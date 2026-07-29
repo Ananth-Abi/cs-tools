@@ -47,9 +47,9 @@ The server auto-loads `.env` from the working directory at startup (silently ign
 ## Commands
 
 ```bash
-make setup   # wire up git hooks (once after clone)
-make test    # vet + race-detector tests
-make build   # runs tests then compiles ./cmd/server
+go vet ./...              # vet
+go test -race ./...       # vet + race-detector tests
+go build -o server ./cmd/server   # compile
 ```
 
 ## Adding a new channel
