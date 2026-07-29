@@ -33,7 +33,7 @@ A new channel (SMS/voice via Twilio is the next expected one, per the Kafka POC'
 
 ## Request contract
 
-`POST /notifications` takes a single discriminated-union body: `{"channel": "email"|"googleChat", "email": {...}, "googleChat": {...}}` — only the object matching `channel` needs to be populated. This shape (one endpoint, a `channel` field) is deliberate so a future Kafka consumer producing the same notification events doesn't need a new route — it can call the same internal validation/dispatch path `PostNotification` calls.
+`POST /notifications` takes a single discriminated-union body: `{"channel": "email"|"googleChat", "email": {...}, "googleChat": {...}}` — only the object matching `channel` may be populated; `PostNotification` rejects a request that also carries the non-selected payload (e.g. `channel: "email"` with a `googleChat` object present), and requires the decoded body to end exactly after the JSON object (no trailing values). `openapi.yaml` mirrors this as a `oneOf`/`discriminator` schema (`SendEmailNotificationRequest`/`SendGoogleChatNotificationRequest`), each with `additionalProperties: false`. This shape (one endpoint, a `channel` field) is deliberate so a future Kafka consumer producing the same notification events doesn't need a new route — it can call the same internal validation/dispatch path `PostNotification` calls.
 
 ## Running locally
 

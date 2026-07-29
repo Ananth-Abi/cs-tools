@@ -65,3 +65,40 @@ func TestLogger_DefaultsStatusToOKWhenUnset(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
+
+func TestLogger_IgnoresWriteHeaderAfterWrite(t *testing.T) {
+	t.Parallel()
+
+	// Write implicitly sends 200; a later WriteHeader call is superfluous and
+	// must not change the status actually sent to the client (matches
+	// net/http's own behavior for the underlying ResponseWriter).
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hi"))
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	middleware.Logger(next).ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d (superfluous WriteHeader after Write must be ignored)", w.Code, http.StatusOK)
+	}
+}
+
+func TestLogger_IgnoresRepeatedWriteHeader(t *testing.T) {
+	t.Parallel()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	middleware.Logger(next).ServeHTTP(w, r)
+
+	if w.Code != http.StatusCreated {
+		t.Errorf("status = %d, want %d (only the first WriteHeader call should count)", w.Code, http.StatusCreated)
+	}
+}

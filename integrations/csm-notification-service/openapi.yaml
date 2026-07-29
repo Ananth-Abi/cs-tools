@@ -147,15 +147,34 @@ components:
         caseId:
           type: string
 
-    SendNotificationRequest:
+    SendEmailNotificationRequest:
       type: object
-      required: [channel]
+      required: [channel, email]
       additionalProperties: false
       properties:
         channel:
           type: string
-          enum: [email, googleChat]
+          enum: [email]
         email:
           $ref: '#/components/schemas/EmailNotificationPayload'
+
+    SendGoogleChatNotificationRequest:
+      type: object
+      required: [channel, googleChat]
+      additionalProperties: false
+      properties:
+        channel:
+          type: string
+          enum: [googleChat]
         googleChat:
           $ref: '#/components/schemas/GoogleChatNotificationPayload'
+
+    SendNotificationRequest:
+      oneOf:
+        - $ref: '#/components/schemas/SendEmailNotificationRequest'
+        - $ref: '#/components/schemas/SendGoogleChatNotificationRequest'
+      discriminator:
+        propertyName: channel
+        mapping:
+          email: '#/components/schemas/SendEmailNotificationRequest'
+          googleChat: '#/components/schemas/SendGoogleChatNotificationRequest'

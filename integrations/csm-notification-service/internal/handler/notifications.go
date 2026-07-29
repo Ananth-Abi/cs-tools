@@ -98,14 +98,28 @@ func (h *NotificationHandler) PostNotification(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
+	// Decode only consumes the first JSON value in body; reject any trailing
+	// value or malformed bytes rather than silently ignoring them.
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
 
 	switch req.Channel {
 	case "email":
+		if req.GoogleChat != nil {
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
 		if req.Email == nil || len(req.Email.To) == 0 || strings.TrimSpace(req.Email.Subject) == "" {
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
 	case "googleChat":
+		if req.Email != nil {
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
 		gc := req.GoogleChat
 		if gc == nil ||
 			strings.TrimSpace(gc.Product) == "" ||
