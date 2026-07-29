@@ -1,0 +1,180 @@
+openapi: 3.0.1
+info:
+  title: CSM Notification Service API
+  version: 1.0.0
+  description: >
+    Accepts notification requests (email, Google Chat, and future channels)
+    from other services. Fronted by Choreo's API Manager gateway (subscription
+    + client credentials) — this service performs no inbound auth of its own.
+security:
+  - oauth2ClientCredentials: []
+servers:
+  - url: "{server}:{port}/"
+    variables:
+      server:
+        default: http://localhost
+      port:
+        default: "8080"
+paths:
+  /health:
+    get:
+      summary: Health check endpoint.
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Ok
+
+  /notifications:
+    post:
+      summary: >-
+        Submit a notification for dispatch. TODO: currently only validates and
+        accepts the request (202); once the Kafka-based event backbone lands,
+        this will publish to the message queue for asynchronous dispatch
+        instead.
+      operationId: postNotification
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendNotificationRequest'
+        required: true
+      responses:
+        "202":
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    oauth2ClientCredentials:
+      type: oauth2
+      flows:
+        clientCredentials:
+          # Placeholder — fill in with the actual token endpoint for this service's
+          # Choreo-managed API once it's provisioned. Not a real/guessed URL.
+          tokenUrl: "<token_url>"
+          scopes: {}
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        message:
+          type: string
+
+    EmailAttachment:
+      type: object
+      required: [contentName, contentType, attachment]
+      properties:
+        contentName:
+          type: string
+          description: Attachment file name (e.g. "invoice.pdf").
+        contentType:
+          type: string
+          description: Attachment MIME type (e.g. "application/pdf").
+        attachment:
+          type: string
+          format: byte
+          description: Base64-encoded file content.
+
+    EmailNotificationPayload:
+      type: object
+      required: [to, subject]
+      properties:
+        to:
+          type: array
+          items:
+            type: string
+        cc:
+          type: array
+          items:
+            type: string
+        bcc:
+          type: array
+          items:
+            type: string
+        replyTo:
+          type: array
+          items:
+            type: string
+        subject:
+          type: string
+        htmlBody:
+          type: string
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmailAttachment'
+
+    GoogleChatNotificationPayload:
+      type: object
+      required: [product, title, shortDescription, caseId]
+      properties:
+        product:
+          type: string
+          description: >-
+            Selects which configured Google Chat space receives the alert
+            (e.g. "api-manager", "identity-server"); matched case- and
+            whitespace-insensitively against GOOGLE_CHAT_SPACES.
+        title:
+          type: string
+        shortDescription:
+          type: string
+        caseId:
+          type: string
+
+    SendEmailNotificationRequest:
+      type: object
+      required: [channel, email]
+      additionalProperties: false
+      properties:
+        channel:
+          type: string
+          enum: [email]
+        email:
+          $ref: '#/components/schemas/EmailNotificationPayload'
+
+    SendGoogleChatNotificationRequest:
+      type: object
+      required: [channel, googleChat]
+      additionalProperties: false
+      properties:
+        channel:
+          type: string
+          enum: [googleChat]
+        googleChat:
+          $ref: '#/components/schemas/GoogleChatNotificationPayload'
+
+    SendNotificationRequest:
+      oneOf:
+        - $ref: '#/components/schemas/SendEmailNotificationRequest'
+        - $ref: '#/components/schemas/SendGoogleChatNotificationRequest'
+      discriminator:
+        propertyName: channel
+        mapping:
+          email: '#/components/schemas/SendEmailNotificationRequest'
+          googleChat: '#/components/schemas/SendGoogleChatNotificationRequest'
