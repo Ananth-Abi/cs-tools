@@ -102,7 +102,7 @@ Copy `.env` and fill in the values:
 
 ### Shared OAuth2 client credentials
 
-Every upstream service client (customer entity, engineering entity, updates, SCIM, and future notification channels) authenticates as the same OAuth2 client-credentials app — only each service's base URL and scopes differ, so the credentials are configured once and reused.
+Every upstream service client (customer entity, engineering entity, updates, SCIM) authenticates as the same OAuth2 client-credentials app — only each service's base URL and scopes differ, so the credentials are configured once and reused.
 
 | Variable | Description |
 |---|---|
@@ -142,25 +142,6 @@ Backs `entity.EngineeringEntityClient.CreateGitIssue` (wso2-enterprise/digiops-e
 | `SCIM_BASE_URL` | Base URL of the SCIM operations service |
 | `SCIM_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 
-### Notifications — email channel (not yet wired in)
-
-`internal/notifications` (`EmailClient.SendEmail`) is ready to use but is not constructed in `cmd/server/main.go` — no handler calls it yet. These variables are not read by any code today; they're documented here for when the first caller is added, which should reuse the shared `OAUTH2_*` credentials above rather than adding its own. Each notification channel gets its own `NOTIFICATIONS_<CHANNEL>_*` prefix for its channel-specific settings — SMS/Twilio will follow this same convention once added.
-
-| Variable | Description |
-|---|---|
-| `NOTIFICATIONS_EMAIL_BASE_URL` | Base URL of the email notification service (optional) |
-| `NOTIFICATIONS_EMAIL_SCOPES` | Comma-separated OAuth2 scopes (optional) |
-| `NOTIFICATIONS_EMAIL_FROM_ADDRESS` | Fixed "From" address used for every outgoing email (optional) |
-
-### Notifications — Google Chat channel
-
-`internal/notifications` (`GoogleChatClient.SendIncidentAlert`) posts a card message — title, short description, and an "Open in CSM Portal" button — to a Google Chat space via an incoming webhook. There's one space per product (each WSO2 product has its own space), so the client is configured with a list of `{product, webhookUrl}` pairs and routes each alert to the space matching the case's product (case- and whitespace-insensitive match; an unconfigured product returns an error rather than falling back). Unlike every other upstream client it does not use the shared `OAUTH2_*` credentials; a webhook URL is the only credential needed per space (Space settings > Apps & integrations > Webhooks). It's called from `POST /notifications/google-chat/alerts` (see [API Endpoints](#notifications) below), which today is triggered manually rather than from real case/incident creation.
-
-| Variable | Description |
-|---|---|
-| `NOTIFICATIONS_GOOGLE_CHAT_SPACES` | JSON array of `{"product","webhookUrl"}` objects, one per Google Chat space — e.g. `[{"product":"api-manager","webhookUrl":"https://chat.googleapis.com/..."}]`. Optional — left unset, malformed, Google Chat alerts are unavailable but startup and every other endpoint work normally |
-| `CSM_PORTAL_WEB_BASE_URL` | Base URL of the CSM portal webapp, used to build the "Open in CSM Portal" link at `/operations/incidents/{caseId}` (e.g. `http://localhost:3001` for local dev). Optional — only needed alongside `NOTIFICATIONS_GOOGLE_CHAT_SPACES` above |
-
 ### Auth
 
 | Variable | Description |
@@ -193,10 +174,6 @@ backend/
 │   ├── updates/
 │   │   ├── client.go           # OAuth2 HTTP client for the updates service
 │   │   └── updates.go          # Updates service operations
-│   ├── notifications/
-│   │   ├── doc.go               # Package overview — one config/client pair per channel
-│   │   ├── email.go             # EmailConfig/EmailClient/SendEmail (not yet wired into main.go — no caller)
-│   │   └── googlechat.go        # GoogleChatConfig/GoogleChatClient/SendIncidentAlert (per-product webhook routing)
 │   ├── middleware/
 │   │   ├── auth.go             # JWT validation; injects UserInfo into context
 │   │   ├── correlation.go      # X-CSM-Correlation-ID propagation + slog enrichment
@@ -214,7 +191,6 @@ backend/
 │       ├── projects.go                   # HTTP handlers for project endpoints
 │       ├── incidents.go                  # HTTP handlers for incident endpoints (ServiceNow only)
 │       ├── problems.go                   # HTTP handlers for problem endpoints (ServiceNow only)
-│       ├── notifications.go              # HTTP handlers for notification channels (Google Chat alert endpoint)
 │       ├── updates.go                    # HTTP handlers for updates endpoints
 │       └── users.go                      # HTTP handlers for user endpoints
 ├── .env                        # Local config (git-ignored)
@@ -318,10 +294,6 @@ backend/
 ### Problems
 
 - `POST /problems/search` — Search problems; optional `filters` (`searchQuery`) (ServiceNow data source only)
-
-### Notifications
-
-- `POST /notifications/google-chat/alerts` — Send an incident alert card message to the Google Chat space configured for `product`; body requires `product`, `title`, `shortDescription`, `caseId`. Triggered manually today, pending integration into real case/incident creation.
 
 ## Run Locally
 

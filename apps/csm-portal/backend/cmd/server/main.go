@@ -19,7 +19,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net"
@@ -34,7 +33,6 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/notifications"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/scim"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
@@ -43,9 +41,9 @@ func main() {
 	loadDotEnv(".env")
 	middleware.ConfigureLogger()
 
-	// All upstream service clients (entity, updates, SCIM, and future notification
-	// channels) authenticate as the same OAuth2 client-credentials app; only the
-	// base URL and scopes differ per service.
+	// All upstream service clients (entity, updates, SCIM) authenticate as the
+	// same OAuth2 client-credentials app; only the base URL and scopes differ
+	// per service.
 	oauth2ClientID := mustEnv("OAUTH2_CLIENT_ID")
 	oauth2ClientSecret := mustEnv("OAUTH2_CLIENT_SECRET")
 	oauth2TokenURL := mustEnv("OAUTH2_TOKEN_URL")
@@ -78,15 +76,6 @@ func main() {
 	taskHandler := handler.NewTaskHandler(customerEntityClient)
 	incidentHandler := handler.NewIncidentHandler(customerEntityClient)
 	problemHandler := handler.NewProblemHandler(customerEntityClient)
-
-	// Google Chat is not yet configured for every deployment, so its spaces
-	// are read with os.Getenv (never mustEnv) — a missing or malformed value
-	// only surfaces as an error the first time an alert is sent for a product
-	// with no matching space.
-	googleChatClient := notifications.NewGoogleChatClient(notifications.GoogleChatConfig{
-		Spaces: parseGoogleChatSpaces(os.Getenv("NOTIFICATIONS_GOOGLE_CHAT_SPACES")),
-	})
-	notificationHandler := handler.NewNotificationHandler(googleChatClient, os.Getenv("CSM_PORTAL_WEB_BASE_URL"))
 
 	updatesCfg := updates.Config{
 		BaseURL:      mustEnv("UPDATES_BASE_URL"),
@@ -194,8 +183,6 @@ func main() {
 	mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
 	mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
 	mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
-	// Called manually today; not yet wired into real incident/case creation.
-	mux.HandleFunc("POST /notifications/google-chat/alerts", notificationHandler.PostGoogleChatAlert)
 
 	addr := ":" + mustPort("PORT", "8080")
 
@@ -319,21 +306,4 @@ func splitComma(s string) []string {
 		}
 	}
 	return result
-}
-
-// parseGoogleChatSpaces decodes NOTIFICATIONS_GOOGLE_CHAT_SPACES, a JSON array
-// of {"product":"...","webhookUrl":"..."} objects — one per Google Chat space.
-// A missing or malformed value logs a warning and yields no spaces rather
-// than failing startup, since this channel is not required for every
-// deployment.
-func parseGoogleChatSpaces(raw string) []notifications.GoogleChatSpace {
-	if raw == "" {
-		return nil
-	}
-	var spaces []notifications.GoogleChatSpace
-	if err := json.Unmarshal([]byte(raw), &spaces); err != nil {
-		slog.Error("failed to parse NOTIFICATIONS_GOOGLE_CHAT_SPACES; Google Chat alerts will be unavailable", "err", err)
-		return nil
-	}
-	return spaces
 }

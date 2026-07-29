@@ -26,7 +26,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )

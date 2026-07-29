@@ -14,12 +14,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package notifications groups every outbound notification channel used by
-// the CSM portal backend. Each channel gets its own config/client pair in its
-// own file — e.g. email.go's EmailConfig/EmailClient, googlechat.go's
-// GoogleChatConfig/GoogleChatClient — because channels are expected to differ
-// in upstream auth scheme and base URL (email via OAuth2 client credentials;
-// Google Chat via a space's incoming webhook URL; SMS and voice/Twilio calls
-// are expected to follow, likely with their own auth schemes such as
-// Twilio's Account SID/Auth Token).
-package notifications
+package middleware
+
+import "net/http"
+
+// SecurityHeaders sets security-related response headers on every response.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Content-Security-Policy", "upgrade-insecure-requests")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
+}
