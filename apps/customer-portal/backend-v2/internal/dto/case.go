@@ -262,10 +262,15 @@ func MapCaseCreate(r entity.CreateCaseResponse) CaseCreateResponse {
 // DeploymentID/DeployedProductID (case relinking), AutocloseHoldUntil
 // (ServiceNow auto-closure workflow control), and FixEta/BestCaseFixEta/
 // MostLikelyFixEta/WorstCaseFixEta (fix-commitment dates set by support
-// engineers, not the customer). Exactly one of State/Severity/Subject/
-// Description/WatchList must be set per entity-service's own validation;
-// ResolutionCode/Cause/CloseNotes are only accepted alongside a closing
-// State transition.
+// engineers, not the customer). entity-service requires exactly one of
+// State/Severity/WorkState/WatchList/AssigneeEmail/ParentID/RelatedCaseID/
+// AutocloseHoldUntil/Subject/Description/DeploymentID/DeployedProductID/
+// FixEta/BestCaseFixEta/MostLikelyFixEta/WorstCaseFixEta to be set (see
+// entity.UpdateCaseRequest's doc comment) — since this portal DTO only
+// exposes State/Severity/Subject/Description/WatchList of that set, exactly
+// one of those five must be set here too. ResolutionCode/Cause/CloseNotes
+// are secondary fields, only accepted alongside a closing State transition,
+// and don't count toward the exactly-one rule.
 type UpdateCaseRequest struct {
 	State          *string  `json:"state,omitempty"`
 	Severity       *string  `json:"severity,omitempty"`
@@ -295,16 +300,17 @@ func BuildEntityUpdateCaseRequest(id string, req UpdateCaseRequest) entity.Updat
 }
 
 // CaseUpdateResponse is the portal's response for PATCH /cases/{id}.
-// Deliberately excludes entity-service's UpdatedBy (internal actor identity)
-// and the Best/MostLikely/WorstCaseFixEta trio, for the same reasons as
-// CaseDetails above.
+// Deliberately excludes entity-service's UpdatedBy (internal actor identity),
+// WatchList (CSM-engineer-facing only — CaseView/CaseDetails exclude it for
+// the same reason, so the update response must not leak watcher email
+// addresses that the read path never returns), and the Best/MostLikely/
+// WorstCaseFixEta trio, for the same reasons as CaseDetails above.
 type CaseUpdateResponse struct {
 	ID             string     `json:"id"`
 	UpdatedOn      time.Time  `json:"updatedOn"`
 	State          string     `json:"state,omitempty"`
 	Severity       string     `json:"severity,omitempty"`
 	WorkState      *string    `json:"workState,omitempty"`
-	WatchList      []string   `json:"watchList,omitempty"`
 	AssignedTo     *PersonRef `json:"assignedTo,omitempty"`
 	ResolutionCode *string    `json:"resolutionCode,omitempty"`
 	Cause          *string    `json:"cause,omitempty"`
@@ -318,18 +324,6 @@ type CaseUpdateResponse struct {
 func MapCaseUpdate(r entity.UpdateCaseResponse) CaseUpdateResponse {
 	c := r.Case
 
-	var watchList []string
-	if len(c.WatchList) > 0 {
-		watchList = make([]string, 0, len(c.WatchList))
-		for _, w := range c.WatchList {
-			if w.Email != "" {
-				watchList = append(watchList, w.Email)
-			} else {
-				watchList = append(watchList, w.UserName)
-			}
-		}
-	}
-
 	var assignedTo *PersonRef
 	if c.AssignedTo != nil {
 		assignedTo = &PersonRef{Name: c.AssignedTo.Name, Email: c.AssignedTo.Email}
@@ -341,7 +335,6 @@ func MapCaseUpdate(r entity.UpdateCaseResponse) CaseUpdateResponse {
 		State:          c.State,
 		Severity:       c.Severity,
 		WorkState:      c.WorkState,
-		WatchList:      watchList,
 		AssignedTo:     assignedTo,
 		ResolutionCode: c.ResolutionCode,
 		Cause:          c.Cause,

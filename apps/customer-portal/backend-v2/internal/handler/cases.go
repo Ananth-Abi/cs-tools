@@ -156,8 +156,16 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if req.State == nil && req.Severity == nil && req.Subject == nil && req.Description == nil && len(req.WatchList) == 0 {
-		writeError(w, http.StatusBadRequest, "At least one field must be provided for update.")
+	// entity-service requires exactly one of these primary fields per PATCH —
+	// see dto.UpdateCaseRequest's doc comment.
+	primaryFieldsSet := 0
+	for _, set := range []bool{req.State != nil, req.Severity != nil, req.Subject != nil, req.Description != nil, len(req.WatchList) > 0} {
+		if set {
+			primaryFieldsSet++
+		}
+	}
+	if primaryFieldsSet != 1 {
+		writeError(w, http.StatusBadRequest, "Exactly one of state, severity, subject, description, or watchList must be provided.")
 		return
 	}
 
