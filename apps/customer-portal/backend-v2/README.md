@@ -5,7 +5,7 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 11 routes listed below are implemented so far, across
+This is a work in progress — only the 16 routes listed below are implemented so far, across
 entity-service, the WSO2 Updates service, and SCIM. Everything else the Ballerina backend exposes
 still needs a Go handler; add them following the pattern described in
 [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
@@ -133,7 +133,8 @@ backend-v2/
 │   │   ├── users.go             # GetMe, PatchMe
 │   │   ├── accounts.go          # SearchAccounts, GetAccount
 │   │   ├── projects.go          # SearchProjects, GetProject
-│   │   └── cases.go             # SearchCases, GetCase
+│   │   ├── cases.go             # SearchCases, GetCase, CreateCase, UpdateCase, CreateCaseComment
+│   │   └── deployments.go       # SearchDeployments, CreateDeployment
 │   ├── updates/                 # OAuth2 HTTP client for the WSO2 Updates service
 │   │   ├── client.go            # Config/Client/do()
 │   │   ├── types.go             # upstream (snake_case) vs portal (camelCase) structs
@@ -147,7 +148,8 @@ backend-v2/
 │   │   ├── user.go
 │   │   ├── account.go
 │   │   ├── project.go
-│   │   └── case.go
+│   │   ├── case.go
+│   │   └── deployment.go
 │   ├── middleware/
 │   │   ├── auth.go              # JWT validation; injects UserInfo into context
 │   │   ├── correlation.go       # X-CSM-Correlation-ID propagation + slog enrichment
@@ -158,7 +160,8 @@ backend-v2/
 │       ├── users.go             # GET/PATCH /users/me
 │       ├── accounts.go          # POST /accounts/search, GET /accounts/{id}
 │       ├── projects.go          # POST /projects/search, GET /projects/{id}
-│       ├── cases.go             # POST /cases/search, GET /cases/{id}
+│       ├── cases.go             # cases search/get/create/update/comment
+│       ├── deployments.go       # POST /deployments/search, POST /deployments
 │       └── updates.go           # GET /updates/product-update-levels, POST /updates/levels/search
 ├── .choreo/component.yaml
 ├── openapi.yaml
@@ -178,6 +181,11 @@ backend-v2/
 - `GET /projects/{id}` — get project by ID
 - `POST /cases/search` — search cases
 - `GET /cases/{id}` — get case by ID
+- `POST /cases` — create a case
+- `PATCH /cases/{id}` — update a case (restricted, customer-safe field subset — see CLAUDE.md)
+- `POST /cases/{id}/comments` — add a comment to a case (always a plain customer comment)
+- `POST /deployments/search` — search deployments
+- `POST /deployments` — create a deployment (ServiceNow data source only)
 - `GET /updates/product-update-levels` — list product update levels
 - `POST /updates/levels/search` — search update descriptions between two update levels
 
@@ -225,6 +233,26 @@ curl -X POST http://localhost:8080/cases/search \
   -d '{"pagination":{"limit":10,"offset":0},"filters":{"searchQuery":"login error"}}'
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/cases/<case-id>
+
+curl -X POST http://localhost:8080/cases \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"type":"case","projectId":"<project-id>","deploymentId":"<deployment-id>","subject":"Login error","description":"...","severity":"high","issueType":"question"}'
+
+curl -X PATCH http://localhost:8080/cases/<case-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"state":"closed","closeNotes":"Resolved on our end, thanks!"}'
+
+curl -X POST http://localhost:8080/cases/<case-id>/comments \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"content":"Any update on this?"}'
+
+curl -X POST http://localhost:8080/deployments/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0}}'
+
+curl -X POST http://localhost:8080/deployments \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"projectId":"<project-id>","name":"Production"}'
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/updates/product-update-levels
 

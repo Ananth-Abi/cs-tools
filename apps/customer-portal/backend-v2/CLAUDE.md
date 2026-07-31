@@ -6,14 +6,16 @@ responses for the frontend. This is a Go rewrite of the Ballerina backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** 11 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
+**Status: in progress.** 16 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
 `POST /accounts/search`, `GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
-`POST /cases/search`, `GET /cases/{id}`, `GET /updates/product-update-levels`,
-`POST /updates/levels/search`) across three upstream services: entity-service, the WSO2 Updates
-service, and SCIM. The Ballerina backend exposes ~100 routes across many more modules (deployments,
-deployed products, attachments, comments, conversations, change requests, call requests, catalogs,
-time cards, registry tokens, contacts, escalations, product vulnerabilities, AI chat/websocket,
-etc.) — none of those are ported yet. Follow the recipe below to add the next one.
+`POST /cases/search`, `GET /cases/{id}`, `POST /cases`, `PATCH /cases/{id}`,
+`POST /cases/{id}/comments`, `POST /deployments/search`, `POST /deployments`,
+`GET /updates/product-update-levels`, `POST /updates/levels/search`) across three upstream
+services: entity-service, the WSO2 Updates service, and SCIM. The Ballerina backend exposes ~100
+routes across many more modules (deployed products, attachments, comments, conversations, change
+requests, call requests, catalogs, time cards, registry tokens, contacts, escalations, product
+vulnerabilities, AI chat/websocket, etc.) — none of those are ported yet. Follow the recipe below
+to add the next one.
 
 ## Which entity-service
 
@@ -99,10 +101,28 @@ here, it's resolved once in the mapper. Also deliberately excluded from account 
 (annual recurring revenue — WSO2-internal financial data, never expose to the customer) and `Pod`
 (WSO2-internal account routing).
 
-Request bodies are the exception: incoming search/filter payloads are decoded directly into the
-entity package's request structs (e.g. `entity.SearchProjectsRequest`) with no separate DTO layer,
-since those shapes are already what the frontend needs to send — there is nothing to hide on the
-request side.
+Request bodies are usually the exception: incoming search/filter/create payloads are decoded
+directly into the entity package's request structs (e.g. `entity.SearchProjectsRequest`,
+`entity.CreateCaseRequest`) with no separate DTO layer, since those shapes are already what the
+frontend needs to send and every field is customer-appropriate — there is nothing to hide.
+
+**But when entity-service's request contract mixes customer-safe fields with internal-only ones,
+build a restricted portal request DTO too.** `entity.UpdateCaseRequest` (`PATCH /cases/{id}`) is
+the example: it has 18 optional fields, but `workState`, `assigneeEmail`, `parentId`/
+`relatedCaseId`/`deploymentId`/`deployedProductId` (case relinking), `autocloseHoldUntil`, and the
+`fixEta`/`bestCaseFixEta`/`mostLikelyFixEta`/`worstCaseFixEta` quartet are internal WSO2 support
+operations, not things a customer should be able to set on their own case. `dto.UpdateCaseRequest`
+(`internal/dto/case.go`) exposes only the customer-safe subset (state, severity, subject,
+description, watchList, resolutionCode, cause, closeNotes), and
+`dto.BuildEntityUpdateCaseRequest(id, req)` builds the full entity-service request from it, leaving
+every excluded field zero/nil — so even if a client sends `{"workState": "ongoing"}`, it's silently
+dropped (the portal struct has no such field) rather than forwarded. The same pattern applies to
+`POST /cases/{id}/comments`: entity-service accepts `type: work_note|comment|activity`, but
+`dto.BuildEntityCreateCaseCommentRequest` always forces `type: comment`, regardless of what the
+client sends — a customer should never be able to create an internal work-note or system-activity
+entry. When you add a write endpoint, check the entity-service request struct for fields that read
+as "internal support operation" rather than "customer self-service action" before deciding whether
+to pass it through directly or build a restricted DTO.
 
 ## Adding a new endpoint
 
