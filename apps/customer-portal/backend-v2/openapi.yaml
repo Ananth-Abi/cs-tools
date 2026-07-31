@@ -1368,6 +1368,10 @@ components:
           type: string
         workState:
           type: string
+        watchList:
+          type: array
+          items:
+            type: string
         assignedTo:
           $ref: '#/components/schemas/PersonRef'
         resolutionCode:
