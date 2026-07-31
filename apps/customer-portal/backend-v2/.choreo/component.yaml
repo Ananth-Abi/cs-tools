@@ -1,0 +1,12 @@
+schemaVersion: 1.2
+
+endpoints:
+  - name: customer-portal-api
+    displayName: Customer Portal API (v2)
+    service:
+      basePath: /
+      port: 8080
+    type: REST
+    networkVisibilities:
+      - Public
+    schemaFilePath: openapi.yaml

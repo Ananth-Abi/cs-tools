@@ -34,24 +34,53 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/scim"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/updates"
 )
 
 func main() {
 	loadDotEnv(".env")
 	middleware.ConfigureLogger()
 
+	// entity-service, the updates service, and SCIM all authenticate as the
+	// same OAuth2 client-credentials app; only each service's base URL and
+	// scopes differ.
+	oauth2ClientID := os.Getenv("OAUTH2_CLIENT_ID")
+	oauth2ClientSecret := os.Getenv("OAUTH2_CLIENT_SECRET")
+	oauth2TokenURL := os.Getenv("OAUTH2_TOKEN_URL")
+
 	entityCfg := entity.Config{
 		BaseURL:      mustEnv("ENTITY_SERVICE_BASE_URL"),
-		TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
-		ClientID:     os.Getenv("OAUTH2_CLIENT_ID"),
-		ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
 		Scopes:       splitComma(os.Getenv("ENTITY_SERVICE_SCOPES")),
 	}
 	entityClient := entity.NewClient(entityCfg)
 
-	userHandler := handler.NewUserHandler(entityClient)
+	updatesCfg := updates.Config{
+		BaseURL:      mustEnv("UPDATES_BASE_URL"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
+		Scopes:       splitComma(os.Getenv("UPDATES_SCOPES")),
+	}
+	updatesClient := updates.NewClient(updatesCfg)
+
+	scimCfg := scim.Config{
+		BaseURL:      mustEnv("SCIM_BASE_URL"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
+		Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
+	}
+	scimClient := scim.NewClient(scimCfg)
+
+	userHandler := handler.NewUserHandler(entityClient, scimClient)
 	projectHandler := handler.NewProjectHandler(entityClient)
 	caseHandler := handler.NewCaseHandler(entityClient)
+	accountHandler := handler.NewAccountHandler(entityClient)
+	updatesHandler := handler.NewUpdatesHandler(updatesClient)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -66,15 +95,22 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	// GET /users/me is only served by entity-service when it runs with
-	// DATA_SOURCE=servicenow — see internal/entity/users.go.
+	// GET/PATCH /users/me are only served by entity-service when it runs
+	// with DATA_SOURCE=servicenow — see internal/entity/users.go.
 	mux.HandleFunc("GET /users/me", userHandler.GetMe)
+	mux.HandleFunc("PATCH /users/me", userHandler.PatchMe)
 
 	mux.HandleFunc("POST /projects/search", projectHandler.SearchProjects)
 	mux.HandleFunc("GET /projects/{id}", projectHandler.GetProject)
 
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /cases/{id}", caseHandler.GetCase)
+
+	mux.HandleFunc("POST /accounts/search", accountHandler.SearchAccounts)
+	mux.HandleFunc("GET /accounts/{id}", accountHandler.GetAccount)
+
+	mux.HandleFunc("GET /updates/product-update-levels", updatesHandler.GetProductUpdateLevels)
+	mux.HandleFunc("POST /updates/levels/search", updatesHandler.SearchUpdatesBetweenUpdateLevels)
 
 	addr := ":" + mustPort("PORT", "8080")
 

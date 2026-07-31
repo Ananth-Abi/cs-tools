@@ -45,6 +45,24 @@ type GetUserMeResponse struct {
 	Roles     []string `json:"roles"`
 }
 
+// PatchUserMeRequest is the request body for PATCH /users/me.
+type PatchUserMeRequest struct {
+	TimeZone string `json:"timeZone"`
+}
+
+// PatchUserMeUpdated contains the key fields returned after a successful user update.
+type PatchUserMeUpdated struct {
+	ID        string `json:"id"`
+	UpdatedBy string `json:"updatedBy"`
+	UpdatedOn string `json:"updatedOn"`
+}
+
+// PatchUserMeResponse is entity-service's response for PATCH /users/me.
+type PatchUserMeResponse struct {
+	Message string             `json:"message"`
+	User    PatchUserMeUpdated `json:"user"`
+}
+
 // --- projects ---
 
 // SearchProjectsRequest is the input for POST /projects/search.
@@ -113,6 +131,109 @@ type ProjectDetailsView struct {
 	CreatedOn        time.Time         `json:"createdOn"`
 	UpdatedOn        time.Time         `json:"updatedOn"`
 	ProjectClosureFields
+}
+
+// --- accounts ---
+//
+// entity-service returns a different wire shape for these two endpoints
+// depending on its DATA_SOURCE (postgres vs servicenow) — unlike projects and
+// cases, account responses have not been unified upstream. The structs below
+// are a superset of both shapes: JSON key names never collide between the two
+// data sources (they use different field names for the same concept, e.g.
+// "tier" vs "classification", "agentEnabled" vs "hasAgent"), and every date/
+// time field is typed as *string here since a Go string field decodes a JSON
+// string value regardless of whether the source type was time.Time or a
+// plain string — so only the fields the active data source actually
+// populates come out non-nil.
+
+// SupportTierRef is a compact reference to a support tier carrying its label
+// (ServiceNow data source, GET /accounts/{id} only).
+type SupportTierRef struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// SearchAccountsFilters holds the optional filter criteria for an account search.
+type SearchAccountsFilters struct {
+	SearchQuery    string `json:"searchQuery,omitempty"`
+	Active         *bool  `json:"active,omitempty"`
+	Pod            string `json:"pod,omitempty"`
+	Classification string `json:"classification,omitempty"`
+}
+
+// SearchAccountsRequest is the input for POST /accounts/search.
+type SearchAccountsRequest struct {
+	Pagination Pagination            `json:"pagination"`
+	Filters    SearchAccountsFilters `json:"filters,omitempty"`
+}
+
+// AccountSummary is a single search result item from POST /accounts/search —
+// a superset of entity-service's Postgres Account and ServiceNow SNAccountView.
+type AccountSummary struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Region *string `json:"region,omitempty"`
+	// Postgres-only.
+	SfID             *string `json:"sfId,omitempty"`
+	Tier             *string `json:"tier,omitempty"`
+	OwnerID          *string `json:"ownerId,omitempty"`
+	TechnicalOwnerID *string `json:"technicalOwnerId,omitempty"`
+	AgentEnabled     *bool   `json:"agentEnabled,omitempty"`
+	KbReferencesEnabled *bool `json:"kbReferencesEnabled,omitempty"`
+	// ServiceNow-only.
+	Classification  *string    `json:"classification,omitempty"`
+	Pod             *string    `json:"pod,omitempty"`
+	SupportTier     *string    `json:"supportTier,omitempty"`
+	ArrToday        *string    `json:"arrToday,omitempty"`
+	Owner           *EntityRef `json:"owner,omitempty"`
+	TechnicalOwner  *EntityRef `json:"technicalOwner,omitempty"`
+	HasAgent        *bool      `json:"hasAgent,omitempty"`
+	HasKbReferences *bool      `json:"hasKbReferences,omitempty"`
+	CreatedBy       *string    `json:"createdBy,omitempty"`
+	// Shared (identical key/type on both data sources).
+	ActivationDate   *string `json:"activationDate,omitempty"`
+	DeactivationDate *string `json:"deactivationDate,omitempty"`
+	CreatedOn        *string `json:"createdOn,omitempty"`
+	UpdatedOn        *string `json:"updatedOn,omitempty"`
+}
+
+// SearchAccountsResponse is entity-service's response for POST /accounts/search.
+type SearchAccountsResponse struct {
+	Accounts []AccountSummary `json:"accounts"`
+	Total    int              `json:"total"`
+	Limit    int              `json:"limit"`
+	Offset   int              `json:"offset"`
+	HasMore  bool             `json:"hasMore"`
+}
+
+// AccountDetail is entity-service's response for GET /accounts/{id} — a
+// superset of entity-service's Postgres Account and ServiceNow SNAccountDetail.
+type AccountDetail struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	Region *string `json:"region,omitempty"`
+	// Postgres-only.
+	SfID             *string `json:"sfId,omitempty"`
+	Tier             *string `json:"tier,omitempty"`
+	OwnerID          *string `json:"ownerId,omitempty"`
+	TechnicalOwnerID *string `json:"technicalOwnerId,omitempty"`
+	AgentEnabled     *bool   `json:"agentEnabled,omitempty"`
+	KbReferencesEnabled *bool `json:"kbReferencesEnabled,omitempty"`
+	// ServiceNow-only.
+	Classification  *string         `json:"classification,omitempty"`
+	Pod             *string         `json:"pod,omitempty"`
+	SupportTier     *SupportTierRef `json:"supportTier,omitempty"`
+	ArrToday        *string         `json:"arrToday,omitempty"`
+	Owner           *EntityRef      `json:"owner,omitempty"`
+	TechnicalOwner  *EntityRef      `json:"technicalOwner,omitempty"`
+	HasAgent        *bool           `json:"hasAgent,omitempty"`
+	HasKbReferences *bool           `json:"hasKbReferences,omitempty"`
+	CreatedBy       *string         `json:"createdBy,omitempty"`
+	// Shared (identical key/type on both data sources).
+	ActivationDate   *string `json:"activationDate,omitempty"`
+	DeactivationDate *string `json:"deactivationDate,omitempty"`
+	CreatedOn        *string `json:"createdOn,omitempty"`
+	UpdatedOn        *string `json:"updatedOn,omitempty"`
 }
 
 // --- cases ---
