@@ -34,6 +34,7 @@ type entityCaseClient interface {
 	CreateCase(ctx context.Context, req entity.CreateCaseRequest) (entity.CreateCaseResponse, error)
 	UpdateCase(ctx context.Context, id string, req entity.UpdateCaseRequest) (entity.UpdateCaseResponse, error)
 	CreateCaseComment(ctx context.Context, caseID string, req entity.CreateCaseCommentRequest) (entity.CreateCaseCommentResponse, error)
+	SearchCaseActivities(ctx context.Context, caseID string, req entity.SearchCaseActivitiesRequest) (entity.SearchCaseActivitiesResponse, error)
 }
 
 // CaseHandler handles HTTP requests for case operations.
@@ -216,4 +217,39 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSONValue(w, http.StatusCreated, dto.MapCaseComment(result))
+}
+
+// SearchCaseActivities handles POST /cases/{id}/activities/search.
+func (h *CaseHandler) SearchCaseActivities(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req entity.SearchCaseActivitiesRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SearchCaseActivities(r.Context(), id, req)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchCaseActivities failed", "userID", user.UserID, "caseID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to search case activities.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapSearchCaseActivities(result))
 }

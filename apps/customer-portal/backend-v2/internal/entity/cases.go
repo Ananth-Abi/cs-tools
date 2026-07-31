@@ -56,3 +56,10 @@ func (c *Client) CreateCaseComment(ctx context.Context, caseID string, req Creat
 	err := c.postJSON(ctx, fmt.Sprintf("/cases/%s/comments", url.PathEscape(caseID)), req, &out)
 	return out, err
 }
+
+// SearchCaseActivities calls POST /cases/{id}/activities/search.
+func (c *Client) SearchCaseActivities(ctx context.Context, caseID string, req SearchCaseActivitiesRequest) (SearchCaseActivitiesResponse, error) {
+	var out SearchCaseActivitiesResponse
+	err := c.postJSON(ctx, fmt.Sprintf("/cases/%s/activities/search", url.PathEscape(caseID)), req, &out)
+	return out, err
+}

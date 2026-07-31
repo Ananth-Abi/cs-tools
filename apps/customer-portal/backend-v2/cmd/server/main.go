@@ -80,6 +80,9 @@ func main() {
 	projectHandler := handler.NewProjectHandler(entityClient)
 	caseHandler := handler.NewCaseHandler(entityClient)
 	deploymentHandler := handler.NewDeploymentHandler(entityClient)
+	deployedProductHandler := handler.NewDeployedProductHandler(entityClient)
+	attachmentHandler := handler.NewAttachmentHandler(entityClient)
+	productHandler := handler.NewProductHandler(entityClient)
 	accountHandler := handler.NewAccountHandler(entityClient)
 	updatesHandler := handler.NewUpdatesHandler(updatesClient)
 
@@ -109,11 +112,26 @@ func main() {
 	mux.HandleFunc("POST /cases", caseHandler.CreateCase)
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
+	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
 
 	mux.HandleFunc("POST /deployments/search", deploymentHandler.SearchDeployments)
 	// POST /deployments only succeeds against entity-service's ServiceNow
 	// data source — see internal/entity/deployments.go.
 	mux.HandleFunc("POST /deployments", deploymentHandler.CreateDeployment)
+
+	mux.HandleFunc("POST /deployed-products/search", deployedProductHandler.SearchDeployedProducts)
+	// POST/PATCH /deployed-products only succeed against entity-service's
+	// ServiceNow data source — see internal/entity/deployed_products.go.
+	mux.HandleFunc("POST /deployed-products", deployedProductHandler.CreateDeployedProduct)
+	mux.HandleFunc("PATCH /deployed-products/{id}", deployedProductHandler.PatchDeployedProduct)
+
+	mux.HandleFunc("POST /attachments", attachmentHandler.CreateAttachment)
+	mux.HandleFunc("POST /attachments/search", attachmentHandler.SearchAttachments)
+	mux.HandleFunc("GET /attachments/{id}/content", attachmentHandler.GetAttachmentContent)
+	mux.HandleFunc("DELETE /attachments/{id}", attachmentHandler.DeleteAttachment)
+
+	mux.HandleFunc("POST /products/search", productHandler.SearchProducts)
+	mux.HandleFunc("POST /products/{id}/versions/search", productHandler.SearchProductVersions)
 
 	mux.HandleFunc("POST /accounts/search", accountHandler.SearchAccounts)
 	mux.HandleFunc("GET /accounts/{id}", accountHandler.GetAccount)

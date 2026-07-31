@@ -693,6 +693,540 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /deployed-products/search:
+    post:
+      summary: Search deployed products.
+      operationId: postDeployedProductsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchDeployedProductsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchDeployedProductsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployed-products:
+    post:
+      summary: Create a deployed product.
+      description: >
+        Only entity-service's ServiceNow data source supports this route —
+        a Postgres-mode deployment always returns 400.
+      operationId: postDeployedProducts
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeployedProductRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployedProductCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployed-products/{id}:
+    patch:
+      summary: Update a deployed product.
+      description: >
+        Provide either cores/tps/description or active=false, but not both.
+        Only entity-service's ServiceNow data source supports this route —
+        a Postgres-mode deployment always returns 400.
+      operationId: patchDeployedProductsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeployedProductRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployedProductUpdateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /attachments:
+    post:
+      summary: Create an attachment.
+      operationId: postAttachments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAttachmentRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /attachments/search:
+    post:
+      summary: Search attachments.
+      operationId: postAttachmentsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchAttachmentsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchAttachmentsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /attachments/{id}/content:
+    get:
+      summary: Download an attachment's raw file content.
+      description: >
+        Response body is the raw file, not JSON. Content-Disposition:
+        attachment is always set, forcing a download rather than inline
+        rendering, mirroring entity-service's own XSS mitigation for this
+        endpoint.
+      operationId: getAttachmentsIdContent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /attachments/{id}:
+    delete:
+      summary: Delete an attachment.
+      operationId: deleteAttachmentsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/{id}/activities/search:
+    post:
+      summary: Search a case's activity feed (comments, attachments, field changes).
+      operationId: postCasesIdActivitiesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCaseActivitiesRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCaseActivitiesResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /products/search:
+    post:
+      summary: Search products.
+      operationId: postProductsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchProductsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchProductsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /products/{id}/versions/search:
+    post:
+      summary: Search a product's versions.
+      operationId: postProductsIdVersionsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchProductVersionsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchProductVersionsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /updates/product-update-levels:
     get:
       summary: Get product update levels.
@@ -1481,6 +2015,375 @@ components:
           type: string
         createdOn:
           type: string
+
+    # ---- deployed products ----
+
+    SearchDeployedProductsRequest:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        deploymentIds:
+          type: array
+          items:
+            type: string
+
+    DeployedProductVersion:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        releasedDate:
+          type: string
+        supportEoLDate:
+          type: string
+
+    DeployedProductSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        deployment:
+          $ref: '#/components/schemas/Ref'
+        product:
+          $ref: '#/components/schemas/Ref'
+        version:
+          $ref: '#/components/schemas/DeployedProductVersion'
+        cores:
+          type: string
+        tps:
+          type: string
+        category:
+          type: string
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+
+    SearchDeployedProductsResponse:
+      type: object
+      properties:
+        deployedProducts:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployedProductSummary'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+
+    CreateDeployedProductRequest:
+      type: object
+      required: [projectId, deploymentId, productId, versionId]
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        deploymentId:
+          type: string
+          format: uuid
+        productId:
+          type: string
+          format: uuid
+        versionId:
+          type: string
+          format: uuid
+        cores:
+          type: integer
+        tps:
+          type: number
+        description:
+          type: string
+
+    DeployedProductCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        createdOn:
+          type: string
+
+    UpdateDeployedProductRequest:
+      description: Provide either cores/tps/description or active=false, but not both.
+      type: object
+      properties:
+        deploymentId:
+          type: string
+          format: uuid
+          description: Optional — scopes the update to this deployment.
+        cores:
+          type: integer
+        tps:
+          type: number
+        description:
+          type: string
+        active:
+          type: boolean
+
+    DeployedProductUpdateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        updatedOn:
+          type: string
+
+    # ---- attachments ----
+
+    CreateAttachmentRequest:
+      type: object
+      required: [referenceId, referenceType, name, type, file]
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+        referenceType:
+          type: string
+          description: "\"case\", \"conversation\", \"change_request\", \"deployment\", or \"incident\""
+        name:
+          type: string
+        type:
+          type: string
+          description: MIME/content type of the file.
+        file:
+          type: string
+          description: Base64-encoded file content.
+        description:
+          type: string
+
+    AttachmentCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        sizeBytes:
+          type: integer
+        createdOn:
+          type: string
+        downloadUrl:
+          type: string
+
+    SearchAttachmentsRequest:
+      type: object
+      required: [referenceId, referenceType]
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+        referenceType:
+          type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    AttachmentSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        referenceId:
+          type: string
+        referenceType:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        sizeBytes:
+          type: integer
+        description:
+          type: string
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        downloadUrl:
+          type: string
+        previewUrl:
+          type: string
+
+    SearchAttachmentsResponse:
+      type: object
+      properties:
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentSummary'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+
+    DeleteResponse:
+      type: object
+      properties:
+        message:
+          type: string
+
+    # ---- case activities ----
+
+    CaseFieldChange:
+      type: object
+      properties:
+        field:
+          type: string
+        fieldLabel:
+          type: string
+        previousValue:
+          type: string
+        newValue:
+          type: string
+
+    CaseActivity:
+      description: >
+        A discriminated union on type: "comment" entries additionally carry
+        commentType; "attachment" entries carry fileName/contentType/
+        sizeBytes/downloadUrl; "field_change" entries carry changes.
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          description: "\"comment\", \"attachment\", or \"field_change\""
+        content:
+          type: string
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+        commentType:
+          type: string
+        fileName:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+        downloadUrl:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseFieldChange'
+
+    SearchCaseActivitiesRequest:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        includeFieldChanges:
+          type: boolean
+          description: When false or omitted, only comment and attachment entries are returned.
+
+    SearchCaseActivitiesResponse:
+      type: object
+      properties:
+        activity:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseActivity'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+
+    # ---- products ----
+
+    SearchProductsRequest:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        searchQuery:
+          type: string
+
+    ProductSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        class:
+          type: string
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+
+    SearchProductsResponse:
+      type: object
+      properties:
+        products:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductSummary'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+
+    SearchProductVersionsRequest:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        searchQuery:
+          type: string
+
+    ProductVersionSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        version:
+          type: string
+        currentSupportStatus:
+          type: string
+        releaseDate:
+          type: string
+        supportEolDate:
+          type: string
+        earliestPossibleSupportEolDate:
+          type: string
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+
+    SearchProductVersionsResponse:
+      type: object
+      properties:
+        productVersions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductVersionSummary'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
 
     # ---- updates ----
 
