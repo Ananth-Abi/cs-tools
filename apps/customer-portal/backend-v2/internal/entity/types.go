@@ -968,12 +968,12 @@ type ChangeRequestSort struct {
 
 // SearchChangeRequestsFilters holds the optional filter criteria for a change request search.
 type SearchChangeRequestsFilters struct {
-	ProjectIDs      []string   `json:"projectIds,omitempty"`
-	SearchQuery     string     `json:"searchQuery,omitempty"`
-	States          []string   `json:"states,omitempty"`
-	Impacts         []string   `json:"impacts,omitempty"`
-	ClosedStartDate *time.Time `json:"closedStartDate,omitempty"`
-	ClosedEndDate   *time.Time `json:"closedEndDate,omitempty"`
+	ProjectIDs      []string `json:"projectIds,omitempty"`
+	SearchQuery     string   `json:"searchQuery,omitempty"`
+	States          []string `json:"states,omitempty"`
+	Impacts         []string `json:"impacts,omitempty"`
+	ClosedStartDate *string  `json:"closedStartDate,omitempty"`
+	ClosedEndDate   *string  `json:"closedEndDate,omitempty"`
 }
 
 // SearchChangeRequestsRequest is the input for POST /change-requests/search.

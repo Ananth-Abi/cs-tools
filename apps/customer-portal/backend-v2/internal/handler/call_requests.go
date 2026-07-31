@@ -66,6 +66,10 @@ func (h *CallRequestHandler) CreateCallRequest(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
+	if !uuidRe.MatchString(req.CaseID) || req.Reason == "" || len(req.UTCTimes) == 0 || req.DurationMinutes <= 0 {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
 
 	result, err := h.entity.CreateCallRequest(r.Context(), req)
 	if err != nil {
@@ -92,6 +96,10 @@ func (h *CallRequestHandler) SearchCallRequests(w http.ResponseWriter, r *http.R
 
 	var req entity.SearchCallRequestsRequest
 	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	if !uuidRe.MatchString(req.CaseID) {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
