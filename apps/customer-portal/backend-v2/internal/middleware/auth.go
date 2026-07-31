@@ -19,6 +19,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -104,7 +105,7 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 
 			info, err := extractUserInfo(tokenStr, cfg, keyFunc)
 			if err != nil {
-				slog.ErrorContext(r.Context(), "auth: token validation failed", "err", err)
+				slog.ErrorContext(r.Context(), "auth: token validation failed", "err", summarizeAuthErr(err))
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
 				return
 			}
@@ -174,6 +175,32 @@ func extractUserInfo(tokenStr string, cfg Config, keyFunc jwt.Keyfunc) (*UserInf
 		UserID: c.UserID,
 		Groups: c.Groups,
 	}, nil
+}
+
+// summarizeAuthErr returns a short, log-safe category for a token validation
+// failure — never the raw error, which for some jwt/v5 error paths can embed
+// parts of the offending token or claim values.
+func summarizeAuthErr(err error) string {
+	switch {
+	case errors.Is(err, jwt.ErrTokenExpired):
+		return "token expired"
+	case errors.Is(err, jwt.ErrTokenNotValidYet):
+		return "token not valid yet"
+	case errors.Is(err, jwt.ErrTokenUsedBeforeIssued):
+		return "token used before issued"
+	case errors.Is(err, jwt.ErrTokenSignatureInvalid):
+		return "signature invalid"
+	case errors.Is(err, jwt.ErrTokenMalformed):
+		return "malformed token"
+	case errors.Is(err, jwt.ErrTokenInvalidAudience):
+		return "invalid audience"
+	case errors.Is(err, jwt.ErrTokenInvalidIssuer):
+		return "invalid issuer"
+	case errors.Is(err, jwt.ErrTokenRequiredClaimMissing):
+		return "required claim missing"
+	default:
+		return "token validation failed"
+	}
 }
 
 func hasAnyAudience(tokenAuds jwt.ClaimStrings, expected []string) bool {

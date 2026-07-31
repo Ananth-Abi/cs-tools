@@ -177,8 +177,10 @@ func loadDotEnv(path string) {
 		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
 			v = v[1 : len(v)-1]
 		}
-		if os.Getenv(k) == "" {
-			_ = os.Setenv(k, v)
+		if _, exists := os.LookupEnv(k); !exists {
+			if err := os.Setenv(k, v); err != nil {
+				slog.Warn("loadDotEnv: failed to set environment variable", "key", k, "err", err)
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {

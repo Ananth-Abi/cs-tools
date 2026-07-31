@@ -5,7 +5,7 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the first 5 endpoints are implemented so far (see below).
+This is a work in progress — only the first 6 routes are implemented so far (see below).
 Everything else the Ballerina backend exposes still needs a Go handler; add them following the
 pattern described in [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
 
@@ -86,7 +86,7 @@ Copy `.env.example` to `.env` and fill in the values.
 | `AUTH_JWKS_ENDPOINT` | JWKS endpoint used to verify JWT signatures |
 | `AUTH_ISSUER` | Expected `iss` claim value |
 | `AUTH_AUDIENCE` | Comma-separated accepted `aud` values |
-| `AUTH_TOKEN_VALIDATOR_ENABLED` | Set to `false` for local development to skip signature verification (default `true`) |
+| `AUTH_TOKEN_VALIDATOR_ENABLED` | `false` skips JWT signature verification — **local development only**; `.env.example` ships `false` for local convenience. Production **must** set this to `true` with a real `AUTH_JWKS_ENDPOINT`/`AUTH_ISSUER`/`AUTH_AUDIENCE` |
 
 ### Server
 
@@ -144,8 +144,8 @@ excluded from each and why.
 go run ./cmd/server/main.go
 ```
 
-When `AUTH_TOKEN_VALIDATOR_ENABLED=false` (default for local), pass any valid JWT as the
-`x-jwt-assertion` header.
+With `AUTH_TOKEN_VALIDATOR_ENABLED=false` (the `.env.example` local default), pass any valid JWT as
+the `x-jwt-assertion` header — its signature is not verified.
 
 ### Examples
 

@@ -103,7 +103,7 @@ request side.
 
 - **Never commit secrets** — `.env`, `Config.toml`, or any file with real credentials must never be
   staged.
-- **No sensitive data in logs** — do not log request bodies, JWT payloads, or user PII.
+- **No sensitive data in logs** — do not log request bodies, JWT payloads, or PII such as email/name. The opaque `userID` claim (`UserInfo.UserID`) is not PII and may be logged for correlation/support purposes, as every handler does today.
 - **JWT is the only inbound auth mechanism** — every non-health endpoint must go through
   `middleware.Auth`.
 - **Run gosec on every change** — `gosec -fmt=text ./...` must report 0 issues before opening a PR.

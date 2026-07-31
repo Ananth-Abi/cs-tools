@@ -38,6 +38,11 @@ import (
 // Overridden in tests to keep them fast.
 var tokenFetchTimeout = 10 * time.Second
 
+// maxResponseBodyBytes bounds how much of an entity-service response this
+// client will read into memory, protecting against a huge or malicious
+// upstream response exhausting process memory.
+const maxResponseBodyBytes = 10 << 20 // 10 MiB
+
 type ctxKey string
 
 const userIDTokenKey ctxKey = "x-user-id-token"        // #nosec G101 -- context map key, not a credential
@@ -102,6 +107,14 @@ func NewClient(cfg Config) *Client {
 		&http.Client{Timeout: tokenFetchTimeout})
 	httpClient := cc.Client(tokenCtx)
 	httpClient.Timeout = 25 * time.Second
+	// x-user-id-token carries the caller's JWT to entity-service. Go's client
+	// only strips sensitive headers on cross-origin redirects for a fixed
+	// allowlist (Authorization, Cookie, etc.) that does not include this
+	// custom header, so a redirecting upstream could otherwise receive it at
+	// a different origin. Disable redirect-following entirely instead.
+	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
 
 	return &Client{
 		http:    httpClient,
@@ -137,9 +150,13 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	limited := io.LimitReader(resp.Body, maxResponseBodyBytes+1)
+	respBody, err := io.ReadAll(limited)
 	if err != nil {
 		return nil, fmt.Errorf("entity: read response body: %w", err)
+	}
+	if len(respBody) > maxResponseBodyBytes {
+		return nil, fmt.Errorf("entity: %s %s: response body exceeds %d bytes", method, path, maxResponseBodyBytes)
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
