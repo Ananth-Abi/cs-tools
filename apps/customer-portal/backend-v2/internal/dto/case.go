@@ -395,3 +395,85 @@ func MapCaseComment(r entity.CreateCaseCommentResponse) CaseCommentResponse {
 		CreatedBy: r.Comment.CreatedBy,
 	}
 }
+
+// CaseFieldChange describes a single field's value change in a case's activity feed.
+type CaseFieldChange struct {
+	Field         string `json:"field"`
+	FieldLabel    string `json:"fieldLabel"`
+	PreviousValue string `json:"previousValue"`
+	NewValue      string `json:"newValue"`
+}
+
+// CaseActivity is one entry in the portal's response for
+// POST /cases/{id}/activities/search — a discriminated union on Type, like
+// entity-service's CaseActivity. Deliberately excludes entity-service's
+// CreatedByFirstName/CreatedByLastName (redundant with CreatedBy, which
+// carries the full name) and the raw internal actor ID.
+type CaseActivity struct {
+	ID          string            `json:"id"`
+	Type        string            `json:"type"`
+	Content     string            `json:"content,omitempty"`
+	CreatedOn   time.Time         `json:"createdOn"`
+	CreatedBy   string            `json:"createdBy"`
+	CommentType *string           `json:"commentType,omitempty"`
+	FileName    string            `json:"fileName,omitempty"`
+	ContentType string            `json:"contentType,omitempty"`
+	SizeBytes   int               `json:"sizeBytes,omitempty"`
+	DownloadURL string            `json:"downloadUrl,omitempty"`
+	Changes     []CaseFieldChange `json:"changes,omitempty"`
+}
+
+// SearchCaseActivitiesResponse is the portal's response for POST /cases/{id}/activities/search.
+type SearchCaseActivitiesResponse struct {
+	Activity []CaseActivity `json:"activity"`
+	Total    int            `json:"total"`
+	Limit    int            `json:"limit"`
+	Offset   int            `json:"offset"`
+	HasMore  bool           `json:"hasMore"`
+}
+
+// MapSearchCaseActivities builds the portal response from entity-service's SearchCaseActivitiesResponse.
+func MapSearchCaseActivities(r entity.SearchCaseActivitiesResponse) SearchCaseActivitiesResponse {
+	items := make([]CaseActivity, 0, len(r.Activity))
+	for _, a := range r.Activity {
+		var commentType *string
+		if a.CommentType != nil {
+			s := string(*a.CommentType)
+			commentType = &s
+		}
+
+		var changes []CaseFieldChange
+		if len(a.Changes) > 0 {
+			changes = make([]CaseFieldChange, 0, len(a.Changes))
+			for _, c := range a.Changes {
+				changes = append(changes, CaseFieldChange{
+					Field:         c.Field,
+					FieldLabel:    c.FieldLabel,
+					PreviousValue: c.PreviousValue,
+					NewValue:      c.NewValue,
+				})
+			}
+		}
+
+		items = append(items, CaseActivity{
+			ID:          a.ID,
+			Type:        string(a.Type),
+			Content:     a.Content,
+			CreatedOn:   a.CreatedOn,
+			CreatedBy:   a.CreatedByFullName,
+			CommentType: commentType,
+			FileName:    a.FileName,
+			ContentType: a.ContentType,
+			SizeBytes:   a.SizeBytes,
+			DownloadURL: a.DownloadURL,
+			Changes:     changes,
+		})
+	}
+	return SearchCaseActivitiesResponse{
+		Activity: items,
+		Total:    r.Total,
+		Limit:    r.Limit,
+		Offset:   r.Offset,
+		HasMore:  r.HasMore,
+	}
+}

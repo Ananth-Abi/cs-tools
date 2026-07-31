@@ -6,16 +6,19 @@ responses for the frontend. This is a Go rewrite of the Ballerina backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** 16 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
+**Status: in progress.** 26 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
 `POST /accounts/search`, `GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
 `POST /cases/search`, `GET /cases/{id}`, `POST /cases`, `PATCH /cases/{id}`,
-`POST /cases/{id}/comments`, `POST /deployments/search`, `POST /deployments`,
-`GET /updates/product-update-levels`, `POST /updates/levels/search`) across three upstream
-services: entity-service, the WSO2 Updates service, and SCIM. The Ballerina backend exposes ~100
-routes across many more modules (deployed products, attachments, comments, conversations, change
-requests, call requests, catalogs, time cards, registry tokens, contacts, escalations, product
-vulnerabilities, AI chat/websocket, etc.) — none of those are ported yet. Follow the recipe below
-to add the next one.
+`POST /cases/{id}/comments`, `POST /cases/{id}/activities/search`, `POST /deployments/search`,
+`POST /deployments`, `POST /deployed-products/search`, `POST /deployed-products`,
+`PATCH /deployed-products/{id}`, `POST /attachments`, `POST /attachments/search`,
+`GET /attachments/{id}/content`, `DELETE /attachments/{id}`, `POST /products/search`,
+`POST /products/{id}/versions/search`, `GET /updates/product-update-levels`,
+`POST /updates/levels/search`) across three upstream services: entity-service, the WSO2 Updates
+service, and SCIM. The Ballerina backend exposes ~100 routes across many more modules (generic
+comments, conversations, change requests, call requests, catalogs, time cards, registry tokens,
+contacts, escalations, product vulnerabilities, AI chat/websocket, etc.) — none of those are ported
+yet. Follow the recipe below to add the next one.
 
 ## Which entity-service
 
@@ -99,7 +102,30 @@ a genuine advantage of the DTO-mapping convention over raw passthrough — `apps
 has to model this as an OpenAPI `oneOf` in its spec and pass the ambiguity on to the frontend;
 here, it's resolved once in the mapper. Also deliberately excluded from account DTOs: `ArrToday`
 (annual recurring revenue — WSO2-internal financial data, never expose to the customer) and `Pod`
-(WSO2-internal account routing).
+(WSO2-internal account routing). `POST /products/search` and `POST /products/{id}/versions/search`
+(`internal/entity/types.go`'s `ProductView`/`ProductVersionView`) use the exact same superset-struct
+technique — e.g. `ProductVersionView.ReleaseDate` is typed `*string` even though the Postgres shape
+is `time.Time` and the ServiceNow shape is a plain string, because a Go `*string` field decodes a
+JSON string value regardless of which the source type actually was.
+
+**`json.RawMessage` on a request field usually means "preserve three states," not "skip validation."**
+`entity.UpdateDeployedProductRequest.Description` is `json.RawMessage` specifically so entity-service
+can distinguish "field absent" (omit), `"description": null` (clear the value), and
+`"description": "value"` (set it) — a plain `*string` can't represent "absent vs. explicitly null."
+When a portal request decodes straight into a struct with such a field (no restricted DTO needed
+here, since Cores/TPS/Description/Active are all customer-appropriate), the raw bytes the client
+sent pass through unchanged and this three-state semantic is preserved automatically — don't
+"simplify" the field to `*string` when porting a similar endpoint.
+
+**Binary responses use a `doBinary`-shaped client method, not `getJSON`/`postJSON`.**
+`GET /attachments/{id}/content` returns a raw file, not JSON — `entity.Client.doBinary` (added in
+`internal/entity/client.go` alongside `do`) returns `(body []byte, contentType string, error)`, and
+the handler (`internal/handler/attachments.go`) writes `Content-Type` from entity-service's own
+(already-sanitized) header value and explicitly sets `Content-Disposition: attachment` itself —
+never render an attachment inline, since entity-service's own allowlist coercion to
+`application/octet-stream` for unrecognized types is a stored-XSS mitigation this backend must not
+undo by, say, echoing a client-supplied filename into a `Content-Disposition` you construct
+yourself.
 
 Request bodies are usually the exception: incoming search/filter/create payloads are decoded
 directly into the entity package's request structs (e.g. `entity.SearchProjectsRequest`,

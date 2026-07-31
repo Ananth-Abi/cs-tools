@@ -5,7 +5,7 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 16 routes listed below are implemented so far, across
+This is a work in progress — only the 26 routes listed below are implemented so far, across
 entity-service, the WSO2 Updates service, and SCIM. Everything else the Ballerina backend exposes
 still needs a Go handler; add them following the pattern described in
 [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
@@ -133,8 +133,11 @@ backend-v2/
 │   │   ├── users.go             # GetMe, PatchMe
 │   │   ├── accounts.go          # SearchAccounts, GetAccount
 │   │   ├── projects.go          # SearchProjects, GetProject
-│   │   ├── cases.go             # SearchCases, GetCase, CreateCase, UpdateCase, CreateCaseComment
-│   │   └── deployments.go       # SearchDeployments, CreateDeployment
+│   │   ├── cases.go             # SearchCases, GetCase, CreateCase, UpdateCase, CreateCaseComment, SearchCaseActivities
+│   │   ├── deployments.go       # SearchDeployments, CreateDeployment
+│   │   ├── deployed_products.go # SearchDeployedProducts, CreateDeployedProduct, UpdateDeployedProduct
+│   │   ├── attachments.go       # CreateAttachment, SearchAttachments, GetAttachmentContent, DeleteAttachment
+│   │   └── products.go          # SearchProducts, SearchProductVersions
 │   ├── updates/                 # OAuth2 HTTP client for the WSO2 Updates service
 │   │   ├── client.go            # Config/Client/do()
 │   │   ├── types.go             # upstream (snake_case) vs portal (camelCase) structs
@@ -149,7 +152,10 @@ backend-v2/
 │   │   ├── account.go
 │   │   ├── project.go
 │   │   ├── case.go
-│   │   └── deployment.go
+│   │   ├── deployment.go
+│   │   ├── deployed_product.go
+│   │   ├── attachment.go
+│   │   └── product.go
 │   ├── middleware/
 │   │   ├── auth.go              # JWT validation; injects UserInfo into context
 │   │   ├── correlation.go       # X-CSM-Correlation-ID propagation + slog enrichment
@@ -160,8 +166,11 @@ backend-v2/
 │       ├── users.go             # GET/PATCH /users/me
 │       ├── accounts.go          # POST /accounts/search, GET /accounts/{id}
 │       ├── projects.go          # POST /projects/search, GET /projects/{id}
-│       ├── cases.go             # cases search/get/create/update/comment
+│       ├── cases.go             # cases search/get/create/update/comment/activities
 │       ├── deployments.go       # POST /deployments/search, POST /deployments
+│       ├── deployed_products.go # deployed-product search/create/update
+│       ├── attachments.go       # attachment create/search/download/delete
+│       ├── products.go          # POST /products/search, POST /products/{id}/versions/search
 │       └── updates.go           # GET /updates/product-update-levels, POST /updates/levels/search
 ├── .choreo/component.yaml
 ├── openapi.yaml
@@ -186,6 +195,16 @@ backend-v2/
 - `POST /cases/{id}/comments` — add a comment to a case (always a plain customer comment)
 - `POST /deployments/search` — search deployments
 - `POST /deployments` — create a deployment (ServiceNow data source only)
+- `POST /deployed-products/search` — search deployed products
+- `POST /deployed-products` — create a deployed product (ServiceNow data source only)
+- `PATCH /deployed-products/{id}` — update a deployed product's cores/tps/description, or deactivate it (ServiceNow data source only)
+- `POST /attachments` — create an attachment
+- `POST /attachments/search` — search attachments
+- `GET /attachments/{id}/content` — download an attachment's raw file content
+- `DELETE /attachments/{id}` — delete an attachment
+- `POST /cases/{id}/activities/search` — search a case's activity feed (comments, attachments, field changes)
+- `POST /products/search` — search products
+- `POST /products/{id}/versions/search` — search a product's versions
 - `GET /updates/product-update-levels` — list product update levels
 - `POST /updates/levels/search` — search update descriptions between two update levels
 
@@ -253,6 +272,42 @@ curl -X POST http://localhost:8080/deployments/search \
 curl -X POST http://localhost:8080/deployments \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"projectId":"<project-id>","name":"Production"}'
+
+curl -X POST http://localhost:8080/deployed-products/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0},"deploymentIds":["<deployment-id>"]}'
+
+curl -X POST http://localhost:8080/deployed-products \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"projectId":"<project-id>","deploymentId":"<deployment-id>","productId":"<product-id>","versionId":"<version-id>"}'
+
+curl -X PATCH http://localhost:8080/deployed-products/<deployed-product-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"cores":4}'
+
+curl -X POST http://localhost:8080/attachments \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"referenceId":"<case-id>","referenceType":"case","name":"log.txt","type":"text/plain","file":"<base64>"}'
+
+curl -X POST http://localhost:8080/attachments/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"referenceId":"<case-id>","referenceType":"case","pagination":{"limit":10,"offset":0}}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/attachments/<attachment-id>/content -o downloaded-file
+
+curl -X DELETE -H "x-jwt-assertion: $JWT" http://localhost:8080/attachments/<attachment-id>
+
+curl -X POST http://localhost:8080/cases/<case-id>/activities/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":20,"offset":0}}'
+
+curl -X POST http://localhost:8080/products/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0},"searchQuery":"wso2am"}'
+
+curl -X POST http://localhost:8080/products/<product-id>/versions/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0}}'
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/updates/product-update-levels
 

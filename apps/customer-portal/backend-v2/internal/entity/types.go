@@ -613,3 +613,299 @@ type CreateDeploymentResponse struct {
 	Message    string            `json:"message"`
 	Deployment CreatedDeployment `json:"deployment"`
 }
+
+// --- deployed products ---
+
+// CreateDeployedProductRequest is the input for POST /deployed-products.
+//
+// NOTE: entity-service only supports deployed-product creation on its
+// ServiceNow data source — a Postgres-mode deployment always returns 400
+// for this route (see cs-tools/entity-service/internal/service/deployed_product_service.go).
+type CreateDeployedProductRequest struct {
+	ProjectID    string   `json:"projectId"`
+	DeploymentID string   `json:"deploymentId"`
+	ProductID    string   `json:"productId"`
+	VersionID    string   `json:"versionId"`
+	Cores        *int     `json:"cores,omitempty"`
+	TPS          *float64 `json:"tps,omitempty"`
+	Description  *string  `json:"description,omitempty"`
+}
+
+// CreatedDeployedProduct carries the key fields of a newly created deployed product.
+type CreatedDeployedProduct struct {
+	ID        string    `json:"id"`
+	CreatedOn time.Time `json:"createdOn"`
+	CreatedBy string    `json:"createdBy"`
+}
+
+// CreateDeployedProductResponse is entity-service's response for POST /deployed-products.
+type CreateDeployedProductResponse struct {
+	Message         string                 `json:"message"`
+	DeployedProduct CreatedDeployedProduct `json:"deployedProduct"`
+}
+
+// SearchDeployedProductsRequest is the input for POST /deployed-products/search.
+type SearchDeployedProductsRequest struct {
+	Pagination    Pagination `json:"pagination"`
+	DeploymentIDs []string   `json:"deploymentIds,omitempty"`
+}
+
+// DeployedProductVersionRef is the version sub-object in a DeployedProductView.
+type DeployedProductVersionRef struct {
+	ID             string     `json:"id"`
+	Name           string     `json:"name"`
+	ReleasedDate   *time.Time `json:"releasedDate"`
+	SupportEoLDate *time.Time `json:"supportEoLDate"`
+}
+
+// DeployedProductView is a single search result item from POST /deployed-products/search.
+// Cores, TPS, and Category are ServiceNow-only fields, always nil on the
+// Postgres data source.
+type DeployedProductView struct {
+	ID         string                     `json:"id"`
+	Deployment EntityRef                  `json:"deployment"`
+	Product    EntityRef                  `json:"product"`
+	Version    *DeployedProductVersionRef `json:"version"`
+	Cores      *string                    `json:"cores"`
+	TPS        *string                    `json:"tps"`
+	Category   *string                    `json:"category"`
+	CreatedOn  time.Time                  `json:"createdOn"`
+	UpdatedOn  time.Time                  `json:"updatedOn"`
+}
+
+// SearchDeployedProductsResponse is entity-service's response for POST /deployed-products/search.
+type SearchDeployedProductsResponse struct {
+	DeployedProducts []DeployedProductView `json:"deployedProducts"`
+	Total            int                   `json:"total"`
+	Limit            int                   `json:"limit"`
+	Offset           int                   `json:"offset"`
+	HasMore          bool                  `json:"hasMore"`
+}
+
+// UpdateDeployedProductRequest is the input for PATCH /deployed-products/{id}.
+// Either detail fields (Cores, TPS, Description) or Active=false must be
+// provided, but not both. Description uses json.RawMessage to preserve three
+// states: absent = omit, "null" = clear, `"value"` = set — decoding a client's
+// request body directly into this field naturally preserves that semantic.
+//
+// NOTE: entity-service only supports this route on its ServiceNow data
+// source — see CreateDeployedProductRequest's doc comment.
+type UpdateDeployedProductRequest struct {
+	ID           string          `json:"-"`
+	DeploymentID *string         `json:"deploymentId,omitempty"`
+	Cores        *int            `json:"cores,omitempty"`
+	TPS          *float64        `json:"tps,omitempty"`
+	Description  json.RawMessage `json:"description,omitempty"`
+	Active       *bool           `json:"active,omitempty"`
+}
+
+// UpdatedDeployedProduct carries the fields that may change after an update.
+type UpdatedDeployedProduct struct {
+	ID        string    `json:"id"`
+	UpdatedOn time.Time `json:"updatedOn"`
+	UpdatedBy string    `json:"updatedBy"`
+}
+
+// UpdateDeployedProductResponse is entity-service's response for PATCH /deployed-products/{id}.
+type UpdateDeployedProductResponse struct {
+	Message         string                 `json:"message"`
+	DeployedProduct UpdatedDeployedProduct `json:"deployedProduct"`
+}
+
+// --- attachments ---
+
+// ReferenceType identifies which kind of entity an attachment or comment is
+// attached to.
+type ReferenceType string
+
+const (
+	ReferenceTypeCase          ReferenceType = "case"
+	ReferenceTypeConversation  ReferenceType = "conversation"
+	ReferenceTypeChangeRequest ReferenceType = "change_request"
+	ReferenceTypeDeployment    ReferenceType = "deployment"
+	ReferenceTypeIncident      ReferenceType = "incident"
+)
+
+// CreateAttachmentRequest is the input for POST /attachments.
+type CreateAttachmentRequest struct {
+	ReferenceID   string        `json:"referenceId"`
+	ReferenceType ReferenceType `json:"referenceType"`
+	Name          string        `json:"name"`
+	Type          string        `json:"type"`
+	File          string        `json:"file"`
+	Description   *string       `json:"description,omitempty"`
+}
+
+// AttachmentDetail holds the core fields returned after creating an attachment.
+type AttachmentDetail struct {
+	ID          string    `json:"id"`
+	SizeBytes   int       `json:"sizeBytes"`
+	CreatedOn   time.Time `json:"createdOn"`
+	CreatedBy   string    `json:"createdBy"`
+	DownloadURL string    `json:"downloadUrl"`
+}
+
+// CreateAttachmentResponse is entity-service's response for POST /attachments.
+type CreateAttachmentResponse struct {
+	Message    string           `json:"message"`
+	Attachment AttachmentDetail `json:"attachment"`
+}
+
+// SearchAttachmentsRequest is the input for POST /attachments/search.
+type SearchAttachmentsRequest struct {
+	ReferenceID   string        `json:"referenceId"`
+	ReferenceType ReferenceType `json:"referenceType"`
+	Pagination    Pagination    `json:"pagination"`
+}
+
+// Attachment is a single search result item from POST /attachments/search.
+type Attachment struct {
+	ID            string        `json:"id"`
+	ReferenceID   string        `json:"referenceId"`
+	ReferenceType ReferenceType `json:"referenceType"`
+	Name          string        `json:"name"`
+	Type          string        `json:"type"`
+	SizeBytes     int           `json:"sizeBytes"`
+	Description   *string       `json:"description"`
+	CreatedBy     string        `json:"createdBy"`
+	CreatedOn     time.Time     `json:"createdOn"`
+	DownloadURL   *string       `json:"downloadUrl"`
+	PreviewURL    *string       `json:"previewUrl"`
+}
+
+// SearchAttachmentsResponse is entity-service's response for POST /attachments/search.
+type SearchAttachmentsResponse struct {
+	Attachments []Attachment `json:"attachments"`
+	Total       int          `json:"total"`
+	Limit       int          `json:"limit"`
+	Offset      int          `json:"offset"`
+	HasMore     bool         `json:"hasMore"`
+}
+
+// DeleteAttachmentResponse is entity-service's response for DELETE /attachments/{id}.
+type DeleteAttachmentResponse struct {
+	Message string `json:"message"`
+}
+
+// --- case activities ---
+
+// ActivityType discriminates the kind of entry in a case's activity feed.
+type ActivityType string
+
+const (
+	ActivityTypeComment     ActivityType = "comment"
+	ActivityTypeAttachment  ActivityType = "attachment"
+	ActivityTypeFieldChange ActivityType = "field_change"
+)
+
+// FieldChange describes a single field's value change, present only on
+// CaseActivity entries with Type == ActivityTypeFieldChange.
+type FieldChange struct {
+	Field         string `json:"field"`
+	FieldLabel    string `json:"fieldLabel"`
+	PreviousValue string `json:"previousValue"`
+	NewValue      string `json:"newValue"`
+}
+
+// CaseActivity is a single entry in a case's activity feed — a discriminated
+// union on Type. The shared fields are always present; type-specific fields
+// are populated only for the matching Type (CommentType for comments;
+// FileName/ContentType/SizeBytes/DownloadURL for attachments; Changes for
+// field changes). Field types/omitempty here mirror entity-service's struct
+// exactly (see its doc comment) — do not change to pointers.
+type CaseActivity struct {
+	ID                 string        `json:"id"`
+	Type               ActivityType  `json:"type"`
+	Content            string        `json:"content"`
+	CreatedOn          time.Time     `json:"createdOn"`
+	CreatedBy          string        `json:"createdBy"`
+	CreatedByFirstName string        `json:"createdByFirstName"`
+	CreatedByLastName  string        `json:"createdByLastName"`
+	CreatedByFullName  string        `json:"createdByFullName"`
+	CommentType        *CommentType  `json:"commentType,omitempty"`
+	FileName           string        `json:"fileName,omitempty"`
+	ContentType        string        `json:"contentType,omitempty"`
+	SizeBytes          int           `json:"sizeBytes,omitempty"`
+	DownloadURL        string        `json:"downloadUrl,omitempty"`
+	Changes            []FieldChange `json:"changes,omitempty"`
+}
+
+// SearchCaseActivitiesRequest is the input for POST /cases/{id}/activities/search.
+// CaseID is populated from the URL path parameter and is not part of the JSON body.
+type SearchCaseActivitiesRequest struct {
+	CaseID              string     `json:"-"`
+	Pagination          Pagination `json:"pagination"`
+	IncludeFieldChanges *bool      `json:"includeFieldChanges,omitempty"`
+}
+
+// SearchCaseActivitiesResponse is entity-service's response for POST /cases/{id}/activities/search.
+type SearchCaseActivitiesResponse struct {
+	Activity []CaseActivity `json:"activity"`
+	Total    int            `json:"total"`
+	Limit    int            `json:"limit"`
+	Offset   int            `json:"offset"`
+	HasMore  bool           `json:"hasMore"`
+}
+
+// --- products ---
+//
+// Like accounts, entity-service returns a different wire shape for these
+// routes depending on its DATA_SOURCE. The structs below are a superset of
+// both shapes for the same reasons documented on AccountSummary/AccountDetail
+// above: no colliding JSON keys, and every ambiguous-typed field (class,
+// dates) is typed as *string so either shape decodes cleanly.
+
+// ProductView is a single search result item from POST /products/search.
+type ProductView struct {
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	Class     *string `json:"class,omitempty"`
+	CreatedOn *string `json:"createdOn,omitempty"`
+	UpdatedOn *string `json:"updatedOn,omitempty"`
+}
+
+// SearchProductsRequest is the input for POST /products/search.
+type SearchProductsRequest struct {
+	Pagination  Pagination `json:"pagination"`
+	SearchQuery string     `json:"searchQuery,omitempty"`
+}
+
+// SearchProductsResponse is entity-service's response for POST /products/search.
+type SearchProductsResponse struct {
+	Products []ProductView `json:"products"`
+	Total    int           `json:"total"`
+	Limit    int           `json:"limit"`
+	Offset   int           `json:"offset"`
+	HasMore  bool          `json:"hasMore"`
+}
+
+// SearchProductVersionsRequest is the input for POST /products/{id}/versions/search.
+// ProductID is populated from the URL path parameter and is not part of the JSON body.
+type SearchProductVersionsRequest struct {
+	Pagination  Pagination `json:"pagination"`
+	ProductID   string     `json:"-"`
+	SearchQuery string     `json:"searchQuery,omitempty"`
+}
+
+// ProductVersionView is a single search result item from
+// POST /products/{id}/versions/search.
+type ProductVersionView struct {
+	ID                             string  `json:"id"`
+	ProductID                      string  `json:"productId"`
+	Version                        string  `json:"version"`
+	CurrentSupportStatus           *string `json:"currentSupportStatus,omitempty"`
+	ReleaseDate                    *string `json:"releaseDate,omitempty"`
+	SupportEOLDate                 *string `json:"supportEolDate,omitempty"`
+	EarliestPossibleSupportEOLDate *string `json:"earliestPossibleSupportEolDate,omitempty"`
+	CreatedOn                      *string `json:"createdOn,omitempty"`
+	UpdatedOn                      *string `json:"updatedOn,omitempty"`
+}
+
+// SearchProductVersionsResponse is entity-service's response for POST /products/{id}/versions/search.
+type SearchProductVersionsResponse struct {
+	ProductVersions []ProductVersionView `json:"productVersions"`
+	Total           int                  `json:"total"`
+	Limit           int                  `json:"limit"`
+	Offset          int                  `json:"offset"`
+	HasMore         bool                 `json:"hasMore"`
+}
