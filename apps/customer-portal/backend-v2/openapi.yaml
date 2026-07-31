@@ -1227,6 +1227,497 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /change-requests:
+    post:
+      summary: Create a change request.
+      description: Only entity-service's ServiceNow data source supports this route.
+      operationId: postChangeRequests
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeRequestCreateRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRequestCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /change-requests/search:
+    post:
+      summary: Search change requests.
+      description: Only entity-service's ServiceNow data source supports this route.
+      operationId: postChangeRequestsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchChangeRequestsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchChangeRequestsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /change-requests/{id}:
+    get:
+      summary: Get a change request by ID.
+      description: Only entity-service's ServiceNow data source supports this route.
+      operationId: getChangeRequestsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRequestDetails'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    patch:
+      summary: Update a change request.
+      description: >
+        At least one field is required. Only entity-service's ServiceNow data
+        source supports this route. State transitions are driven through
+        isCustomerApproved/isCustomerReviewed/requestApproval, not by setting
+        state directly.
+      operationId: patchChangeRequestsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeRequestUpdateRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRequestDetails'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /change-requests/{id}/approvals:
+    get:
+      summary: Get a change request's approval stages.
+      description: Only entity-service's ServiceNow data source supports this route.
+      operationId: getChangeRequestsIdApprovals
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRequestApprovals'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /change-requests/{id}/approvals/decision:
+    post:
+      summary: Record the caller's decision on their own pending change-request approval.
+      description: Only entity-service's ServiceNow data source supports this route.
+      operationId: postChangeRequestsIdApprovalsDecision
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeRequestApprovalDecisionRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangeRequestApprovalDecisionResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /call-requests:
+    post:
+      summary: Create a call request.
+      description: Only entity-service's ServiceNow data source supports this route.
+      operationId: postCallRequests
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCallRequestRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallRequestCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /call-requests/search:
+    post:
+      summary: Search call requests.
+      description: >
+        Scoped by caseId in the request body (not a path segment). Only
+        entity-service's ServiceNow data source supports this route.
+      operationId: postCallRequestsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCallRequestsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCallRequestsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /call-requests/{id}:
+    patch:
+      summary: Update a call request.
+      description: >
+        state is required. Agent-side fields (meetingDate, assignee, notes,
+        plan, attendees, actionItems, actualDurationMin) are read-only for
+        the customer and not accepted here — see CallRequestSummary for
+        viewing them. Only entity-service's ServiceNow data source supports
+        this route.
+      operationId: patchCallRequestsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallRequestUpdateRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallRequestUpdateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /updates/product-update-levels:
     get:
       summary: Get product update levels.
@@ -2384,6 +2875,426 @@ components:
           type: integer
         hasMore:
           type: boolean
+
+    # ---- change requests ----
+
+    ChangeRequestCreateRequest:
+      type: object
+      required: [subject]
+      properties:
+        subject:
+          type: string
+        category:
+          type: string
+        serviceId:
+          type: string
+          format: uuid
+        serviceOfferingId:
+          type: string
+          format: uuid
+        configurationItemId:
+          type: string
+          format: uuid
+        priority:
+          type: string
+        impact:
+          type: string
+        type:
+          type: string
+        risk:
+          type: string
+        description:
+          type: string
+        justification:
+          type: string
+        implementationPlan:
+          type: string
+        riskImpactAnalysis:
+          type: string
+        backoutPlan:
+          type: string
+        testPlan:
+          type: string
+        plannedStartDate:
+          type: string
+        plannedEndDate:
+          type: string
+        comment:
+          type: string
+
+    ChangeRequestCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        createdOn:
+          type: string
+
+    SearchChangeRequestsRequest:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            projectIds:
+              type: array
+              items:
+                type: string
+            searchQuery:
+              type: string
+            states:
+              type: array
+              items:
+                type: string
+            impacts:
+              type: array
+              items:
+                type: string
+            closedStartDate:
+              type: string
+            closedEndDate:
+              type: string
+        sortBy:
+          type: object
+          properties:
+            field:
+              type: string
+            order:
+              type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    ChangeRequestSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        subject:
+          type: string
+        description:
+          type: string
+        project:
+          $ref: '#/components/schemas/Ref'
+        case:
+          $ref: '#/components/schemas/Ref'
+        deployment:
+          $ref: '#/components/schemas/Ref'
+        deployedProduct:
+          $ref: '#/components/schemas/Ref'
+        product:
+          $ref: '#/components/schemas/Ref'
+        assignedEngineer:
+          $ref: '#/components/schemas/Ref'
+        assignedTeam:
+          $ref: '#/components/schemas/Ref'
+        plannedStartOn:
+          type: string
+        plannedEndOn:
+          type: string
+        duration:
+          type: string
+        impact:
+          type: string
+        state:
+          type: string
+        type:
+          type: string
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+
+    SearchChangeRequestsResponse:
+      type: object
+      properties:
+        changeRequests:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChangeRequestSummary'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    ChangeRequestDetails:
+      allOf:
+        - $ref: '#/components/schemas/ChangeRequestSummary'
+        - type: object
+          properties:
+            createdBy:
+              type: string
+            justification:
+              type: string
+            impactDescription:
+              type: string
+            serviceOutage:
+              type: string
+            communicationPlan:
+              type: string
+            rollbackPlan:
+              type: string
+            testPlan:
+              type: string
+            hasCustomerApproved:
+              type: boolean
+            hasCustomerReviewed:
+              type: boolean
+            approvedBy:
+              $ref: '#/components/schemas/Ref'
+            approvedOn:
+              type: string
+            legalNextStates:
+              type: array
+              items:
+                type: string
+
+    ChangeRequestUpdateRequest:
+      description: >
+        At least one field is required. State transitions are driven through
+        isCustomerApproved/isCustomerReviewed/requestApproval, not by
+        setting state directly.
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        plannedStartOn:
+          type: string
+        plannedEndOn:
+          type: string
+        impact:
+          type: string
+        type:
+          type: string
+        justification:
+          type: string
+        impactDescription:
+          type: string
+        serviceOutage:
+          type: string
+        communicationPlan:
+          type: string
+        rollbackPlan:
+          type: string
+        testPlan:
+          type: string
+        isCustomerApproved:
+          type: boolean
+        isCustomerReviewed:
+          type: boolean
+        requestApproval:
+          type: boolean
+
+    ChangeRequestApprover:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+        respondedOn:
+          type: string
+
+    ChangeRequestApproval:
+      type: object
+      properties:
+        stage:
+          type: string
+        approverType:
+          type: string
+          description: "\"STATIC_GROUP\" or \"DYNAMIC_CONTACT\""
+        approverName:
+          type: string
+        status:
+          type: string
+          description: "\"APPROVED\", \"REJECTED\", or \"PENDING\""
+        approvers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChangeRequestApprover'
+
+    ChangeRequestApprovals:
+      type: object
+      properties:
+        approvals:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChangeRequestApproval'
+
+    ChangeRequestApprovalDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          description: "\"approved\" or \"rejected\""
+
+    ChangeRequestApprovalDecisionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        state:
+          type: string
+
+    # ---- call requests ----
+
+    CreateCallRequestRequest:
+      type: object
+      required: [caseId, reason, utcTimes, durationInMinutes]
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+        utcTimes:
+          type: array
+          items:
+            type: string
+        durationInMinutes:
+          type: integer
+
+    CallRequestCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        createdOn:
+          type: string
+        state:
+          type: string
+
+    SearchCallRequestsRequest:
+      type: object
+      required: [caseId]
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        filters:
+          type: object
+          properties:
+            states:
+              type: array
+              items:
+                type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    CallRequestStateInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+
+    CallRequestCase:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        number:
+          type: string
+
+    CallRequestSummary:
+      description: >
+        assignee/notes/plan/attendees/actionItems/actualDurationMin are
+        agent-side fields, populated once a support engineer schedules or
+        concludes the call.
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        case:
+          $ref: '#/components/schemas/CallRequestCase'
+        reason:
+          type: string
+        preferredTimes:
+          type: array
+          items:
+            type: string
+        durationMin:
+          type: integer
+        scheduleTime:
+          type: string
+        meetingLink:
+          type: string
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+        state:
+          $ref: '#/components/schemas/CallRequestStateInfo'
+        cancellationReason:
+          type: string
+        assignee:
+          type: string
+        notes:
+          type: string
+        plan:
+          type: string
+        attendees:
+          type: string
+        actionItems:
+          type: string
+        actualDurationMin:
+          type: integer
+
+    SearchCallRequestsResponse:
+      type: object
+      properties:
+        callRequests:
+          type: array
+          items:
+            $ref: '#/components/schemas/CallRequestSummary'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    CallRequestUpdateRequest:
+      description: >
+        Agent-side fields (meetingDate, assignee, notes, plan, attendees,
+        actionItems, actualDurationMin) are read-only for the customer and
+        not accepted here.
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+        cancellationReason:
+          type: string
+        utcTimes:
+          type: array
+          items:
+            type: string
+        durationInMinutes:
+          type: integer
+
+    CallRequestUpdateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        updatedOn:
+          type: string
 
     # ---- updates ----
 

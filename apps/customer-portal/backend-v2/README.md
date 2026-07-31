@@ -5,7 +5,7 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 26 routes listed below are implemented so far, across
+This is a work in progress — only the 35 routes listed below are implemented so far, across
 entity-service, the WSO2 Updates service, and SCIM. Everything else the Ballerina backend exposes
 still needs a Go handler; add them following the pattern described in
 [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
@@ -137,7 +137,9 @@ backend-v2/
 │   │   ├── deployments.go       # SearchDeployments, CreateDeployment
 │   │   ├── deployed_products.go # SearchDeployedProducts, CreateDeployedProduct, UpdateDeployedProduct
 │   │   ├── attachments.go       # CreateAttachment, SearchAttachments, GetAttachmentContent, DeleteAttachment
-│   │   └── products.go          # SearchProducts, SearchProductVersions
+│   │   ├── products.go          # SearchProducts, SearchProductVersions
+│   │   ├── change_requests.go   # create/search/get/update, approvals get/decide
+│   │   └── call_requests.go     # CreateCallRequest, SearchCallRequests, UpdateCallRequest
 │   ├── updates/                 # OAuth2 HTTP client for the WSO2 Updates service
 │   │   ├── client.go            # Config/Client/do()
 │   │   ├── types.go             # upstream (snake_case) vs portal (camelCase) structs
@@ -155,7 +157,9 @@ backend-v2/
 │   │   ├── deployment.go
 │   │   ├── deployed_product.go
 │   │   ├── attachment.go
-│   │   └── product.go
+│   │   ├── product.go
+│   │   ├── change_request.go
+│   │   └── call_request.go
 │   ├── middleware/
 │   │   ├── auth.go              # JWT validation; injects UserInfo into context
 │   │   ├── correlation.go       # X-CSM-Correlation-ID propagation + slog enrichment
@@ -171,6 +175,8 @@ backend-v2/
 │       ├── deployed_products.go # deployed-product search/create/update
 │       ├── attachments.go       # attachment create/search/download/delete
 │       ├── products.go          # POST /products/search, POST /products/{id}/versions/search
+│       ├── change_requests.go   # change-request create/search/get/update/approvals
+│       ├── call_requests.go     # call-request create/search/update
 │       └── updates.go           # GET /updates/product-update-levels, POST /updates/levels/search
 ├── .choreo/component.yaml
 ├── openapi.yaml
@@ -203,6 +209,15 @@ backend-v2/
 - `GET /attachments/{id}/content` — download an attachment's raw file content
 - `DELETE /attachments/{id}` — delete an attachment
 - `POST /cases/{id}/activities/search` — search a case's activity feed (comments, attachments, field changes)
+- `POST /change-requests` — create a change request (ServiceNow data source only)
+- `POST /change-requests/search` — search change requests (ServiceNow data source only)
+- `GET /change-requests/{id}` — get change request by ID (ServiceNow data source only)
+- `PATCH /change-requests/{id}` — update a change request (restricted, customer-safe field subset — see CLAUDE.md; ServiceNow data source only)
+- `GET /change-requests/{id}/approvals` — get a change request's approval stages (ServiceNow data source only)
+- `POST /change-requests/{id}/approvals/decision` — approve/reject the caller's own pending approval (ServiceNow data source only)
+- `POST /call-requests` — create a call request (ServiceNow data source only)
+- `POST /call-requests/search` — search call requests, scoped by caseId in the body (ServiceNow data source only)
+- `PATCH /call-requests/{id}` — update a call request (restricted, excludes agent-only fields — see CLAUDE.md; ServiceNow data source only)
 - `POST /products/search` — search products
 - `POST /products/{id}/versions/search` — search a product's versions
 - `GET /updates/product-update-levels` — list product update levels
@@ -308,6 +323,38 @@ curl -X POST http://localhost:8080/products/search \
 curl -X POST http://localhost:8080/products/<product-id>/versions/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":10,"offset":0}}'
+
+curl -X POST http://localhost:8080/change-requests \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"subject":"Upgrade WSO2 API Manager to 4.3.0"}'
+
+curl -X POST http://localhost:8080/change-requests/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0}}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/change-requests/<change-request-id>
+
+curl -X PATCH http://localhost:8080/change-requests/<change-request-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"isCustomerApproved":true}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/change-requests/<change-request-id>/approvals
+
+curl -X POST http://localhost:8080/change-requests/<change-request-id>/approvals/decision \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"decision":"approved"}'
+
+curl -X POST http://localhost:8080/call-requests \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"caseId":"<case-id>","reason":"Discuss workaround","utcTimes":["2026-08-05T10:00:00Z"],"durationInMinutes":30}'
+
+curl -X POST http://localhost:8080/call-requests/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"caseId":"<case-id>","pagination":{"limit":10,"offset":0}}'
+
+curl -X PATCH http://localhost:8080/call-requests/<call-request-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"state":"customer_rejected","cancellationReason":"No longer needed"}'
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/updates/product-update-levels
 
