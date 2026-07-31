@@ -1,0 +1,134 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+// Package handler implements the HTTP layer: decoding requests, calling the
+// entity-service client, mapping responses via the dto package, and writing
+// JSON back to the customer-portal frontend.
+package handler
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"regexp"
+
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/apierror"
+)
+
+// maxRequestBodyBytes caps request bodies accepted by search/create/update endpoints.
+const maxRequestBodyBytes = 1 << 20 // 1 MiB
+
+// uuidRe validates path parameters that are expected to be UUIDs.
+var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+// Error message constants matching the customer-portal error vocabulary.
+const (
+	ErrMsgUnauthorized = "You are not authorized to perform this action. Please try again."
+	ErrMsgForbidden    = "Access to the requested resource is forbidden!"
+	ErrMsgNotFound     = "The requested resource was not found!"
+	ErrMsgBadRequest   = "Invalid request payload."
+	ErrMsgTooLarge     = "Request body too large."
+	ErrMsgInternal     = "An internal server error occurred. Please try again later."
+	ErrMsgInvalidUUID  = "Invalid UUID format."
+	errMsgReadBody     = "Failed to read request body."
+)
+
+// errorBody is the JSON error payload format matching the customer-portal pattern.
+type errorBody struct {
+	Message string `json:"message"`
+}
+
+// writeError writes a JSON error response: {"message": "..."}.
+func writeError(w http.ResponseWriter, statusCode int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(errorBody{Message: message})
+}
+
+// writeJSONValue marshals v and writes the result as a JSON response.
+func writeJSONValue(w http.ResponseWriter, statusCode int, v any) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	_, _ = w.Write(data) // #nosec G705 -- Content-Type: application/json already set; SecurityHeaders middleware adds X-Content-Type-Options: nosniff
+}
+
+// mapUpstreamError translates an entity-service error to an HTTP response,
+// mirroring the Ballerina getStatusCode pattern in the customer-portal.
+func mapUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
+	var apiErr *apierror.Error
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusUnauthorized:
+			writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		case http.StatusForbidden:
+			writeError(w, http.StatusForbidden, ErrMsgForbidden)
+		case http.StatusNotFound:
+			writeError(w, http.StatusNotFound, ErrMsgNotFound)
+		case http.StatusBadRequest:
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		case http.StatusConflict, http.StatusUnprocessableEntity:
+			writeError(w, apiErr.StatusCode, apiErr.Body)
+		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+			writeError(w, http.StatusServiceUnavailable, fallbackMsg)
+		default:
+			writeError(w, http.StatusInternalServerError, fallbackMsg)
+		}
+		return
+	}
+	writeError(w, http.StatusInternalServerError, fallbackMsg)
+}
+
+// summarizeErr returns a short, log-safe description of err: the upstream status
+// code for a typed *apierror.Error (never its Body, which may carry upstream
+// response data not meant for logs), or a fixed generic message otherwise — an
+// unrecognized error can come from the underlying HTTP client (e.g. a
+// net/url.Error), which stringifies with the full request URL including query
+// parameters, so its raw text is not safe to log verbatim.
+func summarizeErr(err error) string {
+	var apiErr *apierror.Error
+	if errors.As(err, &apiErr) {
+		return fmt.Sprintf("upstream status %d", apiErr.StatusCode)
+	}
+	return "upstream request failed"
+}
+
+// readJSONBody caps r.Body at maxRequestBodyBytes, reads it fully, and
+// validates it is well-formed JSON. Writes the appropriate error response and
+// returns ok=false if the body is too large, unreadable, or invalid JSON.
+func readJSONBody(w http.ResponseWriter, r *http.Request) (body []byte, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, isTooLarge := err.(*http.MaxBytesError); isTooLarge {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return nil, false
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return nil, false
+	}
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return nil, false
+	}
+	return body, true
+}
