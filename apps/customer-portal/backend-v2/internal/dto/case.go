@@ -234,3 +234,164 @@ func MapCaseDetails(c entity.CaseView) CaseDetails {
 		Tags:                  tags,
 	}
 }
+
+// CaseCreateResponse is the portal's response for POST /cases. Deliberately
+// excludes entity-service's InternalID, consistent with the other case DTOs.
+type CaseCreateResponse struct {
+	ID        string    `json:"id"`
+	Number    string    `json:"number"`
+	CreatedOn time.Time `json:"createdOn"`
+	State     string    `json:"state"`
+}
+
+// MapCaseCreate builds the portal response from entity-service's CreateCaseResponse.
+func MapCaseCreate(r entity.CreateCaseResponse) CaseCreateResponse {
+	return CaseCreateResponse{
+		ID:        r.Case.ID,
+		Number:    r.Case.Number,
+		CreatedOn: r.Case.CreatedOn,
+		State:     r.Case.State,
+	}
+}
+
+// UpdateCaseRequest is the portal's request shape for PATCH /cases/{id} — a
+// deliberately restricted subset of entity-service's UpdateCaseRequest.
+// Excluded fields are internal WSO2 support operations, not customer
+// self-service actions: WorkState (CSM engineer work-in-progress tracking),
+// AssigneeEmail (support engineer assignment), ParentID/RelatedCaseID/
+// DeploymentID/DeployedProductID (case relinking), AutocloseHoldUntil
+// (ServiceNow auto-closure workflow control), and FixEta/BestCaseFixEta/
+// MostLikelyFixEta/WorstCaseFixEta (fix-commitment dates set by support
+// engineers, not the customer). entity-service requires exactly one of
+// State/Severity/WorkState/WatchList/AssigneeEmail/ParentID/RelatedCaseID/
+// AutocloseHoldUntil/Subject/Description/DeploymentID/DeployedProductID/
+// FixEta/BestCaseFixEta/MostLikelyFixEta/WorstCaseFixEta to be set (see
+// entity.UpdateCaseRequest's doc comment) — since this portal DTO only
+// exposes State/Severity/Subject/Description/WatchList of that set, exactly
+// one of those five must be set here too. ResolutionCode/Cause/CloseNotes
+// are secondary fields, only accepted alongside a closing State transition,
+// and don't count toward the exactly-one rule.
+type UpdateCaseRequest struct {
+	State          *string  `json:"state,omitempty"`
+	Severity       *string  `json:"severity,omitempty"`
+	Subject        *string  `json:"subject,omitempty"`
+	Description    *string  `json:"description,omitempty"`
+	WatchList      []string `json:"watchList,omitempty"`
+	ResolutionCode *string  `json:"resolutionCode,omitempty"`
+	Cause          *string  `json:"cause,omitempty"`
+	CloseNotes     *string  `json:"closeNotes,omitempty"`
+}
+
+// BuildEntityUpdateCaseRequest converts the portal's restricted update
+// request into entity-service's full request shape, leaving every excluded
+// field zero/nil.
+func BuildEntityUpdateCaseRequest(id string, req UpdateCaseRequest) entity.UpdateCaseRequest {
+	return entity.UpdateCaseRequest{
+		ID:             id,
+		State:          req.State,
+		Severity:       req.Severity,
+		Subject:        req.Subject,
+		Description:    req.Description,
+		WatchList:      req.WatchList,
+		ResolutionCode: req.ResolutionCode,
+		Cause:          req.Cause,
+		CloseNotes:     req.CloseNotes,
+	}
+}
+
+// CaseUpdateResponse is the portal's response for PATCH /cases/{id}.
+// Deliberately excludes entity-service's UpdatedBy (internal actor identity)
+// and the Best/MostLikely/WorstCaseFixEta trio, for the same reasons as
+// CaseDetails above. WatchList IS included (unlike CaseView/CaseDetails,
+// which omit it) — a customer who just updated the watch list needs
+// confirmation of who's on it now, so this is a deliberate exception to the
+// read-path exclusion rather than an oversight.
+type CaseUpdateResponse struct {
+	ID             string     `json:"id"`
+	UpdatedOn      time.Time  `json:"updatedOn"`
+	State          string     `json:"state,omitempty"`
+	Severity       string     `json:"severity,omitempty"`
+	WorkState      *string    `json:"workState,omitempty"`
+	WatchList      []string   `json:"watchList,omitempty"`
+	AssignedTo     *PersonRef `json:"assignedTo,omitempty"`
+	ResolutionCode *string    `json:"resolutionCode,omitempty"`
+	Cause          *string    `json:"cause,omitempty"`
+	CloseNotes     *string    `json:"closeNotes,omitempty"`
+	ResolvedOn     *time.Time `json:"resolvedOn,omitempty"`
+	ParentCase     *NumberRef `json:"parentCase,omitempty"`
+	FixEta         *time.Time `json:"fixEta,omitempty"`
+}
+
+// MapCaseUpdate builds the portal response from entity-service's UpdateCaseResponse.
+func MapCaseUpdate(r entity.UpdateCaseResponse) CaseUpdateResponse {
+	c := r.Case
+
+	var watchList []string
+	if len(c.WatchList) > 0 {
+		watchList = make([]string, 0, len(c.WatchList))
+		for _, w := range c.WatchList {
+			if w.Email != "" {
+				watchList = append(watchList, w.Email)
+			} else {
+				watchList = append(watchList, w.UserName)
+			}
+		}
+	}
+
+	var assignedTo *PersonRef
+	if c.AssignedTo != nil {
+		assignedTo = &PersonRef{Name: c.AssignedTo.Name, Email: c.AssignedTo.Email}
+	}
+
+	return CaseUpdateResponse{
+		ID:             c.ID,
+		UpdatedOn:      c.UpdatedOn,
+		State:          c.State,
+		Severity:       c.Severity,
+		WorkState:      c.WorkState,
+		WatchList:      watchList,
+		AssignedTo:     assignedTo,
+		ResolutionCode: c.ResolutionCode,
+		Cause:          c.Cause,
+		CloseNotes:     c.CloseNotes,
+		ResolvedOn:     c.ResolvedOn,
+		ParentCase:     mapNumberRef(c.ParentCase),
+		FixEta:         c.FixEta,
+	}
+}
+
+// CaseCommentRequest is the portal's request shape for POST /cases/{id}/comments.
+// entity-service also supports "work_note" and "activity" comment types, but
+// those are internal WSO2 support annotations — the customer portal only
+// ever lets a customer post a plain "comment"; see
+// BuildEntityCreateCaseCommentRequest.
+type CaseCommentRequest struct {
+	Content string `json:"content"`
+}
+
+// BuildEntityCreateCaseCommentRequest converts the portal's comment request
+// into entity-service's request shape, forcing Type to "comment" regardless
+// of anything the caller might otherwise try to set.
+func BuildEntityCreateCaseCommentRequest(caseID string, req CaseCommentRequest) entity.CreateCaseCommentRequest {
+	return entity.CreateCaseCommentRequest{
+		CaseID:  caseID,
+		Type:    entity.CommentTypeComment,
+		Content: req.Content,
+	}
+}
+
+// CaseCommentResponse is the portal's response for POST /cases/{id}/comments.
+type CaseCommentResponse struct {
+	ID        string    `json:"id"`
+	CreatedOn time.Time `json:"createdOn"`
+	CreatedBy string    `json:"createdBy"`
+}
+
+// MapCaseComment builds the portal response from entity-service's CreateCaseCommentResponse.
+func MapCaseComment(r entity.CreateCaseCommentResponse) CaseCommentResponse {
+	return CaseCommentResponse{
+		ID:        r.Comment.ID,
+		CreatedOn: r.Comment.CreatedOn,
+		CreatedBy: r.Comment.CreatedBy,
+	}
+}

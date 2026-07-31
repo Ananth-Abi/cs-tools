@@ -79,6 +79,7 @@ func main() {
 	userHandler := handler.NewUserHandler(entityClient, scimClient)
 	projectHandler := handler.NewProjectHandler(entityClient)
 	caseHandler := handler.NewCaseHandler(entityClient)
+	deploymentHandler := handler.NewDeploymentHandler(entityClient)
 	accountHandler := handler.NewAccountHandler(entityClient)
 	updatesHandler := handler.NewUpdatesHandler(updatesClient)
 
@@ -105,6 +106,14 @@ func main() {
 
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /cases/{id}", caseHandler.GetCase)
+	mux.HandleFunc("POST /cases", caseHandler.CreateCase)
+	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
+	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
+
+	mux.HandleFunc("POST /deployments/search", deploymentHandler.SearchDeployments)
+	// POST /deployments only succeeds against entity-service's ServiceNow
+	// data source — see internal/entity/deployments.go.
+	mux.HandleFunc("POST /deployments", deploymentHandler.CreateDeployment)
 
 	mux.HandleFunc("POST /accounts/search", accountHandler.SearchAccounts)
 	mux.HandleFunc("GET /accounts/{id}", accountHandler.GetAccount)

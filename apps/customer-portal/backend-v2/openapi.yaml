@@ -367,6 +367,184 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+    patch:
+      summary: Update a case.
+      description: >
+        Exactly one of state/severity/subject/description/watchList is
+        required. This is a deliberately restricted subset of
+        entity-service's update contract — internal WSO2 support fields
+        (work state, engineer assignment, fix-ETA dates, case relinking,
+        auto-closure control) are not customer-settable.
+      operationId: patchCasesId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseUpdateRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseUpdateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases:
+    post:
+      summary: Create a case.
+      operationId: postCases
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseCreateRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/{id}/comments:
+    post:
+      summary: Add a comment to a case.
+      description: >
+        Always creates a plain customer comment — entity-service's
+        "work_note"/"activity" comment types are internal WSO2 support
+        annotations and are not exposed here.
+      operationId: postCasesIdComments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseCommentRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseCommentResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
 
   /cases/search:
     post:
@@ -385,6 +563,105 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SearchCasesResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/search:
+    post:
+      summary: Search deployments.
+      operationId: postDeploymentsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchDeploymentsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchDeploymentsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments:
+    post:
+      summary: Create a deployment.
+      description: >
+        Only entity-service's ServiceNow data source supports this route —
+        a Postgres-mode deployment always returns 400.
+      operationId: postDeployments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeploymentRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentCreateResponse'
         "400":
           description: BadRequest
           content:
@@ -978,6 +1255,232 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/CaseTag'
+
+    CaseCreateRequest:
+      type: object
+      required: [type, projectId, deploymentId, subject, description, severity, issueType]
+      properties:
+        type:
+          type: string
+          description: "\"case\", \"service_request\", or \"security_report_analysis\""
+        projectId:
+          type: string
+          format: uuid
+        deploymentId:
+          type: string
+          format: uuid
+        deployedProductId:
+          type: string
+          format: uuid
+        subject:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+        issueType:
+          type: string
+        catalogId:
+          type: string
+          description: Required when type is "service_request".
+        catalogItemId:
+          type: string
+          description: Required when type is "service_request".
+        variables:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              value:
+                type: string
+        relatedCaseId:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        watchList:
+          type: array
+          items:
+            type: string
+        attachments:
+          type: array
+          description: Required (at least one) when type is "security_report_analysis".
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              file:
+                type: string
+                description: Base64 data URI, e.g. "data:application/pdf;base64,...".
+
+    CaseCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        createdOn:
+          type: string
+        state:
+          type: string
+
+    CaseUpdateRequest:
+      description: >
+        Exactly one of state/severity/subject/description/watchList is
+        required. resolutionCode/cause/closeNotes are only accepted
+        alongside a closing state transition.
+      type: object
+      properties:
+        state:
+          type: string
+        severity:
+          type: string
+        subject:
+          type: string
+        description:
+          type: string
+        watchList:
+          type: array
+          items:
+            type: string
+        resolutionCode:
+          type: string
+        cause:
+          type: string
+        closeNotes:
+          type: string
+
+    CaseUpdateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        updatedOn:
+          type: string
+        state:
+          type: string
+        severity:
+          type: string
+        workState:
+          type: string
+        watchList:
+          type: array
+          items:
+            type: string
+        assignedTo:
+          $ref: '#/components/schemas/PersonRef'
+        resolutionCode:
+          type: string
+        cause:
+          type: string
+        closeNotes:
+          type: string
+        resolvedOn:
+          type: string
+        parentCase:
+          $ref: '#/components/schemas/NumberRef'
+        fixEta:
+          type: string
+
+    CaseCommentRequest:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+
+    CaseCommentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+
+    # ---- deployments ----
+
+    SearchDeploymentsRequest:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        searchQuery:
+          type: string
+        projectIds:
+          type: array
+          items:
+            type: string
+        deploymentTypes:
+          type: array
+          items:
+            type: string
+
+    DeploymentSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+        createdBy:
+          $ref: '#/components/schemas/Ref'
+        project:
+          $ref: '#/components/schemas/Ref'
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+
+    SearchDeploymentsResponse:
+      type: object
+      properties:
+        deployments:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeploymentSummary'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+
+    CreateDeploymentRequest:
+      type: object
+      required: [projectId, name]
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+
+    DeploymentCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        createdOn:
+          type: string
 
     # ---- updates ----
 

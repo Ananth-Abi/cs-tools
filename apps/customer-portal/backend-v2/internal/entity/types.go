@@ -365,6 +365,155 @@ type SearchCasesResponse struct {
 	Limit  int              `json:"limit"`
 }
 
+// Variable is a key-value pair used in service-request case creation.
+type Variable struct {
+	ID    string `json:"id"`
+	Value string `json:"value"`
+}
+
+// CaseAttachment is a file attachment for security-report-analysis case
+// creation. File must be a base64 data URI (e.g. "data:application/pdf;base64,...").
+type CaseAttachment struct {
+	Name string `json:"name"`
+	File string `json:"file"`
+}
+
+// CreateCaseRequest is the input for POST /cases. CreatedBy is never
+// serialized (json:"-") — entity-service derives the creator from its own
+// auth context, not the request body.
+type CreateCaseRequest struct {
+	CreatedBy         string           `json:"-"`
+	Type              string           `json:"type"`
+	ProjectID         string           `json:"projectId"`
+	DeploymentID      string           `json:"deploymentId"`
+	DeployedProductID string           `json:"deployedProductId,omitempty"`
+	Subject           string           `json:"subject"`
+	Description       string           `json:"description"`
+	Severity          string           `json:"severity"`
+	IssueType         string           `json:"issueType"`
+	CatalogID         string           `json:"catalogId,omitempty"`
+	CatalogItemID     string           `json:"catalogItemId,omitempty"`
+	Variables         []Variable       `json:"variables,omitempty"`
+	RelatedCaseID     string           `json:"relatedCaseId,omitempty"`
+	ConversationID    string           `json:"conversationId,omitempty"`
+	WatchList         []string         `json:"watchList,omitempty"`
+	Attachments       []CaseAttachment `json:"attachments,omitempty"`
+}
+
+// CreateCaseDetails carries the key fields of a newly created case.
+type CreateCaseDetails struct {
+	ID         string    `json:"id"`
+	InternalID string    `json:"internalId"`
+	Number     string    `json:"number"`
+	CreatedBy  string    `json:"createdBy"`
+	CreatedOn  time.Time `json:"createdOn"`
+	State      string    `json:"state"`
+}
+
+// CreateCaseResponse is entity-service's response for POST /cases.
+type CreateCaseResponse struct {
+	Message string            `json:"message"`
+	Case    CreateCaseDetails `json:"case"`
+}
+
+// UpdateCaseRequest is the full field set entity-service accepts for
+// PATCH /cases/{id}. This is entity-service's raw contract — the portal only
+// exposes a customer-safe subset of these fields; see dto.UpdateCaseRequest
+// and dto.BuildEntityUpdateCaseRequest for which ones and why.
+type UpdateCaseRequest struct {
+	ID                 string     `json:"-"`
+	State              *string    `json:"state,omitempty"`
+	Severity           *string    `json:"severity,omitempty"`
+	WorkState          *string    `json:"workState,omitempty"`
+	WatchList          []string   `json:"watchList,omitempty"`
+	AssigneeEmail      *string    `json:"assigneeEmail,omitempty"`
+	ResolutionCode     *string    `json:"resolutionCode,omitempty"`
+	Cause              *string    `json:"cause,omitempty"`
+	CloseNotes         *string    `json:"closeNotes,omitempty"`
+	ParentID           *string    `json:"parentId,omitempty"`
+	RelatedCaseID      *string    `json:"relatedCaseId,omitempty"`
+	AutocloseHoldUntil *time.Time `json:"autocloseHoldUntil,omitempty"`
+	Subject            *string    `json:"subject,omitempty"`
+	Description        *string    `json:"description,omitempty"`
+	DeploymentID       *string    `json:"deploymentId,omitempty"`
+	DeployedProductID  *string    `json:"deployedProductId,omitempty"`
+	FixEta             *time.Time `json:"fixEta,omitempty"`
+	BestCaseFixEta     *time.Time `json:"bestCaseFixEta,omitempty"`
+	MostLikelyFixEta   *time.Time `json:"mostLikelyFixEta,omitempty"`
+	WorstCaseFixEta    *time.Time `json:"worstCaseFixEta,omitempty"`
+}
+
+// WatchListUser is a user watching a case (ServiceNow data source only).
+type WatchListUser struct {
+	ID       string `json:"id"`
+	UserName string `json:"userName"`
+	Name     string `json:"name,omitempty"`
+	Email    string `json:"email,omitempty"`
+}
+
+// UpdatedCase carries the case fields entity-service returns after a
+// successful PATCH /cases/{id}.
+type UpdatedCase struct {
+	ID             string               `json:"id"`
+	UpdatedOn      time.Time            `json:"updatedOn"`
+	UpdatedBy      string               `json:"updatedBy,omitempty"`
+	State          string               `json:"state,omitempty"`
+	Severity       string               `json:"severity,omitempty"`
+	WorkState      *string              `json:"workState"`
+	WatchList      []WatchListUser      `json:"watchList,omitempty"`
+	AssignedTo     *AssignedEngineerRef `json:"assignedTo,omitempty"`
+	ResolutionCode *string              `json:"resolutionCode,omitempty"`
+	Cause          *string              `json:"cause,omitempty"`
+	CloseNotes     *string              `json:"closeNotes,omitempty"`
+	ResolvedOn     *time.Time           `json:"resolvedOn,omitempty"`
+	ParentCase     *CaseNumberRef       `json:"parentCase,omitempty"`
+	// FixEta is the customer-facing fix-commitment date; the internal-only
+	// Best/MostLikely/WorstCaseFixEta fields are intentionally not decoded
+	// here — see CaseView's doc comment above for why.
+	FixEta *time.Time `json:"fixEta,omitempty"`
+}
+
+// UpdateCaseResponse is entity-service's response for PATCH /cases/{id}.
+type UpdateCaseResponse struct {
+	Message string      `json:"message"`
+	Case    UpdatedCase `json:"case"`
+}
+
+// CommentType classifies a case comment. entity-service supports
+// "work_note" and "activity" too, but the customer portal only ever creates
+// (and should only ever create) plain "comment" entries — see
+// dto.BuildEntityCreateCaseCommentRequest.
+type CommentType string
+
+const (
+	CommentTypeWorkNote CommentType = "work_note"
+	CommentTypeComment  CommentType = "comment"
+	CommentTypeActivity CommentType = "activity"
+)
+
+// CreateCaseCommentRequest is the input for POST /cases/{id}/comments.
+// CaseID and CreatedBy are never serialized (json:"-") — CaseID comes from
+// the URL path, CreatedBy from entity-service's own auth context.
+type CreateCaseCommentRequest struct {
+	CaseID    string      `json:"-"`
+	CreatedBy string      `json:"-"`
+	Type      CommentType `json:"type"`
+	Content   string      `json:"content"`
+}
+
+// CaseCommentDetail carries the key fields of a newly created comment.
+type CaseCommentDetail struct {
+	ID        string    `json:"id"`
+	CreatedOn time.Time `json:"createdOn"`
+	CreatedBy string    `json:"createdBy"`
+}
+
+// CreateCaseCommentResponse is entity-service's response for POST /cases/{id}/comments.
+type CreateCaseCommentResponse struct {
+	Message string            `json:"message"`
+	Comment CaseCommentDetail `json:"comment"`
+}
+
 // CaseView is entity-service's response for GET /cases/{id}.
 type CaseView struct {
 	ID                     string                    `json:"id"`
@@ -406,4 +555,61 @@ type CaseView struct {
 	// workflow state to end customers.
 	FixEta *time.Time `json:"fixEta"`
 	Tags   []Tag      `json:"tags"`
+}
+
+// --- deployments ---
+
+// SearchDeploymentsRequest is the input for POST /deployments/search.
+type SearchDeploymentsRequest struct {
+	Pagination      Pagination `json:"pagination"`
+	SearchQuery     string     `json:"searchQuery,omitempty"`
+	ProjectIDs      []string   `json:"projectIds,omitempty"`
+	DeploymentTypes []string   `json:"deploymentTypes,omitempty"`
+}
+
+// DeploymentView is a single search result item from POST /deployments/search.
+type DeploymentView struct {
+	ID          string     `json:"id"`
+	Number      string     `json:"number"`
+	Name        string     `json:"name"`
+	Type        string     `json:"type"`
+	Description *string    `json:"description"`
+	CreatedBy   *EntityRef `json:"createdBy"`
+	Project     EntityRef  `json:"project"`
+	CreatedOn   time.Time  `json:"createdOn"`
+	UpdatedOn   time.Time  `json:"updatedOn"`
+}
+
+// SearchDeploymentsResponse is entity-service's response for POST /deployments/search.
+type SearchDeploymentsResponse struct {
+	Deployments []DeploymentView `json:"deployments"`
+	Total       int              `json:"total"`
+	Limit       int              `json:"limit"`
+	Offset      int              `json:"offset"`
+	HasMore     bool             `json:"hasMore"`
+}
+
+// CreateDeploymentRequest is the input for POST /deployments.
+//
+// NOTE: entity-service only supports deployment creation on its ServiceNow
+// data source — a Postgres-mode deployment always returns 400 for this
+// route (see cs-tools/entity-service/internal/service/deployment_service.go).
+type CreateDeploymentRequest struct {
+	ProjectID   string  `json:"projectId"`
+	Name        string  `json:"name"`
+	Type        *string `json:"type,omitempty"`
+	Description string  `json:"description,omitempty"`
+}
+
+// CreatedDeployment carries the key fields of a newly created deployment.
+type CreatedDeployment struct {
+	ID        string    `json:"id"`
+	CreatedOn time.Time `json:"createdOn"`
+	CreatedBy string    `json:"createdBy"`
+}
+
+// CreateDeploymentResponse is entity-service's response for POST /deployments.
+type CreateDeploymentResponse struct {
+	Message    string            `json:"message"`
+	Deployment CreatedDeployment `json:"deployment"`
 }

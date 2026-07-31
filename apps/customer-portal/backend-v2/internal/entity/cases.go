@@ -35,3 +35,24 @@ func (c *Client) GetCase(ctx context.Context, id string) (CaseView, error) {
 	err := c.getJSON(ctx, fmt.Sprintf("/cases/%s", url.PathEscape(id)), &out)
 	return out, err
 }
+
+// CreateCase calls POST /cases.
+func (c *Client) CreateCase(ctx context.Context, req CreateCaseRequest) (CreateCaseResponse, error) {
+	var out CreateCaseResponse
+	err := c.postJSON(ctx, "/cases", req, &out)
+	return out, err
+}
+
+// UpdateCase calls PATCH /cases/{id}.
+func (c *Client) UpdateCase(ctx context.Context, id string, req UpdateCaseRequest) (UpdateCaseResponse, error) {
+	var out UpdateCaseResponse
+	err := c.patchJSON(ctx, fmt.Sprintf("/cases/%s", url.PathEscape(id)), req, &out)
+	return out, err
+}
+
+// CreateCaseComment calls POST /cases/{id}/comments.
+func (c *Client) CreateCaseComment(ctx context.Context, caseID string, req CreateCaseCommentRequest) (CreateCaseCommentResponse, error) {
+	var out CreateCaseCommentResponse
+	err := c.postJSON(ctx, fmt.Sprintf("/cases/%s/comments", url.PathEscape(caseID)), req, &out)
+	return out, err
+}
