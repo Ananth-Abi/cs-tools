@@ -909,3 +909,321 @@ type SearchProductVersionsResponse struct {
 	Offset          int                  `json:"offset"`
 	HasMore         bool                 `json:"hasMore"`
 }
+
+// --- change requests ---
+//
+// entity-service only supports change requests on its ServiceNow data
+// source — DATA_SOURCE=postgres deployments don't register these routes at
+// all (404, not a data-shape difference like accounts/products).
+
+// CreateChangeRequestRequest is the input for POST /change-requests. Subject
+// is the only required field. entity-service's category/priority/impact/
+// type/state/risk fields are plain strings here (not named Go enum types),
+// matching this file's convention elsewhere (e.g. CaseView.Severity).
+type CreateChangeRequestRequest struct {
+	Subject             string  `json:"subject"`
+	Category            *string `json:"category,omitempty"`
+	ServiceID           *string `json:"serviceId,omitempty"`
+	ServiceOfferingID   *string `json:"serviceOfferingId,omitempty"`
+	ConfigurationItemID *string `json:"configurationItemId,omitempty"`
+	Priority            *string `json:"priority,omitempty"`
+	Impact              *string `json:"impact,omitempty"`
+	Type                *string `json:"type,omitempty"`
+	State               *string `json:"state,omitempty"`
+	GroupID             *string `json:"groupId,omitempty"`
+	AssignedEngineerID  *string `json:"assignedEngineerId,omitempty"`
+	Risk                *string `json:"risk,omitempty"`
+	RequestedByID       *string `json:"requestedById,omitempty"`
+	Description         *string `json:"description,omitempty"`
+	Justification       *string `json:"justification,omitempty"`
+	ImplementationPlan  *string `json:"implementationPlan,omitempty"`
+	RiskImpactAnalysis  *string `json:"riskImpactAnalysis,omitempty"`
+	BackoutPlan         *string `json:"backoutPlan,omitempty"`
+	TestPlan            *string `json:"testPlan,omitempty"`
+	PlannedStartDate    *string `json:"plannedStartDate,omitempty"`
+	PlannedEndDate      *string `json:"plannedEndDate,omitempty"`
+	Comment             *string `json:"comment,omitempty"`
+	WorkNote            *string `json:"workNote,omitempty"`
+}
+
+// ChangeRequestCreated carries the key fields of a newly created change request.
+type ChangeRequestCreated struct {
+	ID        string `json:"id"`
+	Number    string `json:"number"`
+	CreatedOn string `json:"createdOn"`
+	CreatedBy string `json:"createdBy"`
+}
+
+// CreateChangeRequestResponse is entity-service's response for POST /change-requests.
+type CreateChangeRequestResponse struct {
+	Message       string               `json:"message"`
+	ChangeRequest ChangeRequestCreated `json:"changeRequest"`
+}
+
+// ChangeRequestSort specifies the sort field and direction for change request search results.
+type ChangeRequestSort struct {
+	Field string `json:"field,omitempty"`
+	Order string `json:"order,omitempty"`
+}
+
+// SearchChangeRequestsFilters holds the optional filter criteria for a change request search.
+type SearchChangeRequestsFilters struct {
+	ProjectIDs      []string `json:"projectIds,omitempty"`
+	SearchQuery     string   `json:"searchQuery,omitempty"`
+	States          []string `json:"states,omitempty"`
+	Impacts         []string `json:"impacts,omitempty"`
+	ClosedStartDate *string  `json:"closedStartDate,omitempty"`
+	ClosedEndDate   *string  `json:"closedEndDate,omitempty"`
+}
+
+// SearchChangeRequestsRequest is the input for POST /change-requests/search.
+type SearchChangeRequestsRequest struct {
+	Filters    SearchChangeRequestsFilters `json:"filters"`
+	SortBy     ChangeRequestSort           `json:"sortBy"`
+	Pagination Pagination                  `json:"pagination"`
+}
+
+// SearchChangeRequestView is a single search result item from POST /change-requests/search.
+type SearchChangeRequestView struct {
+	ID               string     `json:"id"`
+	Number           string     `json:"number"`
+	Subject          *string    `json:"subject"`
+	Description      *string    `json:"description"`
+	Project          EntityRef  `json:"project"`
+	Case             *EntityRef `json:"case"`
+	Deployment       *EntityRef `json:"deployment"`
+	DeployedProduct  *EntityRef `json:"deployedProduct"`
+	Product          *EntityRef `json:"product"`
+	AssignedEngineer *EntityRef `json:"assignedEngineer"`
+	AssignedTeam     *EntityRef `json:"assignedTeam"`
+	PlannedStartOn   *string    `json:"plannedStartOn"`
+	PlannedEndOn     *string    `json:"plannedEndOn"`
+	Duration         *string    `json:"duration"`
+	Impact           *string    `json:"impact"`
+	State            *string    `json:"state"`
+	Type             *string    `json:"type"`
+	CreatedOn        string     `json:"createdOn"`
+	UpdatedOn        string     `json:"updatedOn"`
+}
+
+// SearchChangeRequestsResponse is entity-service's response for POST /change-requests/search.
+type SearchChangeRequestsResponse struct {
+	ChangeRequests []SearchChangeRequestView `json:"changeRequests"`
+	Total          int                       `json:"total"`
+	Offset         int                       `json:"offset"`
+	Limit          int                       `json:"limit"`
+}
+
+// ChangeRequest is entity-service's response for GET /change-requests/{id}.
+// Embeds SearchChangeRequestView (matching entity-service's own struct
+// embedding, which flattens its fields into the same JSON object).
+type ChangeRequest struct {
+	SearchChangeRequestView
+	CreatedBy           string     `json:"createdBy"`
+	Justification       *string    `json:"justification"`
+	ImpactDescription   *string    `json:"impactDescription"`
+	ServiceOutage       *string    `json:"serviceOutage"`
+	CommunicationPlan   *string    `json:"communicationPlan"`
+	RollbackPlan        *string    `json:"rollbackPlan"`
+	TestPlan            *string    `json:"testPlan"`
+	HasCustomerApproved bool       `json:"hasCustomerApproved"`
+	HasCustomerReviewed bool       `json:"hasCustomerReviewed"`
+	ApprovedBy          *EntityRef `json:"approvedBy"`
+	ApprovedOn          *string    `json:"approvedOn"`
+	LegalNextStates     []string   `json:"legalNextStates"`
+}
+
+// PatchChangeRequestRequest is the full field set entity-service accepts for
+// PATCH /change-requests/{id}. This is entity-service's raw contract — the
+// portal only exposes a customer-safe subset; see
+// dto.ChangeRequestUpdateRequest for which ones and why.
+type PatchChangeRequestRequest struct {
+	Title              *string `json:"title,omitempty"`
+	Description        *string `json:"description,omitempty"`
+	ProjectID          *string `json:"projectId,omitempty"`
+	CaseID             *string `json:"caseId,omitempty"`
+	DeploymentID       *string `json:"deploymentId,omitempty"`
+	DeployedProductID  *string `json:"deployedProductId,omitempty"`
+	AssignedEngineerID *string `json:"assignedEngineerId,omitempty"`
+	AssignedTeamID     *string `json:"assignedTeamId,omitempty"`
+	PlannedStartOn     *string `json:"plannedStartOn,omitempty"`
+	PlannedEndOn       *string `json:"plannedEndOn,omitempty"`
+	Impact             *string `json:"impact,omitempty"`
+	State              *string `json:"state,omitempty"`
+	Type               *string `json:"type,omitempty"`
+	Justification      *string `json:"justification,omitempty"`
+	ImpactDescription  *string `json:"impactDescription,omitempty"`
+	ServiceOutage      *string `json:"serviceOutage,omitempty"`
+	CommunicationPlan  *string `json:"communicationPlan,omitempty"`
+	RollbackPlan       *string `json:"rollbackPlan,omitempty"`
+	TestPlan           *string `json:"testPlan,omitempty"`
+	IsCustomerApproved *bool   `json:"isCustomerApproved,omitempty"`
+	IsCustomerReviewed *bool   `json:"isCustomerReviewed,omitempty"`
+	RequestApproval    *bool   `json:"requestApproval,omitempty"`
+}
+
+// PatchChangeRequestResponse is entity-service's response for PATCH /change-requests/{id}.
+type PatchChangeRequestResponse struct {
+	Message       string        `json:"message"`
+	ChangeRequest ChangeRequest `json:"changeRequest"`
+}
+
+// ChangeRequestApprover is a single approver's response within an approval
+// stage. Status is deliberately a plain string, not a closed enum —
+// entity-service documents it as an open set (APPROVED, NOT_REQUIRED,
+// REQUESTED, REJECTED, CANCELLED, NO_CONSENSUS, or an unrecognized
+// uppercased value).
+type ChangeRequestApprover struct {
+	ID          string  `json:"id"`
+	Name        string  `json:"name"`
+	Status      string  `json:"status"`
+	RespondedOn *string `json:"respondedOn"`
+}
+
+// ChangeRequestApproval represents a single approval stage (e.g. Assess,
+// Authorize, Customer Approval) on a change request.
+type ChangeRequestApproval struct {
+	Stage        string                  `json:"stage"`
+	ApproverType string                  `json:"approverType"`
+	ApproverName string                  `json:"approverName"`
+	Status       string                  `json:"status"`
+	Approvers    []ChangeRequestApprover `json:"approvers"`
+}
+
+// ChangeRequestApprovals is entity-service's response for GET /change-requests/{id}/approvals.
+type ChangeRequestApprovals struct {
+	Approvals []ChangeRequestApproval `json:"approvals"`
+}
+
+// ChangeRequestApprovalDecisionRequest is the input for
+// POST /change-requests/{id}/approvals/decision. Decision is a plain string
+// ("approved" or "rejected" per entity-service's doc comment), not an enum type.
+type ChangeRequestApprovalDecisionRequest struct {
+	Decision string `json:"decision"`
+}
+
+// ChangeRequestApprovalDecisionResponse is entity-service's response for
+// POST /change-requests/{id}/approvals/decision.
+type ChangeRequestApprovalDecisionResponse struct {
+	ID    string `json:"id"`
+	State string `json:"state"`
+}
+
+// --- call requests ---
+//
+// entity-service only supports call requests on its ServiceNow data source.
+
+// CreateCallRequestRequest is the input for POST /call-requests.
+type CreateCallRequestRequest struct {
+	CaseID          string   `json:"caseId"`
+	Reason          string   `json:"reason"`
+	UTCTimes        []string `json:"utcTimes"`
+	DurationMinutes int      `json:"durationInMinutes"`
+}
+
+// CallRequestCreated carries the key fields of a newly created call request.
+type CallRequestCreated struct {
+	ID        string `json:"id"`
+	CreatedOn string `json:"createdOn"`
+	CreatedBy string `json:"createdBy"`
+	State     string `json:"state"`
+}
+
+// CreateCallRequestResponse is entity-service's response for POST /call-requests.
+type CreateCallRequestResponse struct {
+	Message     string             `json:"message"`
+	CallRequest CallRequestCreated `json:"callRequest"`
+}
+
+// CallRequestState holds the state of a call request: ID is the string state
+// enum key, Label is the human-readable display label.
+type CallRequestState struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// CallRequestCaseRef is a reference to a case embedded in a call request.
+type CallRequestCaseRef struct {
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
+	Number *string `json:"number,omitempty"`
+}
+
+// SearchCallRequestsFilters holds the optional filter criteria for a call request search.
+type SearchCallRequestsFilters struct {
+	States []string `json:"states,omitempty"`
+}
+
+// SearchCallRequestsRequest is the input for POST /call-requests/search.
+type SearchCallRequestsRequest struct {
+	CaseID     string                     `json:"caseId"`
+	Filters    *SearchCallRequestsFilters `json:"filters,omitempty"`
+	Pagination Pagination                 `json:"pagination"`
+}
+
+// CallRequestView is a single search result item from POST /call-requests/search.
+// Assignee/Notes/Plan/Attendees/ActionItems/ActualDurationMin are agent-side
+// fields, populated once a support engineer schedules or concludes the call.
+type CallRequestView struct {
+	ID                 string             `json:"id"`
+	Number             string             `json:"number"`
+	Case               CallRequestCaseRef `json:"case"`
+	Reason             *string            `json:"reason"`
+	PreferredTimes     []string           `json:"preferredTimes"`
+	DurationMin        int                `json:"durationMin"`
+	ScheduleTime       *string            `json:"scheduleTime"`
+	MeetingLink        *string            `json:"meetingLink"`
+	CreatedOn          string             `json:"createdOn"`
+	UpdatedOn          string             `json:"updatedOn"`
+	State              CallRequestState   `json:"state"`
+	CancellationReason *string            `json:"cancellationReason,omitempty"`
+	Assignee           *string            `json:"assignee,omitempty"`
+	Notes              *string            `json:"notes,omitempty"`
+	Plan               *string            `json:"plan,omitempty"`
+	Attendees          *string            `json:"attendees,omitempty"`
+	ActionItems        *string            `json:"actionItems,omitempty"`
+	ActualDurationMin  *int               `json:"actualDurationMin,omitempty"`
+}
+
+// SearchCallRequestsResponse is entity-service's response for POST /call-requests/search.
+type SearchCallRequestsResponse struct {
+	CallRequests []CallRequestView `json:"callRequests"`
+	Total        int               `json:"total"`
+	Offset       int               `json:"offset"`
+	Limit        int               `json:"limit"`
+}
+
+// UpdateCallRequestRequest is the full field set entity-service accepts for
+// PATCH /call-requests/{id}. This is entity-service's raw contract — the
+// portal only exposes a customer-safe subset; see
+// dto.CallRequestUpdateRequest for which ones and why (the agent-side
+// fields below must never be customer-settable).
+type UpdateCallRequestRequest struct {
+	ID                 string   `json:"-"`
+	CaseID             string   `json:"caseId,omitempty"`
+	State              string   `json:"state"`
+	CancellationReason *string  `json:"cancellationReason,omitempty"`
+	UTCTimes           []string `json:"utcTimes,omitempty"`
+	DurationMinutes    *int     `json:"durationInMinutes,omitempty"`
+	// Agent-side fields, set when an engineer schedules or concludes the call.
+	MeetingDate       *string `json:"meetingDate,omitempty"`
+	Assignee          *string `json:"assignee,omitempty"`
+	Notes             *string `json:"notes,omitempty"`
+	Plan              *string `json:"plan,omitempty"`
+	Attendees         *string `json:"attendees,omitempty"`
+	ActionItems       *string `json:"actionItems,omitempty"`
+	ActualDurationMin *int    `json:"actualDurationMin,omitempty"`
+}
+
+// CallRequestUpdated carries the fields that may change after an update.
+type CallRequestUpdated struct {
+	ID        string `json:"id"`
+	UpdatedOn string `json:"updatedOn"`
+	UpdatedBy string `json:"updatedBy"`
+}
+
+// UpdateCallRequestResponse is entity-service's response for PATCH /call-requests/{id}.
+type UpdateCallRequestResponse struct {
+	Message     string             `json:"message"`
+	CallRequest CallRequestUpdated `json:"callRequest"`
+}

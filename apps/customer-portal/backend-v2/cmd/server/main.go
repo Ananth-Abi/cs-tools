@@ -83,6 +83,8 @@ func main() {
 	deployedProductHandler := handler.NewDeployedProductHandler(entityClient)
 	attachmentHandler := handler.NewAttachmentHandler(entityClient)
 	productHandler := handler.NewProductHandler(entityClient)
+	changeRequestHandler := handler.NewChangeRequestHandler(entityClient)
+	callRequestHandler := handler.NewCallRequestHandler(entityClient)
 	accountHandler := handler.NewAccountHandler(entityClient)
 	updatesHandler := handler.NewUpdatesHandler(updatesClient)
 
@@ -132,6 +134,20 @@ func main() {
 
 	mux.HandleFunc("POST /products/search", productHandler.SearchProducts)
 	mux.HandleFunc("POST /products/{id}/versions/search", productHandler.SearchProductVersions)
+
+	// entity-service only supports change requests and call requests on its
+	// ServiceNow data source — see internal/entity/change_requests.go and
+	// internal/entity/call_requests.go.
+	mux.HandleFunc("POST /change-requests", changeRequestHandler.CreateChangeRequest)
+	mux.HandleFunc("POST /change-requests/search", changeRequestHandler.SearchChangeRequests)
+	mux.HandleFunc("GET /change-requests/{id}", changeRequestHandler.GetChangeRequest)
+	mux.HandleFunc("PATCH /change-requests/{id}", changeRequestHandler.PatchChangeRequest)
+	mux.HandleFunc("GET /change-requests/{id}/approvals", changeRequestHandler.GetChangeRequestApprovals)
+	mux.HandleFunc("POST /change-requests/{id}/approvals/decision", changeRequestHandler.DecideChangeRequestApproval)
+
+	mux.HandleFunc("POST /call-requests", callRequestHandler.CreateCallRequest)
+	mux.HandleFunc("POST /call-requests/search", callRequestHandler.SearchCallRequests)
+	mux.HandleFunc("PATCH /call-requests/{id}", callRequestHandler.PatchCallRequest)
 
 	mux.HandleFunc("POST /accounts/search", accountHandler.SearchAccounts)
 	mux.HandleFunc("GET /accounts/{id}", accountHandler.GetAccount)

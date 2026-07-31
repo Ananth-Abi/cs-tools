@@ -6,19 +6,22 @@ responses for the frontend. This is a Go rewrite of the Ballerina backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** 26 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
+**Status: in progress.** 35 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
 `POST /accounts/search`, `GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
 `POST /cases/search`, `GET /cases/{id}`, `POST /cases`, `PATCH /cases/{id}`,
 `POST /cases/{id}/comments`, `POST /cases/{id}/activities/search`, `POST /deployments/search`,
 `POST /deployments`, `POST /deployed-products/search`, `POST /deployed-products`,
 `PATCH /deployed-products/{id}`, `POST /attachments`, `POST /attachments/search`,
 `GET /attachments/{id}/content`, `DELETE /attachments/{id}`, `POST /products/search`,
-`POST /products/{id}/versions/search`, `GET /updates/product-update-levels`,
+`POST /products/{id}/versions/search`, `POST /change-requests`, `POST /change-requests/search`,
+`GET /change-requests/{id}`, `PATCH /change-requests/{id}`, `GET /change-requests/{id}/approvals`,
+`POST /change-requests/{id}/approvals/decision`, `POST /call-requests`,
+`POST /call-requests/search`, `PATCH /call-requests/{id}`, `GET /updates/product-update-levels`,
 `POST /updates/levels/search`) across three upstream services: entity-service, the WSO2 Updates
 service, and SCIM. The Ballerina backend exposes ~100 routes across many more modules (generic
-comments, conversations, change requests, call requests, catalogs, time cards, registry tokens,
-contacts, escalations, product vulnerabilities, AI chat/websocket, etc.) — none of those are ported
-yet. Follow the recipe below to add the next one.
+comments, conversations, catalogs, time cards, registry tokens, contacts, escalations, product
+vulnerabilities, incidents, problems, task SLAs, tasks, groups/service-offerings/configuration-items,
+AI chat/websocket, etc.) — none of those are ported yet. Follow the recipe below to add the next one.
 
 ## Which entity-service
 
@@ -149,6 +152,42 @@ client sends — a customer should never be able to create an internal work-note
 entry. When you add a write endpoint, check the entity-service request struct for fields that read
 as "internal support operation" rather than "customer self-service action" before deciding whether
 to pass it through directly or build a restricted DTO.
+
+Two more examples, both in this same "restrict, don't mirror" category:
+- `PATCH /change-requests/{id}` (`dto.ChangeRequestUpdateRequest`) excludes case/project/deployment
+  relinking and `assignedEngineerId`/`assignedTeamId` (support assignment) for the same reasons as
+  case updates, plus `state` specifically — state transitions go through the dedicated
+  `isCustomerApproved`/`isCustomerReviewed`/`requestApproval` fields (which *are* exposed, since
+  they're literally the customer's own approval actions) rather than letting the customer set an
+  arbitrary ServiceNow workflow state directly.
+- `PATCH /call-requests/{id}` (`dto.CallRequestUpdateRequest`) excludes `meetingDate`/`assignee`/
+  `notes`/`plan`/`attendees`/`actionItems`/`actualDurationMin` — entity-service's own doc comment
+  labels these "agent-side fields, set when an engineer schedules or concludes the call." They're
+  still exposed on the *read* side (`dto.CallRequestSummary`) since the customer should be able to
+  see the outcome of their own call, just not set it themselves.
+
+**Not every field worth restricting is a security decision — some are just an unenforced entity-service
+scoping convenience.** `PATCH /deployed-products/{id}`'s `deploymentId` field looks similar to the
+fields above (an id referencing another resource) but isn't restricted, because entity-service
+documents it as an IDOR-style scope guard the caller supplies voluntarily (verify the deployed
+product belongs to this deployment before mutating it), not a way to relink the resource. Read the
+entity-service doc comment on the field before deciding which category it falls into — don't
+pattern-match on field name alone (e.g. "any ID field" or "any assignee-shaped field").
+
+**"Exactly one" vs. "at least one" is per-entity, read entity-service's own doc comment.**
+`PATCH /cases/{id}` requires *exactly one* of its primary fields (entity-service's doc comment says
+so explicitly); `PATCH /change-requests/{id}` requires *at least one* (its doc comment says "at
+least one must be provided"). Don't assume one pattern generalizes to the other — copying the wrong
+validation produces a portal that's stricter or looser than the upstream contract, and CodeRabbit
+caught exactly this mismatch once already (see the case-update fix in this backend's PR history).
+
+Where entity-service defines many enum-like fields (change request category/priority/impact/type/
+state/risk, call request state, etc.) as named Go string types with const blocks, this file's
+convention is to flatten them to plain `string` in the mirrored struct (matching how `CaseView`
+already treats `Severity`/`State` as plain strings) — skip re-declaring the const blocks unless a
+specific value needs to be checked in Go code (e.g. `ChangeRequestApprovalDecisionRequest.Decision`
+validation in the handler compares against literal `"approved"`/`"rejected"` strings, not enum
+constants).
 
 ## Adding a new endpoint
 
