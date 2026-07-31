@@ -23,16 +23,23 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 )
 
 const correlationIDHeader = "X-CSM-Correlation-ID"
 
+// correlationIDPrefix marks a correlation ID as having passed through the
+// customer portal, so it can be told apart from IDs originating in other
+// portals/services sharing the same downstream entity-service.
+const correlationIDPrefix = "cp-"
+
 type correlationIDKey struct{}
 
 // CorrelationID is an HTTP middleware that reads the X-CSM-Correlation-ID request
-// header or generates a UUID v4 if absent. The ID is:
+// header or generates a UUID v4 if absent, ensuring the value carries the
+// "cp-" (customer portal) prefix before it is used further. The ID is:
 //   - stored in the context for automatic inclusion in slog records
 //   - stored in the entity client context so it is forwarded on every outgoing
 //     entity-service request
@@ -43,6 +50,9 @@ func CorrelationID(next http.Handler) http.Handler {
 		id := r.Header.Get(correlationIDHeader)
 		if id == "" {
 			id = newCorrelationID()
+		}
+		if !strings.HasPrefix(id, correlationIDPrefix) {
+			id = correlationIDPrefix + id
 		}
 		w.Header().Set(correlationIDHeader, id)
 		ctx := context.WithValue(r.Context(), correlationIDKey{}, id)

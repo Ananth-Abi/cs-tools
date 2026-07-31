@@ -43,6 +43,13 @@ var tokenFetchTimeout = 10 * time.Second
 // upstream response exhausting process memory.
 const maxResponseBodyBytes = 10 << 20 // 10 MiB
 
+// noRedirect stops an *http.Client from following any redirect, returning the
+// redirect response itself instead. Used on both the token-fetch client and
+// the entity-service request client — see the comment in NewClient.
+func noRedirect(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
 type ctxKey string
 
 const userIDTokenKey ctxKey = "x-user-id-token"        // #nosec G101 -- context map key, not a credential
@@ -103,17 +110,25 @@ func NewClient(cfg Config) *Client {
 		Scopes:       cfg.Scopes,
 	}
 
+	// x-user-id-token carries the caller's JWT to entity-service, and the
+	// client-credentials exchange carries cfg.ClientSecret to TokenURL. Go's
+	// client only strips sensitive headers on cross-origin redirects for a
+	// fixed allowlist (Authorization, Cookie, etc.) that covers neither, so a
+	// redirecting TokenURL or BaseURL could otherwise receive one of them at a
+	// different origin. Disable redirect-following entirely on both instead.
 	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient,
-		&http.Client{Timeout: tokenFetchTimeout})
-	httpClient := cc.Client(tokenCtx)
-	httpClient.Timeout = 25 * time.Second
-	// x-user-id-token carries the caller's JWT to entity-service. Go's client
-	// only strips sensitive headers on cross-origin redirects for a fixed
-	// allowlist (Authorization, Cookie, etc.) that does not include this
-	// custom header, so a redirecting upstream could otherwise receive it at
-	// a different origin. Disable redirect-following entirely instead.
-	httpClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
-		return http.ErrUseLastResponse
+		&http.Client{Timeout: tokenFetchTimeout, CheckRedirect: noRedirect})
+
+	// clientcredentials.Config.Client's returned *http.Client and its
+	// Transport must not be mutated (see the package doc comment) — its
+	// Transport is the only part we need (it injects the bearer token), so
+	// wrap it in a fresh http.Client we own instead of setting fields
+	// directly on the returned one.
+	oauthClient := cc.Client(tokenCtx)
+	httpClient := &http.Client{
+		Transport:     oauthClient.Transport,
+		Timeout:       25 * time.Second,
+		CheckRedirect: noRedirect,
 	}
 
 	return &Client{
