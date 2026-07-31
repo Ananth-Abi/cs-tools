@@ -128,6 +128,14 @@ func (h *DeployedProductHandler) PatchDeployedProduct(w http.ResponseWriter, r *
 		return
 	}
 
+	// Decoded directly into entity-service's request struct (no restricted
+	// portal DTO) — every field here is customer-appropriate, including
+	// DeploymentID: per entity-service's own doc comment on
+	// UpdateDeployedProductRequest, it isn't a mutation field but an
+	// IDOR-style scope guard ("the deployed product must belong to that
+	// deployment or the operation returns a NotFoundError") — a legitimate
+	// safety check for the frontend to supply, unlike the case-update
+	// endpoint's genuinely internal-only fields (see dto.UpdateCaseRequest).
 	var req entity.UpdateDeployedProductRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)

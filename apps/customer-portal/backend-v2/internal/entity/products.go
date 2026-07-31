@@ -31,6 +31,7 @@ func (c *Client) SearchProducts(ctx context.Context, req SearchProductsRequest) 
 
 // SearchProductVersions calls POST /products/{id}/versions/search.
 func (c *Client) SearchProductVersions(ctx context.Context, productID string, req SearchProductVersionsRequest) (SearchProductVersionsResponse, error) {
+	req.ProductID = productID // never serialized (json:"-"); set for consistency with the struct's doc comment
 	var out SearchProductVersionsResponse
 	err := c.postJSON(ctx, fmt.Sprintf("/products/%s/versions/search", url.PathEscape(productID)), req, &out)
 	return out, err

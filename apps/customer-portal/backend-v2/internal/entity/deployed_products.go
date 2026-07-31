@@ -44,6 +44,7 @@ func (c *Client) CreateDeployedProduct(ctx context.Context, req CreateDeployedPr
 // NOTE: only entity-service's ServiceNow data source supports this route —
 // see CreateDeployedProductRequest's doc comment.
 func (c *Client) UpdateDeployedProduct(ctx context.Context, id string, req UpdateDeployedProductRequest) (UpdateDeployedProductResponse, error) {
+	req.ID = id // never serialized (json:"-"); set for consistency with the struct's doc comment
 	var out UpdateDeployedProductResponse
 	err := c.patchJSON(ctx, fmt.Sprintf("/deployed-products/%s", url.PathEscape(id)), req, &out)
 	return out, err
