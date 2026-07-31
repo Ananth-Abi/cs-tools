@@ -2,7 +2,7 @@ schemaVersion: 1.2
 
 endpoints:
   - name: customer-portal-api
-    displayName: Customer Portal API (v2)
+    displayName: Customer Portal API
     service:
       basePath: /
       port: 8080
