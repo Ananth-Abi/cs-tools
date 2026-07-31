@@ -42,6 +42,7 @@ type AccountSummary struct {
 	HasAgent         bool    `json:"hasAgent"`
 	HasKbReferences  bool    `json:"hasKbReferences"`
 	CreatedOn        *string `json:"createdOn,omitempty"`
+	UpdatedOn        *string `json:"updatedOn,omitempty"`
 }
 
 // SearchAccountsResponse is the portal's response for POST /accounts/search.
@@ -63,13 +64,14 @@ func MapSearchAccounts(r entity.SearchAccountsResponse) SearchAccountsResponse {
 			Tier:             firstNonNil(a.Tier, a.Classification),
 			Region:           a.Region,
 			SupportTier:      a.SupportTier,
-			Owner:            mapAccountRef(a.Owner, a.OwnerID),
-			TechnicalOwner:   mapAccountRef(a.TechnicalOwner, a.TechnicalOwnerID),
+			Owner:            mapAccountRef(a.Owner),
+			TechnicalOwner:   mapAccountRef(a.TechnicalOwner),
 			ActivationDate:   a.ActivationDate,
 			DeactivationDate: a.DeactivationDate,
 			HasAgent:         boolValue(firstNonNilBool(a.HasAgent, a.AgentEnabled)),
 			HasKbReferences:  boolValue(firstNonNilBool(a.HasKbReferences, a.KbReferencesEnabled)),
 			CreatedOn:        a.CreatedOn,
+			UpdatedOn:        a.UpdatedOn,
 		})
 	}
 	return SearchAccountsResponse{
@@ -111,8 +113,8 @@ func MapAccountDetails(a entity.AccountDetail) AccountDetails {
 		Tier:             firstNonNil(a.Tier, a.Classification),
 		Region:           a.Region,
 		SupportTier:      supportTier,
-		Owner:            mapAccountRef(a.Owner, a.OwnerID),
-		TechnicalOwner:   mapAccountRef(a.TechnicalOwner, a.TechnicalOwnerID),
+		Owner:            mapAccountRef(a.Owner),
+		TechnicalOwner:   mapAccountRef(a.TechnicalOwner),
 		ActivationDate:   a.ActivationDate,
 		DeactivationDate: a.DeactivationDate,
 		HasAgent:         boolValue(firstNonNilBool(a.HasAgent, a.AgentEnabled)),
@@ -122,17 +124,15 @@ func MapAccountDetails(a entity.AccountDetail) AccountDetails {
 	}
 }
 
-// mapAccountRef prefers the ServiceNow {id,name} reference; if only a bare
-// Postgres ID is available, it's surfaced as a Ref with an empty Name rather
-// than dropped entirely.
-func mapAccountRef(ref *entity.EntityRef, bareID *string) *Ref {
-	if ref != nil {
-		return &Ref{ID: ref.ID, Name: ref.Name}
+// mapAccountRef surfaces the ServiceNow {id,name} reference only. A bare
+// Postgres owner/technicalOwner ID (no name attached) is intentionally
+// dropped rather than exposed as a nameless Ref — see AccountSummary's doc
+// comment.
+func mapAccountRef(ref *entity.EntityRef) *Ref {
+	if ref == nil {
+		return nil
 	}
-	if bareID != nil {
-		return &Ref{ID: *bareID}
-	}
-	return nil
+	return &Ref{ID: ref.ID, Name: ref.Name}
 }
 
 func firstNonNil(a, b *string) *string {

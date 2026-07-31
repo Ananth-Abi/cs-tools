@@ -79,7 +79,7 @@ type SearchProjectsRequest struct {
 // ProjectClosureFields groups the ServiceNow-only closure-tracking fields
 // shared by ProjectDetailsView and ProjectView.
 type ProjectClosureFields struct {
-	ClosureState                   *string         `json:"closureState"`
+	ClosureState                    *string         `json:"closureState"`
 	EndDateClosureState             *string         `json:"endDateClosureState"`
 	InvoiceDueDateClosureState      *string         `json:"invoiceDueDateClosureState"`
 	ComplianceViolationClosureState *string         `json:"complianceViolationClosureState"`
@@ -170,16 +170,16 @@ type SearchAccountsRequest struct {
 // AccountSummary is a single search result item from POST /accounts/search —
 // a superset of entity-service's Postgres Account and ServiceNow SNAccountView.
 type AccountSummary struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
+	ID     string  `json:"id"`
+	Name   string  `json:"name"`
 	Region *string `json:"region,omitempty"`
 	// Postgres-only.
-	SfID             *string `json:"sfId,omitempty"`
-	Tier             *string `json:"tier,omitempty"`
-	OwnerID          *string `json:"ownerId,omitempty"`
-	TechnicalOwnerID *string `json:"technicalOwnerId,omitempty"`
-	AgentEnabled     *bool   `json:"agentEnabled,omitempty"`
-	KbReferencesEnabled *bool `json:"kbReferencesEnabled,omitempty"`
+	SfID                *string `json:"sfId,omitempty"`
+	Tier                *string `json:"tier,omitempty"`
+	OwnerID             *string `json:"ownerId,omitempty"`
+	TechnicalOwnerID    *string `json:"technicalOwnerId,omitempty"`
+	AgentEnabled        *bool   `json:"agentEnabled,omitempty"`
+	KbReferencesEnabled *bool   `json:"kbReferencesEnabled,omitempty"`
 	// ServiceNow-only.
 	Classification  *string    `json:"classification,omitempty"`
 	Pod             *string    `json:"pod,omitempty"`
@@ -213,12 +213,12 @@ type AccountDetail struct {
 	Name   string  `json:"name"`
 	Region *string `json:"region,omitempty"`
 	// Postgres-only.
-	SfID             *string `json:"sfId,omitempty"`
-	Tier             *string `json:"tier,omitempty"`
-	OwnerID          *string `json:"ownerId,omitempty"`
-	TechnicalOwnerID *string `json:"technicalOwnerId,omitempty"`
-	AgentEnabled     *bool   `json:"agentEnabled,omitempty"`
-	KbReferencesEnabled *bool `json:"kbReferencesEnabled,omitempty"`
+	SfID                *string `json:"sfId,omitempty"`
+	Tier                *string `json:"tier,omitempty"`
+	OwnerID             *string `json:"ownerId,omitempty"`
+	TechnicalOwnerID    *string `json:"technicalOwnerId,omitempty"`
+	AgentEnabled        *bool   `json:"agentEnabled,omitempty"`
+	KbReferencesEnabled *bool   `json:"kbReferencesEnabled,omitempty"`
 	// ServiceNow-only.
 	Classification  *string         `json:"classification,omitempty"`
 	Pod             *string         `json:"pod,omitempty"`
@@ -248,21 +248,21 @@ type CaseSort struct {
 // Only the fields the portal currently exposes are included here; extend as
 // needed when more filters are surfaced to the frontend.
 type SearchCasesFilters struct {
-	Types           []string   `json:"types,omitempty"`
-	SearchQuery     string     `json:"searchQuery,omitempty"`
-	ProjectIDs      []string   `json:"projectIds,omitempty"`
-	DeploymentIDs   []string   `json:"deploymentIds,omitempty"`
-	States          []string   `json:"states,omitempty"`
-	Severities      []string   `json:"severities,omitempty"`
-	IssueTypes      []string   `json:"issueTypes,omitempty"`
-	EngagementTypes []string   `json:"engagementTypes,omitempty"`
-	CreatedBy       []string   `json:"createdBy,omitempty"`
-	CreatedByMe     bool       `json:"createdByMe,omitempty"`
-	WorkStates      []string   `json:"workStates,omitempty"`
-	AssignedUserIDs []string   `json:"assignedUserIds,omitempty"`
-	ProductNames    []string   `json:"productNames,omitempty"`
-	Tags            []string   `json:"tags,omitempty"`
-	ParentID        *string    `json:"parentId,omitempty"`
+	Types           []string `json:"types,omitempty"`
+	SearchQuery     string   `json:"searchQuery,omitempty"`
+	ProjectIDs      []string `json:"projectIds,omitempty"`
+	DeploymentIDs   []string `json:"deploymentIds,omitempty"`
+	States          []string `json:"states,omitempty"`
+	Severities      []string `json:"severities,omitempty"`
+	IssueTypes      []string `json:"issueTypes,omitempty"`
+	EngagementTypes []string `json:"engagementTypes,omitempty"`
+	CreatedBy       []string `json:"createdBy,omitempty"`
+	CreatedByMe     bool     `json:"createdByMe,omitempty"`
+	WorkStates      []string `json:"workStates,omitempty"`
+	AssignedUserIDs []string `json:"assignedUserIds,omitempty"`
+	ProductNames    []string `json:"productNames,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	ParentID        *string  `json:"parentId,omitempty"`
 }
 
 // SearchCasesRequest is the input for POST /cases/search.

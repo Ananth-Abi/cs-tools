@@ -82,6 +82,14 @@ func (h *UpdatesHandler) SearchUpdatesBetweenUpdateLevels(w http.ResponseWriter,
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
+	if payload.ProductName == "" || payload.ProductVersion == "" {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	if payload.StartingUpdateLevel < 0 || payload.EndingUpdateLevel < payload.StartingUpdateLevel {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
 
 	result, err := h.updates.SearchUpdatesBetweenUpdateLevels(r.Context(), payload, user.Email)
 	if err != nil {

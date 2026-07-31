@@ -44,7 +44,7 @@ type SearchProjectsResponse struct {
 	Total    int              `json:"total"`
 	Limit    int              `json:"limit"`
 	Offset   int              `json:"offset"`
-	HasMore  bool              `json:"hasMore"`
+	HasMore  bool             `json:"hasMore"`
 }
 
 // MapSearchProjects builds the portal response from entity-service's SearchProjectsResponse.

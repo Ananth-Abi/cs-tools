@@ -37,6 +37,21 @@ import (
 // Overridden in tests to keep them fast.
 var tokenFetchTimeout = 10 * time.Second
 
+type ctxKey string
+
+const correlationIDKey ctxKey = "x-csm-correlation-id" // #nosec G101 -- context map key, not a credential
+
+// WithCorrelationID returns a copy of ctx carrying the correlation ID to be
+// forwarded as X-CSM-Correlation-ID on every outgoing SCIM request.
+func WithCorrelationID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, correlationIDKey, id)
+}
+
+func correlationIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(correlationIDKey).(string)
+	return v
+}
+
 // maxResponseBodyBytes bounds how much of a SCIM response this client will
 // read into memory, protecting against a huge or malicious upstream response
 // exhausting process memory.
@@ -109,6 +124,9 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	}
 	if len(body) > 0 {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if id := correlationIDFromContext(ctx); id != "" {
+		req.Header.Set("X-CSM-Correlation-ID", id)
 	}
 
 	resp, err := c.http.Do(req)

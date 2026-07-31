@@ -48,7 +48,9 @@ func (c *Client) SearchUser(ctx context.Context, email string) (*UserInfo, error
 		reqBody, err := json.Marshal(scimSearchRequest{
 			Domain:     domainDefault,
 			Attributes: []string{attrPhoneNumbers, attrUserName, attrSchema},
-			Filter:     fmt.Sprintf("userName eq %s", email),
+			// RFC 7644 requires SCIM filter string literals to be quoted,
+			// with embedded quotes/backslashes escaped — %q does both.
+			Filter:     fmt.Sprintf("userName eq %q", email),
 			StartIndex: startIndex,
 		})
 		if err != nil {

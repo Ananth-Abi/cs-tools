@@ -43,6 +43,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserMeResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "401":
           description: Unauthorized
           content:
@@ -423,6 +429,12 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ProductUpdateLevel'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "401":
           description: Unauthorized
           content:
