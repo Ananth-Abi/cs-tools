@@ -214,3 +214,20 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody, out any) er
 	}
 	return nil
 }
+
+// patchJSON marshals reqBody, issues a PATCH request, and decodes the JSON
+// response into out.
+func (c *Client) patchJSON(ctx context.Context, path string, reqBody, out any) error {
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("entity: encode request for PATCH %s: %w", path, err)
+	}
+	body, err := c.do(ctx, http.MethodPatch, path, payload)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("entity: decode response for PATCH %s: %w", path, err)
+	}
+	return nil
+}

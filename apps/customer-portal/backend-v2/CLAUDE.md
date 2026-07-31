@@ -6,11 +6,13 @@ responses for the frontend. This is a Go rewrite of the Ballerina backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** Only 6 routes are wired up so far (`GET /health`, `GET /users/me`,
-`POST /projects/search`, `GET /projects/{id}`, `POST /cases/search`, `GET /cases/{id}`). The
-Ballerina backend exposes ~100 routes across many more modules (accounts, deployments, deployed
-products, attachments, comments, conversations, change requests, call requests, catalogs, time
-cards, updates, registry tokens, contacts, escalations, product vulnerabilities, AI chat/websocket,
+**Status: in progress.** 11 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
+`POST /accounts/search`, `GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
+`POST /cases/search`, `GET /cases/{id}`, `GET /updates/product-update-levels`,
+`POST /updates/levels/search`) across three upstream services: entity-service, the WSO2 Updates
+service, and SCIM. The Ballerina backend exposes ~100 routes across many more modules (deployments,
+deployed products, attachments, comments, conversations, change requests, call requests, catalogs,
+time cards, registry tokens, contacts, escalations, product vulnerabilities, AI chat/websocket,
 etc.) — none of those are ported yet. Follow the recipe below to add the next one.
 
 ## Which entity-service
@@ -26,6 +28,27 @@ deployment will 404 on those. If the Ballerina backend has an endpoint with no `
 equivalent at all (e.g. `GET /metadata` — entity-service has no metadata endpoint), do not invent
 one; add a code comment at the call site noting the gap and flag it instead of fabricating a
 response.
+
+## Other upstream services
+
+Not everything comes from entity-service. Two more upstream service clients exist, each following
+the same `Config{BaseURL, TokenURL, ClientID, ClientSecret, Scopes}` + `Client` + `NewClient` +
+private `do()` shape as `internal/entity`:
+
+- **`internal/updates`** — the WSO2 Updates service (product update levels, update descriptions
+  between levels). Its own types are already portal-shaped camelCase (`internal/updates/types.go`
+  defines both the upstream snake_case wire structs and the portal camelCase structs, translated by
+  `internal/updates/mapper.go`) — so handlers write its return values directly via `writeJSONValue`
+  with **no** further `internal/dto` mapping layer. This is the one deliberate exception to the
+  "always map through dto" rule below, because the mapping already happened inside the client.
+- **`internal/scim`** — the SCIM operations service, used only for a user's phone number
+  (`SearchUser`, `UpdateUserPhone`). Its `UserInfo` return type is already a small portal-clean
+  struct, so it's merged directly into `dto.UserMeResponse`/`dto.UserUpdateResponse` in
+  `internal/handler/users.go` — again no separate mapping layer needed.
+
+All three service clients (entity, updates, SCIM) authenticate as the same shared OAuth2
+client-credentials app in `cmd/server/main.go` — only each service's `*_BASE_URL`/`*_SCOPES` env
+vars differ.
 
 ## Middleware chain
 
@@ -62,6 +85,20 @@ When you add a new endpoint, add the equivalent trimming — read the field care
 including it; when in doubt whether a field is customer-appropriate, leave it out and note why in
 a comment on the DTO struct (see `internal/dto/case.go` for examples).
 
+**Data-source normalization is a second job of the DTO layer.** Unlike projects and cases,
+entity-service's account endpoints (`GET /accounts/{id}`, `POST /accounts/search`) return a
+genuinely different wire shape depending on whether it's deployed with `DATA_SOURCE=postgres` or
+`DATA_SOURCE=servicenow` — see `internal/entity/types.go`'s `AccountDetail`/`AccountSummary`
+comments for how the two shapes are unioned into one Go struct (their JSON keys never collide) and
+`internal/dto/account.go` for how the DTO mapper picks whichever fields the active data source
+populated (e.g. `Tier` prefers entity-service's `tier`, falling back to `classification`) to
+produce one consistent contract for the frontend regardless of which data source is live. This is
+a genuine advantage of the DTO-mapping convention over raw passthrough — `apps/csm-portal/backend`
+has to model this as an OpenAPI `oneOf` in its spec and pass the ambiguity on to the frontend;
+here, it's resolved once in the mapper. Also deliberately excluded from account DTOs: `ArrToday`
+(annual recurring revenue — WSO2-internal financial data, never expose to the customer) and `Pod`
+(WSO2-internal account routing).
+
 Request bodies are the exception: incoming search/filter payloads are decoded directly into the
 entity package's request structs (e.g. `entity.SearchProjectsRequest`) with no separate DTO layer,
 since those shapes are already what the frontend needs to send — there is nothing to hide on the
@@ -85,7 +122,10 @@ request side.
 6. **Route** (`cmd/server/main.go`) — register using Go 1.22 method-prefixed patterns:
    `"POST /cases/{id}/comments"`.
 7. **README** — add the endpoint under "API Endpoints" in `README.md`.
-8. **gosec** — run `gosec -fmt=text ./...` (must report 0 issues) before opening a PR.
+8. **OpenAPI spec** (`openapi.yaml`) — add the path with `200`/`400`/`401`/`403`/`500` responses
+   (`404` too for get-by-id, `413` too for endpoints with a request body); every endpoint must
+   declare `403` since `mapUpstreamError` can return it.
+9. **gosec** — run `gosec -fmt=text ./...` (must report 0 issues) before opening a PR.
 
 ## Handler conventions
 

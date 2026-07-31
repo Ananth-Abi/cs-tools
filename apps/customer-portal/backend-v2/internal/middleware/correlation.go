@@ -26,6 +26,8 @@ import (
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/scim"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/updates"
 )
 
 const correlationIDHeader = "X-CSM-Correlation-ID"
@@ -41,8 +43,8 @@ type correlationIDKey struct{}
 // header or generates a UUID v4 if absent, ensuring the value carries the
 // "cp-" (customer portal) prefix before it is used further. The ID is:
 //   - stored in the context for automatic inclusion in slog records
-//   - stored in the entity client context so it is forwarded on every outgoing
-//     entity-service request
+//   - stored in the entity, scim, and updates client contexts so it is
+//     forwarded on every outgoing request to any of those three services
 //   - echoed in the response header so callers can reference it in support
 //     requests
 func CorrelationID(next http.Handler) http.Handler {
@@ -57,6 +59,8 @@ func CorrelationID(next http.Handler) http.Handler {
 		w.Header().Set(correlationIDHeader, id)
 		ctx := context.WithValue(r.Context(), correlationIDKey{}, id)
 		ctx = entity.WithCorrelationID(ctx, id)
+		ctx = scim.WithCorrelationID(ctx, id)
+		ctx = updates.WithCorrelationID(ctx, id)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

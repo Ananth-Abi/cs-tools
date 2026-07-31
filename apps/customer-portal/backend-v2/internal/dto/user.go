@@ -23,14 +23,18 @@ package dto
 
 import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 
-// UserMeResponse is the portal's response for GET /users/me.
+// UserMeResponse is the portal's response for GET /users/me. PhoneNumber is
+// not part of entity-service's response — the handler sets it separately from
+// the SCIM client's result, since phone numbers are sourced from SCIM, not
+// entity-service.
 type UserMeResponse struct {
-	ID        string   `json:"id"`
-	Email     string   `json:"email"`
-	FirstName *string  `json:"firstName,omitempty"`
-	LastName  string   `json:"lastName"`
-	TimeZone  *string  `json:"timeZone,omitempty"`
-	Roles     []string `json:"roles"`
+	ID          string   `json:"id"`
+	Email       string   `json:"email"`
+	FirstName   *string  `json:"firstName,omitempty"`
+	LastName    string   `json:"lastName"`
+	TimeZone    *string  `json:"timeZone,omitempty"`
+	Roles       []string `json:"roles"`
+	PhoneNumber *string  `json:"phoneNumber,omitempty"`
 }
 
 // MapUserMe builds the portal response from entity-service's GetUserMeResponse.
@@ -43,4 +47,12 @@ func MapUserMe(u entity.GetUserMeResponse) UserMeResponse {
 		TimeZone:  u.TimeZone,
 		Roles:     u.Roles,
 	}
+}
+
+// UserUpdateResponse is the portal's response for PATCH /users/me. Only the
+// fields that were actually updated are set — phoneNumber via SCIM,
+// timeZone via entity-service.
+type UserUpdateResponse struct {
+	PhoneNumber *string `json:"phoneNumber,omitempty"`
+	TimeZone    *string `json:"timeZone,omitempty"`
 }
