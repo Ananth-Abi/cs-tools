@@ -277,11 +277,15 @@ func (h *AIChatHandler) GetConversationSummary(w http.ResponseWriter, r *http.Re
 
 // parseLimitOffset parses the limit/offset query parameters, defaulting to
 // 20/0. Writes a 400 response and returns ok=false on an invalid value.
+// maxConversationMessagesLimit caps GetConversationMessages' limit query
+// param, matching this backend's other search endpoints' page-size ceiling.
+const maxConversationMessagesLimit = 100
+
 func parseLimitOffset(w http.ResponseWriter, r *http.Request) (limit, offset int, ok bool) {
 	limit, offset = 20, 0
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		v, err := strconv.Atoi(raw)
-		if err != nil || v < 0 {
+		if err != nil || v < 1 || v > maxConversationMessagesLimit {
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return 0, 0, false
 		}

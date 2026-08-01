@@ -39,6 +39,15 @@ const (
 	eventError      = "error"
 )
 
+// maxMessageBytes bounds the size of a single frame read from the upstream
+// AI chat agent — mirrors internal/handler/websocket.go's wsMaxMessageBytes
+// for the browser-facing side of the same proxy.
+const maxMessageBytes = 64 << 10 // 64 KiB
+
+// idleTimeout bounds how long StreamChat waits for the next frame from an
+// otherwise-healthy upstream connection.
+const idleTimeout = 5 * time.Minute
+
 // WSConfig holds the configuration for dialing the upstream AI chat agent's
 // WebSocket endpoint. Kept separate from Config since the Ballerina backend
 // this is rewriting uses a distinct OAuth2 client-credentials configuration
@@ -103,14 +112,18 @@ type BrowserConn interface {
 
 // StreamChat opens a dedicated upstream WebSocket connection for sessionID,
 // sends payload, then forwards every event verbatim to caller until a
-// "final" or "error" event arrives or the upstream connection closes.
-// Mirrors apps/customer-portal/backend's ai_chat_agent:streamChat.
+// "final" event arrives, an "error" event arrives, a read/write fails, or
+// the upstream connection closes normally. Mirrors
+// apps/customer-portal/backend's ai_chat_agent:streamChat, except it also
+// reports failure to the caller (below) via a non-nil error, so a failed
+// turn is never mistaken for a successful one.
 func (c *WSClient) StreamChat(ctx context.Context, sessionID, payload string, caller BrowserConn) (map[string]json.RawMessage, error) {
 	conn, err := c.dial(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	defer conn.Close()
+	conn.SetReadLimit(maxMessageBytes)
 
 	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
 		return nil, fmt.Errorf("aichatagent: write initial message: %w", err)
@@ -118,21 +131,26 @@ func (c *WSClient) StreamChat(ctx context.Context, sessionID, payload string, ca
 
 	finalPayload := map[string]json.RawMessage{}
 	for {
-		if dl, ok := ctx.Deadline(); ok {
-			_ = conn.SetReadDeadline(dl)
+		deadline := time.Now().Add(idleTimeout)
+		if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+			deadline = dl
 		}
+		_ = conn.SetReadDeadline(deadline)
+
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 				break
 			}
-			errPayload, _ := json.Marshal(map[string]string{"type": eventError, "message": err.Error()}) // #nosec G104 -- best-effort forward, connection may already be gone
-			_ = caller.WriteMessage(websocket.TextMessage, errPayload)
-			break
+			// Never forward err.Error() to the browser — it can contain the
+			// upstream host/URL/TLS detail of this internal Python service.
+			// The caller (internal/handler/websocket.go) logs the real error
+			// returned here and sends its own fixed-text error event.
+			return nil, fmt.Errorf("aichatagent: read upstream message: %w", err)
 		}
 
 		if writeErr := caller.WriteMessage(websocket.TextMessage, data); writeErr != nil {
-			break
+			return nil, fmt.Errorf("aichatagent: forward message to browser: %w", writeErr)
 		}
 
 		var parsed map[string]json.RawMessage
@@ -155,7 +173,11 @@ func (c *WSClient) StreamChat(ctx context.Context, sessionID, payload string, ca
 			break
 		}
 		if evtType == eventError {
-			break
+			var upstreamMsg string
+			if raw, ok := parsed["message"]; ok {
+				_ = json.Unmarshal(raw, &upstreamMsg)
+			}
+			return nil, fmt.Errorf("aichatagent: upstream reported an error: %s", upstreamMsg)
 		}
 	}
 

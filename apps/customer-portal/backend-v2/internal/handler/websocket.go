@@ -37,6 +37,16 @@ type wsStreamer interface {
 	StreamChat(ctx context.Context, sessionID, payload string, caller aichatagent.BrowserConn) (map[string]json.RawMessage, error)
 }
 
+// wsMaxMessageBytes bounds the size of a single WebSocket frame this handler
+// will read, on both the browser connection (here) and the upstream AI agent
+// connection (internal/aichatagent/ws.go) — protects against a peer forcing
+// a large allocation via an oversized frame.
+const wsMaxMessageBytes = 64 << 10 // 64 KiB
+
+// wsIdleTimeout bounds how long this handler waits for the next frame from
+// an idle peer before closing the connection.
+const wsIdleTimeout = 5 * time.Minute
+
 // entityCommentCreator is the subset of entityCommentClient needed to persist
 // a conversation message as a comment.
 type entityCommentCreator interface {
@@ -126,7 +136,21 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	}
 	defer conn.Close()
 
+	// The server's ReadTimeout/WriteTimeout (see cmd/server/main.go) can leave
+	// deadlines on the connection Hijack handed off for this upgrade; clear
+	// them so they don't kill an otherwise-idle-but-healthy chat session, and
+	// rely on wsIdleTimeout below instead.
+	underlying := conn.UnderlyingConn()
+	_ = underlying.SetReadDeadline(time.Time{})
+	_ = underlying.SetWriteDeadline(time.Time{})
+
+	conn.SetReadLimit(wsMaxMessageBytes)
+
 	for {
+		if err := conn.SetReadDeadline(time.Now().Add(wsIdleTimeout)); err != nil {
+			slog.WarnContext(r.Context(), "websocket set read deadline failed", "userID", user.UserID, "err", summarizeErr(err))
+			return
+		}
 		_, data, err := conn.ReadMessage()
 		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
@@ -166,8 +190,17 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 	}
 
 	userMessage, _ := parsed["message"].(string)
-	parsed["conversationId"] = conversationID
-	enriched, err := json.Marshal(parsed)
+	// Forward only the fields the upstream contract defines — never the raw
+	// client-supplied map verbatim, which could otherwise let a client smuggle
+	// extra keys (e.g. its own "accountId"/"sessionId") the agent might trust.
+	upstreamPayload := map[string]any{
+		"message":        userMessage,
+		"conversationId": conversationID,
+	}
+	if envProducts, ok := parsed["envProducts"]; ok {
+		upstreamPayload["envProducts"] = envProducts
+	}
+	enriched, err := json.Marshal(upstreamPayload)
 	if err != nil {
 		_ = writeWSJSON(conn, wsEvent{Type: "error", Message: "Failed to process message."})
 		return

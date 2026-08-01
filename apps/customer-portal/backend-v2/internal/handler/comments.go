@@ -41,6 +41,15 @@ type CommentHandler struct {
 	entity entityCommentClient
 }
 
+// validCommentReferenceType matches entity-service's own ReferenceType enum.
+var validCommentReferenceType = map[string]bool{
+	string(entity.ReferenceTypeCase):          true,
+	string(entity.ReferenceTypeConversation):  true,
+	string(entity.ReferenceTypeChangeRequest): true,
+	string(entity.ReferenceTypeDeployment):    true,
+	string(entity.ReferenceTypeIncident):      true,
+}
+
 // NewCommentHandler creates a CommentHandler backed by the given entity client.
 func NewCommentHandler(entity entityCommentClient) *CommentHandler {
 	return &CommentHandler{entity: entity}
@@ -64,7 +73,7 @@ func (h *CommentHandler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if req.ReferenceID == "" || req.ReferenceType == "" || req.Content == "" {
+	if !uuidRe.MatchString(req.ReferenceID) || !validCommentReferenceType[req.ReferenceType] || req.Content == "" {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
@@ -97,7 +106,7 @@ func (h *CommentHandler) SearchComments(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if req.ReferenceID == "" || req.ReferenceType == "" {
+	if !uuidRe.MatchString(req.ReferenceID) || !validCommentReferenceType[req.ReferenceType] {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}

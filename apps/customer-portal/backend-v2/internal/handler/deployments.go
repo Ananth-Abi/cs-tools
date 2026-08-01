@@ -142,6 +142,10 @@ func (h *DeploymentHandler) PatchDeployment(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "Provide either name/type/description or active, but not both.")
 		return
 	}
+	if activeSet && *req.Active {
+		writeError(w, http.StatusBadRequest, "active can only be set to false.")
+		return
+	}
 
 	result, err := h.entity.UpdateDeployment(r.Context(), id, req)
 	if err != nil {

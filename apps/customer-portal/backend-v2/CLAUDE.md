@@ -124,9 +124,11 @@ Because a brand-new conversation can't be created (see above), this endpoint onl
 *resuming* an existing conversation — the browser must supply a `conversationId` in its first
 message, or the handler returns an `error` event rather than silently failing. One simplification
 versus the Ballerina backend: Go's `http.Server` runs each upgraded connection in its own
-goroutine, processing one message at a time in a blocking loop, so there's no need for the
-Ballerina implementation's explicit "already streaming" busy-flag/mutex — a second incoming message
-simply can't arrive until the handler returns from the first.
+goroutine, and the handler's `ReadMessage` → `handleMessage` loop is a single blocking sequence —
+it does not read or process the next frame until `handleMessage` returns, and never starts a
+concurrent read or upstream stream. So there's no need for the Ballerina implementation's explicit
+"already streaming" busy-flag/mutex; the client can still send another frame at any time, this
+handler simply won't look at it until the current one finishes.
 
 Primary authorization on `GET /ws` is the same JWT middleware chain as every other route.
 `WebSocketHandler`'s `gorilla/websocket.Upgrader.CheckOrigin` adds a defense-in-depth check against

@@ -41,19 +41,28 @@ servers:
 
 channels:
   /ws:
-    parameters:
-      sessionId:
-        description: >
-          Query parameter (not a path parameter): the project ID. Named
-          sessionId for wire compatibility with the Ballerina backend this
-          replaces, even though it doesn't carry a session/conversation
-          value itself — the upstream agent's own per-conversation session
-          key is derived server-side as "{projectId}:{conversationId}".
-        schema:
-          type: string
-          format: uuid
+    bindings:
+      ws:
+        query:
+          type: object
+          properties:
+            sessionId:
+              type: string
+              format: uuid
+              description: >
+                The project ID. Named sessionId for wire compatibility with
+                the Ballerina backend this replaces, even though it doesn't
+                carry a session/conversation value itself — the upstream
+                agent's own per-conversation session key is derived
+                server-side as "{projectId}:{conversationId}".
+          required:
+            - sessionId
 
-    subscribe:
+    # AsyncAPI 2.x's publish/subscribe are named from the client's
+    # perspective: "publish" is what the client sends (this application
+    # receives), "subscribe" is what the client receives (this application
+    # sends) — the opposite of what the operationId names might suggest.
+    publish:
       operationId: SendMessage
       summary: Messages sent from client to server
       message:
@@ -61,7 +70,7 @@ channels:
           - $ref: '#/components/messages/PingMessage'
           - $ref: '#/components/messages/UserMessage'
 
-    publish:
+    subscribe:
       operationId: ReceiveMessage
       summary: Messages sent from server to client
       message:
