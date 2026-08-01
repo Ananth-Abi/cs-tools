@@ -82,3 +82,19 @@ func MapDeploymentCreate(r entity.CreateDeploymentResponse) DeploymentCreateResp
 		CreatedOn: r.Deployment.CreatedOn,
 	}
 }
+
+// DeploymentUpdateResponse is the portal's response for PATCH /deployments/{id}.
+// Deliberately excludes entity-service's UpdatedBy (internal actor identity),
+// consistent with the other update responses in this package.
+type DeploymentUpdateResponse struct {
+	ID        string    `json:"id"`
+	UpdatedOn time.Time `json:"updatedOn"`
+}
+
+// MapDeploymentUpdate builds the portal response from entity-service's UpdateDeploymentResponse.
+func MapDeploymentUpdate(r entity.UpdateDeploymentResponse) DeploymentUpdateResponse {
+	return DeploymentUpdateResponse{
+		ID:        r.Deployment.ID,
+		UpdatedOn: r.Deployment.UpdatedOn,
+	}
+}

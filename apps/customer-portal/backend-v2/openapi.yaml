@@ -1806,6 +1806,817 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /deployments/{id}:
+    patch:
+      summary: Update a deployment.
+      description: >
+        Provide either name/type/description or active=false, but not both.
+      operationId: patchDeploymentsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateDeploymentRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeploymentUpdateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /comments:
+    post:
+      summary: Create a generic comment.
+      description: >
+        Attaches a comment to any reference entity (case, conversation,
+        change_request, deployment, incident). Type is always "comment"
+        server-side and is not client-settable.
+      operationId: postComments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentCreateRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommentCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /comments/search:
+    post:
+      summary: Search generic comments.
+      description: >
+        Results are always filtered server-side to type "comment" — internal
+        WSO2 work-note entries are never returned here.
+      operationId: postCommentsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommentSearchRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCommentsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /products/vulnerabilities/search:
+    post:
+      summary: Search product vulnerabilities.
+      operationId: postProductsVulnerabilitiesSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchProductVulnerabilitiesRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchProductVulnerabilitiesResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /products/vulnerabilities/{id}:
+    get:
+      summary: Get a product vulnerability by ID.
+      operationId: getProductsVulnerabilitiesId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductVulnerability'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /catalogs/search:
+    post:
+      summary: Search service catalogs.
+      operationId: postCatalogsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCatalogsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCatalogsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /catalogs/{catalogId}/items/{catalogItemId}/variables:
+    get:
+      summary: Get a catalog item's variables.
+      operationId: getCatalogsCatalogIdItemsCatalogItemIdVariables
+      parameters:
+        - name: catalogId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: catalogItemId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogItemVariablesResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /time-cards/search:
+    post:
+      summary: Search time cards.
+      description: >
+        Only entity-service's ServiceNow data source supports this route —
+        a Postgres-mode deployment 404s. Excludes internal WSO2 per-category
+        time breakdowns and notes — see this backend's CLAUDE.md.
+      operationId: postTimeCardsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchTimeCardsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchTimeCardsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/classify:
+    post:
+      summary: Classify a case from chat context.
+      description: >
+        Calls the separate AI chat agent service, not entity-service — see
+        this backend's CLAUDE.md, "The AI chat agent".
+      operationId: postCasesClassify
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseClassificationRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseClassificationResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /conversations/recommendations/search:
+    post:
+      summary: Search KB article recommendations for a conversation.
+      description: >
+        Calls the separate AI chat agent service, not entity-service — see
+        this backend's CLAUDE.md, "The AI chat agent".
+      operationId: postConversationsRecommendationsSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecommendationRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecommendationResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/conversations/search:
+    post:
+      summary: Search a project's AI chat conversations.
+      description: >
+        projectIds is set server-side from the path parameter — any
+        client-supplied value in filters.projectIds is ignored.
+      operationId: postProjectsIdConversationsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchConversationsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchConversationsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /conversations/{id}/messages:
+    get:
+      summary: Get a conversation's messages.
+      description: Backed by the generic comment search (referenceType=conversation).
+      operationId: getConversationsIdMessages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCommentsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{projectId}/conversations/{conversationId}/messages:
+    post:
+      summary: Send a follow-up message on an existing AI chat conversation.
+      description: >
+        Sends a follow-up message on an EXISTING conversation only — there is
+        no entity-service createConversation yet (see this backend's CLAUDE.md).
+      operationId: postProjectsProjectIdConversationsConversationIdMessages
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessageRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/conversations/{conversationId}/summary:
+    get:
+      summary: Get an AI chat conversation's summary.
+      description: >
+        Calls the separate AI chat agent service, not entity-service — see
+        this backend's CLAUDE.md, "The AI chat agent".
+      operationId: getProjectsIdConversationsConversationIdSummary
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSummaryResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /ws:
+    get:
+      summary: >-
+        Upgrade to WebSocket for real-time AI chat (resumes an existing
+        conversation only — see repo CLAUDE.md).
+      description: >
+        This is a WebSocket upgrade endpoint — OpenAPI 3.0 has no native
+        support for describing WebSocket message framing, so only the
+        upgrade handshake is documented here. The sessionId query parameter
+        is named for wire compatibility with the Ballerina backend this
+        replaces, but actually carries the project ID.
+      operationId: getWs
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: >-
+            Project ID — named sessionId for wire compatibility with the
+            Ballerina backend this replaces.
+      responses:
+        "101":
+          description: Switching Protocols
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2507,6 +3318,28 @@ components:
         createdOn:
           type: string
 
+    UpdateDeploymentRequest:
+      description: Provide either name/type/description or active=false, but not both.
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+        description:
+          type: string
+          nullable: true
+        active:
+          type: boolean
+
+    DeploymentUpdateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        updatedOn:
+          type: string
+
     # ---- deployed products ----
 
     SearchDeployedProductsRequest:
@@ -2792,6 +3625,81 @@ components:
         hasMore:
           type: boolean
 
+    # ---- comments ----
+    #
+    # Generic comments attached to any reference entity (case, conversation,
+    # change_request, deployment, incident) — distinct from the case-specific
+    # comment endpoint under POST /cases/{id}/comments.
+
+    CommentCreateRequest:
+      description: >
+        Type is always "comment" server-side and is not client-settable.
+      type: object
+      required: [referenceId, referenceType, content]
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+        referenceType:
+          type: string
+          enum: [case, conversation, change_request, deployment, incident]
+        content:
+          type: string
+
+    CommentCreateResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+
+    CommentSearchRequest:
+      description: >
+        Results are always filtered server-side to type "comment" — internal
+        WSO2 work-note entries are never returned here.
+      type: object
+      required: [referenceId, referenceType]
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+        referenceType:
+          type: string
+          enum: [case, conversation, change_request, deployment, incident]
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    CommentView:
+      type: object
+      properties:
+        id:
+          type: string
+        content:
+          type: string
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+
+    SearchCommentsResponse:
+      type: object
+      properties:
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommentView'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean
+
     # ---- products ----
 
     SearchProductsRequest:
@@ -2875,6 +3783,514 @@ components:
           type: integer
         hasMore:
           type: boolean
+
+    # ---- product vulnerabilities ----
+
+    SearchProductVulnerabilitiesRequest:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            searchQuery:
+              type: string
+            priority:
+              type: string
+              enum: [info, low, medium, high, critical, unknown]
+            productName:
+              type: string
+            productVersion:
+              type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    ProductVulnerability:
+      type: object
+      properties:
+        id:
+          type: string
+        cveId:
+          type: string
+        vulnerabilityId:
+          type: string
+        priority:
+          type: string
+        productName:
+          type: string
+          nullable: true
+        productVersion:
+          type: string
+          nullable: true
+        componentName:
+          type: string
+        version:
+          type: string
+        type:
+          type: string
+        componentType:
+          type: string
+          nullable: true
+        updateLevel:
+          type: string
+          nullable: true
+        useCase:
+          type: string
+          nullable: true
+        justification:
+          type: string
+          nullable: true
+        resolution:
+          type: string
+          nullable: true
+
+    SearchProductVulnerabilitiesResponse:
+      type: object
+      properties:
+        productVulnerabilities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductVulnerability'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # ---- catalogs ----
+
+    SearchCatalogsRequest:
+      description: Scopes the search to catalogs available for the given deployed product.
+      type: object
+      required: [deployedProductId]
+      properties:
+        deployedProductId:
+          type: string
+          format: uuid
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    CatalogItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+
+    Catalog:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        catalogItems:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogItem'
+
+    SearchCatalogsResponse:
+      type: object
+      properties:
+        catalogs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Catalog'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    CatalogItemVariable:
+      type: object
+      properties:
+        id:
+          type: string
+        questionText:
+          type: string
+        order:
+          type: integer
+        type:
+          type: string
+
+    CatalogItemVariablesResponse:
+      type: object
+      properties:
+        variables:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogItemVariable'
+
+    # ---- time cards ----
+
+    SearchTimeCardsRequest:
+      description: >
+        entity-service also accepts userId/approverId/approvedById/userIds
+        filters that scope results to a specific WSO2 engineer — deliberately
+        not exposed here since the portal has no notion of a customer
+        selecting a WSO2 engineer to filter by.
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            projectIds:
+              type: array
+              items:
+                type: string
+            caseId:
+              type: string
+            startDate:
+              type: string
+            endDate:
+              type: string
+            states:
+              type: array
+              items:
+                type: string
+        sortBy:
+          type: object
+          properties:
+            field:
+              type: string
+            order:
+              type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    TimeCardCaseRef:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        number:
+          type: string
+
+    TimeCardSummary:
+      description: >
+        Deliberately excludes entity-service's per-category time breakdowns,
+        issueComplexity, workLogComment, rejectionReason, and the
+        eligible-approvers list — internal WSO2 support bookkeeping never
+        exposed to the customer portal.
+      type: object
+      properties:
+        id:
+          type: string
+        totalTime:
+          type: number
+        workDate:
+          type: string
+        hasBillable:
+          type: boolean
+        state:
+          type: string
+          nullable: true
+        user:
+          $ref: '#/components/schemas/Ref'
+        approvedBy:
+          $ref: '#/components/schemas/Ref'
+        project:
+          $ref: '#/components/schemas/Ref'
+        case:
+          $ref: '#/components/schemas/TimeCardCaseRef'
+
+    SearchTimeCardsResponse:
+      type: object
+      properties:
+        timeCards:
+          type: array
+          items:
+            $ref: '#/components/schemas/TimeCardSummary'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    # ---- ai chat ----
+    #
+    # internal/aichatagent is a separate Python service unrelated to
+    # cs-tools/entity-service — see this backend's CLAUDE.md, "The AI chat agent".
+
+    CaseClassificationRequest:
+      type: object
+      required: [chatHistory, envProducts, region, tier, projectTypeId]
+      properties:
+        chatHistory:
+          type: string
+        envProducts:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        region:
+          type: string
+        tier:
+          type: string
+        projectTypeId:
+          type: string
+
+    CaseClassificationResponse:
+      type: object
+      properties:
+        issueType:
+          type: string
+        severityLevel:
+          type: string
+        caseInfo:
+          type: object
+          properties:
+            description:
+              type: string
+            shortDescription:
+              type: string
+            productName:
+              type: string
+            productVersion:
+              type: string
+            environment:
+              type: string
+            tier:
+              type: string
+            region:
+              type: string
+
+    RecommendationRequest:
+      type: object
+      required: [chatHistory, conversationData]
+      properties:
+        chatHistory:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+              content:
+                type: string
+              timestamp:
+                type: string
+        conversationData:
+          type: object
+          properties:
+            chatHistory:
+              type: string
+            envProducts:
+              type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+            region:
+              type: string
+            tier:
+              type: string
+
+    RecommendationResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        recommendations:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              articleId:
+                type: string
+              score:
+                type: number
+
+    ChatMessageRequest:
+      description: >
+        Sends a follow-up message on an existing conversation only — there is
+        no entity-service createConversation yet (see CLAUDE.md).
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        envProducts:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        region:
+          type: string
+        tier:
+          type: string
+
+    ChatResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        conversationId:
+          type: string
+        intent:
+          type: object
+          nullable: true
+          properties:
+            intentId:
+              type: string
+            intentLabel:
+              type: string
+            confidence:
+              type: number
+            severity:
+              type: string
+            caseType:
+              type: string
+        slotState:
+          type: object
+          nullable: true
+          properties:
+            intentId:
+              type: string
+            filledSlots:
+              type: object
+              additionalProperties:
+                type: string
+            missingSlots:
+              type: array
+              items:
+                type: string
+            isComplete:
+              type: boolean
+            slotOptions:
+              type: array
+              items:
+                type: object
+                properties:
+                  slot:
+                    type: string
+                  label:
+                    type: string
+                  options:
+                    type: array
+                    items:
+                      type: string
+                  type:
+                    type: string
+        actions:
+          type: array
+          nullable: true
+          items:
+            type: object
+            properties:
+              type:
+                type: string
+              label:
+                type: string
+              style:
+                type: string
+              payload:
+                type: object
+                additionalProperties: true
+        recommendations:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/RecommendationResponse'
+        resolved:
+          type: boolean
+          nullable: true
+        kbReferences:
+          type: array
+          nullable: true
+          items:
+            type: object
+            properties:
+              sysKbId:
+                type: string
+              title:
+                type: string
+
+    ConversationSummaryResponse:
+      type: object
+      properties:
+        conversationId:
+          type: string
+        messagesExchanged:
+          type: integer
+        troubleshootingAttempts:
+          type: integer
+        kbArticlesReviewed:
+          type: integer
+
+    SearchConversationsRequest:
+      description: >
+        projectIds is set server-side from the path parameter and any
+        client-supplied value in filters.projectIds is ignored.
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            projectIds:
+              type: array
+              items:
+                type: string
+            states:
+              type: array
+              items:
+                type: string
+            searchQuery:
+              type: string
+            createdByMe:
+              type: boolean
+        sortBy:
+          type: object
+          properties:
+            field:
+              type: string
+            order:
+              type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    ConversationSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        initialMessage:
+          type: string
+        messageCount:
+          type: integer
+        case:
+          $ref: '#/components/schemas/Ref'
+        state:
+          type: string
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+
+    SearchConversationsResponse:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationSummary'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
 
     # ---- change requests ----
 

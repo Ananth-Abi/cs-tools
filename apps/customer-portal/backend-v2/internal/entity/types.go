@@ -614,6 +614,33 @@ type CreateDeploymentResponse struct {
 	Deployment CreatedDeployment `json:"deployment"`
 }
 
+// UpdateDeploymentRequest is the input for PATCH /deployments/{id}. Either
+// detail fields (Name, Type, Description) or Active (to deactivate) must be
+// provided, but not both groups in the same request. Active can only be set
+// to false. Description uses json.RawMessage to preserve the three-state
+// absent/null/value semantics entity-service expects (see
+// UpdateDeployedProductRequest's doc comment for the same convention).
+type UpdateDeploymentRequest struct {
+	ID          string          `json:"-"`
+	Name        *string         `json:"name,omitempty"`
+	Type        *string         `json:"type,omitempty"`
+	Description json.RawMessage `json:"description,omitempty"`
+	Active      *bool           `json:"active,omitempty"`
+}
+
+// UpdatedDeployment carries the fields of a deployment that may change after an update.
+type UpdatedDeployment struct {
+	ID        string    `json:"id"`
+	UpdatedOn time.Time `json:"updatedOn"`
+	UpdatedBy string    `json:"updatedBy"`
+}
+
+// UpdateDeploymentResponse is entity-service's response for PATCH /deployments/{id}.
+type UpdateDeploymentResponse struct {
+	Message    string            `json:"message"`
+	Deployment UpdatedDeployment `json:"deployment"`
+}
+
 // --- deployed products ---
 
 // CreateDeployedProductRequest is the input for POST /deployed-products.
@@ -847,6 +874,75 @@ type SearchCaseActivitiesResponse struct {
 	HasMore  bool           `json:"hasMore"`
 }
 
+// --- comments ---
+//
+// Generic comments attached to any reference entity (case, conversation,
+// change_request, deployment, incident — see ReferenceType above) — distinct
+// from case-specific comments (see CreateCaseCommentRequest above).
+
+// CreateCommentRequest is the input for POST /comments. Type is always
+// CommentTypeComment for portal-originated comments — see
+// dto.BuildEntityCreateCommentRequest.
+type CreateCommentRequest struct {
+	ReferenceID   string        `json:"referenceId"`
+	ReferenceType ReferenceType `json:"referenceType"`
+	Type          CommentType   `json:"type"`
+	Content       string        `json:"content"`
+}
+
+// CommentUserRef holds user details embedded in a comment response.
+type CommentUserRef struct {
+	ID        string `json:"id"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+	FullName  string `json:"fullName"`
+}
+
+// CommentCreated carries the fields returned after creating a comment.
+type CommentCreated struct {
+	ID        string         `json:"id"`
+	CreatedOn time.Time      `json:"createdOn"`
+	CreatedBy CommentUserRef `json:"createdBy"`
+}
+
+// CreateCommentResponse is entity-service's response for POST /comments.
+type CreateCommentResponse struct {
+	Message string         `json:"message"`
+	Comment CommentCreated `json:"comment"`
+}
+
+// CommentFilters holds optional filter criteria for POST /comments/search.
+type CommentFilters struct {
+	Type *CommentType `json:"type,omitempty"`
+}
+
+// SearchCommentsRequest is the input for POST /comments/search.
+type SearchCommentsRequest struct {
+	ReferenceID   string          `json:"referenceId"`
+	ReferenceType ReferenceType   `json:"referenceType"`
+	Pagination    Pagination      `json:"pagination"`
+	Filters       *CommentFilters `json:"filters,omitempty"`
+}
+
+// CommentView is a single search result item from POST /comments/search.
+type CommentView struct {
+	ID          string         `json:"id"`
+	ReferenceID string         `json:"referenceId"`
+	Content     string         `json:"content"`
+	Type        CommentType    `json:"type"`
+	CreatedOn   time.Time      `json:"createdOn"`
+	CreatedBy   CommentUserRef `json:"createdBy"`
+}
+
+// SearchCommentsResponse is entity-service's response for POST /comments/search.
+type SearchCommentsResponse struct {
+	Comments []CommentView `json:"comments"`
+	Total    int           `json:"total"`
+	Limit    int           `json:"limit"`
+	Offset   int           `json:"offset"`
+	HasMore  bool          `json:"hasMore"`
+}
+
 // --- products ---
 //
 // Like accounts, entity-service returns a different wire shape for these
@@ -908,6 +1004,215 @@ type SearchProductVersionsResponse struct {
 	Limit           int                  `json:"limit"`
 	Offset          int                  `json:"offset"`
 	HasMore         bool                 `json:"hasMore"`
+}
+
+// --- product vulnerabilities ---
+
+// SearchProductVulnerabilitiesFilters holds the optional filter criteria for
+// a product vulnerability search.
+type SearchProductVulnerabilitiesFilters struct {
+	SearchQuery    string  `json:"searchQuery,omitempty"`
+	Priority       *string `json:"priority,omitempty"`
+	ProductName    string  `json:"productName,omitempty"`
+	ProductVersion string  `json:"productVersion,omitempty"`
+}
+
+// SearchProductVulnerabilitiesRequest is the input for POST /products/vulnerabilities/search.
+type SearchProductVulnerabilitiesRequest struct {
+	Filters    *SearchProductVulnerabilitiesFilters `json:"filters,omitempty"`
+	Pagination Pagination                           `json:"pagination"`
+}
+
+// ProductVulnerabilityView is entity-service's representation of a
+// vulnerability, returned both in search results and as the single-item
+// GET response.
+type ProductVulnerabilityView struct {
+	ID              string  `json:"id"`
+	CveID           string  `json:"cveId"`
+	VulnerabilityID string  `json:"vulnerabilityId"`
+	Priority        string  `json:"priority"`
+	ProductName     *string `json:"productName"`
+	ProductVersion  *string `json:"productVersion"`
+	ComponentName   string  `json:"componentName"`
+	Version         string  `json:"version"`
+	Type            string  `json:"type"`
+	ComponentType   *string `json:"componentType"`
+	UpdateLevel     *string `json:"updateLevel"`
+	UseCase         *string `json:"useCase"`
+	Justification   *string `json:"justification"`
+	Resolution      *string `json:"resolution"`
+}
+
+// SearchProductVulnerabilitiesResponse is entity-service's response for
+// POST /products/vulnerabilities/search.
+type SearchProductVulnerabilitiesResponse struct {
+	ProductVulnerabilities []ProductVulnerabilityView `json:"productVulnerabilities"`
+	Total                  int                        `json:"total"`
+	Limit                  int                        `json:"limit"`
+	Offset                 int                        `json:"offset"`
+}
+
+// --- catalogs ---
+
+// CatalogItem is a single selectable item within a service catalog.
+type CatalogItem struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// CatalogView represents a service catalog containing one or more catalog items.
+type CatalogView struct {
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	CatalogItems []CatalogItem `json:"catalogItems"`
+}
+
+// SearchCatalogsRequest is the input for POST /catalogs/search. DeployedProductID
+// scopes the search to catalogs available for that deployed product.
+type SearchCatalogsRequest struct {
+	DeployedProductID string     `json:"deployedProductId"`
+	Pagination        Pagination `json:"pagination"`
+}
+
+// SearchCatalogsResponse is entity-service's response for POST /catalogs/search.
+type SearchCatalogsResponse struct {
+	Catalogs []CatalogView `json:"catalogs"`
+	Total    int           `json:"total"`
+	Limit    int           `json:"limit"`
+	Offset   int           `json:"offset"`
+}
+
+// CatalogItemVariable describes a single variable (form field) on a catalog item.
+type CatalogItemVariable struct {
+	ID           string `json:"id"`
+	QuestionText string `json:"questionText"`
+	Order        int    `json:"order"`
+	Type         string `json:"type"`
+}
+
+// GetCatalogItemVariablesResponse is entity-service's response for
+// GET /catalogs/{catalogId}/items/{catalogItemId}/variables.
+type GetCatalogItemVariablesResponse struct {
+	Variables []CatalogItemVariable `json:"variables"`
+}
+
+// --- time cards ---
+
+// TimeCardFilters holds the optional filter criteria for a time card search.
+type TimeCardFilters struct {
+	ProjectIDs []string `json:"projectIds,omitempty"`
+	CaseID     *string  `json:"caseId,omitempty"`
+	StartDate  *string  `json:"startDate,omitempty"`
+	EndDate    *string  `json:"endDate,omitempty"`
+	States     []string `json:"states,omitempty"`
+}
+
+// TimeCardSort specifies the sort field and direction for time-card search results.
+type TimeCardSort struct {
+	Field string `json:"field,omitempty"`
+	Order string `json:"order,omitempty"`
+}
+
+// SearchTimeCardsRequest is the input for POST /time-cards/search. entity-service
+// also accepts userId/approverId/approvedById/userIds filters that scope results
+// to a specific WSO2 engineer — deliberately not exposed here since the portal
+// has no notion of a customer selecting a WSO2 engineer to filter by.
+type SearchTimeCardsRequest struct {
+	Filters    *TimeCardFilters `json:"filters,omitempty"`
+	SortBy     TimeCardSort     `json:"sortBy"`
+	Pagination Pagination       `json:"pagination"`
+}
+
+// TimeCardRef is a lightweight reference used for user, approvedBy, and project fields.
+type TimeCardRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// TimeCardCaseRef is a reference to the case associated with a time card.
+type TimeCardCaseRef struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Number string `json:"number"`
+}
+
+// TimeCardView is a single time card in search results. entity-service also
+// returns per-category time breakdowns (timeAnalyzing, timeSettingUp, etc.),
+// issueComplexity, workLogComment, rejectionReason, and the eligible-approvers
+// list — internal WSO2 support bookkeeping the Ballerina backend never
+// exposed to the customer portal either (see its thinner TimeCard type);
+// mirrored here only insofar as this backend actually decodes them, but see
+// dto.TimeCardSummary for what the portal exposes.
+type TimeCardView struct {
+	ID              string           `json:"id"`
+	TotalTime       float64          `json:"totalTime"`
+	WorkDate        string           `json:"workDate"`
+	HasBillable     bool             `json:"hasBillable"`
+	IssueComplexity *string          `json:"issueComplexity"`
+	WorkLogComment  *string          `json:"workLogComment"`
+	RejectionReason *string          `json:"rejectionReason"`
+	State           *string          `json:"state"`
+	User            *TimeCardRef     `json:"user"`
+	ApprovedBy      *TimeCardRef     `json:"approvedBy"`
+	Project         *TimeCardRef     `json:"project"`
+	Case            *TimeCardCaseRef `json:"case"`
+}
+
+// SearchTimeCardsResponse is entity-service's response for POST /time-cards/search.
+type SearchTimeCardsResponse struct {
+	TimeCards []TimeCardView `json:"timeCards"`
+	Total     int            `json:"total"`
+	Limit     int            `json:"limit"`
+	Offset    int            `json:"offset"`
+}
+
+// --- conversations ---
+//
+// Backing store for the AI chat feature's conversation threads. entity-service
+// currently only supports searching conversations — there is no create/update/
+// get-single route yet (see internal/handler/ai_chat.go's doc comment for the
+// features this blocks).
+
+// SearchConversationsFilters holds the optional filter criteria for a conversation search.
+type SearchConversationsFilters struct {
+	ProjectIDs  []string `json:"projectIds,omitempty"`
+	States      []string `json:"states,omitempty"`
+	SearchQuery string   `json:"searchQuery,omitempty"`
+	CreatedByMe bool     `json:"createdByMe,omitempty"`
+}
+
+// ConversationSort specifies the sort field and direction for conversation search results.
+type ConversationSort struct {
+	Field string `json:"field,omitempty"`
+	Order string `json:"order,omitempty"`
+}
+
+// SearchConversationsRequest is the input for POST /conversations/search.
+type SearchConversationsRequest struct {
+	Filters    SearchConversationsFilters `json:"filters"`
+	SortBy     ConversationSort           `json:"sortBy"`
+	Pagination Pagination                 `json:"pagination"`
+}
+
+// SearchConversationView is the conversation representation returned in search results.
+type SearchConversationView struct {
+	ID             *string    `json:"id"`
+	Number         *string    `json:"number"`
+	InitialMessage *string    `json:"initialMessage"`
+	MessageCount   int        `json:"messageCount"`
+	Project        *EntityRef `json:"project"`
+	Case           *EntityRef `json:"case"`
+	State          *string    `json:"state"`
+	CreatedOn      string     `json:"createdOn"`
+	CreatedBy      string     `json:"createdBy"`
+}
+
+// SearchConversationsResponse is entity-service's response for POST /conversations/search.
+type SearchConversationsResponse struct {
+	Conversations []SearchConversationView `json:"conversations"`
+	Total         int                      `json:"total"`
+	Offset        int                      `json:"offset"`
+	Limit         int                      `json:"limit"`
 }
 
 // --- change requests ---

@@ -10,3 +10,13 @@ endpoints:
     networkVisibilities:
       - Public
     schemaFilePath: openapi.yaml
+
+  - name: customer-portal-websocket
+    displayName: Customer Portal Websocket
+    service:
+      basePath: /
+      port: 8080
+    type: WS
+    networkVisibilities:
+      - Public
+    schemaFilePath: asyncapi.yaml
