@@ -33,6 +33,10 @@ import (
 // maxRequestBodyBytes caps request bodies accepted by search/create/update endpoints.
 const maxRequestBodyBytes = 1 << 20 // 1 MiB
 
+// maxZipUploadBytes caps the raw (non-JSON) binary body accepted by
+// POST /deployment-usages.
+const maxZipUploadBytes = 25 << 20 // 25 MiB
+
 // uuidRe validates path parameters that are expected to be UUIDs.
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -128,6 +132,23 @@ func readJSONBody(w http.ResponseWriter, r *http.Request) (body []byte, ok bool)
 	}
 	if !json.Valid(body) {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return nil, false
+	}
+	return body, true
+}
+
+// readBinaryBody caps r.Body at maxBytes and reads it fully, for endpoints
+// that accept a raw (non-JSON) request body. Writes the appropriate error
+// response and returns ok=false if the body is too large or unreadable.
+func readBinaryBody(w http.ResponseWriter, r *http.Request, maxBytes int64) (body []byte, ok bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, isTooLarge := err.(*http.MaxBytesError); isTooLarge {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return nil, false
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
 		return nil, false
 	}
 	return body, true

@@ -35,6 +35,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/productconsumption"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/scim"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/updates"
 )
@@ -100,6 +101,19 @@ func main() {
 	}
 	aiChatAgentWsClient := aichatagent.NewWSClient(aiChatAgentWsCfg)
 
+	// The product-consumption service is a separate service (not
+	// entity-service) that provisions deployment licenses; it also
+	// authenticates as the same shared OAuth2 app (see the Ballerina
+	// backend's Config.toml).
+	productConsumptionCfg := productconsumption.Config{
+		BaseURL:      mustEnv("PRODUCT_CONSUMPTION_BASE_URL"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
+		Scopes:       splitComma(os.Getenv("PRODUCT_CONSUMPTION_SCOPES")),
+	}
+	productConsumptionClient := productconsumption.NewClient(productConsumptionCfg)
+
 	userHandler := handler.NewUserHandler(entityClient, scimClient)
 	projectHandler := handler.NewProjectHandler(entityClient)
 	caseHandler := handler.NewCaseHandler(entityClient)
@@ -117,6 +131,7 @@ func main() {
 	timeCardHandler := handler.NewTimeCardHandler(entityClient)
 	aiChatHandler := handler.NewAIChatHandler(aiChatAgentClient, entityClient)
 	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient, splitComma(os.Getenv("WS_ALLOWED_ORIGINS")))
+	productConsumptionHandler := handler.NewProductConsumptionHandler(productConsumptionClient, entityClient)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -209,6 +224,11 @@ func main() {
 	mux.HandleFunc("POST /projects/{projectId}/conversations/{conversationId}/messages", aiChatHandler.SendConversationMessage)
 	mux.HandleFunc("GET /projects/{id}/conversations/{conversationId}/summary", aiChatHandler.GetConversationSummary)
 	mux.HandleFunc("GET /ws", webSocketHandler.HandleWebSocket)
+
+	// The product-consumption service is a separate service (not
+	// entity-service) — see internal/productconsumption's package doc comment.
+	mux.HandleFunc("POST /projects/{projectId}/deployments/{deploymentId}/license", productConsumptionHandler.GetDeploymentLicense)
+	mux.HandleFunc("POST /deployment-usages", productConsumptionHandler.ImportDeploymentUsage)
 
 	mux.HandleFunc("GET /updates/product-update-levels", updatesHandler.GetProductUpdateLevels)
 	mux.HandleFunc("POST /updates/levels/search", updatesHandler.SearchUpdatesBetweenUpdateLevels)
