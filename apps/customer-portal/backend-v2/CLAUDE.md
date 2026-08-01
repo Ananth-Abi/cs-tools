@@ -128,6 +128,12 @@ goroutine, processing one message at a time in a blocking loop, so there's no ne
 Ballerina implementation's explicit "already streaming" busy-flag/mutex — a second incoming message
 simply can't arrive until the handler returns from the first.
 
+Primary authorization on `GET /ws` is the same JWT middleware chain as every other route.
+`WebSocketHandler`'s `gorilla/websocket.Upgrader.CheckOrigin` adds a defense-in-depth check against
+cross-site WebSocket hijacking, restricting which browser `Origin`s may open the connection — set
+via the optional `WS_ALLOWED_ORIGINS` env var (comma-separated; unset allows any origin, local
+development only).
+
 ## Middleware chain
 
 `SecurityHeaders → CorrelationID → Auth → Logger → Mux`

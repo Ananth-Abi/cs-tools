@@ -116,7 +116,7 @@ func main() {
 	catalogHandler := handler.NewCatalogHandler(entityClient)
 	timeCardHandler := handler.NewTimeCardHandler(entityClient)
 	aiChatHandler := handler.NewAIChatHandler(aiChatAgentClient, entityClient)
-	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient)
+	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient, splitComma(os.Getenv("WS_ALLOWED_ORIGINS")))
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),

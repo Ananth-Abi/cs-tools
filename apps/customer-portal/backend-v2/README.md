@@ -118,6 +118,7 @@ A separate Python service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#t
 | `AI_CHAT_AGENT_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 | `AI_CHAT_AGENT_WS_BASE_URL` | Base URL of the AI chat agent's WebSocket endpoint |
 | `AI_CHAT_AGENT_WS_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+| `WS_ALLOWED_ORIGINS` | Comma-separated browser Origins allowed to open `GET /ws` (optional — defense in depth against cross-site WebSocket hijacking; unset allows any origin, local development only) |
 
 ### Auth
 

@@ -66,16 +66,28 @@ type WebSocketHandler struct {
 }
 
 // NewWebSocketHandler creates a WebSocketHandler backed by the given AI chat
-// agent WebSocket client and entity client.
-func NewWebSocketHandler(ai wsStreamer, entityClient entityCommentCreator) *WebSocketHandler {
+// agent WebSocket client and entity client. allowedOrigins restricts which
+// browser Origins may open this connection (defense in depth against
+// cross-site WebSocket hijacking) — pass nil/empty to allow any origin,
+// e.g. for local development.
+func NewWebSocketHandler(ai wsStreamer, entityClient entityCommentCreator, allowedOrigins []string) *WebSocketHandler {
+	allowed := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[o] = true
+	}
 	return &WebSocketHandler{
 		ai:     ai,
 		entity: entityClient,
 		upgrade: websocket.Upgrader{
-			// Authorization is enforced by the same JWT middleware chain as
-			// every other route (see cmd/server/main.go); Origin is not used
-			// as a second gate here.
-			CheckOrigin: func(_ *http.Request) bool { return true },
+			// Primary authorization is still the same JWT middleware chain as
+			// every other route (see cmd/server/main.go); this Origin check is
+			// defense in depth against cross-site WebSocket hijacking. A
+			// non-browser caller (e.g. a server-to-server client) sends no
+			// Origin header at all and is allowed through either way.
+			CheckOrigin: func(r *http.Request) bool {
+				origin := r.Header.Get("Origin")
+				return origin == "" || len(allowed) == 0 || allowed[origin]
+			},
 		},
 	}
 }
