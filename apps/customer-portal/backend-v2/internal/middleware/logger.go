@@ -50,6 +50,35 @@ func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return hijacker.Hijack()
 }
 
+// deadlineSetter matches the unexported interface net/http's response type
+// implements, which http.ResponseController relies on via a type assertion.
+type deadlineSetter interface {
+	SetWriteDeadline(time.Time) error
+	SetReadDeadline(time.Time) error
+}
+
+// SetWriteDeadline and SetReadDeadline forward to the underlying
+// ResponseWriter, for the same reason Hijack does above: they let
+// http.NewResponseController(w).SetWriteDeadline/SetReadDeadline work through
+// this wrapper — used by handlers whose upstream call chain can legitimately
+// exceed the server's global WriteTimeout (see
+// internal/handler/product_consumption.go's GetDeploymentLicense).
+func (rw *responseWriter) SetWriteDeadline(deadline time.Time) error {
+	ds, ok := rw.ResponseWriter.(deadlineSetter)
+	if !ok {
+		return fmt.Errorf("underlying ResponseWriter does not support setting a write deadline")
+	}
+	return ds.SetWriteDeadline(deadline)
+}
+
+func (rw *responseWriter) SetReadDeadline(deadline time.Time) error {
+	ds, ok := rw.ResponseWriter.(deadlineSetter)
+	if !ok {
+		return fmt.Errorf("underlying ResponseWriter does not support setting a read deadline")
+	}
+	return ds.SetReadDeadline(deadline)
+}
+
 // Logger is an HTTP middleware that logs each completed request via slog. The
 // correlation ID is included automatically in every record when ConfigureLogger
 // has been called (it is attached by the ctxHandler from the context).

@@ -86,10 +86,11 @@ private `do()` shape as `internal/entity`:
   struct, so it's merged directly into `dto.UserMeResponse`/`dto.UserUpdateResponse` in
   `internal/handler/users.go` — again no separate mapping layer needed.
 
-All four service clients (entity, updates, SCIM, the AI chat agent) authenticate as the same shared
-OAuth2 client-credentials app in `cmd/server/main.go` — only each service's `*_BASE_URL`/`*_SCOPES`
-env vars differ (confirmed against the Ballerina backend's `Config.toml`, where every module,
-including the AI chat agent's WebSocket variant, declares the same `clientId`/`tokenUrl`).
+All five service clients (entity, updates, SCIM, the AI chat agent, the product-consumption
+service) authenticate as the same shared OAuth2 client-credentials app in `cmd/server/main.go` —
+only each service's `*_BASE_URL`/`*_SCOPES` env vars differ (confirmed against the Ballerina
+backend's `Config.toml`, where every module, including the AI chat agent's WebSocket variant,
+declares the same `clientId`/`tokenUrl`).
 
 ## The AI chat agent
 
@@ -160,7 +161,12 @@ It backs two routes:
   yet. Read the whole function before touching it — a subtly wrong condition could create a
   duplicate WSO2 API Manager application. The handler first calls `entity.GetProject` purely as an
   access-control gate (mirroring the Ballerina backend), discarding the result — entity-service is
-  still the actual authorization boundary for "does this caller own this project."
+  still the actual authorization boundary for "does this caller own this project." Because up to 5
+  sequential upstream calls can plausibly exceed the server's global `WriteTimeout` (see
+  `cmd/server/main.go`) even when no single step is slow, the handler extends its own write
+  deadline via `http.NewResponseController(w).SetWriteDeadline` — which only works because
+  `middleware.responseWriter` forwards `SetWriteDeadline`/`SetReadDeadline` to the underlying
+  `ResponseWriter`, the same reason it forwards `Hijack` for the WebSocket route above.
 - `POST /deployment-usages` — imports a deployment-usage zip file. Unlike every other endpoint in
   this backend, the request body is **raw binary**, not JSON — see `readBinaryBody` in
   `internal/handler/response.go` (a `readJSONBody` counterpart with a larger size cap,

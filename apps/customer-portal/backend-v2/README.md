@@ -83,8 +83,9 @@ Copy `.env.example` to `.env` and fill in the values.
 
 ### Shared OAuth2 client credentials
 
-Every upstream service client (entity-service, updates, SCIM, the AI chat agent) authenticates as
-the same OAuth2 client-credentials app — only each service's base URL and scopes differ.
+Every upstream service client (entity-service, updates, SCIM, the AI chat agent, the
+product-consumption service) authenticates as the same OAuth2 client-credentials app — only each
+service's base URL and scopes differ.
 
 | Variable | Description |
 |---|---|

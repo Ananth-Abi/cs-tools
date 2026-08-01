@@ -94,7 +94,7 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+func (c *Client) do(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
 	var reqBody io.Reader
 	if len(body) > 0 {
 		reqBody = bytes.NewReader(body)
@@ -105,7 +105,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 		return nil, fmt.Errorf("productconsumption: build request %s %s: %w", method, path, err)
 	}
 	if len(body) > 0 {
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 	}
 
 	resp, err := c.http.Do(req)
@@ -140,11 +140,26 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody, out any) er
 	if err != nil {
 		return fmt.Errorf("productconsumption: encode request for POST %s: %w", path, err)
 	}
-	body, err := c.do(ctx, http.MethodPost, path, payload)
+	body, err := c.do(ctx, http.MethodPost, path, "application/json", payload)
 	if err != nil {
 		return err
 	}
 	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("productconsumption: decode response for POST %s: %w", path, err)
+	}
+	return nil
+}
+
+// postText issues a POST with a raw text/plain body — used only for
+// subscribeApplication, which mirrors the Ballerina backend's
+// `.post(applicationId)` call: Ballerina's http:Client sends a bare `string`
+// payload as raw text/plain, not a JSON-quoted string.
+func (c *Client) postText(ctx context.Context, path, body string, out any) error {
+	respBody, err := c.do(ctx, http.MethodPost, path, "text/plain", []byte(body))
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(respBody, out); err != nil {
 		return fmt.Errorf("productconsumption: decode response for POST %s: %w", path, err)
 	}
 	return nil
@@ -155,7 +170,7 @@ func (c *Client) patchJSON(ctx context.Context, path string, reqBody, out any) e
 	if err != nil {
 		return fmt.Errorf("productconsumption: encode request for PATCH %s: %w", path, err)
 	}
-	body, err := c.do(ctx, http.MethodPatch, path, payload)
+	body, err := c.do(ctx, http.MethodPatch, path, "application/json", payload)
 	if err != nil {
 		return err
 	}

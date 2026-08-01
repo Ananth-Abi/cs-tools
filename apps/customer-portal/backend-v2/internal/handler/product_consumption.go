@@ -21,12 +21,20 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/dto"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/productconsumption"
 )
+
+// licenseProvisioningWriteDeadline extends the response write deadline for
+// GetDeploymentLicense beyond the server's global WriteTimeout (see
+// cmd/server/main.go) — ProcessLicenseDownload can make up to 5 sequential
+// upstream requests, which can plausibly exceed the global timeout under
+// normal network latency even though no single step is slow.
+const licenseProvisioningWriteDeadline = 2 * time.Minute
 
 // productConsumptionClient abstracts the upstream product-consumption
 // service operations used by ProductConsumptionHandler.
@@ -63,6 +71,10 @@ func (h *ProductConsumptionHandler) GetDeploymentLicense(w http.ResponseWriter, 
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
 		return
 	}
+
+	// See licenseProvisioningWriteDeadline's doc comment. Best-effort: an
+	// unrecognized ResponseWriter simply keeps the server's default timeout.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(licenseProvisioningWriteDeadline))
 
 	projectID := r.PathValue("projectId")
 	deploymentID := r.PathValue("deploymentId")
