@@ -5,8 +5,9 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 35 routes listed below are implemented so far, across
-entity-service, the WSO2 Updates service, and SCIM. Everything else the Ballerina backend exposes
+This is a work in progress — only the 50 routes listed below are implemented so far, across
+entity-service, the WSO2 Updates service, SCIM, and the AI chat agent (a separate Python service —
+see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent)). Everything else the Ballerina backend exposes
 still needs a Go handler; add them following the pattern described in
 [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
 
@@ -28,9 +29,9 @@ Backend starts at `http://localhost:8080`.
 - Entry point: `cmd/server/main.go`
 - Authentication:
   - Incoming requests: JWT Bearer token; pass as `x-jwt-assertion` header when testing locally
-  - Outbound calls to entity-service, the Updates service, and SCIM: OAuth2 client credentials
-    grant, shared across all three (optional — entity-service itself does not validate inbound
-    credentials, see [CLAUDE.md](./CLAUDE.md))
+  - Outbound calls to entity-service, the Updates service, SCIM, and the AI chat agent: OAuth2
+    client credentials grant, shared across all four (optional — entity-service itself does not
+    validate inbound credentials, see [CLAUDE.md](./CLAUDE.md))
 
 ## Prerequisites
 
@@ -39,6 +40,8 @@ Backend starts at `http://localhost:8080`.
   `GET`/`PATCH /users/me` require `DATA_SOURCE=servicenow`)
 - A running instance of the WSO2 Updates service and the SCIM operations service (for the
   `/updates/*` routes and phone-number fields on `/users/me`)
+- A running instance of the AI chat agent (a separate Python service, not entity-service — for
+  `/cases/classify`, `/conversations/*`, `/projects/*/conversations/*`, and `/ws`)
 
 ## Testing
 
@@ -77,8 +80,8 @@ Copy `.env.example` to `.env` and fill in the values.
 
 ### Shared OAuth2 client credentials
 
-Every upstream service client (entity-service, updates, SCIM) authenticates as the same OAuth2
-client-credentials app — only each service's base URL and scopes differ.
+Every upstream service client (entity-service, updates, SCIM, the AI chat agent) authenticates as
+the same OAuth2 client-credentials app — only each service's base URL and scopes differ.
 
 | Variable | Description |
 |---|---|
@@ -104,6 +107,17 @@ client-credentials app — only each service's base URL and scopes differ.
 |---|---|
 | `SCIM_BASE_URL` | Base URL of the SCIM operations service |
 | `SCIM_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+
+### AI chat agent
+
+A separate Python service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent).
+
+| Variable | Description |
+|---|---|
+| `AI_CHAT_AGENT_BASE_URL` | Base URL of the AI chat agent's HTTP API |
+| `AI_CHAT_AGENT_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+| `AI_CHAT_AGENT_WS_BASE_URL` | Base URL of the AI chat agent's WebSocket endpoint |
+| `AI_CHAT_AGENT_WS_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 
 ### Auth
 
@@ -139,7 +153,12 @@ backend-v2/
 │   │   ├── attachments.go       # CreateAttachment, SearchAttachments, GetAttachmentContent, DeleteAttachment
 │   │   ├── products.go          # SearchProducts, SearchProductVersions
 │   │   ├── change_requests.go   # create/search/get/update, approvals get/decide
-│   │   └── call_requests.go     # CreateCallRequest, SearchCallRequests, UpdateCallRequest
+│   │   ├── call_requests.go     # CreateCallRequest, SearchCallRequests, UpdateCallRequest
+│   │   ├── comments.go          # CreateComment, SearchComments (generic, any reference entity)
+│   │   ├── conversations.go     # SearchConversations
+│   │   ├── product_vulnerabilities.go # SearchProductVulnerabilities, GetProductVulnerability
+│   │   ├── catalogs.go          # SearchCatalogs, GetCatalogItemVariables
+│   │   └── time_cards.go        # SearchTimeCards
 │   ├── updates/                 # OAuth2 HTTP client for the WSO2 Updates service
 │   │   ├── client.go            # Config/Client/do()
 │   │   ├── types.go             # upstream (snake_case) vs portal (camelCase) structs
@@ -149,6 +168,10 @@ backend-v2/
 │   │   ├── client.go            # Config/Client/do()
 │   │   ├── types.go
 │   │   └── scim.go              # SearchUser, UpdateUserPhone
+│   ├── aichatagent/              # OAuth2 HTTP + WebSocket client for the AI chat agent (not entity-service)
+│   │   ├── client.go            # Config/Client/do()/getJSON()/postJSON()
+│   │   ├── types.go             # AI chat agent's wire-format structs
+│   │   └── ws.go                # WSConfig/WSClient/StreamChat — proxies the upstream WebSocket
 │   ├── dto/                     # Portal-facing response shapes + Map* functions from entity types
 │   │   ├── user.go
 │   │   ├── account.go
@@ -158,6 +181,11 @@ backend-v2/
 │   │   ├── deployed_product.go
 │   │   ├── attachment.go
 │   │   ├── product.go
+│   │   ├── product_vulnerability.go
+│   │   ├── catalog.go
+│   │   ├── time_card.go
+│   │   ├── comment.go
+│   │   ├── ai_chat.go
 │   │   ├── change_request.go
 │   │   └── call_request.go
 │   ├── middleware/
@@ -171,10 +199,16 @@ backend-v2/
 │       ├── accounts.go          # POST /accounts/search, GET /accounts/{id}
 │       ├── projects.go          # POST /projects/search, GET /projects/{id}
 │       ├── cases.go             # cases search/get/create/update/comment/activities
-│       ├── deployments.go       # POST /deployments/search, POST /deployments
+│       ├── deployments.go       # POST /deployments/search, POST /deployments, PATCH /deployments/{id}
 │       ├── deployed_products.go # deployed-product search/create/update
 │       ├── attachments.go       # attachment create/search/download/delete
 │       ├── products.go          # POST /products/search, POST /products/{id}/versions/search
+│       ├── product_vulnerabilities.go # vulnerability search/get
+│       ├── catalogs.go          # catalog search, catalog item variables
+│       ├── time_cards.go        # POST /time-cards/search
+│       ├── comments.go          # generic comment create/search
+│       ├── ai_chat.go           # case classification, recommendations, conversation search/messages/summary
+│       ├── websocket.go         # GET /ws — real-time AI chat proxy
 │       ├── change_requests.go   # change-request create/search/get/update/approvals
 │       ├── call_requests.go     # call-request create/search/update
 │       └── updates.go           # GET /updates/product-update-levels, POST /updates/levels/search
@@ -201,6 +235,7 @@ backend-v2/
 - `POST /cases/{id}/comments` — add a comment to a case (always a plain customer comment)
 - `POST /deployments/search` — search deployments
 - `POST /deployments` — create a deployment (ServiceNow data source only)
+- `PATCH /deployments/{id}` — update a deployment's name/type/description, or deactivate it
 - `POST /deployed-products/search` — search deployed products
 - `POST /deployed-products` — create a deployed product (ServiceNow data source only)
 - `PATCH /deployed-products/{id}` — update a deployed product's cores/tps/description, or deactivate it (ServiceNow data source only)
@@ -220,6 +255,20 @@ backend-v2/
 - `PATCH /call-requests/{id}` — update a call request (restricted, excludes agent-only fields — see CLAUDE.md; ServiceNow data source only)
 - `POST /products/search` — search products
 - `POST /products/{id}/versions/search` — search a product's versions
+- `POST /products/vulnerabilities/search` — search product vulnerabilities
+- `GET /products/vulnerabilities/{id}` — get a product vulnerability by ID
+- `POST /catalogs/search` — search service catalogs, scoped by deployedProductId
+- `GET /catalogs/{catalogId}/items/{catalogItemId}/variables` — get a catalog item's form variables
+- `POST /time-cards/search` — search time cards (read-only; ServiceNow data source only)
+- `POST /comments` — add a comment to any reference entity (case, conversation, change_request, deployment, incident) — always a plain customer comment
+- `POST /comments/search` — search comments on a reference entity — always filtered to plain customer comments
+- `POST /cases/classify` — classify a chat transcript into a case type/severity via the AI chat agent
+- `POST /conversations/recommendations/search` — get KB article recommendations via the AI chat agent
+- `POST /projects/{id}/conversations/search` — search a project's AI chat conversations
+- `GET /conversations/{id}/messages` — get a conversation's messages (backed by generic comment search)
+- `POST /projects/{projectId}/conversations/{conversationId}/messages` — send a follow-up message on an existing conversation
+- `GET /projects/{id}/conversations/{conversationId}/summary` — get a conversation's summary via the AI chat agent
+- `GET /ws?sessionId={projectId}` — WebSocket: real-time AI chat proxy for an existing conversation (see CLAUDE.md — starting a brand-new conversation isn't supported yet)
 - `GET /updates/product-update-levels` — list product update levels
 - `POST /updates/levels/search` — search update descriptions between two update levels
 
@@ -355,6 +404,59 @@ curl -X POST http://localhost:8080/call-requests/search \
 curl -X PATCH http://localhost:8080/call-requests/<call-request-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"state":"customer_rejected","cancellationReason":"No longer needed"}'
+
+curl -X PATCH http://localhost:8080/deployments/<deployment-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"name":"Production (EU)"}'
+
+curl -X POST http://localhost:8080/products/vulnerabilities/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0},"filters":{"productName":"wso2am"}}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/products/vulnerabilities/<vulnerability-id>
+
+curl -X POST http://localhost:8080/catalogs/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"deployedProductId":"<deployed-product-id>","pagination":{"limit":10,"offset":0}}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/catalogs/<catalog-id>/items/<catalog-item-id>/variables
+
+curl -X POST http://localhost:8080/time-cards/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0},"filters":{"projectIds":["<project-id>"]}}'
+
+curl -X POST http://localhost:8080/comments \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"referenceId":"<change-request-id>","referenceType":"change_request","content":"Any update?"}'
+
+curl -X POST http://localhost:8080/comments/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"referenceId":"<change-request-id>","referenceType":"change_request","pagination":{"limit":10,"offset":0}}'
+
+curl -X POST http://localhost:8080/cases/classify \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"chatHistory":"user: my API gateway is down\n","envProducts":{},"region":"EU","tier":"gold","projectTypeId":"<project-type-id>"}'
+
+curl -X POST http://localhost:8080/conversations/recommendations/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"chatHistory":[{"role":"user","content":"my API gateway is down","timestamp":"2026-08-01T10:00:00Z"}],"conversationData":{"chatHistory":"user: my API gateway is down","envProducts":{},"region":"EU","tier":"gold"}}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/conversations/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"filters":{},"sortBy":{},"pagination":{"limit":10,"offset":0}}'
+
+curl -H "x-jwt-assertion: $JWT" "http://localhost:8080/conversations/<conversation-id>/messages?limit=20&offset=0"
+
+curl -X POST http://localhost:8080/projects/<project-id>/conversations/<conversation-id>/messages \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"message":"It is still down","region":"EU","tier":"gold"}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/conversations/<conversation-id>/summary
+
+# WebSocket (real-time chat proxy) — resumes an existing conversation only, see CLAUDE.md.
+# Using websocat (https://github.com/vi/websocat) as an example client:
+websocat "ws://localhost:8080/ws?sessionId=<project-id>" -H "x-jwt-assertion: $JWT"
+# then send: {"message":"still seeing the error","conversationId":"<conversation-id>"}
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/updates/product-update-levels
 

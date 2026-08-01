@@ -6,22 +6,33 @@ responses for the frontend. This is a Go rewrite of the Ballerina backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** 35 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
+**Status: in progress.** 50 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
 `POST /accounts/search`, `GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
 `POST /cases/search`, `GET /cases/{id}`, `POST /cases`, `PATCH /cases/{id}`,
 `POST /cases/{id}/comments`, `POST /cases/{id}/activities/search`, `POST /deployments/search`,
-`POST /deployments`, `POST /deployed-products/search`, `POST /deployed-products`,
-`PATCH /deployed-products/{id}`, `POST /attachments`, `POST /attachments/search`,
-`GET /attachments/{id}/content`, `DELETE /attachments/{id}`, `POST /products/search`,
-`POST /products/{id}/versions/search`, `POST /change-requests`, `POST /change-requests/search`,
-`GET /change-requests/{id}`, `PATCH /change-requests/{id}`, `GET /change-requests/{id}/approvals`,
-`POST /change-requests/{id}/approvals/decision`, `POST /call-requests`,
-`POST /call-requests/search`, `PATCH /call-requests/{id}`, `GET /updates/product-update-levels`,
-`POST /updates/levels/search`) across three upstream services: entity-service, the WSO2 Updates
-service, and SCIM. The Ballerina backend exposes ~100 routes across many more modules (generic
-comments, conversations, catalogs, time cards, registry tokens, contacts, escalations, product
-vulnerabilities, incidents, problems, task SLAs, tasks, groups/service-offerings/configuration-items,
-AI chat/websocket, etc.) — none of those are ported yet. Follow the recipe below to add the next one.
+`POST /deployments`, `PATCH /deployments/{id}`, `POST /deployed-products/search`,
+`POST /deployed-products`, `PATCH /deployed-products/{id}`, `POST /attachments`,
+`POST /attachments/search`, `GET /attachments/{id}/content`, `DELETE /attachments/{id}`,
+`POST /products/search`, `POST /products/{id}/versions/search`,
+`POST /products/vulnerabilities/search`, `GET /products/vulnerabilities/{id}`,
+`POST /catalogs/search`, `GET /catalogs/{catalogId}/items/{catalogItemId}/variables`,
+`POST /time-cards/search`, `POST /comments`, `POST /comments/search`, `POST /change-requests`,
+`POST /change-requests/search`, `GET /change-requests/{id}`, `PATCH /change-requests/{id}`,
+`GET /change-requests/{id}/approvals`, `POST /change-requests/{id}/approvals/decision`,
+`POST /call-requests`, `POST /call-requests/search`, `PATCH /call-requests/{id}`,
+`POST /cases/classify`, `POST /conversations/recommendations/search`,
+`POST /projects/{id}/conversations/search`, `GET /conversations/{id}/messages`,
+`POST /projects/{projectId}/conversations/{conversationId}/messages`,
+`GET /projects/{id}/conversations/{conversationId}/summary`, `GET /ws`,
+`GET /updates/product-update-levels`, `POST /updates/levels/search`) across four upstream
+services: entity-service, the WSO2 Updates service, SCIM, and the AI chat agent (see "The AI chat
+agent" below — unlike the other three, it isn't entity-service-backed at all). The Ballerina
+backend exposes ~100 routes across many more modules (registry tokens, escalations, incidents,
+problems, task SLAs, tasks, groups/service-offerings/configuration-items, account/project contacts,
+project update, generic user search, etc.) — none of those are ported yet, several because they
+have no genuine equivalent on `cs-tools/entity-service` or aren't actually customer-portal features
+at all (see "Which entity-service" below on how to tell the difference before porting one). Follow
+the recipe below to add the next one.
 
 ## Which entity-service
 
@@ -36,6 +47,22 @@ deployment will 404 on those. If the Ballerina backend has an endpoint with no `
 equivalent at all (e.g. `GET /metadata` — entity-service has no metadata endpoint), do not invent
 one; add a code comment at the call site noting the gap and flag it instead of fabricating a
 response.
+
+**Existing on `cs-tools/entity-service` is necessary but not sufficient — also confirm the
+Ballerina backend actually exposes it as a customer-portal feature.** `cs-tools/entity-service`
+implements plenty of routes this backend should *not* port: some are genuinely customer-facing but
+belong to a different portal (e.g. `POST /cases/{id}/github-issues` — filing an engineering bug
+against an internal repo is a support-agent action with zero precedent anywhere in the Ballerina
+customer-portal backend), and some read like customer features but the Ballerina backend actually
+serves the equivalent from an entirely different, non-`cs-tools` microservice (e.g.
+`POST /accounts/{id}/contacts/search` / `POST /projects/{id}/contacts/search` look like read
+analogues of the Ballerina backend's project-contact endpoints, but those are actually backed by
+the separate `user_management` module/microservice, not entity-service at all — porting the
+`cs-tools/entity-service` version would expose a different, unrelated dataset under a
+similar-looking URL). Before implementing anything new, grep
+`apps/customer-portal/backend/modules/entity/entity.bal` (or the relevant sibling module) for the
+Ballerina function that would call it, and check what it actually resolves to — a route only earns
+a place in this backend once both checks pass.
 
 ## Other upstream services
 
@@ -54,9 +81,52 @@ private `do()` shape as `internal/entity`:
   struct, so it's merged directly into `dto.UserMeResponse`/`dto.UserUpdateResponse` in
   `internal/handler/users.go` — again no separate mapping layer needed.
 
-All three service clients (entity, updates, SCIM) authenticate as the same shared OAuth2
-client-credentials app in `cmd/server/main.go` — only each service's `*_BASE_URL`/`*_SCOPES` env
-vars differ.
+All four service clients (entity, updates, SCIM, the AI chat agent) authenticate as the same shared
+OAuth2 client-credentials app in `cmd/server/main.go` — only each service's `*_BASE_URL`/`*_SCOPES`
+env vars differ (confirmed against the Ballerina backend's `Config.toml`, where every module,
+including the AI chat agent's WebSocket variant, declares the same `clientId`/`tokenUrl`).
+
+## The AI chat agent
+
+`internal/aichatagent` is a fourth upstream client, but unlike entity/updates/SCIM it talks to a
+**separate Python service that has no relationship to `cs-tools/entity-service` at all** — see
+`apps/customer-portal/backend`'s `modules/ai_chat_agent` for the Ballerina backend's equivalent
+client. It has its own HTTP API (`internal/aichatagent/client.go`) and a distinct WebSocket
+endpoint (`internal/aichatagent/ws.go`, using `github.com/gorilla/websocket` — the one third-party
+dependency in this otherwise-stdlib-only backend, since `net/http` has no server-side WebSocket
+support).
+
+`internal/handler/ai_chat.go` (case classification, KB recommendations, conversation search,
+conversation messages, conversation summary) and `internal/handler/websocket.go` (the real-time
+chat proxy) both mix calls to the AI agent with calls to entity-service's conversation/comment
+routes — mirroring the Ballerina backend's own design (a conversation thread lives in
+entity-service; the AI agent only handles the live message exchange). Three entity-service gaps
+block a full 1:1 port, all flagged with `TODO(entity-service)` at their call sites rather than
+worked around — do not build a workaround for these; wait for the actual entity-service methods:
+
+- **No `createConversation` / `updateConversation`** — only `POST /conversations/search` exists
+  (see `internal/entity/conversations.go`). This blocks: starting a brand-new AI chat conversation
+  (`POST /projects/{id}/conversations` from the Ballerina backend is not ported at all — there is no
+  way to mint a conversation ID), and marking a conversation `resolved` when the AI agent reports
+  `resolved: true` (skipped in both `internal/handler/ai_chat.go`'s `SendConversationMessage` and
+  `internal/handler/websocket.go`).
+- **No `createdBy` override on `entity.CreateCommentRequest`** — the Ballerina backend attributes
+  the AI agent's own reply to a special "chat agent" identity when saving it as a comment;
+  `cs-tools/entity-service` always attributes a created comment to the caller's own authenticated
+  identity. Since there is no way to correctly attribute the AI's reply, this backend does **not**
+  save it as a comment at all (only the customer's own message is saved, since that attribution is
+  correct as-is) — saving it under the wrong identity would be worse than not saving it.
+
+`GET /ws?sessionId={projectId}` keeps the Ballerina backend's query parameter name for wire
+compatibility even though it actually carries the *project* ID, not a session ID — the AI agent's
+own per-conversation session key is derived as `"{projectId}:{conversationId}"` inside the handler.
+Because a brand-new conversation can't be created (see above), this endpoint only supports
+*resuming* an existing conversation — the browser must supply a `conversationId` in its first
+message, or the handler returns an `error` event rather than silently failing. One simplification
+versus the Ballerina backend: Go's `http.Server` runs each upgraded connection in its own
+goroutine, processing one message at a time in a blocking loop, so there's no need for the
+Ballerina implementation's explicit "already streaming" busy-flag/mutex — a second incoming message
+simply can't arrive until the handler returns from the first.
 
 ## Middleware chain
 
@@ -110,6 +180,17 @@ here, it's resolved once in the mapper. Also deliberately excluded from account 
 technique — e.g. `ProductVersionView.ReleaseDate` is typed `*string` even though the Postgres shape
 is `time.Time` and the ServiceNow shape is a plain string, because a Go `*string` field decodes a
 JSON string value regardless of which the source type actually was.
+
+**When the Ballerina backend exposes a thinner shape than entity-service's own struct, match the
+Ballerina backend, not entity-service.** `POST /time-cards/search`'s `dto.TimeCardSummary` excludes
+entity-service's per-category time breakdowns (`timeAnalyzing`, `timeSettingUp`, etc.),
+`issueComplexity`, `workLogComment`, `rejectionReason`, and the eligible-approvers list — not
+because any of them are individually dangerous, but because the Ballerina backend's own `TimeCard`
+type (`apps/customer-portal/backend/modules/entity/types.bal`) never exposed them either. When
+porting an endpoint, read the Ballerina backend's response type for the equivalent feature, not just
+the request/response pair on `cs-tools/entity-service` — the Ballerina shape is itself a design
+decision about what a customer should see, and entity-service's superset shouldn't leak through it
+by default.
 
 **`json.RawMessage` on a request field usually means "preserve three states," not "skip validation."**
 `entity.UpdateDeployedProductRequest.Description` is `json.RawMessage` specifically so entity-service
@@ -165,6 +246,13 @@ Two more examples, both in this same "restrict, don't mirror" category:
   labels these "agent-side fields, set when an engineer schedules or concludes the call." They're
   still exposed on the *read* side (`dto.CallRequestSummary`) since the customer should be able to
   see the outcome of their own call, just not set it themselves.
+- `POST /comments` / `POST /comments/search` (generic comments — distinct from `POST /cases/{id}/comments`,
+  these attach to any reference entity: case, conversation, change_request, deployment, incident)
+  restrict in *both* directions: `dto.BuildEntityCreateCommentRequest` forces `type: comment` on
+  write for the same reason as case comments, and `dto.BuildEntitySearchCommentsRequest` forces
+  `filters.type: comment` on **read** too — entity-service's search endpoint returns `work_note`
+  entries verbatim unless the caller filters them out, and those are internal WSO2 annotations that
+  must never reach the customer regardless of which reference entity they're attached to.
 
 **Not every field worth restricting is a security decision — some are just an unenforced entity-service
 scoping convenience.** `PATCH /deployed-products/{id}`'s `deploymentId` field looks similar to the

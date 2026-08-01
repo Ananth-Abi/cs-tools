@@ -31,6 +31,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/aichatagent"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/middleware"
@@ -76,6 +77,29 @@ func main() {
 	}
 	scimClient := scim.NewClient(scimCfg)
 
+	// The AI chat agent is a separate Python service (not entity-service),
+	// but authenticates as the same shared OAuth2 client-credentials app as
+	// entity/updates/scim above (see the Ballerina backend's Config.toml,
+	// where every module — including ai_chat_agent's WebSocket variant —
+	// reuses the same clientId/tokenUrl); only its base URLs differ.
+	aiChatAgentCfg := aichatagent.Config{
+		BaseURL:      mustEnv("AI_CHAT_AGENT_BASE_URL"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
+		Scopes:       splitComma(os.Getenv("AI_CHAT_AGENT_SCOPES")),
+	}
+	aiChatAgentClient := aichatagent.NewClient(aiChatAgentCfg)
+
+	aiChatAgentWsCfg := aichatagent.WSConfig{
+		BaseURL:      mustEnv("AI_CHAT_AGENT_WS_BASE_URL"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
+		Scopes:       splitComma(os.Getenv("AI_CHAT_AGENT_WS_SCOPES")),
+	}
+	aiChatAgentWsClient := aichatagent.NewWSClient(aiChatAgentWsCfg)
+
 	userHandler := handler.NewUserHandler(entityClient, scimClient)
 	projectHandler := handler.NewProjectHandler(entityClient)
 	caseHandler := handler.NewCaseHandler(entityClient)
@@ -87,6 +111,12 @@ func main() {
 	callRequestHandler := handler.NewCallRequestHandler(entityClient)
 	accountHandler := handler.NewAccountHandler(entityClient)
 	updatesHandler := handler.NewUpdatesHandler(updatesClient)
+	commentHandler := handler.NewCommentHandler(entityClient)
+	productVulnerabilityHandler := handler.NewProductVulnerabilityHandler(entityClient)
+	catalogHandler := handler.NewCatalogHandler(entityClient)
+	timeCardHandler := handler.NewTimeCardHandler(entityClient)
+	aiChatHandler := handler.NewAIChatHandler(aiChatAgentClient, entityClient)
+	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -120,6 +150,7 @@ func main() {
 	// POST /deployments only succeeds against entity-service's ServiceNow
 	// data source — see internal/entity/deployments.go.
 	mux.HandleFunc("POST /deployments", deploymentHandler.CreateDeployment)
+	mux.HandleFunc("PATCH /deployments/{id}", deploymentHandler.PatchDeployment)
 
 	mux.HandleFunc("POST /deployed-products/search", deployedProductHandler.SearchDeployedProducts)
 	// POST/PATCH /deployed-products only succeed against entity-service's
@@ -151,6 +182,33 @@ func main() {
 
 	mux.HandleFunc("POST /accounts/search", accountHandler.SearchAccounts)
 	mux.HandleFunc("GET /accounts/{id}", accountHandler.GetAccount)
+
+	mux.HandleFunc("POST /comments", commentHandler.CreateComment)
+	mux.HandleFunc("POST /comments/search", commentHandler.SearchComments)
+
+	mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
+	mux.HandleFunc("GET /products/vulnerabilities/{id}", productVulnerabilityHandler.GetProductVulnerability)
+
+	mux.HandleFunc("POST /catalogs/search", catalogHandler.SearchCatalogs)
+	mux.HandleFunc("GET /catalogs/{catalogId}/items/{catalogItemId}/variables", catalogHandler.GetCatalogItemVariables)
+
+	// entity-service only supports time cards on its ServiceNow data source —
+	// see internal/entity/time_cards.go.
+	mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
+
+	// AI chat feature: case classification and KB recommendations call the
+	// upstream AI chat agent directly; conversation search/messages/summary
+	// mix the AI agent with entity-service's conversation/comment routes.
+	// See handler.AIChatHandler and handler.WebSocketHandler's doc comments
+	// for the entity-service gaps (no createConversation/updateConversation,
+	// no comment createdBy override) this works around.
+	mux.HandleFunc("POST /cases/classify", aiChatHandler.ClassifyCase)
+	mux.HandleFunc("POST /conversations/recommendations/search", aiChatHandler.SearchRecommendations)
+	mux.HandleFunc("POST /projects/{id}/conversations/search", aiChatHandler.SearchConversations)
+	mux.HandleFunc("GET /conversations/{id}/messages", aiChatHandler.GetConversationMessages)
+	mux.HandleFunc("POST /projects/{projectId}/conversations/{conversationId}/messages", aiChatHandler.SendConversationMessage)
+	mux.HandleFunc("GET /projects/{id}/conversations/{conversationId}/summary", aiChatHandler.GetConversationSummary)
+	mux.HandleFunc("GET /ws", webSocketHandler.HandleWebSocket)
 
 	mux.HandleFunc("GET /updates/product-update-levels", updatesHandler.GetProductUpdateLevels)
 	mux.HandleFunc("POST /updates/levels/search", updatesHandler.SearchUpdatesBetweenUpdateLevels)

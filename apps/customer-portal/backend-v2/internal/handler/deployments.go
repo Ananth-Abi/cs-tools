@@ -32,6 +32,7 @@ import (
 type entityDeploymentClient interface {
 	SearchDeployments(ctx context.Context, req entity.SearchDeploymentsRequest) (entity.SearchDeploymentsResponse, error)
 	CreateDeployment(ctx context.Context, req entity.CreateDeploymentRequest) (entity.CreateDeploymentResponse, error)
+	UpdateDeployment(ctx context.Context, id string, req entity.UpdateDeploymentRequest) (entity.UpdateDeploymentResponse, error)
 }
 
 // DeploymentHandler handles HTTP requests for deployment operations.
@@ -104,4 +105,50 @@ func (h *DeploymentHandler) CreateDeployment(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSONValue(w, http.StatusCreated, dto.MapDeploymentCreate(result))
+}
+
+// PatchDeployment handles PATCH /deployments/{id}.
+func (h *DeploymentHandler) PatchDeployment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	// Decoded directly into entity-service's request struct (no restricted
+	// portal DTO) — every field here (name/type/description/active) is
+	// customer-appropriate, matching the deployed-product update endpoint.
+	var req entity.UpdateDeploymentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	// entity-service requires exactly one of the detail-fields group
+	// (name/type/description) or active=false — never both, never neither.
+	detailFieldsSet := req.Name != nil || req.Type != nil || len(req.Description) > 0
+	activeSet := req.Active != nil
+	if detailFieldsSet == activeSet {
+		writeError(w, http.StatusBadRequest, "Provide either name/type/description or active, but not both.")
+		return
+	}
+
+	result, err := h.entity.UpdateDeployment(r.Context(), id, req)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity UpdateDeployment failed", "userID", user.UserID, "deploymentID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to update deployment.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapDeploymentUpdate(result))
 }

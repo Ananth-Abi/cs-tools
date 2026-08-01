@@ -16,7 +16,11 @@
 
 package entity
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"net/url"
+)
 
 // SearchDeployments calls POST /deployments/search.
 func (c *Client) SearchDeployments(ctx context.Context, req SearchDeploymentsRequest) (SearchDeploymentsResponse, error) {
@@ -32,5 +36,13 @@ func (c *Client) SearchDeployments(ctx context.Context, req SearchDeploymentsReq
 func (c *Client) CreateDeployment(ctx context.Context, req CreateDeploymentRequest) (CreateDeploymentResponse, error) {
 	var out CreateDeploymentResponse
 	err := c.postJSON(ctx, "/deployments", req, &out)
+	return out, err
+}
+
+// UpdateDeployment calls PATCH /deployments/{id}.
+func (c *Client) UpdateDeployment(ctx context.Context, id string, req UpdateDeploymentRequest) (UpdateDeploymentResponse, error) {
+	req.ID = id // never serialized (json:"-"); set for consistency with the struct's doc comment
+	var out UpdateDeploymentResponse
+	err := c.patchJSON(ctx, fmt.Sprintf("/deployments/%s", url.PathEscape(id)), req, &out)
 	return out, err
 }

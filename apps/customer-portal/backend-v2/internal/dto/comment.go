@@ -1,0 +1,121 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package dto
+
+import (
+	"time"
+
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
+)
+
+// CommentCreateRequest is the portal's request shape for POST /comments.
+// entity-service also supports "work_note" and "activity" comment types, but
+// those are internal WSO2 support annotations — the customer portal only
+// ever lets a customer post a plain "comment"; see BuildEntityCreateCommentRequest.
+type CommentCreateRequest struct {
+	ReferenceID   string `json:"referenceId"`
+	ReferenceType string `json:"referenceType"`
+	Content       string `json:"content"`
+}
+
+// BuildEntityCreateCommentRequest converts the portal's comment request into
+// entity-service's request shape, forcing Type to "comment" regardless of
+// anything the caller might otherwise try to set.
+func BuildEntityCreateCommentRequest(req CommentCreateRequest) entity.CreateCommentRequest {
+	return entity.CreateCommentRequest{
+		ReferenceID:   req.ReferenceID,
+		ReferenceType: entity.ReferenceType(req.ReferenceType),
+		Type:          entity.CommentTypeComment,
+		Content:       req.Content,
+	}
+}
+
+// CommentCreateResponse is the portal's response for POST /comments.
+type CommentCreateResponse struct {
+	ID        string    `json:"id"`
+	CreatedOn time.Time `json:"createdOn"`
+	CreatedBy string    `json:"createdBy"`
+}
+
+// MapCommentCreate builds the portal response from entity-service's CreateCommentResponse.
+func MapCommentCreate(r entity.CreateCommentResponse) CommentCreateResponse {
+	return CommentCreateResponse{
+		ID:        r.Comment.ID,
+		CreatedOn: r.Comment.CreatedOn,
+		CreatedBy: r.Comment.CreatedBy.FullName,
+	}
+}
+
+// CommentSearchRequest is the portal's request shape for POST /comments/search.
+// entity-service's Filters.Type is deliberately not exposed here — it would
+// let a caller fetch "work_note" entries (internal WSO2 support annotations
+// on the same reference), which must never reach the customer portal
+// frontend; see BuildEntitySearchCommentsRequest.
+type CommentSearchRequest struct {
+	ReferenceID   string            `json:"referenceId"`
+	ReferenceType string            `json:"referenceType"`
+	Pagination    entity.Pagination `json:"pagination"`
+}
+
+// BuildEntitySearchCommentsRequest converts the portal's search request into
+// entity-service's request shape, always filtering to Type "comment".
+func BuildEntitySearchCommentsRequest(req CommentSearchRequest) entity.SearchCommentsRequest {
+	commentType := entity.CommentTypeComment
+	return entity.SearchCommentsRequest{
+		ReferenceID:   req.ReferenceID,
+		ReferenceType: entity.ReferenceType(req.ReferenceType),
+		Pagination:    req.Pagination,
+		Filters:       &entity.CommentFilters{Type: &commentType},
+	}
+}
+
+// CommentView is one item of the portal's response for POST /comments/search.
+type CommentView struct {
+	ID        string    `json:"id"`
+	Content   string    `json:"content"`
+	CreatedOn time.Time `json:"createdOn"`
+	CreatedBy string    `json:"createdBy"`
+}
+
+// SearchCommentsResponse is the portal's response for POST /comments/search.
+type SearchCommentsResponse struct {
+	Comments []CommentView `json:"comments"`
+	Total    int           `json:"total"`
+	Limit    int           `json:"limit"`
+	Offset   int           `json:"offset"`
+	HasMore  bool          `json:"hasMore"`
+}
+
+// MapSearchComments builds the portal response from entity-service's SearchCommentsResponse.
+func MapSearchComments(r entity.SearchCommentsResponse) SearchCommentsResponse {
+	comments := make([]CommentView, 0, len(r.Comments))
+	for _, c := range r.Comments {
+		comments = append(comments, CommentView{
+			ID:        c.ID,
+			Content:   c.Content,
+			CreatedOn: c.CreatedOn,
+			CreatedBy: c.CreatedBy.FullName,
+		})
+	}
+	return SearchCommentsResponse{
+		Comments: comments,
+		Total:    r.Total,
+		Limit:    r.Limit,
+		Offset:   r.Offset,
+		HasMore:  r.HasMore,
+	}
+}

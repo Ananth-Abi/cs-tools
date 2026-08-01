@@ -17,7 +17,10 @@
 package middleware
 
 import (
+	"bufio"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 )
@@ -32,6 +35,19 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.status = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack forwards to the underlying ResponseWriter's http.Hijacker
+// implementation. Wrapping http.ResponseWriter in responseWriter otherwise
+// hides Hijack from callers that type-assert for it — including
+// gorilla/websocket's Upgrade, which GET /ws (internal/handler/websocket.go)
+// relies on to switch the connection to WebSocket.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
+	}
+	return hijacker.Hijack()
 }
 
 // Logger is an HTTP middleware that logs each completed request via slog. The
