@@ -2617,6 +2617,120 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /projects/{projectId}/deployments/{deploymentId}/license:
+    post:
+      summary: Provision (or resume provisioning) and return a deployment's license.
+      description: >
+        Calls the separate product-consumption service, not entity-service —
+        see this backend's CLAUDE.md, "The product-consumption service". Can
+        make several sequential upstream calls (application creation,
+        subscription, credential/secret-key generation) depending on how far
+        the project's provisioning has already progressed.
+      operationId: postProjectsProjectIdDeploymentsDeploymentIdLicense
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LicenseResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployment-usages:
+    post:
+      summary: Import a deployment-usage zip file.
+      description: >
+        Calls the separate product-consumption service, not entity-service —
+        see this backend's CLAUDE.md, "The product-consumption service". The
+        request body is a raw zip file, not JSON.
+      operationId: postDeploymentUsages
+      requestBody:
+        required: true
+        content:
+          application/zip:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportDeploymentUsageResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4826,3 +4940,39 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/UpdateDescription'
+
+    # ---- product consumption ----
+
+    LicenseSubscriptionData:
+      type: object
+      required: [deploymentId, deploymentName, subscriptionKey, clientId, clientSecret, secrets]
+      properties:
+        deploymentId:
+          type: string
+        deploymentName:
+          type: string
+        subscriptionKey:
+          type: string
+        clientId:
+          type: string
+        clientSecret:
+          type: string
+        secrets:
+          type: string
+
+    LicenseResponse:
+      type: object
+      required: [subscriptionData, signature]
+      properties:
+        subscriptionData:
+          $ref: '#/components/schemas/LicenseSubscriptionData'
+        signature:
+          type: string
+
+    ImportDeploymentUsageResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        result:
+          description: Arbitrary result payload from the upstream product-consumption service.

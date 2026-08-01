@@ -5,10 +5,11 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 50 routes listed below are implemented so far, across
-entity-service, the WSO2 Updates service, SCIM, and the AI chat agent (a separate Python service —
-see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent)). Everything else the Ballerina backend exposes
-still needs a Go handler; add them following the pattern described in
+This is a work in progress — only the 52 routes listed below are implemented so far, across
+entity-service, the WSO2 Updates service, SCIM, the AI chat agent, and the product-consumption
+service (two more separate services — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent) and
+[CLAUDE.md](./CLAUDE.md#the-product-consumption-service)). Everything else the Ballerina backend
+exposes still needs a Go handler; add them following the pattern described in
 [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
 
 ## Quick Start
@@ -29,9 +30,9 @@ Backend starts at `http://localhost:8080`.
 - Entry point: `cmd/server/main.go`
 - Authentication:
   - Incoming requests: JWT Bearer token; pass as `x-jwt-assertion` header when testing locally
-  - Outbound calls to entity-service, the Updates service, SCIM, and the AI chat agent: OAuth2
-    client credentials grant, shared across all four (optional — entity-service itself does not
-    validate inbound credentials, see [CLAUDE.md](./CLAUDE.md))
+  - Outbound calls to entity-service, the Updates service, SCIM, the AI chat agent, and the
+    product-consumption service: OAuth2 client credentials grant, shared across all five (optional
+    — entity-service itself does not validate inbound credentials, see [CLAUDE.md](./CLAUDE.md))
 
 ## Prerequisites
 
@@ -42,6 +43,8 @@ Backend starts at `http://localhost:8080`.
   `/updates/*` routes and phone-number fields on `/users/me`)
 - A running instance of the AI chat agent (a separate Python service, not entity-service — for
   `/cases/classify`, `/conversations/*`, `/projects/*/conversations/*`, and `/ws`)
+- A running instance of the product-consumption service (a separate service, not entity-service —
+  for `/projects/*/deployments/*/license` and `/deployment-usages`)
 
 ## Testing
 
@@ -120,6 +123,15 @@ A separate Python service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#t
 | `AI_CHAT_AGENT_WS_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 | `WS_ALLOWED_ORIGINS` | Comma-separated browser Origins allowed to open `GET /ws` (optional — defense in depth against cross-site WebSocket hijacking; unset allows any origin, local development only) |
 
+### Product-consumption service
+
+A separate service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#the-product-consumption-service).
+
+| Variable | Description |
+|---|---|
+| `PRODUCT_CONSUMPTION_BASE_URL` | Base URL of the product-consumption service |
+| `PRODUCT_CONSUMPTION_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+
 ### Auth
 
 | Variable | Description |
@@ -173,6 +185,11 @@ backend-v2/
 │   │   ├── client.go            # Config/Client/do()/getJSON()/postJSON()
 │   │   ├── types.go             # AI chat agent's wire-format structs
 │   │   └── ws.go                # WSConfig/WSClient/StreamChat — proxies the upstream WebSocket
+│   ├── productconsumption/       # OAuth2 HTTP client for the product-consumption service (not entity-service)
+│   │   ├── client.go            # Config/Client/do()/postJSON()/patchJSON()
+│   │   ├── types.go             # product-consumption service's wire-format structs
+│   │   ├── subscription.go      # ProcessLicenseDownload — the deployment-license state machine
+│   │   └── tracking.go          # ImportDeploymentUsage
 │   ├── dto/                     # Portal-facing response shapes + Map* functions from entity types
 │   │   ├── user.go
 │   │   ├── account.go
@@ -187,6 +204,7 @@ backend-v2/
 │   │   ├── time_card.go
 │   │   ├── comment.go
 │   │   ├── ai_chat.go
+│   │   ├── product_consumption.go
 │   │   ├── change_request.go
 │   │   └── call_request.go
 │   ├── middleware/
@@ -210,6 +228,7 @@ backend-v2/
 │       ├── comments.go          # generic comment create/search
 │       ├── ai_chat.go           # case classification, recommendations, conversation search/messages/summary
 │       ├── websocket.go         # GET /ws — real-time AI chat proxy
+│       ├── product_consumption.go # deployment license provisioning, deployment usage import
 │       ├── change_requests.go   # change-request create/search/get/update/approvals
 │       ├── call_requests.go     # call-request create/search/update
 │       └── updates.go           # GET /updates/product-update-levels, POST /updates/levels/search
@@ -270,6 +289,8 @@ backend-v2/
 - `POST /projects/{projectId}/conversations/{conversationId}/messages` — send a follow-up message on an existing conversation
 - `GET /projects/{id}/conversations/{conversationId}/summary` — get a conversation's summary via the AI chat agent
 - `GET /ws?sessionId={projectId}` — WebSocket: real-time AI chat proxy for an existing conversation (see CLAUDE.md — starting a brand-new conversation isn't supported yet)
+- `POST /projects/{projectId}/deployments/{deploymentId}/license` — provision (or resume provisioning) and return a deployment's license via the product-consumption service
+- `POST /deployment-usages` — import a deployment-usage zip file (raw binary body, `Content-Type: application/zip`) via the product-consumption service
 - `GET /updates/product-update-levels` — list product update levels
 - `POST /updates/levels/search` — search update descriptions between two update levels
 
@@ -458,6 +479,13 @@ curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/conv
 # Using websocat (https://github.com/vi/websocat) as an example client:
 websocat "ws://localhost:8080/ws?sessionId=<project-id>" -H "x-jwt-assertion: $JWT"
 # then send: {"message":"still seeing the error","conversationId":"<conversation-id>"}
+
+curl -X POST http://localhost:8080/projects/<project-id>/deployments/<deployment-id>/license \
+  -H "x-jwt-assertion: $JWT"
+
+curl -X POST http://localhost:8080/deployment-usages \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/zip" \
+  --data-binary @deployment-usage.zip
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/updates/product-update-levels
 

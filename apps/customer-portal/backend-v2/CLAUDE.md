@@ -24,15 +24,20 @@ backend's own CLAUDE.md too if something here is underspecified.
 `POST /projects/{id}/conversations/search`, `GET /conversations/{id}/messages`,
 `POST /projects/{projectId}/conversations/{conversationId}/messages`,
 `GET /projects/{id}/conversations/{conversationId}/summary`, `GET /ws`,
-`GET /updates/product-update-levels`, `POST /updates/levels/search`) across four upstream
-services: entity-service, the WSO2 Updates service, SCIM, and the AI chat agent (see "The AI chat
-agent" below — unlike the other three, it isn't entity-service-backed at all). The Ballerina
-backend exposes ~100 routes across many more modules (registry tokens, escalations, incidents,
-problems, task SLAs, tasks, groups/service-offerings/configuration-items, account/project contacts,
-project update, generic user search, etc.) — none of those are ported yet, several because they
-have no genuine equivalent on `cs-tools/entity-service` or aren't actually customer-portal features
-at all (see "Which entity-service" below on how to tell the difference before porting one). Follow
-the recipe below to add the next one.
+`POST /projects/{projectId}/deployments/{deploymentId}/license`, `POST /deployment-usages`,
+`GET /updates/product-update-levels`, `POST /updates/levels/search`) across five upstream
+services: entity-service, the WSO2 Updates service, SCIM, the AI chat agent, and the
+product-consumption service (see "The AI chat agent" and "The product-consumption service" below —
+unlike the other three, neither is entity-service-backed at all). The Ballerina backend exposes
+~100 routes across many more modules (registry tokens, escalations, incidents, problems, task
+SLAs, tasks, groups/service-offerings/configuration-items, account/project contacts, project
+update, generic user search, project/case/deployment/conversation/time-card stats, case feedback,
+instance search/metrics, global search, etc.) — none of those are ported yet, several because they
+have no genuine equivalent on `cs-tools/entity-service` (confirmed by grepping
+`entity-service/internal/server/routes.go` for each — stats, feedback, instance metrics, escalations,
+and global search all come up empty) or aren't actually customer-portal features at all (see "Which
+entity-service" below on how to tell the difference before porting one). Follow the recipe below to
+add the next one.
 
 ## Which entity-service
 
@@ -135,6 +140,34 @@ Primary authorization on `GET /ws` is the same JWT middleware chain as every oth
 cross-site WebSocket hijacking, restricting which browser `Origin`s may open the connection — set
 via the optional `WS_ALLOWED_ORIGINS` env var (comma-separated; unset allows any origin, local
 development only).
+
+## The product-consumption service
+
+`internal/productconsumption` is a fifth upstream client for **another separate service unrelated
+to entity-service** — see `apps/customer-portal/backend`'s `modules/product_consumption_subscription`
+and `modules/product_consumption_tracking` for the Ballerina backend's two client modules, which
+this backend models as one Go package since both Ballerina modules point at the same upstream base
+URL in practice (confirmed in the Ballerina backend's `config.toml`).
+
+It backs two routes:
+- `POST /projects/{projectId}/deployments/{deploymentId}/license` — provisions (or resumes
+  provisioning) a WSO2 API Manager application/subscription/credentials for a deployment and
+  returns the resulting license. `ProcessLicenseDownload` (`internal/productconsumption/subscription.go`)
+  is a straight port of the Ballerina backend's `processLicenseDownload` state machine — it is
+  **not idempotent-by-accident-safe to reimplement casually**: it can make up to 5 sequential
+  upstream calls, several with side effects (creating an application, subscribing it, generating
+  credentials), and each step only runs if the project's upstream-tracked status hasn't reached it
+  yet. Read the whole function before touching it — a subtly wrong condition could create a
+  duplicate WSO2 API Manager application. The handler first calls `entity.GetProject` purely as an
+  access-control gate (mirroring the Ballerina backend), discarding the result — entity-service is
+  still the actual authorization boundary for "does this caller own this project."
+- `POST /deployment-usages` — imports a deployment-usage zip file. Unlike every other endpoint in
+  this backend, the request body is **raw binary**, not JSON — see `readBinaryBody` in
+  `internal/handler/response.go` (a `readJSONBody` counterpart with a larger size cap,
+  `maxZipUploadBytes`) and the `Content-Type: application/zip`/`application/x-zip-compressed`
+  check in the handler, both mirroring the Ballerina backend's `validateDeploymentUsageImportRequest`.
+  The Go client base64-encodes the bytes before forwarding to the upstream service, matching its
+  JSON contract exactly (`{"email": "...", "zip": "<base64>"}`).
 
 ## Middleware chain
 
