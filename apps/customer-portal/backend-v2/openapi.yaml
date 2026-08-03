@@ -271,6 +271,461 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /projects/{id}/filters:
+    get:
+      summary: Get filter-dropdown options for a project.
+      operationId: getProjectsIdFilters
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectFilterOptions'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/features:
+    get:
+      summary: Get a project's feature-access flags.
+      operationId: getProjectsIdFeatures
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectFeatures'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/stats:
+    get:
+      summary: >-
+        Get a project's dashboard statistics (case/conversation/deployment/activity
+        combined; tolerates partial failures).
+      operationId: getProjectsIdStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: caseTypes
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: createdBy
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDashboardStats'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/stats/cases:
+    get:
+      summary: Get a project's case statistics.
+      operationId: getProjectsIdStatsCases
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: caseTypes
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: createdBy
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCaseStats'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/stats/conversations:
+    get:
+      summary: Get a project's conversation statistics.
+      operationId: getProjectsIdStatsConversations
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: createdBy
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationStats'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/stats/support:
+    get:
+      summary: >-
+        Get a project's combined support statistics (case + conversation;
+        tolerates partial failures).
+      operationId: getProjectsIdStatsSupport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: caseTypes
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+        - name: createdBy
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectSupportStats'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/stats/time-cards:
+    get:
+      summary: Get a project's time-card statistics.
+      operationId: getProjectsIdStatsTimeCards
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectTimeCardStats'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/stats/change-requests:
+    get:
+      summary: Get a project's change-request statistics.
+      operationId: getProjectsIdStatsChangeRequests
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectChangeRequestStats'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /projects/search:
     post:
       summary: Search projects.
@@ -4976,3 +5431,408 @@ components:
           type: string
         result:
           description: Arbitrary result payload from the upstream product-consumption service.
+
+    # ---- project stats ----
+    #
+    # GET /projects/{id}/filters, /features, /stats, /stats/cases,
+    # /stats/conversations, /stats/support, /stats/time-cards, and
+    # /stats/change-requests — see internal/dto/project_stats.go and this
+    # backend's CLAUDE.md, "Project metadata and stats — reshaped, not
+    # passed through".
+
+    ReferenceItem:
+      description: >-
+        A flattened {id, label, count?} view of entity-service's
+        ChoiceListItem/ReferenceTableItem, used across every project
+        metadata/stats endpoint.
+      type: object
+      required: [id, label]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+          nullable: true
+
+    ChoiceListItem:
+      description: >-
+        entity-service's ChoiceListItem, embedded as-is in CasesTrend.severities
+        rather than flattened to ReferenceItem.
+      type: object
+      required: [id, label]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+          nullable: true
+
+    ProjectFilterOptions:
+      type: object
+      required:
+        - caseStates
+        - severities
+        - issueTypes
+        - deploymentTypes
+        - callRequestStates
+        - changeRequestStates
+        - changeRequestImpacts
+        - conversationStates
+        - caseTypes
+        - timeCardStates
+        - engagementTypes
+        - engagementPaymentTypes
+        - severityBasedAllocationTime
+      properties:
+        caseStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        issueTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        deploymentTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        callRequestStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        changeRequestStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        changeRequestImpacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        conversationStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        caseTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        timeCardStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        engagementTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        engagementPaymentTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        severityBasedAllocationTime:
+          type: object
+          additionalProperties:
+            type: integer
+
+    ProjectFeatures:
+      type: object
+      required:
+        - acceptedSeverityValues
+        - hasServiceRequestWriteAccess
+        - hasServiceRequestReadAccess
+        - hasSraWriteAccess
+        - hasSraReadAccess
+        - hasChangeRequestReadAccess
+        - hasEngagementsReadAccess
+        - hasUpdatesReadAccess
+        - hasTimeLogsReadAccess
+        - hasDeploymentWriteAccess
+        - hasDeploymentReadAccess
+        - hasComponentAnalysisReadAccess
+        - hasUsageMetricsReadAccess
+      properties:
+        acceptedSeverityValues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        hasServiceRequestWriteAccess:
+          type: boolean
+        hasServiceRequestReadAccess:
+          type: boolean
+        hasSraWriteAccess:
+          type: boolean
+        hasSraReadAccess:
+          type: boolean
+        hasChangeRequestReadAccess:
+          type: boolean
+        hasEngagementsReadAccess:
+          type: boolean
+        hasUpdatesReadAccess:
+          type: boolean
+        hasTimeLogsReadAccess:
+          type: boolean
+        hasDeploymentWriteAccess:
+          type: boolean
+        hasDeploymentReadAccess:
+          type: boolean
+        hasComponentAnalysisReadAccess:
+          type: boolean
+        hasUsageMetricsReadAccess:
+          type: boolean
+        defaultCaseProductCategories:
+          type: array
+          nullable: true
+          items:
+            type: string
+        srProductCategories:
+          type: array
+          nullable: true
+          items:
+            type: string
+
+    ProjectStats:
+      description: The headline counters on the project dashboard.
+      type: object
+      properties:
+        openCases:
+          type: integer
+          nullable: true
+        activeChats:
+          type: integer
+          nullable: true
+        deployments:
+          type: integer
+          nullable: true
+        slaStatus:
+          type: string
+          nullable: true
+        outstandingCaseCount:
+          type: integer
+          nullable: true
+        outstandingServiceRequestCount:
+          type: integer
+          nullable: true
+        outstandingEngagementCount:
+          type: integer
+          nullable: true
+        outstandingSraCount:
+          type: integer
+          nullable: true
+        outstandingChangeRequestCount:
+          type: integer
+          nullable: true
+        outstandingAnnouncementCount:
+          type: integer
+          nullable: true
+
+    RecentActivity:
+      description: The recent-activity panel on the project dashboard.
+      type: object
+      properties:
+        totalHours:
+          type: number
+          nullable: true
+        billableHours:
+          type: number
+          nullable: true
+        lastDeploymentOn:
+          type: string
+          nullable: true
+
+    ProjectDashboardStats:
+      description: >-
+        Combines entity-service's case/conversation/deployment/activity stats
+        into one dashboard view; tolerates any of the four sources failing
+        independently (see BuildProjectDashboardStats) — a failed source's
+        fields are simply omitted rather than failing the whole request.
+      type: object
+      required: [projectStats, recentActivity]
+      properties:
+        projectStats:
+          $ref: '#/components/schemas/ProjectStats'
+        recentActivity:
+          $ref: '#/components/schemas/RecentActivity'
+
+    ResolvedCountBreakdown:
+      description: >-
+        The resolved-count breakdown shared by case and change-request stats
+        responses.
+      type: object
+      required: [total, currentMonth, pastThirtyDays]
+      properties:
+        total:
+          type: integer
+        currentMonth:
+          type: integer
+        pastThirtyDays:
+          type: integer
+
+    ProjectCaseStatsChangeRate:
+      description: >-
+        The period-over-period change-rate figures embedded in
+        ProjectCaseStats.
+      type: object
+      required: [resolvedEngagements, averageResponseTime]
+      properties:
+        resolvedEngagements:
+          type: number
+        averageResponseTime:
+          type: number
+
+    CasesTrend:
+      description: >-
+        The severity breakdown for a single time-unit bucket in a case-count
+        trend series.
+      type: object
+      required: [period, severities]
+      properties:
+        period:
+          type: string
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+
+    ProjectCaseStats:
+      type: object
+      required:
+        - totalCount
+        - activeCount
+        - outstandingCount
+        - actionRequiredCount
+        - averageResponseTime
+        - resolvedCases
+        - changeRate
+        - stateCount
+        - severityCount
+        - outstandingSeverityCount
+        - caseTypeCount
+        - casesTrend
+        - engagementTypeCount
+        - outstandingEngagementTypeCount
+      properties:
+        totalCount:
+          type: integer
+        activeCount:
+          type: integer
+        outstandingCount:
+          type: integer
+        actionRequiredCount:
+          type: integer
+        averageResponseTime:
+          type: number
+        resolvedCases:
+          $ref: '#/components/schemas/ResolvedCountBreakdown'
+        changeRate:
+          $ref: '#/components/schemas/ProjectCaseStatsChangeRate'
+        stateCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        severityCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        outstandingSeverityCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        caseTypeCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        casesTrend:
+          type: array
+          items:
+            $ref: '#/components/schemas/CasesTrend'
+        engagementTypeCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        outstandingEngagementTypeCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+
+    ConversationStats:
+      description: >-
+        A handful of specific counts picked out of entity-service's
+        conversation state breakdown.
+      type: object
+      properties:
+        openCount:
+          type: integer
+          nullable: true
+        activeCount:
+          type: integer
+          nullable: true
+        resolvedCount:
+          type: integer
+          nullable: true
+        abandonedCount:
+          type: integer
+          nullable: true
+
+    ProjectSupportStats:
+      description: >-
+        Combines independently-fetched case and conversation stats; tolerates
+        either source failing independently (see BuildProjectSupportStats) —
+        a failed source's fields are simply omitted rather than failing the
+        whole request.
+      type: object
+      properties:
+        ongoingCases:
+          type: integer
+          nullable: true
+        activeChats:
+          type: integer
+          nullable: true
+        resolvedPast30DaysCasesCount:
+          type: integer
+          nullable: true
+        resolvedChats:
+          type: integer
+          nullable: true
+
+    ProjectTimeCardStats:
+      type: object
+      required: [totalHours, billableHours, nonBillableHours]
+      properties:
+        totalHours:
+          type: number
+        billableHours:
+          type: number
+        nonBillableHours:
+          type: number
+
+    ProjectChangeRequestStats:
+      type: object
+      required:
+        - totalCount
+        - activeCount
+        - outstandingCount
+        - actionRequiredCount
+        - stateCount
+        - resolvedCount
+      properties:
+        totalCount:
+          type: integer
+        activeCount:
+          type: integer
+        outstandingCount:
+          type: integer
+        actionRequiredCount:
+          type: integer
+        stateCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        resolvedCount:
+          $ref: '#/components/schemas/ResolvedCountBreakdown'

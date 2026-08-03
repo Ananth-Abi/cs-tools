@@ -116,6 +116,7 @@ func main() {
 
 	userHandler := handler.NewUserHandler(entityClient, scimClient)
 	projectHandler := handler.NewProjectHandler(entityClient)
+	projectStatsHandler := handler.NewProjectStatsHandler(entityClient)
 	caseHandler := handler.NewCaseHandler(entityClient)
 	deploymentHandler := handler.NewDeploymentHandler(entityClient)
 	deployedProductHandler := handler.NewDeployedProductHandler(entityClient)
@@ -153,6 +154,14 @@ func main() {
 
 	mux.HandleFunc("POST /projects/search", projectHandler.SearchProjects)
 	mux.HandleFunc("GET /projects/{id}", projectHandler.GetProject)
+	mux.HandleFunc("GET /projects/{id}/filters", projectStatsHandler.GetProjectFilters)
+	mux.HandleFunc("GET /projects/{id}/features", projectStatsHandler.GetProjectFeatures)
+	mux.HandleFunc("GET /projects/{id}/stats", projectStatsHandler.GetProjectDashboardStats)
+	mux.HandleFunc("GET /projects/{id}/stats/cases", projectStatsHandler.GetProjectCaseStats)
+	mux.HandleFunc("GET /projects/{id}/stats/conversations", projectStatsHandler.GetProjectConversationStats)
+	mux.HandleFunc("GET /projects/{id}/stats/support", projectStatsHandler.GetProjectSupportStats)
+	mux.HandleFunc("GET /projects/{id}/stats/time-cards", projectStatsHandler.GetProjectTimeCardStats)
+	mux.HandleFunc("GET /projects/{id}/stats/change-requests", projectStatsHandler.GetProjectChangeRequestStats)
 
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /cases/{id}", caseHandler.GetCase)
