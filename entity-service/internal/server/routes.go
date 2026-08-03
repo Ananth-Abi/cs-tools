@@ -80,6 +80,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		projectUpdateHandler = handler.NewProjectUpdateHandler(service.NewServiceNowProjectUpdateService(serviceNowIntegrationServiceClient))
 	}
 
+	var projectStatsHandler *handler.ProjectStatsHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		projectStatsHandler = handler.NewProjectStatsHandler(service.NewServiceNowProjectStatsService(serviceNowIntegrationServiceClient))
+	}
+
 	productRepo := repository.NewProductRepository(db)
 	productSvc := service.NewProductService(productRepo)
 	productHandler := handler.NewProductHandler(productSvc)
@@ -252,6 +257,15 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	}
 	if projectUpdateHandler != nil {
 		mux.HandleFunc("PATCH /projects/{id}", projectUpdateHandler.UpdateProject)
+	}
+	if projectStatsHandler != nil {
+		mux.HandleFunc("GET /projects/{id}/metadata", projectStatsHandler.GetProjectMetadata)
+		mux.HandleFunc("GET /projects/{id}/stats", projectStatsHandler.GetProjectStats)
+		mux.HandleFunc("GET /projects/{id}/cases/stats", projectStatsHandler.GetProjectCaseStats)
+		mux.HandleFunc("GET /projects/{id}/conversations/stats", projectStatsHandler.GetProjectConversationStats)
+		mux.HandleFunc("GET /projects/{id}/deployments/stats", projectStatsHandler.GetProjectDeploymentStats)
+		mux.HandleFunc("GET /projects/{id}/time-cards/stats", projectStatsHandler.GetProjectTimeCardStats)
+		mux.HandleFunc("GET /projects/{id}/change-requests/stats", projectStatsHandler.GetProjectChangeRequestStats)
 	}
 	if snProductHandler != nil {
 		mux.HandleFunc("POST /products/search", snProductHandler.SearchProducts)

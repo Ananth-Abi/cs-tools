@@ -91,6 +91,30 @@ type ProjectUpdateService interface {
 	UpdateProject(ctx context.Context, id string, req domain.ProjectUpdateRequest) (domain.ProjectUpdateResponse, error)
 }
 
+// ProjectStatsService defines the project-scoped metadata and statistics
+// operations. All methods require the ServiceNow data source; there is no
+// Postgres fallback.
+type ProjectStatsService interface {
+	// GetProjectMetadata returns the reference data (choice lists, feature
+	// flags) needed to build the project's UI.
+	GetProjectMetadata(ctx context.Context, projectID string) (domain.ProjectMetadataResponse, error)
+	// GetProjectStats returns the project's overall statistics.
+	GetProjectStats(ctx context.Context, projectID string) (domain.ProjectStatsResponse, error)
+	// GetProjectCaseStats returns the project's case statistics, optionally
+	// filtered by case type and/or creator.
+	GetProjectCaseStats(ctx context.Context, projectID string, req domain.ProjectCaseStatsRequest) (domain.ProjectCaseStatsResponse, error)
+	// GetProjectConversationStats returns the project's conversation
+	// statistics, optionally filtered by creator.
+	GetProjectConversationStats(ctx context.Context, projectID, createdBy string) (domain.ProjectConversationStatsResponse, error)
+	// GetProjectDeploymentStats returns the project's deployment statistics.
+	GetProjectDeploymentStats(ctx context.Context, projectID string) (domain.ProjectDeploymentStatsResponse, error)
+	// GetProjectTimeCardStats returns the project's time-card statistics,
+	// optionally filtered by a startDate/endDate range (each yyyy-MM-dd).
+	GetProjectTimeCardStats(ctx context.Context, projectID, startDate, endDate string) (domain.ProjectTimeCardStatsResponse, error)
+	// GetProjectChangeRequestStats returns the project's change-request statistics.
+	GetProjectChangeRequestStats(ctx context.Context, projectID string) (domain.ProjectChangeRequestStatsResponse, error)
+}
+
 // ProjectContactService defines the operations available on project contacts.
 // All methods require the ServiceNow data source; there is no Postgres fallback.
 type ProjectContactService interface {

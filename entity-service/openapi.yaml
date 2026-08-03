@@ -551,6 +551,303 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /projects/{id}/metadata:
+    get:
+      summary: Get a project's reference metadata (choice lists, feature flags).
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getProjectMetadata
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The project's reference metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMetadataResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{id}/stats:
+    get:
+      summary: Get a project's overall statistics.
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getProjectStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The project's overall statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectStatsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{id}/cases/stats:
+    get:
+      summary: Get a project's case statistics, optionally filtered by case type and/or creator.
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getProjectCaseStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: caseTypes
+          in: query
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
+          description: >
+            Restrict to these case types. Repeated for multiple values, e.g.
+            ?caseTypes=a&caseTypes=b.
+        - name: createdBy
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Restrict to cases created by this user.
+      responses:
+        "200":
+          description: The project's case statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectCaseStatsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{id}/conversations/stats:
+    get:
+      summary: Get a project's conversation statistics, optionally filtered by creator.
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getProjectConversationStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: createdBy
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Restrict to conversations created by this user.
+      responses:
+        "200":
+          description: The project's conversation statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectConversationStatsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{id}/deployments/stats:
+    get:
+      summary: Get a project's deployment statistics.
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getProjectDeploymentStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The project's deployment statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectDeploymentStatsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{id}/time-cards/stats:
+    get:
+      summary: Get a project's time-card statistics, optionally filtered by a date range.
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getProjectTimeCardStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: startDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Restrict to time cards on or after this date (yyyy-MM-dd).
+        - name: endDate
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: Restrict to time cards on or before this date (yyyy-MM-dd).
+      responses:
+        "200":
+          description: The project's time-card statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectTimeCardStatsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /projects/{id}/change-requests/stats:
+    get:
+      summary: Get a project's change-request statistics.
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getProjectChangeRequestStats
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The project's change-request statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectChangeRequestStatsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /products/search:
     post:
       summary: Search products by name.
@@ -8370,3 +8667,395 @@ components:
           type: integer
         limit:
           type: integer
+
+    # ---- project stats ----
+
+    ChoiceListItem:
+      type: object
+      description: >
+        One available option for a ServiceNow choice-list field — used in metadata responses
+        that enumerate the valid values for a field (e.g. case states, severities) rather than
+        classify a single record, and in stats responses that report a count per option.
+      required: [id, label]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        count:
+          type: integer
+          nullable: true
+
+    ReferenceTableItem:
+      type: object
+      description: >
+        A reference to a row in another ServiceNow table, used in metadata/stats responses
+        (e.g. case types) — richer than EntityRef: adds an optional record number,
+        WSO2-internal ID, and per-item count.
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        number:
+          type: string
+          nullable: true
+        internalId:
+          type: string
+          nullable: true
+        count:
+          type: integer
+          nullable: true
+
+    ProjectFeatures:
+      type: object
+      description: The feature-access configuration for a project.
+      required:
+        - projectType
+        - acceptedSeverityValues
+        - hasServiceRequestWriteAccess
+        - hasServiceRequestReadAccess
+        - hasSraWriteAccess
+        - hasSraReadAccess
+        - hasChangeRequestReadAccess
+        - hasEngagementsReadAccess
+        - hasUpdatesReadAccess
+        - hasTimeLogsReadAccess
+        - hasDeploymentWriteAccess
+        - hasDeploymentReadAccess
+        - hasComponentAnalysisReadAccess
+        - hasUsageMetricsReadAccess
+      properties:
+        projectType:
+          $ref: '#/components/schemas/ReferenceTableItem'
+        acceptedSeverityValues:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        hasServiceRequestWriteAccess:
+          type: boolean
+        hasServiceRequestReadAccess:
+          type: boolean
+        hasSraWriteAccess:
+          type: boolean
+        hasSraReadAccess:
+          type: boolean
+        hasChangeRequestReadAccess:
+          type: boolean
+        hasEngagementsReadAccess:
+          type: boolean
+        hasUpdatesReadAccess:
+          type: boolean
+        hasTimeLogsReadAccess:
+          type: boolean
+        hasDeploymentWriteAccess:
+          type: boolean
+        hasDeploymentReadAccess:
+          type: boolean
+        hasComponentAnalysisReadAccess:
+          type: boolean
+        hasUsageMetricsReadAccess:
+          type: boolean
+        defaultCaseProductCategories:
+          type: array
+          items:
+            type: string
+          nullable: true
+        srProductCategories:
+          type: array
+          items:
+            type: string
+          nullable: true
+
+    ProjectMetadataResponse:
+      type: object
+      description: >
+        The response for GET /projects/{id}/metadata — reference data (choice lists, feature
+        flags) for building the project's UI, not project-specific field values.
+      required:
+        - caseStates
+        - callRequestStates
+        - changeRequestStates
+        - conversationStates
+        - timeCardStates
+        - changeRequestImpacts
+        - severities
+        - severityBasedAllocationTime
+        - issueTypes
+        - deploymentTypes
+        - caseTypes
+        - engagementTypes
+        - engagementPaymentTypes
+        - features
+      properties:
+        caseStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        callRequestStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        changeRequestStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        conversationStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        timeCardStates:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        changeRequestImpacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        severityBasedAllocationTime:
+          type: object
+          additionalProperties:
+            type: integer
+        issueTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        deploymentTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        caseTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceTableItem'
+        engagementTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        engagementPaymentTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        features:
+          $ref: '#/components/schemas/ProjectFeatures'
+
+    ProjectStatsOutstandingCount:
+      type: object
+      description: Groups the outstanding-work-item counts embedded in ProjectStatsResponse.
+      required: [caseCount, serviceRequestCount, engagementCount, sraCount, changeRequestCount, announcementCount]
+      properties:
+        caseCount:
+          type: integer
+        serviceRequestCount:
+          type: integer
+        engagementCount:
+          type: integer
+        sraCount:
+          type: integer
+        changeRequestCount:
+          type: integer
+        announcementCount:
+          type: integer
+
+    ProjectStatsResponse:
+      type: object
+      description: The response for GET /projects/{id}/stats.
+      required:
+        - totalHours
+        - billableHours
+        - slaStatus
+        - deploymentCount
+        - deployedProductCount
+        - instanceCount
+        - outstandingCount
+      properties:
+        totalHours:
+          type: number
+          format: double
+        billableHours:
+          type: number
+          format: double
+        slaStatus:
+          type: string
+        deploymentCount:
+          type: integer
+        deployedProductCount:
+          type: integer
+        instanceCount:
+          type: integer
+        outstandingCount:
+          $ref: '#/components/schemas/ProjectStatsOutstandingCount'
+
+    ResolvedCountBreakdown:
+      type: object
+      description: >
+        Groups the resolved-count breakdown shared by case and change-request stats responses.
+      required: [total, currentMonth, pastThirtyDays]
+      properties:
+        total:
+          type: integer
+        currentMonth:
+          type: integer
+        pastThirtyDays:
+          type: integer
+
+    ProjectCaseStatsChangeRate:
+      type: object
+      description: >
+        Groups the period-over-period change-rate figures embedded in
+        ProjectCaseStatsResponse.
+      required: [resolvedEngagements, averageResponseTime]
+      properties:
+        resolvedEngagements:
+          type: number
+          format: double
+        averageResponseTime:
+          type: number
+          format: double
+
+    CasesTrend:
+      type: object
+      description: >
+        The severity breakdown for a single time-unit bucket in a case-count trend series.
+      required: [period, severities]
+      properties:
+        period:
+          type: string
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+
+    ProjectCaseStatsResponse:
+      type: object
+      description: The response for GET /projects/{id}/cases/stats.
+      required:
+        - totalCount
+        - activeCount
+        - outstandingCount
+        - actionRequiredCount
+        - averageResponseTime
+        - resolvedCount
+        - changeRate
+        - stateCount
+        - severityCount
+        - outstandingSeverityCount
+        - engagementTypeCount
+        - outstandingEngagementTypeCount
+        - caseTypeCount
+        - casesTrend
+      properties:
+        totalCount:
+          type: integer
+        activeCount:
+          type: integer
+        outstandingCount:
+          type: integer
+        actionRequiredCount:
+          type: integer
+        averageResponseTime:
+          type: number
+          format: double
+        resolvedCount:
+          $ref: '#/components/schemas/ResolvedCountBreakdown'
+        changeRate:
+          $ref: '#/components/schemas/ProjectCaseStatsChangeRate'
+        stateCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        severityCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        outstandingSeverityCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        engagementTypeCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        outstandingEngagementTypeCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        caseTypeCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceTableItem'
+        casesTrend:
+          type: array
+          items:
+            $ref: '#/components/schemas/CasesTrend'
+
+    ProjectConversationStatsResponse:
+      type: object
+      description: The response for GET /projects/{id}/conversations/stats.
+      required: [totalCount, activeCount, stateCount]
+      properties:
+        totalCount:
+          type: integer
+        activeCount:
+          type: integer
+        stateCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+
+    ProjectDeploymentStatsResponse:
+      type: object
+      description: The response for GET /projects/{id}/deployments/stats.
+      required: [totalCount]
+      properties:
+        totalCount:
+          type: integer
+        lastDeploymentOn:
+          type: string
+          nullable: true
+
+    ProjectTimeCardStatsResponse:
+      type: object
+      description: The response for GET /projects/{id}/time-cards/stats.
+      required: [totalHours, billableHours, nonBillableHours]
+      properties:
+        totalHours:
+          type: number
+          format: double
+        billableHours:
+          type: number
+          format: double
+        nonBillableHours:
+          type: number
+          format: double
+
+    ProjectChangeRequestStatsResponse:
+      type: object
+      description: The response for GET /projects/{id}/change-requests/stats.
+      required:
+        - totalCount
+        - activeCount
+        - outstandingCount
+        - actionRequiredCount
+        - stateCount
+        - resolvedCount
+      properties:
+        totalCount:
+          type: integer
+        activeCount:
+          type: integer
+        outstandingCount:
+          type: integer
+        actionRequiredCount:
+          type: integer
+        stateCount:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        resolvedCount:
+          $ref: '#/components/schemas/ResolvedCountBreakdown'
