@@ -5,7 +5,7 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 52 routes listed below are implemented so far, across
+This is a work in progress — only the 60 routes listed below are implemented so far, across
 entity-service, the WSO2 Updates service, SCIM, the AI chat agent, and the product-consumption
 service (two more separate services — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent) and
 [CLAUDE.md](./CLAUDE.md#the-product-consumption-service)). Everything else the Ballerina backend
@@ -195,6 +195,7 @@ backend-v2/
 │   │   ├── user.go
 │   │   ├── account.go
 │   │   ├── project.go
+│   │   ├── project_stats.go
 │   │   ├── case.go
 │   │   ├── deployment.go
 │   │   ├── deployed_product.go
@@ -218,6 +219,7 @@ backend-v2/
 │       ├── users.go             # GET/PATCH /users/me
 │       ├── accounts.go          # POST /accounts/search, GET /accounts/{id}
 │       ├── projects.go          # POST /projects/search, GET /projects/{id}
+│       ├── project_stats.go     # project filters/features/dashboard-stats (composite, some graceful-degradation)
 │       ├── cases.go             # cases search/get/create/update/comment/activities
 │       ├── deployments.go       # POST /deployments/search, POST /deployments, PATCH /deployments/{id}
 │       ├── deployed_products.go # deployed-product search/create/update
@@ -249,6 +251,14 @@ backend-v2/
 - `GET /accounts/{id}` — get account by ID (same normalization)
 - `POST /projects/search` — search projects
 - `GET /projects/{id}` — get project by ID
+- `GET /projects/{id}/filters` — get filter-dropdown options for a project (case states, severities, issue types, etc.)
+- `GET /projects/{id}/features` — get a project's feature-access flags
+- `GET /projects/{id}/stats` — get a project's dashboard statistics (combines case/conversation/deployment/activity stats; partial failures are tolerated)
+- `GET /projects/{id}/stats/cases` — get a project's case statistics, optionally filtered by `caseTypes`/`createdBy` query params
+- `GET /projects/{id}/stats/conversations` — get a project's conversation statistics, optionally filtered by `createdBy`
+- `GET /projects/{id}/stats/support` — get a project's combined support statistics (case + conversation; partial failures are tolerated)
+- `GET /projects/{id}/stats/time-cards` — get a project's time-card statistics, optionally filtered by `startDate`/`endDate`
+- `GET /projects/{id}/stats/change-requests` — get a project's change-request statistics
 - `POST /cases/search` — search cases
 - `GET /cases/{id}` — get case by ID
 - `POST /cases` — create a case
@@ -333,6 +343,22 @@ curl -X POST http://localhost:8080/projects/search \
   -d '{"pagination":{"limit":10,"offset":0},"searchQuery":"acme"}'
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/filters
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/features
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stats
+
+curl -H "x-jwt-assertion: $JWT" "http://localhost:8080/projects/<project-id>/stats/cases?caseTypes=default_case&createdBy=<user-id>"
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stats/conversations
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stats/support
+
+curl -H "x-jwt-assertion: $JWT" "http://localhost:8080/projects/<project-id>/stats/time-cards?startDate=2026-07-01&endDate=2026-07-31"
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stats/change-requests
 
 curl -X POST http://localhost:8080/cases/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \

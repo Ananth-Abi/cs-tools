@@ -6,7 +6,7 @@ responses for the frontend. This is a Go rewrite of the Ballerina backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** 50 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
+**Status: in progress.** 60 routes are wired up so far (`GET /health`, `GET`/`PATCH /users/me`,
 `POST /accounts/search`, `GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
 `POST /cases/search`, `GET /cases/{id}`, `POST /cases`, `PATCH /cases/{id}`,
 `POST /cases/{id}/comments`, `POST /cases/{id}/activities/search`, `POST /deployments/search`,
@@ -25,14 +25,18 @@ backend's own CLAUDE.md too if something here is underspecified.
 `POST /projects/{projectId}/conversations/{conversationId}/messages`,
 `GET /projects/{id}/conversations/{conversationId}/summary`, `GET /ws`,
 `POST /projects/{projectId}/deployments/{deploymentId}/license`, `POST /deployment-usages`,
+`GET /projects/{id}/filters`, `GET /projects/{id}/features`, `GET /projects/{id}/stats`,
+`GET /projects/{id}/stats/cases`, `GET /projects/{id}/stats/conversations`,
+`GET /projects/{id}/stats/support`, `GET /projects/{id}/stats/time-cards`,
+`GET /projects/{id}/stats/change-requests`,
 `GET /updates/product-update-levels`, `POST /updates/levels/search`) across five upstream
 services: entity-service, the WSO2 Updates service, SCIM, the AI chat agent, and the
 product-consumption service (see "The AI chat agent" and "The product-consumption service" below —
 unlike the other three, neither is entity-service-backed at all). The Ballerina backend exposes
 ~100 routes across many more modules (registry tokens, escalations, incidents, problems, task
 SLAs, tasks, groups/service-offerings/configuration-items, account/project contacts, project
-update, generic user search, project/case/deployment/conversation/time-card stats, case feedback,
-instance search/metrics, global search, etc.) — none of those are ported yet, several because they
+update, generic user search, case feedback, instance search/metrics, global search, etc.) — none
+of those are ported yet, several because they
 have no genuine equivalent on `cs-tools/entity-service` (confirmed by grepping
 `entity-service/internal/server/routes.go` for each — stats, feedback, instance metrics, escalations,
 and global search all come up empty) or aren't actually customer-portal features at all (see "Which
@@ -174,6 +178,48 @@ It backs two routes:
   check in the handler, both mirroring the Ballerina backend's `validateDeploymentUsageImportRequest`.
   The Go client base64-encodes the bytes before forwarding to the upstream service, matching its
   JSON contract exactly (`{"email": "...", "zip": "<base64>"}`).
+
+## Project metadata and stats — reshaped, not passed through
+
+`GET /projects/{id}/filters`, `/features`, `/stats`, `/stats/cases`, `/stats/conversations`,
+`/stats/support`, `/stats/time-cards`, and `/stats/change-requests` all read from seven
+entity-service endpoints (`GetProjectMetadata`, `GetProjectCaseStats`,
+`GetProjectConversationStats`, `GetProjectDeploymentStats`, `GetProjectStats`,
+`GetProjectTimeCardStats`, and `GetProjectChangeRequestStats`) — the Ballerina backend fans a
+handful of raw entity-service responses out into eight differently-shaped, purpose-built views
+rather than exposing them 1:1, and `internal/dto/project_stats.go`
+replicates that fan-out exactly (ported from the Ballerina backend's `getProjectFilters`,
+`mapProjectFeatures`, `mapCaseStats`, `getConversationStats`, and
+`mapProjectChangeRequestStatsResponse` in `utils.bal`):
+
+- **`/filters` and `/features` both call `GetProjectMetadata`** — there is no `GET /projects/{id}/metadata`
+  passthrough endpoint in this backend at all, because the Ballerina backend never exposed one
+  either; it only ever exposes the metadata response split into these two narrower views.
+  `ChoiceListItem`/`ReferenceTableItem` (entity-service's two "list of valid options" shapes) both
+  collapse into one `dto.ReferenceItem{id, label, count?}` for the frontend, matching the Ballerina
+  backend's own `ReferenceItem` type. `/filters`' `changeRequestStates` additionally drops three
+  internal ServiceNow workflow state IDs (`dto.restrictedChangeRequestStateIDs`) that were never
+  meant to be a customer-facing filter option.
+- **`/stats` and `/stats/support` are composite, graceful-degradation endpoints** — each combines
+  multiple independent entity-service calls (`/stats` combines case/conversation/deployment/activity
+  stats; `/stats/support` combines case/conversation stats) and returns `200` even if every one of
+  them fails, simply omitting that source's fields from the response (`dto.BuildProjectDashboardStats`/
+  `dto.BuildProjectSupportStats` take `*entity.XxxResponse`, nil meaning "this source failed to
+  load"). This exactly mirrors the Ballerina backend's own behavior — it logs each failure and moves
+  on rather than failing the whole request. `/stats/cases`, `/stats/conversations`,
+  `/stats/time-cards`, and `/stats/change-requests`, by contrast, are **not** graceful — each is a
+  single entity-service call and a failure there is a hard failure (`mapUpstreamError`), matching
+  the Ballerina backend's per-endpoint behavior exactly (verified individually, not assumed from the
+  composite endpoints' pattern).
+- **State-ID-based derived counts are hardcoded, not configurable.** `dto.caseStateIDOpen` and the
+  `conversationStateID*` constants pick specific counts out of a state-count breakdown (e.g. "how
+  many cases are in the *open* state") using the same default ServiceNow state IDs the Ballerina
+  backend's own `stateIdOpen`/`conversationStateIds` configuration defaults to. If cs-tools'
+  ServiceNow instance uses different state IDs for these, these constants need to become
+  configurable here too — they are not currently, since the Ballerina backend's own configurability
+  was never exercised away from its defaults as far as this rewrite could confirm.
+- `/stats/cases` also, in the Ballerina backend, fetches change-request stats and never uses the
+  result (dead code, presumably a leftover) — this backend does not replicate that no-op call.
 
 ## Middleware chain
 

@@ -35,3 +35,86 @@ func (c *Client) GetProject(ctx context.Context, id string) (ProjectDetailsView,
 	err := c.getJSON(ctx, fmt.Sprintf("/projects/%s", url.PathEscape(id)), &out)
 	return out, err
 }
+
+// GetProjectMetadata calls GET /projects/{id}/metadata.
+//
+// NOTE: only entity-service's ServiceNow data source supports this route —
+// see cs-tools/entity-service/internal/server/routes.go.
+func (c *Client) GetProjectMetadata(ctx context.Context, id string) (ProjectMetadataResponse, error) {
+	var out ProjectMetadataResponse
+	err := c.getJSON(ctx, fmt.Sprintf("/projects/%s/metadata", url.PathEscape(id)), &out)
+	return out, err
+}
+
+// GetProjectStats calls GET /projects/{id}/stats.
+func (c *Client) GetProjectStats(ctx context.Context, id string) (ProjectStatsResponse, error) {
+	var out ProjectStatsResponse
+	err := c.getJSON(ctx, fmt.Sprintf("/projects/%s/stats", url.PathEscape(id)), &out)
+	return out, err
+}
+
+// GetProjectCaseStats calls GET /projects/{id}/cases/stats. caseTypes and
+// createdBy are both optional filters; pass caseTypes as nil/empty and
+// createdBy as "" to omit them.
+func (c *Client) GetProjectCaseStats(ctx context.Context, id string, caseTypes []string, createdBy string) (ProjectCaseStatsResponse, error) {
+	q := url.Values{}
+	for _, ct := range caseTypes {
+		q.Add("caseTypes", ct)
+	}
+	if createdBy != "" {
+		q.Set("createdBy", createdBy)
+	}
+	path := fmt.Sprintf("/projects/%s/cases/stats", url.PathEscape(id))
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out ProjectCaseStatsResponse
+	err := c.getJSON(ctx, path, &out)
+	return out, err
+}
+
+// GetProjectConversationStats calls GET /projects/{id}/conversations/stats.
+// createdBy is an optional filter; pass "" to omit it.
+func (c *Client) GetProjectConversationStats(ctx context.Context, id, createdBy string) (ProjectConversationStatsResponse, error) {
+	path := fmt.Sprintf("/projects/%s/conversations/stats", url.PathEscape(id))
+	if createdBy != "" {
+		path += "?" + url.Values{"createdBy": {createdBy}}.Encode()
+	}
+	var out ProjectConversationStatsResponse
+	err := c.getJSON(ctx, path, &out)
+	return out, err
+}
+
+// GetProjectDeploymentStats calls GET /projects/{id}/deployments/stats.
+func (c *Client) GetProjectDeploymentStats(ctx context.Context, id string) (ProjectDeploymentStatsResponse, error) {
+	var out ProjectDeploymentStatsResponse
+	err := c.getJSON(ctx, fmt.Sprintf("/projects/%s/deployments/stats", url.PathEscape(id)), &out)
+	return out, err
+}
+
+// GetProjectTimeCardStats calls GET /projects/{id}/time-cards/stats.
+// startDate/endDate (each yyyy-MM-dd) are an optional filter range; pass ""
+// to omit either.
+func (c *Client) GetProjectTimeCardStats(ctx context.Context, id, startDate, endDate string) (ProjectTimeCardStatsResponse, error) {
+	q := url.Values{}
+	if startDate != "" {
+		q.Set("startDate", startDate)
+	}
+	if endDate != "" {
+		q.Set("endDate", endDate)
+	}
+	path := fmt.Sprintf("/projects/%s/time-cards/stats", url.PathEscape(id))
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out ProjectTimeCardStatsResponse
+	err := c.getJSON(ctx, path, &out)
+	return out, err
+}
+
+// GetProjectChangeRequestStats calls GET /projects/{id}/change-requests/stats.
+func (c *Client) GetProjectChangeRequestStats(ctx context.Context, id string) (ProjectChangeRequestStatsResponse, error) {
+	var out ProjectChangeRequestStatsResponse
+	err := c.getJSON(ctx, fmt.Sprintf("/projects/%s/change-requests/stats", url.PathEscape(id)), &out)
+	return out, err
+}
