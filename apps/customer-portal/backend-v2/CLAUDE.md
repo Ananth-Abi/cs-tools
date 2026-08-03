@@ -182,11 +182,12 @@ It backs two routes:
 ## Project metadata and stats — reshaped, not passed through
 
 `GET /projects/{id}/filters`, `/features`, `/stats`, `/stats/cases`, `/stats/conversations`,
-`/stats/support`, `/stats/time-cards`, and `/stats/change-requests` all read from just three
+`/stats/support`, `/stats/time-cards`, and `/stats/change-requests` all read from seven
 entity-service endpoints (`GetProjectMetadata`, `GetProjectCaseStats`,
-`GetProjectConversationStats`, plus the standalone deployment/activity/time-card/change-request
-stats calls) — the Ballerina backend fans a handful of raw entity-service responses out into eight
-differently-shaped, purpose-built views rather than exposing them 1:1, and `internal/dto/project_stats.go`
+`GetProjectConversationStats`, `GetProjectDeploymentStats`, `GetProjectStats`,
+`GetProjectTimeCardStats`, and `GetProjectChangeRequestStats`) — the Ballerina backend fans a
+handful of raw entity-service responses out into eight differently-shaped, purpose-built views
+rather than exposing them 1:1, and `internal/dto/project_stats.go`
 replicates that fan-out exactly (ported from the Ballerina backend's `getProjectFilters`,
 `mapProjectFeatures`, `mapCaseStats`, `getConversationStats`, and
 `mapProjectChangeRequestStatsResponse` in `utils.bal`):

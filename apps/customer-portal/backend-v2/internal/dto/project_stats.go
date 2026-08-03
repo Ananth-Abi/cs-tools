@@ -246,22 +246,56 @@ func BuildProjectDashboardStats(
 	return out
 }
 
+// ResolvedCountBreakdown is the portal's own copy of entity-service's
+// resolved-count breakdown, kept separate per this package's "always map
+// through dto" convention.
+type ResolvedCountBreakdown struct {
+	Total          int `json:"total"`
+	CurrentMonth   int `json:"currentMonth"`
+	PastThirtyDays int `json:"pastThirtyDays"`
+}
+
+func mapResolvedCountBreakdown(r entity.ResolvedCountBreakdown) ResolvedCountBreakdown {
+	return ResolvedCountBreakdown{Total: r.Total, CurrentMonth: r.CurrentMonth, PastThirtyDays: r.PastThirtyDays}
+}
+
+// CaseStatsChangeRate is the portal's own copy of the case-stats change-rate figures.
+type CaseStatsChangeRate struct {
+	ResolvedEngagements float64 `json:"resolvedEngagements"`
+	AverageResponseTime float64 `json:"averageResponseTime"`
+}
+
+// CasesTrend is the portal's own copy of a case-count trend bucket, with
+// severities mapped through ReferenceItem instead of entity.ChoiceListItem.
+type CasesTrend struct {
+	Period     string          `json:"period"`
+	Severities []ReferenceItem `json:"severities"`
+}
+
+func mapCasesTrend(trends []entity.CasesTrend) []CasesTrend {
+	out := make([]CasesTrend, 0, len(trends))
+	for _, t := range trends {
+		out = append(out, CasesTrend{Period: t.Period, Severities: mapChoiceListItems(t.Severities)})
+	}
+	return out
+}
+
 // ProjectCaseStats is the portal's response for GET /projects/{id}/cases/stats.
 type ProjectCaseStats struct {
-	TotalCount                     int                               `json:"totalCount"`
-	ActiveCount                    int                               `json:"activeCount"`
-	OutstandingCount               int                               `json:"outstandingCount"`
-	ActionRequiredCount            int                               `json:"actionRequiredCount"`
-	AverageResponseTime            float64                           `json:"averageResponseTime"`
-	ResolvedCases                  entity.ResolvedCountBreakdown     `json:"resolvedCases"`
-	ChangeRate                     entity.ProjectCaseStatsChangeRate `json:"changeRate"`
-	StateCount                     []ReferenceItem                   `json:"stateCount"`
-	SeverityCount                  []ReferenceItem                   `json:"severityCount"`
-	OutstandingSeverityCount       []ReferenceItem                   `json:"outstandingSeverityCount"`
-	CaseTypeCount                  []ReferenceItem                   `json:"caseTypeCount"`
-	CasesTrend                     []entity.CasesTrend               `json:"casesTrend"`
-	EngagementTypeCount            []ReferenceItem                   `json:"engagementTypeCount"`
-	OutstandingEngagementTypeCount []ReferenceItem                   `json:"outstandingEngagementTypeCount"`
+	TotalCount                     int                    `json:"totalCount"`
+	ActiveCount                    int                    `json:"activeCount"`
+	OutstandingCount               int                    `json:"outstandingCount"`
+	ActionRequiredCount            int                    `json:"actionRequiredCount"`
+	AverageResponseTime            float64                `json:"averageResponseTime"`
+	ResolvedCases                  ResolvedCountBreakdown `json:"resolvedCases"`
+	ChangeRate                     CaseStatsChangeRate    `json:"changeRate"`
+	StateCount                     []ReferenceItem        `json:"stateCount"`
+	SeverityCount                  []ReferenceItem        `json:"severityCount"`
+	OutstandingSeverityCount       []ReferenceItem        `json:"outstandingSeverityCount"`
+	CaseTypeCount                  []ReferenceItem        `json:"caseTypeCount"`
+	CasesTrend                     []CasesTrend           `json:"casesTrend"`
+	EngagementTypeCount            []ReferenceItem        `json:"engagementTypeCount"`
+	OutstandingEngagementTypeCount []ReferenceItem        `json:"outstandingEngagementTypeCount"`
 }
 
 // MapProjectCaseStats builds the portal response from entity-service's
@@ -273,13 +307,13 @@ func MapProjectCaseStats(r entity.ProjectCaseStatsResponse) ProjectCaseStats {
 		OutstandingCount:               r.OutstandingCount,
 		ActionRequiredCount:            r.ActionRequiredCount,
 		AverageResponseTime:            r.AverageResponseTime,
-		ResolvedCases:                  r.ResolvedCount,
-		ChangeRate:                     r.ChangeRate,
+		ResolvedCases:                  mapResolvedCountBreakdown(r.ResolvedCount),
+		ChangeRate:                     CaseStatsChangeRate(r.ChangeRate),
 		StateCount:                     mapChoiceListItems(r.StateCount),
 		SeverityCount:                  mapChoiceListItems(r.SeverityCount),
 		OutstandingSeverityCount:       mapChoiceListItems(r.OutstandingSeverityCount),
 		CaseTypeCount:                  mapReferenceTableItems(r.CaseTypeCount),
-		CasesTrend:                     r.CasesTrend,
+		CasesTrend:                     mapCasesTrend(r.CasesTrend),
 		EngagementTypeCount:            mapChoiceListItems(r.EngagementTypeCount),
 		OutstandingEngagementTypeCount: mapChoiceListItems(r.OutstandingEngagementTypeCount),
 	}
@@ -361,12 +395,12 @@ func MapProjectTimeCardStats(r entity.ProjectTimeCardStatsResponse) ProjectTimeC
 // ProjectChangeRequestStats is the portal's response for
 // GET /projects/{id}/stats/change-requests.
 type ProjectChangeRequestStats struct {
-	TotalCount          int                           `json:"totalCount"`
-	ActiveCount         int                           `json:"activeCount"`
-	OutstandingCount    int                           `json:"outstandingCount"`
-	ActionRequiredCount int                           `json:"actionRequiredCount"`
-	StateCount          []ReferenceItem               `json:"stateCount"`
-	ResolvedCount       entity.ResolvedCountBreakdown `json:"resolvedCount"`
+	TotalCount          int                    `json:"totalCount"`
+	ActiveCount         int                    `json:"activeCount"`
+	OutstandingCount    int                    `json:"outstandingCount"`
+	ActionRequiredCount int                    `json:"actionRequiredCount"`
+	StateCount          []ReferenceItem        `json:"stateCount"`
+	ResolvedCount       ResolvedCountBreakdown `json:"resolvedCount"`
 }
 
 // MapProjectChangeRequestStats builds the portal response from
@@ -378,6 +412,6 @@ func MapProjectChangeRequestStats(r entity.ProjectChangeRequestStatsResponse) Pr
 		OutstandingCount:    r.OutstandingCount,
 		ActionRequiredCount: r.ActionRequiredCount,
 		StateCount:          mapChoiceListItems(r.StateCount),
-		ResolvedCount:       r.ResolvedCount,
+		ResolvedCount:       mapResolvedCountBreakdown(r.ResolvedCount),
 	}
 }
