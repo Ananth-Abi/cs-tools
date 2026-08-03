@@ -27,6 +27,7 @@ import type {
   BeCaseResolutionCode,
   BeCaseType,
 } from "@api/backend/types";
+import type { UserReference } from "@/types/userReference";
 
 export interface CsmCaseRow {
   /**
@@ -81,11 +82,9 @@ export interface CsmCaseRow {
    */
   hasSla?: boolean;
   createdAt: string;
+  /** Falls back to {@link createdAt} when the backend hasn't returned
+   * `updatedOn` for this row; rendered unprefixed either way. */
   updatedAt: string;
-  /** True when the backend didn't return `updatedOn` and {@link updatedAt}
-   * was filled in from {@link createdAt} instead — the list renders that
-   * fallback labeled "Created", never silently as "Updated". */
-  updatedAtIsCreatedFallback?: boolean;
 }
 
 export interface CsmCasesListResponse {
@@ -110,6 +109,14 @@ export interface CsmCaseComment {
   id: string;
   caseId: string;
   authorName: string;
+  /** Author's email, when the backend returns one — used to link the author
+   * name to their profile page. */
+  authorEmail?: string;
+  /** Canonical reference to the author, when the backend returns one. `id`
+   * is populated for a comment author — prefer this over {@link authorEmail}
+   * for linking; the email is still needed for bot detection and as the
+   * resolution fallback when `id` is null. */
+  authorUser?: UserReference;
   authorRole: CsmCommentAuthorRole;
   bodyHtml: string;
   createdAt: string;
@@ -128,6 +135,12 @@ export interface CaseAttachment {
   size: number;
   contentType: string;
   uploadedBy: string;
+  /** Uploader's email, when the backend returns one — used to link the
+   * uploader name to their profile page. */
+  uploadedByEmail?: string;
+  /** Canonical reference to the uploader, when the backend returns one. `id`
+   * is populated for an attachment uploader. */
+  uploadedByUser?: UserReference;
   uploadedAt: string;
 }
 
@@ -232,6 +245,10 @@ export interface CaseWatcher {
   name: string;
   email?: string;
   isMe?: boolean;
+  /** Canonical reference to this watcher, when the backend returns one. `id`
+   * is always null here — watchers resolve their profile link through the
+   * cached email lookup like any other actor without a resolved id. */
+  user?: UserReference;
 }
 
 export interface CaseLinkedItem {
@@ -285,6 +302,12 @@ export interface CaseAuditEntry {
   id: string;
   kind: CaseAuditKind;
   actor: string;
+  /** Canonical reference to the actor, when the backend supplies one. `id` is
+   * typically null here (the activity feed doesn't resolve one) and `email`
+   * is sometimes a non-email username (e.g. an automation account) rather
+   * than a real address — `UserRefLink`'s plausibility check already refuses
+   * to look those up, so this is safe to pass through as-is. */
+  actorUser?: UserReference;
   /** Free-text summary; used when `changes` is absent (older/synthetic entries). */
   description?: string;
   createdAt: string;
@@ -378,6 +401,46 @@ export interface CreateRelatedCaseNavState {
 }
 
 /**
+ * Router (`navigate(..., { state })`) payload carried from a case's "Create
+ * service request" action (Related tab, Linked service requests card) to
+ * `/operations/service-requests/new`, so the create-service-request form can
+ * prefill from the originating case and file the new SR as linked to it in
+ * one step — no separate create-then-link round trip. `projectId` seeds the
+ * form's Project field locked read-only (mirrors
+ * {@link CreateRelatedCaseNavState} / CsmCaseCreatePage.tsx); `deploymentId` /
+ * `deployedProductId` are just starting values and stay fully editable. See
+ * CsmCaseDetailPage.tsx's "Create service request" button and
+ * CreateServiceRequestPage.tsx's read of `useLocation().state`.
+ */
+export interface CreateServiceRequestFromCaseNavState {
+  projectId: string;
+  relatedCaseId: string;
+  relatedCaseNumber?: string;
+  deploymentId?: string;
+  deployedProductId?: string;
+}
+
+/**
+ * Router (`navigate(..., { state })`) payload carried from a case's "Create
+ * incident from case…" action to `/operations/incidents/new`, so the
+ * create-incident form can prefill from the originating case without a
+ * query-string round trip or a full page load. `caseId` seeds the incident's
+ * `parentId` (ServiceNow's generic task-parent reference — the same field
+ * used for the case-to-case/case-to-incident hierarchical link, not the
+ * incident-specific `parentIncidentId`); every field is just a starting
+ * value the form leaves editable. See CsmCaseDetailPage.tsx's
+ * `create_incident` handler and CreateIncidentPage.tsx's read of
+ * `useLocation().state`.
+ */
+export interface CreateIncidentFromCaseNavState {
+  caseId: string;
+  caseNumber?: string;
+  subject?: string;
+  /** Plain text — the case's rich-text description with tags stripped. */
+  description?: string;
+}
+
+/**
  * Full case detail used by the case detail page. Extends the lightweight
  * row type used in lists with all the side-widget data plus a curated set
  * of state-driven primary actions.
@@ -405,14 +468,32 @@ export interface CsmCaseDetail extends CsmCaseRow {
   /**
    * The case, incident, change request, or problem this case is linked to as
    * its parent (the hierarchical major-case/child-case relationship). Absent
-   * when not linked.
+   * when not linked. `type` may still be undefined/null for older data the
+   * backend can't resolve a type for — treat that as "case" (the only type
+   * this link supported before cross-table parents existed).
    */
-  parentCase?: { id: string; caseNumber?: string };
+  parentCase?: {
+    id: string;
+    caseNumber?: string;
+    type?: "case" | "incident" | "change_request" | "problem" | null;
+  };
   /**
    * Service-request cases whose parent points to this case. Populated on
    * every case detail response, not just high-severity cases.
    */
   linkedServiceRequests?: { id: string; number: string; name: string }[];
+  /**
+   * Change requests raised from this case. Only service-request cases carry
+   * these; absent/empty otherwise. One-to-many: promoting the same change
+   * through multiple environments produces one change request per
+   * environment, all pointing back at the same service request.
+   */
+  linkedChangeRequests?: {
+    id: string;
+    number: string;
+    /** Subject, or `null` when the record has none — never `""`. */
+    name: string | null;
+  }[];
   /**
    * Where the case sits in the backing data source's staged auto-closure
    * sequence (ServiceNow only). Read-only; `undefined`/`"DEFAULT"` means no
@@ -422,23 +503,30 @@ export interface CsmCaseDetail extends CsmCaseRow {
   /** When the auto-closure sequence next advances (ServiceNow only). Read-only. */
   autoclosureStateTime?: string;
   /**
-   * The customer-facing fix-commitment date/time for the case; `null`/absent
-   * when not set. Distinct from the backend-computed SLA clocks shown in
-   * {@link CaseSla} — this is a settable commitment, not a derived clock. Also
-   * distinct from the three internal-only estimates below, which are never
-   * shared with the customer.
+   * Internal-only best-case fix estimate, as a date-only "YYYY-MM-DD"
+   * string; `null`/absent when not set. Never shared with the customer.
+   * Distinct from the backend-computed SLA clocks shown in {@link CaseSla} —
+   * these are settable commitments, not derived clocks.
    */
-  fixEta?: string | null;
-  /** Internal-only best-case fix estimate; `null`/absent when not set. */
   bestCaseFixEta?: string | null;
-  /** Internal-only most-likely fix estimate; `null`/absent when not set. */
+  /**
+   * Internal-only most-likely fix estimate, as a date-only "YYYY-MM-DD"
+   * string; `null`/absent when not set.
+   */
   mostLikelyFixEta?: string | null;
-  /** Internal-only worst-case fix estimate; `null`/absent when not set. */
+  /**
+   * Internal-only worst-case fix estimate, as a date-only "YYYY-MM-DD"
+   * string; `null`/absent when not set.
+   */
   worstCaseFixEta?: string | null;
   /** Display name of the person who opened the case. */
   createdBy?: string;
   /** Email of the creator — used to tell a WSO2 engineer from a customer. */
   createdByEmail?: string;
+  /** Canonical reference to the case creator. `id` is always null here — the
+   * data source doesn't resolve the reporter to a user record on this view,
+   * so the profile link (if any) comes from resolving {@link createdByEmail}. */
+  createdByUser?: UserReference;
   /**
    * Raw assigned-engineer name, with no "Unassigned" display fallback baked
    * in (unlike `assignee`) — for callers that need to tell "actually
@@ -446,6 +534,12 @@ export interface CsmCaseDetail extends CsmCaseRow {
    * against that fallback.
    */
   assigneeName?: string;
+  /** Email of the assigned engineer, when the data source returns one — used
+   * to link the assignee name to their profile page. */
+  assigneeEmail?: string;
+  /** Canonical reference to the assigned engineer, when the backend returns
+   * one. `id` is populated for the case assignee. */
+  assigneeUser?: UserReference;
   customerContext: CaseCustomerContext;
   productContext: CaseProductContext;
   watchers: CaseWatcher[];

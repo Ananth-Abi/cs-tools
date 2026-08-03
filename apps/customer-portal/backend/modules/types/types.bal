@@ -1280,8 +1280,10 @@ public type CallRequestCreatePayload record {|
 
 # Request payload for creating an escalation.
 public type EscalationCreatePayload record {|
-    # Reason for the escalation
-    string reason;
+    # Reason for the escalation. Mandatory when action is ESCALATE
+    string reason?;
+    # Action to perform. One of "ESCALATE" (default) or "DEESCALATE", case-insensitive
+    string action?;
 |};
 
 # Created escalation details.
@@ -1299,7 +1301,7 @@ public type CreatedEscalation record {|
     # Created date and time
     string createdOn;
     # Reason for the escalation
-    string reason;
+    string? reason;
     # Users notified about the escalation
     record {|
         # ID of the user
@@ -1351,7 +1353,7 @@ public type Escalation record {|
     # Updated date and time
     string updatedOn;
     # Reason for the escalation
-    string reason;
+    string? reason;
     # Users notified about the escalation
     record {|
         # ID of the user
@@ -1634,6 +1636,13 @@ public type ConversationResponse record {|
     json...;
 |};
 
+# Payload to update a conversation's status via PATCH /conversations/{id}.
+public type ConversationStatusUpdate record {|
+    # Target status: "closed" (user-initiated) or "abandoned" (set
+    # automatically when a case is created before the assistant responds).
+    string status;
+|};
+
 # Overall conversation statistics for a project.
 public type OverallConversationStats record {|
     # Chat sessions count
@@ -1789,7 +1798,7 @@ public type ChangeRequestResponse record {|
     # Indicates if the customer has permission to review
     boolean hasCustomerReviewed;
     # Internal approval details
-    ReferenceItem? approvedBy;
+    ReferenceItem? approvedBy?;
     # Internal approval date and time
     string? approvedOn;
 |};
@@ -2071,6 +2080,12 @@ public type GlobalSearchProject record {|
     string? closureState;
     # Associated account
     ReferenceItem account;
+    # Number of active chats in the project
+    int activeChatsCount;
+    # Number of cases requiring action in the project
+    int actionRequiredCount;
+    # Number of outstanding cases in the project
+    int outstandingCount;
 |};
 
 # Case item in a global search response.

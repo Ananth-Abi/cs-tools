@@ -15,18 +15,39 @@
 // under the License.
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { BeChangeRequestDetail } from "@api/backend/types";
+import { BackendApiError } from "@api/backend/client";
 
 const navigateMock = vi.fn();
 const useGetChangeRequestMock = vi.fn();
 const patchMutateMock = vi.fn();
+const patchResetMock = vi.fn();
 const showErrorMock = vi.fn();
+const editChangeRequestDialogMock = vi.fn();
+let patchIsPending = false;
+let patchIsError = false;
+let patchError: Error | null = null;
+
+// The backend client reads runtime config (`CSM_PORTAL_BACKEND_BASE_URL`) at
+// module load, which isn't present under vitest. The page imports
+// `BackendApiError` from it directly, so stub the module with a real class
+// (so `instanceof` still works) — same approach as CsmIncidentDetailPage.test.tsx.
+vi.mock("@api/backend/client", () => ({
+  BackendApiError: class BackendApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+}));
 
 vi.mock("react-router", () => ({
   useParams: () => ({ id: "chg-1" }),
+  useLocation: () => ({ pathname: "/operations/change-requests/chg-1", search: "", state: undefined }),
 }));
 vi.mock("@hooks/useNavTransition", () => ({
   useNavTransition: () => navigateMock,
@@ -40,11 +61,22 @@ vi.mock("@features/csm-operations/api/useGetChangeRequest", () => ({
 vi.mock("@features/csm-operations/api/usePatchChangeRequest", () => ({
   usePatchChangeRequest: () => ({
     mutate: patchMutateMock,
-    isPending: false,
+    reset: patchResetMock,
+    isPending: patchIsPending,
+    isError: patchIsError,
+    error: patchError,
   }),
 }));
 vi.mock("@features/csm-operations/components/ChangeRequestApprovals", () => ({
   default: () => null,
+}));
+// Exercised in isolation by EditChangeRequestDialog.test.tsx; here we only
+// assert this page wires `saveError` and resets the mutation before opening.
+vi.mock("@features/csm-operations/components/EditChangeRequestDialog", () => ({
+  default: (props: unknown) => {
+    editChangeRequestDialogMock(props);
+    return null;
+  },
 }));
 vi.mock("@features/csm-operations/api/useCsmChangeRequestComments", () => ({
   useGetCsmChangeRequestComments: () => ({ data: [] }),
@@ -73,6 +105,7 @@ const BASE_CR: BeChangeRequestDetail = {
   createdOn: "2026-01-01T00:00:00Z",
   state: "new",
   type: "normal",
+  assignedTeam: { id: "team-1", name: "Platform" },
 };
 
 function mockQueryResult(
@@ -86,6 +119,17 @@ function mockQueryResult(
     ...overrides,
   });
 }
+
+beforeEach(() => {
+  navigateMock.mockClear();
+  patchMutateMock.mockClear();
+  showErrorMock.mockClear();
+  patchIsPending = false;
+  patchIsError = false;
+  patchError = null;
+  patchResetMock.mockClear();
+  editChangeRequestDialogMock.mockClear();
+});
 
 describe("CsmChangeRequestDetailPage", () => {
   it("renders the linked case as a clickable reference to the case route", () => {
@@ -105,6 +149,52 @@ describe("CsmChangeRequestDetailPage", () => {
     render(<CsmChangeRequestDetailPage />);
     const linkedCaseCell = screen.getByText("Linked case").parentElement!;
     expect(within(linkedCaseCell).getByText("—")).toBeInTheDocument();
+  });
+});
+
+describe("CsmChangeRequestDetailPage — Clone", () => {
+  it("navigates to the create form with router state built from this record", () => {
+    mockQueryResult({
+      data: {
+        ...BASE_CR,
+        description: "<p>Upgrade the gateway.</p>",
+        impact: "high",
+        assignedEngineer: { id: "user-1", name: "Jane Doe" },
+      },
+    });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /clone/i }));
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/operations/change-requests/new",
+      expect.objectContaining({
+        state: expect.objectContaining({
+          sourceNumber: "CHG0009988",
+          subject: "Upgrade the gateway cluster",
+          type: "normal",
+          impact: "high",
+          assignedEngineerId: "user-1",
+          assignedEngineerLabel: "Jane Doe",
+        }),
+      }),
+    );
+  });
+
+  it("never puts the deployment, state, or approval fields into the clone's router state", () => {
+    mockQueryResult({
+      data: {
+        ...BASE_CR,
+        deployment: { id: "dep-1", name: "prod" },
+        state: "closed",
+        hasCustomerApproved: true,
+      },
+    });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /clone/i }));
+    const [, options] = navigateMock.mock.calls[0];
+    const keys = Object.keys(options.state);
+    expect(keys).not.toContain("deployment");
+    expect(keys).not.toContain("state");
+    expect(keys).not.toContain("hasCustomerApproved");
   });
 });
 
@@ -133,6 +223,41 @@ describe("CsmChangeRequestDetailPage — Request approval (New -> Assess)", () =
     ).not.toBeInTheDocument();
   });
 
+  it("shows a disabled Request approval button when the state allows it but there is no assigned team", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, legalNextStates: ["assess"], assignedTeam: null },
+    });
+    render(<CsmChangeRequestDetailPage />);
+    const button = screen.getByRole("button", { name: /request approval/i });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(patchMutateMock).not.toHaveBeenCalled();
+  });
+
+  it("exposes the blocked reason to keyboard users via a focusable, labeled wrapper", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, legalNextStates: ["assess"], assignedTeam: null },
+    });
+    render(<CsmChangeRequestDetailPage />);
+    const button = screen.getByRole("button", { name: /request approval/i });
+    const focusTarget = button.closest('[tabindex="0"]');
+    expect(focusTarget).not.toBeNull();
+    expect(focusTarget).toHaveAttribute(
+      "aria-label",
+      "Request approval: Set an assigned team before requesting approval",
+    );
+  });
+
+  it("leaves Request approval enabled when both the state and the assigned team allow it", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, legalNextStates: ["assess"], assignedTeam: { id: "team-1", name: "Platform" } },
+    });
+    render(<CsmChangeRequestDetailPage />);
+    expect(
+      screen.getByRole("button", { name: /request approval/i }),
+    ).toBeEnabled();
+  });
+
   it("PATCHes { requestApproval: true } for this CR when clicked", () => {
     mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
     render(<CsmChangeRequestDetailPage />);
@@ -154,5 +279,73 @@ describe("CsmChangeRequestDetailPage — Request approval (New -> Assess)", () =
       "Could not request approval for this change request.",
       err,
     );
+  });
+
+  it("surfaces the backend's real rejection reason for a 4xx state-transition error", () => {
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /request approval/i }));
+    const [, options] = patchMutateMock.mock.calls[0];
+    const err = new BackendApiError(409, "State transition rejected: approver required");
+    options.onError(err);
+    expect(showErrorMock).toHaveBeenCalledWith(
+      "State transition rejected: approver required",
+      err,
+    );
+  });
+
+  it("falls back to the generic message for a 5xx error even with a body message", () => {
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /request approval/i }));
+    const [, options] = patchMutateMock.mock.calls[0];
+    const err = new BackendApiError(500, "internal error detail");
+    options.onError(err);
+    expect(showErrorMock).toHaveBeenCalledWith(
+      "Could not request approval for this change request.",
+      err,
+    );
+  });
+});
+
+describe("CsmChangeRequestDetailPage — Edit dialog error wiring", () => {
+  it("resets the shared mutation before opening the Edit dialog, so a stale error from elsewhere isn't shown as this save's error", () => {
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    expect(patchResetMock).toHaveBeenCalled();
+  });
+
+  it("passes no saveError to the dialog when the mutation hasn't failed", () => {
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    const [props] = editChangeRequestDialogMock.mock.calls.at(-1)!;
+    expect(props.saveError).toBeNull();
+  });
+
+  it("passes the backend's rejection reason as saveError for a 4xx failure", () => {
+    patchIsError = true;
+    patchError = new BackendApiError(
+      400,
+      "isCustomerApproved, isCustomerReviewed, and requestApproval are mutually exclusive",
+    );
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    const [props] = editChangeRequestDialogMock.mock.calls.at(-1)!;
+    expect(props.saveError).toBe(
+      "isCustomerApproved, isCustomerReviewed, and requestApproval are mutually exclusive",
+    );
+  });
+
+  it("falls back to a generic saveError for a 5xx failure", () => {
+    patchIsError = true;
+    patchError = new BackendApiError(500, "internal error detail");
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    render(<CsmChangeRequestDetailPage />);
+    fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
+    const [props] = editChangeRequestDialogMock.mock.calls.at(-1)!;
+    expect(props.saveError).toBe("Could not update the change request.");
   });
 });

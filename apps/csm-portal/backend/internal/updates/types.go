@@ -24,10 +24,10 @@ const updateTypeSecurity = "security"
 const updateTypeRegular = "regular"
 
 // ---- upstream (snake-case) types ----
-// These mirror the record types defined in modules/updates/types.bal.
+// These mirror the record types defined by the upstream updates service.
 
 type upstreamProductUpdateLevel struct {
-	ProductName         string               `json:"product-name"`
+	ProductName         string                `json:"product-name"`
 	ProductUpdateLevels []upstreamUpdateLevel `json:"product-update-levels"`
 }
 
@@ -47,21 +47,21 @@ type upstreamUpdateDescriptionRequest struct {
 }
 
 type upstreamUpdateDescription struct {
-	ProductName        string                    `json:"product-name"`
-	ProductVersion     string                    `json:"product-version"`
-	Channel            string                    `json:"channel"`
-	UpdateLevel        int                       `json:"update-level"`
-	UpdateNumber       int                       `json:"update-number"`
-	Description        *string                   `json:"description,omitempty"`
-	Instructions       *string                   `json:"instructions,omitempty"`
-	BugFixes           *string                   `json:"bug-fixes,omitempty"`
-	FilesAdded         *string                   `json:"files-added,omitempty"`
-	FilesModified      *string                   `json:"files-modified,omitempty"`
-	FilesRemoved       *string                   `json:"files-removed,omitempty"`
-	BundlesInfoChanges *string                   `json:"bundles-info-changes,omitempty"`
+	ProductName        string                     `json:"product-name"`
+	ProductVersion     string                     `json:"product-version"`
+	Channel            string                     `json:"channel"`
+	UpdateLevel        int                        `json:"update-level"`
+	UpdateNumber       int                        `json:"update-number"`
+	Description        *string                    `json:"description,omitempty"`
+	Instructions       *string                    `json:"instructions,omitempty"`
+	BugFixes           *string                    `json:"bug-fixes,omitempty"`
+	FilesAdded         *string                    `json:"files-added,omitempty"`
+	FilesModified      *string                    `json:"files-modified,omitempty"`
+	FilesRemoved       *string                    `json:"files-removed,omitempty"`
+	BundlesInfoChanges *string                    `json:"bundles-info-changes,omitempty"`
 	DependantReleases  []upstreamDependantRelease `json:"dependant-releases,omitempty"`
-	UpdateType         string                    `json:"update-type"`
-	Timestamp          int64                     `json:"timestamp"`
+	UpdateType         string                     `json:"update-type"`
+	Timestamp          int64                      `json:"timestamp"`
 	SecurityAdvisories []upstreamSecurityAdvisory `json:"security-advisories"`
 }
 
@@ -82,7 +82,7 @@ type upstreamSecurityAdvisory struct {
 }
 
 // ---- portal (camelCase) types ----
-// These mirror the types defined in modules/types/types.bal and are what the
+// These mirror the upstream service's shared types and are what the
 // CSM portal returns to its callers.
 
 // ProductUpdateLevel is the portal response shape for a product's update levels.

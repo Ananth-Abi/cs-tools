@@ -20,6 +20,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -48,6 +49,7 @@ var validCaseType = map[string]bool{
 	"case":                     true,
 	"service_request":          true,
 	"security_report_analysis": true,
+	"engagement":               true,
 }
 
 var validEngagementType = map[domain.EngagementType]bool{
@@ -146,9 +148,10 @@ func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
 		if req.Description == "" {
 			return &apierror.ValidationError{Msg: "description is required for security_report_analysis"}
 		}
-		if len(req.Attachments) == 0 {
-			return &apierror.ValidationError{Msg: "at least one attachment is required for security_report_analysis"}
-		}
+		// Attachments are optional here (not backend-enforced by ServiceNow either):
+		// the FE creates the case first, then uploads attachments in a separate
+		// request per file, so a failed attachment upload never masks a
+		// successful case creation.
 		for i, a := range req.Attachments {
 			if a.Name == "" {
 				return &apierror.ValidationError{Msg: fmt.Sprintf("attachments[%d].name is required", i)}
@@ -156,6 +159,16 @@ func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
 			if a.File == "" {
 				return &apierror.ValidationError{Msg: fmt.Sprintf("attachments[%d].file is required", i)}
 			}
+		}
+	case "engagement":
+		if req.Subject == "" {
+			return &apierror.ValidationError{Msg: "subject is required for engagement"}
+		}
+		if req.Description == "" {
+			return &apierror.ValidationError{Msg: "description is required for engagement"}
+		}
+		if !validEngagementType[req.EngagementType] {
+			return &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(req.EngagementType)}
 		}
 	}
 
@@ -292,10 +305,11 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	if err := validateUUIDs("id", []string{req.ID}); err != nil {
 		return domain.UpdateCaseResponse{}, err
 	}
-	if len(req.WatchList) > 0 || req.AssigneeEmail != nil || req.FixEta != nil ||
+	if len(req.WatchList) > 0 || req.AssigneeEmail != nil ||
 		req.RelatedCaseID != nil || req.ParentID != nil || req.AutocloseHoldUntil != nil ||
-		req.Subject != nil || req.Description != nil || req.DeploymentID != nil || req.DeployedProductID != nil {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "watchList, assigneeEmail, fixEta, relatedCaseId, parentId, autocloseHoldUntil, subject, description, deploymentId, and deployedProductId are only supported for the ServiceNow data source"}
+		req.Subject != nil || req.Description != nil || req.DeploymentID != nil || req.DeployedProductID != nil ||
+		req.BestCaseFixEta != nil || req.MostLikelyFixEta != nil || req.WorstCaseFixEta != nil {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "watchList, assigneeEmail, relatedCaseId, parentId, autocloseHoldUntil, subject, description, deploymentId, deployedProductId, bestCaseFixEta, mostLikelyFixEta, and worstCaseFixEta are only supported for the ServiceNow data source"}
 	}
 	fieldCount := 0
 	if req.State != nil {
@@ -343,77 +357,131 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if err := normalizePagination(&req.Pagination); err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
-	if req.Pagination.Limit > 50 {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "limit cannot exceed 50"}
-	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
-	if err := validateUUIDs("projectIds", req.Filters.ProjectIDs); err != nil {
-		return domain.SearchCasesResponse{}, err
-	}
-	if err := validateUUIDs("deploymentIds", req.Filters.DeploymentIDs); err != nil {
+
+	token := middleware.UserIDTokenFromContext(ctx)
+	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(token)
+	parsed, err := ParseCaseFieldFilters(req.Filters.Filters, callerEmail, callerEmailErr, time.Now().UTC())
+	if err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
 
-	for _, t := range req.Filters.Types {
+	if err := validateUUIDs("projectId", parsed.ProjectIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
+	if err := validateUUIDs("deploymentId", parsed.DeploymentIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
+
+	for _, t := range parsed.Types {
 		if !validCaseType[t] {
-			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "types contains invalid value: " + t}
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "type contains invalid value: " + t}
 		}
 	}
-	for _, s := range req.Filters.States {
-		if !validCaseState[s] {
-			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "states contains invalid value: " + string(s)}
+	for _, st := range parsed.States {
+		if !validCaseState[st] {
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "state contains invalid value: " + string(st)}
 		}
 	}
-	for _, s := range req.Filters.Severities {
-		if !validCaseSeverity[s] {
-			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "severities contains invalid value: " + string(s)}
+	for _, sv := range parsed.Severities {
+		if !validCaseSeverity[sv] {
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "severity contains invalid value: " + string(sv)}
 		}
 	}
-	for _, it := range req.Filters.IssueTypes {
+	for _, it := range parsed.IssueTypes {
 		if !validCaseIssueType[it] {
-			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "issueTypes contains invalid value: " + string(it)}
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "issueType contains invalid value: " + string(it)}
 		}
 	}
-	for _, et := range req.Filters.EngagementTypes {
+	for _, et := range parsed.EngagementTypes {
 		if !validEngagementType[et] {
-			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "engagementTypes contains invalid value: " + string(et)}
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(et)}
 		}
 	}
-	for _, ws := range req.Filters.WorkStates {
+	for _, ws := range parsed.WorkStates {
 		if !validCaseWorkState[ws] {
-			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "workStates contains invalid value: " + string(ws)}
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "workState contains invalid value: " + string(ws)}
 		}
 	}
-	if err := validateUUIDs("assignedUserIds", req.Filters.AssignedUserIDs); err != nil {
+	if err := validateUUIDs("assignedUserId", parsed.AssignedUserIDs); err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
 
-	if req.Filters.CreatedByMe {
-		token := middleware.UserIDTokenFromContext(ctx)
-		if token == "" {
-			return domain.SearchCasesResponse{}, &apierror.UnauthorizedError{Msg: "x-user-id-token header is required for createdByMe filter"}
-		}
-		email, err := emailFromJWT(token)
-		if err != nil {
-			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "x-user-id-token: " + err.Error()}
-		}
-		req.Filters.CreatedBy = append(req.Filters.CreatedBy, email)
+	if parsed.CreatedByMe {
+		parsed.CreatedBy = append(parsed.CreatedBy, callerEmail)
 	}
 
-	if req.Filters.ClosedEndDate != nil && req.Filters.ClosedStartDate != nil &&
-		req.Filters.ClosedEndDate.Before(*req.Filters.ClosedStartDate) {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "closedEndDate must not be before closedStartDate"}
+	if parsed.ClosedEndDate != nil && parsed.ClosedStartDate != nil &&
+		parsed.ClosedEndDate.Before(*parsed.ClosedStartDate) {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "closedOn: lte value must not be before gte value"}
 	}
-	if req.Filters.EndCreatedDate != nil && req.Filters.StartCreatedDate != nil &&
-		req.Filters.EndCreatedDate.Before(*req.Filters.StartCreatedDate) {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "endCreatedDate must not be before startCreatedDate"}
+	if parsed.EndCreatedDate != nil && parsed.StartCreatedDate != nil &&
+		parsed.EndCreatedDate.Before(*parsed.StartCreatedDate) {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
 	}
-	if req.Filters.EndUpdatedDate != nil && req.Filters.StartUpdatedDate != nil &&
-		req.Filters.EndUpdatedDate.Before(*req.Filters.StartUpdatedDate) {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "endUpdatedDate must not be before startUpdatedDate"}
+	if parsed.EndUpdatedDate != nil && parsed.StartUpdatedDate != nil &&
+		parsed.EndUpdatedDate.Before(*parsed.StartUpdatedDate) {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "updatedOn: lte value must not be before gte value"}
 	}
+
+	// These fields dot-walk into ServiceNow-specific concepts (tags,
+	// project-onboarding-status, integration-CS-team, etc.) that have no
+	// equivalent in the Postgres schema and no repository query support today.
+	// Reject rather than silently drop the predicate and widen the result set.
+	if len(parsed.Tags) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "tag" is not supported by this data source`}
+	}
+	if len(parsed.ExcludeTags) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "tag" (notIn) is not supported by this data source`}
+	}
+	if parsed.ParentID != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "parentId" is not supported by this data source`}
+	}
+	if len(parsed.ProductNames) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "product" is not supported by this data source`}
+	}
+	if len(parsed.ProjectOnboardingStatuses) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "projectOnboardingStatus" is not supported by this data source`}
+	}
+	if len(parsed.ProjectTypeIDs) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "projectType" is not supported by this data source`}
+	}
+	if len(parsed.IntegrationCsTeamIDs) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "integrationCsTeam" is not supported by this data source`}
+	}
+	if parsed.Unassigned {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "assignedUserId" (isEmpty) is not supported by this data source`}
+	}
+	if parsed.ResolutionNotesEmpty {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "resolutionNotes" is not supported by this data source`}
+	}
+
+	// Task-SLA and escalation predicates, OR groups, and grouped counts are
+	// implemented only in the ServiceNow case service (snCaseService.SearchCases);
+	// caseRepo.SearchCases models none of them. ParseCaseFieldFilters accepts them
+	// because it is shared by both data sources, so without these guards a
+	// Postgres deployment would drop the predicate and answer 200 with a wider
+	// result set than the caller asked for. These stay ServiceNow-only by design:
+	// reject loudly rather than implement them here.
+	if parsed.TaskSLAFilter != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "taskSLABusinessElapsedPercent" is not supported by this data source`}
+	}
+	if len(parsed.EscalationLevels) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "escalationLevel" is not supported by this data source`}
+	}
+	if parsed.HasActiveEscalation != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "escalation" is not supported by this data source`}
+	}
+	if len(req.Filters.OrGroups) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "orGroups is not supported by this data source"}
+	}
+	if req.GroupBy != "" {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "groupBy is not supported by this data source"}
+	}
+
+	req.Parsed = parsed
 
 	if req.SortBy.Field == "" {
 		req.SortBy.Field = domain.CaseSortFieldCreatedOn
@@ -432,10 +500,10 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	}
 
 	return domain.SearchCasesResponse{
-		Cases:        cases,
-		Total: total,
-		Limit:        req.Pagination.Limit,
-		Offset:       req.Pagination.Offset,
+		Cases:  cases,
+		Total:  total,
+		Limit:  req.Pagination.Limit,
+		Offset: req.Pagination.Offset,
 	}, nil
 }
 

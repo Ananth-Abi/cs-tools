@@ -66,6 +66,7 @@ type snProductRef struct {
 type snTaskParentCase struct {
 	ID     *string `json:"id"`
 	Number *string `json:"number"`
+	Type   *string `json:"type"`
 }
 
 // snTaskDetail mirrors the Choreo GET /tasks/{id} response.
@@ -219,6 +220,7 @@ func snTaskDetailToDomain(t snTaskDetail) domain.TaskDetail {
 		if t.ParentCase.Number != nil {
 			ref.Number = *t.ParentCase.Number
 		}
+		ref.Type = snParentCaseTypeToDomain(t.ParentCase.Type)
 		detail.ParentCase = ref
 	}
 
@@ -226,25 +228,25 @@ func snTaskDetailToDomain(t snTaskDetail) domain.TaskDetail {
 }
 
 // taskWritesUnavailable gates CreateCaseTask/UpdateTask while the downstream
-// Choreo task-write endpoints don't exist yet (tracked on the
-// ballerina-tasks-fixeta-tags branch, not yet merged to digiops-cs main). A
-// deliberate ServiceUnavailableError here -- rather than letting the request
-// reach the downstream client and come back as a generic 404 -- avoids
+// Choreo task-write endpoints don't exist yet (not yet available in the backing
+// service). A deliberate ServiceUnavailableError here -- rather than letting the
+// request reach the downstream client and come back as a generic 404 -- avoids
 // conflating "this operation isn't deployed yet" with "task not found".
 // Flip this to false once the downstream endpoints ship; the send logic below
 // is already wired and ready. A var (not const) so tests can flip it locally
 // to exercise that send logic ahead of the downstream endpoints existing.
 var taskWritesUnavailable = true
+
 const taskWritesUnavailableMsg = "task creation/update is not yet available: the downstream ServiceNow integration for this operation has not been deployed"
 
 // snCreateTaskPayload is the request body for the (not yet existing) Choreo
 // POST /cases/{id}/tasks endpoint.
 //
-// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): ServiceNow/Ballerina task support is read-only today
-// (TaskSearchPayload/TaskResponse only -- see modules/servicenow/types.bal).
-// No Choreo endpoint exists yet to create a sn_customerservice_task record.
-// Ask: add POST /cases/{id}/tasks (this payload shape) to servicenow.bal,
-// returning a TaskResponse-shaped detail.
+// Not yet available in the backing service: ServiceNow/Ballerina task support is
+// read-only today (task search/read only). No Choreo endpoint exists yet to create
+// a sn_customerservice_task record. Ask: add POST /cases/{id}/tasks (this payload
+// shape) to the backing service's case API, returning a task-detail-shaped
+// response.
 type snCreateTaskPayload struct {
 	Subject           string  `json:"subject"`
 	DueDate           *string `json:"dueDate,omitempty"`
@@ -259,8 +261,8 @@ type snCreateTaskResponse struct {
 
 // CreateCaseTask creates a new task on the case identified by caseID.
 //
-// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): see snCreateTaskPayload doc comment. Implemented so the
-// entity-service side is ready the moment Ballerina adds the endpoint; gated
+// Not yet available in the backing service: see snCreateTaskPayload doc comment.
+// Implemented so the entity-service side is ready the moment Ballerina adds it; gated
 // with a deliberate ServiceUnavailableError (see taskWritesUnavailableMsg)
 // until then.
 func (s *snTaskService) CreateCaseTask(ctx context.Context, caseID string, req domain.CreateCaseTaskRequest) (domain.TaskDetail, error) {
@@ -305,9 +307,9 @@ func (s *snTaskService) CreateCaseTask(ctx context.Context, caseID string, req d
 // must be provided per request, following the same convention as
 // snUpdateCasePayload.
 //
-// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): same gap as snCreateTaskPayload above. Ask: add
-// PATCH /tasks/{id} (this payload shape) to servicenow.bal, returning a
-// TaskResponse-shaped detail.
+// Not yet available in the backing service: same gap as snCreateTaskPayload above.
+// Ask: add PATCH /tasks/{id} (this payload shape) to the backing service's case
+// API, returning a task-detail-shaped response.
 type snUpdateTaskPayload struct {
 	State           *string `json:"state,omitempty"`
 	AssignedToEmail *string `json:"assignedToEmail,omitempty"`
@@ -319,11 +321,181 @@ type snUpdateTaskResponse struct {
 	Task    snTaskDetail `json:"task"`
 }
 
+// snTasksSearchPayload is the request body for Choreo POST /tasks/search.
+type snTasksSearchPayload struct {
+	Filters    snTasksSearchFilters `json:"filters"`
+	SortBy     snTaskSort           `json:"sortBy"`
+	Pagination snProjectPagination  `json:"pagination"`
+}
+
+// snTasksSearchFilters mirrors the filters sent to Choreo.
+type snTasksSearchFilters struct {
+	States          []string `json:"states,omitempty"`
+	Types           []string `json:"types,omitempty"`
+	AssignedUserIDs []string `json:"assignedUserIds,omitempty"`
+	DueDateStart    *string  `json:"dueDateStart,omitempty"`
+	DueDateEnd      *string  `json:"dueDateEnd,omitempty"`
+}
+
+// snTaskSort specifies sort field and order for Choreo.
+type snTaskSort struct {
+	Field string `json:"field"`
+	Order string `json:"order"`
+}
+
+// snTasksResponse mirrors the Choreo POST /tasks/search response.
+type snTasksResponse struct {
+	Tasks  []snTask `json:"tasks"`
+	Total  int      `json:"total"`
+	Offset int      `json:"offset"`
+	Limit  int      `json:"limit"`
+}
+
+var validTaskState = map[domain.TaskState]bool{
+	domain.TaskStateOpen:   true,
+	domain.TaskStateClosed: true,
+	domain.TaskStateOther:  true,
+}
+
+var validTaskSortField = map[domain.TaskSortField]bool{
+	domain.TaskSortFieldCreatedOn: true,
+	domain.TaskSortFieldUpdatedOn: true,
+}
+
+var validTaskSortOrder = map[domain.TaskSortOrder]bool{
+	domain.TaskSortOrderAsc:  true,
+	domain.TaskSortOrderDesc: true,
+}
+
+// tasksStatesToStrings converts a slice of TaskState enums to strings.
+func tasksStatesToStrings(states []domain.TaskState) []string {
+	result := make([]string, 0, len(states))
+	for _, s := range states {
+		result = append(result, string(s))
+	}
+	return result
+}
+
+// SearchTasks implements TaskService by calling the Choreo POST /tasks/search endpoint.
+func (s *snTaskService) SearchTasks(ctx context.Context, req domain.SearchTasksRequest) (domain.SearchTasksResponse, error) {
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	if err := normalizePagination(&req.Pagination); err != nil {
+		return domain.SearchTasksResponse{}, err
+	}
+
+	if req.Pagination.Limit > 50 {
+		return domain.SearchTasksResponse{}, &apierror.ValidationError{Msg: "limit cannot exceed 50"}
+	}
+
+	// Validate states
+	for _, state := range req.Filters.States {
+		if !validTaskState[state] {
+			return domain.SearchTasksResponse{}, &apierror.ValidationError{Msg: "filters.states contains invalid value: " + string(state)}
+		}
+	}
+
+	// Validate assigned user IDs (UUIDs)
+	if err := validateUUIDs("filters.assignedUserIds", req.Filters.AssignedUserIDs); err != nil {
+		return domain.SearchTasksResponse{}, err
+	}
+
+	// Validate date range
+	if req.Filters.DueDateEnd != nil && req.Filters.DueDateStart != nil &&
+		req.Filters.DueDateEnd.Before(*req.Filters.DueDateStart) {
+		return domain.SearchTasksResponse{}, &apierror.ValidationError{Msg: "filters.dueDateEnd must not be before filters.dueDateStart"}
+	}
+
+	// Validate sort field and order
+	if req.SortBy.Field == "" {
+		req.SortBy.Field = domain.TaskSortFieldUpdatedOn
+	} else if !validTaskSortField[req.SortBy.Field] {
+		return domain.SearchTasksResponse{}, &apierror.ValidationError{Msg: "sortBy.field must be one of: createdOn, updatedOn"}
+	}
+	if req.SortBy.Order == "" {
+		req.SortBy.Order = domain.TaskSortOrderDesc
+	} else if !validTaskSortOrder[req.SortBy.Order] {
+		return domain.SearchTasksResponse{}, &apierror.ValidationError{Msg: "sortBy.order must be one of: asc, desc"}
+	}
+
+	// Convert assigned user UUIDs to sysids for Ballerina
+	assignedUserSysids := uuidsToSysids(req.Filters.AssignedUserIDs)
+
+	// Format dates for ServiceNow (using space-separated layout, not UTC ISO-8601)
+	var dueDateStart *string
+	var dueDateEnd *string
+	if req.Filters.DueDateStart != nil {
+		formatted := formatSNDate(req.Filters.DueDateStart)
+		dueDateStart = &formatted
+	}
+	if req.Filters.DueDateEnd != nil {
+		formatted := formatSNDate(req.Filters.DueDateEnd)
+		dueDateEnd = &formatted
+	}
+
+	// Build payload
+	payload := snTasksSearchPayload{
+		Filters: snTasksSearchFilters{
+			States:          tasksStatesToStrings(req.Filters.States),
+			Types:           req.Filters.Types,
+			AssignedUserIDs: assignedUserSysids,
+			DueDateStart:    dueDateStart,
+			DueDateEnd:      dueDateEnd,
+		},
+		SortBy: snTaskSort{
+			Field: string(req.SortBy.Field),
+			Order: string(req.SortBy.Order),
+		},
+		Pagination: snProjectPagination{
+			Limit:  req.Pagination.Limit,
+			Offset: req.Pagination.Offset,
+		},
+	}
+
+	raw, err := s.client.Post(ctx, "/tasks/search", token, payload)
+	if err != nil {
+		return domain.SearchTasksResponse{}, err
+	}
+
+	var snResp snTasksResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.SearchTasksResponse{}, fmt.Errorf("sn tasks search: parse response: %w", err)
+	}
+
+	tasks := make([]domain.TaskSummary, 0, len(snResp.Tasks))
+	for _, t := range snResp.Tasks {
+		subject := ""
+		if t.Subject != nil {
+			subject = *t.Subject
+		}
+		updatedOn := ""
+		if t.UpdatedOn != nil {
+			updatedOn = *t.UpdatedOn
+		}
+		task := domain.TaskSummary{
+			ID:         sysidToUUID(t.ID),
+			Subject:    subject,
+			State:      t.State,
+			DueDate:    t.DueDate,
+			AssignedTo: snAssignedToToEntityRef(t.AssignedTo),
+			UpdatedOn:  updatedOn,
+		}
+		tasks = append(tasks, task)
+	}
+
+	return domain.SearchTasksResponse{
+		Tasks:  tasks,
+		Total:  snResp.Total,
+		Offset: snResp.Offset,
+		Limit:  snResp.Limit,
+	}, nil
+}
+
 // UpdateTask updates exactly one of state, assignedToEmail, or dueDate on the
 // task identified by taskID.
 //
-// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): see snUpdateTaskPayload doc comment. Implemented so the
-// entity-service side is ready the moment Ballerina adds the endpoint; gated
+// Not yet available in the backing service: see snUpdateTaskPayload doc comment.
+// Implemented so the entity-service side is ready the moment Ballerina adds it; gated
 // with a deliberate ServiceUnavailableError (see taskWritesUnavailableMsg)
 // until then.
 func (s *snTaskService) UpdateTask(ctx context.Context, taskID string, req domain.UpdateTaskRequest) (domain.TaskDetail, error) {

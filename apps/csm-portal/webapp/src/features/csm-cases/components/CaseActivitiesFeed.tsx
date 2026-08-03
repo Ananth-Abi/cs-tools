@@ -33,6 +33,7 @@ import {
   ArrowUpRight,
   CheckCircle,
   Download,
+  Eye,
   Link as LinkIcon,
   ListFilter,
   Paperclip,
@@ -42,11 +43,16 @@ import {
   Users,
 } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type JSX } from "react";
+import type { BeCallRequestView } from "@api/backend/types";
+import AttachmentPreviewDialog from "@features/csm-cases/components/AttachmentPreviewDialog";
+import CallRequestDetailModal from "@features/csm-cases/components/CallRequestDetailModal";
 import CsmCaseCommentBubble from "@features/csm-cases/components/CsmCaseCommentBubble";
 import ImageFullscreenModal from "@features/csm-cases/components/ImageFullscreenModal";
 import RelativeTime from "@components/RelativeTime";
+import UserRefLink from "@components/UserRefLink";
 import { formatBytes } from "@utils/formatBytes";
 import { formatAbsoluteForUser } from "@utils/dateTime";
+import { getAttachmentPreviewKind } from "@features/csm-cases/utils/attachmentPreview";
 import {
   compareFeedEntries,
   type FeedEntry,
@@ -61,8 +67,33 @@ interface CaseActivitiesFeedProps {
   comments: CsmCaseComment[];
   audit: CaseAuditEntry[];
   attachments: CaseAttachment[];
+  /**
+   * Call requests already fetched for this case (e.g. by the page's Call
+   * Requests tab query) — reused here, never re-fetched, to resolve a
+   * call-request link embedded in a comment body to its detail popup.
+   * Optional: incidents/change requests don't have call requests, so a
+   * missing/empty list just means the click-to-open affordance never
+   * resolves a match (comment text still renders, link click is a no-op).
+   */
+  callRequests?: BeCallRequestView[];
   /** Download a file surfaced in the timeline. */
   onDownloadAttachment?: (attachment: CaseAttachment) => void;
+  /**
+   * Inline attachment preview for image/PDF attachments in the timeline.
+   * Mirrors the `AttachmentsWidget` preview prop (see `CaseDetailWidgets.tsx`)
+   * — all three fields are one feature, so omit the whole object to hide the
+   * per-row Preview affordance rather than supplying only some of the
+   * fields. `previewTarget`/`onPreviewTargetChange` are expected to be
+   * lifted to the parent page, shared with the Attachments tab's widget so
+   * there is exactly one dialog open at a time.
+   */
+  preview?: {
+    /** Fetch an attachment's raw bytes for inline preview. */
+    onGetPreviewContent: (attachment: CaseAttachment) => Promise<Blob>;
+    /** Attachment currently shown in the preview dialog. */
+    previewTarget: CaseAttachment | null;
+    onPreviewTargetChange: (attachment: CaseAttachment | null) => void;
+  };
 }
 
 const AUDIT_ICON: Record<CaseAuditEntry["kind"], JSX.Element> = {
@@ -126,7 +157,9 @@ export default function CaseActivitiesFeed({
   comments,
   audit,
   attachments,
+  callRequests = [],
   onDownloadAttachment,
+  preview,
 }: CaseActivitiesFeedProps): JSX.Element {
   const [showWorkNotes, setShowWorkNotes] = useState(true);
   const [showLifecycle, setShowLifecycle] = useState(true);
@@ -135,6 +168,8 @@ export default function CaseActivitiesFeed({
   const [filterAnchor, setFilterAnchor] = useState<HTMLElement | null>(null);
   const [fullscreenImageSrc, setFullscreenImageSrc] = useState<string | null>(null);
   const [fullscreenImageAlt, setFullscreenImageAlt] = useState<string | undefined>(undefined);
+  const [selectedCallRequest, setSelectedCallRequest] =
+    useState<BeCallRequestView | null>(null);
 
   const entries: FeedEntry[] = useMemo(() => {
     const out: FeedEntry[] = [];
@@ -269,6 +304,13 @@ export default function CaseActivitiesFeed({
                     setFullscreenImageSrc(src);
                     setFullscreenImageAlt(alt);
                   }}
+                  onCallRequestClick={(sysId) => {
+                    // Stale/cross-case reference (not in this case's fetched
+                    // call requests) — do nothing rather than open a broken
+                    // popup; see task scope, this fallback is intentional.
+                    const match = callRequests.find((cr) => cr.id === sysId);
+                    if (match) setSelectedCallRequest(match);
+                  }}
                 />
               );
             }
@@ -320,7 +362,11 @@ export default function CaseActivitiesFeed({
                       }}
                     >
                       <Typography variant="subtitle2">
-                        {e.entry.actor}
+                        <UserRefLink
+                          name={e.entry.actor}
+                          email={e.entry.actorUser?.email}
+                          userId={e.entry.actorUser?.id}
+                        />
                       </Typography>
                       <Chip
                         size="small"
@@ -404,7 +450,14 @@ export default function CaseActivitiesFeed({
                     }}
                   >
                     <Typography variant="subtitle2">
-                      {e.attachment.uploadedBy}
+                      <UserRefLink
+                        name={e.attachment.uploadedBy}
+                        email={
+                          e.attachment.uploadedByUser?.email ||
+                          e.attachment.uploadedByEmail
+                        }
+                        userId={e.attachment.uploadedByUser?.id}
+                      />
                     </Typography>
                     <Chip size="small" variant="outlined" label="Attachment" />
                     <Typography variant="caption" color="text.secondary">
@@ -435,18 +488,33 @@ export default function CaseActivitiesFeed({
                         {e.attachment.contentType}
                       </Typography>
                     </Box>
-                    {onDownloadAttachment && (
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<Download size={14} />}
-                        onClick={() => onDownloadAttachment(e.attachment)}
-                        aria-label={`Download ${e.attachment.filename}`}
-                        sx={{ flexShrink: 0 }}
-                      >
-                        Download
-                      </Button>
-                    )}
+                    <Box sx={{ display: "flex", gap: 1, flexShrink: 0 }}>
+                      {preview &&
+                        getAttachmentPreviewKind(e.attachment.contentType) && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<Eye size={14} />}
+                            onClick={() =>
+                              preview.onPreviewTargetChange(e.attachment)
+                            }
+                            aria-label={`Preview ${e.attachment.filename}`}
+                          >
+                            Preview
+                          </Button>
+                        )}
+                      {onDownloadAttachment && (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          startIcon={<Download size={14} />}
+                          onClick={() => onDownloadAttachment(e.attachment)}
+                          aria-label={`Download ${e.attachment.filename}`}
+                        >
+                          Download
+                        </Button>
+                      )}
+                    </Box>
                   </Box>
                 </Paper>
               </Box>
@@ -463,6 +531,19 @@ export default function CaseActivitiesFeed({
           setFullscreenImageAlt(undefined);
         }}
       />
+      {preview && (
+        <AttachmentPreviewDialog
+          attachment={preview.previewTarget}
+          onClose={() => preview.onPreviewTargetChange(null)}
+          fetchContent={preview.onGetPreviewContent}
+        />
+      )}
+      {selectedCallRequest && (
+        <CallRequestDetailModal
+          callRequest={selectedCallRequest}
+          onClose={() => setSelectedCallRequest(null)}
+        />
+      )}
     </Box>
   );
 }
@@ -499,7 +580,12 @@ export function AttachmentsList({
             </Typography>
             <Typography variant="caption" color="text.secondary">
               {formatBytes(a.size)} · {a.contentType} · uploaded by{" "}
-              {a.uploadedBy} · <RelativeTime iso={a.uploadedAt} />
+              <UserRefLink
+                name={a.uploadedBy}
+                email={a.uploadedByUser?.email || a.uploadedByEmail}
+                userId={a.uploadedByUser?.id}
+              />{" "}
+              · <RelativeTime iso={a.uploadedAt} />
             </Typography>
           </Box>
         </Paper>

@@ -14,12 +14,73 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState, type ComponentProps, type JSX, type ReactElement } from "react";
+import { MemoryRouter } from "react-router";
 import "@testing-library/jest-dom/vitest";
+
+// The real client reads runtime config at module load, which isn't present
+// under vitest (same approach as useQuickCaseSearch.test.tsx). `UserRefLink`
+// (used for the attachment uploader) resolves an unknown id through
+// `useResolvedUserId`, which calls this client — the attachments in this file
+// carry no `uploadedByUser`, so it never actually fires, but the mock keeps
+// the hook's `useBackendApi()` call from throwing on missing runtime config.
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({ post: vi.fn().mockResolvedValue({ users: [] }) }),
+}));
+
 import CaseActivitiesFeed from "@features/csm-cases/components/CaseActivitiesFeed";
 import { formatAbsoluteForUser } from "@utils/dateTime";
-import type { CaseAuditEntry } from "@features/csm-cases/types/csmCases";
+import type { BeCallRequestView } from "@api/backend/types";
+import type {
+  CaseAttachment,
+  CaseAuditEntry,
+  CsmCaseComment,
+} from "@features/csm-cases/types/csmCases";
+
+// `UserRefLink` (used for the attachment uploader and the comment/lifecycle
+// actor) renders a `react-router` `Link` and resolves its id through
+// react-query, so every render needs both a Router and a QueryClient context
+// even outside a full app render.
+function renderWithRouter(ui: ReactElement): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+// `previewTarget`/`onPreviewTargetChange` (part of the feed's `preview`
+// prop) are lifted to the parent page (see CsmCaseDetailPage) so the
+// preview dialog is shared with the Attachments tab's widget. This harness
+// owns that bit of state locally, standing in for the parent, and keeps the
+// flat `onGetPreviewContent` shape for individual tests below so only this
+// harness needs to know about the grouped `preview` prop.
+function CaseActivitiesFeedHarness({
+  onGetPreviewContent,
+  ...props
+}: Omit<ComponentProps<typeof CaseActivitiesFeed>, "preview"> & {
+  onGetPreviewContent?: (attachment: CaseAttachment) => Promise<Blob>;
+}): JSX.Element {
+  const [previewTarget, setPreviewTarget] = useState<CaseAttachment | null>(
+    null,
+  );
+  return (
+    <CaseActivitiesFeed
+      {...props}
+      preview={
+        onGetPreviewContent
+          ? { onGetPreviewContent, previewTarget, onPreviewTargetChange: setPreviewTarget }
+          : undefined
+      }
+    />
+  );
+}
 
 describe("CaseActivitiesFeed", () => {
   it("renders a field_change entry with old/new values", () => {
@@ -38,7 +99,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    const { container } = render(
+    const { container } = renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -73,7 +134,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -100,7 +161,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -124,7 +185,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -133,6 +194,60 @@ describe("CaseActivitiesFeed", () => {
     // The time is a permalink anchor to the entry, same pattern comments use.
     const permalink = document.querySelector(`a[href="#${entry.id}"]`);
     expect(permalink).not.toBeNull();
+  });
+
+  it("links the actor to their profile when actorUser carries a resolvable id", () => {
+    const entry: CaseAuditEntry = {
+      id: "fc-8",
+      kind: "field_change",
+      actor: "Jane Doe",
+      actorUser: { id: "user-1", email: "jane.doe@example.com", name: "Jane Doe" },
+      createdAt: "2026-07-01T00:00:00Z",
+      changes: [
+        {
+          field: "state",
+          fieldLabel: "State",
+          previousValue: "In Progress",
+          newValue: "Resolved",
+        },
+      ],
+    };
+
+    renderWithRouter(
+      <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
+    );
+
+    const link = screen.getByRole("link", { name: "Jane Doe" });
+    expect(link).toHaveAttribute("href", "/people/user-1");
+  });
+
+  it("renders the actor as plain text (no link) when the activity's email field is really a username, not an address", () => {
+    // Real backend shape: activity entries never resolve `id`, and `email`
+    // sometimes holds an automation account name (e.g. "system"/"guest")
+    // rather than an address — `isPlausibleEmail` correctly refuses to
+    // resolve it, and no id-lookup request should ever fire for it.
+    const entry: CaseAuditEntry = {
+      id: "fc-9",
+      kind: "field_change",
+      actor: "System",
+      actorUser: { id: null, email: "system", name: "System" },
+      createdAt: "2026-07-01T00:00:00Z",
+      changes: [
+        {
+          field: "state",
+          fieldLabel: "State",
+          previousValue: "In Progress",
+          newValue: "Resolved",
+        },
+      ],
+    };
+
+    renderWithRouter(
+      <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
+    );
+
+    expect(screen.getByText("System")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "System" })).not.toBeInTheDocument();
   });
 
   it("renders every backend-provided change line, even one matching the entry's own timestamp", () => {
@@ -159,7 +274,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -183,7 +298,7 @@ describe("CaseActivitiesFeed", () => {
       ],
     };
 
-    const { container } = render(
+    const { container } = renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
@@ -205,10 +320,179 @@ describe("CaseActivitiesFeed", () => {
       createdAt: "2026-07-01T00:00:00Z",
     };
 
-    render(
+    renderWithRouter(
       <CaseActivitiesFeed comments={[]} audit={[entry]} attachments={[]} />,
     );
 
     expect(screen.getByText("Case moved to In Progress")).toBeInTheDocument();
+  });
+});
+
+describe("CaseActivitiesFeed — call-request link in a comment", () => {
+  const SYSID = "7a43e2d43b2a4b5091404c6aa5e45a41";
+  const UUID = "7a43e2d4-3b2a-4b50-9140-4c6aa5e45a41";
+
+  function makeComment(bodyHtml: string): CsmCaseComment {
+    return {
+      id: "c-1",
+      caseId: "case-1",
+      authorName: "Jane Doe",
+      authorRole: "customer",
+      bodyHtml,
+      createdAt: "2026-07-01T00:00:00Z",
+    };
+  }
+
+  const CALL_REQUEST: BeCallRequestView = {
+    id: UUID,
+    number: "CR-1001",
+    reason: "Discuss upgrade path",
+  };
+
+  it("opens CallRequestDetailModal with the matching call request on marker click", () => {
+    renderWithRouter(
+      <CaseActivitiesFeed
+        comments={[
+          makeComment(
+            `See https://sn-dev.example.com/sn_customerservice_customer_call.do?sys_id=${SYSID}`,
+          ),
+        ]}
+        audit={[]}
+        attachments={[]}
+        callRequests={[CALL_REQUEST]}
+      />,
+    );
+
+    const marker = screen.getByRole("button", { name: "View call request" });
+    fireEvent.click(marker);
+
+    expect(screen.getByText("Call request · CR-1001")).toBeInTheDocument();
+    expect(screen.getByText("Discuss upgrade path")).toBeInTheDocument();
+  });
+
+  it("does nothing when the referenced call request is not in the fetched list", () => {
+    renderWithRouter(
+      <CaseActivitiesFeed
+        comments={[
+          makeComment(
+            `See https://sn-dev.example.com/sn_customerservice_customer_call.do?sys_id=${SYSID}`,
+          ),
+        ]}
+        audit={[]}
+        attachments={[]}
+        callRequests={[]}
+      />,
+    );
+
+    const marker = screen.getByRole("button", { name: "View call request" });
+    fireEvent.click(marker);
+
+    expect(screen.queryByText(/^Call request/)).not.toBeInTheDocument();
+  });
+});
+
+describe("CaseActivitiesFeed — attachment preview affordance", () => {
+  const IMAGE_ATTACHMENT: CaseAttachment = {
+    id: "att-1",
+    filename: "screenshot.png",
+    size: 2048,
+    contentType: "image/png",
+    uploadedBy: "Jane Doe",
+    uploadedAt: "2026-01-01T00:00:00Z",
+  };
+  const ZIP_ATTACHMENT: CaseAttachment = {
+    id: "att-2",
+    filename: "logs.zip",
+    size: 8192,
+    contentType: "application/zip",
+    uploadedBy: "Jane Doe",
+    uploadedAt: "2026-01-02T00:00:00Z",
+  };
+
+  beforeEach(() => {
+    // jsdom has no object-URL implementation; stub both so the preview
+    // dialog's blob -> object URL -> revoke lifecycle can run in tests.
+    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock-url");
+    globalThis.URL.revokeObjectURL = vi.fn();
+  });
+
+  it("shows Preview only for an image attachment, when a fetcher is supplied", () => {
+    renderWithRouter(
+      <CaseActivitiesFeedHarness
+        comments={[]}
+        audit={[]}
+        attachments={[IMAGE_ATTACHMENT, ZIP_ATTACHMENT]}
+        onGetPreviewContent={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: `Preview ${IMAGE_ATTACHMENT.filename}` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `Preview ${ZIP_ATTACHMENT.filename}` }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides every Preview affordance when no fetcher is supplied", () => {
+    renderWithRouter(
+      <CaseActivitiesFeedHarness
+        comments={[]}
+        audit={[]}
+        attachments={[IMAGE_ATTACHMENT]}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /^preview /i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens the fullscreen preview dialog with the fetched object URL and revokes it on close", async () => {
+    const fetchContent = vi
+      .fn()
+      .mockResolvedValue(new Blob(["fake"], { type: "image/png" }));
+    renderWithRouter(
+      <CaseActivitiesFeedHarness
+        comments={[]}
+        audit={[]}
+        attachments={[IMAGE_ATTACHMENT]}
+        onGetPreviewContent={fetchContent}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `Preview ${IMAGE_ATTACHMENT.filename}` }),
+    );
+
+    expect(fetchContent).toHaveBeenCalledWith(IMAGE_ATTACHMENT);
+    await waitFor(() =>
+      expect(screen.getByAltText(IMAGE_ATTACHMENT.filename)).toBeInTheDocument(),
+    );
+    expect(screen.getByAltText(IMAGE_ATTACHMENT.filename)).toHaveAttribute(
+      "src",
+      "blob:mock-url",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /close preview/i }));
+    await waitFor(() =>
+      expect(globalThis.URL.revokeObjectURL).toHaveBeenCalledWith(
+        "blob:mock-url",
+      ),
+    );
+  });
+
+  it("still shows Download for a non-previewable attachment", () => {
+    const onDownloadAttachment = vi.fn();
+    renderWithRouter(
+      <CaseActivitiesFeedHarness
+        comments={[]}
+        audit={[]}
+        attachments={[ZIP_ATTACHMENT]}
+        onDownloadAttachment={onDownloadAttachment}
+        onGetPreviewContent={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: `Download ${ZIP_ATTACHMENT.filename}` }),
+    ).toBeInTheDocument();
   });
 });

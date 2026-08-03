@@ -19,6 +19,7 @@ import {
   AccordionDetails,
   AccordionSummary,
   AdapterDateFns,
+  Alert,
   Box,
   Button,
   Card,
@@ -34,20 +35,27 @@ import {
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 import { ArrowLeft, ChevronDown } from "@wso2/oxygen-ui-icons-react";
 import { useRef, useState, type JSX } from "react";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import Editor from "@components/rich-text-editor/Editor";
 import { isBlankHtml } from "@utils/sanitizeHtml";
+import { isPastDateTime } from "@utils/dateTime";
 import { usePostChangeRequest } from "@features/csm-operations/api/usePostChangeRequest";
+import { usePatchChangeRequest } from "@features/csm-operations/api/usePatchChangeRequest";
 import { useGetUsersMe } from "@features/settings/api/useGetUsersMe";
 import { useSearchGroups } from "@api/useSearchGroups";
 import { useSearchItServices } from "@api/useSearchItServices";
 import { useSearchServiceOfferings } from "@api/useSearchServiceOfferings";
 import { useSearchConfigurationItems } from "@api/useSearchConfigurationItems";
 import { useSearchUsersByName } from "@api/useSearchUsersByName";
+import { useSearchServiceRequestsForSelect } from "@features/csm-operations/api/useSearchServiceRequestsForSelect";
 import AsyncEntitySelect from "@components/AsyncEntitySelect";
-import { changeRequestStateLabel } from "@features/csm-operations/utils/changeRequests";
+import {
+  changeRequestStateLabel,
+  CLONE_SOURCE_GAP_MESSAGE,
+  type CloneChangeRequestNavState,
+} from "@features/csm-operations/utils/changeRequests";
 import type {
   BeChangeRequestCategory,
   BeChangeRequestImpact,
@@ -55,6 +63,7 @@ import type {
   BeChangeRequestRisk,
   BeChangeRequestState,
   BeChangeRequestType,
+  BeCaseSearchView,
   BeCreateChangeRequestPayload,
   BeConfigurationItem,
   BeGroup,
@@ -129,16 +138,32 @@ const CREATE_STATE_VALUES: BeChangeRequestState[] = ["new", "assess", "authorize
 const STATE_OPTIONS: Array<{ value: BeChangeRequestState; label: string }> =
   CREATE_STATE_VALUES.map((s) => ({ value: s, label: changeRequestStateLabel(s) }));
 
+// Option labels for this form's pickers. Each falls back down to the record id
+// rather than rendering blank, so an option is always selectable even when the
+// backing record carries none of the friendlier fields.
+
+/** Display label for a user option: full name, else email, else id. */
 function userLabel(u: BeUser): string {
   return [u.firstName, u.lastName].filter(Boolean).join(" ").trim() || u.email || u.id || "";
 }
 
+/** Display label for an IT service option: name, else id. */
 function itServiceLabel(s: BeItService): string {
   return s.name ?? s.id;
 }
 
+/** Display label for a configuration item option: name, else id. */
 function configurationItemLabel(ci: BeConfigurationItem): string {
   return ci.name ?? ci.id;
+}
+
+/**
+ * Display label for an originating-service-request option, as
+ * "CS0001234 — subject". Number and subject are both optional on the search
+ * view, so it degrades to whichever exists and finally to the id.
+ */
+function caseSearchLabel(c: BeCaseSearchView): string {
+  return [c.number, c.subject].filter(Boolean).join(" — ") || c.id;
 }
 
 /** `datetime-local` input value ("YYYY-MM-DDTHH:MM") to the BE's expected
@@ -185,34 +210,57 @@ export default function CreateChangeRequestPage(): JSX.Element {
   const navigate = useNavigate();
   const { showError } = useErrorBanner();
   const postChangeRequest = usePostChangeRequest();
+  const patchChangeRequest = usePatchChangeRequest();
 
-  const [subject, setSubject] = useState("");
+  // Set when opened from a change request's "Clone" action, which navigates
+  // here with router state (not query params) — see
+  // CsmChangeRequestDetailPage.tsx's cloneChangeRequest and
+  // buildCloneChangeRequestNavState's doc comment for exactly which fields
+  // this can and can't carry over. Read once: this form's state is what the
+  // user edits from here on, so a later change to the *source* record must
+  // not reach back in and overwrite what they've typed.
+  const cloneState = useLocation().state as CloneChangeRequestNavState | undefined;
+
+  // Slice on seed as well as on change: a source record at or beyond the cap
+  // would otherwise load untrimmed, show a negative characters-left count, and
+  // submit over-length if the user never edits the field.
+  const [subject, setSubject] = useState((cloneState?.subject ?? "").slice(0, SUBJECT_MAX));
   // Pre-selected to match the legacy ServiceNow form's own defaults, rather
   // than leaving every dropdown blank — most change requests are Normal
   // type, Other category, Low impact, Moderate risk. Priority has no default
-  // there either ("-- None --"), so it stays unset here too.
-  const [type, setType] = useState<string>("normal");
+  // there either ("-- None --"), so it stays unset here too. A clone
+  // carries over `type`/`impact` from the source record when present;
+  // category/priority/risk have no source value to carry (see
+  // buildCloneChangeRequestNavState), so they keep the same defaults a
+  // from-scratch change request gets.
+  const [type, setType] = useState<string>(cloneState?.type ?? "normal");
   const [category, setCategory] = useState<string>("other");
-  const [impact, setImpact] = useState<string>("low");
+  const [impact, setImpact] = useState<string>(cloneState?.impact ?? "low");
   const [priority, setPriority] = useState<string>(UNSET);
   const [risk, setRisk] = useState<string>("moderate");
+  // Always "new" regardless of the source record's own state/schedule/
+  // approval — cloning must never carry an approval or a stale window
+  // across into the new change request.
   const [state, setState] = useState<string>("new");
   const [plannedStartDate, setPlannedStartDate] = useState("");
   const [plannedEndDate, setPlannedEndDate] = useState("");
-  const [description, setDescription] = useState("");
-  const [justification, setJustification] = useState("");
+  const [description, setDescription] = useState(cloneState?.description ?? "");
+  const [justification, setJustification] = useState(cloneState?.justification ?? "");
   const [implementationPlan, setImplementationPlan] = useState("");
   const [riskImpactAnalysis, setRiskImpactAnalysis] = useState("");
   const [backoutPlan, setBackoutPlan] = useState("");
-  const [testPlan, setTestPlan] = useState("");
+  const [testPlan, setTestPlan] = useState(cloneState?.testPlan ?? "");
   const [serviceId, setServiceId] = useState("");
   const [serviceOfferingId, setServiceOfferingId] = useState("");
   const [configurationItemId, setConfigurationItemId] = useState("");
   const [groupId, setGroupId] = useState("");
-  const [assignedEngineerId, setAssignedEngineerId] = useState("");
+  const [assignedEngineerId, setAssignedEngineerId] = useState(
+    cloneState?.assignedEngineerId ?? "",
+  );
   const [requestedById, setRequestedById] = useState("");
-  const [comment, setComment] = useState("");
-  const [workNote, setWorkNote] = useState("");
+  // The service request this change request was raised from, when picked.
+  // Not part of BeCreateChangeRequestPayload — see handleSubmit's comment.
+  const [caseId, setCaseId] = useState("");
 
   // Defaults "Requested by" to the signed-in user, matching the legacy
   // ServiceNow form's own behaviour (usePostChangeRequest.ts/BE doesn't do
@@ -229,7 +277,12 @@ export default function CreateChangeRequestPage(): JSX.Element {
     setRequestedById(me.id);
   }
 
-  const canSubmit = subject.trim().length > 0 && !postChangeRequest.isPending;
+  const isSubmitting = postChangeRequest.isPending || patchChangeRequest.isPending;
+  const canSubmit = subject.trim().length > 0 && !isSubmitting;
+  // Non-blocking: a past planned start/end is unusual but not forbidden
+  // (e.g. logging a change that already happened), so this only warns.
+  const plannedStartIsPast = isPastDateTime(parseDateTimeLocal(plannedStartDate));
+  const plannedEndIsPast = isPastDateTime(parseDateTimeLocal(plannedEndDate));
 
   const handleSubmit = (): void => {
     if (!canSubmit) return;
@@ -260,12 +313,32 @@ export default function CreateChangeRequestPage(): JSX.Element {
     if (groupId.trim()) payload.groupId = groupId.trim();
     if (assignedEngineerId.trim()) payload.assignedEngineerId = assignedEngineerId.trim();
     if (requestedById.trim()) payload.requestedById = requestedById.trim();
-    if (comment.trim()) payload.comment = comment.trim();
-    if (workNote.trim()) payload.workNote = workNote.trim();
 
     postChangeRequest.mutate(payload, {
-      onSuccess: (created) =>
-        navigate(`/operations/change-requests/${created.changeRequest.id}`),
+      onSuccess: (created) => {
+        const createdId = created.changeRequest.id;
+        // POST /change-requests can't carry the originating-service-request
+        // link (it isn't an accepted create field), so it's set with a
+        // follow-up PATCH once the change request exists. A failed PATCH
+        // still leaves a valid, created change request — navigate there
+        // regardless, but surface the link failure rather than hiding it.
+        if (!caseId) {
+          navigate(`/operations/change-requests/${createdId}`);
+          return;
+        }
+        patchChangeRequest.mutate(
+          { id: createdId, patch: { caseId } },
+          {
+            onSuccess: () => navigate(`/operations/change-requests/${createdId}`),
+            onError: () => {
+              showError(
+                "The change request was created, but linking it to the originating service request failed. The change request itself is unaffected; the link is not set.",
+              );
+              navigate(`/operations/change-requests/${createdId}`);
+            },
+          },
+        );
+      },
       onError: (err) => {
         // The backend surfaces real validation messages on 4xx (e.g. an
         // invalid UUID in one of the advanced ID fields); show them.
@@ -287,7 +360,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
     onChange: (v: string) => void,
     options: Array<{ value: string; label: string }>,
   ): JSX.Element => (
-    <FormControl fullWidth size="small" disabled={postChangeRequest.isPending}>
+    <FormControl fullWidth size="small" disabled={isSubmitting}>
       <InputLabel id={`${id}-label`} shrink>
         {label}
       </InputLabel>
@@ -342,7 +415,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
           minHeight={100}
           maxHeight={300}
           toolbarVariant="full"
-          disabled={postChangeRequest.isPending}
+          disabled={isSubmitting}
         />
       </Box>
     </Box>
@@ -362,6 +435,15 @@ export default function CreateChangeRequestPage(): JSX.Element {
         New change request
       </Typography>
 
+      {cloneState && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          {cloneState.sourceNumber
+            ? `Cloned from ${cloneState.sourceNumber}. `
+            : "Cloned from an existing change request. "}
+          {CLONE_SOURCE_GAP_MESSAGE}
+        </Alert>
+      )}
+
       <Card variant="outlined" sx={{ p: 3 }}>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
           <Typography variant="subtitle2">Change request</Typography>
@@ -372,7 +454,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
             onChange={(e) => setSubject(e.target.value.slice(0, SUBJECT_MAX))}
             fullWidth
             required
-            disabled={postChangeRequest.isPending}
+            disabled={isSubmitting}
             placeholder="Short summary of the change"
             helperText={charsLeftHelper(subject, SUBJECT_MAX)}
           />
@@ -442,10 +524,16 @@ export default function CreateChangeRequestPage(): JSX.Element {
                       : "",
                   )
                 }
-                disabled={postChangeRequest.isPending}
+                disabled={isSubmitting}
                 sx={{ flex: "1 1 240px" }}
                 slotProps={{
-                  textField: { size: "small", fullWidth: true },
+                  textField: {
+                    size: "small",
+                    fullWidth: true,
+                    helperText: plannedStartIsPast
+                      ? "This date is in the past."
+                      : undefined,
+                  },
                   field: { clearable: true },
                 }}
               />
@@ -460,10 +548,16 @@ export default function CreateChangeRequestPage(): JSX.Element {
                       : "",
                   )
                 }
-                disabled={postChangeRequest.isPending}
+                disabled={isSubmitting}
                 sx={{ flex: "1 1 240px" }}
                 slotProps={{
-                  textField: { size: "small", fullWidth: true },
+                  textField: {
+                    size: "small",
+                    fullWidth: true,
+                    helperText: plannedEndIsPast
+                      ? "This date is in the past."
+                      : undefined,
+                  },
                   field: { clearable: true },
                 }}
               />
@@ -473,38 +567,19 @@ export default function CreateChangeRequestPage(): JSX.Element {
           {/* Everything below is optional and used less often at creation
               time — collapsed by default so the form isn't dominated by
               fields most requests won't need up front. */}
-          <Accordion disableGutters sx={{ "&:before": { display: "none" }, mt: 1 }}>
+          <Accordion
+            disableGutters
+            // Auto-expanded when cloning and an engineer carried over, so
+            // the prefilled value isn't hidden behind a collapsed section.
+            defaultExpanded={!!cloneState?.assignedEngineerId}
+            sx={{ "&:before": { display: "none" }, mt: 1 }}
+          >
             <AccordionSummary expandIcon={<ChevronDown size={16} />}>
               <Typography variant="body2" color="text.secondary">
                 More options (optional)
               </Typography>
             </AccordionSummary>
             <AccordionDetails sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {/* These map to two different ServiceNow journal fields — mixing
-                  them up would either leak an internal note to the customer or
-                  bury something they were meant to see, so the distinction is
-                  spelled out rather than left to a generic "Comment" label. */}
-              <TextField
-                label="Additional comments (customer-visible)"
-                multiline
-                minRows={2}
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                disabled={postChangeRequest.isPending}
-                fullWidth
-                helperText="Visible to the customer — do not include internal-only details."
-              />
-              <TextField
-                label="Internal work note"
-                multiline
-                minRows={2}
-                value={workNote}
-                onChange={(e) => setWorkNote(e.target.value)}
-                disabled={postChangeRequest.isPending}
-                fullWidth
-                helperText="Internal only — never shown to the customer."
-              />
-
               <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
                 <Box sx={{ flex: "1 1 220px" }}>
                   <AsyncEntitySelect<BeItService>
@@ -518,7 +593,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
                       // service — drop it rather than leave a stale pairing.
                       setServiceOfferingId("");
                     }}
-                    disabled={postChangeRequest.isPending}
+                    disabled={isSubmitting}
                     useSearch={useSearchItServices}
                     getId={(s) => s.id}
                     getLabel={itServiceLabel}
@@ -531,7 +606,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
                     placeholder="Search service offerings…"
                     value={serviceOfferingId}
                     onChange={setServiceOfferingId}
-                    disabled={postChangeRequest.isPending}
+                    disabled={isSubmitting}
                     useSearch={useSearchServiceOfferings}
                     searchExtra={serviceId || undefined}
                     getId={(o) => o.id}
@@ -546,7 +621,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
                     placeholder="Search configuration items…"
                     value={configurationItemId}
                     onChange={setConfigurationItemId}
-                    disabled={postChangeRequest.isPending}
+                    disabled={isSubmitting}
                     useSearch={useSearchConfigurationItems}
                     getId={(ci) => ci.id}
                     getLabel={configurationItemLabel}
@@ -559,7 +634,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
                     placeholder="Search groups…"
                     value={groupId}
                     onChange={setGroupId}
-                    disabled={postChangeRequest.isPending}
+                    disabled={isSubmitting}
                     useSearch={useSearchGroups}
                     getId={(g) => g.id}
                     getLabel={(g) => g.name}
@@ -572,12 +647,13 @@ export default function CreateChangeRequestPage(): JSX.Element {
                     placeholder="Search people…"
                     value={assignedEngineerId}
                     onChange={setAssignedEngineerId}
-                    disabled={postChangeRequest.isPending}
+                    disabled={isSubmitting}
                     useSearch={useSearchUsersByName}
                     // useSearchUsersByName filters out any user without an id,
                     // so every option here is guaranteed to have one.
                     getId={(u) => u.id!}
                     getLabel={userLabel}
+                    knownLabel={cloneState?.assignedEngineerLabel}
                   />
                 </Box>
                 <Box sx={{ flex: "1 1 220px" }}>
@@ -587,7 +663,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
                     placeholder="Search people…"
                     value={requestedById}
                     onChange={setRequestedById}
-                    disabled={postChangeRequest.isPending}
+                    disabled={isSubmitting}
                     useSearch={useSearchUsersByName}
                     // useSearchUsersByName filters out any user without an id,
                     // so every option here is guaranteed to have one.
@@ -595,6 +671,23 @@ export default function CreateChangeRequestPage(): JSX.Element {
                     getLabel={userLabel}
                     knownLabel={meLabel}
                     helperText="Defaults to you — clear it if this wasn't your request."
+                  />
+                </Box>
+                <Box sx={{ flex: "1 1 220px" }}>
+                  <AsyncEntitySelect<BeCaseSearchView>
+                    id="cr-originating-service-request"
+                    label="Originating service request"
+                    placeholder="Search service requests…"
+                    value={caseId}
+                    onChange={setCaseId}
+                    disabled={isSubmitting}
+                    // This form carries no account/project field, so there's
+                    // no context available to narrow suggestions — the search
+                    // is across all service requests by number/subject.
+                    useSearch={useSearchServiceRequestsForSelect}
+                    getId={(c) => c.id}
+                    getLabel={caseSearchLabel}
+                    helperText="Links this change request back to the service request it was raised from."
                   />
                 </Box>
               </Box>
@@ -613,7 +706,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
             variant="contained"
             onClick={handleSubmit}
             disabled={!canSubmit}
-            loading={postChangeRequest.isPending}
+            loading={isSubmitting}
           >
             Create change request
           </Button>
