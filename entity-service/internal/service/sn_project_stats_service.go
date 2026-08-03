@@ -339,8 +339,13 @@ func (s *snProjectStatsService) GetProjectCaseStats(ctx context.Context, project
 	token := middleware.UserIDTokenFromContext(ctx)
 
 	q := url.Values{}
-	for _, ct := range req.CaseTypes {
-		q.Add("caseTypes", ct)
+	if len(req.CaseTypes) > 0 {
+		if err := validateUUIDs("caseTypes", req.CaseTypes); err != nil {
+			return domain.ProjectCaseStatsResponse{}, err
+		}
+		for _, ct := range uuidsToSysids(req.CaseTypes) {
+			q.Add("caseTypes", ct)
+		}
 	}
 	if req.CreatedBy != "" {
 		q.Set("createdBy", req.CreatedBy)

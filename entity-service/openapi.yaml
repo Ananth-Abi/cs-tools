@@ -562,6 +562,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         "200":
           description: The project's reference metadata.
@@ -599,6 +600,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         "200":
           description: The project's overall statistics.
@@ -636,6 +638,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
         - name: caseTypes
           in: query
           required: false
@@ -691,6 +694,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
         - name: createdBy
           in: query
           required: false
@@ -734,6 +738,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         "200":
           description: The project's deployment statistics.
@@ -771,6 +776,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
         - name: startDate
           in: query
           required: false
@@ -822,6 +828,7 @@ paths:
           required: true
           schema:
             type: string
+            format: uuid
       responses:
         "200":
           description: The project's change-request statistics.
