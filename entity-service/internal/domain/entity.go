@@ -634,6 +634,171 @@ type SearchProjectsResponse struct {
 	HasMore  bool          `json:"hasMore"`
 }
 
+// --- project metadata/stats (ServiceNow data source only) ---
+
+// ChoiceListItem is one available option for a ServiceNow choice-list field —
+// used in metadata responses that enumerate the valid values for a field
+// (e.g. case states, severities) rather than classify a single record, and in
+// stats responses that report a count per option.
+type ChoiceListItem struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Count *int   `json:"count,omitempty"`
+}
+
+// ReferenceTableItem is a reference to a row in another ServiceNow table,
+// used in metadata/stats responses (e.g. case types) — richer than EntityRef:
+// adds an optional record number, WSO2-internal ID, and per-item count.
+type ReferenceTableItem struct {
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	Number     *string `json:"number,omitempty"`
+	InternalID *string `json:"internalId,omitempty"`
+	Count      *int    `json:"count,omitempty"`
+}
+
+// ProjectFeatures is the feature-access configuration for a project.
+type ProjectFeatures struct {
+	ProjectType                    ReferenceTableItem `json:"projectType"`
+	AcceptedSeverityValues         []ChoiceListItem   `json:"acceptedSeverityValues"`
+	HasServiceRequestWriteAccess   bool               `json:"hasServiceRequestWriteAccess"`
+	HasServiceRequestReadAccess    bool               `json:"hasServiceRequestReadAccess"`
+	HasSraWriteAccess              bool               `json:"hasSraWriteAccess"`
+	HasSraReadAccess               bool               `json:"hasSraReadAccess"`
+	HasChangeRequestReadAccess     bool               `json:"hasChangeRequestReadAccess"`
+	HasEngagementsReadAccess       bool               `json:"hasEngagementsReadAccess"`
+	HasUpdatesReadAccess           bool               `json:"hasUpdatesReadAccess"`
+	HasTimeLogsReadAccess          bool               `json:"hasTimeLogsReadAccess"`
+	HasDeploymentWriteAccess       bool               `json:"hasDeploymentWriteAccess"`
+	HasDeploymentReadAccess        bool               `json:"hasDeploymentReadAccess"`
+	HasComponentAnalysisReadAccess bool               `json:"hasComponentAnalysisReadAccess"`
+	HasUsageMetricsReadAccess      bool               `json:"hasUsageMetricsReadAccess"`
+	// DefaultCaseProductCategories/SrProductCategories are plain strings, not a
+	// named Go enum type, matching this file's convention for enum-like fields.
+	DefaultCaseProductCategories []string `json:"defaultCaseProductCategories,omitempty"`
+	SrProductCategories          []string `json:"srProductCategories,omitempty"`
+}
+
+// ProjectMetadataResponse is the response for GET /projects/{id}/metadata —
+// reference data (choice lists, feature flags) for building the project's UI,
+// not project-specific field values.
+type ProjectMetadataResponse struct {
+	CaseStates                  []ChoiceListItem     `json:"caseStates"`
+	CallRequestStates           []ChoiceListItem     `json:"callRequestStates"`
+	ChangeRequestStates         []ChoiceListItem     `json:"changeRequestStates"`
+	ConversationStates          []ChoiceListItem     `json:"conversationStates"`
+	TimeCardStates              []ChoiceListItem     `json:"timeCardStates"`
+	ChangeRequestImpacts        []ChoiceListItem     `json:"changeRequestImpacts"`
+	Severities                  []ChoiceListItem     `json:"severities"`
+	SeverityBasedAllocationTime map[string]int       `json:"severityBasedAllocationTime"`
+	IssueTypes                  []ChoiceListItem     `json:"issueTypes"`
+	DeploymentTypes             []ChoiceListItem     `json:"deploymentTypes"`
+	CaseTypes                   []ReferenceTableItem `json:"caseTypes"`
+	EngagementTypes             []ChoiceListItem     `json:"engagementTypes"`
+	EngagementPaymentTypes      []ChoiceListItem     `json:"engagementPaymentTypes"`
+	Features                    ProjectFeatures      `json:"features"`
+}
+
+// ProjectStatsOutstandingCount groups the outstanding-work-item counts
+// embedded in ProjectStatsResponse.
+type ProjectStatsOutstandingCount struct {
+	CaseCount           int `json:"caseCount"`
+	ServiceRequestCount int `json:"serviceRequestCount"`
+	EngagementCount     int `json:"engagementCount"`
+	SraCount            int `json:"sraCount"`
+	ChangeRequestCount  int `json:"changeRequestCount"`
+	AnnouncementCount   int `json:"announcementCount"`
+}
+
+// ProjectStatsResponse is the response for GET /projects/{id}/stats.
+type ProjectStatsResponse struct {
+	TotalHours           float64                      `json:"totalHours"`
+	BillableHours        float64                      `json:"billableHours"`
+	SLAStatus            string                       `json:"slaStatus"`
+	DeploymentCount      int                          `json:"deploymentCount"`
+	DeployedProductCount int                          `json:"deployedProductCount"`
+	InstanceCount        int                          `json:"instanceCount"`
+	OutstandingCount     ProjectStatsOutstandingCount `json:"outstandingCount"`
+}
+
+// ResolvedCountBreakdown groups the resolved-count breakdown shared by case
+// and change-request stats responses.
+type ResolvedCountBreakdown struct {
+	Total          int `json:"total"`
+	CurrentMonth   int `json:"currentMonth"`
+	PastThirtyDays int `json:"pastThirtyDays"`
+}
+
+// ProjectCaseStatsChangeRate groups the period-over-period change-rate
+// figures embedded in ProjectCaseStatsResponse.
+type ProjectCaseStatsChangeRate struct {
+	ResolvedEngagements float64 `json:"resolvedEngagements"`
+	AverageResponseTime float64 `json:"averageResponseTime"`
+}
+
+// CasesTrend is the severity breakdown for a single time-unit bucket in a
+// case-count trend series.
+type CasesTrend struct {
+	Period     string           `json:"period"`
+	Severities []ChoiceListItem `json:"severities"`
+}
+
+// ProjectCaseStatsRequest is the input for GET /projects/{id}/cases/stats.
+type ProjectCaseStatsRequest struct {
+	// CaseTypes is a plain string slice, not a named Go enum type, matching
+	// this file's convention for enum-like fields.
+	CaseTypes []string
+	CreatedBy string
+}
+
+// ProjectCaseStatsResponse is the response for GET /projects/{id}/cases/stats.
+type ProjectCaseStatsResponse struct {
+	TotalCount                     int                        `json:"totalCount"`
+	ActiveCount                    int                        `json:"activeCount"`
+	OutstandingCount               int                        `json:"outstandingCount"`
+	ActionRequiredCount            int                        `json:"actionRequiredCount"`
+	AverageResponseTime            float64                    `json:"averageResponseTime"`
+	ResolvedCount                  ResolvedCountBreakdown     `json:"resolvedCount"`
+	ChangeRate                     ProjectCaseStatsChangeRate `json:"changeRate"`
+	StateCount                     []ChoiceListItem           `json:"stateCount"`
+	SeverityCount                  []ChoiceListItem           `json:"severityCount"`
+	OutstandingSeverityCount       []ChoiceListItem           `json:"outstandingSeverityCount"`
+	EngagementTypeCount            []ChoiceListItem           `json:"engagementTypeCount"`
+	OutstandingEngagementTypeCount []ChoiceListItem           `json:"outstandingEngagementTypeCount"`
+	CaseTypeCount                  []ReferenceTableItem       `json:"caseTypeCount"`
+	CasesTrend                     []CasesTrend               `json:"casesTrend"`
+}
+
+// ProjectConversationStatsResponse is the response for GET /projects/{id}/conversations/stats.
+type ProjectConversationStatsResponse struct {
+	TotalCount  int              `json:"totalCount"`
+	ActiveCount int              `json:"activeCount"`
+	StateCount  []ChoiceListItem `json:"stateCount"`
+}
+
+// ProjectDeploymentStatsResponse is the response for GET /projects/{id}/deployments/stats.
+type ProjectDeploymentStatsResponse struct {
+	TotalCount       int     `json:"totalCount"`
+	LastDeploymentOn *string `json:"lastDeploymentOn"`
+}
+
+// ProjectTimeCardStatsResponse is the response for GET /projects/{id}/time-cards/stats.
+type ProjectTimeCardStatsResponse struct {
+	TotalHours       float64 `json:"totalHours"`
+	BillableHours    float64 `json:"billableHours"`
+	NonBillableHours float64 `json:"nonBillableHours"`
+}
+
+// ProjectChangeRequestStatsResponse is the response for GET /projects/{id}/change-requests/stats.
+type ProjectChangeRequestStatsResponse struct {
+	TotalCount          int                    `json:"totalCount"`
+	ActiveCount         int                    `json:"activeCount"`
+	OutstandingCount    int                    `json:"outstandingCount"`
+	ActionRequiredCount int                    `json:"actionRequiredCount"`
+	StateCount          []ChoiceListItem       `json:"stateCount"`
+	ResolvedCount       ResolvedCountBreakdown `json:"resolvedCount"`
+}
+
 // ProductClass classifies a product as either a standalone software or a managed service.
 type ProductClass string
 
