@@ -217,6 +217,52 @@ describe("CaseActionBar — nextStates-driven buttons", () => {
   });
 });
 
+describe("CaseActionBar — isPending shows a spinner and disables the click", () => {
+  it("shows a spinner and disables the single primary button (e.g. Assign to me) while isPending", () => {
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...caseInState("open", ["work_in_progress"]),
+          assigneeIsMe: false,
+        }}
+        onAction={() => {}}
+        isPending
+      />,
+    );
+    const button = screen.getByRole("button", { name: /assign to me/i });
+    expect(button).toBeDisabled();
+    expect(button.querySelector(".MuiCircularProgress-root")).toBeInTheDocument();
+  });
+
+  it("disables the Change-state trigger while isPending, when there are multiple primary buttons", () => {
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("solution_proposed", ["closed", "waiting_on_wso2"])}
+        onAction={() => {}}
+        isPending
+      />,
+    );
+    const button = screen.getByRole("button", { name: /change state/i });
+    expect(button).toBeDisabled();
+    expect(button.querySelector(".MuiCircularProgress-root")).toBeInTheDocument();
+  });
+
+  it("leaves the primary button enabled with its normal icon when isPending is unset", () => {
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...caseInState("open", ["work_in_progress"]),
+          assigneeIsMe: false,
+        }}
+        onAction={() => {}}
+      />,
+    );
+    const button = screen.getByRole("button", { name: /assign to me/i });
+    expect(button).not.toBeDisabled();
+    expect(button.querySelector(".MuiCircularProgress-root")).not.toBeInTheDocument();
+  });
+});
+
 describe("CaseActionBar — reassign gating for WIP-Ongoing", () => {
   /** Open the "More" overflow and return the reassign engineer menu item. */
   function openReassignItem(): HTMLElement {
@@ -369,12 +415,10 @@ describe("CaseActionBar — Raise internal Git issue is blocked on a closed case
   });
 });
 
-describe("CaseActionBar — Manage watchers / Hold auto-closure / Edit case details / Link to another case", () => {
+describe("CaseActionBar — Hold auto-closure / Edit case details", () => {
   const SECONDARY_ITEMS: Array<[RegExp, string]> = [
-    [/manage watchers/i, "manage_watchers"],
     [/hold auto-closure/i, "hold_auto_close"],
     [/edit case details/i, "edit_case_details"],
-    [/link to another case/i, "link_case"],
   ];
 
   it.each(SECONDARY_ITEMS)(

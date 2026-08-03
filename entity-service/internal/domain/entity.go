@@ -33,6 +33,11 @@ const (
 	UserTypeCustomer UserType = "customer"
 	// UserTypeSystem identifies automated system actors.
 	UserTypeSystem UserType = "system"
+	// UserTypeExternal identifies a customer or partner contact, as reported by the
+	// ServiceNow data source. Note the two sources name this concept differently: the
+	// postgres source emits "customer", ServiceNow emits "external". Callers that
+	// branch on staff-vs-not must treat both as non-staff.
+	UserTypeExternal UserType = "external"
 )
 
 // User represents a single user entity as stored in the database.
@@ -63,6 +68,9 @@ const (
 	UserRoleCustomerAdmin UserRole = "customer_admin"
 	UserRolePartner       UserRole = "partner"
 	UserRolePartnerAdmin  UserRole = "partner_admin"
+	// UserRoleTimecardApprover exists upstream but was absent from this enum, so it
+	// could not be filtered on.
+	UserRoleTimecardApprover UserRole = "timecard_approver"
 )
 
 // UserSortField enumerates the columns by which user search results may be ordered.
@@ -92,10 +100,21 @@ type Pagination struct {
 // SearchUsersFilters holds the optional filter criteria for a user search.
 type SearchUsersFilters struct {
 	SearchQuery string     `json:"searchQuery"`
-	Roles       []UserRole `json:"roles"`
+	RoleIDs     []UserRole `json:"roleIds"`
 	UserNames   []string   `json:"userNames"`
 	Emails      []string   `json:"emails"`
-	Active      *bool      `json:"active"`
+	// UserIDs restricts the search to specific users. It intersects with the other
+	// filters, and supplying it also lifts the active-only default so a deactivated
+	// user stays retrievable by ID.
+	UserIDs []string `json:"userIds"`
+	// GroupIDs restricts the search to members of these groups. Resolved to a user-ID
+	// set before the upstream call, since the data source cannot join users against
+	// group membership in one query.
+	GroupIDs []string `json:"groupIds"`
+	// TeamIDs restricts the search to members of these teams, by team key. Teams are
+	// resolved to their group names via the registry, then to a user-ID set.
+	TeamIDs []string `json:"teamIds"`
+	Active  *bool    `json:"active"`
 }
 
 // UserSortBy specifies the sort field and direction for a user search.
@@ -123,15 +142,134 @@ type SearchUsersResponse struct {
 
 // SNUser is the user view returned by the ServiceNow data source.
 type SNUser struct {
-	ID        string   `json:"id"`
-	UserName  string   `json:"userName"`
-	Name      string   `json:"name"`
-	Email     string   `json:"email"`
-	TimeZone  *string  `json:"timeZone"`
+	ID       string  `json:"id"`
+	UserName string  `json:"userName"`
+	Name     string  `json:"name"`
+	Email    string  `json:"email"`
+	TimeZone *string `json:"timeZone"`
+	// MobilePhone is the number the on-call escalation flow dials -- the only phone
+	// field the platform surfaces. Nil when the backing record has none.
+	MobilePhone *string `json:"mobilePhone,omitempty"`
+	// UserType distinguishes staff from customer/partner contacts. Derived by the
+	// backing data source from role membership, not stored as a column.
+	UserType  UserType `json:"userType,omitempty"`
 	Active    bool     `json:"active"`
 	CreatedOn string   `json:"createdOn"`
 	UpdatedOn string   `json:"updatedOn"`
 	Roles     []string `json:"roles"`
+}
+
+// SNUserDetail is a single user's full profile: the user row plus the memberships and
+// project access a caller would otherwise have to assemble from several searches.
+//
+// The enrichment blocks are best-effort. Each is empty rather than absent when its
+// upstream lookup fails, so a partial profile still renders instead of erroring.
+type SNUserDetail struct {
+	SNUser
+	// Groups is every group the user belongs to.
+	Groups []UserGroupRef `json:"groups"`
+	// Teams is the subset of Groups that are registry teams.
+	Teams []UserTeamRef `json:"teams"`
+	// ProjectAccess is populated for external contacts only; it is nil for staff.
+	ProjectAccess []UserProjectAccess `json:"projectAccess,omitempty"`
+}
+
+// UserGroupRef is a group the user is a member of.
+type UserGroupRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// UserTeamRef is a team the user is a member of. ID is the registry team key, which is
+// stable across environments -- unlike the underlying group id.
+type UserTeamRef struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Family string `json:"family,omitempty"`
+}
+
+// UserProjectAccess is one project-contact row for a user, reported as stored rather than
+// as filtered.
+//
+// Rows with no linked contact record make the project, and every case on it, silently
+// invisible to that user, so they are reported here with GrantsCaseAccess spelling out the
+// verdict instead of being dropped. GrantsCaseAccess mirrors ContactRecordPresent directly
+// -- deliberately not the stricter email-match rule the live access check enforces, since
+// that only diverges for integration/system accounts, which aren't the audience this
+// signals for.
+type UserProjectAccess struct {
+	ProjectID   string `json:"projectId"`
+	ProjectName string `json:"projectName"`
+	// ProjectKey is the project's short human-readable key (e.g. "TESTPROSSUB").
+	ProjectKey string `json:"projectKey"`
+	// ContactEmail is the email as stored on the row itself.
+	ContactEmail string `json:"contactEmail"`
+	// ContactRecordPresent is false when the row has no contact record linked.
+	ContactRecordPresent bool `json:"contactRecordPresent"`
+	// ContactRecordEmail is the linked record's own email, which may differ from
+	// ContactEmail.
+	ContactRecordEmail   string   `json:"contactRecordEmail"`
+	RegistrationState    string   `json:"registrationState"`
+	NotificationsEnabled bool     `json:"notificationsEnabled"`
+	Roles                []string `json:"roles"`
+	GrantsCaseAccess     bool     `json:"grantsCaseAccess"`
+}
+
+// Role is an assignable platform role.
+type Role struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// SearchRolesRequest is the input for POST /roles/search.
+type SearchRolesRequest struct {
+	Filters    SearchRolesFilters `json:"filters"`
+	Pagination Pagination         `json:"pagination"`
+}
+
+// SearchRolesFilters holds optional filter criteria for role searches.
+type SearchRolesFilters struct {
+	SearchQuery string `json:"searchQuery,omitempty"`
+}
+
+// SearchRolesResponse is the paginated result of a role search.
+type SearchRolesResponse struct {
+	Roles  []Role `json:"roles"`
+	Total  int    `json:"total"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
+}
+
+// Team is one of the organisation's teams. ID is the registry key, stable across
+// environments; the backing group's id is not.
+type Team struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Family string `json:"family,omitempty"`
+	// GroupID is the backing group's id, converted to this platform's UUID
+	// format, suitable for the case-search integrationCsTeamIds filter.
+	// Omitted when the team registry did not configure a backing group id
+	// for this team -- the team is still listed, just not filter-scopable.
+	GroupID string `json:"groupId,omitempty"`
+}
+
+// SearchTeamsRequest is the input for POST /teams/search.
+type SearchTeamsRequest struct {
+	Filters    SearchTeamsFilters `json:"filters"`
+	Pagination Pagination         `json:"pagination"`
+}
+
+// SearchTeamsFilters holds optional filter criteria for team searches.
+type SearchTeamsFilters struct {
+	SearchQuery string `json:"searchQuery,omitempty"`
+}
+
+// SearchTeamsResponse is the paginated result of a team search.
+type SearchTeamsResponse struct {
+	Teams  []Team `json:"teams"`
+	Total  int    `json:"total"`
+	Offset int    `json:"offset"`
+	Limit  int    `json:"limit"`
 }
 
 // SearchSNUsersResponse is the paginated result of a ServiceNow user search.
@@ -142,6 +280,14 @@ type SearchSNUsersResponse struct {
 	Offset int      `json:"offset"`
 }
 
+// UserTeam identifies the caller's resolved ABT (Account-Based Team),
+// derived live from ServiceNow group membership on every GET /users/me call.
+type UserTeam struct {
+	TeamKey  string `json:"teamKey"`
+	TeamName string `json:"teamName"`
+	Family   string `json:"family"` // "cre" | "sre"
+}
+
 // GetUserMeResponse is the response for GET /users/me from the ServiceNow data source.
 type GetUserMeResponse struct {
 	ID        string   `json:"id"`
@@ -150,6 +296,10 @@ type GetUserMeResponse struct {
 	LastName  string   `json:"lastName"`
 	TimeZone  *string  `json:"timeZone,omitempty"`
 	Roles     []string `json:"roles"`
+	// Team is nil when the caller has no resolvable ABT team membership, or
+	// when team resolution failed — team resolution is best-effort and never
+	// fails the identity response.
+	Team *UserTeam `json:"team,omitempty"`
 }
 
 // PatchUserMeRequest is the request body for PATCH /users/me.
@@ -226,15 +376,23 @@ type SearchAccountsResponse struct {
 // Timestamp fields are kept as strings to accommodate empty values from ServiceNow.
 // SupportTier is returned as a plain label string (no ID).
 type SNAccountView struct {
-	ID               string     `json:"id"`
-	Name             string     `json:"name"`
-	Classification   string     `json:"classification"`
-	Pod              *string    `json:"pod"`
-	Region           *string    `json:"region"`
-	SupportTier      *string    `json:"supportTier"`
-	ArrToday         *string    `json:"arrToday"`
-	TechnicalOwner   *EntityRef `json:"technicalOwner"`
-	Owner            *EntityRef `json:"owner"`
+	ID                    string     `json:"id"`
+	Name                  string     `json:"name"`
+	Classification        string     `json:"classification"`
+	Pod                   *string    `json:"pod"`
+	SfID                  *string    `json:"sfId"`
+	Region                *string    `json:"region"`
+	SupportTier           *string    `json:"supportTier"`
+	ArrToday              *string    `json:"arrToday"`
+	TechnicalOwner        *PersonRef `json:"technicalOwner"`
+	AccountManager        *PersonRef `json:"accountManager"`
+	RenewalAccountManager *PersonRef `json:"renewalAccountManager"`
+	// CreTeam is the account's CRE (customer relationship engineering) team, resolved to a
+	// named group reference (ServiceNow data source only). Mirrors AccountRef.CreTeam.
+	CreTeam *EntityRef `json:"creTeam,omitempty"`
+	// SreTeam is the account's SRE team, resolved to a named group reference (ServiceNow
+	// data source only). Mirrors AccountRef.SreTeam.
+	SreTeam          *EntityRef `json:"sreTeam,omitempty"`
 	ActivationDate   string     `json:"activationDate"`
 	DeactivationDate *string    `json:"deactivationDate"`
 	HasAgent         bool       `json:"hasAgent"`
@@ -262,22 +420,30 @@ type SNSupportTierRef struct {
 // SNAccountDetail is the full account detail returned by the ServiceNow data source
 // for GET /accounts/{id}. SupportTier is returned as an {id, label} object.
 type SNAccountDetail struct {
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Classification   string            `json:"classification"`
-	Pod              *string           `json:"pod"`
-	Region           *string           `json:"region"`
-	SupportTier      *SNSupportTierRef `json:"supportTier"`
-	ArrToday         *string           `json:"arrToday"`
-	TechnicalOwner   *EntityRef        `json:"technicalOwner"`
-	Owner            *EntityRef        `json:"owner"`
-	ActivationDate   string            `json:"activationDate"`
-	DeactivationDate *string           `json:"deactivationDate"`
-	HasAgent         bool              `json:"hasAgent"`
-	HasKbReferences  bool              `json:"hasKbReferences"`
-	CreatedOn        string            `json:"createdOn"`
-	CreatedBy        *string           `json:"createdBy"`
-	UpdatedOn        string            `json:"updatedOn"`
+	ID                    string            `json:"id"`
+	Name                  string            `json:"name"`
+	Classification        string            `json:"classification"`
+	Pod                   *string           `json:"pod"`
+	SfID                  *string           `json:"sfId"`
+	Region                *string           `json:"region"`
+	SupportTier           *SNSupportTierRef `json:"supportTier"`
+	ArrToday              *string           `json:"arrToday"`
+	TechnicalOwner        *PersonRef        `json:"technicalOwner"`
+	AccountManager        *PersonRef        `json:"accountManager"`
+	RenewalAccountManager *PersonRef        `json:"renewalAccountManager"`
+	// CreTeam is the account's CRE (customer relationship engineering) team, resolved to a
+	// named group reference (ServiceNow data source only). Mirrors AccountRef.CreTeam.
+	CreTeam *EntityRef `json:"creTeam,omitempty"`
+	// SreTeam is the account's SRE team, resolved to a named group reference (ServiceNow
+	// data source only). Mirrors AccountRef.SreTeam.
+	SreTeam          *EntityRef `json:"sreTeam,omitempty"`
+	ActivationDate   string     `json:"activationDate"`
+	DeactivationDate *string    `json:"deactivationDate"`
+	HasAgent         bool       `json:"hasAgent"`
+	HasKbReferences  bool       `json:"hasKbReferences"`
+	CreatedOn        string     `json:"createdOn"`
+	CreatedBy        *string    `json:"createdBy"`
+	UpdatedOn        string     `json:"updatedOn"`
 }
 
 // SubscriptionType classifies the subscription type of a project.
@@ -432,6 +598,10 @@ type SearchProjectsRequest struct {
 	SortBy string `json:"sortBy"`
 	// SortOrder is the sort direction ("asc" or "desc", ServiceNow data source only).
 	SortOrder string `json:"sortOrder"`
+	// AccountID filters to projects belonging to this account. Platform UUID,
+	// converted to the backing data source's internal id before dispatch
+	// (ServiceNow data source only).
+	AccountID string `json:"accountId"`
 }
 
 // ProjectView is the unified search result shape returned for all data sources.
@@ -442,10 +612,16 @@ type ProjectView struct {
 	Name             string           `json:"name"`
 	Key              string           `json:"key"`
 	SubscriptionType SubscriptionType `json:"subscriptionType"`
+	// StartDate is the start of the project's current renewed period, and is nil
+	// when the backing data source has no start date recorded for this project
+	// (e.g. ServiceNow leaves it blank).
+	StartDate *time.Time `json:"startDate"`
 	// EndDate is nil when the backing data source has no end date recorded
 	// for this project (e.g. ServiceNow leaves it blank).
 	EndDate   *time.Time `json:"endDate"`
 	CreatedOn time.Time  `json:"createdOn"`
+	// Account is nil when the project has no linked account (ServiceNow data source only).
+	Account *EntityRef `json:"account"`
 	ProjectClosureFields
 }
 
@@ -965,6 +1141,13 @@ type AssignedEngineerRef struct {
 type CaseNumberRef struct {
 	ID     string `json:"id"`
 	Number string `json:"number"`
+	// Type discriminates what kind of record this reference points at
+	// ("case", "incident", "change_request", "problem") -- a parent reference can
+	// point at any of these, not just another case. Nil means the backing data
+	// source could not resolve the referenced record's kind, so a consumer must
+	// NOT fall back to treating it as a case: it may well be one of the other
+	// kinds, and linking to a case detail page for it would 404.
+	Type *string `json:"type"`
 }
 
 // LinkedServiceRequestRef is a compact reference to a service-request case linked to
@@ -974,6 +1157,22 @@ type LinkedServiceRequestRef struct {
 	ID     string `json:"id"`
 	Number string `json:"number"`
 	Name   string `json:"name"`
+}
+
+// LinkedChangeRequestRef is a compact reference to a change request raised from a
+// service-request case (the reverse of PatchChangeRequestRequest.CaseID).
+//
+// This is a one-to-many relationship, not a single field: promoting the same change
+// through each environment produces one change request per environment, all pointing
+// at the same originating service request.
+// Name is the change request's subject. It is a pointer because the subject can
+// genuinely be absent upstream, and an absent value must be null rather than ""
+// — otherwise "no subject recorded" is indistinguishable from a subject
+// deliberately set to the empty string.
+type LinkedChangeRequestRef struct {
+	ID     string  `json:"id"`
+	Number string  `json:"number"`
+	Name   *string `json:"name"`
 }
 
 // AccountRef is a compact reference to an account.
@@ -1001,6 +1200,62 @@ type EntityRef struct {
 	Name string `json:"name"`
 }
 
+// PersonRef is a compact reference to a person (e.g. an account's manager or
+// technical owner), carrying an optional email alongside id/name. Kept
+// separate from EntityRef because EntityRef is also used for many
+// non-person references (projects, deployments, products, catalogs, ...)
+// where an email field would be semantically meaningless.
+type PersonRef struct {
+	ID    string  `json:"id"`
+	Name  string  `json:"name"`
+	Email *string `json:"email"`
+}
+
+// UserReference is the canonical reference to a person appearing anywhere in
+// this service's responses: exactly the user's id, email and display name.
+// Every person-valued field carries one as a sibling of whatever
+// actor fields that response already returned, so a consumer has a single
+// shape for "who did this", whichever entity it hangs off.
+//
+// ID is a pointer, serialized as an explicit null and never omitted, and that
+// is deliberate — do not "fix" it.
+//
+// The backing data source hands over a user id only at the sites where it
+// already had to resolve the user record for another reason (comment and
+// attachment rows). Everywhere else — case creator, assignee on some
+// responses, activity-feed actors, watchers — filling the id in would mean an
+// extra per-row user lookup on hot list endpoints, in a data-source layer that
+// is shared with a live production consumer. That cost was weighed and
+// rejected: the id is left null there on purpose. Resolving it lazily inside
+// this service would reintroduce exactly the per-row query that was rejected.
+//
+// Email and Name are the load-bearing fields and are populated at every site.
+// A consumer that needs the id resolves it from the email through its own
+// cached user lookup. An explicit null says "no id available here, resolve it
+// yourself"; an omitted key would be indistinguishable from an older producer
+// that does not populate the field at all.
+type UserReference struct {
+	ID    *string `json:"id"`
+	Email string  `json:"email"`
+	Name  string  `json:"name"`
+}
+
+// NewUserReference builds a UserReference for an actor. Pass the user's id when
+// the data source already supplies one for that site, or "" when it does not:
+// an empty id becomes an explicit JSON null rather than a fabricated value.
+// Returns nil only when there is no actor at all, so a caller never emits a
+// reference to nobody.
+func NewUserReference(id, email, name string) *UserReference {
+	if id == "" && email == "" && name == "" {
+		return nil
+	}
+	ref := &UserReference{Email: email, Name: name}
+	if id != "" {
+		ref.ID = &id
+	}
+	return ref
+}
+
 // DeployedProductRef is a compact reference to a deployed product with a
 // computed display name combining the product name and version.
 type DeployedProductRef struct {
@@ -1010,21 +1265,25 @@ type DeployedProductRef struct {
 
 // CaseView is the enriched read representation of a case.
 type CaseView struct {
-	ID                     string               `json:"id"`
-	Number                 string               `json:"number"`
-	InternalID             string               `json:"internalId"`
-	Subject                string               `json:"subject"`
-	Description            string               `json:"description"`
-	Severity               CaseSeverity         `json:"severity"`
-	IssueType              CaseIssueType        `json:"issueType"`
-	State                  CaseState            `json:"state"`
-	WorkState              *CaseWorkState       `json:"workState"`
-	Type                   *string              `json:"type"`
-	EngagementType         *string              `json:"engagementType"`
-	CreatedOn              time.Time            `json:"createdOn"`
-	UpdatedOn              time.Time            `json:"updatedOn"`
-	ClosedOn               *time.Time           `json:"closedOn"`
-	CreatedByDetails       UserRef              `json:"createdBy"`
+	ID               string         `json:"id"`
+	Number           string         `json:"number"`
+	InternalID       string         `json:"internalId"`
+	Subject          string         `json:"subject"`
+	Description      string         `json:"description"`
+	Severity         CaseSeverity   `json:"severity"`
+	IssueType        CaseIssueType  `json:"issueType"`
+	State            CaseState      `json:"state"`
+	WorkState        *CaseWorkState `json:"workState"`
+	Type             *string        `json:"type"`
+	EngagementType   *string        `json:"engagementType"`
+	CreatedOn        time.Time      `json:"createdOn"`
+	UpdatedOn        time.Time      `json:"updatedOn"`
+	ClosedOn         *time.Time     `json:"closedOn"`
+	CreatedByDetails UserRef        `json:"createdBy"`
+	// CreatedByUser is the canonical user reference for the case creator, a
+	// sibling of createdBy. Its id is populated only where the backing data
+	// source already supplies one, and null otherwise: see UserReference.
+	CreatedByUser          *UserReference       `json:"createdByUser"`
 	ProjectDetails         EntityRef            `json:"project"`
 	DeploymentDetails      *EntityRef           `json:"deployment"`
 	DeployedProductDetails *DeployedProductRef  `json:"deployedProduct"`
@@ -1034,12 +1293,20 @@ type CaseView struct {
 	AssignedTeam           *EntityRef           `json:"assignedTeam"`
 	Conversation           *EntityRef           `json:"conversation"`
 	AssignedEngineer       *AssignedEngineerRef `json:"assignedEngineer"`
-	ParentCase             *CaseNumberRef       `json:"parentCase"`
-	RelatedCase            *CaseNumberRef       `json:"relatedCase"`
-	AccountDetails         *AccountRef          `json:"account"`
+	// AssignedEngineerUser is the canonical user reference for the assigned
+	// engineer, a sibling of assignedEngineer. Its id is populated: the
+	// assignee's own id already arrives with the response, so no extra lookup
+	// is involved. Null when the case is unassigned.
+	AssignedEngineerUser *UserReference `json:"assignedEngineerUser"`
+	ParentCase           *CaseNumberRef `json:"parentCase"`
+	RelatedCase          *CaseNumberRef `json:"relatedCase"`
+	AccountDetails       *AccountRef    `json:"account"`
 	// LinkedServiceRequests lists any service-request cases whose parent points to this
 	// case. Populated on every case detail response, not just high-severity cases.
 	LinkedServiceRequests []LinkedServiceRequestRef `json:"linkedServiceRequests"`
+	// LinkedChangeRequests lists the change requests raised from this case. Only
+	// service-request cases carry them; empty for every other case type.
+	LinkedChangeRequests []LinkedChangeRequestRef `json:"linkedChangeRequests"`
 	// Resolution fields — populated only for resolved/closed ServiceNow cases.
 	ResolvedOn      *time.Time          `json:"resolvedOn"`
 	ResolutionCode  *CaseResolutionCode `json:"resolutionCode"`
@@ -1055,26 +1322,26 @@ type CaseView struct {
 	// AutoclosureStateTime is when the auto-closure sequence next advances (e.g. the
 	// "eligible again after" date for a held case). Read-only (ServiceNow data source only).
 	AutoclosureStateTime *time.Time `json:"autoclosureStateTime,omitempty"`
-	// FixEta is the single customer-facing fix-commitment date/time
-	// (ServiceNow u_fix_eta_shared).
-	FixEta *time.Time `json:"fixEta"`
-	// BestCaseFixEta is the internal-only best-case fix-commitment date
-	// (ServiceNow u_best_case_fix_eta). CSM-engineer-facing only.
-	BestCaseFixEta *time.Time `json:"bestCaseFixEta"`
-	// MostLikelyFixEta is the internal-only most-likely fix-commitment date
-	// (ServiceNow u_most_likely_fix_eta). CSM-engineer-facing only.
-	MostLikelyFixEta *time.Time `json:"mostLikelyFixEta"`
-	// WorstCaseFixEta is the internal-only worst-case fix-commitment date
-	// (ServiceNow u_worst_case_fix_eta). CSM-engineer-facing only.
-	WorstCaseFixEta *time.Time `json:"worstCaseFixEta"`
+	// BestCaseFixEta is the internal-only best-case fix-commitment date, as a
+	// date-only "YYYY-MM-DD" string (ServiceNow u_best_case_fix_eta).
+	// CSM-engineer-facing only, never shared with the customer.
+	BestCaseFixEta *string `json:"bestCaseFixEta"`
+	// MostLikelyFixEta is the internal-only most-likely fix-commitment date, as
+	// a date-only "YYYY-MM-DD" string (ServiceNow u_most_likely_fix_eta).
+	// CSM-engineer-facing only, never shared with the customer.
+	MostLikelyFixEta *string `json:"mostLikelyFixEta"`
+	// WorstCaseFixEta is the internal-only worst-case fix-commitment date, as a
+	// date-only "YYYY-MM-DD" string (ServiceNow u_worst_case_fix_eta).
+	// CSM-engineer-facing only, never shared with the customer.
+	WorstCaseFixEta *string `json:"worstCaseFixEta"`
 	// Tags are the free-text labels attached to the case via ServiceNow's generic
 	// platform label/label_entry mechanism (not a case-specific column).
 	//
-	// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): no Ballerina adapter exists yet for SN's generic
-	// label/label_entry tables. Confirmed real tag values exist in production
-	// (e.g. "micro-gw", "ws-policy", "node") but nothing in the current Choreo
-	// GET /cases/{id} contract returns them. This field is always nil until a
-	// Ballerina endpoint surfaces the case's tags.
+	// Not yet available in the backing service: no Ballerina adapter exists yet
+	// for SN's generic label/label_entry tables. Confirmed real tag values exist in
+	// production (e.g. "micro-gw", "ws-policy", "node") but nothing in the current
+	// Choreo GET /cases/{id} contract returns them. This field is always nil until
+	// a Ballerina endpoint surfaces the case's tags.
 	Tags []Tag `json:"tags"`
 }
 
@@ -1087,53 +1354,179 @@ type Tag struct {
 	Color *string `json:"color"`
 }
 
-// SearchCasesFilters holds all optional filter criteria for a case search.
+// CaseFieldFilter is a single predicate in a case search's generic filter
+// expression array: "field op values". Replaces what used to be dozens of
+// individually named filter fields (types, states, severities, projectIds, ...)
+// on SearchCasesFilters, so a new filtering capability no longer needs a new
+// named field threaded through every layer -- see ParseCaseFieldFilters in the
+// service package for the field/op enum and translation into the internal,
+// per-backend representation.
+type CaseFieldFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Values []string `json:"values,omitempty"`
+}
+
+// SearchCasesFilters is the case-search filter contract. SearchQuery stays
+// special-cased (a free-text match, not a field predicate); every other
+// criterion is expressed as an entry in Filters.
 type SearchCasesFilters struct {
-	Types            []string         `json:"types"`
-	SearchQuery      string           `json:"searchQuery"`
-	ProjectIDs       []string         `json:"projectIds"`
-	DeploymentIDs    []string         `json:"deploymentIds"`
-	States           []CaseState      `json:"states"`
-	Severities       []CaseSeverity   `json:"severities"`
-	IssueTypes       []CaseIssueType  `json:"issueTypes"`
-	EngagementTypes  []EngagementType `json:"engagementTypes"`
-	ClosedStartDate  *time.Time       `json:"closedStartDate"`
-	ClosedEndDate    *time.Time       `json:"closedEndDate"`
-	StartCreatedDate *time.Time       `json:"startCreatedDate"`
-	EndCreatedDate   *time.Time       `json:"endCreatedDate"`
-	StartUpdatedDate *time.Time       `json:"startUpdatedDate"`
-	EndUpdatedDate   *time.Time       `json:"endUpdatedDate"`
-	CreatedBy        []string         `json:"createdBy"`
-	CreatedByMe      bool             `json:"createdByMe"`
-	WorkStates       []CaseWorkState  `json:"workStates"`
-	AssignedUserIDs  []string         `json:"assignedUserIds"`
-	ProductNames     []string         `json:"productNames"`
-	// Tags filters cases by attached free-text label. Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): same
-	// gap as CaseView.Tags — no Ballerina search-filter support exists yet, so this
-	// filter is accepted here but has no effect until Ballerina wires it through.
-	Tags []string `json:"tags"`
+	SearchQuery string            `json:"searchQuery,omitempty"`
+	Filters     []CaseFieldFilter `json:"filters,omitempty"`
+	// OrGroups expresses cross-field OR: each inner array is a set of
+	// CaseFieldFilter predicates ANDed together (a "branch"); the branches
+	// themselves are OR'd against each other, and the whole OrGroups result is
+	// ANDed with Filters (if both are present). Only fields with a direct,
+	// non-subquery ServiceNow mapping are supported inside a branch -- see
+	// service.ParseCaseFieldFilterGroups for the exact supported field set.
+	// Requires ServiceNow data source.
+	OrGroups [][]CaseFieldFilter `json:"orGroups,omitempty"`
+}
+
+// ParsedCaseFilters is the internal, named-field representation that
+// SearchCasesFilters.Filters is translated into by
+// service.ParseCaseFieldFilters. Both CaseService backends (ServiceNow and
+// Postgres) and the Postgres repository consume this shape rather than
+// re-parsing the wire-level generic filter array themselves, so this is
+// where the pre-redesign per-field validation and query/payload-building
+// logic still lives, unchanged.
+type ParsedCaseFilters struct {
+	Types            []string
+	ProjectIDs       []string
+	DeploymentIDs    []string
+	States           []CaseState
+	Severities       []CaseSeverity
+	IssueTypes       []CaseIssueType
+	EngagementTypes  []EngagementType
+	ClosedStartDate  *time.Time
+	ClosedEndDate    *time.Time
+	StartCreatedDate *time.Time
+	EndCreatedDate   *time.Time
+	StartUpdatedDate *time.Time
+	EndUpdatedDate   *time.Time
+	CreatedBy        []string
+	// CreatedByMe is true when the array carried a createdBy+eq current-user
+	// placeholder filter. The ServiceNow backend forwards this as-is (Ballerina
+	// resolves the caller itself); the Postgres backend folds the caller's
+	// resolved email into CreatedBy, exactly as the old createdByMe:true
+	// request field did.
+	CreatedByMe     bool
+	WorkStates      []CaseWorkState
+	AssignedUserIDs []string
+	ProductNames    []string
+	// Tags filters cases by attached free-text label. Works end-to-end: ServiceNow's
+	// CaseUtils.searchCases honors filters.tags, and Ballerina's CaseSearchFilters
+	// forwards it.
+	Tags []string
+	// ExcludeTags filters to cases NOT carrying any of these free-text tag labels
+	// (optional). Inverse of Tags. Works end-to-end: ServiceNow's CaseUtils.searchCases
+	// honors filters.excludeTags, and Ballerina's CaseSearchFilters declares it.
+	ExcludeTags []string
 	// ParentID filters to child cases of this case (the hierarchical major-case/
-	// child-case relationship set via the case PATCH parentId field). Ballerina
-	// support added on ballerina-case-field-additions.
-	ParentID *string `json:"parentId"`
+	// child-case relationship set via the case PATCH parentId field). Not yet
+	// available in the backing service.
+	ParentID *string
+	// ProjectOnboardingStatuses filters to cases whose parent project's onboarding
+	// status is one of these values (optional; free-text SN choice labels, e.g.
+	// "Completed", "Not-Applicable" -- not a closed enum at this layer).
+	ProjectOnboardingStatuses []string
+	// ProjectTypeIDs filters to cases whose parent project's type is one of these
+	// project-type UUIDs (optional).
+	ProjectTypeIDs []string
+	// IntegrationCsTeamIDs filters to cases whose parent account's integration CS
+	// team is one of these team UUIDs (optional).
+	IntegrationCsTeamIDs []string
+	// Unassigned, when true, filters to cases with no assigned engineer. false and
+	// omitted are treated identically (optional).
+	Unassigned bool
+	// ResolutionNotesEmpty, when true, filters to cases with empty resolution notes.
+	// false and omitted are treated identically (optional).
+	ResolutionNotesEmpty bool
+	// TaskSLAFilter filters cases by Task SLA businessElapsedPercent range (optional).
+	// Populated from the "taskSLABusinessElapsedPercent" filter field's gte/lte bounds.
+	// Requires ServiceNow data source (not available via PostgreSQL-only path).
+	// Filtering logic is confined to the SN adapter per vendor-neutral boundary.
+	TaskSLAFilter *TaskSLAFilter
+	// EscalationLevels filters cases to one of these escalation level ids ("0"-"5"),
+	// from the "escalationLevel" filter field's in values (optional).
+	EscalationLevels []string
+	// HasActiveEscalation filters cases by whether they carry an active
+	// escalation, from the "escalation" filter field's isEmpty/isNotEmpty op
+	// (optional; nil means no filter on this field).
+	HasActiveEscalation *bool
+	// OrGroups: see SearchCasesFilters.OrGroups doc comment. Each entry is one
+	// parsed, ANDed branch; branches are OR'd together by the SN adapter.
+	OrGroups []CaseFilterGroup
+}
+
+// CaseFilterGroup is one ANDed branch of a SearchCasesFilters.OrGroups entry.
+// Deliberately narrower than ParsedCaseFilters: only fields with a direct,
+// non-subquery ServiceNow field mapping are supported inside an OR branch (no
+// tags/excludeTags/taskSLAFilter/parentId/createdBy/date-range/
+// projectOnboardingStatus/projectType/integrationCsTeam/resolutionNotes/
+// unassigned/hasActiveEscalation) -- service.ParseCaseFieldFilterGroups
+// rejects any of those fields inside a branch with a validation error, they
+// remain usable only via the top-level (AND-only) Filters array.
+type CaseFilterGroup struct {
+	Types            []string
+	States           []CaseState
+	Severities       []CaseSeverity
+	EngagementTypes  []EngagementType
+	IssueTypes       []CaseIssueType
+	WorkStates       []CaseWorkState
+	ProjectIDs       []string
+	DeploymentIDs    []string
+	AssignedUserIDs  []string
+	EscalationLevels []string
+}
+
+// TaskSLAFilter specifies a range of business-elapsed-percent values for Task SLA
+// filtering. Cases are matched if they have at least one Task SLA record where
+// businessElapsedPercent falls within [MinBusinessElapsedPercent,
+// MaxBusinessElapsedPercent] inclusive.
+type TaskSLAFilter struct {
+	MinBusinessElapsedPercent *int
+	MaxBusinessElapsedPercent *int
 }
 
 // SearchCasesRequest is the input for a case search operation.
 // All filter fields are optional and nested under Filters. SortBy defaults to createdOn desc.
 type SearchCasesRequest struct {
-	Filters    SearchCasesFilters `json:"filters"`
-	SortBy     CaseSort           `json:"sortBy"`
-	Pagination Pagination         `json:"pagination"`
+	Filters SearchCasesFilters `json:"filters"`
+	// Parsed is populated by the service layer (service.ParseCaseFieldFilters)
+	// from Filters.Filters before the request reaches a CaseService backend or
+	// the Postgres repository; it carries no wire representation of its own.
+	Parsed     ParsedCaseFilters `json:"-"`
+	SortBy     CaseSort          `json:"sortBy"`
+	Pagination Pagination        `json:"pagination"`
+	// GroupBy, when set, returns aggregated counts per value of the named field
+	// instead of a case list (see Groups on SearchCasesResponse). Only fields
+	// backed by a small fixed enum are groupable; see the ServiceNow adapter's
+	// caseGroupByFieldValues for the supported set. Requires ServiceNow data
+	// source.
+	GroupBy string `json:"groupBy,omitempty"`
+}
+
+// CaseGroup is one bucket in a grouped case-search result: Key is the group's
+// field value (e.g. a CaseState string), Count is the number of matching cases.
+type CaseGroup struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
 }
 
 // SearchCaseView is the unified case representation returned in search results.
 // Fields absent for a given data source are nil.
 type SearchCaseView struct {
-	ID               string               `json:"id"`
-	InternalID       string               `json:"internalId"`
-	Number           string               `json:"number"`
-	CreatedOn        string               `json:"createdOn"`
-	CreatedBy        string               `json:"createdBy"`
+	ID         string `json:"id"`
+	InternalID string `json:"internalId"`
+	Number     string `json:"number"`
+	CreatedOn  string `json:"createdOn"`
+	UpdatedOn  string `json:"updatedOn"`
+	CreatedBy  string `json:"createdBy"`
+	// CreatedByUser is the canonical user reference for the case creator, a
+	// sibling of createdBy. Its id is populated only where the backing data
+	// source already supplies one, and null otherwise: see UserReference.
+	CreatedByUser    *UserReference       `json:"createdByUser"`
 	Subject          *string              `json:"subject"`
 	Description      *string              `json:"description"`
 	IssueType        *string              `json:"issueType"`
@@ -1150,25 +1543,44 @@ type SearchCaseView struct {
 	Deployment       *EntityRef           `json:"deployment"`
 	DeployedProduct  *EntityRef           `json:"deployedProduct"`
 	AssignedEngineer *AssignedEngineerRef `json:"assignedEngineer"`
-	ParentCase       *EntityRef           `json:"parentCase"`
-	RelatedCase      *EntityRef           `json:"relatedCase"`
-	Conversation     *EntityRef           `json:"conversation"`
+	// AssignedEngineerUser is the canonical user reference for the assigned
+	// engineer, a sibling of assignedEngineer. Its id is populated from the
+	// assignee id the response already carries. Null when unassigned.
+	AssignedEngineerUser *UserReference `json:"assignedEngineerUser"`
+	ParentCase           *EntityRef     `json:"parentCase"`
+	RelatedCase          *EntityRef     `json:"relatedCase"`
+	Conversation         *EntityRef     `json:"conversation"`
 }
 
-// SearchCasesResponse is the paginated result of a case search.
+// SearchCasesResponse is the paginated result of a case search. When the
+// request set GroupBy, Groups is populated instead of Cases (Cases is nil).
+//
+// Total means different things in the two modes. Ungrouped, it is the total
+// matching record count. Grouped, it is the sum of the returned Groups' counts,
+// which is the number of matching cases whose value of the grouped field is one
+// of the enumerated buckets -- a case carrying a value outside that fixed set
+// (a state or type added in the backing data source but not yet in the
+// service's enum) is counted in no bucket and so is excluded from Total. Do not
+// read a grouped Total as "all cases matching the filters"; issue the same
+// search without GroupBy for that number.
 type SearchCasesResponse struct {
 	Cases  []SearchCaseView `json:"cases"`
+	Groups []CaseGroup      `json:"groups,omitempty"`
 	Total  int              `json:"total"`
 	Offset int              `json:"offset"`
 	Limit  int              `json:"limit"`
 }
 
 // UpdateCaseRequest is the input for PATCH /cases/{id}.
-// Exactly one of State, Severity, WorkState, WatchList, AssigneeEmail, ParentID, RelatedCaseID,
-// AutocloseHoldUntil, Subject, Description, DeploymentID, DeployedProductID, FixEta,
+// At least one of State, Severity, WorkState, WatchList, AssigneeEmail, ParentID, RelatedCaseID,
+// AutocloseHoldUntil, Subject, Description, DeploymentID, DeployedProductID,
 // BestCaseFixEta, MostLikelyFixEta, or WorstCaseFixEta must be provided.
+// State, Severity, WorkState, WatchList, AssigneeEmail, and ParentID are mutually exclusive of
+// each other and of every other field in this request. RelatedCaseID, AutocloseHoldUntil,
+// Subject, Description, DeploymentID, DeployedProductID, BestCaseFixEta, MostLikelyFixEta, and
+// WorstCaseFixEta may be combined with each other in any subset within a single request.
 // WatchList, AssigneeEmail, ParentID, RelatedCaseID, AutocloseHoldUntil, Subject, Description,
-// DeploymentID, DeployedProductID, FixEta, BestCaseFixEta, MostLikelyFixEta, and WorstCaseFixEta
+// DeploymentID, DeployedProductID, BestCaseFixEta, MostLikelyFixEta, and WorstCaseFixEta
 // are only supported for the ServiceNow data source.
 // ResolutionCode, Cause, and CloseNotes are optional resolution fields only allowed when
 // State is closed or solution_proposed.
@@ -1209,22 +1621,31 @@ type UpdateCaseRequest struct {
 	// converted to the backing data source's internal id before dispatch (ServiceNow data
 	// source only).
 	DeployedProductID *string `json:"deployedProductId"`
-	// FixEta sets the customer-facing fix-commitment date/time (ServiceNow
-	// u_fix_eta_shared). Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): no Ballerina write support exists yet
-	// for this field — see snUpdateCasePayload.FixEta in sn_case_service.go.
-	FixEta *time.Time `json:"fixEta"`
-	// BestCaseFixEta sets the internal-only best-case fix-commitment date (ServiceNow
-	// u_best_case_fix_eta). Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): no Ballerina write support exists
-	// yet for this field — see snUpdateCasePayload.BestCaseFixEta in sn_case_service.go.
-	BestCaseFixEta *time.Time `json:"bestCaseFixEta"`
-	// MostLikelyFixEta sets the internal-only most-likely fix-commitment date (ServiceNow
-	// u_most_likely_fix_eta). Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): no Ballerina write support
-	// exists yet for this field — see snUpdateCasePayload.MostLikelyFixEta in sn_case_service.go.
-	MostLikelyFixEta *time.Time `json:"mostLikelyFixEta"`
-	// WorstCaseFixEta sets the internal-only worst-case fix-commitment date (ServiceNow
-	// u_worst_case_fix_eta). Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): no Ballerina write support exists
-	// yet for this field — see snUpdateCasePayload.WorstCaseFixEta in sn_case_service.go.
-	WorstCaseFixEta *time.Time `json:"worstCaseFixEta"`
+	// BestCaseFixEta sets the internal-only best-case fix-commitment date
+	// (ServiceNow u_best_case_fix_eta), as a date-only "YYYY-MM-DD" string —
+	// see snUpdateCasePayload.BestCaseFixEta in sn_case_service.go.
+	BestCaseFixEta *string `json:"bestCaseFixEta"`
+	// MostLikelyFixEta sets the internal-only most-likely fix-commitment date
+	// (ServiceNow u_most_likely_fix_eta), as a date-only "YYYY-MM-DD" string —
+	// see snUpdateCasePayload.MostLikelyFixEta in sn_case_service.go.
+	MostLikelyFixEta *string `json:"mostLikelyFixEta"`
+	// WorstCaseFixEta sets the internal-only worst-case fix-commitment date
+	// (ServiceNow u_worst_case_fix_eta), as a date-only "YYYY-MM-DD" string —
+	// see snUpdateCasePayload.WorstCaseFixEta in sn_case_service.go.
+	WorstCaseFixEta *string `json:"worstCaseFixEta"`
+	// AddPublicComment, when true and at least one of the 3 fix-ETA fields above is
+	// set in the same request, posts a customer-visible comment summarizing the fix
+	// ETA (built from Product + PublicTicket + the 3 ETA dates), mirroring ServiceNow's
+	// "Share Fix ETA" CWF action. Ignored (no comment posted) when false or omitted,
+	// but the 3 ETA fields still update either way (ServiceNow data source only).
+	AddPublicComment *bool `json:"addPublicComment"`
+	// Product names the product the fix ETA applies to, echoed into the public comment.
+	// Required by ServiceNow when AddPublicComment is true (ServiceNow data source only).
+	Product *string `json:"product"`
+	// PublicTicket is the public-facing ticket/issue reference (e.g. a public GitHub
+	// issue) echoed into the public comment. Required by ServiceNow when
+	// AddPublicComment is true (ServiceNow data source only).
+	PublicTicket *string `json:"publicTicket"`
 }
 
 // UpdateCaseResponse is the response for PATCH /cases/{id}.
@@ -1241,38 +1662,37 @@ type CaseLabelRef struct {
 
 // UpdatedCase carries the fields of a case that may change after an update.
 type UpdatedCase struct {
-	ID             string               `json:"id"`
-	UpdatedOn      time.Time            `json:"updatedOn"`
-	UpdatedBy      string               `json:"updatedBy,omitempty"`
-	State          CaseState            `json:"state,omitempty"`
-	Severity       CaseSeverity         `json:"severity,omitempty"`
-	WorkState      *CaseWorkState       `json:"workState"`
-	WatchList      []WatchListUser      `json:"watchList,omitempty"`
-	AssignedTo     *AssignedEngineerRef `json:"assignedTo,omitempty"`
-	ResolutionCode *CaseResolutionCode  `json:"resolutionCode,omitempty"`
-	Cause          *CaseCause           `json:"cause,omitempty"`
-	CloseNotes     *string              `json:"closeNotes,omitempty"`
-	ResolvedOn     *time.Time           `json:"resolvedOn,omitempty"`
-	ParentCase     *CaseNumberRef       `json:"parentCase,omitempty"`
-	// FixEta echoes the updated customer-facing fix-commitment date/time
-	// (u_fix_eta_shared) back on a successful PATCH. Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main) — see
-	// UpdateCaseRequest.FixEta doc comment; always nil until Ballerina supports the write.
-	FixEta *time.Time `json:"fixEta,omitempty"`
-	// BestCaseFixEta echoes the updated internal-only best-case fix-commitment date
-	// (u_best_case_fix_eta) back on a successful PATCH. Ballerina support added on
-	// ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main) — see
-	// UpdateCaseRequest.BestCaseFixEta doc comment; always nil until Ballerina supports the write.
-	BestCaseFixEta *time.Time `json:"bestCaseFixEta,omitempty"`
-	// MostLikelyFixEta echoes the updated internal-only most-likely fix-commitment date
-	// (u_most_likely_fix_eta) back on a successful PATCH. Ballerina support added on
-	// ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main) — see
-	// UpdateCaseRequest.MostLikelyFixEta doc comment; always nil until Ballerina supports the write.
-	MostLikelyFixEta *time.Time `json:"mostLikelyFixEta,omitempty"`
-	// WorstCaseFixEta echoes the updated internal-only worst-case fix-commitment date
-	// (u_worst_case_fix_eta) back on a successful PATCH. Ballerina support added on
-	// ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main) — see
-	// UpdateCaseRequest.WorstCaseFixEta doc comment; always nil until Ballerina supports the write.
-	WorstCaseFixEta *time.Time `json:"worstCaseFixEta,omitempty"`
+	ID         string               `json:"id"`
+	UpdatedOn  time.Time            `json:"updatedOn"`
+	UpdatedBy  string               `json:"updatedBy,omitempty"`
+	State      CaseState            `json:"state,omitempty"`
+	Severity   CaseSeverity         `json:"severity,omitempty"`
+	WorkState  *CaseWorkState       `json:"workState"`
+	WatchList  []WatchListUser      `json:"watchList,omitempty"`
+	AssignedTo *AssignedEngineerRef `json:"assignedTo,omitempty"`
+	// AssignedToUser is the canonical user reference for the new assignee, a
+	// sibling of assignedTo. Present only when the update set the assignee, and
+	// its id is populated from the assignee id the response already carries.
+	AssignedToUser *UserReference      `json:"assignedToUser,omitempty"`
+	ResolutionCode *CaseResolutionCode `json:"resolutionCode,omitempty"`
+	Cause          *CaseCause          `json:"cause,omitempty"`
+	CloseNotes     *string             `json:"closeNotes,omitempty"`
+	ResolvedOn     *time.Time          `json:"resolvedOn,omitempty"`
+	ParentCase     *CaseNumberRef      `json:"parentCase,omitempty"`
+	// BestCaseFixEta echoes the updated internal-only best-case fix-commitment
+	// date (u_best_case_fix_eta) back on a successful PATCH, as a date-only
+	// "YYYY-MM-DD" string. Present only when the update set bestCaseFixEta.
+	BestCaseFixEta *string `json:"bestCaseFixEta,omitempty"`
+	// MostLikelyFixEta echoes the updated internal-only most-likely
+	// fix-commitment date (u_most_likely_fix_eta) back on a successful PATCH,
+	// as a date-only "YYYY-MM-DD" string. Present only when the update set
+	// mostLikelyFixEta.
+	MostLikelyFixEta *string `json:"mostLikelyFixEta,omitempty"`
+	// WorstCaseFixEta echoes the updated internal-only worst-case
+	// fix-commitment date (u_worst_case_fix_eta) back on a successful PATCH,
+	// as a date-only "YYYY-MM-DD" string. Present only when the update set
+	// worstCaseFixEta.
+	WorstCaseFixEta *string `json:"worstCaseFixEta,omitempty"`
 }
 
 // WatchListUser is a compact user reference within the watch list.
@@ -1281,6 +1701,13 @@ type WatchListUser struct {
 	UserName string `json:"userName"`
 	Name     string `json:"name,omitempty"`
 	Email    string `json:"email,omitempty"`
+	// User is the canonical user reference for this watcher, a sibling of the
+	// flat id/userName/name/email fields. Its id is always null: a watch-list
+	// entry is not guaranteed to point at a user record (the list collapses
+	// several upstream lists, which may also name groups), so emitting the
+	// entry's own id here could hand a consumer an id that is not a user's.
+	// See UserReference.
+	User *UserReference `json:"user"`
 }
 
 // CreateCaseResponse is the unified response for POST /cases across all data sources.
@@ -1316,7 +1743,8 @@ type CaseAttachment struct {
 // id, number, and internal_id are auto-generated; state defaults to open.
 // CreatedBy is not accepted from the request body and will be wired from auth context later.
 // For type "service_request": catalogId, catalogItemId, and variables are required.
-// For type "security_report_analysis": subject, description, and at least one attachment are required.
+// For type "security_report_analysis": subject and description are required; attachments are optional
+// (uploaded via a separate request after creation, not bundled into this one).
 type CreateCaseRequest struct {
 	CreatedBy         string        `json:"-"`
 	Type              string        `json:"type"`
@@ -1337,6 +1765,8 @@ type CreateCaseRequest struct {
 	WatchList      []string `json:"watchList"`
 	// For security_report_analysis type
 	Attachments []CaseAttachment `json:"attachments"`
+	// For engagement type
+	EngagementType EngagementType `json:"engagementType"`
 }
 
 // CommentType classifies the type of a case comment.
@@ -1363,7 +1793,13 @@ type CaseComment struct {
 	Type      CommentType    `json:"type"`
 	Content   string         `json:"content"`
 	CreatedBy CommentUserRef `json:"createdBy"`
-	CreatedOn time.Time      `json:"createdOn"`
+	// CreatedByUser is the canonical user reference for the comment author, a
+	// sibling of createdBy (whose id field is the author's email, not an id).
+	// Its id is populated when the backing data source resolved the author to a
+	// real user record, and null otherwise — a comment can be written by an
+	// automation or integration account that is not a user. See UserReference.
+	CreatedByUser *UserReference `json:"createdByUser"`
+	CreatedOn     time.Time      `json:"createdOn"`
 }
 
 // CreateCaseCommentRequest is the input for creating a new case comment.
@@ -1377,11 +1813,11 @@ type CreateCaseCommentRequest struct {
 
 // AddCaseTagRequest is the request body for POST /cases/{id}/tags.
 //
-// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): SN's tagging is the generic platform label/label_entry
-// mechanism (table-agnostic, not a case column), so it needs an entirely new
-// Ballerina/Choreo adapter — nothing in the current contract creates a label on a
-// case. This request/the AddCaseTag service method are implemented so the
-// entity-service side is ready once Ballerina adds the endpoint.
+// Not yet available in the backing service: SN's tagging is the generic platform
+// label/label_entry mechanism (table-agnostic, not a case column), so it needs an
+// entirely new Ballerina/Choreo adapter — nothing in the current contract creates
+// a label on a case. This request/the AddCaseTag service method are implemented so
+// the entity-service side is ready once Ballerina adds the endpoint.
 type AddCaseTagRequest struct {
 	CaseID string `json:"-"`
 	Label  string `json:"label"`
@@ -1472,6 +1908,10 @@ type CaseActivity struct {
 	CreatedByFirstName string       `json:"createdByFirstName"`
 	CreatedByLastName  string       `json:"createdByLastName"`
 	CreatedByFullName  string       `json:"createdByFullName"`
+	// CreatedByUser is the canonical user reference for the actor behind this
+	// activity entry, a sibling of the createdBy* fields. Its id is always
+	// null: the activity feed carries no user id. See UserReference.
+	CreatedByUser *UserReference `json:"createdByUser"`
 	// CommentType is set only for Type == ActivityTypeComment.
 	CommentType *CommentType `json:"commentType,omitempty"`
 	// FileName, ContentType, SizeBytes, and DownloadURL are set only for
@@ -1512,6 +1952,11 @@ type Comment struct {
 	Type        CommentType    `json:"type"`
 	CreatedOn   time.Time      `json:"createdOn"`
 	CreatedBy   CommentUserRef `json:"createdBy"`
+	// CreatedByUser is the canonical user reference for the comment author, a
+	// sibling of createdBy (whose id field is the author's email, not an id).
+	// Its id is populated when the backing data source resolved the author to a
+	// real user record, and null otherwise. See UserReference.
+	CreatedByUser *UserReference `json:"createdByUser"`
 }
 
 // SearchCommentsRequest is the input for POST /comments/search.
@@ -1586,10 +2031,15 @@ type Attachment struct {
 	Type          string        `json:"type"`
 	SizeBytes     int           `json:"sizeBytes"`
 	Description   *string       `json:"description"`
-	CreatedBy     string        `json:"createdBy"`
-	CreatedOn     time.Time     `json:"createdOn"`
-	DownloadURL   *string       `json:"downloadUrl"`
-	PreviewURL    *string       `json:"previewUrl"`
+	CreatedBy     UserRef       `json:"createdBy"`
+	// CreatedByUser is the canonical user reference for whoever uploaded the
+	// attachment, a sibling of createdBy. Its id is populated when the backing
+	// data source resolved the uploader to a real user record, and null
+	// otherwise. See UserReference.
+	CreatedByUser *UserReference `json:"createdByUser"`
+	CreatedOn     time.Time      `json:"createdOn"`
+	DownloadURL   *string        `json:"downloadUrl"`
+	PreviewURL    *string        `json:"previewUrl"`
 }
 
 // CreateAttachmentRequest is the input for POST /attachments.
@@ -1890,11 +2340,28 @@ type SearchContactsFilters struct {
 // ProjectContact is a contact associated with a project. Supported by the
 // ServiceNow data source only; there is no Postgres equivalent.
 type ProjectContact struct {
+	// ID is the contact's user id, for linking a row to that user's profile. Nil when
+	// the row has no contact record linked, or when the backing instance predates the
+	// field -- both are normal, so callers must render the row without a link rather
+	// than treating it as an error. A pointer keeps "no id" distinguishable from an
+	// empty id internally; on the wire both a nil and an absent id are omitted, so the
+	// published shape is unchanged.
+	ID                   *string  `json:"id,omitempty"`
 	Name                 string   `json:"name"`
 	Email                string   `json:"email"`
 	RegistrationState    string   `json:"registrationState"`
 	NotificationsEnabled bool     `json:"notificationsEnabled"`
 	Roles                []string `json:"roles"`
+	// CustomerContactPresent and GrantsCaseAccess answer "can this person actually see
+	// this project's cases" per row, not just "are they listed". CustomerContactPresent
+	// is whether a contact record is linked at all (false is the same fault ID==nil
+	// signals, restated as an explicit boolean rather than an absence a caller has to
+	// notice). GrantsCaseAccess mirrors it directly -- deliberately not the stricter
+	// invited-email-matches-account-email rule the portal's access check technically
+	// applies underneath, since that only ever diverges for integration/system accounts,
+	// not the real customers this signals for.
+	CustomerContactPresent bool `json:"customerContactPresent"`
+	GrantsCaseAccess       bool `json:"grantsCaseAccess"`
 }
 
 // SearchProjectContactsRequest is the input for POST /projects/{id}/contacts/search.
@@ -2665,11 +3132,12 @@ type TaskDetail struct {
 
 // CreateCaseTaskRequest is the request body for POST /cases/{id}/tasks.
 //
-// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): ServiceNow/Ballerina task support is read-only today
-// (SearchCaseTasks/GetTask only). No Choreo endpoint exists yet to create a
-// sn_customerservice_task record. This request/the CreateCaseTask service method
-// are implemented so the entity-service side is ready the moment Ballerina adds
-// the corresponding endpoint; until then, calling it returns a downstream error.
+// Not yet available in the backing service: ServiceNow/Ballerina task support is
+// read-only today (SearchCaseTasks/GetTask only). No Choreo endpoint exists yet
+// to create a sn_customerservice_task record. This request/the CreateCaseTask
+// service method are implemented so the entity-service side is ready the moment
+// Ballerina adds the corresponding endpoint; until then, calling it returns a
+// downstream error.
 type CreateCaseTaskRequest struct {
 	CaseID            string     `json:"-"`
 	Subject           string     `json:"subject"`
@@ -2682,13 +3150,68 @@ type CreateCaseTaskRequest struct {
 // State, AssignedToEmail, or DueDate must be provided per request, following the
 // same convention as UpdateCaseRequest.
 //
-// Ballerina support added on ballerina-tasks-fixeta-tags (not yet merged to digiops-cs main): same gap as CreateCaseTaskRequest above — no Choreo
-// write endpoint exists yet for sn_customerservice_task.
+// Not yet available in the backing service: same gap as CreateCaseTaskRequest
+// above — no Choreo write endpoint exists yet for sn_customerservice_task.
 type UpdateTaskRequest struct {
 	ID              string     `json:"-"`
 	State           *string    `json:"state"`
 	AssignedToEmail *string    `json:"assignedToEmail"`
 	DueDate         *time.Time `json:"dueDate"`
+}
+
+// TaskState represents the state of a task.
+type TaskState string
+
+const (
+	TaskStateOpen   TaskState = "OPEN"
+	TaskStateClosed TaskState = "CLOSED"
+	TaskStateOther  TaskState = "OTHER"
+)
+
+// TaskSortField enumerates the columns available for sorting task search results.
+type TaskSortField string
+
+const (
+	TaskSortFieldCreatedOn TaskSortField = "createdOn"
+	TaskSortFieldUpdatedOn TaskSortField = "updatedOn"
+)
+
+// TaskSortOrder controls the sort direction for task search.
+type TaskSortOrder string
+
+const (
+	TaskSortOrderAsc  TaskSortOrder = "asc"
+	TaskSortOrderDesc TaskSortOrder = "desc"
+)
+
+// TaskSort specifies the sort field and direction for task search results.
+type TaskSort struct {
+	Field TaskSortField `json:"field"`
+	Order TaskSortOrder `json:"order"`
+}
+
+// SearchTasksFilters holds all optional filter criteria for a task search.
+type SearchTasksFilters struct {
+	States          []TaskState `json:"states"`
+	Types           []string    `json:"types"`
+	AssignedUserIDs []string    `json:"assignedUserIds"`
+	DueDateStart    *time.Time  `json:"dueDateStart"`
+	DueDateEnd      *time.Time  `json:"dueDateEnd"`
+}
+
+// SearchTasksRequest is the input for POST /tasks/search.
+type SearchTasksRequest struct {
+	Filters    SearchTasksFilters `json:"filters"`
+	SortBy     TaskSort           `json:"sortBy"`
+	Pagination Pagination         `json:"pagination"`
+}
+
+// SearchTasksResponse is the paginated result of a task search.
+type SearchTasksResponse struct {
+	Tasks  []TaskSummary `json:"tasks"`
+	Total  int           `json:"total"`
+	Offset int           `json:"offset"`
+	Limit  int           `json:"limit"`
 }
 
 // IncidentPriority represents the priority level of an incident.

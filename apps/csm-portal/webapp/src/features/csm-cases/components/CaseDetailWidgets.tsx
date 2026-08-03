@@ -35,6 +35,7 @@ import {
   CheckCircle,
   Clock,
   Download,
+  Eye,
   History,
   Link as LinkIcon,
   MapPin,
@@ -50,11 +51,15 @@ import {
   Users,
   X,
 } from "@wso2/oxygen-ui-icons-react";
-import { useMemo, useRef, useState, type ChangeEvent, type JSX } from "react";
+import { useMemo, useRef, useState, type ChangeEvent, type JSX, type ReactNode } from "react";
+import { Link as RouterLink } from "react-router";
 import { formatBytes } from "@utils/formatBytes";
+import DirectoryEntityChip from "@features/csm-admin/components/DirectoryEntityChip";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useSearchUsers } from "@features/csm-users/api/useSearchUsers";
 import type { NormalizedUser } from "@features/csm-users/types/csmUsers";
+import AttachmentPreviewDialog from "@features/csm-cases/components/AttachmentPreviewDialog";
+import { getAttachmentPreviewKind } from "@features/csm-cases/utils/attachmentPreview";
 import type {
   CaseAttachment,
   CaseAuditEntry,
@@ -72,6 +77,7 @@ import {
 import type { ProjectDetails } from "@features/csm-projects/types/csmProjects";
 import type { BeDeployment } from "@api/backend/types";
 import RelativeTime from "@components/RelativeTime";
+import UserRefLink from "@components/UserRefLink";
 
 // ---------------------------------------------------------------------------
 // Shared widget shell
@@ -153,6 +159,35 @@ function MetaRow({
   );
 }
 
+// Same link styling/convention as `CaseMetaBand`'s own `LinkText` (not
+// exported from there) — a real anchor so account/project names stay
+// cmd/middle-clickable and copyable, with plain left-click staying in-app.
+function LinkText({ to, children }: { to: string; children: ReactNode }): JSX.Element {
+  return (
+    <Typography
+      component={RouterLink}
+      to={to}
+      variant="body2"
+      sx={(t) => ({
+        display: "inline",
+        cursor: "pointer",
+        textDecoration: "none",
+        color: t.palette.primary.dark,
+        ...t.applyStyles("dark", { color: t.palette.primary.main }),
+        "&:hover": { textDecoration: "underline" },
+        "&:focus-visible": {
+          outline: "2px solid",
+          outlineColor: "primary.main",
+          outlineOffset: 2,
+          borderRadius: 0.5,
+        },
+      })}
+    >
+      {children}
+    </Typography>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 1. Customer / Account context
 // ---------------------------------------------------------------------------
@@ -167,6 +202,7 @@ export function CustomerContextWidget({
   ctx,
   project,
   isLoadingProject,
+  accountId,
 }: {
   ctx: CaseCustomerContext;
   /** The case's project, via `GET /projects/{id}` — carries the subscription
@@ -174,6 +210,11 @@ export function CustomerContextWidget({
    * embedded `customerContext`. */
   project?: ProjectDetails | null;
   isLoadingProject?: boolean;
+  /** The case's account id, when known — links `ctx.accountName` to its
+   * detail page (`/customers/accounts/{accountId}`), matching `CaseMetaBand`'s
+   * own Account cell. Omit (e.g. an announcement without a resolved account)
+   * to fall back to plain text. */
+  accountId?: string;
 }): JSX.Element {
   return (
     <WidgetCard
@@ -189,7 +230,15 @@ export function CustomerContextWidget({
     >
       <MetaRow label="Account">
         <Typography variant="body2">
-          <strong>{ctx.accountName}</strong>
+          {accountId ? (
+            <strong>
+              <LinkText to={`/customers/accounts/${accountId}`}>
+                {ctx.accountName}
+              </LinkText>
+            </strong>
+          ) : (
+            <strong>{ctx.accountName}</strong>
+          )}
         </Typography>
       </MetaRow>
       <MetaRow label="Account Manager">
@@ -209,6 +258,26 @@ export function CustomerContextWidget({
           {ctx.region}
         </Typography>
       </MetaRow>
+      {(ctx.creTeam || ctx.sreTeam) && (
+        <MetaRow label="CRE / SRE team">
+          <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+            {ctx.creTeam && (
+              <DirectoryEntityChip
+                id={ctx.creTeam.id}
+                name={ctx.creTeam.name}
+                routeBase="/admin/teams"
+              />
+            )}
+            {ctx.sreTeam && (
+              <DirectoryEntityChip
+                id={ctx.sreTeam.id}
+                name={ctx.sreTeam.name}
+                routeBase="/admin/teams"
+              />
+            )}
+          </Box>
+        </MetaRow>
+      )}
       {isLoadingProject && (
         <MetaRow label="Project">
           <Typography variant="body2" color="text.secondary">
@@ -219,7 +288,11 @@ export function CustomerContextWidget({
       {project && (
         <>
           <MetaRow label="Project name">
-            <Typography variant="body2">{project.name}</Typography>
+            <Typography variant="body2">
+              <LinkText to={`/customers/projects/${project.id}`}>
+                {project.name}
+              </LinkText>
+            </Typography>
           </MetaRow>
           <MetaRow label="Project key">
             <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
@@ -543,7 +616,13 @@ export function WatchersWidget({
               size="small"
               variant="outlined"
               icon={<User size={14} />}
-              label={w.isMe ? `${w.name} (you)` : w.name}
+              label={
+                <UserRefLink
+                  name={w.isMe ? `${w.name} (you)` : w.name}
+                  email={w.user?.email || w.email}
+                  userId={w.user?.id}
+                />
+              }
               disabled={isSaving}
               onDelete={
                 onRemove && w.email ? () => onRemove(w) : undefined
@@ -664,6 +743,7 @@ export function AttachmentsWidget({
   onDownload,
   onDelete,
   deletingId,
+  preview,
 }: {
   attachments: CaseAttachment[];
   /** List query is loading. */
@@ -682,6 +762,25 @@ export function AttachmentsWidget({
   onDelete?: (attachment: CaseAttachment) => void;
   /** Id of the attachment whose delete is in flight; disables its row actions. */
   deletingId?: string | null;
+  /**
+   * Inline attachment preview. All three fields are required together —
+   * fetching content, tracking which attachment is open, and closing the
+   * dialog are one feature, not three independent knobs — so omit the whole
+   * object to hide the per-row Preview affordance entirely (e.g. in contexts
+   * without network access, such as tests/storybook) rather than supplying
+   * only some of the fields.
+   */
+  preview?: {
+    /** Fetch an attachment's raw bytes for inline preview. */
+    onGetPreviewContent: (attachment: CaseAttachment) => Promise<Blob>;
+    /**
+     * Attachment currently shown in the preview dialog, lifted to the parent
+     * page so it can be reset on case-to-case navigation (this widget stays
+     * mounted while the page's `caseId` route param changes).
+     */
+    previewTarget: CaseAttachment | null;
+    onPreviewTargetChange: (attachment: CaseAttachment | null) => void;
+  };
 }): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sorted = [...attachments].sort(
@@ -698,153 +797,180 @@ export function AttachmentsWidget({
   };
 
   return (
-    <WidgetCard
-      title={`Attachments (${sorted.length})`}
-      icon={<Paperclip size={16} />}
-      action={
-        <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-          {onUpload && (
+    <>
+      <WidgetCard
+        title={`Attachments (${sorted.length})`}
+        icon={<Paperclip size={16} />}
+        action={
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+            {onUpload && (
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<Upload size={14} />}
+                onClick={pickFile}
+                disabled={uploading}
+              >
+                {uploading ? "Uploading…" : "Upload"}
+              </Button>
+            )}
             <Button
               size="small"
               variant="text"
-              startIcon={<Upload size={14} />}
-              onClick={pickFile}
-              disabled={uploading}
+              startIcon={<Download size={14} />}
+              onClick={onDownloadAll}
+              disabled={sorted.length === 0}
             >
-              {uploading ? "Uploading…" : "Upload"}
+              Download all
             </Button>
-          )}
-          <Button
-            size="small"
-            variant="text"
-            startIcon={<Download size={14} />}
-            onClick={onDownloadAll}
-            disabled={sorted.length === 0}
-          >
-            Download all
-          </Button>
-        </Box>
-      }
-    >
-      {onUpload && (
-        <input
-          ref={fileInputRef}
-          type="file"
-          hidden
-          onChange={onFileChange}
-          aria-hidden
-        />
-      )}
-      {uploading && <LinearProgress sx={{ mb: 1 }} />}
-      {uploadError && (
-        <Typography variant="body2" color="error" sx={{ mb: 1 }}>
-          {uploadError}
-        </Typography>
-      )}
-      {loading ? (
-        <Typography variant="body2" color="text.secondary">
-          Loading attachments…
-        </Typography>
-      ) : error ? (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-          <Typography variant="body2" color="error">
-            Could not load attachments.
+          </Box>
+        }
+      >
+        {onUpload && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            hidden
+            onChange={onFileChange}
+            aria-hidden
+          />
+        )}
+        {uploading && <LinearProgress sx={{ mb: 1 }} />}
+        {uploadError && (
+          <Typography variant="body2" color="error" sx={{ mb: 1 }}>
+            {uploadError}
           </Typography>
-          {onRetry && (
-            <Button size="small" variant="outlined" onClick={onRetry}>
-              Retry
-            </Button>
-          )}
-        </Box>
-      ) : sorted.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          No attachments on this case.
-        </Typography>
-      ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-          {sorted.map((a) => (
-            <Box
-              key={a.id}
-              sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                p: 1,
-                borderRadius: 1,
-                border: 1,
-                borderColor: "divider",
-                transition: "background-color 120ms, border-color 120ms",
-                "&:hover": {
-                  borderColor: "primary.main",
-                  backgroundColor: "action.hover",
-                },
-              }}
-            >
-              <Paperclip size={16} />
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                {onDownload ? (
-                  <Typography
-                    component="button"
-                    variant="body2"
-                    noWrap
-                    onClick={() => onDownload(a)}
-                    title={`Download ${a.filename}`}
-                    sx={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      p: 0,
-                      border: 0,
-                      bgcolor: "transparent",
-                      cursor: "pointer",
-                      fontWeight: 600,
-                      color: "primary.main",
-                      "&:hover": { textDecoration: "underline" },
-                    }}
-                  >
-                    {a.filename}
-                  </Typography>
-                ) : (
-                  <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
-                    {a.filename}
-                  </Typography>
-                )}
-                <Typography variant="caption" color="text.secondary" noWrap>
-                  {formatBytes(a.size)} · {a.contentType} · uploaded by{" "}
-                  {a.uploadedBy} · <RelativeTime iso={a.uploadedAt} />
-                </Typography>
-              </Box>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<Download size={14} />}
-                onClick={() => onDownload?.(a)}
-                aria-label={`Download ${a.filename}`}
-                sx={{ flexShrink: 0 }}
-              >
-                Download
+        )}
+        {loading ? (
+          <Typography variant="body2" color="text.secondary">
+            Loading attachments…
+          </Typography>
+        ) : error ? (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
+            <Typography variant="body2" color="error">
+              Could not load attachments.
+            </Typography>
+            {onRetry && (
+              <Button size="small" variant="outlined" onClick={onRetry}>
+                Retry
               </Button>
-              {onDelete && (
-                <IconButton
+            )}
+          </Box>
+        ) : sorted.length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            No attachments on this case.
+          </Typography>
+        ) : (
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {sorted.map((a) => (
+              <Box
+                key={a.id}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 1,
+                  p: 1,
+                  borderRadius: 1,
+                  border: 1,
+                  borderColor: "divider",
+                  transition: "background-color 120ms, border-color 120ms",
+                  "&:hover": {
+                    borderColor: "primary.main",
+                    backgroundColor: "action.hover",
+                  },
+                }}
+              >
+                <Paperclip size={16} />
+                <Box sx={{ flex: 1, minWidth: 0 }}>
+                  {onDownload ? (
+                    <Typography
+                      component="button"
+                      variant="body2"
+                      noWrap
+                      onClick={() => onDownload(a)}
+                      title={`Download ${a.filename}`}
+                      sx={{
+                        display: "block",
+                        width: "100%",
+                        textAlign: "left",
+                        p: 0,
+                        border: 0,
+                        bgcolor: "transparent",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        color: "primary.main",
+                        "&:hover": { textDecoration: "underline" },
+                      }}
+                    >
+                      {a.filename}
+                    </Typography>
+                  ) : (
+                    <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
+                      {a.filename}
+                    </Typography>
+                  )}
+                  <Typography variant="caption" color="text.secondary" noWrap>
+                    {formatBytes(a.size)} · {a.contentType} · uploaded by{" "}
+                    <UserRefLink
+                      name={a.uploadedBy}
+                      email={a.uploadedByUser?.email || a.uploadedByEmail}
+                      userId={a.uploadedByUser?.id}
+                    />{" "}
+                    · <RelativeTime iso={a.uploadedAt} />
+                  </Typography>
+                </Box>
+                {preview &&
+                  getAttachmentPreviewKind(a.contentType) && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<Eye size={14} />}
+                      onClick={() => preview.onPreviewTargetChange(a)}
+                      aria-label={`Preview ${a.filename}`}
+                      sx={{ flexShrink: 0 }}
+                    >
+                      Preview
+                    </Button>
+                  )}
+                <Button
                   size="small"
-                  color="error"
-                  onClick={() => onDelete(a)}
-                  disabled={deletingId === a.id}
-                  aria-label={`Delete ${a.filename}`}
+                  variant="outlined"
+                  startIcon={<Download size={14} />}
+                  onClick={() => onDownload?.(a)}
+                  aria-label={`Download ${a.filename}`}
                   sx={{ flexShrink: 0 }}
                 >
-                  {deletingId === a.id ? (
-                    <CircularProgress size={16} color="inherit" />
-                  ) : (
-                    <Trash2 size={16} />
-                  )}
-                </IconButton>
-              )}
-            </Box>
-          ))}
-        </Box>
+                  Download
+                </Button>
+                {onDelete && (
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={() => onDelete(a)}
+                    disabled={deletingId === a.id}
+                    aria-label={`Delete ${a.filename}`}
+                    sx={{ flexShrink: 0 }}
+                  >
+                    {deletingId === a.id ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <Trash2 size={16} />
+                    )}
+                  </IconButton>
+                )}
+              </Box>
+            ))}
+          </Box>
+        )}
+      </WidgetCard>
+      {preview && (
+        <AttachmentPreviewDialog
+          attachment={preview.previewTarget}
+          onClose={() => preview.onPreviewTargetChange(null)}
+          fetchContent={preview.onGetPreviewContent}
+        />
       )}
-    </WidgetCard>
+    </>
   );
 }
 

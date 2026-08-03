@@ -27,12 +27,14 @@ import type {
   BeCreatableCommentType,
   BeCaseSeverity,
   BeCaseState,
+  BeUserReference,
 } from "@api/backend/types";
 import type {
   CaseAttachment,
   CsmCaseComment,
   CsmCommentAuthorRole,
 } from "@features/csm-cases/types/csmCases";
+import type { UserReference } from "@/types/userReference";
 import type {
   CaseState,
   Severity,
@@ -103,6 +105,17 @@ export function beStateFromUi(state: CaseState): BeCaseState {
   return state;
 }
 
+/**
+ * Passthrough from the wire `UserReference` shape to the UI's — both are
+ * `{ id, email, name }` — normalizing `null`/absent to `undefined` so UI code
+ * can use plain optional-chaining instead of null checks.
+ */
+export function userReferenceFromBe(
+  ref: BeUserReference | null | undefined,
+): UserReference | undefined {
+  return ref ?? undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Comments
 // ---------------------------------------------------------------------------
@@ -134,6 +147,18 @@ function commentAuthorName(comment: BeComment): string {
   if (cb && typeof cb === "object") return authorDisplayName(cb);
   if (typeof cb === "string" && cb.trim()) return cb;
   return "Unknown";
+}
+
+/**
+ * Best-effort email for a {@link BeComment}'s author, so the FE can link the
+ * author name to their profile page. The nested author block's `id` field IS
+ * the user's email (confirmed live: `{"createdBy":{"id":"rashmika@wso2.com",…}}`).
+ * The create-ack's bare-string `createdBy` carries no email, so this is
+ * `undefined` in that case.
+ */
+function commentAuthorEmail(comment: BeComment): string | undefined {
+  const cb = comment.createdBy;
+  return cb && typeof cb === "object" ? cb.id || undefined : undefined;
 }
 
 /**
@@ -189,6 +214,8 @@ export function uiCommentFromBe(
     id: comment.id,
     caseId: comment.referenceId ?? "",
     authorName: commentAuthorName(comment),
+    authorEmail: commentAuthorEmail(comment),
+    authorUser: userReferenceFromBe(comment.createdByUser),
     // For a chatbot the body is Markdown; the bubble renders it as Markdown.
     // Otherwise it is rich-text HTML, sanitised on render.
     bodyHtml: comment.content ?? "",
@@ -209,7 +236,9 @@ export function uiAttachmentFromBe(att: BeAttachment): CaseAttachment {
     filename: att.name,
     size: att.sizeBytes,
     contentType: att.type,
-    uploadedBy: att.createdBy || "Unknown",
+    uploadedBy: att.createdBy.name?.trim() || att.createdBy.email?.trim() || "Unknown",
+    uploadedByEmail: att.createdBy.email || undefined,
+    uploadedByUser: userReferenceFromBe(att.createdByUser),
     uploadedAt: att.createdOn,
   };
 }

@@ -14,15 +14,62 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useState, type ComponentProps, type JSX, type ReactElement } from "react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import "@testing-library/jest-dom/vitest";
+
+// The real client reads runtime config at module load, which isn't present
+// under vitest (same approach as useQuickCaseSearch.test.tsx). `UserRefLink`
+// (used for the watcher chip and the attachment uploader) resolves an
+// unknown id through `useResolvedUserId`, which calls this client.
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({ post: vi.fn().mockResolvedValue({ users: [] }) }),
+}));
+
 import {
+  AttachmentsWidget,
+  CustomerContextWidget,
   TagsWidget,
   WatchersWidget,
 } from "@features/csm-cases/components/CaseDetailWidgets";
 import { useSearchUsers } from "@features/csm-users/api/useSearchUsers";
-import type { CaseTag, CaseWatcher } from "@features/csm-cases/types/csmCases";
+import type {
+  CaseAttachment,
+  CaseCustomerContext,
+  CaseTag,
+  CaseWatcher,
+} from "@features/csm-cases/types/csmCases";
+import type { ProjectDetails } from "@features/csm-projects/types/csmProjects";
+
+// `previewTarget`/`onPreviewTargetChange` (part of the widget's `preview`
+// prop) are lifted to the parent page (see CsmCaseDetailPage) so the preview
+// dialog resets on case-to-case navigation. This harness owns that bit of
+// state locally, standing in for the parent, and keeps the flat
+// `onGetPreviewContent` shape for individual tests below so only this
+// harness needs to know about the grouped `preview` prop.
+function AttachmentsWidgetHarness({
+  onGetPreviewContent,
+  ...props
+}: Omit<ComponentProps<typeof AttachmentsWidget>, "preview"> & {
+  onGetPreviewContent?: (attachment: CaseAttachment) => Promise<Blob>;
+}): JSX.Element {
+  const [previewTarget, setPreviewTarget] = useState<CaseAttachment | null>(
+    null,
+  );
+  return (
+    <AttachmentsWidget
+      {...props}
+      preview={
+        onGetPreviewContent
+          ? { onGetPreviewContent, previewTarget, onPreviewTargetChange: setPreviewTarget }
+          : undefined
+      }
+    />
+  );
+}
 
 vi.mock("@features/csm-users/api/useSearchUsers", () => ({
   useSearchUsers: vi.fn(),
@@ -64,6 +111,53 @@ const WATCHERS: CaseWatcher[] = [
   { id: "w-2", name: "John Smith", isMe: true },
 ];
 
+// `WatchersWidget` links each watcher's name to their profile page via
+// `UserRefLink`, which renders a `react-router` `Link` and resolves its id
+// through react-query — needs both a Router and a QueryClient context even
+// outside a full app render.
+function renderWithRouter(ui: ReactElement): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+// Renders `path`'s current location as plain text, so a test can assert a
+// link actually navigated (not just that a href/route prop is present)
+// without mocking `useNavigate`.
+function LocationProbe(): JSX.Element {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
+
+// Same intent as `renderWithRouter`, but wires up real routes plus a
+// destination probe so account/project/team links can be asserted by
+// clicking through to the target route, rather than mocking navigation.
+function renderWithRoutes(
+  ui: ReactElement,
+  routes: string[],
+): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/case"]}>
+        <Routes>
+          <Route path="/case" element={ui} />
+          {routes.map((path) => (
+            <Route key={path} path={path} element={<LocationProbe />} />
+          ))}
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 describe("TagsWidget", () => {
   it("renders an empty state when there are no tags", () => {
     render(<TagsWidget tags={[]} />);
@@ -102,34 +196,34 @@ describe("TagsWidget", () => {
 
 describe("WatchersWidget", () => {
   it("renders an empty state when there are no watchers", () => {
-    render(<WatchersWidget watchers={[]} />);
+    renderWithRouter(<WatchersWidget watchers={[]} />);
     expect(
       screen.getByText("No one is watching this case."),
     ).toBeInTheDocument();
   });
 
   it("renders every watcher as a chip, marking the current user", () => {
-    render(<WatchersWidget watchers={WATCHERS} />);
+    renderWithRouter(<WatchersWidget watchers={WATCHERS} />);
     expect(screen.getByText("Jane Doe")).toBeInTheDocument();
     expect(screen.getByText("John Smith (you)")).toBeInTheDocument();
   });
 
   it("hides the Add watcher action when onAdd is omitted", () => {
-    render(<WatchersWidget watchers={WATCHERS} />);
+    renderWithRouter(<WatchersWidget watchers={WATCHERS} />);
     expect(
       screen.queryByRole("button", { name: /add watcher/i }),
     ).not.toBeInTheDocument();
   });
 
   it("omits the per-chip remove affordance when onRemove is omitted", () => {
-    render(<WatchersWidget watchers={WATCHERS} />);
+    renderWithRouter(<WatchersWidget watchers={WATCHERS} />);
     const chip = screen.getByText("Jane Doe").closest(".MuiChip-root");
     expect(chip?.querySelector(".MuiChip-deleteIcon")).toBeFalsy();
   });
 
   it("calls onRemove with the watcher when its chip delete icon is clicked", () => {
     const onRemove = vi.fn();
-    render(<WatchersWidget watchers={WATCHERS} onRemove={onRemove} />);
+    renderWithRouter(<WatchersWidget watchers={WATCHERS} onRemove={onRemove} />);
     const chip = screen.getByText("Jane Doe").closest(".MuiChip-root");
     const deleteIcon = chip?.querySelector(".MuiChip-deleteIcon");
     expect(deleteIcon).toBeTruthy();
@@ -140,7 +234,7 @@ describe("WatchersWidget", () => {
   it("opens an inline search panel on Add watcher and calls onAdd for a picked candidate — no dialog involved", () => {
     mockCandidates();
     const onAdd = vi.fn();
-    render(<WatchersWidget watchers={WATCHERS} onAdd={onAdd} />);
+    renderWithRouter(<WatchersWidget watchers={WATCHERS} onAdd={onAdd} />);
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /add watcher/i }));
@@ -152,7 +246,7 @@ describe("WatchersWidget", () => {
 
   it("closes the inline search panel when its cancel button is clicked", () => {
     mockCandidates();
-    render(<WatchersWidget watchers={WATCHERS} onAdd={() => {}} />);
+    renderWithRouter(<WatchersWidget watchers={WATCHERS} onAdd={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: /add watcher/i }));
     expect(
       screen.getByPlaceholderText(/search people to add/i),
@@ -161,5 +255,224 @@ describe("WatchersWidget", () => {
     expect(
       screen.queryByPlaceholderText(/search people to add/i),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("AttachmentsWidget — preview affordance", () => {
+  const IMAGE_ATTACHMENT: CaseAttachment = {
+    id: "att-1",
+    filename: "screenshot.png",
+    size: 2048,
+    contentType: "image/png",
+    uploadedBy: "Jane Doe",
+    uploadedAt: "2026-01-01T00:00:00Z",
+  };
+  const VIDEO_ATTACHMENT: CaseAttachment = {
+    id: "att-2",
+    filename: "repro.mp4",
+    size: 4096,
+    contentType: "video/mp4",
+    uploadedBy: "Jane Doe",
+    uploadedAt: "2026-01-02T00:00:00Z",
+  };
+  const ZIP_ATTACHMENT: CaseAttachment = {
+    id: "att-3",
+    filename: "logs.zip",
+    size: 8192,
+    contentType: "application/zip",
+    uploadedBy: "Jane Doe",
+    uploadedAt: "2026-01-03T00:00:00Z",
+  };
+
+  beforeEach(() => {
+    // jsdom has no object-URL implementation; stub both so the preview
+    // dialog's blob -> object URL -> revoke lifecycle can run in tests.
+    globalThis.URL.createObjectURL = vi.fn(() => "blob:mock-url");
+    globalThis.URL.revokeObjectURL = vi.fn();
+  });
+
+  it("shows Preview for an image but not for a video or a zip, when a fetcher is supplied", () => {
+    renderWithRouter(
+      <AttachmentsWidgetHarness
+        attachments={[IMAGE_ATTACHMENT, VIDEO_ATTACHMENT, ZIP_ATTACHMENT]}
+        onGetPreviewContent={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: `Preview ${IMAGE_ATTACHMENT.filename}` }),
+    ).toBeInTheDocument();
+    // Video is not previewable: the backend's safe-content-type allowlist
+    // (`safeAttachmentTypes` in case_handler.go) has no video/* entry, so
+    // GET /attachments/{id}/content always coerces a video response to
+    // application/octet-stream. Offering a preview button here would rely
+    // on the uploader-controlled metadata `contentType` instead of the
+    // backend-verified one, defeating that allowlist.
+    expect(
+      screen.queryByRole("button", { name: `Preview ${VIDEO_ATTACHMENT.filename}` }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `Preview ${ZIP_ATTACHMENT.filename}` }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("hides every Preview affordance when no fetcher is supplied", () => {
+    renderWithRouter(
+      <AttachmentsWidgetHarness attachments={[IMAGE_ATTACHMENT, VIDEO_ATTACHMENT]} />,
+    );
+    expect(screen.queryByRole("button", { name: /^preview /i })).not.toBeInTheDocument();
+  });
+
+  it("opens the preview dialog, fetches content, and renders it as an image", async () => {
+    const fetchContent = vi
+      .fn()
+      .mockResolvedValue(new Blob(["fake"], { type: "image/png" }));
+    renderWithRouter(
+      <AttachmentsWidgetHarness
+        attachments={[IMAGE_ATTACHMENT]}
+        onGetPreviewContent={fetchContent}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `Preview ${IMAGE_ATTACHMENT.filename}` }),
+    );
+
+    expect(fetchContent).toHaveBeenCalledWith(IMAGE_ATTACHMENT);
+    await waitFor(() =>
+      expect(screen.getByAltText(IMAGE_ATTACHMENT.filename)).toBeInTheDocument(),
+    );
+    expect(screen.getByAltText(IMAGE_ATTACHMENT.filename)).toHaveAttribute(
+      "src",
+      "blob:mock-url",
+    );
+  });
+
+  it("shows an error message when the preview fetch fails", async () => {
+    const fetchContent = vi.fn().mockRejectedValue(new Error("network down"));
+    renderWithRouter(
+      <AttachmentsWidgetHarness
+        attachments={[IMAGE_ATTACHMENT]}
+        onGetPreviewContent={fetchContent}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `Preview ${IMAGE_ATTACHMENT.filename}` }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText("network down")).toBeInTheDocument(),
+    );
+  });
+
+  it("still shows Download for every attachment regardless of preview support", () => {
+    renderWithRouter(
+      <AttachmentsWidgetHarness
+        attachments={[IMAGE_ATTACHMENT, ZIP_ATTACHMENT]}
+        onDownload={vi.fn()}
+        onGetPreviewContent={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: `Download ${IMAGE_ATTACHMENT.filename}` }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `Download ${ZIP_ATTACHMENT.filename}` }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("CustomerContextWidget", () => {
+  const CTX: CaseCustomerContext = {
+    accountName: "Acme Corp",
+    tier: "Enterprise",
+    region: "US East",
+    primaryContact: "Jane Doe",
+    primaryContactEmail: "jane.doe@example.com",
+    accountManager: "John Smith",
+    openCases: 2,
+  };
+
+  const PROJECT: ProjectDetails = {
+    id: "proj-1",
+    account: {
+      id: "acct-1",
+      name: "Acme Corp",
+      activationDate: null,
+      tier: "Enterprise",
+      agentEnabled: true,
+      kbReferencesEnabled: true,
+    },
+    sfId: "sf-1",
+    name: "Acme - Managed Cloud",
+    key: "ACME",
+    subscriptionType: "cloud_support",
+    startDate: "2026-01-01",
+    endDate: "2026-12-31",
+    createdOn: "2026-01-01T00:00:00Z",
+    updatedOn: "2026-01-01T00:00:00Z",
+    closureState: null,
+  };
+
+  it("renders the account name as plain text when no accountId is supplied", () => {
+    renderWithRouter(<CustomerContextWidget ctx={CTX} />);
+    expect(screen.getByText("Acme Corp")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Acme Corp" })).not.toBeInTheDocument();
+  });
+
+  it("links the account name to its detail page when accountId is supplied", () => {
+    renderWithRoutes(
+      <CustomerContextWidget ctx={CTX} accountId="acct-1" />,
+      ["/customers/accounts/:id"],
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Acme Corp" }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/accounts/acct-1",
+    );
+  });
+
+  it("links the project name to its detail page", () => {
+    renderWithRoutes(
+      <CustomerContextWidget ctx={CTX} project={PROJECT} />,
+      ["/customers/projects/:id"],
+    );
+    fireEvent.click(screen.getByRole("link", { name: PROJECT.name }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/projects/proj-1",
+    );
+  });
+
+  it("renders no CRE/SRE row when neither team is set", () => {
+    renderWithRouter(<CustomerContextWidget ctx={CTX} />);
+    expect(screen.queryByText("CRE / SRE team")).not.toBeInTheDocument();
+  });
+
+  it("renders CRE and SRE team chips as links to the team directory page", () => {
+    renderWithRoutes(
+      <CustomerContextWidget
+        ctx={{
+          ...CTX,
+          creTeam: { id: "team-cre-1", name: "CRE Alpha" },
+          sreTeam: { id: "team-sre-1", name: "SRE Beta" },
+        }}
+      />,
+      ["/admin/teams/:id"],
+    );
+    expect(screen.getByText("CRE / SRE team")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("CRE Alpha"));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/admin/teams/team-cre-1",
+    );
+  });
+
+  it("renders only the SRE chip when only the SRE team is set", () => {
+    renderWithRouter(
+      <CustomerContextWidget
+        ctx={{ ...CTX, sreTeam: { id: "team-sre-1", name: "SRE Beta" } }}
+      />,
+    );
+    expect(screen.getByText("SRE Beta")).toBeInTheDocument();
+    expect(screen.queryByText("CRE Alpha")).not.toBeInTheDocument();
   });
 });

@@ -18,6 +18,7 @@ import { useLayoutEffect, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { BottomNavigation, BottomNavigationAction, Box } from "@wso2/oxygen-ui";
 import { Cog, Headset, House, LayoutGrid } from "@wso2/oxygen-ui-icons-react";
+import { useThemeMode } from "@context/theme";
 
 // Mirrors a subset of the webapp's CSM_NAV_ITEMS (apps/csm-portal/webapp/src/config/csmNavItems.ts):
 // Home (Dashboard), Support (Cases), Operations get their own tab; Time Cards/Security
@@ -35,6 +36,7 @@ export function TabBar() {
   const ref = useRef<HTMLDivElement>(null);
   const location = useLocation();
   const activeTab = activeTabFor(location.pathname);
+  const mode = useThemeMode();
 
   useLayoutEffect(() => {
     if (!ref.current) return;
@@ -51,19 +53,12 @@ export function TabBar() {
     <Box
       ref={ref}
       position="fixed"
-      bgcolor="background.paper"
+      bgcolor={mode === "dark" ? "black" : "white"}
       bottom={0}
       left={0}
       right={0}
       pt={1}
-      // Fixed pb (not derived from --safe-bottom), matching the customer-portal microapp's own
-      // TabBar (apps/customer-portal/microapp/src/components/core/TabBar.tsx) for the same
-      // reason as TopBar.tsx's fixed pt.
       pb={4}
-      sx={{
-        borderTop: "1px solid",
-        borderColor: "divider",
-      }}
     >
       <BottomNavigation value={activeTab} showLabels>
         <BottomNavigationAction component={Link} to="/" value="home" label="Home" icon={<House />} disableRipple />

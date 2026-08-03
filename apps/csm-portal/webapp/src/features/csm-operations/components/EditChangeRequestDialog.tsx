@@ -16,6 +16,7 @@
 
 import {
   AdapterDateFns,
+  Alert,
   Box,
   Button,
   DatePickers,
@@ -24,15 +25,22 @@ import {
   DialogContent,
   DialogTitle,
   FormControlLabel,
+  FormHelperText,
   Switch,
-  Typography,
 } from "@wso2/oxygen-ui";
 import { useMemo, useState, type JSX } from "react";
+import { useSearchGroups } from "@api/useSearchGroups";
 import type {
   BeChangeRequestDetail,
+  BeGroup,
   BePatchChangeRequestPayload,
 } from "@api/backend/types";
-import { formatDateTimeLocal, parseDateTimeLocal } from "@utils/dateTime";
+import AsyncEntitySelect from "@components/AsyncEntitySelect";
+import {
+  formatDateTimeLocal,
+  isPastDateTime,
+  parseDateTimeLocal,
+} from "@utils/dateTime";
 
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 
@@ -40,6 +48,13 @@ interface EditChangeRequestDialogProps {
   cr: BeChangeRequestDetail;
   /** True while the PATCH is in flight; disables the actions. */
   isSaving: boolean;
+  /**
+   * User-facing message for the most recent failed save, if any. Rendered
+   * inline in the dialog so the rejection is visible even if a page-level
+   * error banner is occluded or the dialog is otherwise the only thing the
+   * user is looking at.
+   */
+  saveError?: string | null;
   onClose: () => void;
   /** Submit only the changed fields (`PATCH /change-requests/{id}`). */
   onSave: (patch: BePatchChangeRequestPayload) => void;
@@ -62,13 +77,15 @@ function toBackendDateTime(local: string): string {
 }
 
 /**
- * Edit the change-request fields the BE allows updating: planned start, and the
- * customer approved / reviewed flags. Only changed fields are sent, and the BE
- * requires at least one, so Save is disabled until something differs.
+ * Edit the change-request fields the BE allows updating: planned start, the
+ * assignment group, and the customer approved / reviewed flags. Only changed
+ * fields are sent, and the BE requires at least one, so Save is disabled
+ * until something differs.
  */
 export default function EditChangeRequestDialog({
   cr,
   isSaving,
+  saveError,
   onClose,
   onSave,
 }: EditChangeRequestDialogProps): JSX.Element {
@@ -76,9 +93,11 @@ export default function EditChangeRequestDialog({
     () => toDateTimeLocal(cr.plannedStartOn),
     [cr.plannedStartOn],
   );
+  const initialAssignedTeamId = cr.assignedTeam?.id ?? "";
   const [plannedStart, setPlannedStart] = useState(initialPlannedStart);
   const [approved, setApproved] = useState(!!cr.hasCustomerApproved);
   const [reviewed, setReviewed] = useState(!!cr.hasCustomerReviewed);
+  const [assignedTeamId, setAssignedTeamId] = useState(initialAssignedTeamId);
 
   const patch = useMemo<BePatchChangeRequestPayload>(() => {
     const next: BePatchChangeRequestPayload = {};
@@ -87,23 +106,48 @@ export default function EditChangeRequestDialog({
     }
     if (approved !== !!cr.hasCustomerApproved) next.isCustomerApproved = approved;
     if (reviewed !== !!cr.hasCustomerReviewed) next.isCustomerReviewed = reviewed;
+    if (assignedTeamId !== initialAssignedTeamId && assignedTeamId) {
+      next.assignedTeamId = assignedTeamId;
+    }
     return next;
   }, [
     plannedStart,
     initialPlannedStart,
     approved,
     reviewed,
+    assignedTeamId,
+    initialAssignedTeamId,
     cr.hasCustomerApproved,
     cr.hasCustomerReviewed,
   ]);
 
   const hasChanges = Object.keys(patch).length > 0;
+  // Non-blocking: editing a CR's planned start to a past instant is unusual
+  // but not forbidden (e.g. recording when it actually started), so this
+  // only warns.
+  const plannedStartIsPast = isPastDateTime(parseDateTimeLocal(plannedStart));
+
+  // The backend rejects a patch containing both isCustomerApproved and
+  // isCustomerReviewed outright — they, and requestApproval, are mutually
+  // exclusive. Mirror that here: once one of the two has been changed away
+  // from its saved value, lock the other to its current value until this
+  // save goes through (or the first change is undone), so the dialog can
+  // never build the two-key payload the backend always refuses.
+  const approvedChanged = approved !== !!cr.hasCustomerApproved;
+  const reviewedChanged = reviewed !== !!cr.hasCustomerReviewed;
+  const approvedLocked = reviewedChanged;
+  const reviewedLocked = approvedChanged;
 
   return (
     <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>Edit change request</DialogTitle>
       <DialogContent dividers>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 0.5 }}>
+          {saveError && (
+            <Alert severity="error" sx={{ width: "100%" }}>
+              {saveError}
+            </Alert>
+          )}
           <LocalizationProvider dateAdapter={AdapterDateFns}>
             <DateTimePicker
               label="Planned start"
@@ -116,32 +160,75 @@ export default function EditChangeRequestDialog({
                 )
               }
               slotProps={{
-                textField: { size: "small", fullWidth: true },
+                textField: {
+                  size: "small",
+                  fullWidth: true,
+                  helperText: plannedStartIsPast
+                    ? "This date is in the past."
+                    : undefined,
+                },
                 field: { clearable: true },
               }}
             />
           </LocalizationProvider>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={approved}
-                onChange={(e) => setApproved(e.target.checked)}
-              />
-            }
-            label="Customer approved"
+          <Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={approved}
+                  disabled={isSaving || approvedLocked}
+                  // Guard the handler too, not just the `disabled` attribute:
+                  // it's the actual mutual-exclusion enforcement, so it must
+                  // not depend on the DOM ignoring input while disabled.
+                  onChange={(e) => {
+                    if (approvedLocked) return;
+                    setApproved(e.target.checked);
+                  }}
+                />
+              }
+              label="Customer approved"
+            />
+            {approvedLocked && (
+              <FormHelperText>
+                Save the customer-reviewed change first — approved and
+                reviewed can&apos;t be changed in the same save.
+              </FormHelperText>
+            )}
+          </Box>
+          <Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={reviewed}
+                  disabled={isSaving || reviewedLocked}
+                  onChange={(e) => {
+                    if (reviewedLocked) return;
+                    setReviewed(e.target.checked);
+                  }}
+                />
+              }
+              label="Customer reviewed"
+            />
+            {reviewedLocked && (
+              <FormHelperText>
+                Save the customer-approved change first — approved and
+                reviewed can&apos;t be changed in the same save.
+              </FormHelperText>
+            )}
+          </Box>
+          <AsyncEntitySelect<BeGroup>
+            id="cr-edit-assigned-team"
+            label="Assignment group"
+            placeholder="Search groups…"
+            value={assignedTeamId}
+            onChange={setAssignedTeamId}
+            disabled={isSaving}
+            useSearch={useSearchGroups}
+            getId={(g) => g.id}
+            getLabel={(g) => g.name}
+            knownLabel={cr.assignedTeam?.name}
+            helperText="Required before approval can be requested."
           />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={reviewed}
-                onChange={(e) => setReviewed(e.target.checked)}
-              />
-            }
-            label="Customer reviewed"
-          />
-          <Typography variant="caption" color="text.secondary">
-            Edits apply to ServiceNow-managed change requests.
-          </Typography>
         </Box>
       </DialogContent>
       <DialogActions>

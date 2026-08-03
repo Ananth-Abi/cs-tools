@@ -35,6 +35,7 @@ import {
   ArrowLeft,
   CheckSquare,
   Clock,
+  Eye,
   Layers,
   Link as LinkIcon,
   ListChecks,
@@ -42,6 +43,7 @@ import {
   Paperclip,
   PauseCircle,
   Phone,
+  Plus,
   Users,
   X,
 } from "@wso2/oxygen-ui-icons-react";
@@ -78,6 +80,7 @@ import {
   usePostCsmCaseAttachment,
   useDownloadCsmCaseAttachment,
   useDeleteCsmCaseAttachment,
+  useGetCsmCaseAttachmentContent,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
 import CsmCaseCommentInput from "@features/csm-cases/components/CsmCaseCommentInput";
 import CaseActionBar from "@features/csm-cases/components/CaseActionBar";
@@ -88,19 +91,24 @@ import SetAutocloseHoldDialog from "@features/csm-cases/components/SetAutocloseH
 import EditCaseDetailsDialog, {
   type FieldSaveResult,
 } from "@features/csm-cases/components/EditCaseDetailsDialog";
+import LinkIncidentDialog from "@features/csm-cases/components/LinkIncidentDialog";
 import LinkCaseDialog, {
   type CaseLinkType,
 } from "@features/csm-cases/components/LinkCaseDialog";
-import SetFixEtaDialog from "@features/csm-cases/components/SetFixEtaDialog";
+import SetFixEtaDialog, {
+  type FixEtaSavePayload,
+} from "@features/csm-cases/components/SetFixEtaDialog";
 import CreateTaskDialog from "@features/csm-cases/components/CreateTaskDialog";
 import AddTagDialog from "@features/csm-cases/components/AddTagDialog";
 import { useCreateCaseTask } from "@features/csm-cases/api/useCreateCaseTask";
 import { useAddCaseTag, useRemoveCaseTag } from "@features/csm-cases/api/useCaseTags";
 import { ChildCasesWidget } from "@features/csm-cases/components/ChildCasesWidget";
+import { LinkedChangeRequestsWidget } from "@features/csm-cases/components/LinkedChangeRequestsWidget";
 import { CreateGithubIssueDialog } from "@features/csm-cases/components/CreateGithubIssueDialog";
 import { isCloudSupportSubscription } from "@features/csm-projects/utils/subscriptionType";
 import { usePostCaseGithubIssue } from "@features/csm-cases/api/useCsmCaseGithubIssue";
 import CaseActivitiesFeed from "@features/csm-cases/components/CaseActivitiesFeed";
+import { scrollToFragmentWithRetry } from "@features/csm-cases/utils/permalinkScroll";
 import CaseMetaBand from "@features/csm-cases/components/CaseMetaBand";
 import {
   AttachmentsWidget,
@@ -121,10 +129,12 @@ import CaseTimeCardsPanel from "@features/csm-timecards/components/CaseTimeCards
 import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDialog";
 import { usePostTimeCard } from "@features/csm-timecards/api/useTimeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
+import { parentRecordPath } from "@features/csm-cases/utils/parentRecordRoute";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
   isBlankHtml,
   sanitizeDescriptionHtml,
+  stripHtmlTags,
   stripLightModeInlineStyles,
 } from "@utils/sanitizeHtml";
 import { useDarkMode } from "@utils/useDarkMode";
@@ -144,7 +154,9 @@ import type {
   CaseAttachment,
   CaseLifecycleAction,
   CaseWatcher,
+  CreateIncidentFromCaseNavState,
   CreateRelatedCaseNavState,
+  CreateServiceRequestFromCaseNavState,
 } from "@features/csm-cases/types/csmCases";
 import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import { useNavTransition } from "@hooks/useNavTransition";
@@ -252,31 +264,13 @@ type CaseTabId =
   | "activities"
   | "details"
   | "related"
+  | "watchers"
   | "sla"
   | "attachments"
   | "time"
   | "call-requests"
   | "tasks";
 
-/**
- * Walk the parent chain to find the nearest vertically-scrollable element.
- * Falls back to the document scrolling element if none is found.
- */
-function findVerticalScrollAncestor(el: HTMLElement): HTMLElement {
-  let cur: HTMLElement | null = el.parentElement;
-  while (cur && cur !== document.body) {
-    const style = window.getComputedStyle(cur);
-    const overflowY = style.overflowY;
-    if (
-      (overflowY === "auto" || overflowY === "scroll") &&
-      cur.scrollHeight > cur.clientHeight
-    ) {
-      return cur;
-    }
-    cur = cur.parentElement;
-  }
-  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
-}
 
 const TAB_DEFS: Array<{
   id: CaseTabId;
@@ -290,7 +284,8 @@ const TAB_DEFS: Array<{
   { id: "activities", label: "Activities", icon: <Activity size={16} /> },
   { id: "details", label: "Details", icon: <ListChecks size={16} /> },
   { id: "related", label: "Related", icon: <Users size={16} /> },
-  { id: "sla", label: "SLAs", icon: <Clock size={16} /> },
+  { id: "watchers", label: "Watchers", icon: <Eye size={16} /> },
+  { id: "sla", label: "SLAs", icon: <Clock size={16} />, hidden: true },
   { id: "attachments", label: "Attachments", icon: <Paperclip size={16} /> },
   { id: "time", label: "Time tracking", icon: <Layers size={16} /> },
   { id: "call-requests", label: "Call requests", icon: <Phone size={16} /> },
@@ -308,27 +303,34 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const isEngagementRoute = location.pathname.startsWith("/engagements/");
   const isServiceRequestRoute = location.pathname.startsWith("/operations/service-requests/");
   const isAnnouncementRoute = location.pathname.startsWith("/announcements/");
+  const isSecurityReportRoute = location.pathname.startsWith(
+    "/security-center/security-reports/",
+  );
   const backPath = isEngagementRoute
     ? "/engagements"
     : isServiceRequestRoute
       ? "/operations?tab=service_requests"
       : isAnnouncementRoute
         ? "/announcements"
-        : "/cases";
-  const backLabel = isEngagementRoute
-    ? "Back to engagements"
-    : isServiceRequestRoute
-      ? "Back to service requests"
-      : isAnnouncementRoute
-        ? "Back to announcements"
-        : "Back to cases";
+        : isSecurityReportRoute
+          ? "/security-center?tab=security_reports"
+          : "/cases";
   const detailPath = isEngagementRoute
     ? `/engagements/${caseId}`
     : isServiceRequestRoute
       ? `/operations/service-requests/${caseId}`
       : isAnnouncementRoute
         ? `/announcements/${caseId}`
-        : `/cases/${caseId}`;
+        : isSecurityReportRoute
+          ? `/security-center/security-reports/${caseId}`
+          : `/cases/${caseId}`;
+  // The row link on the originating list carries its own (filtered) URL
+  // forward as router state, so the back button below returns to that exact
+  // list view — filters, search text, sort — instead of a bare list path.
+  // Falls back to the hardcoded backPath for a bookmarked or directly-linked
+  // detail page, which never got the state set.
+  const fromListState = location.state as { from?: string } | undefined;
+  const resolvedBackPath = fromListState?.from ?? backPath;
   const { data, isLoading, isError, error } = useGetCsmCaseDetail(caseId);
   // The route alone isn't a reliable signal once data has loaded: a "Related
   // case" link always points at /cases/:id regardless of the target's actual
@@ -339,6 +341,41 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // severity, so combine the route with the loaded case's own caseType.
   const isServiceRequest =
     isServiceRequestRoute || data?.caseType === "service_request";
+  // Security report analyses have no dedicated pre-load route (they open via
+  // the generic /cases/:caseId route), so caseType is the only signal.
+  const isSecurityReport = data?.caseType === "security_report_analysis";
+  // Same reasoning as isAnnouncement above — Engagements don't carry a
+  // severity, so combine the route with the loaded case's own caseType.
+  const isEngagement = isEngagementRoute || data?.caseType === "engagement";
+
+  // Engagements, Announcements, Service Requests, and Security Reports each
+  // have a dedicated route; opening a case under any route other than its own
+  // canonical one (e.g. a "Related case" link, which always points at
+  // /cases/:id, or a dedicated route reached with a case of a different
+  // type) should redirect to its real destination rather than silently
+  // rendering under the wrong section.
+  const canonicalDetailPath =
+    data?.caseType === "engagement"
+      ? `/engagements/${caseId}`
+      : data?.caseType === "announcement"
+        ? `/announcements/${caseId}`
+        : data?.caseType === "service_request"
+          ? `/operations/service-requests/${caseId}`
+          : data?.caseType === "security_report_analysis"
+            ? `/security-center/security-reports/${caseId}`
+            : `/cases/${caseId}`;
+  const isMisrouted = !!data && detailPath !== canonicalDetailPath;
+
+  useEffect(() => {
+    if (!caseId || !isMisrouted) return;
+    // Carry the originating list location through the canonical redirect. Without
+    // it, a record reached on a non-canonical route (announcements, service
+    // requests, engagements, security reports) lands on its dedicated route with
+    // empty state, and Back then falls through to the bare route-specific path,
+    // dropping the filters, search and sort that got the user here.
+    navigate(canonicalDetailPath, { replace: true, state: { from: resolvedBackPath } });
+  }, [isMisrouted, canonicalDetailPath, caseId, navigate, resolvedBackPath]);
+
   const {
     data: comments,
     isLoading: isCommentsLoading,
@@ -371,6 +408,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   } = useGetCsmCaseAttachments(caseId);
   const postAttachment = usePostCsmCaseAttachment();
   const downloadAttachment = useDownloadCsmCaseAttachment();
+  const getAttachmentPreviewContent = useGetCsmCaseAttachmentContent();
   const deleteAttachment = useDeleteCsmCaseAttachment();
   // Fetched unconditionally (not just while their tab is active) purely for
   // the tab-label counts below; each widget still runs its own scoped query
@@ -422,10 +460,16 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const isDarkMode = useDarkMode();
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [activeTab, setActiveTab] = useState<CaseTabId>("activities");
+  // Permalink fragment (`/cases/:id#<entry-id>`), consumed by the scroll and
+  // highlight effect further down. Hoisted up here because two render-time
+  // state adjustments below both need it: the per-case reset and the
+  // per-fragment Activities-tab force.
+  const permalinkFragment = location.hash?.replace(/^#/, "") ?? "";
   const [metaCollapsed, setMetaCollapsed] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
   const [linkCaseOpen, setLinkCaseOpen] = useState(false);
+  const [linkIncidentOpen, setLinkIncidentOpen] = useState(false);
   const [autocloseHoldOpen, setAutocloseHoldOpen] = useState(false);
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
@@ -440,10 +484,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
   } | null>(null);
   const [severityOpen, setSeverityOpen] = useState(false);
   const [logTimeOpen, setLogTimeOpen] = useState(false);
-  // One-shot: true to pop open the Call requests tab's "Create call request"
-  // dialog from the action bar's "Request a call" item. The widget flips it
-  // back to false once handled, so switching tabs afterwards doesn't reopen it.
-  const [autoOpenCallCreate, setAutoOpenCallCreate] = useState(false);
   const [githubIssueOpen, setGithubIssueOpen] = useState(false);
   // Inline error shown inside the Git-issue dialog (e.g. the SN routing 422 /
   // state 409). Cleared when the dialog opens or a submit is retried.
@@ -456,6 +496,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const postTimeCard = usePostTimeCard();
   // Attachment pending delete confirmation (drives the confirm dialog).
   const [pendingDelete, setPendingDelete] = useState<CaseAttachment | null>(
+    null,
+  );
+  // Attachment shown in the inline preview dialog.
+  const [previewTarget, setPreviewTarget] = useState<CaseAttachment | null>(
     null,
   );
   // When starting work would leave the engineer with more than one ongoing case,
@@ -481,18 +525,24 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setResolutionDialog(null);
     setSeverityOpen(false);
     setLogTimeOpen(false);
-    setAutoOpenCallCreate(false);
     setGithubIssueOpen(false);
     setGithubIssueError(null);
     setGithubIssueResult(null);
     setPendingDelete(null);
+    setPreviewTarget(null);
     setPauseConflict(null);
     setLinkCaseOpen(false);
+    setLinkIncidentOpen(false);
     setAutocloseHoldOpen(false);
     setEditDetailsOpen(false);
     setCreateTaskOpen(false);
     setFixEtaOpen(false);
     setAddTagOpen(false);
+    // Following a permalink from one case to another keeps this page mounted and
+    // can carry the *same* fragment (e.g. #description → #description), so the
+    // fragment-keyed force below won't fire. Force it here instead, otherwise
+    // the new case would open on whatever tab the previous one was left on.
+    if (permalinkFragment) setActiveTab("activities");
   }
 
   // isAnnouncement can only be confirmed once `data` loads (see its
@@ -503,6 +553,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   if (
     isAnnouncement &&
     (activeTab === "related" ||
+      activeTab === "watchers" ||
       activeTab === "sla" ||
       activeTab === "time" ||
       activeTab === "call-requests" ||
@@ -512,67 +563,57 @@ export default function CsmCaseDetailPage(): JSX.Element {
   }
 
   // Twitter-style permalinks: when the URL has a fragment matching an entry id,
-  // jump to the Activities tab, scroll the entry into view vertically, and
-  // flash it. The browser's default hash-anchor `scrollIntoView` also drags
-  // ancestors horizontally if any of them is wider than the viewport (e.g.
-  // when a comment contains a wide `<pre>` block). We zero `scrollLeft` on
-  // every ancestor to undo that horizontal shift while keeping vertical
-  // scroll in place.
+  // jump to the Activities tab and hand off to `scrollToFragmentWithRetry`,
+  // which scrolls the entry into view and flashes it once it actually exists
+  // in the DOM.
+  //
+  // The target only exists once every activity-feed source has loaded:
+  // comments, the linked chat transcript, and the audit trail (see the
+  // `isCommentsLoading || isChatLoading || isActivityLoading` skeleton gate
+  // below). A brand-new tab starts all three of those requests cold and they
+  // don't resolve in a fixed order, so gate the whole permalink attempt on
+  // every one of them finishing rather than retrying only when `comments`
+  // itself changes — otherwise a case where chat/audit resolve after comments
+  // retries once, too early, and never gets another chance. On an
+  // already-open tab this race has usually already settled by the time a
+  // fragment link is followed, which is why the bug reads as "new tab only."
+  const activitiesFeedReady =
+    !isCommentsLoading && !isChatLoading && !isActivityLoading;
+  // Forcing the Activities tab is a state adjustment, done during render like
+  // the prevCaseId reset above — not in the effect below. It has to be keyed on
+  // the fragment *changing*: the effect's other dependency
+  // (`activitiesFeedReady`) flips false → true as the three feed sources
+  // settle, so a setActiveTab living inside the effect re-ran on that flip and
+  // dragged a user who had switched tabs while the feed loaded back to
+  // Activities. Keyed on the fragment, the tab is forced once per link.
+  //
+  // No adjustment is needed on first mount: `activeTab` already starts at
+  // "activities", so initialising prevFragment to the current fragment is
+  // correct rather than a missed force. Following a permalink to a *different*
+  // case with the same fragment is handled by the prevCaseId block above,
+  // since the fragment itself does not change there.
+  const [prevFragment, setPrevFragment] = useState(permalinkFragment);
+  if (permalinkFragment !== prevFragment) {
+    setPrevFragment(permalinkFragment);
+    if (permalinkFragment) setActiveTab("activities");
+  }
   useEffect(() => {
-    const hash = location.hash?.replace(/^#/, "");
-    if (!hash) return;
-    // Permalink: a URL fragment forces the Activities tab. Effect-driven so it
-    // also fires when the hash changes while already on the page.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs active tab to URL hash
-    setActiveTab("activities");
-    // Track every timer (outer + both nested resets) so the cleanup can cancel
-    // all of them on unmount / hash change — the inner resets were previously
-    // leaked.
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const timer = setTimeout(() => {
-      const target = document.getElementById(hash);
-      if (!target) return;
+    // Wait for the feed to actually be able to render the target before
+    // attempting to find it — see the comment above.
+    if (!permalinkFragment || !activitiesFeedReady) return;
 
-      // Undo any horizontal scroll the browser introduced on ancestors.
-      let cur: HTMLElement | null = target.parentElement;
-      while (cur && cur !== document.body) {
-        if (cur.scrollLeft !== 0) cur.scrollLeft = 0;
-        cur = cur.parentElement;
-      }
-      if (document.documentElement.scrollLeft !== 0) {
-        document.documentElement.scrollLeft = 0;
-      }
-      if (document.body.scrollLeft !== 0) document.body.scrollLeft = 0;
-
-      const container = findVerticalScrollAncestor(target);
-      const containerTop = container === document.documentElement
-        ? 0
-        : container.getBoundingClientRect().top;
-      const targetTop = target.getBoundingClientRect().top;
-      const offset = 96;
-      const delta = targetTop - containerTop - offset;
-      container.scrollTo({
-        top: container.scrollTop + delta,
-        behavior: "smooth",
-      });
-
-      const prevTransition = target.style.transition;
-      const prevBg = target.style.backgroundColor;
-      target.style.transition = "background-color 200ms ease-out";
-      target.style.backgroundColor = "rgba(255, 213, 79, 0.35)";
-      const reset = setTimeout(() => {
-        target.style.backgroundColor = prevBg;
-        timers.push(
-          setTimeout(() => {
-            target.style.transition = prevTransition;
-          }, 350),
+    return scrollToFragmentWithRetry(permalinkFragment, {
+      onNotFound: () => {
+        // Every source has loaded and the id still isn't in the DOM — it's
+        // not a timing problem. Say so rather than leaving the page silently
+        // scrolled to the top as if the link were malformed (e.g. a deleted
+        // comment, or one the viewer isn't permitted to see).
+        showError(
+          "Could not find the linked entry — it may have been removed, or you may not have permission to view it.",
         );
-      }, 1500);
-      timers.push(reset);
-    }, 250);
-    timers.push(timer);
-    return () => timers.forEach(clearTimeout);
-  }, [location.hash, data, comments]);
+      },
+    });
+  }, [permalinkFragment, activitiesFeedReady, showError]);
 
   useEffect(() => {
     // State-transition feedback is sticky (persists until dismissed) so it
@@ -795,13 +836,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
-      // Manage watchers jumps to the Related tab, which now edits the watch
-      // list inline (add/remove chips) rather than opening a separate dialog.
-      if (action.secondary === "manage_watchers") {
-        setActiveTab("related");
-        return;
-      }
-
       // Hold auto-closure opens the date picker; the PATCH happens in
       // onSetAutocloseHold once a date is confirmed.
       if (action.secondary === "hold_auto_close") {
@@ -816,10 +850,30 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
-      // Link to another case opens the search-and-pick dialog; the PATCH
-      // happens in onLinkCase once a target case and link type are chosen.
-      if (action.secondary === "link_case") {
-        setLinkCaseOpen(true);
+      // Create incident from case navigates to the create-incident form,
+      // pre-filled with this case as the new incident's parent (ServiceNow's
+      // generic task-parent reference — see CreateIncidentPage.tsx's read of
+      // the nav state).
+      if (action.secondary === "create_incident" && data) {
+        const navState: CreateIncidentFromCaseNavState = {
+          caseId: data.id,
+          caseNumber: data.caseNumber,
+          subject: data.subject,
+          // The case description is rich-text HTML; the incident form's
+          // Description field is plain text (sent as additionalComments), so
+          // strip tags rather than carrying markup through as visible text.
+          description: isBlankHtml(data.description)
+            ? undefined
+            : stripHtmlTags(data.description),
+        };
+        navigate("/operations/incidents/new", { state: navState });
+        return;
+      }
+
+      // Link to incident opens the search-and-pick dialog; the PATCH happens
+      // in onLinkIncident once a target incident is chosen.
+      if (action.secondary === "link_incident") {
+        setLinkIncidentOpen(true);
         return;
       }
 
@@ -924,14 +978,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
       if (action.secondary === "raise_git_issue") {
         setGithubIssueError(null);
         setGithubIssueOpen(true);
-        return;
-      }
-
-      // Jump to the Call requests tab and pop its own "Create call request"
-      // dialog, rather than a second/duplicate entry point for the same form.
-      if (action.secondary === "request_call") {
-        setActiveTab("call-requests");
-        setAutoOpenCallCreate(true);
         return;
       }
 
@@ -1068,7 +1114,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [patchCase, showError],
   );
 
-  // Watchers are edited inline in the Related tab (see WatchersWidget); the
+  // Watchers are edited inline in the Watchers tab (see WatchersWidget); the
   // backend has no add/remove-one endpoint, only a full-list-replace
   // `PATCH /cases/{id}` (`watchList`), and that PATCH is an array of emails
   // (ServiceNow's watch_list only round-trips as `EmailString[]`), so both add
@@ -1217,6 +1263,26 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [patchCase, showError],
   );
 
+  const onLinkIncident = useCallback(
+    (targetIncidentId: string) => {
+      patchCase.mutate(
+        { parentId: targetIncidentId },
+        {
+          onSuccess: () => {
+            setLinkIncidentOpen(false);
+            setFeedback({
+              message: "Incident linked as parent.",
+              severity: "success",
+              sticky: false,
+            });
+          },
+          onError: (err) => showError("Could not link this incident.", err),
+        },
+      );
+    },
+    [patchCase, showError],
+  );
+
   const onCreateTask = useCallback(
     (payload: BeCreateCaseTaskPayload) => {
       createTask.mutate(payload, {
@@ -1240,21 +1306,17 @@ export default function CsmCaseDetailPage(): JSX.Element {
   );
 
   const onSetFixEta = useCallback(
-    (fixEtaIso: string) => {
-      patchCase.mutate(
-        { fixEta: fixEtaIso },
-        {
-          onSuccess: () => {
-            setFixEtaOpen(false);
-            setFeedback({
-              message: "Fix ETA updated.",
-              severity: "success",
-              sticky: false,
-            });
-          },
-          onError: (err) => showError("Could not set the fix ETA.", err),
+    (patch: FixEtaSavePayload) => {
+      patchCase.mutate(patch as BeCaseUpdatePayload, {
+        onSuccess: () => {
+          setFeedback({
+            message: "Fix ETA updated.",
+            severity: "success",
+            sticky: false,
+          });
         },
-      );
+        onError: (err) => showError("Could not set the fix ETA.", err),
+      });
     },
     [patchCase, showError],
   );
@@ -1361,7 +1423,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     );
   }, [caseId, pendingDelete, deleteAttachment, showError]);
 
-  if (isLoading) {
+  if (isLoading || isMisrouted) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
         <Skeleton variant="rounded" height={32} width={240} />
@@ -1377,13 +1439,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
           variant="text"
           size="small"
           startIcon={<ArrowLeft size={16} />}
-          onClick={() => navigate(backPath)}
+          onClick={() => navigate(resolvedBackPath)}
           sx={{ alignSelf: "flex-start" }}
         >
-          {backLabel}
+          Back
         </Button>
         <QueryErrorState
-          message={`Could not load this case: ${error instanceof Error ? error.message : "unknown error"}`}
+          message={error instanceof Error && error.message.trim() ? error.message : "Could not load this case."}
           error={error}
         />
       </Box>
@@ -1397,10 +1459,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
           variant="text"
           size="small"
           startIcon={<ArrowLeft size={16} />}
-          onClick={() => navigate(backPath)}
+          onClick={() => navigate(resolvedBackPath)}
           sx={{ alignSelf: "flex-start" }}
         >
-          {backLabel}
+          Back
         </Button>
         <Typography variant="h5">Case not found</Typography>
         <Typography variant="body2" color="text.secondary">
@@ -1448,10 +1510,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
         variant="text"
         size="small"
         startIcon={<ArrowLeft size={16} />}
-        onClick={() => navigate(backPath)}
+        onClick={() => navigate(resolvedBackPath)}
         sx={{ alignSelf: "flex-start" }}
       >
-        {backLabel}
+        Back
       </Button>
 
       <Box
@@ -1517,9 +1579,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 sx={{ fontWeight: 600 }}
               />
             )}
-            {!isAnnouncement && !isServiceRequest && (
-              <SeverityChip severity={c.severity} withLabel />
-            )}
+            {!isAnnouncement &&
+              !isServiceRequest &&
+              !isSecurityReport &&
+              !isEngagement && (
+                <SeverityChip severity={c.severity} withLabel />
+              )}
             {!isAnnouncement && <StateChip state={c.state} />}
             {!isAnnouncement && relatedCase && (
               <Chip
@@ -1528,21 +1593,50 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 clickable
                 icon={<LinkIcon size={14} />}
                 label={`Related: ${relatedCase.caseNumber ?? relatedCase.id}`}
-                onClick={() => navigate(`/cases/${relatedCase.id}`)}
+                // Carries the same "back to list" target forward — there's no
+                // breadcrumb chain back through this case, so the related
+                // case's own back button returns to the filtered list this
+                // one was opened from rather than losing it a step early.
+                onClick={() =>
+                  navigate(`/cases/${relatedCase.id}`, {
+                    state: { from: resolvedBackPath },
+                  })
+                }
                 sx={{ fontWeight: 600 }}
               />
             )}
-            {!isAnnouncement && c.parentCase && (
-              <Chip
-                size="small"
-                variant="outlined"
-                clickable
-                icon={<LinkIcon size={14} />}
-                label={`Parent: ${c.parentCase.caseNumber ?? c.parentCase.id}`}
-                onClick={() => navigate(`/cases/${c.parentCase?.id}`)}
-                sx={{ fontWeight: 600 }}
-              />
-            )}
+            {!isAnnouncement &&
+              c.parentCase &&
+              (() => {
+                const parentPath = parentRecordPath(c.parentCase);
+                return (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    clickable={parentPath !== null}
+                    icon={<LinkIcon size={14} />}
+                    label={`Parent: ${c.parentCase.caseNumber ?? c.parentCase.id}`}
+                    // Carries the "back to list" target forward the same way
+                    // the related-case chip does, so the parent record's own
+                    // back button returns to the filtered list this case was
+                    // opened from.
+                    onClick={
+                      parentPath === null
+                        ? undefined
+                        : () =>
+                            navigate(parentPath, {
+                              state: { from: resolvedBackPath },
+                            })
+                    }
+                    title={
+                      parentPath === null
+                        ? "This parent record's type could not be resolved, so it cannot be opened from here."
+                        : undefined
+                    }
+                    sx={{ fontWeight: 600 }}
+                  />
+                );
+              })()}
             {!isAnnouncement &&
               c.autoclosureStep &&
               c.autoclosureStep !== "DEFAULT" && (
@@ -1590,6 +1684,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
               caseDetail={c}
               onAction={onAction}
               closeBlockedReason={closeBlockedReason}
+              isPending={patchCase.isPending}
             />
           </Box>
         )}
@@ -1642,25 +1737,29 @@ export default function CsmCaseDetailPage(): JSX.Element {
               !t.hidden &&
               (!isAnnouncement ||
                 (t.id !== "related" &&
+                  t.id !== "watchers" &&
                   t.id !== "sla" &&
                   t.id !== "time" &&
                   t.id !== "call-requests")),
           ).map((t) => {
             // Counts shown only where the tab IS the list (unambiguous). Not
-            // shown for "related" — it combines two lists (watchers + child
-            // cases), so a single count would be misleading.
+            // shown for "related" — ChildCasesWidget runs its own scoped
+            // query for the child-case list, so no count is available here
+            // without an extra fetch.
             const count =
-              t.id === "sla"
-                ? slaList?.count
-                : t.id === "attachments"
-                  ? attachmentList.length
-                  : t.id === "time"
-                    ? c.timeLogs.length
-                    : t.id === "call-requests"
-                      ? callRequests?.length
-                      : t.id === "tasks"
-                        ? caseTasks?.total
-                        : undefined;
+              t.id === "watchers"
+                ? c.watchers.length
+                : t.id === "sla"
+                  ? slaList?.count
+                  : t.id === "attachments"
+                    ? attachmentList.length
+                    : t.id === "time"
+                      ? c.timeLogs.length
+                      : t.id === "call-requests"
+                        ? callRequests?.length
+                        : t.id === "tasks"
+                          ? caseTasks?.total
+                          : undefined;
             return (
               <Tab
                 key={t.id}
@@ -1825,7 +1924,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   comments={safeComments}
                   audit={activityAudit ?? []}
                   attachments={attachmentList}
+                  callRequests={callRequests ?? []}
                   onDownloadAttachment={onDownloadAttachment}
+                  preview={{
+                    onGetPreviewContent: getAttachmentPreviewContent,
+                    previewTarget,
+                    onPreviewTargetChange: setPreviewTarget,
+                  }}
                 />
               </>
             )}
@@ -1911,6 +2016,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             ctx={c.customerContext}
             project={caseProject}
             isLoadingProject={isCaseProjectLoading}
+            accountId={c.accountId}
           />
           <ProductContextWidget
             ctx={c.productContext}
@@ -1925,17 +2031,59 @@ export default function CsmCaseDetailPage(): JSX.Element {
             onRemove={isClosed ? undefined : (t) => onRemoveTag(t.id)}
             removingId={removeTag.isPending ? removeTag.variables : null}
           />
+        </Box>
+      )}
+
+      {activeTab === "related" && (
+        <Box
+          sx={{
+            display: "grid",
+            gap: 2,
+            gridTemplateColumns: {
+              xs: "1fr",
+              md: "repeat(2, minmax(0, 1fr))",
+            },
+            alignItems: "start",
+          }}
+        >
+          <ChildCasesWidget caseId={c.id} />
+          {/* Content-relevance, not a data-source gate: shown whenever this is
+              a service request (the only case type that carries the link) or
+              the list already has entries — never checks the record's data
+              source. */}
+          {(isServiceRequest || (c.linkedChangeRequests?.length ?? 0) > 0) && (
+            <LinkedChangeRequestsWidget changeRequests={c.linkedChangeRequests} />
+          )}
           <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
               <Typography variant="subtitle2">Linked service requests</Typography>
-              <Button
-                size="small"
-                variant="outlined"
-                startIcon={<LinkIcon size={14} />}
-                onClick={() => setLinkCaseOpen(true)}
-              >
-                Link to another case
-              </Button>
+              <Box sx={{ display: "flex", gap: 1 }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<Plus size={14} />}
+                  onClick={() => {
+                    const navState: CreateServiceRequestFromCaseNavState = {
+                      projectId: c.projectId,
+                      relatedCaseId: c.id,
+                      relatedCaseNumber: c.caseNumber,
+                      deploymentId: c.productContext.deploymentId,
+                      deployedProductId: c.productContext.deployedProductId,
+                    };
+                    navigate("/operations/service-requests/new", { state: navState });
+                  }}
+                >
+                  Create service request
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<LinkIcon size={14} />}
+                  onClick={() => setLinkCaseOpen(true)}
+                >
+                  Link to another case
+                </Button>
+              </Box>
             </Box>
             {c.linkedServiceRequests && c.linkedServiceRequests.length > 0 ? (
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
@@ -1960,29 +2108,19 @@ export default function CsmCaseDetailPage(): JSX.Element {
         </Box>
       )}
 
-      {activeTab === "related" && (
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "repeat(2, minmax(0, 1fr))",
-            },
-            alignItems: "start",
-          }}
-        >
+      {activeTab === "watchers" && (
+        <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "1fr" }}>
           {/* Watchers list — moved off the (single-line) overview Cell so a
-              long watch list has room to wrap as chips. Add/remove are
-              inline here (no separate dialog); "Manage watchers…" in the
-              action bar just jumps to this tab. */}
+              long watch list has room to wrap as chips, and given its own
+              tab (split out of "Related") since it's not actually related
+              content. Add/remove are inline here (no separate dialog);
+              "Manage watchers…" in the action bar just jumps to this tab. */}
           <WatchersWidget
             watchers={c.watchers}
             onAdd={onAddWatcher}
             onRemove={onRemoveWatcher}
             isSaving={patchCase.isPending}
           />
-          <ChildCasesWidget caseId={c.id} />
         </Box>
       )}
 
@@ -2008,6 +2146,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
             onDownload={onDownloadAttachment}
             onDelete={setPendingDelete}
             deletingId={deleteAttachment.isPending ? pendingDelete?.id : null}
+            preview={{
+              onGetPreviewContent: getAttachmentPreviewContent,
+              previewTarget,
+              onPreviewTargetChange: setPreviewTarget,
+            }}
           />
         </Box>
       )}
@@ -2026,8 +2169,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
           <CallRequestsWidget
             caseId={caseId}
             severity={c.severity}
-            autoOpenCreate={autoOpenCallCreate}
-            onAutoOpenCreateHandled={() => setAutoOpenCallCreate(false)}
+            caseState={c.state}
             isClosed={isClosed}
           />
         </Box>
@@ -2111,6 +2253,14 @@ export default function CsmCaseDetailPage(): JSX.Element {
         />
       )}
 
+      {linkIncidentOpen && (
+        <LinkIncidentDialog
+          isLinking={patchCase.isPending}
+          onClose={() => setLinkIncidentOpen(false)}
+          onLink={onLinkIncident}
+        />
+      )}
+
       {createTaskOpen && (
         <CreateTaskDialog
           isSaving={createTask.isPending}
@@ -2121,7 +2271,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
 
       {fixEtaOpen && (
         <SetFixEtaDialog
-          currentFixEta={c.fixEta}
+          currentBestCaseFixEta={c.bestCaseFixEta}
+          currentMostLikelyFixEta={c.mostLikelyFixEta}
+          currentWorstCaseFixEta={c.worstCaseFixEta}
           isSaving={patchCase.isPending}
           onClose={() => setFixEtaOpen(false)}
           onSave={onSetFixEta}
@@ -2141,6 +2293,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
         <LogTimeCardDialog
           caseId={c.id}
           caseNumber={c.caseNumber ?? c.id}
+          caseSeverity={c.severity}
           projectId={c.projectId}
           projectName={c.projectName}
           isSubmitting={postTimeCard.isPending}

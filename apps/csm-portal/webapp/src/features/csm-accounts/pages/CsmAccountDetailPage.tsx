@@ -20,13 +20,30 @@ import {
   Card,
   Chip,
   Skeleton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   Typography,
 } from "@wso2/oxygen-ui";
 import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, type ReactNode } from "react";
-import {  useParams } from "react-router";
+import { Link as RouterLink, useParams } from "react-router";
+import { useAccountProjects } from "@features/csm-accounts/api/useAccountProjects";
 import { useGetAccount } from "@features/csm-accounts/api/useGetAccount";
+import {
+  getDeactivationState,
+  resolveAccountTier,
+} from "@features/csm-accounts/types/csmAccounts";
+import DirectoryEntityChip from "@features/csm-admin/components/DirectoryEntityChip";
+import QueryErrorState from "@components/QueryErrorState";
 import { useNavTransition } from "@hooks/useNavTransition";
+
+function formatSubscriptionType(value: string): string {
+  return value.replace(/_/g, " ");
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -83,6 +100,91 @@ function BackButton({ onClick }: { onClick: () => void }): JSX.Element {
   );
 }
 
+/**
+ * Projects belonging to this account, server-side filtered via
+ * `POST /projects/search`'s `accountId` filter (see `useAccountProjects`).
+ */
+function ProjectsSection({ accountId }: { accountId: string }): JSX.Element {
+  const { data, isLoading, isError, error } = useAccountProjects(accountId);
+  const projects = data?.projects ?? [];
+
+  return (
+    <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
+      <Typography variant="subtitle2">Projects</Typography>
+      <TableContainer sx={{ border: 1, borderColor: "divider", borderRadius: 1 }}>
+        <Table size="small" sx={{ "& .MuiTableCell-root": { borderColor: "divider" } }}>
+          <TableHead>
+            <TableRow sx={{ bgcolor: "action.hover" }}>
+              <TableCell>Name</TableCell>
+              <TableCell>Project key</TableCell>
+              <TableCell>Subscription</TableCell>
+              <TableCell>End date</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {isLoading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <TableRow key={i}>
+                  <TableCell><Skeleton variant="rounded" width="70%" height={18} /></TableCell>
+                  <TableCell><Skeleton variant="rounded" width="50%" height={18} /></TableCell>
+                  <TableCell><Skeleton variant="rounded" width={90} height={22} /></TableCell>
+                  <TableCell><Skeleton variant="rounded" width={80} height={18} /></TableCell>
+                </TableRow>
+              ))
+            ) : isError ? (
+              <TableRow>
+                <TableCell colSpan={4} align="center">
+                  <QueryErrorState
+                    message={error instanceof Error && error.message.trim() ? error.message : "Failed to load projects."}
+                    error={error}
+                  />
+                </TableCell>
+              </TableRow>
+            ) : projects.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    No projects found for this account.
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ) : (
+              projects.map((p) => (
+                <TableRow key={p.id} hover>
+                  <TableCell>
+                    <Typography
+                      component={RouterLink}
+                      to={`/customers/projects/${p.id}`}
+                      variant="body2"
+                      sx={(t) => ({
+                        textDecoration: "none",
+                        color: t.palette.primary.dark,
+                        ...t.applyStyles("dark", { color: t.palette.primary.main }),
+                        "&:hover": { textDecoration: "underline" },
+                      })}
+                    >
+                      {p.name}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>{p.key}</TableCell>
+                  <TableCell>
+                    <Chip
+                      size="small"
+                      label={formatSubscriptionType(p.subscriptionType)}
+                      variant="outlined"
+                    />
+                  </TableCell>
+                  <TableCell>{formatDate(p.endDate)}</TableCell>
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Card>
+  );
+}
+
 export default function CsmAccountDetailPage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavTransition();
@@ -121,27 +223,26 @@ export default function CsmAccountDetailPage(): JSX.Element {
   }
 
   const a = data;
+  const tier = resolveAccountTier(a);
+  const deactivationState = getDeactivationState(a.deactivationDate);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
       <BackButton onClick={() => navigate("/customers/accounts")} />
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-          <Typography variant="h5">{a.name}</Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
+        <Typography variant="h5">{a.name}</Typography>
+        {tier && (
           <Chip
             size="small"
-            label={a.tier}
-            color={a.tier === "enterprise" ? "primary" : "default"}
+            label={tier}
+            color={tier === "enterprise" ? "primary" : "default"}
             variant="outlined"
           />
-          {a.deactivationDate && (
-            <Chip size="small" label="Deactivated" color="default" variant="outlined" />
-          )}
-        </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ fontFamily: "monospace" }}>
-          {a.sfId}
-        </Typography>
+        )}
+        {deactivationState === "past" && (
+          <Chip size="small" label="Deactivated" color="default" variant="outlined" />
+        )}
       </Box>
 
       <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
@@ -159,7 +260,7 @@ export default function CsmAccountDetailPage(): JSX.Element {
         >
           <MetaCell label="Tier">
             <Typography variant="body2" sx={{ textTransform: "capitalize" }}>
-              {a.tier}
+              {tier ?? "—"}
             </Typography>
           </MetaCell>
           <MetaCell label="Region">
@@ -168,13 +269,44 @@ export default function CsmAccountDetailPage(): JSX.Element {
           <MetaCell label="Salesforce ID">
             <Mono>{a.sfId || "—"}</Mono>
           </MetaCell>
-          <MetaCell label="Activated">
+          <MetaCell label="Account Manager">
+            <Typography variant="body2">{a.accountManager?.name ?? "—"}</Typography>
+          </MetaCell>
+          <MetaCell label="Renewal Account Manager">
+            <Typography variant="body2">{a.renewalAccountManager?.name ?? "—"}</Typography>
+          </MetaCell>
+          <MetaCell label="Technical Owner">
+            <Typography variant="body2">{a.technicalOwner?.name ?? "—"}</Typography>
+          </MetaCell>
+          {(a.creTeam || a.sreTeam) && (
+            <MetaCell label="CRE / SRE team">
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                {a.creTeam && (
+                  <DirectoryEntityChip
+                    id={a.creTeam.id}
+                    name={a.creTeam.name}
+                    routeBase="/admin/teams"
+                  />
+                )}
+                {a.sreTeam && (
+                  <DirectoryEntityChip
+                    id={a.sreTeam.id}
+                    name={a.sreTeam.name}
+                    routeBase="/admin/teams"
+                  />
+                )}
+              </Box>
+            </MetaCell>
+          )}
+          <MetaCell label="Activated on">
             <Typography variant="body2">{formatDate(a.activationDate)}</Typography>
           </MetaCell>
-          <MetaCell label="Deactivated">
-            <Typography variant="body2">{formatDate(a.deactivationDate)}</Typography>
-          </MetaCell>
-          <MetaCell label="AI agent">
+          {deactivationState !== "none" && (
+            <MetaCell label={deactivationState === "future" ? "Deactivates on" : "Deactivated on"}>
+              <Typography variant="body2">{formatDate(a.deactivationDate)}</Typography>
+            </MetaCell>
+          )}
+          <MetaCell label="AI Chat Assistant (Novera)">
             <Chip
               size="small"
               variant="outlined"
@@ -182,7 +314,7 @@ export default function CsmAccountDetailPage(): JSX.Element {
               label={a.agentEnabled ? "Enabled" : "Disabled"}
             />
           </MetaCell>
-          <MetaCell label="KB references">
+          <MetaCell label="Smart KB Suggestions">
             <Chip
               size="small"
               variant="outlined"
@@ -190,23 +322,16 @@ export default function CsmAccountDetailPage(): JSX.Element {
               label={a.kbReferencesEnabled ? "Enabled" : "Disabled"}
             />
           </MetaCell>
-          <MetaCell label="Owner ID">
-            <Mono>{a.ownerId || "—"}</Mono>
+          <MetaCell label="Created on">
+            <Typography variant="body2">{formatDate(a.createdOn)}</Typography>
           </MetaCell>
-          <MetaCell label="Technical owner ID">
-            <Mono>{a.technicalOwnerId || "—"}</Mono>
-          </MetaCell>
-          <MetaCell label="Created">
-            <Typography variant="body2">{formatDate(a.createdAt)}</Typography>
-          </MetaCell>
-          <MetaCell label="Last updated">
-            <Typography variant="body2">{formatDate(a.updatedAt)}</Typography>
-          </MetaCell>
-          <MetaCell label="Account ID">
-            <Mono>{a.id}</Mono>
+          <MetaCell label="Updated on">
+            <Typography variant="body2">{formatDate(a.updatedOn)}</Typography>
           </MetaCell>
         </Box>
       </Card>
+
+      <ProjectsSection accountId={a.id} />
     </Box>
   );
 }

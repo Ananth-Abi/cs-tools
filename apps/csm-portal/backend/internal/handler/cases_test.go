@@ -29,13 +29,15 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
 )
 
-// upstreamErrorCases is the table used by every handler that calls mapUpstreamError.
-// It covers all four explicit apierror mappings plus an unmapped code and a plain error.
+// upstreamErrorCases is the table used by every PATCH/update handler — the
+// ones that call mapUpstreamError (see upstreamErrorsGeneric for every other
+// handler, which calls mapUpstreamErrorGeneric instead). It covers all four
+// explicit apierror mappings plus an unmapped code and a plain error.
 type upstreamErrorCase struct {
-	name         string
-	err          error
-	wantCode     int
-	wantMsg      string
+	name     string
+	err      error
+	wantCode int
+	wantMsg  string
 }
 
 func upstreamErrors(fallback string) []upstreamErrorCase {
@@ -43,13 +45,55 @@ func upstreamErrors(fallback string) []upstreamErrorCase {
 		{"apierror 401", &apierror.Error{StatusCode: http.StatusUnauthorized}, http.StatusUnauthorized, ErrMsgUnauthorized},
 		{"apierror 403", &apierror.Error{StatusCode: http.StatusForbidden}, http.StatusForbidden, ErrMsgForbidden},
 		{"apierror 404", &apierror.Error{StatusCode: http.StatusNotFound}, http.StatusNotFound, ErrMsgNotFound},
-		{"apierror 400", &apierror.Error{StatusCode: http.StatusBadRequest}, http.StatusBadRequest, ErrMsgBadRequest},
-		{"apierror 409", &apierror.Error{StatusCode: http.StatusConflict, Body: "conflict upstream message"}, http.StatusConflict, "conflict upstream message"},
-		{"apierror 422", &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "invalid state transition"}, http.StatusUnprocessableEntity, "invalid state transition"},
+		{"apierror 400 empty body falls back", &apierror.Error{StatusCode: http.StatusBadRequest, Body: ""}, http.StatusBadRequest, ErrMsgBadRequest},
+		{"apierror 400 JSON envelope body surfaces upstream message", &apierror.Error{StatusCode: http.StatusBadRequest, Body: `{"code":400,"message":"invalid type \"bogus\""}`}, http.StatusBadRequest, `invalid type "bogus"`},
+		{"apierror 400 malformed JSON body falls back", &apierror.Error{StatusCode: http.StatusBadRequest, Body: `{not valid json`}, http.StatusBadRequest, ErrMsgBadRequest},
+		{"apierror 400 JSON body without message field falls back", &apierror.Error{StatusCode: http.StatusBadRequest, Body: `{"code":400}`}, http.StatusBadRequest, ErrMsgBadRequest},
+		{"apierror 409 plain text body", &apierror.Error{StatusCode: http.StatusConflict, Body: "conflict upstream message"}, http.StatusConflict, "conflict upstream message"},
+		{"apierror 422 plain text body", &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "invalid state transition"}, http.StatusUnprocessableEntity, "invalid state transition"},
+		{"apierror 409 JSON envelope body", &apierror.Error{StatusCode: http.StatusConflict, Body: `{"code":409,"message":"State transition rejected"}`}, http.StatusConflict, "State transition rejected"},
+		{"apierror 422 JSON envelope body", &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: `{"code":422,"message":"invalid state transition"}`}, http.StatusUnprocessableEntity, "invalid state transition"},
+		{"apierror 409 empty body falls back", &apierror.Error{StatusCode: http.StatusConflict, Body: ""}, http.StatusConflict, fallback},
 		{"apierror 502", &apierror.Error{StatusCode: http.StatusBadGateway}, http.StatusServiceUnavailable, fallback},
 		{"apierror 503", &apierror.Error{StatusCode: http.StatusServiceUnavailable}, http.StatusServiceUnavailable, fallback},
 		{"apierror 504", &apierror.Error{StatusCode: http.StatusGatewayTimeout}, http.StatusServiceUnavailable, fallback},
 		{"apierror unmapped (418)", &apierror.Error{StatusCode: http.StatusTeapot}, http.StatusInternalServerError, fallback},
+		// The default branch never surfaces the upstream body, whatever its shape: a
+		// 5xx or unmapped upstream failure is not caller-actionable, and this branch
+		// is the error path for several clients (the identity provider's among them),
+		// so a well-formed envelope proves shape, not that the content is safe to
+		// show a portal client. Caller-actionable reasons come through the 4xx
+		// branches above.
+		{"apierror 500 JSON envelope body is not echoed", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: `{"code":500,"message":"Invalid state transition: the change request is not in a state that allows this action."}`}, http.StatusInternalServerError, fallback},
+		{"apierror 500 empty body falls back", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: ""}, http.StatusInternalServerError, fallback},
+		{"apierror 500 foreign body is not echoed", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: `{"schemas":["urn:ietf:params:scim:api:messages:2.0:Error"],"detail":"internal identity provider detail","status":"500"}`}, http.StatusInternalServerError, fallback},
+		{"apierror 500 malformed JSON body is not echoed", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: `{not valid json`}, http.StatusInternalServerError, fallback},
+		{"apierror 500 plain text body is not echoed", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: `goroutine 1 [running]: internal stack detail`}, http.StatusInternalServerError, fallback},
+		{"apierror unmapped (418) with envelope body is not echoed", &apierror.Error{StatusCode: http.StatusTeapot, Body: `{"code":418,"message":"upstream reason"}`}, http.StatusInternalServerError, fallback},
+		{"non-apierror error", errors.New("upstream connection refused"), http.StatusInternalServerError, fallback},
+	}
+}
+
+// upstreamErrorsGeneric is upstreamErrors' counterpart for every non-PATCH
+// handler (the vast majority), which calls mapUpstreamErrorGeneric: every
+// 4xx case falls back to fallback instead of surfacing the upstream body,
+// since those endpoints forward a request that's only partially validated at
+// this layer, so a 4xx from upstream isn't necessarily something the caller
+// could have avoided.
+func upstreamErrorsGeneric(fallback string) []upstreamErrorCase {
+	return []upstreamErrorCase{
+		{"apierror 401", &apierror.Error{StatusCode: http.StatusUnauthorized}, http.StatusUnauthorized, ErrMsgUnauthorized},
+		{"apierror 403", &apierror.Error{StatusCode: http.StatusForbidden}, http.StatusForbidden, ErrMsgForbidden},
+		{"apierror 404", &apierror.Error{StatusCode: http.StatusNotFound}, http.StatusNotFound, ErrMsgNotFound},
+		{"apierror 400 JSON envelope body is not echoed", &apierror.Error{StatusCode: http.StatusBadRequest, Body: `{"code":400,"message":"invalid type \"bogus\""}`}, http.StatusBadRequest, fallback},
+		{"apierror 400 empty body falls back", &apierror.Error{StatusCode: http.StatusBadRequest, Body: ""}, http.StatusBadRequest, fallback},
+		{"apierror 409 plain text body is not echoed", &apierror.Error{StatusCode: http.StatusConflict, Body: "conflict upstream message"}, http.StatusConflict, fallback},
+		{"apierror 422 plain text body is not echoed", &apierror.Error{StatusCode: http.StatusUnprocessableEntity, Body: "invalid state transition"}, http.StatusUnprocessableEntity, fallback},
+		{"apierror 502", &apierror.Error{StatusCode: http.StatusBadGateway}, http.StatusServiceUnavailable, fallback},
+		{"apierror 503", &apierror.Error{StatusCode: http.StatusServiceUnavailable}, http.StatusServiceUnavailable, fallback},
+		{"apierror 504", &apierror.Error{StatusCode: http.StatusGatewayTimeout}, http.StatusServiceUnavailable, fallback},
+		{"apierror unmapped (418)", &apierror.Error{StatusCode: http.StatusTeapot}, http.StatusInternalServerError, fallback},
+		{"apierror 500 JSON envelope body is not echoed", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: `{"code":500,"message":"internal detail"}`}, http.StatusInternalServerError, fallback},
 		{"non-apierror error", errors.New("upstream connection refused"), http.StatusInternalServerError, fallback},
 	}
 }
@@ -145,7 +189,7 @@ func TestCreateCase(t *testing.T) {
 	})
 
 	t.Run("upstream errors on create are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create case.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create case.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -341,7 +385,7 @@ func TestCreateCaseComment(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create case comment.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create case comment.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -447,7 +491,7 @@ func TestSearchCaseComments(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search case comments.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search case comments.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -548,7 +592,7 @@ func TestSearchCaseActivities(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search case activities.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search case activities.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -755,7 +799,7 @@ func TestSearchCases(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search cases.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search cases.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1105,7 +1149,7 @@ func TestPatchCase(t *testing.T) {
 	})
 
 	t.Run("GetCase failure during state validation is mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve current case state.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve current case state.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1430,7 +1474,7 @@ func TestGetCase(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve case details.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve case details.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1503,7 +1547,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 	})
 
 	t.Run("maps upstream errors", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create case attachment.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create case attachment.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1586,7 +1630,7 @@ func TestSearchCaseAttachments(t *testing.T) {
 	})
 
 	t.Run("maps upstream errors", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search case attachments.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search case attachments.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1617,7 +1661,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil)
-		r.SetPathValue("id",testAttachmentID)
+		r.SetPathValue("id", testAttachmentID)
 		w := httptest.NewRecorder()
 		h.GetCaseAttachmentContent(w, r)
 		assertStatus(t, w, http.StatusUnauthorized)
@@ -1627,7 +1671,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 	t.Run("rejects invalid attachment UUID", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/not-a-uuid/content", nil))
-		r.SetPathValue("id","not-a-uuid")
+		r.SetPathValue("id", "not-a-uuid")
 		w := httptest.NewRecorder()
 		h.GetCaseAttachmentContent(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
@@ -1646,7 +1690,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 		}
 		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil))
-		r.SetPathValue("id",testAttachmentID)
+		r.SetPathValue("id", testAttachmentID)
 		w := httptest.NewRecorder()
 		h.GetCaseAttachmentContent(w, r)
 		assertStatus(t, w, http.StatusOK)
@@ -1668,7 +1712,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 		}
 		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil))
-		r.SetPathValue("id",testAttachmentID)
+		r.SetPathValue("id", testAttachmentID)
 		w := httptest.NewRecorder()
 		h.GetCaseAttachmentContent(w, r)
 		assertStatus(t, w, http.StatusOK)
@@ -1676,7 +1720,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 	})
 
 	t.Run("maps upstream errors", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to retrieve attachment content.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve attachment content.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1686,7 +1730,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 				}
 				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil))
-				r.SetPathValue("id",testAttachmentID)
+				r.SetPathValue("id", testAttachmentID)
 				w := httptest.NewRecorder()
 				h.GetCaseAttachmentContent(w, r)
 				assertStatus(t, w, tc.wantCode)
@@ -1782,7 +1826,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to create GitHub issue.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to create GitHub issue.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1878,7 +1922,7 @@ func TestAddCaseTag(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to add case tag.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to add case tag.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1968,7 +2012,7 @@ func TestRemoveCaseTag(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to remove case tag.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to remove case tag.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
@@ -1990,56 +2034,13 @@ func TestRemoveCaseTag(t *testing.T) {
 	})
 }
 
-func TestPatchCaseFixEta(t *testing.T) {
-	// Item 3: fixEta is a pure pass-through single-field PATCH variant. It does not
-	// trip the state/workState peek, so patchCaseFn is invoked directly with the raw
-	// body and the upstream response passes through unchanged.
-	const testCaseID = "11111111-1111-1111-1111-111111111111"
-	const reqBody = `{"fixEta":"2026-08-01T00:00:00Z"}`
-	const upstream = `{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","fixEta":"2026-08-01T00:00:00Z"}}`
-
-	var capturedBody []byte
-	client := &mockEntityCaseClient{
-		patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
-			capturedBody = body
-			return []byte(upstream), nil
-		},
-	}
-	h := NewCaseHandler(client)
-	r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(reqBody)))
-	r.SetPathValue("id", testCaseID)
-	w := httptest.NewRecorder()
-	h.PatchCase(w, r)
-
-	assertStatus(t, w, http.StatusOK)
-	assertContentType(t, w, "application/json")
-
-	if string(capturedBody) != reqBody {
-		t.Errorf("upstream received body %s, want %s (must forward verbatim)", capturedBody, reqBody)
-	}
-
-	var wrapper struct {
-		Case struct {
-			FixEta string `json:"fixEta"`
-		} `json:"case"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &wrapper); err != nil {
-		t.Fatalf("decode response: %v; raw: %s", err, w.Body.String())
-	}
-	if wrapper.Case.FixEta != "2026-08-01T00:00:00Z" {
-		t.Errorf("case.fixEta = %q, want %q", wrapper.Case.FixEta, "2026-08-01T00:00:00Z")
-	}
-}
-
-func TestGetCasePassesThroughFixEtaAndTags(t *testing.T) {
-	// Item 3 (read) + item 8 (read): fixEta and tags are additive entity-response
-	// fields with zero BFF handling — GetCase's injectNextStates merge must not drop
-	// or alter them.
+func TestGetCasePassesThroughTags(t *testing.T) {
+	// Item 8 (read): tags are an additive entity-response field with zero BFF
+	// handling — GetCase's injectNextStates merge must not drop or alter them.
 	const testCaseID = "11111111-1111-1111-1111-111111111111"
 	const upstreamBody = `{
 		"id":"` + testCaseID + `",
 		"state":"open",
-		"fixEta":"2026-08-01T00:00:00Z",
 		"tags":[{"id":"33333333-3333-3333-3333-333333333333","label":"micro-gw","color":"#FF6600"}]
 	}`
 	client := &mockEntityCaseClient{
@@ -2061,14 +2062,10 @@ func TestGetCasePassesThroughFixEtaAndTags(t *testing.T) {
 		Color *string `json:"color"`
 	}
 	type resp struct {
-		FixEta string `json:"fixEta"`
-		Tags   []tag  `json:"tags"`
+		Tags []tag `json:"tags"`
 	}
 	got := decodeJSON[resp](t, w)
 
-	if got.FixEta != "2026-08-01T00:00:00Z" {
-		t.Errorf("fixEta = %q, want 2026-08-01T00:00:00Z", got.FixEta)
-	}
 	if len(got.Tags) != 1 || got.Tags[0].Label != "micro-gw" || got.Tags[0].Color == nil || *got.Tags[0].Color != "#FF6600" {
 		t.Errorf("tags = %+v, want a single micro-gw/#FF6600 entry", got.Tags)
 	}
@@ -2102,8 +2099,8 @@ func TestPatchCaseBestCaseFixEta(t *testing.T) {
 	// patchCaseFn is invoked directly with the raw body and the upstream response
 	// passes through unchanged.
 	const testCaseID = "11111111-1111-1111-1111-111111111111"
-	const reqBody = `{"bestCaseFixEta":"2026-08-01T00:00:00Z"}`
-	const upstream = `{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","bestCaseFixEta":"2026-08-01T00:00:00Z"}}`
+	const reqBody = `{"bestCaseFixEta":"2026-08-01"}`
+	const upstream = `{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","bestCaseFixEta":"2026-08-01"}}`
 
 	var capturedBody []byte
 	client := &mockEntityCaseClient{
@@ -2133,8 +2130,8 @@ func TestPatchCaseBestCaseFixEta(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &wrapper); err != nil {
 		t.Fatalf("decode response: %v; raw: %s", err, w.Body.String())
 	}
-	if wrapper.Case.BestCaseFixEta != "2026-08-01T00:00:00Z" {
-		t.Errorf("case.bestCaseFixEta = %q, want %q", wrapper.Case.BestCaseFixEta, "2026-08-01T00:00:00Z")
+	if wrapper.Case.BestCaseFixEta != "2026-08-01" {
+		t.Errorf("case.bestCaseFixEta = %q, want %q", wrapper.Case.BestCaseFixEta, "2026-08-01")
 	}
 }
 
@@ -2142,8 +2139,8 @@ func TestPatchCaseMostLikelyFixEta(t *testing.T) {
 	// mostLikelyFixEta is a pure pass-through single-field PATCH variant, same
 	// shape as the existing fixEta test.
 	const testCaseID = "11111111-1111-1111-1111-111111111111"
-	const reqBody = `{"mostLikelyFixEta":"2026-08-01T00:00:00Z"}`
-	const upstream = `{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","mostLikelyFixEta":"2026-08-01T00:00:00Z"}}`
+	const reqBody = `{"mostLikelyFixEta":"2026-08-01"}`
+	const upstream = `{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","mostLikelyFixEta":"2026-08-01"}}`
 
 	var capturedBody []byte
 	client := &mockEntityCaseClient{
@@ -2173,8 +2170,8 @@ func TestPatchCaseMostLikelyFixEta(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &wrapper); err != nil {
 		t.Fatalf("decode response: %v; raw: %s", err, w.Body.String())
 	}
-	if wrapper.Case.MostLikelyFixEta != "2026-08-01T00:00:00Z" {
-		t.Errorf("case.mostLikelyFixEta = %q, want %q", wrapper.Case.MostLikelyFixEta, "2026-08-01T00:00:00Z")
+	if wrapper.Case.MostLikelyFixEta != "2026-08-01" {
+		t.Errorf("case.mostLikelyFixEta = %q, want %q", wrapper.Case.MostLikelyFixEta, "2026-08-01")
 	}
 }
 
@@ -2182,8 +2179,8 @@ func TestPatchCaseWorstCaseFixEta(t *testing.T) {
 	// worstCaseFixEta is a pure pass-through single-field PATCH variant, same
 	// shape as the existing fixEta test.
 	const testCaseID = "11111111-1111-1111-1111-111111111111"
-	const reqBody = `{"worstCaseFixEta":"2026-08-01T00:00:00Z"}`
-	const upstream = `{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","worstCaseFixEta":"2026-08-01T00:00:00Z"}}`
+	const reqBody = `{"worstCaseFixEta":"2026-08-01"}`
+	const upstream = `{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","worstCaseFixEta":"2026-08-01"}}`
 
 	var capturedBody []byte
 	client := &mockEntityCaseClient{
@@ -2213,8 +2210,8 @@ func TestPatchCaseWorstCaseFixEta(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &wrapper); err != nil {
 		t.Fatalf("decode response: %v; raw: %s", err, w.Body.String())
 	}
-	if wrapper.Case.WorstCaseFixEta != "2026-08-01T00:00:00Z" {
-		t.Errorf("case.worstCaseFixEta = %q, want %q", wrapper.Case.WorstCaseFixEta, "2026-08-01T00:00:00Z")
+	if wrapper.Case.WorstCaseFixEta != "2026-08-01" {
+		t.Errorf("case.worstCaseFixEta = %q, want %q", wrapper.Case.WorstCaseFixEta, "2026-08-01")
 	}
 }
 
@@ -2226,9 +2223,9 @@ func TestGetCasePassesThroughNewFixEtaFields(t *testing.T) {
 	const upstreamBody = `{
 		"id":"` + testCaseID + `",
 		"state":"open",
-		"bestCaseFixEta":"2026-07-28T00:00:00Z",
-		"mostLikelyFixEta":"2026-08-01T00:00:00Z",
-		"worstCaseFixEta":"2026-08-15T00:00:00Z"
+		"bestCaseFixEta":"2026-07-28",
+		"mostLikelyFixEta":"2026-08-01",
+		"worstCaseFixEta":"2026-08-15"
 	}`
 	client := &mockEntityCaseClient{
 		getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
@@ -2250,21 +2247,21 @@ func TestGetCasePassesThroughNewFixEtaFields(t *testing.T) {
 	}
 	got := decodeJSON[resp](t, w)
 
-	if got.BestCaseFixEta != "2026-07-28T00:00:00Z" {
-		t.Errorf("bestCaseFixEta = %q, want 2026-07-28T00:00:00Z", got.BestCaseFixEta)
+	if got.BestCaseFixEta != "2026-07-28" {
+		t.Errorf("bestCaseFixEta = %q, want 2026-07-28", got.BestCaseFixEta)
 	}
-	if got.MostLikelyFixEta != "2026-08-01T00:00:00Z" {
-		t.Errorf("mostLikelyFixEta = %q, want 2026-08-01T00:00:00Z", got.MostLikelyFixEta)
+	if got.MostLikelyFixEta != "2026-08-01" {
+		t.Errorf("mostLikelyFixEta = %q, want 2026-08-01", got.MostLikelyFixEta)
 	}
-	if got.WorstCaseFixEta != "2026-08-15T00:00:00Z" {
-		t.Errorf("worstCaseFixEta = %q, want 2026-08-15T00:00:00Z", got.WorstCaseFixEta)
+	if got.WorstCaseFixEta != "2026-08-15" {
+		t.Errorf("worstCaseFixEta = %q, want 2026-08-15", got.WorstCaseFixEta)
 	}
 }
 
 func TestSearchCasesPassesThroughNewFixEtaFields(t *testing.T) {
 	// Item: the 3 new fix-ETA fields flow through SearchCases's response verbatim,
 	// same zero-BFF-handling pattern as fixEta/tags on GetCase.
-	const upstream = `{"cases":[{"id":"11111111-1111-1111-1111-111111111111","bestCaseFixEta":"2026-07-28T00:00:00Z","mostLikelyFixEta":"2026-08-01T00:00:00Z","worstCaseFixEta":"2026-08-15T00:00:00Z"}],"total":1}`
+	const upstream = `{"cases":[{"id":"11111111-1111-1111-1111-111111111111","bestCaseFixEta":"2026-07-28","mostLikelyFixEta":"2026-08-01","worstCaseFixEta":"2026-08-15"}],"total":1}`
 	client := &mockEntityCaseClient{
 		searchCasesFn: func(_ context.Context, _ []byte) ([]byte, error) {
 			return []byte(upstream), nil
@@ -2288,14 +2285,14 @@ func TestSearchCasesPassesThroughNewFixEtaFields(t *testing.T) {
 	if len(got.Cases) != 1 {
 		t.Fatalf("cases = %+v, want 1 entry", got.Cases)
 	}
-	if got.Cases[0].BestCaseFixEta != "2026-07-28T00:00:00Z" {
-		t.Errorf("bestCaseFixEta = %q, want 2026-07-28T00:00:00Z", got.Cases[0].BestCaseFixEta)
+	if got.Cases[0].BestCaseFixEta != "2026-07-28" {
+		t.Errorf("bestCaseFixEta = %q, want 2026-07-28", got.Cases[0].BestCaseFixEta)
 	}
-	if got.Cases[0].MostLikelyFixEta != "2026-08-01T00:00:00Z" {
-		t.Errorf("mostLikelyFixEta = %q, want 2026-08-01T00:00:00Z", got.Cases[0].MostLikelyFixEta)
+	if got.Cases[0].MostLikelyFixEta != "2026-08-01" {
+		t.Errorf("mostLikelyFixEta = %q, want 2026-08-01", got.Cases[0].MostLikelyFixEta)
 	}
-	if got.Cases[0].WorstCaseFixEta != "2026-08-15T00:00:00Z" {
-		t.Errorf("worstCaseFixEta = %q, want 2026-08-15T00:00:00Z", got.Cases[0].WorstCaseFixEta)
+	if got.Cases[0].WorstCaseFixEta != "2026-08-15" {
+		t.Errorf("worstCaseFixEta = %q, want 2026-08-15", got.Cases[0].WorstCaseFixEta)
 	}
 }
 
@@ -2417,7 +2414,7 @@ func TestSearchTags(t *testing.T) {
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to search tags.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to search tags.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{

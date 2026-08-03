@@ -103,8 +103,14 @@ export function useCaseComposition(): UseQueryResult<CaseComposition, Error> {
             countTotal({
               pagination: { offset: 0, limit: 1 },
               filters: {
-                severities: [priorityFromSeverity(sev)],
-                states: activeStateKeys,
+                filters: [
+                  { field: "severity", op: "in", values: [priorityFromSeverity(sev)] },
+                  { field: "state", op: "in", values: activeStateKeys },
+                  // The pies drill into the cases list, which is locked to
+                  // plain cases — pin every count to the same type so the
+                  // totals reconcile with that destination and the matrix.
+                  { field: "type", op: "in", values: ["case"] },
+                ],
               },
             }).then((n) => ({ key: sev, n })),
           ),
@@ -114,8 +120,11 @@ export function useCaseComposition(): UseQueryResult<CaseComposition, Error> {
             countTotal({
               pagination: { offset: 0, limit: 1 },
               filters: {
-                states: [beStateFromUi(st)],
-                severities: allPriorityKeys,
+                filters: [
+                  { field: "state", op: "in", values: [beStateFromUi(st)] },
+                  { field: "severity", op: "in", values: allPriorityKeys },
+                  { field: "type", op: "in", values: ["case"] },
+                ],
               },
             }).then((n) => ({ key: st, n })),
           ),
@@ -123,8 +132,11 @@ export function useCaseComposition(): UseQueryResult<CaseComposition, Error> {
         countTotal({
           pagination: { offset: 0, limit: 1 },
           filters: {
-            states: [beStateFromUi("closed")],
-            severities: allPriorityKeys,
+            filters: [
+              { field: "state", op: "in", values: [beStateFromUi("closed")] },
+              { field: "severity", op: "in", values: allPriorityKeys },
+              { field: "type", op: "in", values: ["case"] },
+            ],
           },
         }),
       ]);

@@ -42,6 +42,7 @@ import {
 import type { BeCreateCaseTaskPayload } from "@api/backend/types";
 import {
   formatDateTimeLocal,
+  isPastDateTime,
   parseDateTimeLocal,
   resolveDisplayTimeZone,
   zonedInputToUtcIso,
@@ -92,7 +93,7 @@ export default function CreateTaskDialog({
   const { data, isFetching, isError } = useSearchUsers({
     filters: {
       ...(search.length > 0 && { searchQuery: search }),
-      roles: INTERNAL_USER_ROLES,
+      roleIds: INTERNAL_USER_ROLES,
       active: true,
     },
     pagination: { limit: 8, offset: 0 },
@@ -110,6 +111,9 @@ export default function CreateTaskDialog({
   );
 
   const canSubmit = subject.trim().length > 0;
+  // Non-blocking: a past due date is unusual but not forbidden (e.g. logging
+  // a task that was already due), so this only warns.
+  const dueDateIsPast = isPastDateTime(parseDateTimeLocal(dueDate));
 
   const handleSubmit = (): void => {
     if (!canSubmit) return;
@@ -151,7 +155,11 @@ export default function CreateTaskDialog({
               }
               disabled={isSaving}
               slotProps={{
-                textField: { fullWidth: true, size: "small" },
+                textField: {
+                  fullWidth: true,
+                  size: "small",
+                  helperText: dueDateIsPast ? "This due date is in the past." : undefined,
+                },
                 field: { clearable: true },
               }}
             />

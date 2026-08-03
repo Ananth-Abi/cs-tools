@@ -38,14 +38,28 @@ var sanitizeLog = strings.NewReplacer("\n", `\n`, "\r", `\r`).Replace
 // rejection, a 1 MiB body cap, and no trailing data after the JSON object.
 // Returns false and writes the error response if decoding fails.
 func decodeRequest[T any](w http.ResponseWriter, r *http.Request, dst *T) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+	return decodeRequestWithLimit(w, r, dst, maxRequestBodySize, "request body too large")
+}
+
+// decodeRequestWithLimit is the same as decodeRequest but allows the caller to
+// override the default 1 MiB body cap and the message returned when that cap
+// is exceeded. Use this for endpoints whose payload is legitimately larger
+// than the generic JSON body (e.g. base64-encoded file uploads) instead of
+// changing the default for every other endpoint.
+func decodeRequestWithLimit[T any](w http.ResponseWriter, r *http.Request, dst *T, limit int64, tooLargeMsg string) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
-		apierror.WriteJSON(w, http.StatusBadRequest, decodeErrMsg(err))
+		apierror.WriteJSON(w, http.StatusBadRequest, decodeErrMsgWithLimit(err, tooLargeMsg))
 		return false
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			apierror.WriteJSON(w, http.StatusBadRequest, decodeErrMsgWithLimit(err, tooLargeMsg))
+			return false
+		}
 		apierror.WriteJSON(w, http.StatusBadRequest, "request body must contain a single JSON object")
 		return false
 	}
@@ -56,9 +70,17 @@ func decodeRequest[T any](w http.ResponseWriter, r *http.Request, dst *T) bool {
 // is safe to return to the caller. Infrastructure details (e.g. raw Go type
 // names) are replaced with user-friendly descriptions.
 func decodeErrMsg(err error) string {
+	return decodeErrMsgWithLimit(err, "request body too large")
+}
+
+// decodeErrMsgWithLimit behaves like decodeErrMsg but lets the caller supply
+// an endpoint-specific message for the body-too-large case, so a handler with
+// a raised size cap (see decodeRequestWithLimit) can tell the caller what the
+// actual limit is instead of the generic message.
+func decodeErrMsgWithLimit(err error, tooLargeMsg string) string {
 	var maxBytes *http.MaxBytesError
 	if errors.As(err, &maxBytes) {
-		return "request body too large"
+		return tooLargeMsg
 	}
 	var syntaxErr *json.SyntaxError
 	if errors.As(err, &syntaxErr) {
@@ -95,6 +117,7 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 		ue  *apierror.UnauthorizedError
 		fe  *apierror.ForbiddenError
 		ce  *apierror.ConflictError
+		de  *apierror.DownstreamError
 	)
 	switch {
 	case errors.As(err, &ve):
@@ -121,6 +144,15 @@ func writeServiceError(w http.ResponseWriter, r *http.Request, err error) {
 		// 409 – request conflicts with the current state of the resource; message is safe to return.
 		log.Printf("Conflict: %s %s: %s", r.Method, sanitizeLog(r.URL.Path), sanitizeLog(ce.Msg)) // #nosec G706 -- path and message sanitized
 		apierror.WriteJSON(w, http.StatusConflict, ce.Msg)
+
+	case errors.As(err, &de):
+		// 500 – a downstream dependency rejected the request with a status we do
+		// not map more specifically, but supplied a reason. Keep the 500 and return
+		// the reason: "internal server error" tells the caller nothing actionable
+		// when the real cause is, say, an illegal state transition. Msg is already
+		// a caller-safe extracted reason, not a raw body.
+		log.Printf("Downstream error: %s %s", r.Method, sanitizeLog(r.URL.Path)) // #nosec G706 -- path sanitized
+		apierror.WriteJSON(w, http.StatusInternalServerError, de.Msg)
 
 	case errors.As(err, &sue):
 		// 503 – downstream dependency unavailable; log details, return generic message.
