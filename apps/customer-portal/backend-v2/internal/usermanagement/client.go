@@ -61,23 +61,20 @@ type Client struct {
 	baseURL string
 }
 
-// validateBaseURL rejects a base URL whose scheme isn't https, since every
+// validateBaseURL rejects a base URL that isn't https with a host. Every
 // request through this client carries an OAuth2 bearer token in the
 // Authorization header — an http:// base URL would send that token in
-// cleartext. Plain http is allowed only for loopback addresses, matching how
-// this backend's other service clients are run against a local dev server.
+// cleartext, including to anything else that can observe loopback traffic, so
+// http is rejected unconditionally rather than exempting localhost.
 func validateBaseURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("usermanagement: invalid base URL %q: %w", raw, err)
 	}
-	if u.Scheme == "https" {
-		return nil
+	if u.Scheme != "https" || u.Hostname() == "" {
+		return fmt.Errorf("usermanagement: base URL %q must be an https URL with a host", raw)
 	}
-	if u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1") {
-		return nil
-	}
-	return fmt.Errorf("usermanagement: base URL %q must use https (plain http is only allowed for localhost)", raw)
+	return nil
 }
 
 // NewClient constructs a Client that authenticates against the project-contact
