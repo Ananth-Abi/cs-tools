@@ -177,6 +177,21 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		conversationHandler = handler.NewConversationHandler(service.NewServiceNowConversationService(serviceNowIntegrationServiceClient))
 	}
 
+	var globalHandler *handler.GlobalHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		globalHandler = handler.NewGlobalHandler(service.NewServiceNowGlobalService(serviceNowIntegrationServiceClient))
+	}
+
+	var escalationHandler *handler.EscalationHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		escalationHandler = handler.NewEscalationHandler(service.NewServiceNowEscalationService(serviceNowIntegrationServiceClient))
+	}
+
+	var instanceHandler *handler.InstanceHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		instanceHandler = handler.NewInstanceHandler(service.NewServiceNowInstanceService(serviceNowIntegrationServiceClient))
+	}
+
 	var itServiceHandler *handler.ITServiceHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		itServiceHandler = handler.NewITServiceHandler(service.NewServiceNowITServiceService(serviceNowIntegrationServiceClient))
@@ -283,6 +298,8 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("POST /deployed-products", deployedProductHandler.CreateDeployedProduct)
 	mux.HandleFunc("POST /deployed-products/search", deployedProductHandler.SearchDeployedProducts)
 	mux.HandleFunc("PATCH /deployed-products/{id}", deployedProductHandler.PatchDeployedProduct)
+	mux.HandleFunc("POST /deployed-products/{id}/metrics/search", deployedProductHandler.SearchDeployedProductMetrics)
+	mux.HandleFunc("POST /deployed-products/{id}/metrics/usage-counts/search", deployedProductHandler.SearchDeployedProductUsageCounts)
 	mux.HandleFunc("GET /cases/{id}", caseHandler.GetCase)
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases", caseHandler.CreateCase)
@@ -292,7 +309,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("POST /attachments", caseHandler.CreateCaseAttachment)
 	mux.HandleFunc("POST /attachments/search", caseHandler.SearchCaseAttachments)
 	mux.HandleFunc("GET /attachments/{id}/content", caseHandler.GetCaseAttachmentContent)
+	mux.HandleFunc("GET /attachments/{id}", caseHandler.GetAttachmentByID)
+	mux.HandleFunc("PATCH /attachments/{id}", caseHandler.UpdateAttachment)
 	mux.HandleFunc("DELETE /attachments/{id}", caseHandler.DeleteCaseAttachment)
+	mux.HandleFunc("GET /cases/{id}/feedback", caseHandler.GetCaseFeedback)
+	mux.HandleFunc("POST /cases/{id}/feedback", caseHandler.SubmitCaseFeedback)
 	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseTag)
 	mux.HandleFunc("DELETE /cases/{id}/tags/{tagId}", caseHandler.RemoveCaseTag)
 	mux.HandleFunc("GET /tags/search", caseHandler.SearchTags)
@@ -320,6 +341,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 		mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 		mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+		mux.HandleFunc("POST /cases/time-cards/search", timeCardHandler.SearchCaseTimeCards)
 	}
 
 	if catalogHandler != nil {
@@ -330,6 +352,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	if productVulnerabilityHandler != nil {
 		mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
 		mux.HandleFunc("GET /products/vulnerabilities/{id}", productVulnerabilityHandler.GetProductVulnerability)
+		mux.HandleFunc("GET /products/vulnerabilities/meta", productVulnerabilityHandler.GetVulnerabilityMeta)
 	}
 
 	if itServiceHandler != nil {
@@ -386,6 +409,27 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 
 	if conversationHandler != nil {
 		mux.HandleFunc("POST /conversations/search", conversationHandler.SearchConversations)
+		mux.HandleFunc("GET /conversations/{id}", conversationHandler.GetConversation)
+		mux.HandleFunc("POST /conversations", conversationHandler.CreateConversation)
+		mux.HandleFunc("PATCH /conversations/{id}", conversationHandler.UpdateConversation)
+	}
+
+	if globalHandler != nil {
+		mux.HandleFunc("GET /metadata", globalHandler.GetSystemMetadata)
+		mux.HandleFunc("POST /search", globalHandler.GlobalSearch)
+	}
+
+	if escalationHandler != nil {
+		mux.HandleFunc("POST /escalations/search", escalationHandler.SearchEscalations)
+		mux.HandleFunc("POST /escalations", escalationHandler.CreateEscalation)
+	}
+
+	if instanceHandler != nil {
+		mux.HandleFunc("POST /instances/search", instanceHandler.SearchInstances)
+		mux.HandleFunc("POST /instances/metrics/search", instanceHandler.SearchInstanceMetrics)
+		mux.HandleFunc("POST /instances/usages/search", instanceHandler.SearchInstanceUsage)
+		mux.HandleFunc("POST /instances/metrics/stats/search", instanceHandler.SearchInstanceMetricsStats)
+		mux.HandleFunc("POST /instances/usages/stats/search", instanceHandler.SearchInstanceUsageStats)
 	}
 
 	return middleware.CorrelationID(

@@ -538,3 +538,19 @@ func (s *caseService) RemoveCaseTag(_ context.Context, _, _ string) error {
 func (s *caseService) SearchTags(_ context.Context, _ string, _ int) ([]domain.Tag, error) {
 	return nil, &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
 }
+
+func (s *caseService) GetCaseFeedback(_ context.Context, _ string) (domain.CaseFeedback, error) {
+	return domain.CaseFeedback{}, &apierror.ServiceUnavailableError{Msg: "case feedback is only supported for the ServiceNow data source"}
+}
+
+func (s *caseService) SubmitCaseFeedback(_ context.Context, _ string, _ domain.SubmitCaseFeedbackRequest) (domain.SubmitCaseFeedbackResponse, error) {
+	return domain.SubmitCaseFeedbackResponse{}, &apierror.ServiceUnavailableError{Msg: "case feedback is only supported for the ServiceNow data source"}
+}
+
+func (s *caseService) GetAttachmentByID(_ context.Context, _ string) (domain.AttachmentDetails, error) {
+	return domain.AttachmentDetails{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
+}
+
+func (s *caseService) UpdateAttachment(_ context.Context, _ domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error) {
+	return domain.UpdateAttachmentResponse{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
+}

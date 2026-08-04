@@ -1943,6 +1943,269 @@ func (s *snCaseService) DeleteCaseAttachment(ctx context.Context, req domain.Del
 	return domain.DeleteAttachmentResponse{Message: snResp.Message}, nil
 }
 
+// snAttachmentDetails mirrors the Choreo GET /attachments/{id} response
+// (Ballerina's AttachmentResponse — every Attachment field plus content).
+// ServiceNow's attachment-details lookup returns a bare createdBy string with
+// no createdByUser/referenceType, unlike the search path (see snAttachment).
+type snAttachmentDetails struct {
+	ID          string  `json:"id"`
+	ReferenceID string  `json:"referenceId"`
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	SizeBytes   int     `json:"sizeBytes"`
+	Description *string `json:"description"`
+	CreatedBy   string  `json:"createdBy"`
+	CreatedOn   string  `json:"createdOn"`
+	DownloadURL *string `json:"downloadUrl"`
+	PreviewURL  *string `json:"previewUrl"`
+	Content     string  `json:"content"`
+}
+
+func (s *snCaseService) GetAttachmentByID(ctx context.Context, id string) (domain.AttachmentDetails, error) {
+	if err := validateUUIDs("id", []string{id}); err != nil {
+		return domain.AttachmentDetails{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	raw, err := s.client.Get(ctx, "/attachments/"+uuidToSysid(id), token)
+	if err != nil {
+		return domain.AttachmentDetails{}, err
+	}
+
+	var snResp snAttachmentDetails
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.AttachmentDetails{}, fmt.Errorf("sn get attachment: parse response: %w", err)
+	}
+
+	createdOn, err := time.Parse(snCreatedOnLayout, snResp.CreatedOn)
+	if err != nil {
+		return domain.AttachmentDetails{}, fmt.Errorf("sn get attachment: parse createdOn %q: %w", snResp.CreatedOn, err)
+	}
+
+	return domain.AttachmentDetails{
+		ID:          sysidToUUID(snResp.ID),
+		ReferenceID: sysidToUUID(snResp.ReferenceID),
+		Name:        snResp.Name,
+		Type:        snResp.Type,
+		SizeBytes:   snResp.SizeBytes,
+		Description: snResp.Description,
+		CreatedBy:   snResp.CreatedBy,
+		CreatedOn:   createdOn,
+		DownloadURL: snResp.DownloadURL,
+		PreviewURL:  snResp.PreviewURL,
+		Content:     snResp.Content,
+	}, nil
+}
+
+// validateAttachmentUpdate mirrors the Ballerina reference's
+// validateAttachmentUpdatePayload exactly: referenceType must be case or
+// deployment; case requires name and forbids description; deployment
+// requires at least one of name or description.
+func validateAttachmentUpdate(req domain.UpdateAttachmentRequest) error {
+	if req.ReferenceType != domain.ReferenceTypeCase && req.ReferenceType != domain.ReferenceTypeDeployment {
+		return &apierror.ValidationError{Msg: fmt.Sprintf("invalid reference type %q. Only 'case' and 'deployment' are allowed", req.ReferenceType)}
+	}
+	if req.ReferenceType == domain.ReferenceTypeCase {
+		if req.Description != nil {
+			return &apierror.ValidationError{Msg: "description field is not allowed for case reference type"}
+		}
+		if req.Name == nil || strings.TrimSpace(*req.Name) == "" {
+			return &apierror.ValidationError{Msg: "name field is required for case reference type"}
+		}
+	}
+	if req.ReferenceType == domain.ReferenceTypeDeployment {
+		hasName := req.Name != nil && strings.TrimSpace(*req.Name) != ""
+		hasDescription := req.Description != nil && strings.TrimSpace(*req.Description) != ""
+		if !hasName && !hasDescription {
+			return &apierror.ValidationError{Msg: "at least one field (name or description) must be provided for deployment reference type"}
+		}
+	}
+	return nil
+}
+
+// snUpdateAttachmentPayload mirrors the Choreo PATCH /attachments/{id} request body.
+type snUpdateAttachmentPayload struct {
+	ReferenceID   string  `json:"referenceId"`
+	ReferenceType string  `json:"referenceType"`
+	Name          *string `json:"name,omitempty"`
+	Description   *string `json:"description,omitempty"`
+}
+
+// snUpdateAttachmentResponse mirrors the Choreo PATCH /attachments/{id} response.
+type snUpdateAttachmentResponse struct {
+	Message    string `json:"message"`
+	Attachment struct {
+		ID        string `json:"id"`
+		UpdatedOn string `json:"updatedOn"`
+		UpdatedBy string `json:"updatedBy"`
+	} `json:"attachment"`
+}
+
+func (s *snCaseService) UpdateAttachment(ctx context.Context, req domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error) {
+	if err := validateUUIDs("id", []string{req.ID}); err != nil {
+		return domain.UpdateAttachmentResponse{}, err
+	}
+	if err := validateUUIDs("referenceId", []string{req.ReferenceID}); err != nil {
+		return domain.UpdateAttachmentResponse{}, err
+	}
+	if err := validateAttachmentUpdate(req); err != nil {
+		return domain.UpdateAttachmentResponse{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snUpdateAttachmentPayload{
+		ReferenceID:   uuidToSysid(req.ReferenceID),
+		ReferenceType: string(req.ReferenceType),
+		Name:          req.Name,
+		Description:   req.Description,
+	}
+
+	raw, err := s.client.Patch(ctx, "/attachments/"+uuidToSysid(req.ID), token, payload)
+	if err != nil {
+		return domain.UpdateAttachmentResponse{}, err
+	}
+
+	var snResp snUpdateAttachmentResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.UpdateAttachmentResponse{}, fmt.Errorf("sn update attachment: parse response: %w", err)
+	}
+
+	updatedOn, err := time.Parse(snCreatedOnLayout, snResp.Attachment.UpdatedOn)
+	if err != nil {
+		return domain.UpdateAttachmentResponse{}, fmt.Errorf("sn update attachment: parse updatedOn %q: %w", snResp.Attachment.UpdatedOn, err)
+	}
+
+	return domain.UpdateAttachmentResponse{
+		Message: snResp.Message,
+		Attachment: domain.UpdatedAttachment{
+			ID:        sysidToUUID(snResp.Attachment.ID),
+			UpdatedOn: updatedOn,
+			UpdatedBy: snResp.Attachment.UpdatedBy,
+		},
+	}, nil
+}
+
+// snCaseFeedbackEmojiRef mirrors the emoji reference embedded in the Choreo
+// GET /cases/{id}/feedback response.
+type snCaseFeedbackEmojiRef struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	SelectedImage string `json:"selectedImage"`
+}
+
+// snCaseFeedbackGetResponse mirrors the Choreo GET /cases/{id}/feedback response.
+type snCaseFeedbackGetResponse struct {
+	ID                string                 `json:"id"`
+	Emoji             snCaseFeedbackEmojiRef `json:"emoji"`
+	Chips             []string               `json:"chips"`
+	AssessmentID      string                 `json:"assessmentId"`
+	CreatedBy         string                 `json:"createdBy"`
+	CreatedOn         string                 `json:"createdOn"`
+	AdditionalComment *string                `json:"additionalComment"`
+}
+
+func (s *snCaseService) GetCaseFeedback(ctx context.Context, id string) (domain.CaseFeedback, error) {
+	if err := validateUUIDs("id", []string{id}); err != nil {
+		return domain.CaseFeedback{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	raw, err := s.client.Get(ctx, "/cases/"+uuidToSysid(id)+"/feedback", token)
+	if err != nil {
+		return domain.CaseFeedback{}, err
+	}
+
+	var snResp snCaseFeedbackGetResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.CaseFeedback{}, fmt.Errorf("sn get case feedback: parse response: %w", err)
+	}
+
+	chips := make([]string, 0, len(snResp.Chips))
+	for _, c := range snResp.Chips {
+		chips = append(chips, sysidToUUID(c))
+	}
+
+	return domain.CaseFeedback{
+		ID: sysidToUUID(snResp.ID),
+		Emoji: domain.CaseFeedbackEmojiRef{
+			ID:            sysidToUUID(snResp.Emoji.ID),
+			Name:          snResp.Emoji.Name,
+			SelectedImage: snResp.Emoji.SelectedImage,
+		},
+		ChipIDs:           chips,
+		AssessmentID:      sysidToUUID(snResp.AssessmentID),
+		CreatedBy:         snResp.CreatedBy,
+		CreatedOn:         snResp.CreatedOn,
+		AdditionalComment: snResp.AdditionalComment,
+	}, nil
+}
+
+// snSubmitCaseFeedbackPayload mirrors the Choreo POST /cases/{id}/feedback request body.
+type snSubmitCaseFeedbackPayload struct {
+	EmojiID           string   `json:"emojiId"`
+	ChipIDs           []string `json:"chipIds,omitempty"`
+	AdditionalComment *string  `json:"additionalComment,omitempty"`
+}
+
+// snCaseFeedbackResult mirrors the Choreo CaseFeedbackResult shape.
+type snCaseFeedbackResult struct {
+	ID           string `json:"id"`
+	AssessmentID string `json:"assessmentId"`
+	CaseID       string `json:"caseId"`
+	CreatedBy    string `json:"createdBy"`
+	CreatedOn    string `json:"createdOn"`
+}
+
+// snSubmitCaseFeedbackResponse mirrors the Choreo POST /cases/{id}/feedback response.
+type snSubmitCaseFeedbackResponse struct {
+	Message  string               `json:"message"`
+	Feedback snCaseFeedbackResult `json:"feedback"`
+}
+
+func (s *snCaseService) SubmitCaseFeedback(ctx context.Context, id string, req domain.SubmitCaseFeedbackRequest) (domain.SubmitCaseFeedbackResponse, error) {
+	if err := validateUUIDs("id", []string{id}); err != nil {
+		return domain.SubmitCaseFeedbackResponse{}, err
+	}
+	if err := validateUUIDs("emojiId", []string{req.EmojiID}); err != nil {
+		return domain.SubmitCaseFeedbackResponse{}, err
+	}
+	if err := validateUUIDs("chipIds", req.ChipIDs); err != nil {
+		return domain.SubmitCaseFeedbackResponse{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snSubmitCaseFeedbackPayload{
+		EmojiID:           uuidToSysid(req.EmojiID),
+		ChipIDs:           uuidsToSysids(req.ChipIDs),
+		AdditionalComment: req.AdditionalComment,
+	}
+
+	raw, err := s.client.Post(ctx, "/cases/"+uuidToSysid(id)+"/feedback", token, payload)
+	if err != nil {
+		return domain.SubmitCaseFeedbackResponse{}, err
+	}
+
+	var snResp snSubmitCaseFeedbackResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.SubmitCaseFeedbackResponse{}, fmt.Errorf("sn submit case feedback: parse response: %w", err)
+	}
+
+	return domain.SubmitCaseFeedbackResponse{
+		Message: snResp.Message,
+		Feedback: domain.CaseFeedbackResult{
+			ID:           sysidToUUID(snResp.Feedback.ID),
+			AssessmentID: sysidToUUID(snResp.Feedback.AssessmentID),
+			CaseID:       sysidToUUID(snResp.Feedback.CaseID),
+			CreatedBy:    snResp.Feedback.CreatedBy,
+			CreatedOn:    snResp.Feedback.CreatedOn,
+		},
+	}, nil
+}
+
 // validateOrGroupEnums validates one OrGroups branch's enum-valued fields
 // against the same validXxx maps the top-level (AND-only) filters use,
 // mirroring that validation exactly (unrecognized values would otherwise be
