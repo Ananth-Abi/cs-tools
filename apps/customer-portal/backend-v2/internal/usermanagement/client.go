@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -60,9 +61,32 @@ type Client struct {
 	baseURL string
 }
 
+// validateBaseURL rejects a base URL whose scheme isn't https, since every
+// request through this client carries an OAuth2 bearer token in the
+// Authorization header — an http:// base URL would send that token in
+// cleartext. Plain http is allowed only for loopback addresses, matching how
+// this backend's other service clients are run against a local dev server.
+func validateBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("usermanagement: invalid base URL %q: %w", raw, err)
+	}
+	if u.Scheme == "https" {
+		return nil
+	}
+	if u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1") {
+		return nil
+	}
+	return fmt.Errorf("usermanagement: base URL %q must use https (plain http is only allowed for localhost)", raw)
+}
+
 // NewClient constructs a Client that authenticates against the project-contact
 // onboarding service using the OAuth2 client credentials grant type.
-func NewClient(cfg Config) *Client {
+func NewClient(cfg Config) (*Client, error) {
+	if err := validateBaseURL(cfg.BaseURL); err != nil {
+		return nil, err
+	}
+
 	cc := clientcredentials.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
@@ -83,7 +107,7 @@ func NewClient(cfg Config) *Client {
 	return &Client{
 		http:    httpClient,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-	}
+	}, nil
 }
 
 // do executes an authenticated HTTP request and returns the raw JSON

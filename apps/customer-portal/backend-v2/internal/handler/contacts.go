@@ -68,8 +68,8 @@ func (h *ContactHandler) GetProjectContacts(w http.ResponseWriter, r *http.Reque
 	}
 
 	projectID := r.PathValue("id")
-	if projectID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -100,8 +100,8 @@ func (h *ContactHandler) CreateProjectContact(w http.ResponseWriter, r *http.Req
 	}
 
 	projectID := r.PathValue("id")
-	if projectID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -146,7 +146,7 @@ func (h *ContactHandler) RemoveProjectContact(w http.ResponseWriter, r *http.Req
 
 	projectID := r.PathValue("id")
 	email := r.PathValue("email")
-	if projectID == "" || email == "" {
+	if projectID == "" || !uuidRe.MatchString(projectID) || email == "" {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
@@ -179,7 +179,7 @@ func (h *ContactHandler) UpdateProjectContactRole(w http.ResponseWriter, r *http
 
 	projectID := r.PathValue("id")
 	email := r.PathValue("email")
-	if projectID == "" || email == "" {
+	if projectID == "" || !uuidRe.MatchString(projectID) || email == "" {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
@@ -220,8 +220,8 @@ func (h *ContactHandler) ValidateProjectContact(w http.ResponseWriter, r *http.R
 	}
 
 	projectID := r.PathValue("id")
-	if projectID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 

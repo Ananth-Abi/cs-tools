@@ -44,17 +44,47 @@ type InstanceSearchRequest struct {
 	Pagination entity.Pagination `json:"pagination"`
 }
 
+// InstanceMetadata is the portal's own copy of entity.InstanceMetadata.
+type InstanceMetadata struct {
+	ID                 string         `json:"id"`
+	CoreCount          *int           `json:"coreCount"`
+	Updates            *int           `json:"updates"`
+	JDKVersion         *string        `json:"jdkVersion"`
+	DeploymentMetadata map[string]any `json:"deploymentMetadata"`
+	CreatedOn          string         `json:"createdOn"`
+	UpdatedOn          string         `json:"updatedOn"`
+	CustomCreatedOn    *string        `json:"customCreatedOn"`
+	CustomUpdatedOn    *string        `json:"customUpdatedOn"`
+}
+
+func toOptionalInstanceMetadata(m *entity.InstanceMetadata) *InstanceMetadata {
+	if m == nil {
+		return nil
+	}
+	return &InstanceMetadata{
+		ID:                 m.ID,
+		CoreCount:          m.CoreCount,
+		Updates:            m.Updates,
+		JDKVersion:         m.JDKVersion,
+		DeploymentMetadata: m.DeploymentMetadata,
+		CreatedOn:          m.CreatedOn,
+		UpdatedOn:          m.UpdatedOn,
+		CustomCreatedOn:    m.CustomCreatedOn,
+		CustomUpdatedOn:    m.CustomUpdatedOn,
+	}
+}
+
 // Instance is a single instance row.
 type Instance struct {
-	ID              string                   `json:"id"`
-	Key             string                   `json:"key"`
-	Project         *ReferenceItem           `json:"project"`
-	Deployment      *ReferenceItem           `json:"deployment"`
-	Product         *ReferenceItem           `json:"product"`
-	DeployedProduct *ReferenceItem           `json:"deployedProduct"`
-	CreatedOn       string                   `json:"createdOn"`
-	UpdatedOn       string                   `json:"updatedOn"`
-	Metadata        *entity.InstanceMetadata `json:"metadata"`
+	ID              string            `json:"id"`
+	Key             string            `json:"key"`
+	Project         *ReferenceItem    `json:"project"`
+	Deployment      *ReferenceItem    `json:"deployment"`
+	Product         *ReferenceItem    `json:"product"`
+	DeployedProduct *ReferenceItem    `json:"deployedProduct"`
+	CreatedOn       string            `json:"createdOn"`
+	UpdatedOn       string            `json:"updatedOn"`
+	Metadata        *InstanceMetadata `json:"metadata"`
 }
 
 // InstanceSearchResponse is the portal's response for the three instances/search routes.
@@ -79,7 +109,7 @@ func MapInstanceSearchResponse(r entity.SearchInstancesResponse) InstanceSearchR
 			DeployedProduct: toOptionalRef(i.DeployedProduct),
 			CreatedOn:       i.CreatedOn,
 			UpdatedOn:       i.UpdatedOn,
-			Metadata:        i.Metadata,
+			Metadata:        toOptionalInstanceMetadata(i.Metadata),
 		})
 	}
 	return InstanceSearchResponse{Instances: items, Total: r.Total, Offset: r.Offset, Limit: r.Limit}
@@ -94,15 +124,40 @@ type InstanceDateRangeRequest struct {
 	EndDate   string `json:"endDate"`
 }
 
+// InstanceDataPoint is the portal's own copy of entity.InstanceDataPoint.
+type InstanceDataPoint struct {
+	Date               string         `json:"date"`
+	CreatedOn          string         `json:"createdOn"`
+	CoreCount          *int           `json:"coreCount"`
+	JDKVersion         *string        `json:"jdkVersion"`
+	Updates            *int           `json:"updates"`
+	DeploymentMetadata map[string]any `json:"deploymentMetadata"`
+}
+
+func mapInstanceDataPoints(points []entity.InstanceDataPoint) []InstanceDataPoint {
+	out := make([]InstanceDataPoint, 0, len(points))
+	for _, p := range points {
+		out = append(out, InstanceDataPoint{
+			Date:               p.Date,
+			CreatedOn:          p.CreatedOn,
+			CoreCount:          p.CoreCount,
+			JDKVersion:         p.JDKVersion,
+			Updates:            p.Updates,
+			DeploymentMetadata: p.DeploymentMetadata,
+		})
+	}
+	return out
+}
+
 // InstanceMetric is one instance's metric time series, ordered newest to oldest.
 type InstanceMetric struct {
-	InstanceID      string                     `json:"instanceId"`
-	InstanceKey     string                     `json:"instanceKey"`
-	Project         *ReferenceItem             `json:"project"`
-	Deployment      *ReferenceItem             `json:"deployment"`
-	Product         *ReferenceItem             `json:"product"`
-	DeployedProduct *ReferenceItem             `json:"deployedProduct"`
-	DataPoints      []entity.InstanceDataPoint `json:"dataPoints"`
+	InstanceID      string              `json:"instanceId"`
+	InstanceKey     string              `json:"instanceKey"`
+	Project         *ReferenceItem      `json:"project"`
+	Deployment      *ReferenceItem      `json:"deployment"`
+	Product         *ReferenceItem      `json:"product"`
+	DeployedProduct *ReferenceItem      `json:"deployedProduct"`
+	DataPoints      []InstanceDataPoint `json:"dataPoints"`
 }
 
 // InstanceMetricsResponse is the portal's response for the instances/metrics/search routes.
@@ -125,7 +180,7 @@ func MapInstanceMetricsResponse(r entity.InstanceMetricsResponse) InstanceMetric
 			Deployment:      toOptionalRef(m.Deployment),
 			Product:         toOptionalRef(m.Product),
 			DeployedProduct: toOptionalRef(m.DeployedProduct),
-			DataPoints:      m.DataPoints,
+			DataPoints:      mapInstanceDataPoints(m.DataPoints),
 		})
 	}
 	return InstanceMetricsResponse{
@@ -136,15 +191,30 @@ func MapInstanceMetricsResponse(r entity.InstanceMetricsResponse) InstanceMetric
 	}
 }
 
+// InstanceUsageSummary is the portal's own copy of entity.InstanceSummary —
+// one period's usage counts for an instance.
+type InstanceUsageSummary struct {
+	Period string         `json:"period"`
+	Counts map[string]int `json:"counts"`
+}
+
+func mapInstanceUsageSummaries(summaries []entity.InstanceSummary) []InstanceUsageSummary {
+	out := make([]InstanceUsageSummary, 0, len(summaries))
+	for _, s := range summaries {
+		out = append(out, InstanceUsageSummary{Period: s.Period, Counts: s.Counts})
+	}
+	return out
+}
+
 // InstanceUsageEntry is one instance's usage time series.
 type InstanceUsageEntry struct {
-	InstanceID      string                   `json:"instanceId"`
-	InstanceKey     string                   `json:"instanceKey"`
-	Project         *ReferenceItem           `json:"project"`
-	Deployment      *ReferenceItem           `json:"deployment"`
-	Product         *ReferenceItem           `json:"product"`
-	DeployedProduct *ReferenceItem           `json:"deployedProduct"`
-	PeriodSummaries []entity.InstanceSummary `json:"periodSummaries"`
+	InstanceID      string                 `json:"instanceId"`
+	InstanceKey     string                 `json:"instanceKey"`
+	Project         *ReferenceItem         `json:"project"`
+	Deployment      *ReferenceItem         `json:"deployment"`
+	Product         *ReferenceItem         `json:"product"`
+	DeployedProduct *ReferenceItem         `json:"deployedProduct"`
+	PeriodSummaries []InstanceUsageSummary `json:"periodSummaries"`
 }
 
 // InstanceUsageResponse is the portal's response for the instances/usages/search routes.
@@ -167,7 +237,7 @@ func MapInstanceUsageResponse(r entity.InstanceUsageResponse) InstanceUsageRespo
 			Deployment:      toOptionalRef(u.Deployment),
 			Product:         toOptionalRef(u.Product),
 			DeployedProduct: toOptionalRef(u.DeployedProduct),
-			PeriodSummaries: u.PeriodSummaries,
+			PeriodSummaries: mapInstanceUsageSummaries(u.PeriodSummaries),
 		})
 	}
 	return InstanceUsageResponse{

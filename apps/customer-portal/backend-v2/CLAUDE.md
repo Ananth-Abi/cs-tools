@@ -276,7 +276,7 @@ Like the registry service, several of this service's error responses are surface
 
 ## Instances — fan-out, not passed through
 
-`GET /projects/{id}/instances/*`, `/deployments/{id}/instances/*`, and
+`POST /projects/{id}/instances/*`, `/deployments/{id}/instances/*`, and
 `/deployments/products/{id}/instances/*` (15 routes total) all read from just 5 entity-service
 endpoints (`SearchInstances`, `SearchInstanceMetrics`, `SearchInstanceUsage`,
 `SearchInstanceMetricsStats`, `SearchInstanceUsageStats`) — the Ballerina backend fans each one out

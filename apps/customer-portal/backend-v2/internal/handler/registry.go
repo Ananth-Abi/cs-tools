@@ -88,20 +88,11 @@ func writeUpstreamMessage(w http.ResponseWriter, err error, fallback string) {
 		if msg == "" {
 			msg = fallback
 		}
-		switch apiErr.StatusCode {
-		case http.StatusUnauthorized:
-			writeError(w, http.StatusUnauthorized, msg)
-		case http.StatusForbidden:
-			writeError(w, http.StatusForbidden, msg)
-		case http.StatusNotFound:
-			writeError(w, http.StatusNotFound, msg)
-		case http.StatusBadRequest:
-			writeError(w, http.StatusBadRequest, msg)
-		case http.StatusConflict:
-			writeError(w, http.StatusConflict, msg)
-		default:
-			writeError(w, http.StatusInternalServerError, msg)
+		status := apiErr.StatusCode
+		if status < 400 || status > 599 {
+			status = http.StatusInternalServerError
 		}
+		writeError(w, status, msg)
 		return
 	}
 	writeError(w, http.StatusInternalServerError, fallback)
@@ -116,8 +107,8 @@ func (h *RegistryHandler) CreateRegistryToken(w http.ResponseWriter, r *http.Req
 	}
 
 	projectID := r.PathValue("id")
-	if projectID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -202,8 +193,8 @@ func (h *RegistryHandler) SearchRegistryTokens(w http.ResponseWriter, r *http.Re
 	}
 
 	projectID := r.PathValue("id")
-	if projectID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -231,7 +222,7 @@ func (h *RegistryHandler) SearchRegistryTokens(w http.ResponseWriter, r *http.Re
 	result, err := h.registry.SearchTokens(r.Context(), req)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "registry SearchTokens failed", "userID", user.UserID, "projectID", projectID, "err", summarizeErr(err))
-		mapUpstreamError(w, err, "Failed to search registry tokens.")
+		writeUpstreamMessage(w, err, "Failed to search registry tokens.")
 		return
 	}
 
@@ -247,7 +238,7 @@ func (h *RegistryHandler) authorizeTokenAction(w http.ResponseWriter, r *http.Re
 	token, err := h.registry.GetTokenByID(r.Context(), tokenID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "registry GetTokenByID failed", "userID", user.UserID, "tokenID", tokenID, "err", summarizeErr(err))
-		mapUpstreamError(w, err, "Failed to "+failureNoun+" token")
+		writeUpstreamMessage(w, err, "Failed to "+failureNoun+" token")
 		return false
 	}
 
@@ -261,7 +252,7 @@ func (h *RegistryHandler) authorizeTokenAction(w http.ResponseWriter, r *http.Re
 	userDetails, err := h.entity.GetMe(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetMe failed", "userID", user.UserID, "err", summarizeErr(err))
-		writeError(w, http.StatusInternalServerError, "Failed to "+failureNoun+" token")
+		mapUpstreamError(w, err, "Failed to "+failureNoun+" token")
 		return false
 	}
 	isAdmin := h.isAdmin(userDetails.Roles)
@@ -288,6 +279,9 @@ func (h *RegistryHandler) DeleteRegistryToken(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// tokenID is not UUID-validated: the registry service's own token IDs are
+	// not UUID-shaped (matching the Ballerina reference's plain `string` path
+	// param for this route, unlike the project-scoped registry routes above).
 	tokenID := r.PathValue("id")
 	if tokenID == "" {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
@@ -300,7 +294,7 @@ func (h *RegistryHandler) DeleteRegistryToken(w http.ResponseWriter, r *http.Req
 
 	if err := h.registry.DeleteToken(r.Context(), tokenID); err != nil {
 		slog.ErrorContext(r.Context(), "registry DeleteToken failed", "userID", user.UserID, "tokenID", tokenID, "err", summarizeErr(err))
-		mapUpstreamError(w, err, "Failed to delete token")
+		writeUpstreamMessage(w, err, "Failed to delete token")
 		return
 	}
 
@@ -315,6 +309,7 @@ func (h *RegistryHandler) RegenerateRegistryToken(w http.ResponseWriter, r *http
 		return
 	}
 
+	// tokenID is not UUID-validated — see the matching comment in DeleteRegistryToken.
 	tokenID := r.PathValue("id")
 	if tokenID == "" {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
@@ -328,7 +323,7 @@ func (h *RegistryHandler) RegenerateRegistryToken(w http.ResponseWriter, r *http
 	result, err := h.registry.RegenerateToken(r.Context(), tokenID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "registry RegenerateToken failed", "userID", user.UserID, "tokenID", tokenID, "err", summarizeErr(err))
-		mapUpstreamError(w, err, "Failed to re-generate token")
+		writeUpstreamMessage(w, err, "Failed to re-generate token")
 		return
 	}
 
@@ -344,8 +339,8 @@ func (h *RegistryHandler) GetProjectIntegrationUsers(w http.ResponseWriter, r *h
 	}
 
 	projectID := r.PathValue("id")
-	if projectID == "" {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -359,7 +354,7 @@ func (h *RegistryHandler) GetProjectIntegrationUsers(w http.ResponseWriter, r *h
 	result, err := h.registry.GetIntegrationUsersByProjectID(r.Context(), project.SfID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "registry GetIntegrationUsersByProjectID failed", "userID", user.UserID, "projectID", projectID, "err", summarizeErr(err))
-		mapUpstreamError(w, err, "Failed to retrieve integration users.")
+		writeUpstreamMessage(w, err, "Failed to retrieve integration users.")
 		return
 	}
 

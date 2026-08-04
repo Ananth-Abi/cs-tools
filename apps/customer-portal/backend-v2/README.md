@@ -7,7 +7,7 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 
 This is a work in progress — only the 101 routes listed below are implemented so far, across
 entity-service, the WSO2 Updates service, SCIM, the AI chat agent, the product-consumption
-service, the registry (robot-account) service, and the project-contact onboarding service (five
+service, the registry (robot-account) service, and the project-contact onboarding service (six
 more separate services — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent),
 [CLAUDE.md](./CLAUDE.md#the-product-consumption-service),
 [CLAUDE.md](./CLAUDE.md#the-registry-service), and
@@ -93,8 +93,9 @@ Copy `.env.example` to `.env` and fill in the values.
 ### Shared OAuth2 client credentials
 
 Every upstream service client (entity-service, updates, SCIM, the AI chat agent, the
-product-consumption service) authenticates as the same OAuth2 client-credentials app — only each
-service's base URL and scopes differ.
+product-consumption service, the registry service, and the project-contact onboarding service)
+authenticates as the same OAuth2 client-credentials app — only each service's base URL and scopes
+differ.
 
 | Variable | Description |
 |---|---|

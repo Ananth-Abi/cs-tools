@@ -126,7 +126,11 @@ func main() {
 		ClientSecret: oauth2ClientSecret,
 		Scopes:       splitComma(os.Getenv("REGISTRY_SCOPES")),
 	}
-	registryClient := registry.NewClient(registryCfg)
+	registryClient, err := registry.NewClient(registryCfg)
+	if err != nil {
+		slog.Error("failed to construct registry client", "err", err)
+		os.Exit(1)
+	}
 
 	// The project-contact onboarding service (contact/membership management)
 	// is a separate microservice (not entity-service, not SCIM),
@@ -138,7 +142,11 @@ func main() {
 		ClientSecret: oauth2ClientSecret,
 		Scopes:       splitComma(os.Getenv("USER_MANAGEMENT_SCOPES")),
 	}
-	userManagementClient := usermanagement.NewClient(userManagementCfg)
+	userManagementClient, err := usermanagement.NewClient(userManagementCfg)
+	if err != nil {
+		slog.Error("failed to construct user-management client", "err", err)
+		os.Exit(1)
+	}
 
 	// adminRole is the role string (from entity.GetUserMeResponse.Roles) that
 	// grants admin privileges for registry-token and contact management —

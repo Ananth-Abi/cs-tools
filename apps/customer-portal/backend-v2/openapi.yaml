@@ -3472,7 +3472,9 @@ paths:
         Reuses ChatMessageRequest/ChatResponse (see
         POST /projects/{projectId}/conversations/{conversationId}/messages) —
         this route mints a new conversation, sends the first message to the
-        AI chat agent, and saves the customer's message as a comment.
+        AI chat agent, and persists the AI's reply as a comment (conditionally
+        followed by a recommendations call and an auto-resolve, per this
+        backend's CLAUDE.md).
       operationId: postProjectsIdConversations
       parameters:
         - name: id
