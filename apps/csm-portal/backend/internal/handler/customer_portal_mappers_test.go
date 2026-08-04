@@ -49,6 +49,25 @@ func TestMapMetadataResponse_SelectsPortalFields(t *testing.T) {
 	}
 }
 
+func TestMapMetadataResponse_PreservesLargeNumericReferenceID(t *testing.T) {
+	raw := []byte(`{"timeZones":[{"id":9007199254740993,"label":"UTC"}],"projectTypes":[],"feedbackEmojies":[]}`)
+	mapped, err := mapMetadataResponse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := decodeMappedObject(t, mapped)
+	timeZone := result["timeZones"].([]any)[0].(map[string]any)
+	if timeZone["id"] != "9007199254740993" {
+		t.Fatalf("time zone ID = %#v", timeZone["id"])
+	}
+}
+
+func TestDecodePortalObject_RejectsTrailingJSON(t *testing.T) {
+	if _, err := decodePortalObject([]byte(`{} {}`)); err == nil {
+		t.Fatal("expected trailing JSON to be rejected")
+	}
+}
+
 func TestMapAttachmentsResponse_RenamesSizeAndTotal(t *testing.T) {
 	raw := []byte(`{"attachments":[{"id":"a1","name":"log.txt","type":"text/plain","sizeBytes":42,"createdBy":"u","createdOn":"now","downloadUrl":"/d","reference":{"id":"secret"}}],"total":1,"limit":20,"offset":0}`)
 	mapped, err := mapAttachmentsResponse(raw)

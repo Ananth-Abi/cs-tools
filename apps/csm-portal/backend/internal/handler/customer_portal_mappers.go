@@ -17,8 +17,10 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 )
 
 type portalMapper func([]byte) ([]byte, error)
@@ -32,7 +34,15 @@ func mapEntityCall(result []byte, err error, mapper portalMapper) ([]byte, error
 
 func decodePortalObject(raw []byte) (map[string]any, error) {
 	var value map[string]any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, fmt.Errorf("map entity response: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("unexpected trailing JSON value")
+		}
 		return nil, fmt.Errorf("map entity response: %w", err)
 	}
 	return value, nil
@@ -54,6 +64,8 @@ func pickPortalFields(source map[string]any, fields ...string) map[string]any {
 
 func portalStringID(value any) any {
 	switch id := value.(type) {
+	case json.Number:
+		return id.String()
 	case float64:
 		return fmt.Sprintf("%g", id)
 	default:
