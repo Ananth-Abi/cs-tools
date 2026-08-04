@@ -1464,6 +1464,56 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
 
   /attachments/{id}:
+    get:
+      summary: Get an attachment's metadata plus base64-encoded content.
+      description: >
+        Distinct from GET /attachments/{id}/content, which streams the raw
+        binary file.
+      operationId: getAttachmentsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentDetails'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
     delete:
       summary: Delete an attachment.
       operationId: deleteAttachmentsId
@@ -2905,8 +2955,9 @@ paths:
     post:
       summary: Send a follow-up message on an existing AI chat conversation.
       description: >
-        Sends a follow-up message on an EXISTING conversation only — there is
-        no entity-service createConversation yet (see this backend's CLAUDE.md).
+        Sends a follow-up message on an EXISTING conversation only — to start
+        a new one, use POST /projects/{id}/conversations instead. Unlike that
+        route, no recommendations call is ever made here.
       operationId: postProjectsProjectIdConversationsConversationIdMessages
       parameters:
         - name: projectId
@@ -3169,6 +3220,2430 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /metadata:
+    get:
+      summary: Get system-wide metadata (time zones, project types, feedback emojis, feature flags).
+      operationId: getMetadata
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetadataResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /search:
+    post:
+      summary: Global search across projects and cases.
+      operationId: postSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GlobalSearchRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /products/vulnerabilities/meta:
+    get:
+      summary: Get product vulnerability metadata (severity reference options).
+      operationId: getProductsVulnerabilitiesMeta
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VulnerabilityMetaResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /conversations/{id}:
+    get:
+      summary: Get a conversation by ID.
+      operationId: getConversationsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDetails'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    patch:
+      summary: Update a conversation's status.
+      description: >
+        Allowed status values are closed, abandoned, and converted — the
+        only three transitions entity-service's ConversationState enum
+        supports from this route. Returns an empty body on success.
+      operationId: patchConversationsId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationStatusUpdate'
+        required: true
+      responses:
+        "200":
+          description: Ok
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/conversations:
+    post:
+      summary: Start a new AI chat conversation on a project.
+      description: >
+        Reuses ChatMessageRequest/ChatResponse (see
+        POST /projects/{projectId}/conversations/{conversationId}/messages) —
+        this route mints a new conversation, sends the first message to the
+        AI chat agent, and saves the customer's message as a comment.
+      operationId: postProjectsIdConversations
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatMessageRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/{id}/feedback:
+    get:
+      summary: Get feedback submitted for a case.
+      operationId: getCasesIdFeedback
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseFeedback'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    post:
+      summary: Submit feedback for a case.
+      operationId: postCasesIdFeedback
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitCaseFeedbackRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitCaseFeedbackResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{deploymentId}/attachments/{attachmentId}:
+    patch:
+      summary: Update a deployment's attachment.
+      operationId: patchDeploymentsDeploymentIdAttachmentsAttachmentId
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentUpdateRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdatedAttachment'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/{caseId}/attachments/{attachmentId}:
+    patch:
+      summary: Update a case's attachment.
+      description: >
+        Only name is forwarded here — description is always dropped,
+        matching the Ballerina reference's own restriction for this route.
+      operationId: patchCasesCaseIdAttachmentsAttachmentId
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: attachmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentUpdateRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdatedAttachment'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{deploymentId}/products/{productId}/metrics/search:
+    post:
+      summary: Get core-count metrics for a deployed product.
+      operationId: postDeploymentsDeploymentIdProductsProductIdMetricsSearch
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DateRangePayload'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployedProductMetricsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{deploymentId}/products/{productId}/metrics/usage-counts/search:
+    post:
+      summary: Get usage-count metrics for a deployed product.
+      operationId: postDeploymentsDeploymentIdProductsProductIdMetricsUsageCountsSearch
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DateRangePayload'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployedProductUsageCountsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/{caseId}/escalations:
+    post:
+      summary: Create (or reverse) an escalation on a case.
+      description: >
+        action defaults to ESCALATE if omitted; DEESCALATE is also accepted.
+        reason is required when escalating.
+      operationId: postCasesCaseIdEscalations
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EscalationCreateRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EscalationCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/{caseId}/escalations/search:
+    post:
+      summary: Search escalations on a case.
+      description: >
+        filters.caseIds is always forced to [caseId] server-side — any
+        client-supplied value is discarded.
+      operationId: postCasesCaseIdEscalationsSearch
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EscalationSearchRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EscalationSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/cases/time-cards/search:
+    post:
+      summary: Search time cards grouped by case for a project.
+      description: >
+        filters.projectIds is always forced to [id] server-side — any
+        client-supplied value is discarded.
+      operationId: postProjectsIdCasesTimeCardsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseTimeCardSearchRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseTimeCardSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  # ---- instances (search/metrics/usages/stats fanned out project/deployment/deployed-product scoped) ----
+
+  /projects/{id}/instances/search:
+    post:
+      summary: Search instances belonging to a project.
+      description: >
+        filters.projectIds is always forced to [id] server-side. One of 3
+        scope variants (project/deployment/deployed-product) fanned out from
+        entity-service's single POST /instances/search — see
+        InstanceSearchRequest.
+      operationId: postProjectsIdInstancesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceSearchRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/instances/metrics/search:
+    post:
+      summary: Get core-count metric time series for instances belonging to a project.
+      description: >
+        filters.projectIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/metrics/search.
+      operationId: postProjectsIdInstancesMetricsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceDateRangeRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/instances/usages/search:
+    post:
+      summary: Get usage-count time series for instances belonging to a project.
+      description: >
+        filters.projectIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/usages/search.
+      operationId: postProjectsIdInstancesUsagesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceDateRangeRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/instances/stats/metrics/search:
+    post:
+      summary: Get core-count metric statistics for instances belonging to a project.
+      description: >
+        filters.projectIds is always forced to [id] server-side. Note:
+        dataSource is NOT forwarded to entity-service for this project-scoped
+        metrics-stats variant — a deliberate asymmetry versus the
+        stats/usages/search family, matching the Ballerina reference exactly
+        (see InstanceStatsRequest's doc comment). One of 3 scope variants
+        fanned out from entity-service's single
+        POST /instances/stats/metrics/search.
+      operationId: postProjectsIdInstancesStatsMetricsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceStatsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsStatsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/instances/stats/usages/search:
+    post:
+      summary: Get usage-count statistics for instances belonging to a project.
+      description: >
+        filters.projectIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/stats/usages/search.
+      operationId: postProjectsIdInstancesStatsUsagesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceStatsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageStatsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{id}/instances/search:
+    post:
+      summary: Search instances belonging to a deployment.
+      description: >
+        filters.deploymentIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/search.
+      operationId: postDeploymentsIdInstancesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceSearchRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{id}/instances/metrics/search:
+    post:
+      summary: Get core-count metric time series for instances belonging to a deployment.
+      description: >
+        filters.deploymentIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/metrics/search.
+      operationId: postDeploymentsIdInstancesMetricsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceDateRangeRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{id}/instances/usages/search:
+    post:
+      summary: Get usage-count time series for instances belonging to a deployment.
+      description: >
+        filters.deploymentIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/usages/search.
+      operationId: postDeploymentsIdInstancesUsagesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceDateRangeRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{id}/instances/stats/metrics/search:
+    post:
+      summary: Get core-count metric statistics for instances belonging to a deployment.
+      description: >
+        filters.deploymentIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/stats/metrics/search.
+      operationId: postDeploymentsIdInstancesStatsMetricsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceStatsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsStatsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/{id}/instances/stats/usages/search:
+    post:
+      summary: Get usage-count statistics for instances belonging to a deployment.
+      description: >
+        filters.deploymentIds is always forced to [id] server-side. One of 3
+        scope variants fanned out from entity-service's single
+        POST /instances/stats/usages/search.
+      operationId: postDeploymentsIdInstancesStatsUsagesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceStatsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageStatsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/products/{id}/instances/search:
+    post:
+      summary: Search instances belonging to a deployed product.
+      description: >
+        filters.deployedProductIds is always forced to [id] server-side. One
+        of 3 scope variants fanned out from entity-service's single
+        POST /instances/search.
+      operationId: postDeploymentsProductsIdInstancesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceSearchRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/products/{id}/instances/metrics/search:
+    post:
+      summary: Get core-count metric time series for instances belonging to a deployed product.
+      description: >
+        filters.deployedProductIds is always forced to [id] server-side. One
+        of 3 scope variants fanned out from entity-service's single
+        POST /instances/metrics/search.
+      operationId: postDeploymentsProductsIdInstancesMetricsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceDateRangeRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/products/{id}/instances/usages/search:
+    post:
+      summary: Get usage-count time series for instances belonging to a deployed product.
+      description: >
+        filters.deployedProductIds is always forced to [id] server-side. One
+        of 3 scope variants fanned out from entity-service's single
+        POST /instances/usages/search.
+      operationId: postDeploymentsProductsIdInstancesUsagesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceDateRangeRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/products/{id}/instances/stats/metrics/search:
+    post:
+      summary: Get core-count metric statistics for instances belonging to a deployed product.
+      description: >
+        filters.deployedProductIds is always forced to [id] server-side. One
+        of 3 scope variants fanned out from entity-service's single
+        POST /instances/stats/metrics/search.
+      operationId: postDeploymentsProductsIdInstancesStatsMetricsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceStatsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsStatsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /deployments/products/{id}/instances/stats/usages/search:
+    post:
+      summary: Get usage-count statistics for instances belonging to a deployed product.
+      description: >
+        filters.deployedProductIds is always forced to [id] server-side. One
+        of 3 scope variants fanned out from entity-service's single
+        POST /instances/stats/usages/search.
+      operationId: postDeploymentsProductsIdInstancesStatsUsagesSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceStatsRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageStatsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+  # ---- registry (robot-account tokens) / project contacts ----
+
+  /projects/{id}/registry-tokens:
+    post:
+      summary: Create a registry (robot-account) token for a project.
+      description: >-
+        Only admins may create SERVICE-type tokens or tokens createdFor
+        someone else — see this backend's CLAUDE.md "The registry service" section.
+      operationId: postProjectsIdRegistryTokens
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistryTokenCreateRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistryTokenCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/registry-tokens/search:
+    post:
+      summary: Search a project's registry tokens.
+      description: >-
+        No request body — non-admins only ever see their own tokens (userEmail
+        forced to the caller); admins see every token for the project.
+      operationId: postProjectsIdRegistryTokensSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RegistryToken'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/integration-users:
+    get:
+      summary: Get a project's integration (service-account) users.
+      operationId: getProjectsIdIntegrationUsers
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/IntegrationUser'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /registry-tokens/{id}:
+    delete:
+      summary: Delete a registry token.
+      description: >-
+        Authorization is indirect: the token's opaque description is parsed
+        to recover its owning project, then the caller's access to that
+        project is re-verified via entity-service.
+      operationId: deleteRegistryTokensId
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /registry-tokens/{id}/regenerate:
+    post:
+      summary: Regenerate a registry token's secret.
+      description: >-
+        No request body. Authorization is indirect, matching
+        DELETE /registry-tokens/{id}.
+      operationId: postRegistryTokensIdRegenerate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistryTokenCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/contacts:
+    get:
+      summary: Get a project's contacts.
+      operationId: getProjectsIdContacts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Contact'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    post:
+      summary: Add a contact to a project.
+      description: >-
+        adminEmail is never client-supplied — always the caller's own email.
+      operationId: postProjectsIdContacts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactOnboardRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/contacts/{email}:
+    delete:
+      summary: Remove a contact from a project.
+      operationId: deleteProjectsIdContactsEmail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    patch:
+      summary: Update a project contact's membership roles.
+      description: >-
+        adminEmail is never client-supplied — always the caller's own email.
+      operationId: patchProjectsIdContactsEmail
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MembershipRoleUpdateRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Membership'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /projects/{id}/contacts/validate:
+    post:
+      summary: Validate whether an email can be added as a project contact.
+      description: >-
+        Upstream 3-way result: a brand-new email is valid; an email matching
+        an existing-but-deactivated contact is valid (contactDetails
+        populated); an email matching an active contact already on the
+        project conflicts (409).
+      operationId: postProjectsIdContactsValidate
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ContactValidationRequest'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactValidationResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "409":
+          description: Conflict
           content:
             application/json:
               schema:
@@ -4681,8 +7156,9 @@ components:
 
     ChatMessageRequest:
       description: >
-        Sends a follow-up message on an existing conversation only — there is
-        no entity-service createConversation yet (see CLAUDE.md).
+        Shared by POST /projects/{id}/conversations (starts a new conversation)
+        and POST /projects/{projectId}/conversations/{conversationId}/messages
+        (sends a follow-up message on an existing one).
       type: object
       required: [message]
       properties:
@@ -5836,3 +8312,1255 @@ components:
             $ref: '#/components/schemas/ReferenceItem'
         resolvedCount:
           $ref: '#/components/schemas/ResolvedCountBreakdown'
+
+    # ---- global metadata / search ----
+
+    FeedbackEmojiChip:
+      type: object
+      required: [id, name, value]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+
+    FeedbackEmoji:
+      type: object
+      required: [id, name, value, unselectedImage, selectedImage, chips]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+        unselectedImage:
+          type: string
+        selectedImage:
+          type: string
+        chips:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackEmojiChip'
+
+    FeatureFlags:
+      description: >-
+        A portal-only value that never comes from entity-service — see
+        dto.defaultFeatureFlags.
+      type: object
+      required: [usageMetricsEnabled]
+      properties:
+        usageMetricsEnabled:
+          type: boolean
+
+    MetadataResponse:
+      type: object
+      required: [timeZones, projectTypes, feedbackEmojies, featureFlags]
+      properties:
+        timeZones:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        projectTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+        feedbackEmojies:
+          description: >-
+            Sic — matches the Ballerina reference's own (misspelled) field
+            name on the wire.
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackEmoji'
+        featureFlags:
+          $ref: '#/components/schemas/FeatureFlags'
+
+    GlobalSearchRequest:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            searchQuery:
+              type: string
+            types:
+              type: array
+              items:
+                type: string
+        sortBy:
+          type: object
+          properties:
+            field:
+              type: string
+            order:
+              type: string
+        projectsPagination:
+          description: limit is capped at 50 server-side, matching the Ballerina reference.
+          $ref: '#/components/schemas/Pagination'
+        casesPagination:
+          $ref: '#/components/schemas/Pagination'
+
+    GlobalSearchProject:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        key:
+          type: string
+        type:
+          $ref: '#/components/schemas/ReferenceItem'
+        createdOn:
+          type: string
+        startDate:
+          type: string
+          nullable: true
+        endDate:
+          type: string
+          nullable: true
+        hasPdpSubscription:
+          type: boolean
+        closureState:
+          type: string
+          nullable: true
+        account:
+          $ref: '#/components/schemas/ReferenceItem'
+        activeChatsCount:
+          type: integer
+        actionRequiredCount:
+          type: integer
+        outstandingCount:
+          type: integer
+
+    GlobalSearchCase:
+      type: object
+      properties:
+        id:
+          type: string
+        internalId:
+          type: string
+        number:
+          type: string
+        title:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+        updatedOn:
+          type: string
+        project:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        caseType:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        state:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        severity:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        assignedEngineer:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        account:
+          $ref: '#/components/schemas/ReferenceItem'
+
+    GlobalSearchResponse:
+      type: object
+      properties:
+        query:
+          type: string
+        projectsTotal:
+          type: integer
+        casesTotal:
+          type: integer
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/GlobalSearchProject'
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/GlobalSearchCase'
+
+    VulnerabilityMetaResponse:
+      type: object
+      properties:
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceItem'
+
+    # ---- conversations (GET/PATCH by id, create) ----
+
+    ConversationDetails:
+      type: object
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+          nullable: true
+        initialMessage:
+          type: string
+          nullable: true
+        messageCount:
+          type: integer
+        project:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        case:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        state:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+        updatedOn:
+          type: string
+        updatedBy:
+          type: string
+
+    ConversationStatusUpdate:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [closed, abandoned, converted]
+
+    # ---- case feedback ----
+
+    CaseFeedbackEmoji:
+      description: >-
+        The trimmed emoji reference on GET /cases/{id}/feedback — id/name/
+        selectedImage only, matching the Ballerina reference's
+        FeedbackEmojiSummary.
+      type: object
+      required: [id, name, selectedImage]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        selectedImage:
+          type: string
+
+    CaseFeedback:
+      type: object
+      required: [id, emoji, chips, assessmentId, createdBy, createdOn]
+      properties:
+        id:
+          type: string
+        emoji:
+          $ref: '#/components/schemas/CaseFeedbackEmoji'
+        chips:
+          type: array
+          items:
+            type: string
+        assessmentId:
+          type: string
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        additionalComment:
+          type: string
+          nullable: true
+
+    SubmitCaseFeedbackRequest:
+      type: object
+      required: [emojiId]
+      properties:
+        emojiId:
+          type: string
+        chipIds:
+          type: array
+          items:
+            type: string
+        additionalComment:
+          type: string
+          nullable: true
+
+    SubmittedCaseFeedback:
+      type: object
+      required: [id, assessmentId, caseId, createdBy, createdOn]
+      properties:
+        id:
+          type: string
+        assessmentId:
+          type: string
+        caseId:
+          type: string
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+
+    SubmitCaseFeedbackResponse:
+      type: object
+      required: [message, feedback]
+      properties:
+        message:
+          type: string
+        feedback:
+          $ref: '#/components/schemas/SubmittedCaseFeedback'
+
+    # ---- attachments (get-by-id, reference-scoped update) ----
+
+    AttachmentDetails:
+      description: >-
+        Metadata plus base64-encoded content — entity-service's response has
+        no fields worth restricting here, so this is a direct passthrough
+        shape.
+      type: object
+      required: [id, referenceId, name, type, sizeBytes, createdBy, createdOn, content]
+      properties:
+        id:
+          type: string
+        referenceId:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        sizeBytes:
+          type: integer
+        description:
+          type: string
+          nullable: true
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+          format: date-time
+        downloadUrl:
+          type: string
+          nullable: true
+        previewUrl:
+          type: string
+          nullable: true
+        content:
+          description: Base64-encoded file content.
+          type: string
+
+    AttachmentUpdateRequest:
+      description: >-
+        referenceId/referenceType are never client-supplied — each handler
+        injects them from its own path params. The case-scoped route
+        (PATCH /cases/{caseId}/attachments/{attachmentId}) only ever reads
+        name, never description, matching the Ballerina reference's own
+        restriction for that route.
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    UpdatedAttachment:
+      type: object
+      required: [id, updatedOn, updatedBy]
+      properties:
+        id:
+          type: string
+        updatedOn:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+
+    # ---- deployed product metrics / usage counts ----
+
+    DateRangePayload:
+      description: >-
+        deploymentId is never client-supplied — always injected from the
+        path by the calling handler.
+      type: object
+      required: [startDate, endDate]
+      properties:
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    DeployedProductRef:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+
+    DeployedProductMetricsInstance:
+      type: object
+      required: [id, name, cores]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        cores:
+          type: integer
+
+    DeployedProductMetricsChartEntry:
+      type: object
+      required: [date, instanceCount, totalCores, minCores, maxCores, avgCores, instances]
+      properties:
+        date:
+          type: string
+        instanceCount:
+          type: integer
+        totalCores:
+          type: integer
+        minCores:
+          type: integer
+        maxCores:
+          type: integer
+        avgCores:
+          type: number
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployedProductMetricsInstance'
+
+    DeployedProductMetricsDateRange:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: string
+        end:
+          type: string
+
+    DeployedProductMetricsSummary:
+      type: object
+      required: [dateRange, totalInstances]
+      properties:
+        dateRange:
+          $ref: '#/components/schemas/DeployedProductMetricsDateRange'
+        totalInstances:
+          type: integer
+        minCores:
+          type: integer
+          nullable: true
+        maxCores:
+          type: integer
+          nullable: true
+        avgCores:
+          type: number
+          nullable: true
+
+    DeployedProductMetricsResponse:
+      type: object
+      required: [product, summary, chartData]
+      properties:
+        product:
+          $ref: '#/components/schemas/DeployedProductRef'
+        summary:
+          $ref: '#/components/schemas/DeployedProductMetricsSummary'
+        chartData:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployedProductMetricsChartEntry'
+
+    UsageCountInstance:
+      type: object
+      required: [id, name, value]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        value:
+          type: number
+
+    UsageCountEntry:
+      type: object
+      required: [value, aggregation, instances]
+      properties:
+        value:
+          type: number
+        aggregation:
+          type: string
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/UsageCountInstance'
+
+    DeployedProductUsageCountsChartEntry:
+      type: object
+      required: [date, counts]
+      properties:
+        date:
+          type: string
+        counts:
+          description: Keyed by count-type name.
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/UsageCountEntry'
+
+    CountTypeAggregation:
+      type: object
+      required: [aggregation, min, max, avg]
+      properties:
+        aggregation:
+          type: string
+        min:
+          type: number
+        max:
+          type: number
+        avg:
+          type: number
+
+    DeployedProductUsageCountsSummary:
+      type: object
+      required: [dateRange, countTypes]
+      properties:
+        dateRange:
+          $ref: '#/components/schemas/DeployedProductMetricsDateRange'
+        countTypes:
+          description: Keyed by count-type name.
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CountTypeAggregation'
+
+    DeployedProductUsageCountsResponse:
+      type: object
+      required: [product, summary, chartData]
+      properties:
+        product:
+          $ref: '#/components/schemas/DeployedProductRef'
+        summary:
+          $ref: '#/components/schemas/DeployedProductUsageCountsSummary'
+        chartData:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployedProductUsageCountsChartEntry'
+
+    # ---- case escalations ----
+
+    EscalationCreateRequest:
+      description: >-
+        caseId is never client-supplied — always injected from the path.
+        action defaults to ESCALATE when omitted; reason is required when
+        escalating.
+      type: object
+      properties:
+        reason:
+          type: string
+        action:
+          type: string
+          enum: [ESCALATE, DEESCALATE]
+
+    EscalationNotifiedUser:
+      type: object
+      required: [id, userName]
+      properties:
+        id:
+          type: string
+        userName:
+          type: string
+        name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+
+    CreatedEscalation:
+      type: object
+      required: [id, case, currentLevel, previousLevel, createdBy, createdOn, notificationSentTo]
+      properties:
+        id:
+          type: string
+        case:
+          $ref: '#/components/schemas/ReferenceItem'
+        currentLevel:
+          $ref: '#/components/schemas/ReferenceItem'
+        previousLevel:
+          $ref: '#/components/schemas/ReferenceItem'
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        notificationSentTo:
+          type: array
+          items:
+            $ref: '#/components/schemas/EscalationNotifiedUser'
+
+    EscalationCreateResponse:
+      type: object
+      required: [message, escalation]
+      properties:
+        message:
+          type: string
+        escalation:
+          $ref: '#/components/schemas/CreatedEscalation'
+
+    EscalationSearchRequest:
+      description: >-
+        caseId is never client-supplied — filters.caseIds is always forced
+        to [caseId] server-side, and any client-supplied caseIds are
+        discarded.
+      type: object
+      required: [pagination]
+      properties:
+        sortBy:
+          type: object
+          properties:
+            field:
+              type: string
+            order:
+              type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Escalation:
+      type: object
+      required: [id, case, currentLevel, previousLevel, createdBy, createdOn, updatedOn, notificationSentTo]
+      properties:
+        id:
+          type: string
+        case:
+          $ref: '#/components/schemas/ReferenceItem'
+        currentLevel:
+          $ref: '#/components/schemas/ReferenceItem'
+        previousLevel:
+          $ref: '#/components/schemas/ReferenceItem'
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        notificationSentTo:
+          type: array
+          items:
+            $ref: '#/components/schemas/EscalationNotifiedUser'
+
+    EscalationSearchResponse:
+      type: object
+      required: [escalations, total, offset, limit]
+      properties:
+        escalations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Escalation'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    # ---- project case time cards ----
+
+    CaseTimeCardSearchRequest:
+      description: >-
+        projectIds is never client-supplied — always injected from the path
+        into filters.projectIds server-side.
+      type: object
+      required: [pagination]
+      properties:
+        filters:
+          type: object
+          properties:
+            startDate:
+              type: string
+            endDate:
+              type: string
+            states:
+              type: array
+              items:
+                type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    CaseTimeCardCaseRef:
+      type: object
+      required: [id, number, name, updatedOn]
+      properties:
+        id:
+          type: string
+        number:
+          type: string
+        name:
+          type: string
+        updatedOn:
+          type: string
+        project:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+
+    CaseTimeCardBillingInfo:
+      type: object
+      required: [totalTime, count]
+      properties:
+        totalTime:
+          type: number
+        count:
+          type: integer
+
+    CaseTimeCard:
+      type: object
+      required: [case, totalTime, totalCount, billable, nonBillable]
+      properties:
+        case:
+          $ref: '#/components/schemas/CaseTimeCardCaseRef'
+        totalTime:
+          type: number
+        totalCount:
+          type: integer
+        billable:
+          $ref: '#/components/schemas/CaseTimeCardBillingInfo'
+        nonBillable:
+          $ref: '#/components/schemas/CaseTimeCardBillingInfo'
+
+    CaseTimeCardSearchResponse:
+      type: object
+      required: [caseTimeCards, total, offset, limit]
+      properties:
+        caseTimeCards:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseTimeCard'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    # ---- instances (search/metrics/usages/stats, fanned out 3 ways — see
+    # dto/instance.go's package doc comment) ----
+
+    InstanceSearchRequest:
+      description: >-
+        Exactly one path-scoped ID filter (project/deployment/deployed
+        product) is injected server-side by the calling handler.
+      type: object
+      required: [pagination]
+      properties:
+        startDate:
+          type: string
+        endDate:
+          type: string
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    InstanceMetadata:
+      type: object
+      required: [id, deploymentMetadata, createdOn, updatedOn]
+      properties:
+        id:
+          type: string
+        coreCount:
+          type: integer
+          nullable: true
+        updates:
+          type: integer
+          nullable: true
+        jdkVersion:
+          type: string
+          nullable: true
+        deploymentMetadata:
+          type: object
+          additionalProperties: true
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+        customCreatedOn:
+          type: string
+          nullable: true
+        customUpdatedOn:
+          type: string
+          nullable: true
+
+    Instance:
+      type: object
+      required: [id, key, createdOn, updatedOn]
+      properties:
+        id:
+          type: string
+        key:
+          type: string
+        project:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        deployment:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        product:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        deployedProduct:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+        metadata:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/InstanceMetadata'
+
+    InstanceSearchResponse:
+      type: object
+      required: [instances, total, offset, limit]
+      properties:
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/Instance'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    InstanceDateRangeRequest:
+      description: >-
+        The path-scoped ID filter is injected server-side by the calling
+        handler.
+      type: object
+      required: [startDate, endDate]
+      properties:
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    InstanceDataPoint:
+      type: object
+      required: [date, createdOn, deploymentMetadata]
+      properties:
+        date:
+          type: string
+        createdOn:
+          type: string
+        coreCount:
+          type: integer
+          nullable: true
+        jdkVersion:
+          type: string
+          nullable: true
+        updates:
+          type: integer
+          nullable: true
+        deploymentMetadata:
+          type: object
+          additionalProperties: true
+
+    InstanceMetric:
+      type: object
+      required: [instanceId, instanceKey, dataPoints]
+      properties:
+        instanceId:
+          type: string
+        instanceKey:
+          type: string
+        project:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        deployment:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        product:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        deployedProduct:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        dataPoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceDataPoint'
+
+    InstanceMetricsResponse:
+      type: object
+      required: [metrics, totalInstances, startDate, endDate]
+      properties:
+        metrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceMetric'
+        totalInstances:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    InstanceUsageSummary:
+      description: entity-service's InstanceSummary — one period's usage counts for an instance.
+      type: object
+      required: [period, counts]
+      properties:
+        period:
+          type: string
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+
+    InstanceUsageEntry:
+      type: object
+      required: [instanceId, instanceKey, periodSummaries]
+      properties:
+        instanceId:
+          type: string
+        instanceKey:
+          type: string
+        project:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        deployment:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        product:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        deployedProduct:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ReferenceItem'
+        periodSummaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceUsageSummary'
+
+    InstanceUsageResponse:
+      type: object
+      required: [usages, totalInstances, startDate, endDate]
+      properties:
+        usages:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceUsageEntry'
+        totalInstances:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    InstanceStatsRequest:
+      description: >-
+        dataSource is optional (1 = API Call, 2 = File Upload). Note: the
+        project-scoped .../instances/stats/metrics/search variant does NOT
+        forward dataSource to entity-service — a deliberate asymmetry versus
+        the stats/usages/search family, matching the Ballerina reference
+        exactly.
+      type: object
+      required: [startDate, endDate]
+      properties:
+        startDate:
+          type: string
+        endDate:
+          type: string
+        dataSource:
+          type: integer
+          nullable: true
+
+    InstanceMetricSummary:
+      type: object
+      required: [current, min, max, avg]
+      properties:
+        current:
+          type: number
+        min:
+          type: number
+        max:
+          type: number
+        avg:
+          type: number
+
+    InstanceMetricsStatsResponse:
+      type: object
+      required: [stats, summary, total, startDate, endDate]
+      properties:
+        stats:
+          description: Keyed by instance ID, then by metric bucket.
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+        summary:
+          $ref: '#/components/schemas/InstanceMetricSummary'
+        total:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    InstanceUsageStatsResponse:
+      description: >-
+        Unlike InstanceMetricsStatsResponse, there is no summary block,
+        matching the Ballerina reference exactly.
+      type: object
+      required: [stats, total, startDate, endDate]
+      properties:
+        stats:
+          description: Keyed by instance ID, then by usage bucket.
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+        total:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    # ---- registry (robot-account tokens) ----
+
+    RegistryTokenCreateRequest:
+      description: >-
+        The server derives accountName, projectKey, snAccountId, snProjectId,
+        and createdBy itself — the client only supplies robotName/tokenType/
+        createdFor.
+      type: object
+      required: [robotName, tokenType]
+      properties:
+        robotName:
+          description: Alphanumeric and dashes only.
+          type: string
+        tokenType:
+          type: string
+          enum: [Service, User]
+        createdFor:
+          description: Required when tokenType is Service.
+          type: string
+
+    RegistryTokenCreateResponse:
+      type: object
+      required: [secret]
+      properties:
+        secret:
+          type: string
+
+    RegistryPermission:
+      type: object
+      required: [namespace]
+      properties:
+        namespace:
+          type: string
+
+    RegistryToken:
+      description: >-
+        Description is deliberately omitted — it's an internal encoding the
+        backend uses to recover project/type/owner for authorization, not
+        something the frontend should render.
+      type: object
+      required: [name, disable, duration, permissions]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        displayName:
+          type: string
+        creationTime:
+          type: string
+        tokenType:
+          type: string
+          enum: [Service, User]
+        createdFor:
+          type: string
+        createdBy:
+          type: string
+        expiresAt:
+          type: string
+        disable:
+          type: boolean
+        duration:
+          type: integer
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegistryPermission'
+
+    IntegrationUser:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+
+    # ---- project contacts ----
+
+    ContactAccount:
+      type: object
+      properties:
+        id:
+          type: string
+        domainList:
+          type: string
+        classification:
+          type: string
+        isPartner:
+          type: boolean
+          nullable: true
+
+    Contact:
+      type: object
+      required: [id, email, lastName, isCsAdmin, isLead, isCsIntegrationUser, isPortalUser, isSecurityContact]
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        isCsAdmin:
+          type: boolean
+        isLead:
+          type: boolean
+        isCsIntegrationUser:
+          type: boolean
+        isPortalUser:
+          type: boolean
+        isSecurityContact:
+          type: boolean
+        membershipStatus:
+          type: string
+        account:
+          $ref: '#/components/schemas/ContactAccount'
+
+    ContactOnboardRequest:
+      description: >-
+        adminEmail is never client-supplied — always injected as the
+        caller's own email.
+      type: object
+      required: [contactEmail, contactFirstName, contactLastName, isCsIntegrationUser]
+      properties:
+        contactEmail:
+          type: string
+        contactFirstName:
+          type: string
+        contactLastName:
+          type: string
+        isCsIntegrationUser:
+          type: boolean
+        isCsAdmin:
+          type: boolean
+        isLead:
+          type: boolean
+        isPortalUser:
+          type: boolean
+        isSecurityContact:
+          type: boolean
+
+    ContactRef:
+      type: object
+      properties:
+        id:
+          type: string
+        email:
+          type: string
+
+    Membership:
+      type: object
+      required: [id, state, isCsAdmin, isLead, isPortalUser, isSecurityContact]
+      properties:
+        id:
+          type: string
+        state:
+          type: string
+        isCsAdmin:
+          type: boolean
+        isLead:
+          type: boolean
+        isPortalUser:
+          type: boolean
+        isSecurityContact:
+          type: boolean
+        contact:
+          $ref: '#/components/schemas/ContactRef'
+
+    MembershipRoleUpdateRequest:
+      description: >-
+        adminEmail is never client-supplied — always injected as the
+        caller's own email.
+      type: object
+      properties:
+        isCsAdmin:
+          type: boolean
+        isLead:
+          type: boolean
+        isPortalUser:
+          type: boolean
+        isSecurityContact:
+          type: boolean
+
+    ContactValidationRequest:
+      type: object
+      required: [contactEmail]
+      properties:
+        contactEmail:
+          type: string
+
+    ContactValidationResponse:
+      type: object
+      required: [isContactValid, message]
+      properties:
+        isContactValid:
+          type: boolean
+        message:
+          type: string
+        contactDetails:
+          $ref: '#/components/schemas/Contact'

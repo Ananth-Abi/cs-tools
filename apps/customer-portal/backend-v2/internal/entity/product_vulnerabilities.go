@@ -35,3 +35,10 @@ func (c *Client) GetProductVulnerability(ctx context.Context, id string) (Produc
 	err := c.getJSON(ctx, fmt.Sprintf("/products/vulnerabilities/%s", url.PathEscape(id)), &out)
 	return out, err
 }
+
+// GetVulnerabilityMeta calls GET /products/vulnerabilities/meta.
+func (c *Client) GetVulnerabilityMeta(ctx context.Context) (VulnerabilityMetaResponse, error) {
+	var out VulnerabilityMetaResponse
+	err := c.getJSON(ctx, "/products/vulnerabilities/meta", &out)
+	return out, err
+}

@@ -49,3 +49,18 @@ func (c *Client) UpdateDeployedProduct(ctx context.Context, id string, req Updat
 	err := c.patchJSON(ctx, fmt.Sprintf("/deployed-products/%s", url.PathEscape(id)), req, &out)
 	return out, err
 }
+
+// SearchDeployedProductMetrics calls POST /deployed-products/{id}/metrics/search.
+func (c *Client) SearchDeployedProductMetrics(ctx context.Context, id string, req DeployedProductMetricsRequest) (DeployedProductMetricsResponse, error) {
+	var out DeployedProductMetricsResponse
+	err := c.postJSON(ctx, fmt.Sprintf("/deployed-products/%s/metrics/search", url.PathEscape(id)), req, &out)
+	return out, err
+}
+
+// SearchDeployedProductUsageCounts calls
+// POST /deployed-products/{id}/metrics/usage-counts/search.
+func (c *Client) SearchDeployedProductUsageCounts(ctx context.Context, id string, req DeployedProductUsageCountsRequest) (DeployedProductUsageCountsResponse, error) {
+	var out DeployedProductUsageCountsResponse
+	err := c.postJSON(ctx, fmt.Sprintf("/deployed-products/%s/metrics/usage-counts/search", url.PathEscape(id)), req, &out)
+	return out, err
+}

@@ -43,14 +43,16 @@ type entityConversationClient interface {
 	SearchConversations(ctx context.Context, req entity.SearchConversationsRequest) (entity.SearchConversationsResponse, error)
 	SearchComments(ctx context.Context, req entity.SearchCommentsRequest) (entity.SearchCommentsResponse, error)
 	CreateComment(ctx context.Context, req entity.CreateCommentRequest) (entity.CreateCommentResponse, error)
+	GetConversation(ctx context.Context, id string) (entity.ConversationDetails, error)
+	CreateConversation(ctx context.Context, req entity.CreateConversationRequest) (entity.CreateConversationResponse, error)
+	UpdateConversation(ctx context.Context, id string, req entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error)
 }
 
 // AIChatHandler handles HTTP requests for the AI chat feature: case
-// classification, KB article recommendations, conversation search/messages,
-// and conversation summaries. See WebSocketHandler for the real-time chat
-// proxy, and its doc comment for the entity-service gaps (no
-// createConversation/updateConversation, no comment createdBy override) that
-// this handler works around or skips the same way.
+// classification, KB article recommendations, conversation CRUD/search/
+// messages, and conversation summaries. See WebSocketHandler for the
+// real-time chat proxy and its doc comment for the comment createdBy
+// override gap this handler works around the same way.
 type AIChatHandler struct {
 	ai     aiChatAgentClient
 	entity entityConversationClient
@@ -192,11 +194,131 @@ func (h *AIChatHandler) GetConversationMessages(w http.ResponseWriter, r *http.R
 	writeJSONValue(w, http.StatusOK, dto.MapSearchComments(result))
 }
 
+// agentReplyCreatedBy documents a known gap versus the Ballerina reference:
+// entity-service's CreateCommentRequest has no createdBy override (comments
+// are always attributed to the caller's own identity via their auth token),
+// unlike the Ballerina backend, which tags the AI's own reply with a
+// distinct "agent" identity (entity:CHAT_SENT_AGENT). Both the user's
+// message and the AI's reply are therefore saved here under the calling
+// user's identity — there is no way to distinguish them by author alone.
+// TODO(entity-service): revisit once/if CreateCommentRequest gains a
+// createdBy override.
+const agentReplyCreatedByCaveat = "AI reply comment attributed to caller (see agentReplyCreatedBy doc comment) — entity-service has no createdBy override"
+
+// createEntityStateResolved is entity-service's ConversationState value used
+// to auto-resolve a conversation when the AI agent reports the issue solved.
+const createEntityStateResolved = "RESOLVED"
+
+// CreateConversation handles POST /projects/{id}/conversations — starts a
+// brand-new conversation and gets the AI agent's first response, matching
+// the Ballerina reference's composite flow: create the conversation, call
+// the AI agent, optionally fetch KB recommendations (only when both Region
+// and Tier are supplied), persist the AI's reply as a comment, then
+// auto-resolve the conversation if the agent reports the issue solved.
+// Mirrors the Ballerina reference's own error-handling: conversation
+// creation, the AI call, and comment persistence are all fatal (500) on
+// failure with no compensating rollback of earlier steps; recommendations
+// and auto-resolve are best-effort and never fail the request.
+func (h *AIChatHandler) CreateConversation(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	projectID := r.PathValue("id")
+	if !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.ChatMessageRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	if req.Message == "" {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	convResp, err := h.entity.CreateConversation(r.Context(), entity.CreateConversationRequest{
+		ProjectID:      projectID,
+		InitialMessage: req.Message,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateConversation failed", "userID", user.UserID, "projectID", projectID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to create a new conversation.")
+		return
+	}
+	conversationID := convResp.Conversation.ID
+
+	chatResp, err := h.ai.CreateChat(r.Context(), aichatagent.ChatPayload{
+		Message:        req.Message,
+		AccountID:      projectID,
+		ConversationID: conversationID,
+		EnvProducts:    req.EnvProducts,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "aichatagent CreateChat failed", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to process chat message.")
+		return
+	}
+
+	if req.Region != "" && req.Tier != "" {
+		recResp, err := h.ai.GetRecommendations(r.Context(), aichatagent.RecommendationRequest{
+			ChatHistory: []aichatagent.ChatMessage{
+				{Role: "user", Content: req.Message},
+				{Role: "assistant", Content: chatResp.Message},
+			},
+			ConversationData: aichatagent.ConversationData{
+				ChatHistory: "user: " + req.Message + "\nassistant: " + chatResp.Message,
+				EnvProducts: req.EnvProducts,
+				Region:      req.Region,
+				Tier:        req.Tier,
+			},
+		})
+		if err != nil {
+			slog.WarnContext(r.Context(), "aichatagent GetRecommendations failed for first chat invocation", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		} else {
+			chatResp.Recommendations = &recResp
+		}
+	}
+
+	// See agentReplyCreatedBy doc comment: attributed to the caller, not a
+	// distinct "agent" identity — entity-service has no createdBy override.
+	if _, err := h.entity.CreateComment(r.Context(), entity.CreateCommentRequest{
+		ReferenceID:   conversationID,
+		ReferenceType: entity.ReferenceTypeConversation,
+		Type:          entity.CommentTypeComment,
+		Content:       chatResp.Message,
+	}); err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateComment failed for chat response", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to save chat response as comment.")
+		return
+	}
+
+	if chatResp.Resolved != nil && *chatResp.Resolved {
+		if _, err := h.entity.UpdateConversation(r.Context(), conversationID, entity.UpdateConversationRequest{State: createEntityStateResolved}); err != nil {
+			// Best-effort, matching the Ballerina reference: the main flow
+			// already succeeded, so this failure is logged, not returned.
+			slog.ErrorContext(r.Context(), "entity UpdateConversation failed to auto-resolve", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		}
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapChatResponse(chatResp))
+}
+
 // SendConversationMessage handles
 // POST /projects/{projectId}/conversations/{conversationId}/messages — a
-// follow-up message on an existing conversation. See WebSocketHandler's doc
-// comment for why the AI agent's reply is not saved as a comment here and
-// the conversation's resolved state is not updated.
+// follow-up message on an existing conversation. Unlike CreateConversation,
+// no recommendations call is ever made here — the Ballerina reference only
+// attaches recommendations on a conversation's first message.
 func (h *AIChatHandler) SendConversationMessage(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -245,9 +367,95 @@ func (h *AIChatHandler) SendConversationMessage(w http.ResponseWriter, r *http.R
 		Content:       req.Message,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateComment failed for conversation message", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to save user message as comment.")
+		return
+	}
+
+	// See agentReplyCreatedBy doc comment: attributed to the caller, not a
+	// distinct "agent" identity — entity-service has no createdBy override.
+	if _, err := h.entity.CreateComment(r.Context(), entity.CreateCommentRequest{
+		ReferenceID:   conversationID,
+		ReferenceType: entity.ReferenceTypeConversation,
+		Type:          entity.CommentTypeComment,
+		Content:       chatResp.Message,
+	}); err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateComment failed for chat response", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to save chat response as comment.")
+		return
+	}
+
+	if chatResp.Resolved != nil && *chatResp.Resolved {
+		if _, err := h.entity.UpdateConversation(r.Context(), conversationID, entity.UpdateConversationRequest{State: createEntityStateResolved}); err != nil {
+			slog.ErrorContext(r.Context(), "entity UpdateConversation failed to auto-resolve", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		}
 	}
 
 	writeJSONValue(w, http.StatusOK, dto.MapChatResponse(chatResp))
+}
+
+// GetConversation handles GET /conversations/{id}.
+func (h *AIChatHandler) GetConversation(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.GetConversation(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetConversation failed", "userID", user.UserID, "conversationID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to retrieve conversation details.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapConversationDetails(result))
+}
+
+// UpdateConversation handles PATCH /conversations/{id}. Status must be one
+// of "closed", "abandoned", or "converted" — see dto.ConversationStatusUpdate.
+func (h *AIChatHandler) UpdateConversation(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.ConversationStatusUpdate
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	entityReq, ok := dto.BuildEntityConversationStateUpdate(req)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Invalid conversation status. Allowed values: closed, abandoned, converted.")
+		return
+	}
+
+	if _, err := h.entity.UpdateConversation(r.Context(), id, entityReq); err != nil {
+		slog.ErrorContext(r.Context(), "entity UpdateConversation failed", "userID", user.UserID, "conversationID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to update conversation.")
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 // GetConversationSummary handles GET /projects/{id}/conversations/{conversationId}/summary.

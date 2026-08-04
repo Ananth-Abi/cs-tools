@@ -34,6 +34,7 @@ type entityAttachmentClient interface {
 	SearchAttachments(ctx context.Context, req entity.SearchAttachmentsRequest) (entity.SearchAttachmentsResponse, error)
 	GetAttachmentContent(ctx context.Context, id string) (body []byte, contentType string, err error)
 	DeleteAttachment(ctx context.Context, id string) (entity.DeleteAttachmentResponse, error)
+	GetAttachment(ctx context.Context, id string) (entity.AttachmentDetails, error)
 }
 
 // AttachmentHandler handles HTTP requests for attachment operations.
@@ -156,4 +157,29 @@ func (h *AttachmentHandler) DeleteAttachment(w http.ResponseWriter, r *http.Requ
 	}
 
 	writeJSONValue(w, http.StatusOK, dto.MapDeleteAttachment(result))
+}
+
+// GetAttachment handles GET /attachments/{id} — metadata plus base64-encoded
+// content, distinct from GetAttachmentContent's raw binary stream.
+func (h *AttachmentHandler) GetAttachment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.GetAttachment(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetAttachment failed", "userID", user.UserID, "attachmentID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to retrieve attachment.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapAttachmentDetails(result))
 }

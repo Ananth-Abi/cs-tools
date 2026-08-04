@@ -48,3 +48,18 @@ func (c *Client) DeleteAttachment(ctx context.Context, id string) (DeleteAttachm
 	err := c.deleteJSON(ctx, fmt.Sprintf("/attachments/%s", url.PathEscape(id)), &out)
 	return out, err
 }
+
+// GetAttachment calls GET /attachments/{id} — metadata plus base64-encoded
+// content, distinct from GetAttachmentContent's raw binary stream.
+func (c *Client) GetAttachment(ctx context.Context, id string) (AttachmentDetails, error) {
+	var out AttachmentDetails
+	err := c.getJSON(ctx, fmt.Sprintf("/attachments/%s", url.PathEscape(id)), &out)
+	return out, err
+}
+
+// UpdateAttachment calls PATCH /attachments/{id}.
+func (c *Client) UpdateAttachment(ctx context.Context, id string, req UpdateAttachmentRequest) (UpdateAttachmentResponse, error) {
+	var out UpdateAttachmentResponse
+	err := c.patchJSON(ctx, fmt.Sprintf("/attachments/%s", url.PathEscape(id)), req, &out)
+	return out, err
+}

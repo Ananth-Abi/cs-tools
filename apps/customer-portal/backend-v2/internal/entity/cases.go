@@ -64,3 +64,17 @@ func (c *Client) SearchCaseActivities(ctx context.Context, caseID string, req Se
 	err := c.postJSON(ctx, fmt.Sprintf("/cases/%s/activities/search", url.PathEscape(caseID)), req, &out)
 	return out, err
 }
+
+// GetCaseFeedback calls GET /cases/{id}/feedback.
+func (c *Client) GetCaseFeedback(ctx context.Context, caseID string) (CaseFeedback, error) {
+	var out CaseFeedback
+	err := c.getJSON(ctx, fmt.Sprintf("/cases/%s/feedback", url.PathEscape(caseID)), &out)
+	return out, err
+}
+
+// SubmitCaseFeedback calls POST /cases/{id}/feedback.
+func (c *Client) SubmitCaseFeedback(ctx context.Context, caseID string, req SubmitCaseFeedbackRequest) (SubmitCaseFeedbackResponse, error) {
+	var out SubmitCaseFeedbackResponse
+	err := c.postJSON(ctx, fmt.Sprintf("/cases/%s/feedback", url.PathEscape(caseID)), req, &out)
+	return out, err
+}

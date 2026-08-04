@@ -18,6 +18,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -36,6 +37,7 @@ type entityProjectStatsClient interface {
 	GetProjectDeploymentStats(ctx context.Context, id string) (entity.ProjectDeploymentStatsResponse, error)
 	GetProjectTimeCardStats(ctx context.Context, id, startDate, endDate string) (entity.ProjectTimeCardStatsResponse, error)
 	GetProjectChangeRequestStats(ctx context.Context, id string) (entity.ProjectChangeRequestStatsResponse, error)
+	SearchCaseTimeCards(ctx context.Context, req entity.SearchTimeCardsRequest) (entity.SearchCaseTimeCardsResponse, error)
 }
 
 // ProjectStatsHandler handles HTTP requests for project-scoped metadata and
@@ -281,4 +283,40 @@ func (h *ProjectStatsHandler) GetProjectChangeRequestStats(w http.ResponseWriter
 	}
 
 	writeJSONValue(w, http.StatusOK, dto.MapProjectChangeRequestStats(result))
+}
+
+// SearchProjectCaseTimeCards handles POST /projects/{id}/cases/time-cards/search.
+// filters.projectIds is always forced to [id] server-side.
+func (h *ProjectStatsHandler) SearchProjectCaseTimeCards(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.CaseTimeCardSearchRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SearchCaseTimeCards(r.Context(), dto.BuildEntityCaseTimeCardSearchRequest(id, req))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchCaseTimeCards failed", "userID", user.UserID, "projectID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to search time cards grouped by cases.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapCaseTimeCardSearchResponse(result))
 }

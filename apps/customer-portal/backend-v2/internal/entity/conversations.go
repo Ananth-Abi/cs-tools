@@ -16,7 +16,11 @@
 
 package entity
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"net/url"
+)
 
 // SearchConversations calls POST /conversations/search.
 //
@@ -25,5 +29,26 @@ import "context"
 func (c *Client) SearchConversations(ctx context.Context, req SearchConversationsRequest) (SearchConversationsResponse, error) {
 	var out SearchConversationsResponse
 	err := c.postJSON(ctx, "/conversations/search", req, &out)
+	return out, err
+}
+
+// GetConversation calls GET /conversations/{id}.
+func (c *Client) GetConversation(ctx context.Context, id string) (ConversationDetails, error) {
+	var out ConversationDetails
+	err := c.getJSON(ctx, fmt.Sprintf("/conversations/%s", url.PathEscape(id)), &out)
+	return out, err
+}
+
+// CreateConversation calls POST /conversations.
+func (c *Client) CreateConversation(ctx context.Context, req CreateConversationRequest) (CreateConversationResponse, error) {
+	var out CreateConversationResponse
+	err := c.postJSON(ctx, "/conversations", req, &out)
+	return out, err
+}
+
+// UpdateConversation calls PATCH /conversations/{id}.
+func (c *Client) UpdateConversation(ctx context.Context, id string, req UpdateConversationRequest) (UpdateConversationResponse, error) {
+	var out UpdateConversationResponse
+	err := c.patchJSON(ctx, fmt.Sprintf("/conversations/%s", url.PathEscape(id)), req, &out)
 	return out, err
 }
