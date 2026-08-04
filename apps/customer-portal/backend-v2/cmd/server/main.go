@@ -36,8 +36,10 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/productconsumption"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/registry"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/scim"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/updates"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/usermanagement"
 )
 
 func main() {
@@ -114,6 +116,43 @@ func main() {
 	}
 	productConsumptionClient := productconsumption.NewClient(productConsumptionCfg)
 
+	// The registry service (robot-account/registry-token issuance) is a
+	// separate microservice (not entity-service), authenticating as the same
+	// shared OAuth2 app.
+	registryCfg := registry.Config{
+		BaseURL:      mustEnv("REGISTRY_BASE_URL"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
+		Scopes:       splitComma(os.Getenv("REGISTRY_SCOPES")),
+	}
+	registryClient, err := registry.NewClient(registryCfg)
+	if err != nil {
+		slog.Error("failed to construct registry client", "err", err)
+		os.Exit(1)
+	}
+
+	// The project-contact onboarding service (contact/membership management)
+	// is a separate microservice (not entity-service, not SCIM),
+	// authenticating as the same shared OAuth2 app.
+	userManagementCfg := usermanagement.Config{
+		BaseURL:      mustEnv("USER_MANAGEMENT_BASE_URL"),
+		TokenURL:     oauth2TokenURL,
+		ClientID:     oauth2ClientID,
+		ClientSecret: oauth2ClientSecret,
+		Scopes:       splitComma(os.Getenv("USER_MANAGEMENT_SCOPES")),
+	}
+	userManagementClient, err := usermanagement.NewClient(userManagementCfg)
+	if err != nil {
+		slog.Error("failed to construct user-management client", "err", err)
+		os.Exit(1)
+	}
+
+	// adminRole is the role string (from entity.GetUserMeResponse.Roles) that
+	// grants admin privileges for registry-token and contact management —
+	// mirrors the Ballerina reference's configurable authorizedRoles.adminRole.
+	adminRole := mustEnv("AUTH_ADMIN_ROLE")
+
 	userHandler := handler.NewUserHandler(entityClient, scimClient)
 	projectHandler := handler.NewProjectHandler(entityClient)
 	projectStatsHandler := handler.NewProjectStatsHandler(entityClient)
@@ -133,6 +172,10 @@ func main() {
 	aiChatHandler := handler.NewAIChatHandler(aiChatAgentClient, entityClient)
 	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient, splitComma(os.Getenv("WS_ALLOWED_ORIGINS")))
 	productConsumptionHandler := handler.NewProductConsumptionHandler(productConsumptionClient, entityClient)
+	globalHandler := handler.NewGlobalHandler(entityClient)
+	instanceHandler := handler.NewInstanceHandler(entityClient)
+	registryHandler := handler.NewRegistryHandler(entityClient, registryClient, adminRole)
+	contactHandler := handler.NewContactHandler(entityClient, userManagementClient)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -162,6 +205,22 @@ func main() {
 	mux.HandleFunc("GET /projects/{id}/stats/support", projectStatsHandler.GetProjectSupportStats)
 	mux.HandleFunc("GET /projects/{id}/stats/time-cards", projectStatsHandler.GetProjectTimeCardStats)
 	mux.HandleFunc("GET /projects/{id}/stats/change-requests", projectStatsHandler.GetProjectChangeRequestStats)
+	mux.HandleFunc("POST /projects/{id}/cases/time-cards/search", projectStatsHandler.SearchProjectCaseTimeCards)
+	mux.HandleFunc("POST /projects/{id}/instances/search", instanceHandler.SearchProjectInstances)
+	mux.HandleFunc("POST /projects/{id}/instances/metrics/search", instanceHandler.SearchProjectInstanceMetrics)
+	mux.HandleFunc("POST /projects/{id}/instances/usages/search", instanceHandler.SearchProjectInstanceUsage)
+	mux.HandleFunc("POST /projects/{id}/instances/stats/metrics/search", instanceHandler.SearchProjectInstanceMetricsStats)
+	mux.HandleFunc("POST /projects/{id}/instances/stats/usages/search", instanceHandler.SearchProjectInstanceUsageStats)
+	mux.HandleFunc("POST /projects/{id}/registry-tokens", registryHandler.CreateRegistryToken)
+	mux.HandleFunc("POST /projects/{id}/registry-tokens/search", registryHandler.SearchRegistryTokens)
+	mux.HandleFunc("GET /projects/{id}/integration-users", registryHandler.GetProjectIntegrationUsers)
+	mux.HandleFunc("GET /projects/{id}/contacts", contactHandler.GetProjectContacts)
+	mux.HandleFunc("POST /projects/{id}/contacts", contactHandler.CreateProjectContact)
+	mux.HandleFunc("DELETE /projects/{id}/contacts/{email}", contactHandler.RemoveProjectContact)
+	mux.HandleFunc("PATCH /projects/{id}/contacts/{email}", contactHandler.UpdateProjectContactRole)
+	mux.HandleFunc("POST /projects/{id}/contacts/validate", contactHandler.ValidateProjectContact)
+	mux.HandleFunc("DELETE /registry-tokens/{id}", registryHandler.DeleteRegistryToken)
+	mux.HandleFunc("POST /registry-tokens/{id}/regenerate", registryHandler.RegenerateRegistryToken)
 
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /cases/{id}", caseHandler.GetCase)
@@ -169,22 +228,41 @@ func main() {
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
+	mux.HandleFunc("GET /cases/{id}/feedback", caseHandler.GetCaseFeedback)
+	mux.HandleFunc("POST /cases/{id}/feedback", caseHandler.SubmitCaseFeedback)
+	mux.HandleFunc("PATCH /cases/{caseId}/attachments/{attachmentId}", caseHandler.PatchCaseAttachment)
+	mux.HandleFunc("POST /cases/{caseId}/escalations", caseHandler.CreateCaseEscalation)
+	mux.HandleFunc("POST /cases/{caseId}/escalations/search", caseHandler.SearchCaseEscalations)
 
 	mux.HandleFunc("POST /deployments/search", deploymentHandler.SearchDeployments)
 	// POST /deployments only succeeds against entity-service's ServiceNow
 	// data source — see internal/entity/deployments.go.
 	mux.HandleFunc("POST /deployments", deploymentHandler.CreateDeployment)
 	mux.HandleFunc("PATCH /deployments/{id}", deploymentHandler.PatchDeployment)
+	mux.HandleFunc("PATCH /deployments/{deploymentId}/attachments/{attachmentId}", deploymentHandler.PatchDeploymentAttachment)
+	mux.HandleFunc("POST /deployments/{id}/instances/search", instanceHandler.SearchDeploymentInstances)
+	mux.HandleFunc("POST /deployments/{id}/instances/metrics/search", instanceHandler.SearchDeploymentInstanceMetrics)
+	mux.HandleFunc("POST /deployments/{id}/instances/usages/search", instanceHandler.SearchDeploymentInstanceUsage)
+	mux.HandleFunc("POST /deployments/{id}/instances/stats/metrics/search", instanceHandler.SearchDeploymentInstanceMetricsStats)
+	mux.HandleFunc("POST /deployments/{id}/instances/stats/usages/search", instanceHandler.SearchDeploymentInstanceUsageStats)
 
 	mux.HandleFunc("POST /deployed-products/search", deployedProductHandler.SearchDeployedProducts)
 	// POST/PATCH /deployed-products only succeed against entity-service's
 	// ServiceNow data source — see internal/entity/deployed_products.go.
 	mux.HandleFunc("POST /deployed-products", deployedProductHandler.CreateDeployedProduct)
 	mux.HandleFunc("PATCH /deployed-products/{id}", deployedProductHandler.PatchDeployedProduct)
+	mux.HandleFunc("POST /deployments/{deploymentId}/products/{productId}/metrics/search", deployedProductHandler.SearchDeployedProductMetrics)
+	mux.HandleFunc("POST /deployments/{deploymentId}/products/{productId}/metrics/usage-counts/search", deployedProductHandler.SearchDeployedProductUsageCounts)
+	mux.HandleFunc("POST /deployments/products/{id}/instances/search", instanceHandler.SearchDeployedProductInstances)
+	mux.HandleFunc("POST /deployments/products/{id}/instances/metrics/search", instanceHandler.SearchDeployedProductInstanceMetrics)
+	mux.HandleFunc("POST /deployments/products/{id}/instances/usages/search", instanceHandler.SearchDeployedProductInstanceUsage)
+	mux.HandleFunc("POST /deployments/products/{id}/instances/stats/metrics/search", instanceHandler.SearchDeployedProductInstanceMetricsStats)
+	mux.HandleFunc("POST /deployments/products/{id}/instances/stats/usages/search", instanceHandler.SearchDeployedProductInstanceUsageStats)
 
 	mux.HandleFunc("POST /attachments", attachmentHandler.CreateAttachment)
 	mux.HandleFunc("POST /attachments/search", attachmentHandler.SearchAttachments)
 	mux.HandleFunc("GET /attachments/{id}/content", attachmentHandler.GetAttachmentContent)
+	mux.HandleFunc("GET /attachments/{id}", attachmentHandler.GetAttachment)
 	mux.HandleFunc("DELETE /attachments/{id}", attachmentHandler.DeleteAttachment)
 
 	mux.HandleFunc("POST /products/search", productHandler.SearchProducts)
@@ -212,6 +290,10 @@ func main() {
 
 	mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
 	mux.HandleFunc("GET /products/vulnerabilities/{id}", productVulnerabilityHandler.GetProductVulnerability)
+	mux.HandleFunc("GET /products/vulnerabilities/meta", globalHandler.GetVulnerabilityMeta)
+
+	mux.HandleFunc("GET /metadata", globalHandler.GetMetadata)
+	mux.HandleFunc("POST /search", globalHandler.GlobalSearch)
 
 	mux.HandleFunc("POST /catalogs/search", catalogHandler.SearchCatalogs)
 	mux.HandleFunc("GET /catalogs/{catalogId}/items/{catalogItemId}/variables", catalogHandler.GetCatalogItemVariables)
@@ -224,11 +306,13 @@ func main() {
 	// upstream AI chat agent directly; conversation search/messages/summary
 	// mix the AI agent with entity-service's conversation/comment routes.
 	// See handler.AIChatHandler and handler.WebSocketHandler's doc comments
-	// for the entity-service gaps (no createConversation/updateConversation,
-	// no comment createdBy override) this works around.
+	// for the comment createdBy override gap this works around.
 	mux.HandleFunc("POST /cases/classify", aiChatHandler.ClassifyCase)
 	mux.HandleFunc("POST /conversations/recommendations/search", aiChatHandler.SearchRecommendations)
 	mux.HandleFunc("POST /projects/{id}/conversations/search", aiChatHandler.SearchConversations)
+	mux.HandleFunc("POST /projects/{id}/conversations", aiChatHandler.CreateConversation)
+	mux.HandleFunc("GET /conversations/{id}", aiChatHandler.GetConversation)
+	mux.HandleFunc("PATCH /conversations/{id}", aiChatHandler.UpdateConversation)
 	mux.HandleFunc("GET /conversations/{id}/messages", aiChatHandler.GetConversationMessages)
 	mux.HandleFunc("POST /projects/{projectId}/conversations/{conversationId}/messages", aiChatHandler.SendConversationMessage)
 	mux.HandleFunc("GET /projects/{id}/conversations/{conversationId}/summary", aiChatHandler.GetConversationSummary)

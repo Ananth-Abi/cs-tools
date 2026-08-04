@@ -35,6 +35,11 @@ type entityCaseClient interface {
 	UpdateCase(ctx context.Context, id string, req entity.UpdateCaseRequest) (entity.UpdateCaseResponse, error)
 	CreateCaseComment(ctx context.Context, caseID string, req entity.CreateCaseCommentRequest) (entity.CreateCaseCommentResponse, error)
 	SearchCaseActivities(ctx context.Context, caseID string, req entity.SearchCaseActivitiesRequest) (entity.SearchCaseActivitiesResponse, error)
+	GetCaseFeedback(ctx context.Context, caseID string) (entity.CaseFeedback, error)
+	SubmitCaseFeedback(ctx context.Context, caseID string, req entity.SubmitCaseFeedbackRequest) (entity.SubmitCaseFeedbackResponse, error)
+	UpdateAttachment(ctx context.Context, id string, req entity.UpdateAttachmentRequest) (entity.UpdateAttachmentResponse, error)
+	CreateEscalation(ctx context.Context, req entity.CreateEscalationRequest) (entity.CreateEscalationResponse, error)
+	SearchEscalations(ctx context.Context, req entity.SearchEscalationsRequest) (entity.SearchEscalationsResponse, error)
 }
 
 // CaseHandler handles HTTP requests for case operations.
@@ -252,4 +257,182 @@ func (h *CaseHandler) SearchCaseActivities(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeJSONValue(w, http.StatusOK, dto.MapSearchCaseActivities(result))
+}
+
+// GetCaseFeedback handles GET /cases/{id}/feedback.
+func (h *CaseHandler) GetCaseFeedback(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.GetCaseFeedback(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetCaseFeedback failed", "userID", user.UserID, "caseID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to retrieve feedback for the case.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapCaseFeedback(result))
+}
+
+// SubmitCaseFeedback handles POST /cases/{id}/feedback.
+func (h *CaseHandler) SubmitCaseFeedback(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.SubmitCaseFeedbackRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SubmitCaseFeedback(r.Context(), id, dto.BuildEntitySubmitCaseFeedbackRequest(req))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SubmitCaseFeedback failed", "userID", user.UserID, "caseID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to submit feedback for the case.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusCreated, dto.MapSubmitCaseFeedbackResponse(result))
+}
+
+// PatchCaseAttachment handles PATCH /cases/{caseId}/attachments/{attachmentId}.
+// referenceId/referenceType are injected server-side (caseId path param,
+// ReferenceTypeCase). Only Name is read from the request body — Description
+// is never wired through here, matching the Ballerina reference's own
+// restriction for this route (case attachments don't carry a description).
+func (h *CaseHandler) PatchCaseAttachment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("caseId")
+	attachmentID := r.PathValue("attachmentId")
+	if !uuidRe.MatchString(caseID) || !uuidRe.MatchString(attachmentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.AttachmentUpdateRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	req.Description = nil // this route never forwards description, matching the Ballerina reference
+
+	entityReq := dto.BuildEntityUpdateAttachmentRequest(req, caseID, entity.ReferenceTypeCase)
+	result, err := h.entity.UpdateAttachment(r.Context(), attachmentID, entityReq)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity UpdateAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to update the attachment.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapUpdatedAttachment(result))
+}
+
+// CreateCaseEscalation handles POST /cases/{caseId}/escalations.
+func (h *CaseHandler) CreateCaseEscalation(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("caseId")
+	if !uuidRe.MatchString(caseID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.EscalationCreateRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	action, ok, errMsg := dto.ValidateEscalationAction(req)
+	if !ok {
+		writeError(w, http.StatusBadRequest, errMsg)
+		return
+	}
+
+	result, err := h.entity.CreateEscalation(r.Context(), dto.BuildEntityCreateEscalationRequest(caseID, action, req))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateEscalation failed", "userID", user.UserID, "caseID", caseID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to create escalation.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusCreated, dto.MapEscalationCreateResponse(result))
+}
+
+// SearchCaseEscalations handles POST /cases/{caseId}/escalations/search.
+// filters.caseIds is always forced to [caseId] server-side.
+func (h *CaseHandler) SearchCaseEscalations(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("caseId")
+	if !uuidRe.MatchString(caseID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.EscalationSearchRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SearchEscalations(r.Context(), dto.BuildEntitySearchEscalationsRequest(caseID, req))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchEscalations failed", "userID", user.UserID, "caseID", caseID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to search escalations.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapEscalationSearchResponse(result))
 }

@@ -100,3 +100,82 @@ type DeleteResponse struct {
 func MapDeleteAttachment(r entity.DeleteAttachmentResponse) DeleteResponse {
 	return DeleteResponse{Message: r.Message}
 }
+
+// AttachmentDetails is the portal's response for GET /attachments/{id} —
+// metadata plus base64-encoded content. entity-service's response has no
+// fields worth restricting here (the Ballerina reference returns it as-is
+// too), so this is a direct passthrough shape kept as its own portal type
+// purely for this package's "always map through dto" convention.
+type AttachmentDetails struct {
+	ID          string    `json:"id"`
+	ReferenceID string    `json:"referenceId"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type"`
+	SizeBytes   int       `json:"sizeBytes"`
+	Description *string   `json:"description"`
+	CreatedBy   string    `json:"createdBy"`
+	CreatedOn   time.Time `json:"createdOn"`
+	DownloadURL *string   `json:"downloadUrl"`
+	PreviewURL  *string   `json:"previewUrl"`
+	Content     string    `json:"content"`
+}
+
+// MapAttachmentDetails builds the portal response from entity-service's AttachmentDetails.
+func MapAttachmentDetails(r entity.AttachmentDetails) AttachmentDetails {
+	return AttachmentDetails{
+		ID:          r.ID,
+		ReferenceID: r.ReferenceID,
+		Name:        r.Name,
+		Type:        r.Type,
+		SizeBytes:   r.SizeBytes,
+		Description: r.Description,
+		CreatedBy:   r.CreatedBy,
+		CreatedOn:   r.CreatedOn,
+		DownloadURL: r.DownloadURL,
+		PreviewURL:  r.PreviewURL,
+		Content:     r.Content,
+	}
+}
+
+// AttachmentUpdateRequest is the portal's request body for the two
+// reference-scoped attachment-update routes (PATCH
+// /deployments/{deploymentId}/attachments/{attachmentId} and PATCH
+// /cases/{caseId}/attachments/{attachmentId}). referenceId/referenceType are
+// never client-supplied — each handler injects them from its own path
+// params and the appropriate ReferenceType, matching the Ballerina
+// reference's two routes. The case-scoped route only ever reads Name (never
+// Description), matching that route's own restriction in the Ballerina backend.
+type AttachmentUpdateRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+// BuildEntityUpdateAttachmentRequest builds entity-service's
+// UpdateAttachmentRequest from the portal request plus the reference id/type
+// the calling handler injects.
+func BuildEntityUpdateAttachmentRequest(req AttachmentUpdateRequest, referenceID string, referenceType entity.ReferenceType) entity.UpdateAttachmentRequest {
+	return entity.UpdateAttachmentRequest{
+		ReferenceID:   referenceID,
+		ReferenceType: referenceType,
+		Name:          req.Name,
+		Description:   req.Description,
+	}
+}
+
+// UpdatedAttachment is the portal's response for the two attachment-update routes.
+type UpdatedAttachment struct {
+	ID        string    `json:"id"`
+	UpdatedOn time.Time `json:"updatedOn"`
+	UpdatedBy string    `json:"updatedBy"`
+}
+
+// MapUpdatedAttachment builds the portal response from entity-service's
+// UpdateAttachmentResponse — a raw passthrough of the attachment field,
+// matching the Ballerina reference (both routes return response.attachment directly).
+func MapUpdatedAttachment(r entity.UpdateAttachmentResponse) UpdatedAttachment {
+	return UpdatedAttachment{
+		ID:        r.Attachment.ID,
+		UpdatedOn: r.Attachment.UpdatedOn,
+		UpdatedBy: r.Attachment.UpdatedBy,
+	}
+}

@@ -5,11 +5,14 @@ Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a b
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 60 routes listed below are implemented so far, across
-entity-service, the WSO2 Updates service, SCIM, the AI chat agent, and the product-consumption
-service (two more separate services — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent) and
-[CLAUDE.md](./CLAUDE.md#the-product-consumption-service)). Everything else the Ballerina backend
-exposes still needs a Go handler; add them following the pattern described in
+This is a work in progress — only the 101 routes listed below are implemented so far, across
+entity-service, the WSO2 Updates service, SCIM, the AI chat agent, the product-consumption
+service, the registry (robot-account) service, and the project-contact onboarding service (six
+more separate services — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent),
+[CLAUDE.md](./CLAUDE.md#the-product-consumption-service),
+[CLAUDE.md](./CLAUDE.md#the-registry-service), and
+[CLAUDE.md](./CLAUDE.md#the-project-contact-onboarding-service)). Everything else the Ballerina
+backend exposes still needs a Go handler; add them following the pattern described in
 [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
 
 ## Quick Start
@@ -30,9 +33,10 @@ Backend starts at `http://localhost:8080`.
 - Entry point: `cmd/server/main.go`
 - Authentication:
   - Incoming requests: JWT Bearer token; pass as `x-jwt-assertion` header when testing locally
-  - Outbound calls to entity-service, the Updates service, SCIM, the AI chat agent, and the
-    product-consumption service: OAuth2 client credentials grant, shared across all five (optional
-    — entity-service itself does not validate inbound credentials, see [CLAUDE.md](./CLAUDE.md))
+  - Outbound calls to entity-service, the Updates service, SCIM, the AI chat agent, the
+    product-consumption service, the registry service, and the project-contact onboarding service:
+    OAuth2 client credentials grant, shared across all seven (optional — entity-service itself does
+    not validate inbound credentials, see [CLAUDE.md](./CLAUDE.md))
 
 ## Prerequisites
 
@@ -45,6 +49,11 @@ Backend starts at `http://localhost:8080`.
   `/cases/classify`, `/conversations/*`, `/projects/*/conversations/*`, and `/ws`)
 - A running instance of the product-consumption service (a separate service, not entity-service —
   for `/projects/*/deployments/*/license` and `/deployment-usages`)
+- A running instance of the registry (robot-account) service (a separate service, not
+  entity-service — for `/projects/*/registry-tokens*`, `/registry-tokens/*`, and
+  `/projects/*/integration-users`)
+- A running instance of the project-contact onboarding service (a separate service, not
+  entity-service, not SCIM — for `/projects/*/contacts*`)
 
 ## Testing
 
@@ -84,8 +93,9 @@ Copy `.env.example` to `.env` and fill in the values.
 ### Shared OAuth2 client credentials
 
 Every upstream service client (entity-service, updates, SCIM, the AI chat agent, the
-product-consumption service) authenticates as the same OAuth2 client-credentials app — only each
-service's base URL and scopes differ.
+product-consumption service, the registry service, and the project-contact onboarding service)
+authenticates as the same OAuth2 client-credentials app — only each service's base URL and scopes
+differ.
 
 | Variable | Description |
 |---|---|
@@ -133,6 +143,25 @@ A separate service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#the-prod
 | `PRODUCT_CONSUMPTION_BASE_URL` | Base URL of the product-consumption service |
 | `PRODUCT_CONSUMPTION_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 
+### Registry service
+
+A separate service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#the-registry-service).
+
+| Variable | Description |
+|---|---|
+| `REGISTRY_BASE_URL` | Base URL of the registry (robot-account) service |
+| `REGISTRY_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+
+### Project-contact onboarding service
+
+A separate service (not entity-service, not SCIM) — see
+[CLAUDE.md](./CLAUDE.md#the-project-contact-onboarding-service).
+
+| Variable | Description |
+|---|---|
+| `USER_MANAGEMENT_BASE_URL` | Base URL of the project-contact onboarding service |
+| `USER_MANAGEMENT_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+
 ### Auth
 
 | Variable | Description |
@@ -141,6 +170,7 @@ A separate service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#the-prod
 | `AUTH_ISSUER` | Expected `iss` claim value |
 | `AUTH_AUDIENCE` | Comma-separated accepted `aud` values |
 | `AUTH_TOKEN_VALIDATOR_ENABLED` | `false` skips JWT signature verification — **local development only**; `.env.example` ships `false` for local convenience. Production **must** set this to `true` with a real `AUTH_JWKS_ENDPOINT`/`AUTH_ISSUER`/`AUTH_AUDIENCE` |
+| `AUTH_ADMIN_ROLE` | The role string (from entity-service's `GET /users/me` `roles`) that grants admin privileges for registry-token and project-contact management |
 
 ### Server
 
@@ -170,9 +200,19 @@ backend-v2/
 │   │   ├── call_requests.go     # CreateCallRequest, SearchCallRequests, UpdateCallRequest
 │   │   ├── comments.go          # CreateComment, SearchComments (generic, any reference entity)
 │   │   ├── conversations.go     # SearchConversations
-│   │   ├── product_vulnerabilities.go # SearchProductVulnerabilities, GetProductVulnerability
+│   │   ├── product_vulnerabilities.go # SearchProductVulnerabilities, GetProductVulnerability, GetVulnerabilityMeta
 │   │   ├── catalogs.go          # SearchCatalogs, GetCatalogItemVariables
-│   │   └── time_cards.go        # SearchTimeCards
+│   │   ├── time_cards.go        # SearchTimeCards, SearchCaseTimeCards
+│   │   ├── global.go            # GetSystemMetadata, GlobalSearch
+│   │   └── instances.go         # SearchInstances, SearchInstanceMetrics/Usage/MetricsStats/UsageStats
+│   ├── registry/                # OAuth2 HTTP client for the registry (robot-account) service (not entity-service)
+│   │   ├── client.go            # Config/Client/do()
+│   │   ├── types.go
+│   │   └── registry.go          # CreateToken, SearchTokens, GetTokenByID, DeleteToken, RegenerateToken, GetIntegrationUsersByProjectID, DeriveTokenInfoFromDescription
+│   ├── usermanagement/           # OAuth2 HTTP client for the project-contact onboarding service (not entity-service, not SCIM)
+│   │   ├── client.go            # Config/Client/do()/doJSON()
+│   │   ├── types.go             # wire (semicolon-delimited role string) <-> portal (per-role booleans) translation
+│   │   └── usermanagement.go    # GetProjectContacts, CreateProjectContact, RemoveProjectContact, UpdateMembershipRole, ValidateProjectContact
 │   ├── updates/                 # OAuth2 HTTP client for the WSO2 Updates service
 │   │   ├── client.go            # Config/Client/do()
 │   │   ├── types.go             # upstream (snake_case) vs portal (camelCase) structs
@@ -208,7 +248,16 @@ backend-v2/
 │   │   ├── ai_chat.go
 │   │   ├── product_consumption.go
 │   │   ├── change_request.go
-│   │   └── call_request.go
+│   │   ├── call_request.go
+│   │   ├── global.go            # metadata, global search, vulnerability meta
+│   │   ├── conversation.go      # conversation details + status-update translation
+│   │   ├── case_feedback.go
+│   │   ├── deployed_product_metrics.go # + date-range validation helpers
+│   │   ├── escalation.go
+│   │   ├── case_time_cards.go
+│   │   ├── instance.go          # shared by all 15 instances fan-out routes
+│   │   ├── registry.go
+│   │   └── contacts.go
 │   ├── middleware/
 │   │   ├── auth.go              # JWT validation; injects UserInfo into context
 │   │   ├── correlation.go       # X-CSM-Correlation-ID propagation + slog enrichment
@@ -219,22 +268,26 @@ backend-v2/
 │       ├── users.go             # GET/PATCH /users/me
 │       ├── accounts.go          # POST /accounts/search, GET /accounts/{id}
 │       ├── projects.go          # POST /projects/search, GET /projects/{id}
-│       ├── project_stats.go     # project filters/features/dashboard-stats (composite, some graceful-degradation)
-│       ├── cases.go             # cases search/get/create/update/comment/activities
-│       ├── deployments.go       # POST /deployments/search, POST /deployments, PATCH /deployments/{id}
-│       ├── deployed_products.go # deployed-product search/create/update
-│       ├── attachments.go       # attachment create/search/download/delete
+│       ├── project_stats.go     # project filters/features/dashboard-stats (composite, some graceful-degradation), case-grouped time-cards
+│       ├── cases.go             # cases search/get/create/update/comment/activities/feedback/escalations, case-scoped attachment update
+│       ├── deployments.go       # POST /deployments/search, POST /deployments, PATCH /deployments/{id}, deployment-scoped attachment update
+│       ├── deployed_products.go # deployed-product search/create/update + per-deployed-product metrics/usage-counts
+│       ├── attachments.go       # attachment create/search/download/get/delete
 │       ├── products.go          # POST /products/search, POST /products/{id}/versions/search
 │       ├── product_vulnerabilities.go # vulnerability search/get
 │       ├── catalogs.go          # catalog search, catalog item variables
 │       ├── time_cards.go        # POST /time-cards/search
 │       ├── comments.go          # generic comment create/search
-│       ├── ai_chat.go           # case classification, recommendations, conversation search/messages/summary
+│       ├── ai_chat.go           # case classification, recommendations, conversation create/get/update/search/messages/summary
 │       ├── websocket.go         # GET /ws — real-time AI chat proxy
 │       ├── product_consumption.go # deployment license provisioning, deployment usage import
 │       ├── change_requests.go   # change-request create/search/get/update/approvals
 │       ├── call_requests.go     # call-request create/search/update
-│       └── updates.go           # GET /updates/product-update-levels, POST /updates/levels/search
+│       ├── updates.go           # GET /updates/product-update-levels, POST /updates/levels/search
+│       ├── global.go            # GET /metadata, POST /search, GET /products/vulnerabilities/meta
+│       ├── instances.go         # 15-route instances fan-out (project/deployment/deployed-product scoped)
+│       ├── registry.go          # registry-token create/search/delete/regenerate, project integration-users
+│       └── contacts.go          # project contact/membership add/remove/list/update-role/validate
 ├── .choreo/component.yaml
 ├── openapi.yaml
 ├── .env.example
@@ -264,14 +317,23 @@ backend-v2/
 - `POST /cases` — create a case
 - `PATCH /cases/{id}` — update a case (restricted, customer-safe field subset — see CLAUDE.md)
 - `POST /cases/{id}/comments` — add a comment to a case (always a plain customer comment)
+- `GET /cases/{id}/feedback` — get feedback previously submitted for a case (ServiceNow data source only)
+- `POST /cases/{id}/feedback` — submit feedback for a case (ServiceNow data source only)
+- `PATCH /cases/{caseId}/attachments/{attachmentId}` — update a case attachment's name (description not supported on this route — see CLAUDE.md)
+- `POST /cases/{caseId}/escalations` — escalate or de-escalate a case (ServiceNow data source only)
+- `POST /cases/{caseId}/escalations/search` — search a case's escalations (ServiceNow data source only)
 - `POST /deployments/search` — search deployments
 - `POST /deployments` — create a deployment (ServiceNow data source only)
 - `PATCH /deployments/{id}` — update a deployment's name/type/description, or deactivate it
+- `PATCH /deployments/{deploymentId}/attachments/{attachmentId}` — update a deployment attachment's name/description
 - `POST /deployed-products/search` — search deployed products
 - `POST /deployed-products` — create a deployed product (ServiceNow data source only)
 - `PATCH /deployed-products/{id}` — update a deployed product's cores/tps/description, or deactivate it (ServiceNow data source only)
+- `POST /deployments/{deploymentId}/products/{productId}/metrics/search` — get core-count metrics for a deployed product over a date range (`productId` is the deployed product's own ID; ServiceNow data source only)
+- `POST /deployments/{deploymentId}/products/{productId}/metrics/usage-counts/search` — get usage-count metrics for a deployed product over a date range (ServiceNow data source only)
 - `POST /attachments` — create an attachment
 - `POST /attachments/search` — search attachments
+- `GET /attachments/{id}` — get an attachment's metadata plus base64-encoded content
 - `GET /attachments/{id}/content` — download an attachment's raw file content
 - `DELETE /attachments/{id}` — delete an attachment
 - `POST /cases/{id}/activities/search` — search a case's activity feed (comments, attachments, field changes)
@@ -288,22 +350,45 @@ backend-v2/
 - `POST /products/{id}/versions/search` — search a product's versions
 - `POST /products/vulnerabilities/search` — search product vulnerabilities
 - `GET /products/vulnerabilities/{id}` — get a product vulnerability by ID
+- `GET /products/vulnerabilities/meta` — get valid vulnerability severity choices
 - `POST /catalogs/search` — search service catalogs, scoped by deployedProductId
 - `GET /catalogs/{catalogId}/items/{catalogItemId}/variables` — get a catalog item's form variables
 - `POST /time-cards/search` — search time cards (read-only; ServiceNow data source only)
+- `POST /projects/{id}/cases/time-cards/search` — search time cards rolled up by case for a project (ServiceNow data source only)
 - `POST /comments` — add a comment to any reference entity (case, conversation, change_request, deployment, incident) — always a plain customer comment
 - `POST /comments/search` — search comments on a reference entity — always filtered to plain customer comments
+- `GET /metadata` — get system-wide reference data (time zones, project types, feedback emoji choices)
+- `POST /search` — global search across projects and cases
+- `GET /conversations/{id}` — get a conversation's details
+- `PATCH /conversations/{id}` — update a conversation's status to `closed`/`abandoned`/`converted`
+- `POST /projects/{id}/conversations` — start a new conversation and get the AI agent's first response (creates the conversation, calls the AI agent, optionally fetches KB recommendations, persists the reply as a comment, and auto-resolves if the agent reports the issue solved)
 - `POST /cases/classify` — classify a chat transcript into a case type/severity via the AI chat agent
 - `POST /conversations/recommendations/search` — get KB article recommendations via the AI chat agent
 - `POST /projects/{id}/conversations/search` — search a project's AI chat conversations
 - `GET /conversations/{id}/messages` — get a conversation's messages (backed by generic comment search)
 - `POST /projects/{projectId}/conversations/{conversationId}/messages` — send a follow-up message on an existing conversation
 - `GET /projects/{id}/conversations/{conversationId}/summary` — get a conversation's summary via the AI chat agent
-- `GET /ws?sessionId={projectId}` — WebSocket: real-time AI chat proxy for an existing conversation (see CLAUDE.md — starting a brand-new conversation isn't supported yet)
+- `GET /ws?sessionId={projectId}` — WebSocket: real-time AI chat proxy for an existing conversation (starting a brand-new conversation over this connection isn't supported — use `POST /projects/{id}/conversations` first, see CLAUDE.md)
 - `POST /projects/{projectId}/deployments/{deploymentId}/license` — provision (or resume provisioning) and return a deployment's license via the product-consumption service
 - `POST /deployment-usages` — import a deployment-usage zip file (raw binary body, `Content-Type: application/zip`) via the product-consumption service
 - `GET /updates/product-update-levels` — list product update levels
 - `POST /updates/levels/search` — search update descriptions between two update levels
+- Instances fan-out (15 routes — `searchInstances`/`searchInstanceMetrics`/`searchInstanceUsage`/`searchInstanceMetricsStats`/`searchInstanceUsageStats`, each exposed project-scoped, deployment-scoped, and deployed-product-scoped; ServiceNow data source only):
+  - `POST /projects/{id}/instances/search`, `POST /deployments/{id}/instances/search`, `POST /deployments/products/{id}/instances/search`
+  - `POST /projects/{id}/instances/metrics/search`, `POST /deployments/{id}/instances/metrics/search`, `POST /deployments/products/{id}/instances/metrics/search`
+  - `POST /projects/{id}/instances/usages/search`, `POST /deployments/{id}/instances/usages/search`, `POST /deployments/products/{id}/instances/usages/search`
+  - `POST /projects/{id}/instances/stats/metrics/search`, `POST /deployments/{id}/instances/stats/metrics/search`, `POST /deployments/products/{id}/instances/stats/metrics/search`
+  - `POST /projects/{id}/instances/stats/usages/search`, `POST /deployments/{id}/instances/stats/usages/search`, `POST /deployments/products/{id}/instances/stats/usages/search`
+- `POST /projects/{id}/registry-tokens` — create a registry token (robot account); service tokens require admin, non-admins can only create tokens for themselves
+- `POST /projects/{id}/registry-tokens/search` — search a project's registry tokens (non-admins only see their own)
+- `DELETE /registry-tokens/{id}` — delete a registry token (authorization is derived from the token's own project, not the URL)
+- `POST /registry-tokens/{id}/regenerate` — regenerate a registry token's secret
+- `GET /projects/{id}/integration-users` — list a project's integration (service-account) users
+- `GET /projects/{id}/contacts` — list a project's contacts
+- `POST /projects/{id}/contacts` — add a contact to a project (`adminEmail` is always the caller)
+- `DELETE /projects/{id}/contacts/{email}` — remove a contact from a project
+- `PATCH /projects/{id}/contacts/{email}` — update a contact's membership roles
+- `POST /projects/{id}/contacts/validate` — validate whether a contact can be onboarded before adding them (may return a conflict, a reactivatable existing contact, or a green light)
 
 Full request/response schemas are documented in [openapi.yaml](./openapi.yaml). All entity-service
 and SCIM response shapes are portal-owned DTOs (see `internal/dto`) — the raw upstream response is
@@ -519,4 +604,93 @@ curl -H "x-jwt-assertion: $JWT" http://localhost:8080/updates/product-update-lev
 curl -X POST http://localhost:8080/updates/levels/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"productName":"wso2am","productVersion":"4.2.0","startingUpdateLevel":1,"endingUpdateLevel":10}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/metadata
+
+curl -X POST http://localhost:8080/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"filters":{"searchQuery":"acme"}}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/conversations/<conversation-id>
+
+curl -X PATCH http://localhost:8080/conversations/<conversation-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"status":"closed"}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/conversations \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"message":"My API gateway is down","region":"EU","tier":"gold"}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/cases/<case-id>/feedback
+
+curl -X POST http://localhost:8080/cases/<case-id>/feedback \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"emojiId":"<emoji-id>","chipIds":["<chip-id>"],"additionalComment":"Resolved quickly, thanks!"}'
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/attachments/<attachment-id>
+
+curl -X PATCH http://localhost:8080/deployments/<deployment-id>/attachments/<attachment-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"name":"updated-log.txt","description":"Renamed for clarity"}'
+
+curl -X PATCH http://localhost:8080/cases/<case-id>/attachments/<attachment-id> \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"name":"updated-log.txt"}'
+
+curl -X POST http://localhost:8080/deployments/<deployment-id>/products/<deployed-product-id>/metrics/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"startDate":"2026-07-01","endDate":"2026-07-31"}'
+
+curl -X POST http://localhost:8080/deployments/<deployment-id>/products/<deployed-product-id>/metrics/usage-counts/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"startDate":"2026-07-01","endDate":"2026-07-31"}'
+
+curl -X POST http://localhost:8080/cases/<case-id>/escalations \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"action":"ESCALATE","reason":"No response in 48 hours"}'
+
+curl -X POST http://localhost:8080/cases/<case-id>/escalations/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0}}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/cases/time-cards/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0}}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/instances/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"pagination":{"limit":10,"offset":0}}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/instances/metrics/search \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"startDate":"2026-07-01","endDate":"2026-07-31"}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/registry-tokens \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"robotName":"ci-pipeline","tokenType":"User"}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/registry-tokens/search \
+  -H "x-jwt-assertion: $JWT"
+
+curl -X DELETE -H "x-jwt-assertion: $JWT" http://localhost:8080/registry-tokens/<token-id>
+
+curl -X POST -H "x-jwt-assertion: $JWT" http://localhost:8080/registry-tokens/<token-id>/regenerate
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/integration-users
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/contacts
+
+curl -X POST http://localhost:8080/projects/<project-id>/contacts \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"contactEmail":"jane@example.com","contactFirstName":"Jane","contactLastName":"Doe","isCsIntegrationUser":false,"isPortalUser":true}'
+
+curl -X DELETE -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/contacts/jane@example.com
+
+curl -X PATCH http://localhost:8080/projects/<project-id>/contacts/jane@example.com \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"isLead":true}'
+
+curl -X POST http://localhost:8080/projects/<project-id>/contacts/validate \
+  -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
+  -d '{"contactEmail":"jane@example.com"}'
 ```

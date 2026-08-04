@@ -47,28 +47,29 @@ const wsMaxMessageBytes = 64 << 10 // 64 KiB
 // an idle peer before closing the connection.
 const wsIdleTimeout = 5 * time.Minute
 
-// entityCommentCreator is the subset of entityCommentClient needed to persist
-// a conversation message as a comment.
+// entityCommentCreator is the subset of the entity client needed to persist
+// conversation messages as comments and auto-resolve a conversation.
 type entityCommentCreator interface {
 	CreateComment(ctx context.Context, req entity.CreateCommentRequest) (entity.CreateCommentResponse, error)
+	UpdateConversation(ctx context.Context, id string, req entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error)
 }
+
+// wsAutoResolveState is entity-service's ConversationState value used to
+// auto-resolve a conversation when the AI agent reports the issue solved.
+const wsAutoResolveState = "RESOLVED"
 
 // WebSocketHandler proxies real-time chat messages between the browser and
 // the upstream AI chat agent for an existing conversation.
 //
-// NOTE: entity-service has no createConversation, so unlike the Ballerina
-// backend this is rewriting, a WebSocket message that doesn't carry an
-// existing conversationId cannot start a brand-new conversation here — the
-// caller must first create one via a future entity-service-backed endpoint.
-// TODO(entity-service): once entity-service gains createConversation, wire
-// the same "no conversationId → create one" branch the Ballerina backend has.
-// TODO(entity-service): the AI agent's own reply is not persisted as a
-// comment here (unlike Ballerina, which tags it with a special "chat agent"
-// createdBy) because entity-service's CreateCommentRequest always attributes
-// the comment to the caller's own identity — there is no createdBy override.
-// TODO(entity-service): marking the conversation "resolved" when the AI
-// agent reports resolved=true is skipped — entity-service has no
-// updateConversation yet.
+// NOTE: entity-service has no createConversation exposed over this
+// connection, so unlike the Ballerina backend this is rewriting, a WebSocket
+// message that doesn't carry an existing conversationId cannot start a
+// brand-new conversation here — the caller must first create one via
+// POST /projects/{id}/conversations (see handler.AIChatHandler.CreateConversation).
+// The AI agent's own reply IS persisted as a comment here (see
+// handleMessage), but — like AIChatHandler.SendConversationMessage — it is
+// attributed to the caller's own identity, not a distinct "agent" identity,
+// since entity-service's CreateCommentRequest has no createdBy override.
 type WebSocketHandler struct {
 	ai      wsStreamer
 	entity  entityCommentCreator
@@ -226,7 +227,32 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 		}
 	}
 
-	_ = result // the AI agent's reply is not persisted as a comment — see WebSocketHandler's doc comment.
+	var agentMessageText string
+	if raw, ok := result["message"]; ok {
+		_ = json.Unmarshal(raw, &agentMessageText)
+	}
+	if agentMessageText != "" {
+		// See WebSocketHandler's doc comment: attributed to the caller, not a
+		// distinct "agent" identity — entity-service has no createdBy override.
+		if _, err := h.entity.CreateComment(ctx, entity.CreateCommentRequest{
+			ReferenceID:   conversationID,
+			ReferenceType: entity.ReferenceTypeConversation,
+			Type:          entity.CommentTypeComment,
+			Content:       agentMessageText,
+		}); err != nil {
+			slog.ErrorContext(ctx, "entity CreateComment failed for chat response", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		}
+	}
+
+	var resolved bool
+	if raw, ok := result["resolved"]; ok {
+		_ = json.Unmarshal(raw, &resolved)
+	}
+	if resolved {
+		if _, err := h.entity.UpdateConversation(ctx, conversationID, entity.UpdateConversationRequest{State: wsAutoResolveState}); err != nil {
+			slog.ErrorContext(ctx, "entity UpdateConversation failed to auto-resolve", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		}
+	}
 }
 
 func writeWSJSON(conn *websocket.Conn, v any) error {

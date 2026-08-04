@@ -1693,3 +1693,627 @@ type UpdateCallRequestResponse struct {
 	Message     string             `json:"message"`
 	CallRequest CallRequestUpdated `json:"callRequest"`
 }
+
+// --- global metadata and search ---
+
+// FeedbackEmojiChip mirrors entity-service's domain.FeedbackEmojiChip.
+type FeedbackEmojiChip struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// FeedbackEmoji mirrors entity-service's domain.FeedbackEmoji.
+type FeedbackEmoji struct {
+	ID              string              `json:"id"`
+	Name            string              `json:"name"`
+	Value           string              `json:"value"`
+	UnselectedImage string              `json:"unselectedImage"`
+	SelectedImage   string              `json:"selectedImage"`
+	Chips           []FeedbackEmojiChip `json:"chips"`
+}
+
+// SystemMetadataResponse is entity-service's response for GET /metadata.
+type SystemMetadataResponse struct {
+	TimeZones      []ChoiceListItem     `json:"timeZones"`
+	ProjectTypes   []ReferenceTableItem `json:"projectTypes"`
+	FeedbackEmojis []FeedbackEmoji      `json:"feedbackEmojies"`
+}
+
+// GlobalSearchFilters holds the optional filter criteria for POST /search.
+type GlobalSearchFilters struct {
+	SearchQuery string   `json:"searchQuery,omitempty"`
+	Tables      []string `json:"tables,omitempty"`
+}
+
+// GlobalSearchSort specifies the sort field/order for POST /search.
+type GlobalSearchSort struct {
+	Field string `json:"field,omitempty"`
+	Order string `json:"order,omitempty"`
+}
+
+// GlobalSearchRequest is entity-service's request body for POST /search.
+type GlobalSearchRequest struct {
+	Filters            *GlobalSearchFilters `json:"filters,omitempty"`
+	SortBy             *GlobalSearchSort    `json:"sortBy,omitempty"`
+	ProjectsPagination *Pagination          `json:"projectsPagination,omitempty"`
+	CasesPagination    *Pagination          `json:"casesPagination,omitempty"`
+}
+
+// GlobalSearchProject is a project row in a global search result.
+type GlobalSearchProject struct {
+	ID                  string             `json:"id"`
+	Name                string             `json:"name"`
+	Description         *string            `json:"description"`
+	Key                 string             `json:"key"`
+	Type                ReferenceTableItem `json:"type"`
+	CreatedOn           string             `json:"createdOn"`
+	StartDate           *string            `json:"startDate"`
+	EndDate             *string            `json:"endDate"`
+	HasPdpSubscription  bool               `json:"hasPdpSubscription"`
+	ClosureState        *string            `json:"closureState"`
+	Account             ReferenceTableItem `json:"account"`
+	ActiveChatsCount    int                `json:"activeChatsCount"`
+	ActionRequiredCount int                `json:"actionRequiredCount"`
+	OutstandingCount    int                `json:"outstandingCount"`
+}
+
+// GlobalSearchCase is a case row in a global search result.
+type GlobalSearchCase struct {
+	ID               string              `json:"id"`
+	InternalID       string              `json:"internalId"`
+	Number           string              `json:"number"`
+	Title            *string             `json:"title"`
+	Description      *string             `json:"description"`
+	CreatedOn        string              `json:"createdOn"`
+	CreatedBy        string              `json:"createdBy"`
+	UpdatedOn        string              `json:"updatedOn"`
+	Project          *ReferenceTableItem `json:"project"`
+	CaseType         *ReferenceTableItem `json:"caseType"`
+	State            *ChoiceListItem     `json:"state"`
+	Severity         *ChoiceListItem     `json:"severity"`
+	AssignedEngineer *ReferenceTableItem `json:"assignedEngineer"`
+	Account          ReferenceTableItem  `json:"account"`
+}
+
+// GlobalSearchResponse is entity-service's response for POST /search.
+type GlobalSearchResponse struct {
+	Query         string                `json:"query"`
+	ProjectsTotal int                   `json:"projectsTotal"`
+	CasesTotal    int                   `json:"casesTotal"`
+	Projects      []GlobalSearchProject `json:"projects"`
+	Cases         []GlobalSearchCase    `json:"cases"`
+}
+
+// VulnerabilityMetaResponse is entity-service's response for GET /products/vulnerabilities/meta.
+type VulnerabilityMetaResponse struct {
+	Severities []ChoiceListItem `json:"severities"`
+}
+
+// --- conversations CRUD ---
+
+// ConversationDetails is entity-service's response for GET /conversations/{id}.
+type ConversationDetails struct {
+	ID             string     `json:"id"`
+	Number         *string    `json:"number"`
+	InitialMessage *string    `json:"initialMessage"`
+	MessageCount   int        `json:"messageCount"`
+	Project        *EntityRef `json:"project"`
+	Case           *EntityRef `json:"case"`
+	State          *string    `json:"state"`
+	CreatedOn      string     `json:"createdOn"`
+	CreatedBy      string     `json:"createdBy"`
+	UpdatedOn      string     `json:"updatedOn"`
+	UpdatedBy      string     `json:"updatedBy"`
+}
+
+// CreateConversationRequest is entity-service's request body for POST /conversations.
+type CreateConversationRequest struct {
+	ProjectID      string `json:"projectId"`
+	InitialMessage string `json:"initialMessage"`
+}
+
+// CreatedConversation is the conversation summary returned after creation.
+type CreatedConversation struct {
+	ID        string  `json:"id"`
+	Number    string  `json:"number"`
+	CreatedBy string  `json:"createdBy"`
+	CreatedOn string  `json:"createdOn"`
+	State     *string `json:"state"`
+}
+
+// CreateConversationResponse is entity-service's response for POST /conversations.
+type CreateConversationResponse struct {
+	Message      string              `json:"message"`
+	Conversation CreatedConversation `json:"conversation"`
+}
+
+// UpdateConversationRequest is entity-service's request body for PATCH
+// /conversations/{id}. State must be one of ACTIVE, RESOLVED, CONVERTED,
+// ABANDONED, or CLOSED.
+type UpdateConversationRequest struct {
+	State string `json:"state"`
+}
+
+// UpdatedConversation is the conversation summary returned after an update.
+type UpdatedConversation struct {
+	ID        string  `json:"id"`
+	Number    *string `json:"number"`
+	UpdatedOn string  `json:"updatedOn"`
+	UpdatedBy string  `json:"updatedBy"`
+	State     *string `json:"state"`
+}
+
+// UpdateConversationResponse is entity-service's response for PATCH /conversations/{id}.
+type UpdateConversationResponse struct {
+	Message      string              `json:"message"`
+	Conversation UpdatedConversation `json:"conversation"`
+}
+
+// --- case feedback ---
+
+// SubmitCaseFeedbackRequest is entity-service's request body for POST /cases/{id}/feedback.
+type SubmitCaseFeedbackRequest struct {
+	EmojiID           string   `json:"emojiId"`
+	ChipIDs           []string `json:"chipIds,omitempty"`
+	AdditionalComment *string  `json:"additionalComment,omitempty"`
+}
+
+// CaseFeedbackResult is the feedback record created by a submission.
+type CaseFeedbackResult struct {
+	ID           string `json:"id"`
+	AssessmentID string `json:"assessmentId"`
+	CaseID       string `json:"caseId"`
+	CreatedBy    string `json:"createdBy"`
+	CreatedOn    string `json:"createdOn"`
+}
+
+// SubmitCaseFeedbackResponse is entity-service's response for POST /cases/{id}/feedback.
+type SubmitCaseFeedbackResponse struct {
+	Message  string             `json:"message"`
+	Feedback CaseFeedbackResult `json:"feedback"`
+}
+
+// CaseFeedbackEmojiRef is the emoji reference embedded in GET /cases/{id}/feedback.
+type CaseFeedbackEmojiRef struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	SelectedImage string `json:"selectedImage"`
+}
+
+// CaseFeedback is entity-service's response for GET /cases/{id}/feedback.
+type CaseFeedback struct {
+	ID                string               `json:"id"`
+	Emoji             CaseFeedbackEmojiRef `json:"emoji"`
+	ChipIDs           []string             `json:"chips"`
+	AssessmentID      string               `json:"assessmentId"`
+	CreatedBy         string               `json:"createdBy"`
+	CreatedOn         string               `json:"createdOn"`
+	AdditionalComment *string              `json:"additionalComment"`
+}
+
+// --- attachment gaps ---
+
+// AttachmentDetails is entity-service's response for GET /attachments/{id}.
+type AttachmentDetails struct {
+	ID          string    `json:"id"`
+	ReferenceID string    `json:"referenceId"`
+	Name        string    `json:"name"`
+	Type        string    `json:"type"`
+	SizeBytes   int       `json:"sizeBytes"`
+	Description *string   `json:"description"`
+	CreatedBy   string    `json:"createdBy"`
+	CreatedOn   time.Time `json:"createdOn"`
+	DownloadURL *string   `json:"downloadUrl"`
+	PreviewURL  *string   `json:"previewUrl"`
+	Content     string    `json:"content"`
+}
+
+// UpdateAttachmentRequest is entity-service's request body for PATCH /attachments/{id}.
+type UpdateAttachmentRequest struct {
+	ReferenceID   string        `json:"referenceId"`
+	ReferenceType ReferenceType `json:"referenceType"`
+	Name          *string       `json:"name,omitempty"`
+	Description   *string       `json:"description,omitempty"`
+}
+
+// UpdatedAttachment holds the fields returned after updating an attachment.
+type UpdatedAttachment struct {
+	ID        string    `json:"id"`
+	UpdatedOn time.Time `json:"updatedOn"`
+	UpdatedBy string    `json:"updatedBy"`
+}
+
+// UpdateAttachmentResponse is entity-service's response for PATCH /attachments/{id}.
+type UpdateAttachmentResponse struct {
+	Message    string            `json:"message"`
+	Attachment UpdatedAttachment `json:"attachment"`
+}
+
+// --- deployed product metrics ---
+
+// DeployedProductMetricsRequest is entity-service's request body for
+// POST /deployed-products/{id}/metrics/search.
+type DeployedProductMetricsRequest struct {
+	DeploymentID string `json:"deploymentId"`
+	StartDate    string `json:"startDate"`
+	EndDate      string `json:"endDate"`
+}
+
+// DeployedProductMetricsInstance is a single instance's contribution to a
+// metrics chart entry.
+type DeployedProductMetricsInstance struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Cores int    `json:"cores"`
+}
+
+// DeployedProductMetricsChartEntry is one date's worth of core-count data.
+type DeployedProductMetricsChartEntry struct {
+	Date          string                           `json:"date"`
+	InstanceCount int                              `json:"instanceCount"`
+	TotalCores    int                              `json:"totalCores"`
+	MinCores      int                              `json:"minCores"`
+	MaxCores      int                              `json:"maxCores"`
+	AvgCores      float64                          `json:"avgCores"`
+	Instances     []DeployedProductMetricsInstance `json:"instances"`
+}
+
+// DeployedProductMetricsDateRange is the queried date range echoed back in a summary.
+type DeployedProductMetricsDateRange struct {
+	Start string `json:"start"`
+	End   string `json:"end"`
+}
+
+// DeployedProductMetricsSummary is the summary statistics for a metrics query.
+type DeployedProductMetricsSummary struct {
+	DateRange      DeployedProductMetricsDateRange `json:"dateRange"`
+	TotalInstances int                             `json:"totalInstances"`
+	MinCores       *int                            `json:"minCores"`
+	MaxCores       *int                            `json:"maxCores"`
+	AvgCores       *float64                        `json:"avgCores"`
+}
+
+// DeployedProductMetricsResponse is entity-service's response for
+// POST /deployed-products/{id}/metrics/search.
+type DeployedProductMetricsResponse struct {
+	DeployedProduct ReferenceTableItem                 `json:"deployedProduct"`
+	Summary         DeployedProductMetricsSummary      `json:"summary"`
+	ChartData       []DeployedProductMetricsChartEntry `json:"chartData"`
+}
+
+// DeployedProductUsageCountsRequest is entity-service's request body for
+// POST /deployed-products/{id}/metrics/usage-counts/search.
+type DeployedProductUsageCountsRequest struct {
+	DeploymentID string `json:"deploymentId"`
+	StartDate    string `json:"startDate"`
+	EndDate      string `json:"endDate"`
+}
+
+// UsageCountInstance is a single instance's contribution to a usage-count entry.
+type UsageCountInstance struct {
+	ID    string  `json:"id"`
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
+}
+
+// UsageCountEntry is one count type's aggregated value on a single date.
+type UsageCountEntry struct {
+	Value       float64              `json:"value"`
+	Aggregation string               `json:"aggregation"`
+	Instances   []UsageCountInstance `json:"instances"`
+}
+
+// DeployedProductUsageCountsChartEntry is one date's worth of usage-count data.
+type DeployedProductUsageCountsChartEntry struct {
+	Date   string                     `json:"date"`
+	Counts map[string]UsageCountEntry `json:"counts"`
+}
+
+// CountTypeAggregation is the summary statistics for a single count type over
+// the queried date range.
+type CountTypeAggregation struct {
+	Aggregation string  `json:"aggregation"`
+	Min         float64 `json:"min"`
+	Max         float64 `json:"max"`
+	Avg         float64 `json:"avg"`
+}
+
+// DeployedProductUsageCountsSummary is the summary statistics for a usage-counts query.
+type DeployedProductUsageCountsSummary struct {
+	DateRange  DeployedProductMetricsDateRange `json:"dateRange"`
+	CountTypes map[string]CountTypeAggregation `json:"countTypes"`
+}
+
+// DeployedProductUsageCountsResponse is entity-service's response for
+// POST /deployed-products/{id}/metrics/usage-counts/search.
+type DeployedProductUsageCountsResponse struct {
+	DeployedProduct ReferenceTableItem                     `json:"deployedProduct"`
+	Summary         DeployedProductUsageCountsSummary      `json:"summary"`
+	ChartData       []DeployedProductUsageCountsChartEntry `json:"chartData"`
+}
+
+// --- escalations ---
+
+// CreateEscalationRequest is entity-service's request body for POST /escalations.
+type CreateEscalationRequest struct {
+	CaseID string  `json:"caseId"`
+	Reason *string `json:"reason,omitempty"`
+	Action *string `json:"action,omitempty"`
+}
+
+// EscalationNotifiedUser is a user notified about an escalation.
+type EscalationNotifiedUser struct {
+	ID       string  `json:"id"`
+	UserName string  `json:"userName"`
+	Name     *string `json:"name"`
+	Email    *string `json:"email"`
+}
+
+// CreatedEscalation holds the escalation details returned after creation.
+type CreatedEscalation struct {
+	ID                 string                   `json:"id"`
+	Case               ReferenceTableItem       `json:"case"`
+	CurrentLevel       ChoiceListItem           `json:"currentLevel"`
+	PreviousLevel      ChoiceListItem           `json:"previousLevel"`
+	CreatedBy          string                   `json:"createdBy"`
+	CreatedOn          string                   `json:"createdOn"`
+	Reason             *string                  `json:"reason"`
+	NotificationSentTo []EscalationNotifiedUser `json:"notificationSentTo"`
+}
+
+// CreateEscalationResponse is entity-service's response for POST /escalations.
+type CreateEscalationResponse struct {
+	Message    string            `json:"message"`
+	Escalation CreatedEscalation `json:"escalation"`
+}
+
+// Escalation is a single escalation row in search results.
+type Escalation struct {
+	ID                 string                   `json:"id"`
+	Case               ReferenceTableItem       `json:"case"`
+	CurrentLevel       ChoiceListItem           `json:"currentLevel"`
+	PreviousLevel      ChoiceListItem           `json:"previousLevel"`
+	CreatedBy          string                   `json:"createdBy"`
+	CreatedOn          string                   `json:"createdOn"`
+	UpdatedOn          string                   `json:"updatedOn"`
+	Reason             *string                  `json:"reason"`
+	NotificationSentTo []EscalationNotifiedUser `json:"notificationSentTo"`
+}
+
+// SearchEscalationsFilters holds the optional filter criteria for POST /escalations/search.
+type SearchEscalationsFilters struct {
+	CaseIDs       []string `json:"caseIds,omitempty"`
+	CurrentLevels []int    `json:"currentLevels,omitempty"`
+}
+
+// EscalationSort specifies the sort field/order for POST /escalations/search.
+type EscalationSort struct {
+	Field string `json:"field"`
+	Order string `json:"order"`
+}
+
+// SearchEscalationsRequest is entity-service's request body for POST /escalations/search.
+type SearchEscalationsRequest struct {
+	Filters    *SearchEscalationsFilters `json:"filters,omitempty"`
+	SortBy     *EscalationSort           `json:"sortBy,omitempty"`
+	Pagination Pagination                `json:"pagination"`
+}
+
+// SearchEscalationsResponse is the paginated result of an escalation search.
+type SearchEscalationsResponse struct {
+	Escalations []Escalation `json:"escalations"`
+	Total       int          `json:"total"`
+	Offset      int          `json:"offset"`
+	Limit       int          `json:"limit"`
+}
+
+// --- case-grouped time cards ---
+
+// CaseTimeCardBillingInfo is a billable/non-billable time breakdown.
+type CaseTimeCardBillingInfo struct {
+	TotalTime float64 `json:"totalTime"`
+	Count     int     `json:"count"`
+}
+
+// CaseTimeCardCaseRef is the case reference embedded in a case time-card summary.
+type CaseTimeCardCaseRef struct {
+	ID        string     `json:"id"`
+	Number    string     `json:"number"`
+	Name      string     `json:"name"`
+	UpdatedOn string     `json:"updatedOn"`
+	Project   *EntityRef `json:"project"`
+}
+
+// CaseTimeCardSummary is the time-card rollup for a single case.
+type CaseTimeCardSummary struct {
+	Case        CaseTimeCardCaseRef     `json:"case"`
+	TotalTime   float64                 `json:"totalTime"`
+	TotalCount  int                     `json:"totalCount"`
+	Billable    CaseTimeCardBillingInfo `json:"billable"`
+	NonBillable CaseTimeCardBillingInfo `json:"nonBillable"`
+}
+
+// SearchCaseTimeCardsResponse is entity-service's response for
+// POST /cases/time-cards/search — reuses SearchTimeCardsRequest for the request.
+type SearchCaseTimeCardsResponse struct {
+	Cases  []CaseTimeCardSummary `json:"cases"`
+	Total  int                   `json:"total"`
+	Offset int                   `json:"offset"`
+	Limit  int                   `json:"limit"`
+}
+
+// --- instances / metrics ---
+
+// InstanceSearchFilters holds the optional filter criteria for POST /instances/search.
+type InstanceSearchFilters struct {
+	StartDate          *string  `json:"startDate,omitempty"`
+	EndDate            *string  `json:"endDate,omitempty"`
+	ProjectIDs         []string `json:"projectIds,omitempty"`
+	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
+	DeployedProductIDs []string `json:"deployedProductIds,omitempty"`
+}
+
+// SearchInstancesRequest is entity-service's request body for POST /instances/search.
+type SearchInstancesRequest struct {
+	Filters    *InstanceSearchFilters `json:"filters,omitempty"`
+	Pagination Pagination             `json:"pagination"`
+}
+
+// InstanceMetadata is the metadata block embedded in an Instance.
+type InstanceMetadata struct {
+	ID                 string         `json:"id"`
+	CoreCount          *int           `json:"coreCount"`
+	Updates            *int           `json:"updates"`
+	JDKVersion         *string        `json:"jdkVersion"`
+	DeploymentMetadata map[string]any `json:"deploymentMetadata"`
+	CreatedOn          string         `json:"createdOn"`
+	UpdatedOn          string         `json:"updatedOn"`
+	CustomCreatedOn    *string        `json:"customCreatedOn"`
+	CustomUpdatedOn    *string        `json:"customUpdatedOn"`
+}
+
+// Instance is a single instance row.
+type Instance struct {
+	ID              string              `json:"id"`
+	Key             string              `json:"key"`
+	Project         *ReferenceTableItem `json:"project"`
+	Deployment      *ReferenceTableItem `json:"deployment"`
+	Product         *ReferenceTableItem `json:"product"`
+	DeployedProduct *ReferenceTableItem `json:"deployedProduct"`
+	CreatedOn       string              `json:"createdOn"`
+	UpdatedOn       string              `json:"updatedOn"`
+	Metadata        *InstanceMetadata   `json:"metadata"`
+}
+
+// SearchInstancesResponse is entity-service's response for POST /instances/search.
+type SearchInstancesResponse struct {
+	Instances []Instance `json:"instances"`
+	Total     int        `json:"total"`
+	Offset    int        `json:"offset"`
+	Limit     int        `json:"limit"`
+}
+
+// InstanceDateRangeFilters is the shared filter shape for
+// POST /instances/metrics/search and POST /instances/usages/search.
+type InstanceDateRangeFilters struct {
+	StartDate          string   `json:"startDate"`
+	EndDate            string   `json:"endDate"`
+	ProjectIDs         []string `json:"projectIds,omitempty"`
+	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
+	DeployedProductIDs []string `json:"deployedProductIds,omitempty"`
+}
+
+// InstanceMetricsRequest is entity-service's request body for POST /instances/metrics/search.
+type InstanceMetricsRequest struct {
+	Filters InstanceDateRangeFilters `json:"filters"`
+}
+
+// InstanceDataPoint is a single metric snapshot for an instance.
+type InstanceDataPoint struct {
+	Date               string         `json:"date"`
+	CreatedOn          string         `json:"createdOn"`
+	CoreCount          *int           `json:"coreCount"`
+	JDKVersion         *string        `json:"jdkVersion"`
+	Updates            *int           `json:"updates"`
+	DeploymentMetadata map[string]any `json:"deploymentMetadata"`
+}
+
+// InstanceMetric is one instance's metric time series, ordered newest to oldest.
+type InstanceMetric struct {
+	InstanceID      string              `json:"instanceId"`
+	InstanceKey     string              `json:"instanceKey"`
+	Project         *ReferenceTableItem `json:"project"`
+	Deployment      *ReferenceTableItem `json:"deployment"`
+	Product         *ReferenceTableItem `json:"product"`
+	DeployedProduct *ReferenceTableItem `json:"deployedProduct"`
+	DataPoints      []InstanceDataPoint `json:"dataPoints"`
+}
+
+// InstanceMetricsResponse is entity-service's response for POST /instances/metrics/search.
+type InstanceMetricsResponse struct {
+	Metrics        []InstanceMetric `json:"metrics"`
+	TotalInstances int              `json:"totalInstances"`
+	StartDate      string           `json:"startDate"`
+	EndDate        string           `json:"endDate"`
+}
+
+// InstanceUsageRequest is entity-service's request body for POST /instances/usages/search.
+type InstanceUsageRequest struct {
+	Filters InstanceDateRangeFilters `json:"filters"`
+}
+
+// InstanceSummary is one period's usage counts for an instance.
+type InstanceSummary struct {
+	Period string         `json:"period"`
+	Counts map[string]int `json:"counts"`
+}
+
+// InstanceUsageEntry is one instance's usage time series.
+type InstanceUsageEntry struct {
+	InstanceID      string              `json:"instanceId"`
+	InstanceKey     string              `json:"instanceKey"`
+	Project         *ReferenceTableItem `json:"project"`
+	Deployment      *ReferenceTableItem `json:"deployment"`
+	Product         *ReferenceTableItem `json:"product"`
+	DeployedProduct *ReferenceTableItem `json:"deployedProduct"`
+	PeriodSummaries []InstanceSummary   `json:"periodSummaries"`
+}
+
+// InstanceUsageResponse is entity-service's response for POST /instances/usages/search.
+type InstanceUsageResponse struct {
+	Usages         []InstanceUsageEntry `json:"usages"`
+	TotalInstances int                  `json:"totalInstances"`
+	StartDate      string               `json:"startDate"`
+	EndDate        string               `json:"endDate"`
+}
+
+// InstanceStatsFilters extends InstanceDateRangeFilters with an optional
+// dataSource discriminator, used by the two .../stats/search endpoints only.
+type InstanceStatsFilters struct {
+	StartDate          string   `json:"startDate"`
+	EndDate            string   `json:"endDate"`
+	ProjectIDs         []string `json:"projectIds,omitempty"`
+	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
+	DeployedProductIDs []string `json:"deployedProductIds,omitempty"`
+	DataSource         *int     `json:"dataSource,omitempty"`
+}
+
+// InstanceMetricsStatsRequest is entity-service's request body for
+// POST /instances/metrics/stats/search.
+type InstanceMetricsStatsRequest struct {
+	Filters InstanceStatsFilters `json:"filters"`
+}
+
+// InstanceMetricSummary is the current/min/max/avg summary for a metrics-stats query.
+type InstanceMetricSummary struct {
+	Current float64 `json:"current"`
+	Min     float64 `json:"min"`
+	Max     float64 `json:"max"`
+	Avg     float64 `json:"avg"`
+}
+
+// InstanceMetricsStatsResponse is entity-service's response for
+// POST /instances/metrics/stats/search.
+type InstanceMetricsStatsResponse struct {
+	Stats     map[string]map[string]int `json:"stats"`
+	Summary   InstanceMetricSummary     `json:"summary"`
+	Total     int                       `json:"total"`
+	StartDate string                    `json:"startDate"`
+	EndDate   string                    `json:"endDate"`
+}
+
+// InstanceUsageStatsRequest is entity-service's request body for
+// POST /instances/usages/stats/search.
+type InstanceUsageStatsRequest struct {
+	Filters InstanceStatsFilters `json:"filters"`
+}
+
+// InstanceUsageStatsResponse is entity-service's response for
+// POST /instances/usages/stats/search.
+type InstanceUsageStatsResponse struct {
+	Stats     map[string]map[string]int `json:"stats"`
+	Total     int                       `json:"total"`
+	StartDate string                    `json:"startDate"`
+	EndDate   string                    `json:"endDate"`
+}

@@ -27,3 +27,11 @@ func (c *Client) SearchTimeCards(ctx context.Context, req SearchTimeCardsRequest
 	err := c.postJSON(ctx, "/time-cards/search", req, &out)
 	return out, err
 }
+
+// SearchCaseTimeCards calls POST /cases/time-cards/search — same request
+// shape as SearchTimeCards, but results are grouped by case.
+func (c *Client) SearchCaseTimeCards(ctx context.Context, req SearchTimeCardsRequest) (SearchCaseTimeCardsResponse, error) {
+	var out SearchCaseTimeCardsResponse
+	err := c.postJSON(ctx, "/cases/time-cards/search", req, &out)
+	return out, err
+}

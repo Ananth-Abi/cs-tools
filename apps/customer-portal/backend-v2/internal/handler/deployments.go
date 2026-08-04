@@ -33,6 +33,7 @@ type entityDeploymentClient interface {
 	SearchDeployments(ctx context.Context, req entity.SearchDeploymentsRequest) (entity.SearchDeploymentsResponse, error)
 	CreateDeployment(ctx context.Context, req entity.CreateDeploymentRequest) (entity.CreateDeploymentResponse, error)
 	UpdateDeployment(ctx context.Context, id string, req entity.UpdateDeploymentRequest) (entity.UpdateDeploymentResponse, error)
+	UpdateAttachment(ctx context.Context, id string, req entity.UpdateAttachmentRequest) (entity.UpdateAttachmentResponse, error)
 }
 
 // DeploymentHandler handles HTTP requests for deployment operations.
@@ -155,4 +156,44 @@ func (h *DeploymentHandler) PatchDeployment(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSONValue(w, http.StatusOK, dto.MapDeploymentUpdate(result))
+}
+
+// PatchDeploymentAttachment handles
+// PATCH /deployments/{deploymentId}/attachments/{attachmentId}. referenceId/
+// referenceType are injected server-side (deploymentId path param,
+// ReferenceTypeDeployment) — the client only supplies name/description.
+func (h *DeploymentHandler) PatchDeploymentAttachment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	deploymentID := r.PathValue("deploymentId")
+	attachmentID := r.PathValue("attachmentId")
+	if !uuidRe.MatchString(deploymentID) || !uuidRe.MatchString(attachmentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.AttachmentUpdateRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	entityReq := dto.BuildEntityUpdateAttachmentRequest(req, deploymentID, entity.ReferenceTypeDeployment)
+	result, err := h.entity.UpdateAttachment(r.Context(), attachmentID, entityReq)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity UpdateAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to update the attachment.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapUpdatedAttachment(result))
 }
