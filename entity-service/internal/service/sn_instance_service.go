@@ -411,24 +411,16 @@ type snInstanceStatsFilters struct {
 }
 
 func validateInstanceStatsFilters(f domain.InstanceStatsFilters) (snInstanceStatsFilters, error) {
-	if err := validateUUIDs("projectIds", f.ProjectIDs); err != nil {
-		return snInstanceStatsFilters{}, err
-	}
-	if err := validateUUIDs("deploymentIds", f.DeploymentIDs); err != nil {
-		return snInstanceStatsFilters{}, err
-	}
-	if err := validateUUIDs("deployedProductIds", f.DeployedProductIDs); err != nil {
-		return snInstanceStatsFilters{}, err
-	}
-	if err := validateExclusiveIDFilters(f.ProjectIDs, f.DeploymentIDs, f.DeployedProductIDs); err != nil {
+	base, err := validateInstanceDateRangeFilters(f.InstanceDateRangeFilters)
+	if err != nil {
 		return snInstanceStatsFilters{}, err
 	}
 	return snInstanceStatsFilters{
-		StartDate:          f.StartDate,
-		EndDate:            f.EndDate,
-		ProjectIDs:         uuidsToSysids(f.ProjectIDs),
-		DeploymentIDs:      uuidsToSysids(f.DeploymentIDs),
-		DeployedProductIDs: uuidsToSysids(f.DeployedProductIDs),
+		StartDate:          base.StartDate,
+		EndDate:            base.EndDate,
+		ProjectIDs:         base.ProjectIDs,
+		DeploymentIDs:      base.DeploymentIDs,
+		DeployedProductIDs: base.DeployedProductIDs,
 		DataSource:         f.DataSource,
 	}, nil
 }

@@ -36,18 +36,18 @@ type snConversationsResponse struct {
 }
 
 type snConversation struct {
-	ID             *string                  `json:"id"`
-	Number         *string                  `json:"number"`
-	InitialMessage *string                  `json:"initialMessage"`
-	MessageCount   int                      `json:"messageCount"`
-	Project        *snConversationEntityRef `json:"project"`
-	Case           *snConversationEntityRef `json:"case"`
-	State          *snConversationIntLabel  `json:"state"`
-	CreatedOn      string                   `json:"createdOn"`
-	CreatedBy      string                   `json:"createdBy"`
+	ID             *string                 `json:"id"`
+	Number         *string                 `json:"number"`
+	InitialMessage *string                 `json:"initialMessage"`
+	MessageCount   int                     `json:"messageCount"`
+	Project        *snEntityRef            `json:"project"`
+	Case           *snEntityRef            `json:"case"`
+	State          *snConversationIntLabel `json:"state"`
+	CreatedOn      string                  `json:"createdOn"`
+	CreatedBy      string                  `json:"createdBy"`
 }
 
-type snConversationEntityRef struct {
+type snEntityRef struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
@@ -252,17 +252,17 @@ func (s *snConversationService) SearchConversations(ctx context.Context, req dom
 // (Ballerina's ConversationResponse, which inclusion-copies every field of
 // Conversation and adds updatedOn/updatedBy — flattened here).
 type snConversationDetails struct {
-	ID             string                   `json:"id"`
-	Number         *string                  `json:"number"`
-	InitialMessage *string                  `json:"initialMessage"`
-	MessageCount   int                      `json:"messageCount"`
-	CreatedOn      string                   `json:"createdOn"`
-	CreatedBy      string                   `json:"createdBy"`
-	Project        *snConversationEntityRef `json:"project"`
-	Case           *snConversationEntityRef `json:"case"`
-	State          *snConversationIntLabel  `json:"state"`
-	UpdatedOn      string                   `json:"updatedOn"`
-	UpdatedBy      string                   `json:"updatedBy"`
+	ID             string                  `json:"id"`
+	Number         *string                 `json:"number"`
+	InitialMessage *string                 `json:"initialMessage"`
+	MessageCount   int                     `json:"messageCount"`
+	CreatedOn      string                  `json:"createdOn"`
+	CreatedBy      string                  `json:"createdBy"`
+	Project        *snEntityRef            `json:"project"`
+	Case           *snEntityRef            `json:"case"`
+	State          *snConversationIntLabel `json:"state"`
+	UpdatedOn      string                  `json:"updatedOn"`
+	UpdatedBy      string                  `json:"updatedBy"`
 }
 
 func (s *snConversationService) GetConversation(ctx context.Context, id string) (domain.ConversationDetails, error) {

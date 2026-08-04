@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -361,39 +360,6 @@ func (s *snDeployedProductService) SearchDeployedProducts(ctx context.Context, r
 	}, nil
 }
 
-// validateDateRange enforces the same rules as the Ballerina reference's
-// shared validateDateRange helper: both dates must be exactly 10 characters
-// in YYYY-MM-DD format, startDate must be strictly before endDate, and the
-// span between them must not exceed one year.
-func validateDateRange(startDate, endDate string) error {
-	if len(startDate) != 10 || len(endDate) != 10 ||
-		startDate[4:5] != "-" || startDate[7:8] != "-" ||
-		endDate[4:5] != "-" || endDate[7:8] != "-" {
-		return &apierror.ValidationError{Msg: "invalid date format. Expected YYYY-MM-DD"}
-	}
-
-	startYear, errSY := strconv.Atoi(startDate[0:4])
-	startMonth, errSM := strconv.Atoi(startDate[5:7])
-	startDay, errSD := strconv.Atoi(startDate[8:10])
-	endYear, errEY := strconv.Atoi(endDate[0:4])
-	endMonth, errEM := strconv.Atoi(endDate[5:7])
-	endDay, errED := strconv.Atoi(endDate[8:10])
-	if errSY != nil || errSM != nil || errSD != nil || errEY != nil || errEM != nil || errED != nil {
-		return &apierror.ValidationError{Msg: "invalid date format. Expected YYYY-MM-DD"}
-	}
-
-	if startDate >= endDate {
-		return &apierror.ValidationError{Msg: "endDate must be after startDate"}
-	}
-
-	yearDiff := endYear - startYear
-	if yearDiff > 1 || (yearDiff == 1 && (endMonth > startMonth || (endMonth == startMonth && endDay > startDay))) {
-		return &apierror.ValidationError{Msg: "date range must not exceed 1 year"}
-	}
-
-	return nil
-}
-
 // snDeployedProductMetricsInstance mirrors the Choreo
 // DeployedProductMetricsInstance shape.
 type snDeployedProductMetricsInstance struct {
@@ -438,6 +404,12 @@ type snDeployedProductMetricsResponse struct {
 	ChartData       []snDeployedProductMetricsChartEntry `json:"chartData"`
 }
 
+type snDeployedProductMetricsSearchPayload struct {
+	DeploymentID string `json:"deploymentId"`
+	StartDate    string `json:"startDate"`
+	EndDate      string `json:"endDate"`
+}
+
 func (s *snDeployedProductService) SearchDeployedProductMetrics(ctx context.Context, id string, req domain.DeployedProductMetricsRequest) (domain.DeployedProductMetricsResponse, error) {
 	if err := validateUUIDs("id", []string{id}); err != nil {
 		return domain.DeployedProductMetricsResponse{}, err
@@ -451,11 +423,7 @@ func (s *snDeployedProductService) SearchDeployedProductMetrics(ctx context.Cont
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
-	payload := struct {
-		DeploymentID string `json:"deploymentId"`
-		StartDate    string `json:"startDate"`
-		EndDate      string `json:"endDate"`
-	}{
+	payload := snDeployedProductMetricsSearchPayload{
 		DeploymentID: uuidToSysid(req.DeploymentID),
 		StartDate:    req.StartDate,
 		EndDate:      req.EndDate,
@@ -562,11 +530,7 @@ func (s *snDeployedProductService) SearchDeployedProductUsageCounts(ctx context.
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
-	payload := struct {
-		DeploymentID string `json:"deploymentId"`
-		StartDate    string `json:"startDate"`
-		EndDate      string `json:"endDate"`
-	}{
+	payload := snDeployedProductMetricsSearchPayload{
 		DeploymentID: uuidToSysid(req.DeploymentID),
 		StartDate:    req.StartDate,
 		EndDate:      req.EndDate,

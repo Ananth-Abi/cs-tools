@@ -329,11 +329,11 @@ type snCaseTimeCardBillingInfo struct {
 // snCaseTimeCardCaseRef mirrors the case reference embedded in the Choreo
 // CaseTimeCardSummary shape.
 type snCaseTimeCardCaseRef struct {
-	ID        string                   `json:"id"`
-	Number    string                   `json:"number"`
-	Name      string                   `json:"name"`
-	UpdatedOn string                   `json:"updatedOn"`
-	Project   *snConversationEntityRef `json:"project"`
+	ID        string       `json:"id"`
+	Number    string       `json:"number"`
+	Name      string       `json:"name"`
+	UpdatedOn string       `json:"updatedOn"`
+	Project   *snEntityRef `json:"project"`
 }
 
 // snCaseTimeCardSummary mirrors the Choreo CaseTimeCardSummary shape.

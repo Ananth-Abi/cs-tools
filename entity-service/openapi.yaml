@@ -10775,7 +10775,9 @@ components:
 
     EscalationAction:
       type: string
-      description: Defaults to ESCALATE when omitted.
+      description: >
+        Defaults to ESCALATE when omitted. Matched case-insensitively by the service,
+        but callers should send the upper-case form.
       enum: [ESCALATE, DEESCALATE]
 
     CreateEscalationRequest:

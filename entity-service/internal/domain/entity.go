@@ -4125,9 +4125,7 @@ type DeployedProductMetricsResponse struct {
 // POST /deployed-products/{id}/metrics/usage-counts/search. Same shape and
 // date-range validation as DeployedProductMetricsRequest.
 type DeployedProductUsageCountsRequest struct {
-	DeploymentID string `json:"deploymentId"`
-	StartDate    string `json:"startDate"`
-	EndDate      string `json:"endDate"`
+	DeployedProductMetricsRequest
 }
 
 // UsageCountInstance is a single instance's contribution to a usage-count entry.
@@ -4454,11 +4452,7 @@ type InstanceUsageResponse struct {
 // InstanceStatsFilters extends InstanceDateRangeFilters with an optional
 // dataSource discriminator, used by the two .../stats/search endpoints only.
 type InstanceStatsFilters struct {
-	StartDate          string   `json:"startDate"`
-	EndDate            string   `json:"endDate"`
-	ProjectIDs         []string `json:"projectIds,omitempty"`
-	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
-	DeployedProductIDs []string `json:"deployedProductIds,omitempty"`
+	InstanceDateRangeFilters
 	// DataSource filters by how the data point was recorded: 1 = API Call, 2 = File Upload.
 	DataSource *int `json:"dataSource,omitempty"`
 }
