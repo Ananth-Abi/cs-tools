@@ -203,6 +203,20 @@ func TestCustomerPortalHandler_TranslatesLegacyGlobalSearchAndConversationPayloa
 	}
 }
 
+func TestCustomerPortalHandler_RejectsNonArrayConversationStateKeys(t *testing.T) {
+	client := &portalClientStub{}
+	h := NewCustomerPortalHandler(client)
+	w := httptest.NewRecorder()
+	r := portalRequest(http.MethodPost, "/projects/"+portalTestID+"/conversations/search", `{"filters":{"stateKeys":2}}`, map[string]string{"id": portalTestID})
+
+	h.SearchProjectConversations(w, r)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	if len(client.calls) != 0 {
+		t.Fatal("entity client was called with malformed stateKeys")
+	}
+}
+
 func TestCustomerPortalHandler_TranslatesConversationStatusUpdate(t *testing.T) {
 	client := &portalClientStub{}
 	h := NewCustomerPortalHandler(client)

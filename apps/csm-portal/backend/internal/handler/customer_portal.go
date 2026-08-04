@@ -197,7 +197,11 @@ func transformConversationSearchRequest(body []byte) ([]byte, error) {
 		filters = make(map[string]any)
 		payload["filters"] = filters
 	}
-	if keys, exists := filters["stateKeys"].([]any); exists {
+	if rawStateKeys, exists := filters["stateKeys"]; exists {
+		keys, ok := rawStateKeys.([]any)
+		if !ok {
+			return nil, &portalValidationError{message: "stateKeys must be an array of integers"}
+		}
 		states := make([]string, 0, len(keys))
 		for _, raw := range keys {
 			key, ok := raw.(float64)
@@ -276,7 +280,7 @@ func (h *CustomerPortalHandler) forwardPatch(w http.ResponseWriter, r *http.Requ
 			return
 		}
 		slog.ErrorContext(r.Context(), "customer portal entity update failed", "path", r.URL.Path, "err", err)
-		mapUpstreamError(w, err, fallback)
+		mapUpstreamErrorGeneric(w, err, fallback)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
@@ -301,6 +305,11 @@ func (h *CustomerPortalHandler) forwardScoped(w http.ResponseWriter, r *http.Req
 	}
 	result, err := call(r.Context(), body)
 	if err != nil {
+		var validationErr *portalValidationError
+		if errors.As(err, &validationErr) {
+			writeError(w, http.StatusBadRequest, validationErr.message)
+			return
+		}
 		slog.ErrorContext(r.Context(), "scoped customer portal entity request failed", "path", r.URL.Path, "err", err)
 		mapUpstreamErrorGeneric(w, err, fallback)
 		return
