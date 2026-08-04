@@ -3,6 +3,16 @@
 // WSO2 LLC. licenses this file to you under the Apache License,
 // Version 2.0 (the "License"); you may not use this file except
 // in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 package handler
 
@@ -55,6 +65,28 @@ func (e *portalValidationError) Error() string { return e.message }
 
 func NewCustomerPortalHandler(entity entityCustomerPortalClient) *CustomerPortalHandler {
 	return &CustomerPortalHandler{entity: entity}
+}
+
+func mappedBodyCall(call func(context.Context, []byte) ([]byte, error), mapper portalMapper) func(context.Context, []byte) ([]byte, error) {
+	return func(ctx context.Context, body []byte) ([]byte, error) {
+		result, err := call(ctx, body)
+		return mapEntityCall(result, err, mapper)
+	}
+}
+
+func mappedContextCall(ctx context.Context, call func(context.Context) ([]byte, error), mapper portalMapper) ([]byte, error) {
+	result, err := call(ctx)
+	return mapEntityCall(result, err, mapper)
+}
+
+func mappedIDCall(ctx context.Context, id string, call func(context.Context, string) ([]byte, error), mapper portalMapper) ([]byte, error) {
+	result, err := call(ctx, id)
+	return mapEntityCall(result, err, mapper)
+}
+
+func mappedIDBodyCall(ctx context.Context, id string, body []byte, call func(context.Context, string, []byte) ([]byte, error), mapper portalMapper) ([]byte, error) {
+	result, err := call(ctx, id, body)
+	return mapEntityCall(result, err, mapper)
 }
 
 func authenticated(r *http.Request, w http.ResponseWriter) bool {
@@ -280,7 +312,7 @@ func (h *CustomerPortalHandler) GetMetadata(w http.ResponseWriter, r *http.Reque
 	if !authenticated(r, w) {
 		return
 	}
-	result, err := h.entity.GetMetadata(r.Context())
+	result, err := mappedContextCall(r.Context(), h.entity.GetMetadata, mapMetadataResponse)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve metadata information.")
 		return
@@ -294,18 +326,18 @@ func (h *CustomerPortalHandler) GlobalSearch(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return nil, err
 		}
-		return h.entity.GlobalSearch(ctx, body)
+		return mappedBodyCall(h.entity.GlobalSearch, mapGlobalSearchResponse)(ctx, body)
 	})
 }
 
 func (h *CustomerPortalHandler) SearchProjectInstances(w http.ResponseWriter, r *http.Request) {
-	h.forwardScoped(w, r, "id", "projectIds", "Failed to search instances for the project.", h.entity.SearchInstances)
+	h.forwardScoped(w, r, "id", "projectIds", "Failed to search instances for the project.", mappedBodyCall(h.entity.SearchInstances, mapInstancesResponse))
 }
 func (h *CustomerPortalHandler) SearchDeploymentInstances(w http.ResponseWriter, r *http.Request) {
-	h.forwardScoped(w, r, "id", "deploymentIds", "Failed to search instances for the deployment.", h.entity.SearchInstances)
+	h.forwardScoped(w, r, "id", "deploymentIds", "Failed to search instances for the deployment.", mappedBodyCall(h.entity.SearchInstances, mapInstancesResponse))
 }
 func (h *CustomerPortalHandler) SearchDeployedProductInstances(w http.ResponseWriter, r *http.Request) {
-	h.forwardScoped(w, r, "id", "deployedProductIds", "Failed to search instances for the deployed product.", h.entity.SearchInstances)
+	h.forwardScoped(w, r, "id", "deployedProductIds", "Failed to search instances for the deployed product.", mappedBodyCall(h.entity.SearchInstances, mapInstancesResponse))
 }
 
 func (h *CustomerPortalHandler) SearchProjectConversations(w http.ResponseWriter, r *http.Request) {
@@ -314,7 +346,7 @@ func (h *CustomerPortalHandler) SearchProjectConversations(w http.ResponseWriter
 		if err != nil {
 			return nil, err
 		}
-		return h.entity.SearchConversations(ctx, body)
+		return mappedBodyCall(h.entity.SearchConversations, mapConversationSearchResponse)(ctx, body)
 	})
 }
 func (h *CustomerPortalHandler) CreateProjectConversation(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +386,7 @@ func (h *CustomerPortalHandler) GetConversation(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	result, err := h.entity.GetConversation(r.Context(), id)
+	result, err := mappedIDCall(r.Context(), id, h.entity.GetConversation, mapConversationResponse)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve conversation.")
 		return
@@ -386,7 +418,7 @@ func (h *CustomerPortalHandler) GetCaseFeedback(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	result, err := h.entity.GetCaseFeedback(r.Context(), id)
+	result, err := mappedIDCall(r.Context(), id, h.entity.GetCaseFeedback, mapFeedbackResponse)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve case feedback.")
 		return
@@ -402,7 +434,7 @@ func (h *CustomerPortalHandler) SubmitCaseFeedback(w http.ResponseWriter, r *htt
 		return
 	}
 	h.forwardBody(w, r, http.StatusCreated, "Failed to submit case feedback.", false, func(ctx context.Context, body []byte) ([]byte, error) {
-		return h.entity.SubmitCaseFeedback(ctx, id, body)
+		return mappedIDBodyCall(ctx, id, body, h.entity.SubmitCaseFeedback, mapSubmittedFeedbackResponse)
 	})
 }
 
@@ -432,7 +464,7 @@ func (h *CustomerPortalHandler) searchAttachments(w http.ResponseWriter, r *http
 		pagination["offset"] = offset
 	}
 	body, _ := json.Marshal(map[string]any{"referenceId": id, "referenceType": referenceType, "pagination": pagination})
-	result, err := h.entity.SearchCaseAttachments(r.Context(), body)
+	result, err := mappedBodyCall(h.entity.SearchCaseAttachments, mapAttachmentsResponse)(r.Context(), body)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve attachments.")
 		return
@@ -468,7 +500,7 @@ func (h *CustomerPortalHandler) createAttachment(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	result, err := h.entity.CreateCaseAttachment(r.Context(), body)
+	result, err := mappedBodyCall(h.entity.CreateCaseAttachment, mapCreatedAttachmentResponse)(r.Context(), body)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to create a new attachment.")
 		return
@@ -499,7 +531,7 @@ func (h *CustomerPortalHandler) patchAttachment(w http.ResponseWriter, r *http.R
 		if err != nil {
 			return nil, err
 		}
-		return h.entity.PatchAttachment(ctx, attachmentID, body)
+		return mappedIDBodyCall(ctx, attachmentID, body, h.entity.PatchAttachment, mapUpdatedAttachmentResponse)
 	})
 }
 func (h *CustomerPortalHandler) PatchCaseAttachment(w http.ResponseWriter, r *http.Request) {
@@ -516,7 +548,7 @@ func (h *CustomerPortalHandler) GetAttachment(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	result, err := h.entity.GetAttachment(r.Context(), id)
+	result, err := mappedIDCall(r.Context(), id, h.entity.GetAttachment, mapAttachmentResponse)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve attachment.")
 		return
@@ -528,7 +560,7 @@ func (h *CustomerPortalHandler) GetProductVulnerabilityMetadata(w http.ResponseW
 	if !authenticated(r, w) {
 		return
 	}
-	result, err := h.entity.GetProductVulnerabilityMetadata(r.Context())
+	result, err := mappedContextCall(r.Context(), h.entity.GetProductVulnerabilityMetadata, mapVulnerabilityMetadataResponse)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve product vulnerability metadata.")
 		return
@@ -537,47 +569,47 @@ func (h *CustomerPortalHandler) GetProductVulnerabilityMetadata(w http.ResponseW
 }
 
 func (h *CustomerPortalHandler) SearchProjectCaseTimeCards(w http.ResponseWriter, r *http.Request) {
-	h.forwardScoped(w, r, "id", "projectIds", "Failed to search time cards grouped by cases.", h.entity.SearchCaseTimeCards)
+	h.forwardScoped(w, r, "id", "projectIds", "Failed to search time cards grouped by cases.", mappedBodyCall(h.entity.SearchCaseTimeCards, mapCaseTimeCardsResponse))
 }
 
 func (h *CustomerPortalHandler) scopedAnalytics(w http.ResponseWriter, r *http.Request, field, fallback string, call func(context.Context, []byte) ([]byte, error)) {
 	h.forwardScoped(w, r, "id", field, fallback, call)
 }
 func (h *CustomerPortalHandler) SearchProjectInstanceMetrics(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance metrics for the project.", h.entity.SearchInstanceMetrics)
+	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance metrics for the project.", mappedBodyCall(h.entity.SearchInstanceMetrics, mapInstanceMetricsResponse))
 }
 func (h *CustomerPortalHandler) SearchDeploymentInstanceMetrics(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance metrics for the deployment.", h.entity.SearchInstanceMetrics)
+	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance metrics for the deployment.", mappedBodyCall(h.entity.SearchInstanceMetrics, mapInstanceMetricsResponse))
 }
 func (h *CustomerPortalHandler) SearchDeployedProductInstanceMetrics(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance metrics for the deployed product.", h.entity.SearchInstanceMetrics)
+	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance metrics for the deployed product.", mappedBodyCall(h.entity.SearchInstanceMetrics, mapInstanceMetricsResponse))
 }
 func (h *CustomerPortalHandler) SearchProjectInstanceUsage(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance usage for the project.", h.entity.SearchInstanceUsage)
+	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance usage for the project.", mappedBodyCall(h.entity.SearchInstanceUsage, mapInstanceUsageResponse))
 }
 func (h *CustomerPortalHandler) SearchDeploymentInstanceUsage(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance usage for the deployment.", h.entity.SearchInstanceUsage)
+	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance usage for the deployment.", mappedBodyCall(h.entity.SearchInstanceUsage, mapInstanceUsageResponse))
 }
 func (h *CustomerPortalHandler) SearchDeployedProductInstanceUsage(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance usage for the deployed product.", h.entity.SearchInstanceUsage)
+	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance usage for the deployed product.", mappedBodyCall(h.entity.SearchInstanceUsage, mapInstanceUsageResponse))
 }
 func (h *CustomerPortalHandler) SearchProjectInstanceMetricsStats(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance metric stats for the project.", h.entity.SearchInstanceMetricsStats)
+	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance metric stats for the project.", mappedBodyCall(h.entity.SearchInstanceMetricsStats, mapStatsResponse))
 }
 func (h *CustomerPortalHandler) SearchDeploymentInstanceMetricsStats(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance metric stats for the deployment.", h.entity.SearchInstanceMetricsStats)
+	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance metric stats for the deployment.", mappedBodyCall(h.entity.SearchInstanceMetricsStats, mapStatsResponse))
 }
 func (h *CustomerPortalHandler) SearchDeployedProductInstanceMetricsStats(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance metric stats for the deployed product.", h.entity.SearchInstanceMetricsStats)
+	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance metric stats for the deployed product.", mappedBodyCall(h.entity.SearchInstanceMetricsStats, mapStatsResponse))
 }
 func (h *CustomerPortalHandler) SearchProjectInstanceUsageStats(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance usage stats for the project.", h.entity.SearchInstanceUsageStats)
+	h.scopedAnalytics(w, r, "projectIds", "Failed to search instance usage stats for the project.", mappedBodyCall(h.entity.SearchInstanceUsageStats, mapStatsResponse))
 }
 func (h *CustomerPortalHandler) SearchDeploymentInstanceUsageStats(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance usage stats for the deployment.", h.entity.SearchInstanceUsageStats)
+	h.scopedAnalytics(w, r, "deploymentIds", "Failed to search instance usage stats for the deployment.", mappedBodyCall(h.entity.SearchInstanceUsageStats, mapStatsResponse))
 }
 func (h *CustomerPortalHandler) SearchDeployedProductInstanceUsageStats(w http.ResponseWriter, r *http.Request) {
-	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance usage stats for the deployed product.", h.entity.SearchInstanceUsageStats)
+	h.scopedAnalytics(w, r, "deployedProductIds", "Failed to search instance usage stats for the deployed product.", mappedBodyCall(h.entity.SearchInstanceUsageStats, mapStatsResponse))
 }
 
 func (h *CustomerPortalHandler) CreateCaseEscalation(w http.ResponseWriter, r *http.Request) {
@@ -622,7 +654,7 @@ func (h *CustomerPortalHandler) CreateCaseEscalation(w http.ResponseWriter, r *h
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	result, err := h.entity.CreateEscalation(r.Context(), body)
+	result, err := mappedBodyCall(h.entity.CreateEscalation, mapCreatedEscalationResponse)(r.Context(), body)
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to create escalation.")
 		return
@@ -630,7 +662,7 @@ func (h *CustomerPortalHandler) CreateCaseEscalation(w http.ResponseWriter, r *h
 	writeJSON(w, http.StatusCreated, result)
 }
 func (h *CustomerPortalHandler) SearchCaseEscalations(w http.ResponseWriter, r *http.Request) {
-	h.forwardScoped(w, r, "caseId", "caseIds", "Failed to search escalations.", h.entity.SearchEscalations)
+	h.forwardScoped(w, r, "caseId", "caseIds", "Failed to search escalations.", mappedBodyCall(h.entity.SearchEscalations, mapEscalationsResponse))
 }
 
 func (h *CustomerPortalHandler) deployedProductMetrics(w http.ResponseWriter, r *http.Request, usage bool) {
@@ -656,9 +688,9 @@ func (h *CustomerPortalHandler) deployedProductMetrics(w http.ResponseWriter, r 
 	}
 	var result []byte
 	if usage {
-		result, err = h.entity.SearchDeployedProductUsageCounts(r.Context(), productID, body)
+		result, err = mappedIDBodyCall(r.Context(), productID, body, h.entity.SearchDeployedProductUsageCounts, mapDeployedProductMetricsResponse)
 	} else {
-		result, err = h.entity.SearchDeployedProductMetrics(r.Context(), productID, body)
+		result, err = mappedIDBodyCall(r.Context(), productID, body, h.entity.SearchDeployedProductMetrics, mapDeployedProductMetricsResponse)
 	}
 	if err != nil {
 		mapUpstreamErrorGeneric(w, err, "Failed to retrieve metrics for the deployed product.")
