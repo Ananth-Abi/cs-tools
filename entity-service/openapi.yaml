@@ -1635,6 +1635,114 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   /attachments/{id}:
+    get:
+      summary: Get an attachment's metadata and base64-encoded content (ServiceNow data source only).
+      description: >
+        Distinct from GET /attachments/{id}/content, which streams the raw binary. This
+        endpoint returns JSON metadata plus the content as a base64 data URI.
+      operationId: getAttachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Attachment UUID.
+      responses:
+        "200":
+          description: The attachment's metadata and content.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentDetails'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Attachment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Attachments are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Update an attachment's reference, name, or description (ServiceNow data source only).
+      operationId: updateAttachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Attachment UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAttachmentRequest'
+      responses:
+        "200":
+          description: Attachment updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateAttachmentResponse'
+        "400":
+          description: >-
+            Bad request — invalid referenceType (only case and deployment are accepted here);
+            for case, name is required and description is not allowed; for deployment, at
+            least one of name or description must be provided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Missing or invalid x-user-id-token header (ServiceNow data source only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Attachment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Attachments are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       summary: Delete a case attachment (ServiceNow data source only).
       operationId: deleteCaseAttachment
@@ -3300,6 +3408,844 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /metadata:
+    get:
+      summary: Get system-wide reference metadata (time zones, project types, feedback emojis).
+      description: ServiceNow data source only; there is no Postgres equivalent.
+      operationId: getSystemMetadata
+      responses:
+        "200":
+          description: System-wide reference metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemMetadataResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: System metadata is only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /search:
+    post:
+      summary: Global search across projects and cases (ServiceNow data source only).
+      description: >
+        Runs a single free-text query against both the projects and cases tables and
+        returns paginated results for each independently.
+      operationId: globalSearch
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GlobalSearchRequest'
+      responses:
+        "200":
+          description: Projects and cases matching the query.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalSearchResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Global search is only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /products/vulnerabilities/meta:
+    get:
+      summary: Get reference metadata for product vulnerabilities (ServiceNow data source only).
+      description: >
+        Distinct from GET /products/vulnerabilities/{id} — "meta" is a literal path segment
+        here, not a vulnerability ID.
+      operationId: getProductVulnerabilityMeta
+      responses:
+        "200":
+          description: Reference metadata for product vulnerabilities.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VulnerabilityMetaResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Vulnerability metadata is only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /conversations/{id}:
+    get:
+      summary: Get a single conversation by ID (ServiceNow data source only).
+      operationId: getConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation UUID.
+      responses:
+        "200":
+          description: The conversation detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDetails'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Conversation not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Conversations are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Update a conversation's state (ServiceNow data source only).
+      operationId: updateConversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Conversation UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateConversationRequest'
+      responses:
+        "200":
+          description: Conversation updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateConversationResponse'
+        "400":
+          description: Bad request — invalid or missing state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Missing or invalid x-user-id-token header (ServiceNow data source only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Conversation not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Conversations are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /conversations:
+    post:
+      summary: Start a new conversation on a project (ServiceNow data source only).
+      operationId: createConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+      responses:
+        "201":
+          description: Conversation created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateConversationResponse'
+        "400":
+          description: Bad request — missing projectId/initialMessage, or other invalid field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Missing or invalid x-user-id-token header (ServiceNow data source only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Project not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Conversations are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /cases/{id}/feedback:
+    get:
+      summary: Get the feedback submitted for a case (ServiceNow data source only).
+      operationId: getCaseFeedback
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Case UUID.
+      responses:
+        "200":
+          description: The feedback submitted for the case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseFeedback'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Case not found, or no feedback has been submitted for this case yet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Case feedback is only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      summary: Submit feedback for a case (ServiceNow data source only).
+      operationId: submitCaseFeedback
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Case UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitCaseFeedbackRequest'
+      responses:
+        "201":
+          description: Feedback submitted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitCaseFeedbackResponse'
+        "400":
+          description: Bad request — missing emojiId, or other invalid field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Missing or invalid x-user-id-token header (ServiceNow data source only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Case not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Case feedback is only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /deployed-products/{id}/metrics/search:
+    post:
+      summary: Get deployed-product cores metrics over a date range (ServiceNow data source only).
+      operationId: searchDeployedProductMetrics
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Deployed product UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeployedProductMetricsRequest'
+      responses:
+        "200":
+          description: Cores metrics for the deployed product over the requested date range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployedProductMetricsResponse'
+        "400":
+          description: Bad request — invalid date range, or other invalid field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Deployed product or deployment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Deployed product metrics are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /deployed-products/{id}/metrics/usage-counts/search:
+    post:
+      summary: Get deployed-product usage-count metrics over a date range (ServiceNow data source only).
+      operationId: searchDeployedProductUsageCounts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Deployed product UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeployedProductUsageCountsRequest'
+      responses:
+        "200":
+          description: Usage-count metrics for the deployed product over the requested date range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployedProductUsageCountsResponse'
+        "400":
+          description: Bad request — invalid date range, or other invalid field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Deployed product or deployment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Deployed product usage counts are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /escalations/search:
+    post:
+      summary: Search case escalations (ServiceNow data source only).
+      operationId: searchEscalations
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchEscalationsRequest'
+      responses:
+        "200":
+          description: Escalations matching the filters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEscalationsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Escalations are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /escalations:
+    post:
+      summary: Escalate or de-escalate a case (ServiceNow data source only).
+      description: >
+        Defaults to action ESCALATE when omitted, which requires a non-blank reason.
+        DEESCALATE does not require a reason.
+      operationId: createEscalation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEscalationRequest'
+      responses:
+        "201":
+          description: Escalation recorded successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateEscalationResponse'
+        "400":
+          description: Bad request — missing caseId, missing reason for an ESCALATE action, or other invalid field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Missing or invalid x-user-id-token header (ServiceNow data source only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Case not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Escalations are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /cases/time-cards/search:
+    post:
+      summary: Search time cards rolled up by case (ServiceNow data source only).
+      description: >
+        Same request shape as POST /time-cards/search, but results are grouped by case
+        with per-case billable/non-billable totals instead of returned as flat rows.
+      operationId: searchCaseTimeCards
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchTimeCardsRequest'
+      responses:
+        "200":
+          description: Time cards matching the filters, rolled up by case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCaseTimeCardsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Case time cards are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /instances/search:
+    post:
+      summary: Search instances (ServiceNow data source only).
+      description: >
+        projectIds, deploymentIds, and deployedProductIds in filters are mutually exclusive —
+        at most one may be non-empty.
+      operationId: searchInstances
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchInstancesRequest'
+      responses:
+        "200":
+          description: Instances matching the filters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchInstancesResponse'
+        "400":
+          description: Bad request — invalid UUID, or more than one of projectIds/deploymentIds/deployedProductIds provided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Instances are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /instances/metrics/search:
+    post:
+      summary: Fetch per-instance metric time series over a date range (ServiceNow data source only).
+      description: >
+        filters.startDate/endDate are required. projectIds, deploymentIds, and
+        deployedProductIds are mutually exclusive — at most one may be non-empty.
+      operationId: searchInstanceMetrics
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceMetricsRequest'
+      responses:
+        "200":
+          description: Per-instance metric time series over the requested date range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsResponse'
+        "400":
+          description: Bad request — invalid UUID, missing/invalid date, or more than one ID filter provided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Instances are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /instances/usages/search:
+    post:
+      summary: Fetch per-instance usage time series over a date range (ServiceNow data source only).
+      description: >
+        Same filter rules as POST /instances/metrics/search.
+      operationId: searchInstanceUsage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceUsageRequest'
+      responses:
+        "200":
+          description: Per-instance usage time series over the requested date range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageResponse'
+        "400":
+          description: Bad request — invalid UUID, missing/invalid date, or more than one ID filter provided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Instances are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /instances/metrics/stats/search:
+    post:
+      summary: Fetch aggregated instance metric statistics over a date range (ServiceNow data source only).
+      description: >
+        Same filter rules as POST /instances/metrics/search, plus an optional dataSource filter
+        (1 = API Call, 2 = File Upload).
+      operationId: searchInstanceMetricsStats
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceMetricsStatsRequest'
+      responses:
+        "200":
+          description: Aggregated metric statistics over the requested date range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceMetricsStatsResponse'
+        "400":
+          description: Bad request — invalid UUID, missing/invalid date, or more than one ID filter provided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Instances are only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /instances/usages/stats/search:
+    post:
+      summary: Fetch aggregated instance usage statistics over a date range (ServiceNow data source only).
+      description: >
+        Same filter rules as POST /instances/metrics/stats/search.
+      operationId: searchInstanceUsageStats
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceUsageStatsRequest'
+      responses:
+        "200":
+          description: Aggregated usage statistics over the requested date range.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InstanceUsageStatsResponse'
+        "400":
+          description: Bad request — invalid UUID, missing/invalid date, or more than one ID filter provided.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Instances are only supported for the ServiceNow data source.
           content:
             application/json:
               schema:
@@ -9066,3 +10012,1262 @@ components:
             $ref: '#/components/schemas/ChoiceListItem'
         resolvedCount:
           $ref: '#/components/schemas/ResolvedCountBreakdown'
+
+    SystemMetadataResponse:
+      type: object
+      description: The response for GET /metadata — system-wide reference data (not project- or case-scoped).
+      required: [timeZones, projectTypes, feedbackEmojies]
+      properties:
+        timeZones:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+        projectTypes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReferenceTableItem'
+        feedbackEmojies:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackEmoji'
+
+    FeedbackEmojiChip:
+      type: object
+      description: A selectable follow-up option shown under a feedback emoji.
+      required: [id, name, value]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+
+    FeedbackEmoji:
+      type: object
+      description: One of the emoji choices offered on the case feedback form.
+      required: [id, name, value, unselectedImage, selectedImage, chips]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+        unselectedImage:
+          type: string
+        selectedImage:
+          type: string
+        chips:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackEmojiChip'
+
+    GlobalSearchFilters:
+      type: object
+      properties:
+        searchQuery:
+          type: string
+          maxLength: 200
+          description: Free-text query matched against project and case fields.
+        tables:
+          type: array
+          items:
+            type: string
+            enum: [projects, cases]
+          description: Restrict the search to these entity types. Both are searched when omitted.
+
+    GlobalSearchSort:
+      type: object
+      properties:
+        field:
+          type: string
+        order:
+          type: string
+          enum: [asc, desc]
+
+    GlobalSearchRequest:
+      type: object
+      description: >
+        Every field is optional — an empty request body ({}) is valid and searches both
+        tables with default pagination.
+      properties:
+        filters:
+          $ref: '#/components/schemas/GlobalSearchFilters'
+        sortBy:
+          $ref: '#/components/schemas/GlobalSearchSort'
+        projectsPagination:
+          $ref: '#/components/schemas/Pagination'
+        casesPagination:
+          $ref: '#/components/schemas/Pagination'
+
+    GlobalSearchProject:
+      type: object
+      required:
+        - id
+        - name
+        - key
+        - type
+        - createdOn
+        - hasPdpSubscription
+        - account
+        - activeChatsCount
+        - actionRequiredCount
+        - outstandingCount
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        key:
+          type: string
+        type:
+          $ref: '#/components/schemas/ReferenceTableItem'
+        createdOn:
+          type: string
+        startDate:
+          type: string
+          nullable: true
+        endDate:
+          type: string
+          nullable: true
+        hasPdpSubscription:
+          type: boolean
+        closureState:
+          type: string
+          nullable: true
+        account:
+          $ref: '#/components/schemas/ReferenceTableItem'
+        activeChatsCount:
+          type: integer
+        actionRequiredCount:
+          type: integer
+        outstandingCount:
+          type: integer
+
+    GlobalSearchCase:
+      type: object
+      required: [id, internalId, number, createdOn, createdBy, updatedOn, account]
+      properties:
+        id:
+          type: string
+          format: uuid
+        internalId:
+          type: string
+        number:
+          type: string
+        title:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+        updatedOn:
+          type: string
+        project:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        caseType:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        state:
+          $ref: '#/components/schemas/ChoiceListItem'
+          nullable: true
+        severity:
+          $ref: '#/components/schemas/ChoiceListItem'
+          nullable: true
+        assignedEngineer:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        account:
+          $ref: '#/components/schemas/ReferenceTableItem'
+
+    GlobalSearchResponse:
+      type: object
+      required: [query, projectsTotal, casesTotal, projects, cases]
+      properties:
+        query:
+          type: string
+        projectsTotal:
+          type: integer
+        casesTotal:
+          type: integer
+        projects:
+          type: array
+          items:
+            $ref: '#/components/schemas/GlobalSearchProject'
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/GlobalSearchCase'
+
+    VulnerabilityMetaResponse:
+      type: object
+      required: [severities]
+      properties:
+        severities:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChoiceListItem'
+
+    ConversationState:
+      type: string
+      description: >
+        Only ACTIVE and RESOLVED are accepted by the conversation search filter; all five
+        values are accepted transitions for PATCH /conversations/{id}.
+      enum: [ACTIVE, RESOLVED, CONVERTED, ABANDONED, CLOSED]
+
+    ConversationDetails:
+      type: object
+      description: The response for GET /conversations/{id}.
+      required: [id, messageCount, createdOn, createdBy, updatedOn, updatedBy]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          nullable: true
+        initialMessage:
+          type: string
+          nullable: true
+        messageCount:
+          type: integer
+        project:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        case:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        state:
+          $ref: '#/components/schemas/ConversationState'
+          nullable: true
+        createdOn:
+          type: string
+        createdBy:
+          type: string
+        updatedOn:
+          type: string
+        updatedBy:
+          type: string
+
+    CreateConversationRequest:
+      type: object
+      required: [projectId, initialMessage]
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        initialMessage:
+          type: string
+
+    CreatedConversation:
+      type: object
+      required: [id, number, createdBy, createdOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        state:
+          $ref: '#/components/schemas/ConversationState'
+          nullable: true
+
+    CreateConversationResponse:
+      type: object
+      required: [message, conversation]
+      properties:
+        message:
+          type: string
+        conversation:
+          $ref: '#/components/schemas/CreatedConversation'
+
+    UpdateConversationRequest:
+      type: object
+      required: [state]
+      properties:
+        state:
+          $ref: '#/components/schemas/ConversationState'
+
+    UpdatedConversation:
+      type: object
+      required: [id, updatedOn, updatedBy]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          nullable: true
+        updatedOn:
+          type: string
+        updatedBy:
+          type: string
+        state:
+          $ref: '#/components/schemas/ConversationState'
+          nullable: true
+
+    UpdateConversationResponse:
+      type: object
+      required: [message, conversation]
+      properties:
+        message:
+          type: string
+        conversation:
+          $ref: '#/components/schemas/UpdatedConversation'
+
+    CaseFeedbackEmojiRef:
+      type: object
+      required: [id, name, selectedImage]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        selectedImage:
+          type: string
+
+    CaseFeedback:
+      type: object
+      description: The response for GET /cases/{id}/feedback.
+      required: [id, emoji, chips, assessmentId, createdBy, createdOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        emoji:
+          $ref: '#/components/schemas/CaseFeedbackEmojiRef'
+        chips:
+          type: array
+          nullable: true
+          items:
+            type: string
+            format: uuid
+        assessmentId:
+          type: string
+          format: uuid
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        additionalComment:
+          type: string
+          nullable: true
+
+    SubmitCaseFeedbackRequest:
+      type: object
+      required: [emojiId]
+      properties:
+        emojiId:
+          type: string
+          format: uuid
+        chipIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        additionalComment:
+          type: string
+          nullable: true
+
+    CaseFeedbackResult:
+      type: object
+      required: [id, assessmentId, caseId, createdBy, createdOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        assessmentId:
+          type: string
+          format: uuid
+        caseId:
+          type: string
+          format: uuid
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+
+    SubmitCaseFeedbackResponse:
+      type: object
+      required: [message, feedback]
+      properties:
+        message:
+          type: string
+        feedback:
+          $ref: '#/components/schemas/CaseFeedbackResult'
+
+    AttachmentDetails:
+      type: object
+      description: >
+        The response for GET /attachments/{id}. Distinct from GET /attachments/{id}/content,
+        which streams the raw binary — this endpoint returns JSON metadata plus the content
+        as a base64 data URI.
+      required: [id, referenceId, name, type, sizeBytes, createdBy, createdOn, content]
+      properties:
+        id:
+          type: string
+          format: uuid
+        referenceId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+        sizeBytes:
+          type: integer
+        description:
+          type: string
+          nullable: true
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+          format: date-time
+        downloadUrl:
+          type: string
+          nullable: true
+        previewUrl:
+          type: string
+          nullable: true
+        content:
+          type: string
+          description: Base64 data URI of the attachment content (e.g. data:image/png;base64,...).
+
+    UpdateAttachmentRequest:
+      type: object
+      description: >
+        referenceType accepts only case and deployment (the broader ReferenceType enum also
+        has conversation, change_request, and incident, but this endpoint rejects those). For
+        case, name is required and description is not allowed; for deployment, at least one
+        of name or description must be provided.
+      required: [referenceId, referenceType]
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+        referenceType:
+          type: string
+          enum: [case, deployment]
+        name:
+          type: string
+        description:
+          type: string
+
+    UpdatedAttachment:
+      type: object
+      required: [id, updatedOn, updatedBy]
+      properties:
+        id:
+          type: string
+          format: uuid
+        updatedOn:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+
+    UpdateAttachmentResponse:
+      type: object
+      required: [message, attachment]
+      properties:
+        message:
+          type: string
+        attachment:
+          $ref: '#/components/schemas/UpdatedAttachment'
+
+    DeployedProductMetricsRequest:
+      type: object
+      required: [deploymentId, startDate, endDate]
+      properties:
+        deploymentId:
+          type: string
+          format: uuid
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+
+    DeployedProductMetricsInstance:
+      type: object
+      description: A single instance's contribution to a metrics chart entry.
+      required: [id, name, cores]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        cores:
+          type: integer
+
+    DeployedProductMetricsChartEntry:
+      type: object
+      description: One date's worth of core-count data.
+      required: [date, instanceCount, totalCores, minCores, maxCores, avgCores, instances]
+      properties:
+        date:
+          type: string
+        instanceCount:
+          type: integer
+        totalCores:
+          type: integer
+        minCores:
+          type: integer
+        maxCores:
+          type: integer
+        avgCores:
+          type: number
+          format: double
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployedProductMetricsInstance'
+
+    DeployedProductMetricsDateRange:
+      type: object
+      required: [start, end]
+      properties:
+        start:
+          type: string
+        end:
+          type: string
+
+    DeployedProductMetricsSummary:
+      type: object
+      required: [dateRange, totalInstances]
+      properties:
+        dateRange:
+          $ref: '#/components/schemas/DeployedProductMetricsDateRange'
+        totalInstances:
+          type: integer
+        minCores:
+          type: integer
+          nullable: true
+        maxCores:
+          type: integer
+          nullable: true
+        avgCores:
+          type: number
+          format: double
+          nullable: true
+
+    DeployedProductMetricsResponse:
+      type: object
+      required: [deployedProduct, summary, chartData]
+      properties:
+        deployedProduct:
+          $ref: '#/components/schemas/ReferenceTableItem'
+        summary:
+          $ref: '#/components/schemas/DeployedProductMetricsSummary'
+        chartData:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployedProductMetricsChartEntry'
+
+    DeployedProductUsageCountsRequest:
+      type: object
+      required: [deploymentId, startDate, endDate]
+      properties:
+        deploymentId:
+          type: string
+          format: uuid
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+
+    CountTypeAggregation:
+      type: object
+      description: Summary statistics for a single count type over the queried date range.
+      required: [aggregation, min, max, avg]
+      properties:
+        aggregation:
+          type: string
+        min:
+          type: number
+          format: double
+        max:
+          type: number
+          format: double
+        avg:
+          type: number
+          format: double
+
+    DeployedProductUsageCountsSummary:
+      type: object
+      required: [dateRange, countTypes]
+      properties:
+        dateRange:
+          $ref: '#/components/schemas/DeployedProductMetricsDateRange'
+        countTypes:
+          type: object
+          description: >
+            Keyed by count-type name — ServiceNow defines an open set of count types, not a
+            fixed enum.
+          additionalProperties:
+            $ref: '#/components/schemas/CountTypeAggregation'
+
+    UsageCountInstance:
+      type: object
+      required: [id, name, value]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        value:
+          type: number
+          format: double
+
+    UsageCountEntry:
+      type: object
+      required: [value, aggregation, instances]
+      properties:
+        value:
+          type: number
+          format: double
+        aggregation:
+          type: string
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/UsageCountInstance'
+
+    DeployedProductUsageCountsChartEntry:
+      type: object
+      required: [date, counts]
+      properties:
+        date:
+          type: string
+        counts:
+          type: object
+          description: >
+            Keyed by count-type name — an open set, see
+            DeployedProductUsageCountsSummary.countTypes.
+          additionalProperties:
+            $ref: '#/components/schemas/UsageCountEntry'
+
+    DeployedProductUsageCountsResponse:
+      type: object
+      required: [deployedProduct, summary, chartData]
+      properties:
+        deployedProduct:
+          $ref: '#/components/schemas/ReferenceTableItem'
+        summary:
+          $ref: '#/components/schemas/DeployedProductUsageCountsSummary'
+        chartData:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeployedProductUsageCountsChartEntry'
+
+    SearchEscalationsFilters:
+      type: object
+      properties:
+        caseIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        currentLevels:
+          type: array
+          items:
+            type: integer
+
+    EscalationSort:
+      type: object
+      required: [field, order]
+      properties:
+        field:
+          type: string
+          enum: [createdOn, updatedOn]
+        order:
+          type: string
+          enum: [asc, desc]
+
+    SearchEscalationsRequest:
+      type: object
+      required: [pagination]
+      properties:
+        filters:
+          $ref: '#/components/schemas/SearchEscalationsFilters'
+        sortBy:
+          $ref: '#/components/schemas/EscalationSort'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    EscalationNotifiedUser:
+      type: object
+      required: [id, userName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        userName:
+          type: string
+        name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+
+    Escalation:
+      type: object
+      description: A single escalation row in search results.
+      required: [id, case, currentLevel, previousLevel, createdBy, createdOn, updatedOn, notificationSentTo]
+      properties:
+        id:
+          type: string
+          format: uuid
+        case:
+          $ref: '#/components/schemas/ReferenceTableItem'
+        currentLevel:
+          $ref: '#/components/schemas/ChoiceListItem'
+        previousLevel:
+          $ref: '#/components/schemas/ChoiceListItem'
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        notificationSentTo:
+          type: array
+          items:
+            $ref: '#/components/schemas/EscalationNotifiedUser'
+
+    SearchEscalationsResponse:
+      type: object
+      required: [escalations, total, offset, limit]
+      properties:
+        escalations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Escalation'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    EscalationAction:
+      type: string
+      description: >
+        Defaults to ESCALATE when omitted. Matched case-insensitively by the service,
+        but callers should send the upper-case form.
+      enum: [ESCALATE, DEESCALATE]
+
+    CreateEscalationRequest:
+      type: object
+      required: [caseId]
+      properties:
+        caseId:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          description: Required (non-blank) when action is ESCALATE (the default); optional when DEESCALATE.
+        action:
+          $ref: '#/components/schemas/EscalationAction'
+
+    CreatedEscalation:
+      type: object
+      description: >
+        Unlike Escalation (search results), this has no updatedOn — the create response
+        doesn't carry one.
+      required: [id, case, currentLevel, previousLevel, createdBy, createdOn, notificationSentTo]
+      properties:
+        id:
+          type: string
+          format: uuid
+        case:
+          $ref: '#/components/schemas/ReferenceTableItem'
+        currentLevel:
+          $ref: '#/components/schemas/ChoiceListItem'
+        previousLevel:
+          $ref: '#/components/schemas/ChoiceListItem'
+        createdBy:
+          type: string
+        createdOn:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        notificationSentTo:
+          type: array
+          items:
+            $ref: '#/components/schemas/EscalationNotifiedUser'
+
+    CreateEscalationResponse:
+      type: object
+      required: [message, escalation]
+      properties:
+        message:
+          type: string
+        escalation:
+          $ref: '#/components/schemas/CreatedEscalation'
+
+    CaseTimeCardBillingInfo:
+      type: object
+      required: [totalTime, count]
+      properties:
+        totalTime:
+          type: number
+          format: double
+        count:
+          type: integer
+
+    CaseTimeCardCaseRef:
+      type: object
+      required: [id, number, name, updatedOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+        name:
+          type: string
+        updatedOn:
+          type: string
+        project:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+
+    CaseTimeCardSummary:
+      type: object
+      description: The time-card rollup for a single case.
+      required: [case, totalTime, totalCount, billable, nonBillable]
+      properties:
+        case:
+          $ref: '#/components/schemas/CaseTimeCardCaseRef'
+        totalTime:
+          type: number
+          format: double
+        totalCount:
+          type: integer
+        billable:
+          $ref: '#/components/schemas/CaseTimeCardBillingInfo'
+        nonBillable:
+          $ref: '#/components/schemas/CaseTimeCardBillingInfo'
+
+    SearchCaseTimeCardsResponse:
+      type: object
+      description: >
+        The response for POST /cases/time-cards/search — time cards grouped and rolled up by
+        case, rather than the flat per-time-card rows POST /time-cards/search returns.
+      required: [cases, total, offset, limit]
+      properties:
+        cases:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseTimeCardSummary'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    InstanceSearchFilters:
+      type: object
+      description: >
+        projectIds, deploymentIds, and deployedProductIds are mutually exclusive — at most
+        one may be non-empty.
+      properties:
+        startDate:
+          type: string
+          format: date
+          nullable: true
+        endDate:
+          type: string
+          format: date
+          nullable: true
+        projectIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        deploymentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        deployedProductIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    SearchInstancesRequest:
+      type: object
+      required: [pagination]
+      properties:
+        filters:
+          $ref: '#/components/schemas/InstanceSearchFilters'
+          nullable: true
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    InstanceMetadata:
+      type: object
+      required: [id, createdOn, updatedOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        coreCount:
+          type: integer
+          nullable: true
+        updates:
+          type: integer
+          nullable: true
+        jdkVersion:
+          type: string
+          nullable: true
+        deploymentMetadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+        customCreatedOn:
+          type: string
+          nullable: true
+        customUpdatedOn:
+          type: string
+          nullable: true
+
+    Instance:
+      type: object
+      required: [id, key, createdOn, updatedOn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        project:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        deployment:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        product:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        deployedProduct:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        createdOn:
+          type: string
+        updatedOn:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/InstanceMetadata'
+          nullable: true
+
+    SearchInstancesResponse:
+      type: object
+      required: [instances, total, offset, limit]
+      properties:
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/Instance'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    InstanceDateRangeFilters:
+      type: object
+      description: >
+        Shared filters for POST /instances/metrics/search and POST /instances/usages/search.
+        projectIds, deploymentIds, and deployedProductIds are mutually exclusive — at most
+        one may be non-empty.
+      required: [startDate, endDate]
+      properties:
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        projectIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        deploymentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        deployedProductIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+
+    InstanceMetricsRequest:
+      type: object
+      required: [filters]
+      properties:
+        filters:
+          $ref: '#/components/schemas/InstanceDateRangeFilters'
+
+    InstanceDataPoint:
+      type: object
+      required: [date, createdOn]
+      properties:
+        date:
+          type: string
+        createdOn:
+          type: string
+        coreCount:
+          type: integer
+          nullable: true
+        jdkVersion:
+          type: string
+          nullable: true
+        updates:
+          type: integer
+          nullable: true
+        deploymentMetadata:
+          type: object
+          additionalProperties: true
+          nullable: true
+
+    InstanceMetric:
+      type: object
+      description: One instance's metric time series, ordered newest to oldest.
+      required: [instanceId, instanceKey, dataPoints]
+      properties:
+        instanceId:
+          type: string
+          format: uuid
+        instanceKey:
+          type: string
+        project:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        deployment:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        product:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        deployedProduct:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        dataPoints:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceDataPoint'
+
+    InstanceMetricsResponse:
+      type: object
+      required: [metrics, totalInstances, startDate, endDate]
+      properties:
+        metrics:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceMetric'
+        totalInstances:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    InstanceUsageRequest:
+      type: object
+      required: [filters]
+      properties:
+        filters:
+          $ref: '#/components/schemas/InstanceDateRangeFilters'
+
+    InstanceSummary:
+      type: object
+      description: >
+        One period's usage counts for an instance, keyed by an open set of count-type names
+        (e.g. "TOTAL_USERS", "TRANSACTION_COUNT").
+      required: [period, counts]
+      properties:
+        period:
+          type: string
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+
+    InstanceUsageEntry:
+      type: object
+      required: [instanceId, instanceKey, periodSummaries]
+      properties:
+        instanceId:
+          type: string
+          format: uuid
+        instanceKey:
+          type: string
+        project:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        deployment:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        product:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        deployedProduct:
+          $ref: '#/components/schemas/ReferenceTableItem'
+          nullable: true
+        periodSummaries:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceSummary'
+
+    InstanceUsageResponse:
+      type: object
+      required: [usages, totalInstances, startDate, endDate]
+      properties:
+        usages:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceUsageEntry'
+        totalInstances:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    InstanceStatsFilters:
+      type: object
+      description: >
+        Extends the shared date-range filters with an optional dataSource discriminator,
+        used by the two .../stats/search endpoints only.
+      required: [startDate, endDate]
+      properties:
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        projectIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        deploymentIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        deployedProductIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        dataSource:
+          type: integer
+          nullable: true
+          description: "1 = API Call, 2 = File Upload."
+
+    InstanceMetricsStatsRequest:
+      type: object
+      required: [filters]
+      properties:
+        filters:
+          $ref: '#/components/schemas/InstanceStatsFilters'
+
+    InstanceMetricSummary:
+      type: object
+      required: [current, min, max, avg]
+      properties:
+        current:
+          type: number
+        min:
+          type: number
+        max:
+          type: number
+        avg:
+          type: number
+
+    InstanceMetricsStatsResponse:
+      type: object
+      description: >
+        stats is keyed by date, then by an open set of metric names (e.g. "TOTAL_CORES") —
+        an open set defined by ServiceNow, not a fixed enum.
+      required: [stats, summary, total, startDate, endDate]
+      properties:
+        stats:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+        summary:
+          $ref: '#/components/schemas/InstanceMetricSummary'
+        total:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string
+
+    InstanceUsageStatsRequest:
+      type: object
+      required: [filters]
+      properties:
+        filters:
+          $ref: '#/components/schemas/InstanceStatsFilters'
+
+    InstanceUsageStatsResponse:
+      type: object
+      description: >
+        stats is keyed by date, then by an open set of metric names, same rationale as
+        InstanceMetricsStatsResponse.stats. Unlike that response, there is no summary block.
+      required: [stats, total, startDate, endDate]
+      properties:
+        stats:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+        total:
+          type: integer
+        startDate:
+          type: string
+        endDate:
+          type: string

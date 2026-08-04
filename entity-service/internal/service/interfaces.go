@@ -193,6 +193,15 @@ type DeployedProductService interface {
 	// Either detail fields or Active=false must be provided, but not both.
 	// Supported by the ServiceNow data source only.
 	UpdateDeployedProduct(ctx context.Context, req domain.UpdateDeployedProductRequest) (domain.UpdateDeployedProductResponse, error)
+	// SearchDeployedProductMetrics returns core-count metrics for the deployed product
+	// identified by id, charted over req's date range. A ValidationError is returned for
+	// invalid input (malformed UUID, invalid/unordered dates, or a range exceeding one year).
+	// Supported by the ServiceNow data source only.
+	SearchDeployedProductMetrics(ctx context.Context, id string, req domain.DeployedProductMetricsRequest) (domain.DeployedProductMetricsResponse, error)
+	// SearchDeployedProductUsageCounts returns usage-count metrics for the deployed product
+	// identified by id, charted over req's date range. Same validation as
+	// SearchDeployedProductMetrics. Supported by the ServiceNow data source only.
+	SearchDeployedProductUsageCounts(ctx context.Context, id string, req domain.DeployedProductUsageCountsRequest) (domain.DeployedProductUsageCountsResponse, error)
 }
 
 // CaseService defines the operations available on the cases entity.
@@ -255,6 +264,22 @@ type CaseService interface {
 	// Not yet available in the backing service: no Ballerina/Choreo endpoint exists yet for a
 	// case-agnostic tag search; see SearchTags in sn_case_service.go for the requested contract.
 	SearchTags(ctx context.Context, query string, limit int) ([]domain.Tag, error)
+	// GetCaseFeedback returns the feedback previously submitted for the case identified
+	// by id. A NotFoundError is returned if none has been submitted.
+	// Supported by the ServiceNow data source only.
+	GetCaseFeedback(ctx context.Context, id string) (domain.CaseFeedback, error)
+	// SubmitCaseFeedback records feedback for the case identified by id. A ValidationError
+	// is returned for invalid input. Supported by the ServiceNow data source only.
+	SubmitCaseFeedback(ctx context.Context, id string, req domain.SubmitCaseFeedbackRequest) (domain.SubmitCaseFeedbackResponse, error)
+	// GetAttachmentByID returns the metadata and base64-encoded content of the attachment
+	// identified by id. A NotFoundError is returned if it does not exist.
+	// Supported by the ServiceNow data source only.
+	GetAttachmentByID(ctx context.Context, id string) (domain.AttachmentDetails, error)
+	// UpdateAttachment updates the name and/or description of the attachment identified by
+	// req.ID. A ValidationError is returned for invalid input (referenceType must be "case"
+	// or "deployment"; "case" requires name and forbids description; "deployment" requires
+	// at least one of name or description). Supported by the ServiceNow data source only.
+	UpdateAttachment(ctx context.Context, req domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error)
 }
 
 // CaseGithubIssueService defines the operation for filing a GitHub issue from a case.
@@ -329,6 +354,10 @@ type TimeCardService interface {
 	// UpdateTimeCard edits an editable (submitted) time card, or transitions its
 	// state (approve/reject) when req.State is set. SN enforces authorization.
 	UpdateTimeCard(ctx context.Context, req domain.UpdateTimeCardRequest) (domain.TimeCardMutationResponse, error)
+	// SearchCaseTimeCards returns a paginated list of time cards grouped and rolled up by
+	// case, using the same filters as SearchTimeCards. Supported by the ServiceNow data
+	// source only.
+	SearchCaseTimeCards(ctx context.Context, req domain.SearchTimeCardsRequest) (domain.SearchCaseTimeCardsResponse, error)
 }
 
 // ConfigurationItemService defines the operations available on the configuration items entity.
@@ -416,6 +445,10 @@ type ProductVulnerabilityService interface {
 	// GetProductVulnerability returns the detail of a single vulnerability by its UUID.
 	// A NotFoundError is returned if the vulnerability does not exist.
 	GetProductVulnerability(ctx context.Context, id string) (domain.ProductVulnerabilityView, error)
+
+	// GetVulnerabilityMeta returns the valid severity choices for product vulnerabilities.
+	// Supported by the ServiceNow data source only.
+	GetVulnerabilityMeta(ctx context.Context) (domain.VulnerabilityMetaResponse, error)
 }
 
 // IncidentService defines the operations available on the incidents entity.
@@ -459,6 +492,40 @@ type ConversationService interface {
 	// project IDs, states, search query, and createdByMe. A ValidationError is returned
 	// for invalid input.
 	SearchConversations(ctx context.Context, req domain.SearchConversationsRequest) (domain.SearchConversationsResponse, error)
+	// GetConversation returns the detail of a single conversation by its UUID.
+	// A NotFoundError is returned if the conversation does not exist.
+	GetConversation(ctx context.Context, id string) (domain.ConversationDetails, error)
+	// CreateConversation starts a new conversation on the project identified by
+	// req.ProjectID. A ValidationError is returned for invalid input.
+	CreateConversation(ctx context.Context, req domain.CreateConversationRequest) (domain.CreateConversationResponse, error)
+	// UpdateConversation transitions the conversation identified by id to req.State. A
+	// ValidationError is returned if State is not one of ACTIVE, RESOLVED, CONVERTED,
+	// ABANDONED, or CLOSED.
+	UpdateConversation(ctx context.Context, id string, req domain.UpdateConversationRequest) (domain.UpdateConversationResponse, error)
+}
+
+// GlobalService serves system-wide metadata and cross-entity search that
+// isn't scoped to any single project or case.
+// All methods require the ServiceNow data source; there is no Postgres fallback.
+type GlobalService interface {
+	// GetSystemMetadata returns system-wide reference data (time zones, project types,
+	// and feedback emoji choices) used across the frontend.
+	GetSystemMetadata(ctx context.Context) (domain.SystemMetadataResponse, error)
+	// GlobalSearch searches projects and/or cases matching req's filters. Every field of
+	// req is optional; an empty request searches both tables with default pagination.
+	GlobalSearch(ctx context.Context, req domain.GlobalSearchRequest) (domain.GlobalSearchResponse, error)
+}
+
+// EscalationService defines the operations available on the escalations entity.
+// All methods require the ServiceNow data source; there is no Postgres fallback.
+type EscalationService interface {
+	// SearchEscalations returns a paginated list of escalations filtered by optional case
+	// IDs and current escalation levels. A ValidationError is returned for invalid input.
+	SearchEscalations(ctx context.Context, req domain.SearchEscalationsRequest) (domain.SearchEscalationsResponse, error)
+	// CreateEscalation escalates or de-escalates the case identified by req.CaseID.
+	// Action defaults to ESCALATE when omitted; Reason is required when the (defaulted)
+	// action is ESCALATE. A ValidationError is returned for invalid input.
+	CreateEscalation(ctx context.Context, req domain.CreateEscalationRequest) (domain.CreateEscalationResponse, error)
 }
 
 // RoleService serves the platform's assignable-role catalogue.
@@ -471,4 +538,27 @@ type RoleService interface {
 type TeamService interface {
 	// SearchTeams returns a paginated slice of the team registry.
 	SearchTeams(ctx context.Context, req domain.SearchTeamsRequest) (domain.SearchTeamsResponse, error)
+}
+
+// InstanceService defines the operations available on the instances entity.
+// All methods require the ServiceNow data source; there is no Postgres fallback.
+type InstanceService interface {
+	// SearchInstances returns a paginated list of instances filtered by optional
+	// project/deployment/deployed-product IDs (mutually exclusive) and date range.
+	// A ValidationError is returned for invalid input.
+	SearchInstances(ctx context.Context, req domain.SearchInstancesRequest) (domain.SearchInstancesResponse, error)
+	// SearchInstanceMetrics returns per-instance metric time series over req's required
+	// date range, filtered by optional project/deployment/deployed-product IDs (mutually
+	// exclusive). A ValidationError is returned for invalid input.
+	SearchInstanceMetrics(ctx context.Context, req domain.InstanceMetricsRequest) (domain.InstanceMetricsResponse, error)
+	// SearchInstanceUsage returns per-instance usage time series over req's required date
+	// range. Same filter rules as SearchInstanceMetrics.
+	SearchInstanceUsage(ctx context.Context, req domain.InstanceUsageRequest) (domain.InstanceUsageResponse, error)
+	// SearchInstanceMetricsStats returns aggregated metric statistics over req's required
+	// date range. Same filter rules as SearchInstanceMetrics, plus an optional data-source
+	// filter.
+	SearchInstanceMetricsStats(ctx context.Context, req domain.InstanceMetricsStatsRequest) (domain.InstanceMetricsStatsResponse, error)
+	// SearchInstanceUsageStats returns aggregated usage statistics over req's required
+	// date range. Same filter rules as SearchInstanceMetricsStats.
+	SearchInstanceUsageStats(ctx context.Context, req domain.InstanceUsageStatsRequest) (domain.InstanceUsageStatsResponse, error)
 }
