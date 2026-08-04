@@ -421,6 +421,106 @@ func (c *CustomerEntityClient) SearchConversations(ctx context.Context, body []b
 	return c.do(ctx, http.MethodPost, "/conversations/search", body)
 }
 
+// GetMetadata calls GET /metadata on the entity service.
+func (c *CustomerEntityClient) GetMetadata(ctx context.Context) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, "/metadata", nil)
+}
+
+// GlobalSearch calls POST /search on the entity service.
+func (c *CustomerEntityClient) GlobalSearch(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/search", body)
+}
+
+// SearchInstances calls POST /instances/search on the entity service.
+func (c *CustomerEntityClient) SearchInstances(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/instances/search", body)
+}
+
+// GetAttachment calls GET /attachments/{id} on the entity service.
+func (c *CustomerEntityClient) GetAttachment(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/attachments/%s", url.PathEscape(id)), nil)
+}
+
+// PatchAttachment calls PATCH /attachments/{id} on the entity service.
+func (c *CustomerEntityClient) PatchAttachment(ctx context.Context, id string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/attachments/%s", url.PathEscape(id)), body)
+}
+
+// GetCaseFeedback calls GET /cases/{id}/feedback on the entity service.
+func (c *CustomerEntityClient) GetCaseFeedback(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/cases/%s/feedback", url.PathEscape(id)), nil)
+}
+
+// SubmitCaseFeedback calls POST /cases/{id}/feedback on the entity service.
+func (c *CustomerEntityClient) SubmitCaseFeedback(ctx context.Context, id string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/cases/%s/feedback", url.PathEscape(id)), body)
+}
+
+// GetConversation calls GET /conversations/{id} on the entity service.
+func (c *CustomerEntityClient) GetConversation(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/conversations/%s", url.PathEscape(id)), nil)
+}
+
+// CreateConversation calls POST /conversations on the entity service.
+func (c *CustomerEntityClient) CreateConversation(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/conversations", body)
+}
+
+// UpdateConversation calls PATCH /conversations/{id} on the entity service.
+func (c *CustomerEntityClient) UpdateConversation(ctx context.Context, id string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/conversations/%s", url.PathEscape(id)), body)
+}
+
+// GetProductVulnerabilityMetadata calls GET /products/vulnerabilities/meta.
+func (c *CustomerEntityClient) GetProductVulnerabilityMetadata(ctx context.Context) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, "/products/vulnerabilities/meta", nil)
+}
+
+// SearchCaseTimeCards calls POST /cases/time-cards/search on the entity service.
+func (c *CustomerEntityClient) SearchCaseTimeCards(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/cases/time-cards/search", body)
+}
+
+// SearchInstanceMetrics calls POST /instances/metrics/search on the entity service.
+func (c *CustomerEntityClient) SearchInstanceMetrics(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/instances/metrics/search", body)
+}
+
+// SearchInstanceUsage calls POST /instances/usages/search on the entity service.
+func (c *CustomerEntityClient) SearchInstanceUsage(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/instances/usages/search", body)
+}
+
+// SearchInstanceMetricsStats calls POST /instances/metrics/stats/search on the entity service.
+func (c *CustomerEntityClient) SearchInstanceMetricsStats(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/instances/metrics/stats/search", body)
+}
+
+// SearchInstanceUsageStats calls POST /instances/usages/stats/search on the entity service.
+func (c *CustomerEntityClient) SearchInstanceUsageStats(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/instances/usages/stats/search", body)
+}
+
+// CreateEscalation calls POST /escalations on the entity service.
+func (c *CustomerEntityClient) CreateEscalation(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/escalations", body)
+}
+
+// SearchEscalations calls POST /escalations/search on the entity service.
+func (c *CustomerEntityClient) SearchEscalations(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/escalations/search", body)
+}
+
+// SearchDeployedProductMetrics calls POST /deployed-products/{id}/metrics/search.
+func (c *CustomerEntityClient) SearchDeployedProductMetrics(ctx context.Context, id string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/deployed-products/%s/metrics/search", url.PathEscape(id)), body)
+}
+
+// SearchDeployedProductUsageCounts calls POST /deployed-products/{id}/metrics/usage-counts/search.
+func (c *CustomerEntityClient) SearchDeployedProductUsageCounts(ctx context.Context, id string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/deployed-products/%s/metrics/usage-counts/search", url.PathEscape(id)), body)
+}
+
 // SearchTaskSlas calls POST /slas/search on the entity service.
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) SearchTaskSlas(ctx context.Context, body []byte) ([]byte, error) {
