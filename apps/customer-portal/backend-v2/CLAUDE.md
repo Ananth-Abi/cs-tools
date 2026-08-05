@@ -175,9 +175,14 @@ development only).
 
 `internal/productconsumption` is a fifth upstream client for **another separate service unrelated
 to entity-service** — see `apps/customer-portal/backend`'s `modules/product_consumption_subscription`
-and `modules/product_consumption_tracking` for the Ballerina backend's two client modules, which
-this backend models as one Go package since both Ballerina modules point at the same upstream base
-URL in practice (confirmed in the Ballerina backend's `config.toml`).
+and `modules/product_consumption_tracking` for the Ballerina backend's two client modules. This
+backend models them as one Go package (one shared `*Client`, one OAuth2 app) but keeps their base
+URLs distinct: `Config.BaseURL` backs the subscription/license API, `Config.TrackingBaseURL` backs
+the usage-tracking API. They happen to point at the same host in the Ballerina backend's current
+`config.toml`, which is why `TrackingBaseURL` falls back to `BaseURL` when left unset — but they are
+two independently-configurable variables there (`productConsumptionBaseUrl` vs
+`productConsumptionTrackingBaseUrl`), not guaranteed to always match, so don't collapse them into a
+single field.
 
 It backs two routes:
 - `POST /projects/{projectId}/deployments/{deploymentId}/license` — provisions (or resumes

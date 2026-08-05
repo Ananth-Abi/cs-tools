@@ -103,16 +103,21 @@ func main() {
 	}
 	aiChatAgentWsClient := aichatagent.NewWSClient(aiChatAgentWsCfg)
 
-	// The product-consumption service is a separate service (not
-	// entity-service) that provisions deployment licenses; it also
-	// authenticates as the same shared OAuth2 app (see the Ballerina
-	// backend's Config.toml).
+	// The product-consumption service(s) are separate services (not
+	// entity-service) that provision deployment licenses and import usage
+	// data; both authenticate as the same shared OAuth2 app. The Ballerina
+	// backend configures these as two independently-configurable base URLs
+	// (productConsumptionBaseUrl vs productConsumptionTrackingBaseUrl) —
+	// PRODUCT_CONSUMPTION_TRACKING_BASE_URL defaults to
+	// PRODUCT_CONSUMPTION_BASE_URL when unset, matching that backend's
+	// current config where both happen to point at the same host.
 	productConsumptionCfg := productconsumption.Config{
-		BaseURL:      mustEnv("PRODUCT_CONSUMPTION_BASE_URL"),
-		TokenURL:     oauth2TokenURL,
-		ClientID:     oauth2ClientID,
-		ClientSecret: oauth2ClientSecret,
-		Scopes:       splitComma(os.Getenv("PRODUCT_CONSUMPTION_SCOPES")),
+		BaseURL:         mustEnv("PRODUCT_CONSUMPTION_BASE_URL"),
+		TrackingBaseURL: os.Getenv("PRODUCT_CONSUMPTION_TRACKING_BASE_URL"),
+		TokenURL:        oauth2TokenURL,
+		ClientID:        oauth2ClientID,
+		ClientSecret:    oauth2ClientSecret,
+		Scopes:          splitComma(os.Getenv("PRODUCT_CONSUMPTION_SCOPES")),
 	}
 	productConsumptionClient := productconsumption.NewClient(productConsumptionCfg)
 

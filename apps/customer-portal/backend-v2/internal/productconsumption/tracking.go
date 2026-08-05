@@ -21,14 +21,15 @@ import (
 	"encoding/base64"
 )
 
-// ImportDeploymentUsage calls POST /deployment-usages, base64-encoding
-// zipFile as the upstream service's contract requires.
+// ImportDeploymentUsage calls POST /deployment-usages against the tracking
+// service's own base URL, base64-encoding zipFile as the upstream service's
+// contract requires.
 func (c *Client) ImportDeploymentUsage(ctx context.Context, email string, zipFile []byte) (ImportUsageResponse, error) {
 	req := ImportUsageRequest{
 		Email: email,
 		Zip:   base64.StdEncoding.EncodeToString(zipFile),
 	}
 	var out ImportUsageResponse
-	err := c.postJSON(ctx, "/deployment-usages", req, &out)
+	err := c.postJSONTracking(ctx, "/deployment-usages", req, &out)
 	return out, err
 }
