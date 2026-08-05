@@ -510,7 +510,20 @@ constants).
    entity-client methods this handler needs; handler method sequence: auth check → path/body
    guards → call entity client → `mapUpstreamError` on failure → map to DTO → `writeJSONValue`.
 6. **Route** (`cmd/server/main.go`) — register using Go 1.22 method-prefixed patterns:
-   `"POST /cases/{id}/comments"`.
+   `"POST /cases/{id}/comments"`. **`net/http.ServeMux` panics at startup — crashing the whole
+   server — if a new pattern is ambiguous with an existing one** (neither is strictly more specific;
+   this can happen even with a different number of literal segments in a different position, e.g.
+   `/deployments/products/{id}/instances/metrics/search` vs.
+   `/deployments/{deploymentId}/products/{productId}/metrics/search`, which both match
+   `/deployments/products/products/instances/metrics/search`). Registration order does NOT matter
+   for this — the panic fires regardless of which one is registered first. This is NOT a
+   theoretical concern: it took the server down in production once already (see the merged fix for
+   exactly this pair of routes). Before opening a PR that adds a route with a wildcard segment,
+   sanity-check it against every other route sharing that many-or-fewer path segments; if two
+   patterns are ambiguous, merge them under one wildcard pattern and dispatch manually using
+   `r.SetPathValue` to inject the values each handler expects (see
+   `dispatchDeploymentsProductsMetricsSearch` in `main.go` for the pattern) rather than renaming
+   either route — the URL shapes themselves are an external contract with the frontend.
 7. **README** — add the endpoint under "API Endpoints" in `README.md`.
 8. **OpenAPI spec** (`openapi.yaml`) — add the path with `200`/`400`/`401`/`403`/`500` responses
    (`404` too for get-by-id, `413` too for endpoints with a request body); every endpoint must

@@ -256,10 +256,19 @@ func main() {
 	// ServiceNow data source — see internal/entity/deployed_products.go.
 	mux.HandleFunc("POST /deployed-products", deployedProductHandler.CreateDeployedProduct)
 	mux.HandleFunc("PATCH /deployed-products/{id}", deployedProductHandler.PatchDeployedProduct)
-	mux.HandleFunc("POST /deployments/{deploymentId}/products/{productId}/metrics/search", deployedProductHandler.SearchDeployedProductMetrics)
+	// POST /deployments/{deploymentId}/products/{productId}/metrics/search and
+	// POST /deployments/products/{id}/instances/metrics/search cannot both be
+	// registered as literal patterns: net/http.ServeMux (Go 1.22+) rejects
+	// them as ambiguous (neither is more specific than the other — e.g. both
+	// match "/deployments/products/products/instances/metrics/search") and
+	// panics at startup. Both path shapes are genuine, distinct Ballerina
+	// reference routes, so they're merged under one wildcard pattern and
+	// dispatched by dispatchDeploymentsProductsMetricsSearch below instead of
+	// renaming either one.
+	mux.HandleFunc("POST /deployments/{seg1}/{seg2}/{seg3}/metrics/search",
+		dispatchDeploymentsProductsMetricsSearch(instanceHandler, deployedProductHandler))
 	mux.HandleFunc("POST /deployments/{deploymentId}/products/{productId}/metrics/usage-counts/search", deployedProductHandler.SearchDeployedProductUsageCounts)
 	mux.HandleFunc("POST /deployments/products/{id}/instances/search", instanceHandler.SearchDeployedProductInstances)
-	mux.HandleFunc("POST /deployments/products/{id}/instances/metrics/search", instanceHandler.SearchDeployedProductInstanceMetrics)
 	mux.HandleFunc("POST /deployments/products/{id}/instances/usages/search", instanceHandler.SearchDeployedProductInstanceUsage)
 	mux.HandleFunc("POST /deployments/products/{id}/instances/stats/metrics/search", instanceHandler.SearchDeployedProductInstanceMetricsStats)
 	mux.HandleFunc("POST /deployments/products/{id}/instances/stats/usages/search", instanceHandler.SearchDeployedProductInstanceUsageStats)
@@ -374,6 +383,39 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("Customer Portal Backend (v2) stopped")
+}
+
+// dispatchDeploymentsProductsMetricsSearch resolves the two distinct
+// Ballerina reference routes merged under the "POST
+// /deployments/{seg1}/{seg2}/{seg3}/metrics/search" pattern registered in
+// main() (see the comment at that registration for why they can't be
+// registered as separate literal patterns). Exactly one of the two shapes
+// can match a given request: seg1=="products" identifies the
+// deployed-product-scoped instances-metrics route (seg2 is the deployed
+// product ID, seg3 is the literal "instances"); otherwise seg2=="products"
+// identifies the deployed-product's own metrics route (seg1 is the
+// deployment ID, seg3 is the product ID). Path values are injected via
+// SetPathValue so the existing handler methods can read them exactly as
+// they would from their own literal pattern.
+func dispatchDeploymentsProductsMetricsSearch(instances *handler.InstanceHandler, deployedProducts *handler.DeployedProductHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		seg1 := r.PathValue("seg1")
+		seg2 := r.PathValue("seg2")
+		seg3 := r.PathValue("seg3")
+
+		if seg1 == "products" && seg3 == "instances" {
+			r.SetPathValue("id", seg2)
+			instances.SearchDeployedProductInstanceMetrics(w, r)
+			return
+		}
+		if seg2 == "products" {
+			r.SetPathValue("deploymentId", seg1)
+			r.SetPathValue("productId", seg3)
+			deployedProducts.SearchDeployedProductMetrics(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	}
 }
 
 func mustEnv(key string) string {
