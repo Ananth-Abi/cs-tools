@@ -30,15 +30,13 @@ type DateRangePayload struct {
 	EndDate   string `json:"endDate"`
 }
 
-// IsInvalidDateRange reports whether startDate is after endDate, matching
-// the Ballerina reference's isInvalidDateRange.
+// IsInvalidDateRange reports whether startDate is after endDate.
 func IsInvalidDateRange(startDate, endDate string) bool {
 	return startDate != "" && endDate != "" && startDate > endDate
 }
 
 // IsWithinOneYear reports whether the span between startDate and endDate
-// (both YYYY-MM-DD) is at most one year, matching the Ballerina reference's
-// isWithinOneYear. ok is false if either date fails to parse.
+// (both YYYY-MM-DD) is at most one year. ok is false if either date fails to parse.
 func IsWithinOneYear(startDate, endDate string) (withinOneYear, ok bool) {
 	if len(startDate) != 10 || len(endDate) != 10 {
 		return false, false
@@ -64,8 +62,8 @@ func IsWithinOneYear(startDate, endDate string) (withinOneYear, ok bool) {
 }
 
 // DeployedProductRef is the deployed-product reference embedded in both
-// deployed-product metrics responses — id/name only, matching the Ballerina
-// reference's own reshaping (drops entity-service's number/internalId/count).
+// deployed-product metrics responses — id/name only, dropping entity-service's
+// number/internalId/count.
 type DeployedProductRef struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -114,7 +112,7 @@ type DeployedProductMetricsResponse struct {
 }
 
 // MapDeployedProductMetrics builds the portal response from entity-service's
-// DeployedProductMetricsResponse, matching the Ballerina reference's mapDeployedProductMetrics.
+// DeployedProductMetricsResponse.
 func MapDeployedProductMetrics(r entity.DeployedProductMetricsResponse) DeployedProductMetricsResponse {
 	chartData := make([]DeployedProductMetricsChartEntry, 0, len(r.ChartData))
 	for _, e := range r.ChartData {
@@ -189,8 +187,7 @@ type DeployedProductUsageCountsResponse struct {
 }
 
 // MapDeployedProductUsageCounts builds the portal response from entity-service's
-// DeployedProductUsageCountsResponse, matching the Ballerina reference's
-// mapDeployedProductMetricsUsageCounts.
+// DeployedProductUsageCountsResponse.
 func MapDeployedProductUsageCounts(r entity.DeployedProductUsageCountsResponse) DeployedProductUsageCountsResponse {
 	countTypes := make(map[string]CountTypeAggregation, len(r.Summary.CountTypes))
 	for k, v := range r.Summary.CountTypes {

@@ -63,8 +63,8 @@ type Config struct {
 	TokenValidatorEnabled bool
 }
 
-// jwtClaims defines the expected JWT payload fields, mirroring the Ballerina
-// CustomJwtPayload in the customer-portal's authorization module.
+// jwtClaims defines the expected JWT payload fields carried in the
+// customer portal's x-jwt-assertion token: email, userid, and groups.
 type jwtClaims struct {
 	Email  string   `json:"email"`
 	UserID string   `json:"userid"`
@@ -214,7 +214,8 @@ func hasAnyAudience(tokenAuds jwt.ClaimStrings, expected []string) bool {
 	return false
 }
 
-// addSecurityHeaders mirrors the Ballerina ResponseInterceptor security headers.
+// addSecurityHeaders sets the standard security response headers required on
+// every response.
 func addSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "upgrade-insecure-requests")

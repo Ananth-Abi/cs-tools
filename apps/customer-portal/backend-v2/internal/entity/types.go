@@ -405,28 +405,34 @@ type CaseSort struct {
 	Order string `json:"order,omitempty"`
 }
 
-// SearchCasesFilters holds the optional filter criteria for a case search.
-// Only the fields the portal currently exposes are included here; extend as
-// needed when more filters are surfaced to the frontend.
-type SearchCasesFilters struct {
-	Types           []string `json:"types,omitempty"`
-	SearchQuery     string   `json:"searchQuery,omitempty"`
-	ProjectIDs      []string `json:"projectIds,omitempty"`
-	DeploymentIDs   []string `json:"deploymentIds,omitempty"`
-	States          []string `json:"states,omitempty"`
-	Severities      []string `json:"severities,omitempty"`
-	IssueTypes      []string `json:"issueTypes,omitempty"`
-	EngagementTypes []string `json:"engagementTypes,omitempty"`
-	CreatedBy       []string `json:"createdBy,omitempty"`
-	CreatedByMe     bool     `json:"createdByMe,omitempty"`
-	WorkStates      []string `json:"workStates,omitempty"`
-	AssignedUserIDs []string `json:"assignedUserIds,omitempty"`
-	ProductNames    []string `json:"productNames,omitempty"`
-	Tags            []string `json:"tags,omitempty"`
-	ParentID        *string  `json:"parentId,omitempty"`
+// CaseFieldFilter is one predicate in a case search's generic filter
+// expression array: "field op values". entity-service redesigned its case
+// search contract to this shape (from the old one-named-field-per-filter
+// style dto.CaseSearchRequest still exposes to the portal frontend) — see
+// dto.BuildEntitySearchCasesRequest, which is the only place that builds one
+// of these, and entity-service's own openapi.yaml for the exact supported
+// field/op combinations.
+type CaseFieldFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Values []string `json:"values,omitempty"`
 }
 
-// SearchCasesRequest is the input for POST /cases/search.
+// SearchCasesFilters is entity-service's current case-search filter
+// contract. SearchQuery stays special-cased (a free-text match, not a field
+// predicate); every other criterion is an entry in Filters. OrGroups is not
+// populated by this backend — the portal doesn't currently expose
+// cross-field OR filtering.
+type SearchCasesFilters struct {
+	SearchQuery string              `json:"searchQuery,omitempty"`
+	Filters     []CaseFieldFilter   `json:"filters,omitempty"`
+	OrGroups    [][]CaseFieldFilter `json:"orGroups,omitempty"`
+}
+
+// SearchCasesRequest is entity-service's current wire format for
+// POST /cases/search. Never decode a portal request directly into this —
+// see dto.CaseSearchRequest (the portal's own stable, unchanged contract)
+// and dto.BuildEntitySearchCasesRequest.
 type SearchCasesRequest struct {
 	Filters    SearchCasesFilters `json:"filters"`
 	SortBy     CaseSort           `json:"sortBy"`
@@ -1300,10 +1306,9 @@ type TimeCardCaseRef struct {
 // TimeCardView is a single time card in search results. entity-service also
 // returns per-category time breakdowns (timeAnalyzing, timeSettingUp, etc.),
 // issueComplexity, workLogComment, rejectionReason, and the eligible-approvers
-// list — internal WSO2 support bookkeeping the Ballerina backend never
-// exposed to the customer portal either (see its thinner TimeCard type);
-// mirrored here only insofar as this backend actually decodes them, but see
-// dto.TimeCardSummary for what the portal exposes.
+// list — internal WSO2 support bookkeeping this backend does not expose to
+// the customer portal; mirrored here only insofar as this backend actually
+// decodes them, but see dto.TimeCardSummary for what the portal exposes.
 type TimeCardView struct {
 	ID              string           `json:"id"`
 	TotalTime       float64          `json:"totalTime"`

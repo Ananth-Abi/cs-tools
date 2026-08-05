@@ -36,9 +36,9 @@ type entityTimeCardClient interface {
 // TimeCardHandler handles HTTP requests for time-card search.
 //
 // NOTE: entity-service only supports time cards on its ServiceNow data
-// source — a Postgres-mode deployment 404s on this route. Read-only: the
-// Ballerina backend this is rewriting never exposed time-card creation or
-// updates to the customer portal, only search.
+// source — a Postgres-mode deployment 404s on this route. Read-only: this
+// backend never exposes time-card creation or updates to the customer
+// portal, only search.
 type TimeCardHandler struct {
 	entity entityTimeCardClient
 }

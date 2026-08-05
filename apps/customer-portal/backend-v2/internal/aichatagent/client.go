@@ -17,8 +17,7 @@
 // Package aichatagent is the HTTP client for the upstream AI chat agent — a
 // separate Python service (not entity-service) that powers the customer
 // portal's AI chat feature: case classification, chat responses, and KB
-// article recommendations. See apps/customer-portal/backend's
-// modules/ai_chat_agent for the Ballerina backend's equivalent client.
+// article recommendations.
 package aichatagent
 
 import (

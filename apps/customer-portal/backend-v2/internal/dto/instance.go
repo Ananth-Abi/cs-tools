@@ -19,10 +19,9 @@
 // searchInstances/searchInstanceMetrics/searchInstanceUsage/
 // searchInstanceMetricsStats/searchInstanceUsageStats is exposed as three
 // portal routes (project-scoped, deployment-scoped, deployed-product-scoped)
-// that each force exactly one ID filter from the URL path, matching the
-// Ballerina reference's own fan-out. The mapping logic itself is identical
-// across all three scopes — only the handler layer differs in which path
-// param feeds which entity filter field.
+// that each force exactly one ID filter from the URL path. The mapping logic
+// itself is identical across all three scopes — only the handler layer
+// differs in which path param feeds which entity filter field.
 package dto
 
 import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
@@ -96,7 +95,7 @@ type InstanceSearchResponse struct {
 }
 
 // MapInstanceSearchResponse builds the portal response from entity-service's
-// SearchInstancesResponse, matching the Ballerina reference's mapInstancesResponse.
+// SearchInstancesResponse.
 func MapInstanceSearchResponse(r entity.SearchInstancesResponse) InstanceSearchResponse {
 	items := make([]Instance, 0, len(r.Instances))
 	for _, i := range r.Instances {
@@ -169,7 +168,7 @@ type InstanceMetricsResponse struct {
 }
 
 // MapInstanceMetricsResponse builds the portal response from entity-service's
-// InstanceMetricsResponse, matching the Ballerina reference's mapInstanceMetrics.
+// InstanceMetricsResponse.
 func MapInstanceMetricsResponse(r entity.InstanceMetricsResponse) InstanceMetricsResponse {
 	metrics := make([]InstanceMetric, 0, len(r.Metrics))
 	for _, m := range r.Metrics {
@@ -226,7 +225,7 @@ type InstanceUsageResponse struct {
 }
 
 // MapInstanceUsageResponse builds the portal response from entity-service's
-// InstanceUsageResponse, matching the Ballerina reference's mapInstanceUsages.
+// InstanceUsageResponse.
 func MapInstanceUsageResponse(r entity.InstanceUsageResponse) InstanceUsageResponse {
 	usages := make([]InstanceUsageEntry, 0, len(r.Usages))
 	for _, u := range r.Usages {
@@ -251,10 +250,10 @@ func MapInstanceUsageResponse(r entity.InstanceUsageResponse) InstanceUsageRespo
 // InstanceStatsRequest is the portal's request body for the
 // instances/stats/metrics/search and instances/stats/usages/search route
 // families. StartDate/EndDate are required; DataSource is optional (1 = API
-// Call, 2 = File Upload). Note: the Ballerina reference's project-scoped
-// metrics-stats variant does NOT forward DataSource to entity-service (a
-// real asymmetry, not a bug) — see InstanceMetricsStatsRequestFilters's doc
-// comment on the handler side for how this is preserved.
+// Call, 2 = File Upload). Note: the project-scoped metrics-stats variant does
+// NOT forward DataSource to entity-service (a real asymmetry, by design, not
+// a bug) — see InstanceMetricsStatsRequestFilters's doc comment on the
+// handler side for how this is preserved.
 type InstanceStatsRequest struct {
 	StartDate  string `json:"startDate"`
 	EndDate    string `json:"endDate"`
@@ -280,8 +279,7 @@ type InstanceMetricsStatsResponse struct {
 }
 
 // MapInstanceMetricsStatsResponse builds the portal response from
-// entity-service's InstanceMetricsStatsResponse, matching the Ballerina
-// reference's mapInstanceMetricStats.
+// entity-service's InstanceMetricsStatsResponse.
 func MapInstanceMetricsStatsResponse(r entity.InstanceMetricsStatsResponse) InstanceMetricsStatsResponse {
 	return InstanceMetricsStatsResponse{
 		Stats: r.Stats,
@@ -299,7 +297,7 @@ func MapInstanceMetricsStatsResponse(r entity.InstanceMetricsStatsResponse) Inst
 
 // InstanceUsageStatsResponse is the portal's response for the
 // instances/stats/usages/search routes. Unlike InstanceMetricsStatsResponse,
-// there is no summary block, matching the Ballerina reference exactly.
+// there is no summary block, by design.
 type InstanceUsageStatsResponse struct {
 	Stats     map[string]map[string]int `json:"stats"`
 	Total     int                       `json:"total"`
@@ -308,8 +306,7 @@ type InstanceUsageStatsResponse struct {
 }
 
 // MapInstanceUsageStatsResponse builds the portal response from
-// entity-service's InstanceUsageStatsResponse, matching the Ballerina
-// reference's mapInstanceUsageStats.
+// entity-service's InstanceUsageStatsResponse.
 func MapInstanceUsageStatsResponse(r entity.InstanceUsageStatsResponse) InstanceUsageStatsResponse {
 	return InstanceUsageStatsResponse{
 		Stats:     r.Stats,

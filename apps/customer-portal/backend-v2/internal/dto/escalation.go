@@ -22,8 +22,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 )
 
-// Escalation actions accepted by POST /cases/{caseId}/escalations, matching
-// the Ballerina reference's ESCALATION_ACTION_ESCALATE/DEESCALATE constants.
+// Escalation actions accepted by POST /cases/{caseId}/escalations.
 const (
 	EscalationActionEscalate   = "ESCALATE"
 	EscalationActionDeescalate = "DEESCALATE"
@@ -39,10 +38,9 @@ type EscalationCreateRequest struct {
 
 // ValidateEscalationAction normalizes req.Action (uppercased, defaulted to
 // ESCALATE) and validates it against the allow-list, plus the "reason
-// required when escalating" rule — matching the Ballerina reference's inline
-// validation in its create-escalation resource function exactly. ok is
-// false when the action is invalid or a required reason is missing/blank;
-// errMsg is the caller-safe message to return as a 400 in that case.
+// required when escalating" rule. ok is false when the action is invalid or
+// a required reason is missing/blank; errMsg is the caller-safe message to
+// return as a 400 in that case.
 func ValidateEscalationAction(req EscalationCreateRequest) (action string, ok bool, errMsg string) {
 	action = EscalationActionEscalate
 	if req.Action != nil {
@@ -103,7 +101,7 @@ type EscalationCreateResponse struct {
 }
 
 // MapEscalationCreateResponse builds the portal response from entity-service's
-// CreateEscalationResponse, matching the Ballerina reference's mapCreatedEscalation.
+// CreateEscalationResponse.
 func MapEscalationCreateResponse(r entity.CreateEscalationResponse) EscalationCreateResponse {
 	e := r.Escalation
 	return EscalationCreateResponse{
@@ -131,7 +129,7 @@ type EscalationSearchSort struct {
 // EscalationSearchRequest is the portal's request body for
 // POST /cases/{caseId}/escalations/search — caseId is never client-supplied,
 // always injected from the path (any caseIds the client sends are discarded),
-// matching the Ballerina reference exactly.
+// by design.
 type EscalationSearchRequest struct {
 	SortBy     *EscalationSearchSort `json:"sortBy,omitempty"`
 	Pagination entity.Pagination     `json:"pagination"`
@@ -173,7 +171,7 @@ type EscalationSearchResponse struct {
 }
 
 // MapEscalationSearchResponse builds the portal response from entity-service's
-// SearchEscalationsResponse, matching the Ballerina reference's mapEscalationsResponse.
+// SearchEscalationsResponse.
 func MapEscalationSearchResponse(r entity.SearchEscalationsResponse) EscalationSearchResponse {
 	escalations := make([]Escalation, 0, len(r.Escalations))
 	for _, e := range r.Escalations {

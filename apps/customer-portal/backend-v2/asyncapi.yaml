@@ -24,12 +24,10 @@ info:
     separate Python service — see CLAUDE.md's "The AI chat agent" section).
     This server (internal/handler/websocket.go) forwards every message from
     the upstream agent to the browser verbatim, so the message shapes below
-    mirror the upstream agent's own contract (see
-    apps/customer-portal/backend/asyncapi.yaml for the Ballerina backend's
-    equivalent, which this is adapted from) — with one deliberate difference:
-    conversationId is REQUIRED on UserMessage here. Unlike the Ballerina
-    backend, this server cannot start a brand-new AI chat conversation
-    (entity-service has no createConversation yet — see CLAUDE.md), so a
+    mirror the upstream agent's own contract — with one deliberate
+    restriction: conversationId is REQUIRED on UserMessage here. This
+    connection only resumes an existing conversation (start a new one via
+    POST /projects/{id}/conversations first — see CLAUDE.md), so a
     UserMessage with no conversationId gets an ErrorMessage back instead of
     creating one.
 
@@ -51,10 +49,10 @@ channels:
               format: uuid
               description: >
                 The project ID. Named sessionId for wire compatibility with
-                the Ballerina backend this replaces, even though it doesn't
-                carry a session/conversation value itself — the upstream
-                agent's own per-conversation session key is derived
-                server-side as "{projectId}:{conversationId}".
+                existing clients, even though it doesn't carry a
+                session/conversation value itself — the upstream agent's own
+                per-conversation session key is derived server-side as
+                "{projectId}:{conversationId}".
           required:
             - sessionId
 
@@ -334,9 +332,9 @@ components:
                 type: boolean
                 nullable: true
                 description: >
-                  When true, the Ballerina backend marks the conversation
-                  resolved in entity-service; this server does not (no
-                  updateConversation yet — see CLAUDE.md).
+                  When true, this server marks the conversation resolved in
+                  entity-service (best-effort — a failure here is logged,
+                  not surfaced to the client).
               kbReferences:
                 type: array
                 nullable: true

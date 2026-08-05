@@ -22,7 +22,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/registry"
 )
 
-// robotNameRE matches the Ballerina reference's constraint on
+// robotNameRE matches this API's own constraint on
 // RegistryTokenCreateRequest.RobotName exactly: alphanumeric and dashes only.
 var robotNameRE = regexp.MustCompile(`^[a-zA-Z0-9\-]+$`)
 

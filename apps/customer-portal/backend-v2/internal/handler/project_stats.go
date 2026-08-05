@@ -102,10 +102,10 @@ func (h *ProjectStatsHandler) GetProjectFeatures(w http.ResponseWriter, r *http.
 	writeJSONValue(w, http.StatusOK, dto.MapProjectFeatures(result))
 }
 
-// GetProjectDashboardStats handles GET /projects/{id}/stats. Mirrors the
-// Ballerina backend's own graceful-degradation behavior: each of the four
-// underlying stats calls may fail independently without failing the whole
-// request — a failed source's fields are simply omitted from the response.
+// GetProjectDashboardStats handles GET /projects/{id}/stats. Uses a
+// graceful-degradation behavior: each of the four underlying stats calls
+// may fail independently without failing the whole request — a failed
+// source's fields are simply omitted from the response.
 func (h *ProjectStatsHandler) GetProjectDashboardStats(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {

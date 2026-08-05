@@ -111,6 +111,92 @@ func MapSearchCases(r entity.SearchCasesResponse) SearchCasesResponse {
 	}
 }
 
+// currentUserFilterPlaceholder must match entity-service's own
+// currentUserFilterPlaceholder (case_filters.go) exactly — it's the literal
+// values entry a createdBy+eq filter must carry to mean "the authenticated
+// caller".
+const currentUserFilterPlaceholder = "__current_user_email__"
+
+// CaseSearchFilters holds the optional filter criteria for POST /cases/search.
+// This is the portal's own request contract, unchanged from before
+// entity-service redesigned its case-search wire format into a generic
+// filter-predicate array (matching what the frontend has always sent) —
+// only the fields
+// the portal currently exposes are included; extend as needed when more
+// filters are surfaced to the frontend. See BuildEntitySearchCasesRequest
+// for the translation into entity-service's current contract.
+type CaseSearchFilters struct {
+	Types           []string `json:"types,omitempty"`
+	SearchQuery     string   `json:"searchQuery,omitempty"`
+	ProjectIDs      []string `json:"projectIds,omitempty"`
+	DeploymentIDs   []string `json:"deploymentIds,omitempty"`
+	States          []string `json:"states,omitempty"`
+	Severities      []string `json:"severities,omitempty"`
+	IssueTypes      []string `json:"issueTypes,omitempty"`
+	EngagementTypes []string `json:"engagementTypes,omitempty"`
+	CreatedBy       []string `json:"createdBy,omitempty"`
+	CreatedByMe     bool     `json:"createdByMe,omitempty"`
+	WorkStates      []string `json:"workStates,omitempty"`
+	AssignedUserIDs []string `json:"assignedUserIds,omitempty"`
+	ProductNames    []string `json:"productNames,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
+	ParentID        *string  `json:"parentId,omitempty"`
+}
+
+// CaseSearchRequest is the portal's request body for POST /cases/search.
+type CaseSearchRequest struct {
+	Filters    CaseSearchFilters `json:"filters"`
+	SortBy     entity.CaseSort   `json:"sortBy"`
+	Pagination entity.Pagination `json:"pagination"`
+}
+
+// BuildEntitySearchCasesRequest translates the portal's named-filter-field
+// request into entity-service's current generic filter-predicate array
+// contract (see entity.CaseFieldFilter) — every filter the portal exposes
+// becomes one "field in/eq values" entry; SearchQuery, SortBy, and
+// Pagination pass straight through unchanged. CreatedByMe becomes a
+// createdBy+eq filter carrying currentUserFilterPlaceholder, exactly as
+// entity-service's own case_filters.go expects, resolving the caller's
+// identity server-side from the forwarded x-user-id-token.
+func BuildEntitySearchCasesRequest(req CaseSearchRequest) entity.SearchCasesRequest {
+	var filters []entity.CaseFieldFilter
+
+	addIn := func(field string, values []string) {
+		if len(values) > 0 {
+			filters = append(filters, entity.CaseFieldFilter{Field: field, Op: "in", Values: values})
+		}
+	}
+
+	addIn("type", req.Filters.Types)
+	addIn("projectId", req.Filters.ProjectIDs)
+	addIn("deploymentId", req.Filters.DeploymentIDs)
+	addIn("state", req.Filters.States)
+	addIn("severity", req.Filters.Severities)
+	addIn("issueType", req.Filters.IssueTypes)
+	addIn("engagementType", req.Filters.EngagementTypes)
+	addIn("workState", req.Filters.WorkStates)
+	addIn("assignedUserId", req.Filters.AssignedUserIDs)
+	addIn("product", req.Filters.ProductNames)
+	addIn("tag", req.Filters.Tags)
+	addIn("createdBy", req.Filters.CreatedBy)
+
+	if req.Filters.ParentID != nil {
+		filters = append(filters, entity.CaseFieldFilter{Field: "parentId", Op: "eq", Values: []string{*req.Filters.ParentID}})
+	}
+	if req.Filters.CreatedByMe {
+		filters = append(filters, entity.CaseFieldFilter{Field: "createdBy", Op: "eq", Values: []string{currentUserFilterPlaceholder}})
+	}
+
+	return entity.SearchCasesRequest{
+		Filters: entity.SearchCasesFilters{
+			SearchQuery: req.Filters.SearchQuery,
+			Filters:     filters,
+		},
+		SortBy:     req.SortBy,
+		Pagination: req.Pagination,
+	}
+}
+
 // PersonRef is a compact reference to a person (name + email), used for
 // case creators and assigned engineers. Internal identifiers (entity-service's
 // UserRef.ID/UserID, AssignedEngineerRef.ID) are intentionally dropped.

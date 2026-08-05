@@ -85,7 +85,7 @@ func (h *ProductConsumptionHandler) GetDeploymentLicense(w http.ResponseWriter, 
 
 	// Verify the caller can access this project before provisioning
 	// anything — entity-service's own project-access check is the
-	// authorization gate here, matching the Ballerina backend's flow.
+	// authorization gate here.
 	if _, err := h.entity.GetProject(r.Context(), projectID); err != nil {
 		slog.ErrorContext(r.Context(), "entity GetProject failed", "userID", user.UserID, "projectID", projectID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to retrieve project details.")

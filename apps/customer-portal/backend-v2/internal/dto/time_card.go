@@ -31,8 +31,7 @@ type TimeCardCaseRef struct {
 // (timeAnalyzing, timeSettingUp, timeReproducingDebugging,
 // timeProvidingSolution, timePatching), issueComplexity, workLogComment,
 // rejectionReason, and the eligible-approvers list — internal WSO2 support
-// bookkeeping the Ballerina backend this is rewriting never exposed to the
-// customer portal either.
+// bookkeeping never exposed to the customer portal.
 type TimeCardSummary struct {
 	ID          string           `json:"id"`
 	TotalTime   float64          `json:"totalTime"`

@@ -168,7 +168,7 @@ type ValidationPayload struct {
 }
 
 // getRoles converts the four role booleans into the role-name slice the
-// upstream service expects, matching the Ballerina reference's getRoles exactly.
+// upstream service expects, in the exact order and shape its role field requires.
 func getRoles(isCsAdmin, isLead, isPortalUser, isSecurityContact bool) []string {
 	var roles []string
 	if isCsAdmin {
@@ -187,8 +187,7 @@ func getRoles(isCsAdmin, isLead, isPortalUser, isSecurityContact bool) []string 
 }
 
 // hasRole reports whether role appears in the upstream's semicolon-delimited
-// role string, trimming whitespace around each part — matches the Ballerina
-// reference's hasRole exactly. A nil roleValue never matches.
+// role string, trimming whitespace around each part. A nil roleValue never matches.
 func hasRole(roleValue *string, role string) bool {
 	if roleValue == nil {
 		return false

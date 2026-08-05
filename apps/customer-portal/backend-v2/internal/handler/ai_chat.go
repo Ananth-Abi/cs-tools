@@ -194,13 +194,13 @@ func (h *AIChatHandler) GetConversationMessages(w http.ResponseWriter, r *http.R
 	writeJSONValue(w, http.StatusOK, dto.MapSearchComments(result))
 }
 
-// agentReplyCreatedBy documents a known gap versus the Ballerina reference:
+// agentReplyCreatedBy documents a known limitation of this endpoint:
 // entity-service's CreateCommentRequest has no createdBy override (comments
 // are always attributed to the caller's own identity via their auth token),
-// unlike the Ballerina backend, which tags the AI's own reply with a
-// distinct "agent" identity (entity:CHAT_SENT_AGENT). Both the user's
-// message and the AI's reply are therefore saved here under the calling
-// user's identity — there is no way to distinguish them by author alone.
+// so there is no way to tag the AI's own reply with a distinct "agent"
+// identity. Both the user's message and the AI's reply are therefore saved
+// here under the calling user's identity — there is no way to distinguish
+// them by author alone.
 // TODO(entity-service): revisit once/if CreateCommentRequest gains a
 // createdBy override.
 const agentReplyCreatedByCaveat = "AI reply comment attributed to caller (see agentReplyCreatedBy doc comment) — entity-service has no createdBy override"
@@ -210,15 +210,15 @@ const agentReplyCreatedByCaveat = "AI reply comment attributed to caller (see ag
 const createEntityStateResolved = "RESOLVED"
 
 // CreateConversation handles POST /projects/{id}/conversations — starts a
-// brand-new conversation and gets the AI agent's first response, matching
-// the Ballerina reference's composite flow: create the conversation, call
-// the AI agent, optionally fetch KB recommendations (only when both Region
-// and Tier are supplied), persist the AI's reply as a comment, then
-// auto-resolve the conversation if the agent reports the issue solved.
-// Mirrors the Ballerina reference's own error-handling: conversation
-// creation, the AI call, and comment persistence are all fatal (500) on
-// failure with no compensating rollback of earlier steps; recommendations
-// and auto-resolve are best-effort and never fail the request.
+// brand-new conversation and gets the AI agent's first response via this
+// composite flow: create the conversation, call the AI agent, optionally
+// fetch KB recommendations (only when both Region and Tier are supplied),
+// persist the AI's reply as a comment, then auto-resolve the conversation
+// if the agent reports the issue solved.
+// Error-handling: conversation creation, the AI call, and comment
+// persistence are all fatal (500) on failure with no compensating rollback
+// of earlier steps; recommendations and auto-resolve are best-effort and
+// never fail the request.
 func (h *AIChatHandler) CreateConversation(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -305,8 +305,8 @@ func (h *AIChatHandler) CreateConversation(w http.ResponseWriter, r *http.Reques
 
 	if chatResp.Resolved != nil && *chatResp.Resolved {
 		if _, err := h.entity.UpdateConversation(r.Context(), conversationID, entity.UpdateConversationRequest{State: createEntityStateResolved}); err != nil {
-			// Best-effort, matching the Ballerina reference: the main flow
-			// already succeeded, so this failure is logged, not returned.
+			// Best-effort: the main flow already succeeded, so this
+			// failure is logged, not returned.
 			slog.ErrorContext(r.Context(), "entity UpdateConversation failed to auto-resolve", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
 		}
 	}
@@ -317,8 +317,8 @@ func (h *AIChatHandler) CreateConversation(w http.ResponseWriter, r *http.Reques
 // SendConversationMessage handles
 // POST /projects/{projectId}/conversations/{conversationId}/messages — a
 // follow-up message on an existing conversation. Unlike CreateConversation,
-// no recommendations call is ever made here — the Ballerina reference only
-// attaches recommendations on a conversation's first message.
+// no recommendations call is ever made here — recommendations are only
+// attached on a conversation's first message.
 func (h *AIChatHandler) SendConversationMessage(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {

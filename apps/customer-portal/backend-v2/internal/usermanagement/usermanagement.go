@@ -105,8 +105,7 @@ func (c *Client) UpdateMembershipRole(ctx context.Context, projectID, contactEma
 }
 
 // ValidateProjectContact calls POST /validate-project-contact. The upstream
-// service uses the HTTP status code itself to distinguish three outcomes,
-// matching the Ballerina reference's Contact|error? union:
+// service uses the HTTP status code itself to distinguish three outcomes:
 //   - 201 Created: a deactivated contact with this email already exists —
 //     contact is non-nil, conflict is false, err is nil.
 //   - 202 Accepted: the contact is new and can be onboarded — contact is
@@ -152,7 +151,7 @@ type upstreamErrorBody struct {
 // extractErrorMessage builds an *apierror.Error whose Body is the upstream
 // service's own "message" field when present, so callers can surface the
 // specific reason (e.g. "Contact already exists") rather than a generic
-// fallback — matching the Ballerina reference's response.message() passthrough.
+// fallback.
 func extractErrorMessage(statusCode int, raw []byte) error {
 	var body upstreamErrorBody
 	if err := json.Unmarshal(raw, &body); err == nil && body.Message != "" {

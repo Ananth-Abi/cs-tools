@@ -18,9 +18,9 @@
 // (search/metrics/usages/metrics-stats/usages-stats) as 15 portal routes —
 // each metric type fanned out into a project-scoped, deployment-scoped, and
 // deployed-product-scoped variant that forces exactly one ID filter from its
-// URL path, matching the Ballerina reference's own fan-out exactly. Each
-// public method is a thin wrapper around a shared unexported implementation
-// differing only in which entity filter field the path param feeds.
+// URL path. Each public method is a thin wrapper around a shared unexported
+// implementation differing only in which entity filter field the path param
+// feeds.
 package handler
 
 import (
@@ -256,11 +256,10 @@ func (h *InstanceHandler) SearchDeployedProductInstanceUsage(w http.ResponseWrit
 
 // --- POST .../instances/stats/metrics/search ---
 //
-// NOTE: DataSource is deliberately NOT forwarded to entity-service here,
-// matching the Ballerina reference exactly — its metrics-stats resource
-// functions never read payload.filters.dataSource even though the portal
-// payload type carries it, unlike the stats/usages/search family below,
-// which does forward it. Not a bug to "fix"; preserved intentionally.
+// NOTE: DataSource is deliberately NOT forwarded to entity-service here —
+// this endpoint never reads payload.filters.dataSource even though the
+// portal payload type carries it, unlike the stats/usages/search family
+// below, which does forward it. Not a bug to "fix"; preserved intentionally.
 
 func (h *InstanceHandler) searchInstanceMetricsStats(w http.ResponseWriter, r *http.Request, scope instanceIDFilters, pathID, failureNoun string) {
 	user := middleware.UserInfoFromContext(r.Context())

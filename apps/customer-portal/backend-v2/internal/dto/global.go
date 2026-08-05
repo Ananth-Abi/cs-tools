@@ -54,12 +54,11 @@ func mapFeedbackEmojis(emojis []entity.FeedbackEmoji) []FeedbackEmoji {
 	return out
 }
 
-// FeatureFlags mirrors the Ballerina backend's own `configurable
-// types:FeatureFlags featureFlags` — a portal-only value that never comes
-// from entity-service at all, injected directly into the metadata response.
-// Hardcoded to the Ballerina reference's own default; if this needs to vary
-// per environment, wire it to an env var the same way other configurable
-// values in this backend are read in cmd/server/main.go.
+// FeatureFlags is a portal-only value that never comes from entity-service
+// at all, injected directly into the metadata response. Hardcoded to this
+// API's own default; if this needs to vary per environment, wire it to an
+// env var the same way other configurable values in this backend are read
+// in cmd/server/main.go.
 type FeatureFlags struct {
 	UsageMetricsEnabled bool `json:"usageMetricsEnabled"`
 }
@@ -75,7 +74,7 @@ type MetadataResponse struct {
 }
 
 // MapMetadataResponse builds the portal response from entity-service's
-// SystemMetadataResponse, matching the Ballerina reference's mapMetadataResponse.
+// SystemMetadataResponse.
 func MapMetadataResponse(r entity.SystemMetadataResponse) MetadataResponse {
 	return MetadataResponse{
 		TimeZones:      mapChoiceListItems(r.TimeZones),
@@ -85,8 +84,8 @@ func MapMetadataResponse(r entity.SystemMetadataResponse) MetadataResponse {
 	}
 }
 
-// globalSearchProjectsMaxLimit caps GlobalSearchRequest.ProjectsPagination.Limit,
-// matching the Ballerina reference's GLOBAL_SEARCH_PROJECTS_MAX_LIMIT constant.
+// globalSearchProjectsMaxLimit caps GlobalSearchRequest.ProjectsPagination.Limit
+// at this API's own maximum.
 const globalSearchProjectsMaxLimit = 50
 
 // GlobalSearchFilters holds the optional filter criteria for POST /search.
@@ -111,9 +110,9 @@ type GlobalSearchRequest struct {
 }
 
 // BuildEntityGlobalSearchRequest translates the portal's global-search
-// request into entity-service's shape, matching the Ballerina reference's
-// globalSearch wrapper: renames filters.types to entity's filters.tables and
-// caps projectsPagination.limit at globalSearchProjectsMaxLimit.
+// request into entity-service's shape: renames filters.types to entity's
+// filters.tables and caps projectsPagination.limit at
+// globalSearchProjectsMaxLimit.
 func BuildEntityGlobalSearchRequest(req GlobalSearchRequest) entity.GlobalSearchRequest {
 	out := entity.GlobalSearchRequest{}
 	if req.Filters != nil {
@@ -179,8 +178,7 @@ type GlobalSearchResponse struct {
 }
 
 // MapGlobalSearchResponse builds the portal response from entity-service's
-// GlobalSearchResponse, matching the Ballerina reference's globalSearch
-// wrapper's result remapping.
+// GlobalSearchResponse.
 func MapGlobalSearchResponse(r entity.GlobalSearchResponse) GlobalSearchResponse {
 	projects := make([]GlobalSearchProject, 0, len(r.Projects))
 	for _, p := range r.Projects {

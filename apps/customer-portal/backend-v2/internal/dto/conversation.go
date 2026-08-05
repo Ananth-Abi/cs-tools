@@ -34,7 +34,7 @@ type ConversationDetails struct {
 }
 
 // MapConversationDetails builds the portal response from entity-service's
-// ConversationDetails, matching the Ballerina reference's mapConversationResponse.
+// ConversationDetails.
 func MapConversationDetails(r entity.ConversationDetails) ConversationDetails {
 	out := ConversationDetails{
 		ID:             r.ID,
@@ -69,10 +69,10 @@ const (
 )
 
 // conversationStatusToState maps the portal's PATCH /conversations/{id}
-// status values to entity-service's ConversationState enum, matching the
-// Ballerina reference's configurable conversationStateIds lookup table
-// (open:1, active:2, resolved:3, converted:4, abandonded:5, close:6) —
-// only the three states this endpoint can transition to are represented here.
+// status values to entity-service's ConversationState enum, using this API's
+// own conversation state ID lookup (open:1, active:2, resolved:3, converted:4,
+// abandonded:5, close:6) — only the three states this endpoint can transition
+// to are represented here.
 var conversationStatusToState = map[string]string{
 	ConversationStatusClosed:    "CLOSED",
 	ConversationStatusAbandoned: "ABANDONED",

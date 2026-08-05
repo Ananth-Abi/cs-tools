@@ -80,8 +80,7 @@ type CaseTimeCardSearchResponse struct {
 }
 
 // MapCaseTimeCardSearchResponse builds the portal response from entity-service's
-// SearchCaseTimeCardsResponse, matching the Ballerina reference's
-// mapTimeCardSearchResponseGroupedByCases.
+// SearchCaseTimeCardsResponse, grouping time-card entries by their case.
 func MapCaseTimeCardSearchResponse(r entity.SearchCaseTimeCardsResponse) CaseTimeCardSearchResponse {
 	items := make([]CaseTimeCard, 0, len(r.Cases))
 	for _, c := range r.Cases {

@@ -17,9 +17,7 @@
 package productconsumption
 
 // These types mirror the upstream product-consumption service's wire format
-// 1:1 (see apps/customer-portal/backend's modules/product_consumption_subscription
-// and modules/product_consumption_tracking, the Ballerina backend this is
-// rewriting) so json.Unmarshal can decode its responses directly.
+// 1:1 so json.Unmarshal can decode its responses directly.
 
 // consumptionStatus enumerates the product-consumption service's per-project
 // license-provisioning state machine.

@@ -137,6 +137,36 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
+// maxErrBodyBytes bounds how much of an error response body newUpstreamError
+// keeps, whether or not it parses as JSON.
+const maxErrBodyBytes = 256
+
+// entityErrorBody mirrors entity-service's apierror.WriteJSON output:
+// {"code": <status>, "message": "<msg>"}.
+type entityErrorBody struct {
+	Message string `json:"message"`
+}
+
+// newUpstreamError builds an *apierror.Error whose Body is entity-service's
+// own "message" field — the specific, caller-safe validation reason
+// (apierror.ValidationError et al. are written for exactly this purpose) —
+// rather than the raw {"code":...,"message":"..."} JSON blob, so callers can
+// both log the exact reason and, for 400s, surface it to the frontend
+// verbatim instead of a generic fallback string. Falls back to a raw-body
+// excerpt if the response isn't the expected shape (e.g. a gateway error
+// page instead of an entity-service response).
+func newUpstreamError(statusCode int, rawBody []byte) *apierror.Error {
+	var body entityErrorBody
+	if err := json.Unmarshal(rawBody, &body); err == nil && body.Message != "" {
+		return &apierror.Error{StatusCode: statusCode, Body: body.Message}
+	}
+	excerpt := rawBody
+	if len(excerpt) > maxErrBodyBytes {
+		excerpt = excerpt[:maxErrBodyBytes]
+	}
+	return &apierror.Error{StatusCode: statusCode, Body: string(excerpt)}
+}
+
 // do executes an authenticated HTTP request against entity-service and
 // returns the raw JSON response body. The caller owns the returned slice.
 func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
@@ -175,12 +205,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		return nil, newUpstreamError(resp.StatusCode, respBody)
 	}
 
 	return respBody, nil
@@ -223,12 +248,8 @@ func (c *Client) doBinary(ctx context.Context, path string) (body []byte, conten
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return nil, "", &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		err := newUpstreamError(resp.StatusCode, respBody)
+		return nil, "", err
 	}
 
 	ct := resp.Header.Get("Content-Type")

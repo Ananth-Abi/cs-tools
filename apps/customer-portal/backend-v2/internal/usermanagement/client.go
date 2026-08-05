@@ -148,8 +148,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) (stat
 // becomes an *apierror.Error whose Body is the upstream's own "message"
 // field when present (see extractErrorMessage in usermanagement.go) — this
 // service deliberately surfaces its own error text to the caller rather than
-// a generic fallback, matching the Ballerina reference's response.message()
-// passthrough.
+// a generic fallback.
 func (c *Client) doJSON(ctx context.Context, method, path string, body []byte, wantStatus int) ([]byte, error) {
 	statusCode, respBody, err := c.do(ctx, method, path, body)
 	if err != nil {

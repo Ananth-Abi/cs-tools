@@ -152,8 +152,8 @@ func (c *Client) updateProjectStatus(ctx context.Context, projectID string, req 
 }
 
 // subscribeApplication calls POST /applications/{applicationId}/subscribe.
-// The request body is the bare applicationId string, matching the upstream
-// Ballerina client's own `.post(applicationId)` call.
+// The request body is the bare applicationId string, as the upstream
+// endpoint expects.
 func (c *Client) subscribeApplication(ctx context.Context, applicationID string) (ApplicationSubscriptionResponse, error) {
 	var out ApplicationSubscriptionResponse
 	err := c.postText(ctx, fmt.Sprintf("/applications/%s/subscribe", pathEscape(applicationID)), applicationID, &out)
