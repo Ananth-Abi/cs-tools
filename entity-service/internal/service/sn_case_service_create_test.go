@@ -119,6 +119,54 @@ func TestSNCaseService_CreateCase_Engagement(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_CreateCase_DefaultCaseAliasNormalizesToCase verifies that
+// "default_case" -- the production customer-portal frontend's actual value
+// for this type (ServiceNow's own raw caseType wire value, which predates
+// this service's "case" enum; see caseTypeAliases) -- is accepted, runs the
+// same validation/payload-building as "case" (subject/description/severity/
+// issueType required), and is sent to ServiceNow as "default_case" on the
+// wire, exactly as "case" would be.
+func TestSNCaseService_CreateCase_DefaultCaseAliasNormalizesToCase(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{
+			"message": "Case created successfully",
+			"case": {"id": "` + testWLCaseSysid + `", "number": "CS0000002", "createdBy": "engineer@example.com", "createdOn": "2026-01-02 10:00:00", "state": {"id": 1, "label": "Open"}}
+		}`))
+	})
+
+	svc := NewServiceNowCaseService(client, nil)
+	req := domain.CreateCaseRequest{
+		Type:              "default_case",
+		ProjectID:         testProjectUUID,
+		DeploymentID:      testDeploymentUUID,
+		DeployedProductID: testDeployedProdID,
+		Subject:           "Cannot log in",
+		Description:       "Login fails with a 500",
+		Severity:          domain.CaseSeverityHigh,
+		IssueType:         domain.CaseIssueTypeQuestion,
+	}
+
+	resp, err := svc.CreateCase(contextWithUserIDToken("token"), req)
+	if err != nil {
+		t.Fatalf("unexpected error for the default_case alias: %v", err)
+	}
+	if resp.Case.Number != "CS0000002" {
+		t.Fatalf("unexpected case number: %s", resp.Case.Number)
+	}
+	if gotBody["type"] != "default_case" {
+		t.Fatalf("payload type: got %v, want %q (SN wire value)", gotBody["type"], "default_case")
+	}
+	if gotBody["title"] != "Cannot log in" {
+		t.Fatalf("payload title: got %v, want %q", gotBody["title"], "Cannot log in")
+	}
+}
+
 // TestSNCaseService_CreateCase_SecurityReportAnalysis_AttachmentsOptional verifies
 // that a security_report_analysis request with zero attachments is accepted --
 // attachments are uploaded via a separate request after the case is created, not
