@@ -15,13 +15,16 @@
 // under the License.
 
 // Package productconsumption is the HTTP client for the upstream
-// product-consumption service — a separate service (not entity-service)
-// that provisions WSO2 API Manager applications/subscriptions/credentials to
-// generate per-deployment product licenses, and imports deployment usage
+// product-consumption service(s) — separate services (not entity-service)
+// that provision WSO2 API Manager applications/subscriptions/credentials to
+// generate per-deployment product licenses, and import deployment usage
 // data. See apps/customer-portal/backend's modules/product_consumption_subscription
 // and modules/product_consumption_tracking for the Ballerina backend's
-// equivalent clients — both point at the same upstream base URL there, so
-// this package models them as one client rather than two.
+// equivalent clients: each has its own independently-configurable base URL
+// (productConsumptionBaseUrl vs productConsumptionTrackingBaseUrl) — they
+// happen to be set to the same value in that backend's current config, but
+// are not guaranteed to be, so this package keeps them as two distinct fields
+// rather than assuming they're always the same host.
 package productconsumption
 
 import (
@@ -48,24 +51,33 @@ func noRedirect(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
 }
 
-// Config holds the configuration for the product-consumption service client.
+// Config holds the configuration for the product-consumption service
+// clients. TrackingBaseURL defaults to BaseURL when left empty, matching
+// this Ballerina reference's current deployment where both configurable
+// base URLs happen to be set to the same value — set it explicitly once
+// the two services are hosted separately.
 type Config struct {
-	BaseURL      string
-	TokenURL     string
-	ClientID     string
-	ClientSecret string
-	Scopes       []string
+	BaseURL         string
+	TrackingBaseURL string
+	TokenURL        string
+	ClientID        string
+	ClientSecret    string
+	Scopes          []string
 }
 
-// Client is an HTTP client for the upstream product-consumption service,
-// authenticated via the OAuth2 client credentials grant.
+// Client is an HTTP client for the upstream product-consumption service(s),
+// authenticated via the OAuth2 client credentials grant. baseURL backs the
+// subscription/license API; trackingBaseURL backs the usage-import API —
+// two independently-configurable upstream services in the Ballerina
+// reference, kept distinct here even though they're often the same host.
 type Client struct {
-	http    *http.Client
-	baseURL string
+	http            *http.Client
+	baseURL         string
+	trackingBaseURL string
 }
 
 // NewClient constructs a Client that authenticates against the
-// product-consumption service using the OAuth2 client credentials grant type.
+// product-consumption service(s) using the OAuth2 client credentials grant type.
 func NewClient(cfg Config) *Client {
 	cc := clientcredentials.Config{
 		ClientID:     cfg.ClientID,
@@ -88,19 +100,25 @@ func NewClient(cfg Config) *Client {
 		CheckRedirect: noRedirect,
 	}
 
+	trackingBaseURL := cfg.TrackingBaseURL
+	if trackingBaseURL == "" {
+		trackingBaseURL = cfg.BaseURL
+	}
+
 	return &Client{
-		http:    httpClient,
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
+		http:            httpClient,
+		baseURL:         strings.TrimRight(cfg.BaseURL, "/"),
+		trackingBaseURL: strings.TrimRight(trackingBaseURL, "/"),
 	}
 }
 
-func (c *Client) do(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
+func (c *Client) doAt(ctx context.Context, baseURL, method, path, contentType string, body []byte) ([]byte, error) {
 	var reqBody io.Reader
 	if len(body) > 0 {
 		reqBody = bytes.NewReader(body)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, baseURL+path, reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("productconsumption: build request %s %s: %w", method, path, err)
 	}
@@ -135,12 +153,33 @@ func (c *Client) do(ctx context.Context, method, path, contentType string, body 
 	return respBody, nil
 }
 
+func (c *Client) do(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
+	return c.doAt(ctx, c.baseURL, method, path, contentType, body)
+}
+
 func (c *Client) postJSON(ctx context.Context, path string, reqBody, out any) error {
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return fmt.Errorf("productconsumption: encode request for POST %s: %w", path, err)
 	}
 	body, err := c.do(ctx, http.MethodPost, path, "application/json", payload)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("productconsumption: decode response for POST %s: %w", path, err)
+	}
+	return nil
+}
+
+// postJSONTracking is postJSON's counterpart for the usage-tracking service
+// — the only consumer of trackingBaseURL.
+func (c *Client) postJSONTracking(ctx context.Context, path string, reqBody, out any) error {
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("productconsumption: encode request for POST %s: %w", path, err)
+	}
+	body, err := c.doAt(ctx, c.trackingBaseURL, http.MethodPost, path, "application/json", payload)
 	if err != nil {
 		return err
 	}

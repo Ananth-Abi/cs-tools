@@ -136,11 +136,14 @@ A separate Python service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#t
 
 ### Product-consumption service
 
-A separate service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#the-product-consumption-service).
+Not entity-service — see [CLAUDE.md](./CLAUDE.md#the-product-consumption-service). The Ballerina
+backend configures the subscription/license API and the usage-tracking API as two independently
+configurable base URLs, so set both here too.
 
 | Variable | Description |
 |---|---|
-| `PRODUCT_CONSUMPTION_BASE_URL` | Base URL of the product-consumption service |
+| `PRODUCT_CONSUMPTION_BASE_URL` | Base URL of the subscription/license API |
+| `PRODUCT_CONSUMPTION_TRACKING_BASE_URL` | Base URL of the usage-tracking API (optional — falls back to `PRODUCT_CONSUMPTION_BASE_URL` when unset) |
 | `PRODUCT_CONSUMPTION_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 
 ### Registry service
