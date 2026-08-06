@@ -1579,11 +1579,16 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const c = data;
   const isClosed = c.state === "closed";
   // The backend rejects a customer-visible comment unless the case is
-  // work_in_progress + ongoing. Internal work notes are allowed in any state,
-  // so this only disables the public-reply path in the composer — never work
-  // notes. Mirrors the BFF comment guard so the engineer sees a clear reason
-  // instead of a generic error.
-  const publicReplyGateReason = publicCommentGateReason(c.state, c.workState);
+  // work_in_progress + ongoing AND the signed-in engineer is the case's
+  // assignee. Internal work notes are allowed in any state, so this only
+  // disables the public-reply path in the composer — never work notes.
+  // Mirrors the BFF comment guard so the engineer sees a clear reason instead
+  // of a generic error.
+  const publicReplyGateReason = publicCommentGateReason(
+    c.state,
+    c.workState,
+    c.assigneeIsMe,
+  );
   // The composer's inline "Resume work" quick-fix only applies to this one
   // lock reason — the case is already work_in_progress and assigned to the
   // signed-in engineer, just paused, so resuming is the single-field PATCH
