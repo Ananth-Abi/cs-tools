@@ -18,12 +18,18 @@ import { Box, Button, Card, IconButton, Skeleton, Tooltip, Typography, alpha, us
 import { ArrowRight, Info } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, KeyboardEvent, ReactNode } from "react";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router";
-import type { BeDashboardPieSlice, BeWidgetResourceType, BeWidgetShape } from "@api/backend/types";
+import type {
+  BeDashboardPieSlice,
+  BeDashboardWidgetColumn,
+  BeWidgetResourceType,
+  BeWidgetShape,
+} from "@api/backend/types";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
 import { useWidgetPieData, type PieSliceResult } from "@features/csm-dashboard/api/useWidgetPieData";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
+import GenericColumnList from "@features/csm-dashboard/components/GenericColumnList";
 import { buildWidgetPreviewHref } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 import { mergeWidgetFilters } from "@features/csm-dashboard/utils/widgetFilterMerge";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
@@ -52,6 +58,17 @@ interface DashboardWidgetTileProps {
    * `useWidgetPieData`). Empty/absent renders an empty chart rather than
    * crashing. */
   slices?: BeDashboardPieSlice[];
+  /** Only meaningful for shape "list". When set (non-empty), this widget
+   * renders through the generic `GenericColumnList` (resolving each
+   * column's dot-path against every response item) instead of
+   * `WIDGET_LIST_RENDERERS[resourceType]`. Absent/empty is a no-op — the
+   * existing hardcoded per-resourceType renderer applies exactly as before
+   * this prop existed. */
+  columns?: BeDashboardWidgetColumn[];
+  /** Only meaningful for shape "list". Forwarded verbatim into this
+   * widget's own search request's `sortBy` (see `useWidgetData`) —
+   * opaque, like `filters`. */
+  sortBy?: Record<string, unknown>;
   /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
    * an array of every team's `groupId` in the current dashboard's family
    * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL`),
@@ -96,6 +113,8 @@ export default function DashboardWidgetTile({
   filters,
   listLimit,
   slices,
+  columns,
+  sortBy,
   selectedTeamGroupId,
   selectedTeamLabel,
 }: DashboardWidgetTileProps): JSX.Element {
@@ -129,6 +148,7 @@ export default function DashboardWidgetTile({
     0,
     shape !== "pie" && shape !== "bar",
     selectedTeamGroupId,
+    sortBy,
   );
   const pieData = useWidgetPieData(
     widgetId,
@@ -233,6 +253,14 @@ export default function DashboardWidgetTile({
   );
 
   if (isListShape) {
+    // A widget with `columns` configured renders through the generic,
+    // nested-path-resolving renderer instead of the hardcoded per-
+    // resourceType one — everything else about this tile (header, loading/
+    // error states, "View more") is unchanged either way. No `columns`
+    // (the common case, and every dashboard as of this field's addition) is
+    // a no-op: ListRenderer below is untouched, so existing widgets render
+    // byte-for-byte as before.
+    const hasColumns = Boolean(columns && columns.length > 0);
     const ListRenderer = WIDGET_LIST_RENDERERS[resourceType];
     return (
       <Card variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
@@ -250,7 +278,16 @@ export default function DashboardWidgetTile({
                 and the table is enforced for every resource type, so the
                 header's icon never sits flush against the table's border. */}
             <Box sx={{ mt: 1.5 }}>
-              <ListRenderer items={data?.items ?? []} isLoading={false} />
+              {hasColumns ? (
+                <GenericColumnList
+                  items={data?.items ?? []}
+                  isLoading={false}
+                  resourceType={resourceType}
+                  columns={columns ?? []}
+                />
+              ) : (
+                <ListRenderer items={data?.items ?? []} isLoading={false} />
+              )}
             </Box>
             {(data?.total ?? 0) > (listLimit ?? 4) && (
               <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 1 }}>

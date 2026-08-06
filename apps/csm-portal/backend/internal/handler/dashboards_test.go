@@ -46,7 +46,7 @@ import (
 const testDashboardsConfigJSON = `[
   {"id":"sample-dashboard","displayName":"Sample Dashboard","isDefault":true,"targetTeam":"sample-team","widgets":[
     {"id":"my-open-cases","displayName":"My Open Cases","resourceType":"case","shape":"count","gridWidth":3,"query":{"filters":[{"field":"assignedUserId","op":"in","values":["__current_user__"]},{"field":"state","op":"in","values":["open","work_in_progress"]}]}},
-    {"id":"recent-cases","displayName":"Recent Cases","resourceType":"case","shape":"list","gridWidth":6,"listLimit":5,"query":{"filters":[{"field":"tag","op":"in","values":["example-tag"]},{"field":"tag","op":"notIn","values":["excluded-example-tag"]}]}},
+    {"id":"recent-cases","displayName":"Recent Cases","resourceType":"case","shape":"list","gridWidth":6,"listLimit":5,"query":{"filters":[{"field":"tag","op":"in","values":["example-tag"]},{"field":"tag","op":"notIn","values":["excluded-example-tag"]}]},"columns":[{"path":"subject","label":"Subject"},{"path":"project.key","label":"Project key"}],"sortBy":{"field":"updatedOn","order":"asc"}},
     {"id":"pending-time-cards","displayName":"Pending Time Cards","resourceType":"time_card","shape":"count","gridWidth":3,"query":{"states":["pending"]}},
     {"id":"open-vulnerabilities","displayName":"Open Vulnerabilities","resourceType":"product_vulnerability","shape":"count","gridWidth":3,"query":{"priority":"high"}}
   ]},
@@ -412,6 +412,43 @@ func TestGetDashboardDetail(t *testing.T) {
 		recentFilters := result.Widgets[recentIdx].Query
 		if v, present := filterValuesByField(recentFilters, "assignedUserId"); present {
 			t.Errorf("widget recent-cases filters unexpectedly has an assignedUserId field entry: %v", v)
+		}
+
+		// recent-cases' columns/sortBy round-trip onto the wire verbatim —
+		// the BE never resolves a column's path or interprets sortBy, both
+		// are forwarded exactly as configured (see dashboard.Column doc
+		// comment and WidgetTemplate.SortBy).
+		recentColumns := result.Widgets[recentIdx].Columns
+		wantColumns := []dashboard.Column{
+			{Path: "subject", Label: "Subject"},
+			{Path: "project.key", Label: "Project key"},
+		}
+		if len(recentColumns) != len(wantColumns) {
+			t.Fatalf("widget recent-cases columns = %+v, want %+v", recentColumns, wantColumns)
+		}
+		for i, want := range wantColumns {
+			if recentColumns[i] != want {
+				t.Errorf("widget recent-cases columns[%d] = %+v, want %+v", i, recentColumns[i], want)
+			}
+		}
+		recentSortBy := result.Widgets[recentIdx].SortBy
+		if field, _ := recentSortBy["field"].(string); field != "updatedOn" {
+			t.Errorf("widget recent-cases sortBy[field] = %v, want %q", recentSortBy["field"], "updatedOn")
+		}
+		if order, _ := recentSortBy["order"].(string); order != "asc" {
+			t.Errorf("widget recent-cases sortBy[order] = %v, want %q", recentSortBy["order"], "asc")
+		}
+
+		// my-open-cases sets neither columns nor sortBy in the template
+		// (testDashboardsConfigJSON above) — both must stay absent from the
+		// wire (omitempty), not render as an empty array/object, so a widget
+		// that never opted in is byte-for-byte unaffected by this feature.
+		rawOpenCases := rawWidgets[openIdx]
+		if _, present := rawOpenCases["columns"]; present {
+			t.Errorf("widget my-open-cases unexpectedly has a columns key on the wire: %s", rawOpenCases["columns"])
+		}
+		if _, present := rawOpenCases["sortBy"]; present {
+			t.Errorf("widget my-open-cases unexpectedly has a sortBy key on the wire: %s", rawOpenCases["sortBy"])
 		}
 	})
 

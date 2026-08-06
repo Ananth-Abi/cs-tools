@@ -101,6 +101,30 @@ func (s *PieSlice) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Column is one column of a Shape "list" widget's generic column renderer
+// (see WidgetTemplate.Columns). It is opaque config, like Query/SortBy: the
+// BE never resolves Path or interprets Format, it only forwards this struct
+// to the frontend as part of the widget's own view.
+type Column struct {
+	// Path addresses a field on each item of that ResourceType's own
+	// /search response, dot-separated to reach into nested objects/refs to
+	// arbitrary depth (e.g. "project.key", "project.account.tier") — every
+	// resource's search response embeds related entities as nested JSON
+	// objects, not flat records. Not validated here: the frontend resolves
+	// it against whatever the response actually returns, and a path that
+	// resolves to nothing renders that cell empty rather than erroring the
+	// whole widget.
+	Path string `json:"path"`
+	// Label is this column's header text.
+	Label string `json:"label"`
+	// Format is a rendering hint for the resolved value. "" (equivalently
+	// "text", the default) renders plain text; "date" formats a date/
+	// date-time string the same way the frontend's existing hardcoded list
+	// renderers already format one. Not validated here — the frontend falls
+	// back to plain text for a value it doesn't recognize.
+	Format string `json:"format,omitempty"`
+}
+
 // WidgetTemplate is resource-agnostic: Query is opaque JSON, forwarded
 // verbatim (after __current_user__ substitution) as the filters object of
 // that ResourceType's own /search payload (every resource's search payload
@@ -129,6 +153,20 @@ type WidgetTemplate struct {
 	// Widgets with no Section (the common case) render in one untitled
 	// group, exactly as before this field existed.
 	Section string `json:"section,omitempty"`
+	// Columns is only meaningful for Shape list: an ordered set of columns
+	// the frontend should render instead of that ResourceType's own
+	// hardcoded list renderer. Each entry's Path is resolved against every
+	// item in the resolved search response (see Column). Absent/empty
+	// Columns is a no-op — the frontend falls back to its existing
+	// per-ResourceType renderer exactly as before this field existed.
+	Columns []Column `json:"columns,omitempty"`
+	// SortBy is only meaningful for Shape list: opaque JSON, forwarded
+	// verbatim as the sortBy object of that ResourceType's own /search
+	// payload — same passthrough philosophy as Query/filters. The BE does
+	// not validate or interpret it; an unsupported field name for that
+	// ResourceType is a caller (frontend/config-author) mistake, surfaced by
+	// that resource's own /search endpoint, not caught here.
+	SortBy map[string]any `json:"sortBy,omitempty"`
 
 	// legacyFilters holds a pre-rename config's "filters" key so
 	// migrateLegacyWidgetKeys can move it into Query. Unexported so it can

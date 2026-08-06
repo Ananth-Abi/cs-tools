@@ -404,6 +404,127 @@ describe("DashboardWidgetTile", () => {
     expect(params.get("state")).toBe("open");
   });
 
+  it("renders through the existing hardcoded per-resourceType renderer (CasesList) when no columns are configured — byte-for-byte unaffected by the columns feature", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
+      limit: 5,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+      />,
+    );
+
+    // CasesList's own header markup ("Case ID") only appears via the
+    // hardcoded renderer — GenericColumnList never renders it, since its
+    // columns come entirely from the widget's own `columns` config.
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    expect(screen.getByText("Case ID")).toBeInTheDocument();
+  });
+
+  it("renders through the generic column renderer, resolving a nested dot-path, when columns are configured", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [
+        {
+          id: "11111111-1111-1111-1111-111111111111",
+          subject: "Disk full",
+          bestCaseFixEta: "2026-08-01",
+          project: { id: "p-1", name: "Alpha", key: "ALPHA" },
+        },
+      ],
+      limit: 5,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+        columns={[
+          { path: "subject", label: "Subject" },
+          { path: "project.key", label: "Project key" },
+          { path: "bestCaseFixEta", label: "Best case ETA", format: "date" },
+        ]}
+      />,
+    );
+
+    // Column headers come from the widget's own config, not a hardcoded
+    // per-resourceType label set.
+    await waitFor(() => expect(screen.getByText("Subject")).toBeInTheDocument());
+    expect(screen.getByText("Project key")).toBeInTheDocument();
+    expect(screen.getByText("Best case ETA")).toBeInTheDocument();
+
+    // Row cells: a top-level field, a nested dot-path field, and a
+    // date-formatted field.
+    expect(screen.getByText("Disk full")).toBeInTheDocument();
+    expect(screen.getByText("ALPHA")).toBeInTheDocument();
+    expect(screen.getByText("Aug 1, 2026")).toBeInTheDocument();
+
+    // The hardcoded CasesList renderer's own "Case ID" column header must
+    // NOT appear — this widget rendered through GenericColumnList instead.
+    expect(screen.queryByText("Case ID")).not.toBeInTheDocument();
+  });
+
+  it("forwards a widget's configured sortBy into the /search request, only for shape list", async () => {
+    postMock.mockResolvedValue({ total: 0, cases: [], limit: 5, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+        sortBy={{ field: "updatedOn", order: "asc" }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/cases/search", {
+        filters: {},
+        pagination: { offset: 0, limit: 5 },
+        sortBy: { field: "updatedOn", order: "asc" },
+      }),
+    );
+  });
+
+  it("does not forward sortBy for shape count (only meaningful for shape list)", async () => {
+    postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="count"
+        filters={{}}
+        sortBy={{ field: "updatedOn", order: "asc" }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+    expect(postMock).toHaveBeenCalledWith("/cases/search", {
+      filters: {},
+      pagination: { offset: 0, limit: 1 },
+    });
+  });
+
   it("navigates to /cases with translated filters when a case-resource tile is clicked", async () => {
     postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
 

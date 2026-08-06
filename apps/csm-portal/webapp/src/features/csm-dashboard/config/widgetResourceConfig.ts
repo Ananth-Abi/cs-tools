@@ -77,6 +77,15 @@ export interface WidgetResourceConfig {
    * resource's own tab path (`buildHref`'s destination) — this route is
    * dashboard-widget-scoped, not the resource's real list page. */
   previewSlug: string;
+  /** One search-result item's own detail-page href, given the raw item —
+   * used by the generic `columns`-driven list renderer (see
+   * `GenericColumnList`), which has no resourceType-specific row-link logic
+   * of its own the way each hardcoded renderer in `widgetListConfig.tsx`
+   * does. `undefined` for a resourceType with no standalone detail route
+   * (task, call_request's own record — `call_request` links to its owning
+   * case instead, handled the same way the hardcoded `CallRequestWidgetList`
+   * does) or when the item carries no usable id. */
+  detailHref?: (item: WidgetItem) => string | undefined;
 }
 
 function asString(v: unknown): string | undefined {
@@ -339,6 +348,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Briefcase,
     iconColor: "primary",
     previewSlug: "cases",
+    detailHref: (item) => (asString(item.id) ? `/cases/${asString(item.id)}` : undefined),
   },
   incident: {
     searchEndpoint: "/incidents/search",
@@ -356,6 +366,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: AlertTriangle,
     iconColor: "warning",
     previewSlug: "incidents",
+    detailHref: (item) =>
+      asString(item.id) ? `/operations/incidents/${asString(item.id)}` : undefined,
   },
   change_request: {
     searchEndpoint: "/change-requests/search",
@@ -373,6 +385,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: GitPullRequest,
     iconColor: "info",
     previewSlug: "change-requests",
+    detailHref: (item) =>
+      asString(item.id) ? `/operations/change-requests/${asString(item.id)}` : undefined,
   },
   problem: {
     searchEndpoint: "/problems/search",
@@ -385,6 +399,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: AlertOctagon,
     iconColor: "error",
     previewSlug: "problems",
+    detailHref: (item) =>
+      asString(item.id) ? `/operations/problems/${asString(item.id)}` : undefined,
   },
   account: {
     searchEndpoint: "/accounts/search",
@@ -395,6 +411,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Building2,
     iconColor: "secondary",
     previewSlug: "accounts",
+    detailHref: (item) =>
+      asString(item.id) ? `/customers/accounts/${asString(item.id)}` : undefined,
   },
   project: {
     searchEndpoint: "/projects/search",
@@ -405,6 +423,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: FolderKanban,
     iconColor: "secondary",
     previewSlug: "projects",
+    detailHref: (item) =>
+      asString(item.id) ? `/customers/projects/${asString(item.id)}` : undefined,
   },
   user: {
     searchEndpoint: "/users/search",
@@ -420,6 +440,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Users,
     iconColor: "info",
     previewSlug: "users",
+    detailHref: (item) =>
+      asString(item.id) ? `/people/${encodeURIComponent(asString(item.id) ?? "")}` : undefined,
   },
   time_card: {
     searchEndpoint: "/time-cards/search",
@@ -437,6 +459,9 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Clock,
     iconColor: "warning",
     previewSlug: "time-cards",
+    // TimeCardsTable opens a details dialog in place rather than navigating
+    // — no standalone route for the generic renderer to link to either.
+    detailHref: () => undefined,
   },
   product_vulnerability: {
     searchEndpoint: "/products/vulnerabilities/search",
@@ -452,6 +477,10 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: ShieldAlert,
     iconColor: "error",
     previewSlug: "vulnerabilities",
+    detailHref: (item) =>
+      asString(item.id)
+        ? `/security-center/vulnerabilities/${encodeURIComponent(asString(item.id) ?? "")}`
+        : undefined,
   },
   task: {
     searchEndpoint: "/tasks/search",
@@ -469,6 +498,11 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: ListChecks,
     iconColor: "warning",
     previewSlug: "tasks",
+    // Same reasoning as buildHref above: no standalone detail route exists.
+    // The hardcoded TaskWidgetList opens TaskDetailDialog instead, which the
+    // generic column renderer doesn't replicate — a columns-configured task
+    // widget's rows render inert rather than opening that dialog.
+    detailHref: () => undefined,
   },
   call_request: {
     searchEndpoint: "/call-requests/search",
@@ -491,6 +525,12 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Clock,
     iconColor: "info",
     previewSlug: "call-requests",
+    // Same as the hardcoded CallRequestWidgetList: a call request has no
+    // standalone detail page of its own, so rows link to the owning case.
+    detailHref: (item) => {
+      const caseId = nestedID(item.case);
+      return caseId ? `/cases/${caseId}` : undefined;
+    },
   },
 };
 
@@ -509,6 +549,15 @@ export function resourceTypeForPreviewSlug(
 function nestedNumber(v: unknown): string | undefined {
   if (v && typeof v === "object" && "number" in v) {
     return asString((v as { number?: unknown }).number);
+  }
+  return undefined;
+}
+
+/** Reads `id` off a nested entity reference (e.g. `CallRequestView.case`),
+ * mirroring `nestedNumber` above. */
+function nestedID(v: unknown): string | undefined {
+  if (v && typeof v === "object" && "id" in v) {
+    return asString((v as { id?: unknown }).id);
   }
   return undefined;
 }

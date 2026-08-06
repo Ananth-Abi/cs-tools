@@ -51,6 +51,13 @@ type dashboardWidgetView struct {
 	ListLimit    int                     `json:"listLimit,omitempty"`
 	Slices       []dashboardPieSliceView `json:"slices,omitempty"`
 	Section      string                  `json:"section,omitempty"`
+	// Columns and SortBy are only meaningful for Shape "list" — see
+	// dashboard.WidgetTemplate.Columns/SortBy. Forwarded verbatim: Columns
+	// is display config the BE never resolves, and SortBy is opaque search
+	// criteria like Query, just for that ResourceType's own /search
+	// request's "sortBy" instead of its "filters".
+	Columns []dashboard.Column `json:"columns,omitempty"`
+	SortBy  map[string]any     `json:"sortBy,omitempty"`
 }
 
 // dashboardListItemView is a dashboard's list-level metadata, returned by
@@ -195,6 +202,8 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 			ListLimit:    tpl.ListLimit,
 			Slices:       slices,
 			Section:      tpl.Section,
+			Columns:      tpl.Columns,
+			SortBy:       tpl.SortBy,
 		})
 	}
 

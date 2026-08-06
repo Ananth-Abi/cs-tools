@@ -416,3 +416,76 @@ func TestParseDashboardsConfig_WidgetSection(t *testing.T) {
 		t.Errorf("escalated-incidents.Section = %q, want %q", section, "Escalations")
 	}
 }
+
+func TestParseDashboardsConfig_WidgetColumnsAndSortBy(t *testing.T) {
+	const raw = `[
+		{
+			"id": "sample-dashboard",
+			"displayName": "Sample Dashboard",
+			"widgets": [
+				{
+					"id": "my-patches",
+					"displayName": "My Patches",
+					"resourceType": "case",
+					"shape": "list",
+					"gridWidth": 12,
+					"query": {},
+					"columns": [
+						{"path": "subject", "label": "Subject"},
+						{"path": "project.key", "label": "Project key"},
+						{"path": "bestCaseFixEta", "label": "Best case ETA", "format": "date"}
+					],
+					"sortBy": {"field": "updatedOn", "order": "asc"}
+				},
+				{
+					"id": "no-columns-widget",
+					"displayName": "No Columns Widget",
+					"resourceType": "case",
+					"shape": "list",
+					"gridWidth": 12,
+					"query": {}
+				}
+			]
+		}
+	]`
+
+	got, err := ParseDashboardsConfig(raw)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig returned error: %v", err)
+	}
+	if len(got) != 1 || len(got[0].Widgets) != 2 {
+		t.Fatalf("ParseDashboardsConfig(raw) = %+v, want 1 dashboard with 2 widgets", got)
+	}
+
+	w := got[0].Widgets[0]
+	wantColumns := []Column{
+		{Path: "subject", Label: "Subject"},
+		{Path: "project.key", Label: "Project key"},
+		{Path: "bestCaseFixEta", Label: "Best case ETA", Format: "date"},
+	}
+	if len(w.Columns) != len(wantColumns) {
+		t.Fatalf("my-patches.Columns = %+v, want %+v", w.Columns, wantColumns)
+	}
+	for i, want := range wantColumns {
+		if w.Columns[i] != want {
+			t.Errorf("my-patches.Columns[%d] = %+v, want %+v", i, w.Columns[i], want)
+		}
+	}
+	if field, _ := w.SortBy["field"].(string); field != "updatedOn" {
+		t.Errorf("my-patches.SortBy[field] = %v, want %q", w.SortBy["field"], "updatedOn")
+	}
+	if order, _ := w.SortBy["order"].(string); order != "asc" {
+		t.Errorf("my-patches.SortBy[order] = %v, want %q", w.SortBy["order"], "asc")
+	}
+
+	// A widget with neither key configured round-trips to nil for both — the
+	// existing hardcoded per-resourceType frontend renderer's own no-op path
+	// depends on this staying nil, not an empty slice/map.
+	noColumns := got[0].Widgets[1]
+	if noColumns.Columns != nil {
+		t.Errorf("no-columns-widget.Columns = %+v, want nil", noColumns.Columns)
+	}
+	if noColumns.SortBy != nil {
+		t.Errorf("no-columns-widget.SortBy = %+v, want nil", noColumns.SortBy)
+	}
+}
