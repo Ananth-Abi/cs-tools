@@ -52,11 +52,17 @@ func NewCaseHandler(entity entityCaseClient) *CaseHandler {
 	return &CaseHandler{entity: entity}
 }
 
-// SearchCases handles POST /cases/search.
+// SearchCases handles POST /projects/{id}/cases/search.
 func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	projectID := r.PathValue("id")
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -71,7 +77,7 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.entity.SearchCases(r.Context(), dto.BuildEntitySearchCasesRequest(req))
+	result, err := h.entity.SearchCases(r.Context(), dto.BuildEntitySearchCasesRequest(projectID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCases failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search cases.")

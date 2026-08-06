@@ -26,9 +26,9 @@ import (
 // TestBuildEntitySearchCasesRequest_AllFiltersTranslate guards against
 // reintroducing the bug where this backend sent entity-service's old
 // named-filter-field case-search shape directly instead of building the
-// generic filter-predicate array entity-service's current /cases/search
-// requires (which rejects unknown fields outright) — every filter the
-// portal exposes must produce exactly the CaseFieldFilter entry
+// generic filter-predicate array entity-service's current
+// /cases/search requires (which rejects unknown fields outright) — every
+// filter the portal exposes must produce exactly the CaseFieldFilter entry
 // entity-service's case_filters.go expects.
 func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 	parentID := "parent-id-1"
@@ -36,7 +36,6 @@ func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 		Filters: CaseSearchFilters{
 			Types:           []string{"case", "engagement"},
 			SearchQuery:     "login issue",
-			ProjectIDs:      []string{"proj-1"},
 			DeploymentIDs:   []string{"dep-1"},
 			States:          []string{"open"},
 			Severities:      []string{"high"},
@@ -53,7 +52,7 @@ func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 		Pagination: entity.Pagination{Limit: 20, Offset: 0},
 	}
 
-	got := BuildEntitySearchCasesRequest(req)
+	got := BuildEntitySearchCasesRequest("proj-1", req)
 
 	if got.Filters.SearchQuery != "login issue" {
 		t.Fatalf("SearchQuery = %q", got.Filters.SearchQuery)
@@ -85,6 +84,25 @@ func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 	}
 }
 
+// TestBuildEntitySearchCasesRequest_ProjectIDAlwaysScoped verifies the
+// projectID parameter (the POST /projects/{id}/cases/search path value) is
+// always translated into a projectId+in filter, regardless of what the
+// request body's filters contain — CaseSearchFilters has no client-settable
+// projectIds field at all, so this is the only source of project scoping.
+func TestBuildEntitySearchCasesRequest_ProjectIDAlwaysScoped(t *testing.T) {
+	got := BuildEntitySearchCasesRequest("proj-42", CaseSearchRequest{})
+
+	want := []entity.CaseFieldFilter{
+		{Field: "projectId", Op: "in", Values: []string{"proj-42"}},
+	}
+	if !reflect.DeepEqual(got.Filters.Filters, want) {
+		t.Fatalf("Filters = %+v, want %+v", got.Filters.Filters, want)
+	}
+	if got.Filters.SearchQuery != "" {
+		t.Fatalf("expected empty SearchQuery, got %q", got.Filters.SearchQuery)
+	}
+}
+
 // TestBuildEntitySearchCasesRequest_CreatedByMe verifies CreatedByMe becomes
 // a createdBy+eq filter carrying entity-service's exact current-user
 // placeholder string — a mismatch here would make entity-service reject it
@@ -93,9 +111,10 @@ func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 func TestBuildEntitySearchCasesRequest_CreatedByMe(t *testing.T) {
 	req := CaseSearchRequest{Filters: CaseSearchFilters{CreatedByMe: true}}
 
-	got := BuildEntitySearchCasesRequest(req)
+	got := BuildEntitySearchCasesRequest("proj-1", req)
 
 	want := []entity.CaseFieldFilter{
+		{Field: "projectId", Op: "in", Values: []string{"proj-1"}},
 		{Field: "createdBy", Op: "eq", Values: []string{"__current_user_email__"}},
 	}
 	if !reflect.DeepEqual(got.Filters.Filters, want) {
@@ -115,28 +134,13 @@ func TestBuildEntitySearchCasesRequest_CreatedByMeTakesPrecedenceOverCreatedBy(t
 		CreatedByMe: true,
 	}}
 
-	got := BuildEntitySearchCasesRequest(req)
+	got := BuildEntitySearchCasesRequest("proj-1", req)
 
 	want := []entity.CaseFieldFilter{
+		{Field: "projectId", Op: "in", Values: []string{"proj-1"}},
 		{Field: "createdBy", Op: "eq", Values: []string{"__current_user_email__"}},
 	}
 	if !reflect.DeepEqual(got.Filters.Filters, want) {
 		t.Fatalf("Filters = %+v, want %+v", got.Filters.Filters, want)
-	}
-}
-
-// TestBuildEntitySearchCasesRequest_EmptyFiltersProduceNoPredicates verifies
-// an empty/default CaseSearchRequest builds a request with no filter
-// predicates at all -- entity-service's own case search already treats a
-// missing "type" filter (etc.) as "no restriction", so this must not
-// fabricate empty-but-present filter entries.
-func TestBuildEntitySearchCasesRequest_EmptyFiltersProduceNoPredicates(t *testing.T) {
-	got := BuildEntitySearchCasesRequest(CaseSearchRequest{})
-
-	if len(got.Filters.Filters) != 0 {
-		t.Fatalf("expected no filter predicates for an empty request, got %+v", got.Filters.Filters)
-	}
-	if got.Filters.SearchQuery != "" {
-		t.Fatalf("expected empty SearchQuery, got %q", got.Filters.SearchQuery)
 	}
 }

@@ -22,7 +22,8 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 )
 
-// DeploymentSummary is one item of the portal's response for POST /deployments/search.
+// DeploymentSummary is one item of the portal's response for
+// POST /projects/{id}/deployments/search.
 type DeploymentSummary struct {
 	ID          string    `json:"id"`
 	Number      string    `json:"number"`
@@ -35,7 +36,8 @@ type DeploymentSummary struct {
 	UpdatedOn   time.Time `json:"updatedOn"`
 }
 
-// SearchDeploymentsResponse is the portal's response for POST /deployments/search.
+// SearchDeploymentsResponse is the portal's response for
+// POST /projects/{id}/deployments/search.
 type SearchDeploymentsResponse struct {
 	Deployments []DeploymentSummary `json:"deployments"`
 	Total       int                 `json:"total"`

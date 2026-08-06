@@ -46,11 +46,17 @@ func NewDeploymentHandler(entity entityDeploymentClient) *DeploymentHandler {
 	return &DeploymentHandler{entity: entity}
 }
 
-// SearchDeployments handles POST /deployments/search.
+// SearchDeployments handles POST /projects/{id}/deployments/search.
 func (h *DeploymentHandler) SearchDeployments(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	projectID := r.PathValue("id")
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -64,6 +70,11 @@ func (h *DeploymentHandler) SearchDeployments(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
+	// ProjectIDs is always forced to the {id} path parameter, never the
+	// client-supplied body: project scoping comes exclusively from the URL,
+	// same reasoning as dto.BuildEntitySearchCasesRequest's projectID
+	// parameter for POST /projects/{id}/cases/search.
+	req.ProjectIDs = []string{projectID}
 
 	result, err := h.entity.SearchDeployments(r.Context(), req)
 	if err != nil {
