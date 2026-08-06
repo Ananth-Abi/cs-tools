@@ -27,20 +27,22 @@ import (
 )
 
 // NotificationHandler handles HTTP requests that submit a notification for
-// dispatch. emailClient and googleChatClient are held here so they're ready
-// to use once PostNotification actually dispatches (see its TODO) — for now
-// neither is called.
+// dispatch. emailClient, googleChatClient, and twilioClient are held here so
+// they're ready to use once PostNotification actually dispatches (see its
+// TODO) — for now none of them is called.
 type NotificationHandler struct {
 	emailClient      *notifications.EmailClient
 	googleChatClient *notifications.GoogleChatClient
+	twilioClient     *notifications.TwilioClient
 }
 
 // NewNotificationHandler creates a NotificationHandler backed by the given
 // channel clients.
-func NewNotificationHandler(emailClient *notifications.EmailClient, googleChatClient *notifications.GoogleChatClient) *NotificationHandler {
+func NewNotificationHandler(emailClient *notifications.EmailClient, googleChatClient *notifications.GoogleChatClient, twilioClient *notifications.TwilioClient) *NotificationHandler {
 	return &NotificationHandler{
 		emailClient:      emailClient,
 		googleChatClient: googleChatClient,
+		twilioClient:     twilioClient,
 	}
 }
 
@@ -63,12 +65,31 @@ type googleChatNotificationPayload struct {
 	CaseID           string `json:"caseId"`
 }
 
+// smsNotificationPayload is the body of an "sms" channel notification.
+type smsNotificationPayload struct {
+	// To is the recipient phone number in E.164 format (e.g. "+14155552671").
+	To string `json:"to"`
+	// Body is the message text.
+	Body string `json:"body"`
+}
+
+// callNotificationPayload is the body of a "call" channel notification — a
+// voice call that reads Body aloud via text-to-speech.
+type callNotificationPayload struct {
+	// To is the recipient phone number in E.164 format (e.g. "+14155552671").
+	To string `json:"to"`
+	// Body is the message text read aloud on the call.
+	Body string `json:"body"`
+}
+
 // sendNotificationRequest is the body accepted by PostNotification. Channel
-// selects which of Email/GoogleChat is populated.
+// selects which of Email/GoogleChat/Sms/Call is populated.
 type sendNotificationRequest struct {
 	Channel    string                         `json:"channel"`
 	Email      *emailNotificationPayload      `json:"email,omitempty"`
 	GoogleChat *googleChatNotificationPayload `json:"googleChat,omitempty"`
+	Sms        *smsNotificationPayload        `json:"sms,omitempty"`
+	Call       *callNotificationPayload       `json:"call,omitempty"`
 }
 
 // PostNotification handles POST /notifications — the entry point other
@@ -77,7 +98,7 @@ type sendNotificationRequest struct {
 // TODO: this currently only validates and accepts the request. Once the
 // Kafka-based event backbone lands, this handler should publish the
 // notification event to the message queue (producer) instead of a no-op,
-// so a consumer can dispatch it via emailClient/googleChatClient
+// so a consumer can dispatch it via emailClient/googleChatClient/twilioClient
 // asynchronously.
 func (h *NotificationHandler) PostNotification(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
@@ -107,7 +128,7 @@ func (h *NotificationHandler) PostNotification(w http.ResponseWriter, r *http.Re
 
 	switch req.Channel {
 	case "email":
-		if req.GoogleChat != nil {
+		if req.GoogleChat != nil || req.Sms != nil || req.Call != nil {
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
@@ -116,7 +137,7 @@ func (h *NotificationHandler) PostNotification(w http.ResponseWriter, r *http.Re
 			return
 		}
 	case "googleChat":
-		if req.Email != nil {
+		if req.Email != nil || req.Sms != nil || req.Call != nil {
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
@@ -126,6 +147,24 @@ func (h *NotificationHandler) PostNotification(w http.ResponseWriter, r *http.Re
 			strings.TrimSpace(gc.Title) == "" ||
 			strings.TrimSpace(gc.ShortDescription) == "" ||
 			strings.TrimSpace(gc.CaseID) == "" {
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
+	case "sms":
+		if req.Email != nil || req.GoogleChat != nil || req.Call != nil {
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
+		if req.Sms == nil || strings.TrimSpace(req.Sms.To) == "" || strings.TrimSpace(req.Sms.Body) == "" {
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
+	case "call":
+		if req.Email != nil || req.GoogleChat != nil || req.Sms != nil {
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
+		if req.Call == nil || strings.TrimSpace(req.Call.To) == "" || strings.TrimSpace(req.Call.Body) == "" {
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
