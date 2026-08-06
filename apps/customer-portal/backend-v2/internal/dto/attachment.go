@@ -91,6 +91,45 @@ func MapSearchAttachments(r entity.SearchAttachmentsResponse) SearchAttachmentsR
 	}
 }
 
+// CaseAttachmentsResponse is the portal's response for
+// GET /cases/{id}/attachments. A distinct type from SearchAttachmentsResponse
+// (not just a reuse) because the frontend's pagination envelope for this
+// specific endpoint uses totalRecords, not total — see
+// PaginationResponse in apps/customer-portal/webapp/src/types/common.ts.
+type CaseAttachmentsResponse struct {
+	Attachments  []AttachmentSummary `json:"attachments"`
+	Offset       int                 `json:"offset"`
+	Limit        int                 `json:"limit"`
+	TotalRecords int                 `json:"totalRecords"`
+}
+
+// MapCaseAttachments builds the portal response from entity-service's
+// SearchAttachmentsResponse for GET /cases/{id}/attachments.
+func MapCaseAttachments(r entity.SearchAttachmentsResponse) CaseAttachmentsResponse {
+	items := make([]AttachmentSummary, 0, len(r.Attachments))
+	for _, a := range r.Attachments {
+		items = append(items, AttachmentSummary{
+			ID:            a.ID,
+			ReferenceID:   a.ReferenceID,
+			ReferenceType: string(a.ReferenceType),
+			Name:          a.Name,
+			Type:          a.Type,
+			SizeBytes:     a.SizeBytes,
+			Description:   a.Description,
+			CreatedBy:     a.CreatedBy,
+			CreatedOn:     a.CreatedOn,
+			DownloadURL:   a.DownloadURL,
+			PreviewURL:    a.PreviewURL,
+		})
+	}
+	return CaseAttachmentsResponse{
+		Attachments:  items,
+		Offset:       r.Offset,
+		Limit:        r.Limit,
+		TotalRecords: r.Total,
+	}
+}
+
 // DeleteResponse is the portal's response for DELETE /attachments/{id}.
 type DeleteResponse struct {
 	Message string `json:"message"`

@@ -228,6 +228,7 @@ func main() {
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
+	mux.HandleFunc("GET /cases/{id}/attachments", caseHandler.SearchCaseAttachments)
 	mux.HandleFunc("GET /cases/{id}/feedback", caseHandler.GetCaseFeedback)
 	mux.HandleFunc("POST /cases/{id}/feedback", caseHandler.SubmitCaseFeedback)
 	mux.HandleFunc("PATCH /cases/{caseId}/attachments/{attachmentId}", caseHandler.PatchCaseAttachment)
@@ -288,9 +289,9 @@ func main() {
 	mux.HandleFunc("GET /change-requests/{id}/approvals", changeRequestHandler.GetChangeRequestApprovals)
 	mux.HandleFunc("POST /change-requests/{id}/approvals/decision", changeRequestHandler.DecideChangeRequestApproval)
 
-	mux.HandleFunc("POST /call-requests", callRequestHandler.CreateCallRequest)
-	mux.HandleFunc("POST /call-requests/search", callRequestHandler.SearchCallRequests)
-	mux.HandleFunc("PATCH /call-requests/{id}", callRequestHandler.PatchCallRequest)
+	mux.HandleFunc("POST /cases/{caseId}/call-requests", callRequestHandler.CreateCallRequest)
+	mux.HandleFunc("POST /cases/{caseId}/call-requests/search", callRequestHandler.SearchCallRequests)
+	mux.HandleFunc("PATCH /cases/{caseId}/call-requests/{id}", callRequestHandler.PatchCallRequest)
 
 	mux.HandleFunc("POST /accounts/search", accountHandler.SearchAccounts)
 	mux.HandleFunc("GET /accounts/{id}", accountHandler.GetAccount)

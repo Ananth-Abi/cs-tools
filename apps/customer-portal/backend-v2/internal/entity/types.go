@@ -502,6 +502,7 @@ type SearchCaseView struct {
 	InternalID       string               `json:"internalId"`
 	Number           string               `json:"number"`
 	CreatedOn        string               `json:"createdOn"`
+	UpdatedOn        string               `json:"updatedOn"`
 	CreatedBy        string               `json:"createdBy"`
 	Subject          *string              `json:"subject"`
 	Description      *string              `json:"description"`

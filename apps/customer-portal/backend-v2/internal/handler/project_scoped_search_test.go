@@ -36,7 +36,8 @@ const testProjectID = "11111111-1111-1111-1111-111111111111"
 // never call one.
 type fakeEntityCaseClient struct {
 	entityCaseClient
-	gotSearchCasesReq entity.SearchCasesRequest
+	gotSearchCasesReq       entity.SearchCasesRequest
+	gotSearchAttachmentsReq entity.SearchAttachmentsRequest
 }
 
 func (f *fakeEntityCaseClient) SearchCases(ctx context.Context, req entity.SearchCasesRequest) (entity.SearchCasesResponse, error) {

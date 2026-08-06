@@ -24,29 +24,30 @@ import (
 )
 
 // TestBuildEntitySearchCasesRequest_AllFiltersTranslate guards against
-// reintroducing the bug where this backend sent entity-service's old
-// named-filter-field case-search shape directly instead of building the
-// generic filter-predicate array entity-service's current
+// reintroducing the bug where this backend sent entity-service's own
+// named-filter-field case-search shape (or an invented one) directly instead
+// of building the generic filter-predicate array entity-service's current
 // /cases/search requires (which rejects unknown fields outright) — every
-// filter the portal exposes must produce exactly the CaseFieldFilter entry
+// filter the portal exposes, using the frontend's actual field names and
+// ServiceNow numeric ids, must produce exactly the CaseFieldFilter entry
 // entity-service's case_filters.go expects.
 func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
-	parentID := "parent-id-1"
 	req := CaseSearchRequest{
 		Filters: CaseSearchFilters{
-			Types:           []string{"case", "engagement"},
-			SearchQuery:     "login issue",
-			DeploymentIDs:   []string{"dep-1"},
-			States:          []string{"open"},
-			Severities:      []string{"high"},
-			IssueTypes:      []string{"question"},
-			EngagementTypes: []string{"migration"},
-			CreatedBy:       []string{"user-1"},
-			WorkStates:      []string{"ongoing"},
-			AssignedUserIDs: []string{"eng-1"},
-			ProductNames:    []string{"API Manager"},
-			Tags:            []string{"urgent"},
-			ParentID:        &parentID,
+			SearchQuery:        "login issue",
+			StatusIDs:          []int{1}, // open
+			CaseTypes:          []string{"default_case", "engagement"},
+			SeverityIDs:        []int{11}, // high
+			IssueIDs:           []int{4},  // question
+			DeploymentIDs:      []string{"dep-1"},
+			CreatedBy:          []string{"user-1"},
+			EngagementTypeKeys: []int{1}, // migration
+			StartCreatedDate:   "2026-01-01",
+			EndCreatedDate:     "2026-01-31",
+			StartUpdatedDate:   "2026-02-01",
+			EndUpdatedDate:     "2026-02-28",
+			ClosedStartDate:    "2026-03-01",
+			ClosedEndDate:      "2026-03-31",
 		},
 		SortBy:     entity.CaseSort{Field: "createdOn", Order: "desc"},
 		Pagination: entity.Pagination{Limit: 20, Offset: 0},
@@ -65,22 +66,41 @@ func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 	}
 
 	want := []entity.CaseFieldFilter{
-		{Field: "type", Op: "in", Values: []string{"case", "engagement"}},
 		{Field: "projectId", Op: "in", Values: []string{"proj-1"}},
-		{Field: "deploymentId", Op: "in", Values: []string{"dep-1"}},
+		{Field: "type", Op: "in", Values: []string{"default_case", "engagement"}},
 		{Field: "state", Op: "in", Values: []string{"open"}},
 		{Field: "severity", Op: "in", Values: []string{"high"}},
 		{Field: "issueType", Op: "in", Values: []string{"question"}},
 		{Field: "engagementType", Op: "in", Values: []string{"migration"}},
-		{Field: "workState", Op: "in", Values: []string{"ongoing"}},
-		{Field: "assignedUserId", Op: "in", Values: []string{"eng-1"}},
-		{Field: "product", Op: "in", Values: []string{"API Manager"}},
-		{Field: "tag", Op: "in", Values: []string{"urgent"}},
-		{Field: "parentId", Op: "eq", Values: []string{"parent-id-1"}},
+		{Field: "deploymentId", Op: "in", Values: []string{"dep-1"}},
+		{Field: "createdOn", Op: "gte", Values: []string{"2026-01-01"}},
+		{Field: "createdOn", Op: "lte", Values: []string{"2026-01-31"}},
+		{Field: "updatedOn", Op: "gte", Values: []string{"2026-02-01"}},
+		{Field: "updatedOn", Op: "lte", Values: []string{"2026-02-28"}},
+		{Field: "closedOn", Op: "gte", Values: []string{"2026-03-01"}},
+		{Field: "closedOn", Op: "lte", Values: []string{"2026-03-31"}},
 		{Field: "createdBy", Op: "in", Values: []string{"user-1"}},
 	}
 	if !reflect.DeepEqual(got.Filters.Filters, want) {
 		t.Fatalf("Filters = %+v,\nwant     %+v", got.Filters.Filters, want)
+	}
+}
+
+// TestBuildEntitySearchCasesRequest_UnrecognizedNumericIDsSkipped verifies an
+// id with no entry in the caseXxxIDToEnum tables is silently dropped rather
+// than sent to entity-service verbatim (which would 400, since entity-service
+// only accepts its own lowercase-snake-case enum values, never a raw
+// ServiceNow numeric id).
+func TestBuildEntitySearchCasesRequest_UnrecognizedNumericIDsSkipped(t *testing.T) {
+	req := CaseSearchRequest{Filters: CaseSearchFilters{StatusIDs: []int{999999}}}
+
+	got := BuildEntitySearchCasesRequest("proj-1", req)
+
+	want := []entity.CaseFieldFilter{
+		{Field: "projectId", Op: "in", Values: []string{"proj-1"}},
+	}
+	if !reflect.DeepEqual(got.Filters.Filters, want) {
+		t.Fatalf("Filters = %+v, want %+v (unrecognized status id must be dropped, not forwarded)", got.Filters.Filters, want)
 	}
 }
 
@@ -142,5 +162,99 @@ func TestBuildEntitySearchCasesRequest_CreatedByMeTakesPrecedenceOverCreatedBy(t
 	}
 	if !reflect.DeepEqual(got.Filters.Filters, want) {
 		t.Fatalf("Filters = %+v, want %+v", got.Filters.Filters, want)
+	}
+}
+
+// TestMapSearchCases_MatchesFrontendCaseListItemShape verifies the full
+// response translation: entity-service's plain-string/label fields become
+// {id, label} refs, title comes from Subject, status comes from State, and
+// TotalRecords (not Total) carries the response's pagination envelope — the
+// exact set of mismatches that left the case list rendering "--" for every
+// column and "0-0 of 0" for pagination despite a successful 200 response.
+func TestMapSearchCases_MatchesFrontendCaseListItemShape(t *testing.T) {
+	assignee := "engineer@example.com"
+	subject := "Login error"
+	description := "Cannot log in"
+	severity := "High (P2)"
+	issueType := "Question"
+
+	r := entity.SearchCasesResponse{
+		Total:  878,
+		Offset: 0,
+		Limit:  5,
+		Cases: []entity.SearchCaseView{
+			{
+				ID:               "case-1",
+				InternalID:       "internal-1",
+				Number:           "CS0440883",
+				CreatedOn:        "2026-07-27 08:39:48",
+				UpdatedOn:        "2026-08-01 10:00:00",
+				CreatedBy:        "customer@example.com",
+				Subject:          &subject,
+				Description:      &description,
+				State:            "Work In Progress",
+				Severity:         &severity,
+				IssueType:        &issueType,
+				Type:             "case",
+				Project:          entity.EntityRef{ID: "proj-1", Name: "Customer Project"},
+				Deployment:       &entity.EntityRef{ID: "dep-1", Name: "Primary Production"},
+				DeployedProduct:  &entity.EntityRef{ID: "dp-1", Name: "WSO2 API Manager 4.5.0"},
+				AssignedEngineer: &entity.AssignedEngineerRef{ID: "eng-1", Name: "Jane Engineer", Email: &assignee},
+			},
+		},
+	}
+
+	got := MapSearchCases(r)
+
+	if got.TotalRecords != 878 {
+		t.Fatalf("TotalRecords = %d, want 878", got.TotalRecords)
+	}
+	if len(got.Cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(got.Cases))
+	}
+	c := got.Cases[0]
+
+	if c.Title == nil || *c.Title != "Login error" {
+		t.Fatalf("Title = %v, want \"Login error\" (from entity-service's Subject field)", c.Title)
+	}
+	if c.UpdatedOn != "2026-08-01 10:00:00" {
+		t.Fatalf("UpdatedOn = %q, want the entity-service updatedOn value", c.UpdatedOn)
+	}
+	if c.CreatedBy != "customer@example.com" {
+		t.Fatalf("CreatedBy = %q, want the entity-service createdBy value", c.CreatedBy)
+	}
+	if c.Project.ID != "proj-1" || c.Project.Label != "Customer Project" {
+		t.Fatalf("Project = %+v, want {id: proj-1, label: Customer Project}", c.Project)
+	}
+	if c.Status == nil || c.Status.Label != "Work In Progress" || c.Status.ID != "10" {
+		t.Fatalf("Status = %+v, want {id: 10, label: Work In Progress}", c.Status)
+	}
+	if c.Severity == nil || c.Severity.Label != "High (P2)" || c.Severity.ID != "11" {
+		t.Fatalf("Severity = %+v, want {id: 11, label: High (P2)}", c.Severity)
+	}
+	if c.IssueType == nil || c.IssueType.Label != "Question" || c.IssueType.ID != "4" {
+		t.Fatalf("IssueType = %+v, want {id: 4, label: Question}", c.IssueType)
+	}
+	if c.AssignedEngineer == nil || c.AssignedEngineer.Label != "Jane Engineer" || c.AssignedEngineer.ID != "eng-1" {
+		t.Fatalf("AssignedEngineer = %+v, want {id: eng-1, label: Jane Engineer}", c.AssignedEngineer)
+	}
+	if c.DeployedProduct == nil || c.DeployedProduct.Label != "WSO2 API Manager 4.5.0" {
+		t.Fatalf("DeployedProduct = %+v, want label WSO2 API Manager 4.5.0", c.DeployedProduct)
+	}
+	if c.Deployment == nil || c.Deployment.Label != "Primary Production" {
+		t.Fatalf("Deployment = %+v, want label Primary Production", c.Deployment)
+	}
+	if c.Type == nil || c.Type.ID != "default_case" {
+		t.Fatalf("Type = %+v, want id \"default_case\" (entity-service's canonical \"case\" translated for the frontend's CaseType.DEFAULT_CASE)", c.Type)
+	}
+}
+
+// TestCaseIDsToEnums_UnknownIDsSkipped verifies unrecognized numeric ids
+// don't produce an empty-string enum entry.
+func TestCaseIDsToEnums_UnknownIDsSkipped(t *testing.T) {
+	got := caseIDsToEnums([]int{11, 999}, caseSeverityIDToEnum)
+	want := []string{"high"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("caseIDsToEnums = %+v, want %+v", got, want)
 	}
 }

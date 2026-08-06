@@ -321,6 +321,7 @@ backend-v2/
 - `POST /cases/{id}/comments` — add a comment to a case (always a plain customer comment)
 - `GET /cases/{id}/feedback` — get feedback previously submitted for a case (ServiceNow data source only)
 - `POST /cases/{id}/feedback` — submit feedback for a case (ServiceNow data source only)
+- `GET /cases/{id}/attachments` — search a case's attachments, paginated via `limit`/`offset` query params
 - `PATCH /cases/{caseId}/attachments/{attachmentId}` — update a case attachment's name (description not supported on this route — see CLAUDE.md)
 - `POST /cases/{caseId}/escalations` — escalate or de-escalate a case (ServiceNow data source only)
 - `POST /cases/{caseId}/escalations/search` — search a case's escalations (ServiceNow data source only)
@@ -345,9 +346,9 @@ backend-v2/
 - `PATCH /change-requests/{id}` — update a change request (restricted, customer-safe field subset — see CLAUDE.md; ServiceNow data source only)
 - `GET /change-requests/{id}/approvals` — get a change request's approval stages (ServiceNow data source only)
 - `POST /change-requests/{id}/approvals/decision` — approve/reject the caller's own pending approval (ServiceNow data source only)
-- `POST /call-requests` — create a call request (ServiceNow data source only)
-- `POST /call-requests/search` — search call requests, scoped by caseId in the body (ServiceNow data source only)
-- `PATCH /call-requests/{id}` — update a call request (restricted, excludes agent-only fields — see CLAUDE.md; ServiceNow data source only)
+- `POST /cases/{caseId}/call-requests` — create a call request for a case (ServiceNow data source only)
+- `POST /cases/{caseId}/call-requests/search` — search a case's call requests (ServiceNow data source only)
+- `PATCH /cases/{caseId}/call-requests/{id}` — update a call request (restricted, excludes agent-only fields — see CLAUDE.md; ServiceNow data source only)
 - `POST /products/search` — search products
 - `POST /products/{id}/versions/search` — search a product's versions
 - `POST /products/vulnerabilities/search` — search product vulnerabilities
@@ -449,7 +450,7 @@ curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stat
 
 curl -X POST http://localhost:8080/projects/<project-id>/cases/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"pagination":{"limit":10,"offset":0},"filters":{"searchQuery":"login error"}}'
+  -d '{"pagination":{"limit":10,"offset":0},"filters":{"searchQuery":"login error","statusIds":[1,10],"severityIds":[11]}}'
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/cases/<case-id>
 
@@ -497,6 +498,8 @@ curl -H "x-jwt-assertion: $JWT" http://localhost:8080/attachments/<attachment-id
 
 curl -X DELETE -H "x-jwt-assertion: $JWT" http://localhost:8080/attachments/<attachment-id>
 
+curl -H "x-jwt-assertion: $JWT" "http://localhost:8080/cases/<case-id>/attachments?limit=10&offset=0"
+
 curl -X POST http://localhost:8080/cases/<case-id>/activities/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":20,"offset":0}}'
@@ -529,17 +532,17 @@ curl -X POST http://localhost:8080/change-requests/<change-request-id>/approvals
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"decision":"approved"}'
 
-curl -X POST http://localhost:8080/call-requests \
+curl -X POST http://localhost:8080/cases/<case-id>/call-requests \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"caseId":"<case-id>","reason":"Discuss workaround","utcTimes":["2026-08-05T10:00:00Z"],"durationInMinutes":30}'
+  -d '{"reason":"Discuss workaround","utcTimes":["2026-08-05T10:00:00Z"],"durationInMinutes":30}'
 
-curl -X POST http://localhost:8080/call-requests/search \
+curl -X POST http://localhost:8080/cases/<case-id>/call-requests/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"caseId":"<case-id>","pagination":{"limit":10,"offset":0}}'
+  -d '{"pagination":{"limit":10,"offset":0}}'
 
-curl -X PATCH http://localhost:8080/call-requests/<call-request-id> \
+curl -X PATCH http://localhost:8080/cases/<case-id>/call-requests/<call-request-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"state":"customer_rejected","cancellationReason":"No longer needed"}'
+  -d '{"stateKey":6,"cancellationReason":"No longer needed"}'
 
 curl -X PATCH http://localhost:8080/deployments/<deployment-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \

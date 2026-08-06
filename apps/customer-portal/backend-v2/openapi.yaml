@@ -2076,11 +2076,18 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /call-requests:
+  /cases/{caseId}/call-requests:
     post:
-      summary: Create a call request.
+      summary: Create a call request for a case.
       description: Only entity-service's ServiceNow data source supports this route.
-      operationId: postCallRequests
+      operationId: postCasesCaseIdCallRequests
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -2125,13 +2132,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /call-requests/search:
+  /cases/{caseId}/call-requests/search:
     post:
-      summary: Search call requests.
+      summary: Search a case's call requests.
       description: >
-        Scoped by caseId in the request body (not a path segment). Only
-        entity-service's ServiceNow data source supports this route.
-      operationId: postCallRequestsSearch
+        caseId is set server-side from the path parameter — the request body
+        carries only filters/pagination. Only entity-service's ServiceNow
+        data source supports this route.
+      operationId: postCasesCaseIdCallRequestsSearch
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -2176,7 +2191,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /call-requests/{id}:
+  /cases/{caseId}/call-requests/{id}:
     patch:
       summary: Update a call request.
       description: >
@@ -2184,9 +2199,16 @@ paths:
         plan, attendees, actionItems, actualDurationMin) are read-only for
         the customer and not accepted here — see CallRequestSummary for
         viewing them. Only entity-service's ServiceNow data source supports
-        this route.
-      operationId: patchCallRequestsId
+        this route. caseId is part of the URL only for RESTful nesting — the
+        call request is looked up by id alone.
+      operationId: patchCasesCaseIdCallRequestsId
       parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
         - name: id
           in: path
           required: true
@@ -3542,6 +3564,61 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "413":
           description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/{id}/attachments:
+    get:
+      summary: Search a case's attachments.
+      operationId: getCasesIdAttachments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseAttachmentsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
           content:
             application/json:
               schema:
@@ -5954,6 +6031,13 @@ components:
     # ---- cases ----
 
     SearchCasesRequest:
+      description: >
+        filters uses the frontend's own field names and ServiceNow numeric
+        choice-list ids (statusIds/severityIds/issueIds/engagementTypeKeys),
+        not entity-service's own lowercase-snake-case string enums — this
+        backend translates between the two (see case_enum_mapping.go). There
+        is no projectIds filter: project scope comes exclusively from the
+        {id} path parameter.
       type: object
       properties:
         pagination:
@@ -5968,99 +6052,116 @@ components:
         filters:
           type: object
           properties:
-            types:
-              type: array
-              items:
-                type: string
             searchQuery:
               type: string
+            statusIds:
+              type: array
+              items:
+                type: integer
+            caseTypes:
+              type: array
+              items:
+                type: string
+            severityIds:
+              type: array
+              items:
+                type: integer
+            issueIds:
+              type: array
+              items:
+                type: integer
             deploymentIds:
-              type: array
-              items:
-                type: string
-            states:
-              type: array
-              items:
-                type: string
-            severities:
-              type: array
-              items:
-                type: string
-            issueTypes:
-              type: array
-              items:
-                type: string
-            engagementTypes:
-              type: array
-              items:
-                type: string
-            createdBy:
               type: array
               items:
                 type: string
             createdByMe:
               type: boolean
-            workStates:
+            createdBy:
               type: array
               items:
                 type: string
-            assignedUserIds:
+            engagementTypeKeys:
               type: array
               items:
-                type: string
-            productNames:
-              type: array
-              items:
-                type: string
-            tags:
-              type: array
-              items:
-                type: string
-            parentId:
+                type: integer
+            closedStartDate:
               type: string
+            closedEndDate:
+              type: string
+            startCreatedDate:
+              type: string
+            endCreatedDate:
+              type: string
+            startUpdatedDate:
+              type: string
+            endUpdatedDate:
+              type: string
+
+    IdLabelRef:
+      description: >
+        {id, label} pair. For case-search enum fields (status/severity/
+        issueType/engagementType/type), id is a ServiceNow numeric
+        choice-list key (as a string) matching what the frontend's
+        CaseType/statusIds/etc already use — see case_enum_mapping.go.
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
 
     CaseSummary:
       type: object
       properties:
         id:
           type: string
+        internalId:
+          type: string
         number:
           type: string
-        subject:
+        title:
           type: string
         description:
           type: string
-        state:
-          type: string
-        severity:
-          type: string
+        assignedEngineer:
+          $ref: '#/components/schemas/IdLabelRef'
+        project:
+          $ref: '#/components/schemas/IdLabelRef'
         issueType:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
         engagementType:
-          type: string
-        workState:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
+        deployedProduct:
+          $ref: '#/components/schemas/IdLabelRef'
+        deployment:
+          $ref: '#/components/schemas/IdLabelRef'
+        severity:
+          $ref: '#/components/schemas/IdLabelRef'
+        status:
+          $ref: '#/components/schemas/IdLabelRef'
         type:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
+        caseTypes:
+          $ref: '#/components/schemas/IdLabelRef'
         createdOn:
           type: string
-        project:
-          $ref: '#/components/schemas/Ref'
-        deployment:
-          $ref: '#/components/schemas/Ref'
-        product:
-          $ref: '#/components/schemas/Ref'
-        assignedTeam:
-          $ref: '#/components/schemas/Ref'
+        updatedOn:
+          type: string
+        createdBy:
+          type: string
 
     SearchCasesResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope — see PaginationResponse in
+        apps/customer-portal/webapp/src/types/common.ts.
       type: object
       properties:
         cases:
           type: array
           items:
             $ref: '#/components/schemas/CaseSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -6610,6 +6711,24 @@ components:
           type: integer
         hasMore:
           type: boolean
+
+    CaseAttachmentsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope — see PaginationResponse in
+        apps/customer-portal/webapp/src/types/common.ts.
+      type: object
+      properties:
+        attachments:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttachmentSummary'
+        offset:
+          type: integer
+        limit:
+          type: integer
+        totalRecords:
+          type: integer
 
     DeleteResponse:
       type: object
@@ -7630,12 +7749,10 @@ components:
     # ---- call requests ----
 
     CreateCallRequestRequest:
+      description: caseId is not part of this body — it's set server-side from the {caseId} path parameter.
       type: object
-      required: [caseId, reason, utcTimes, durationInMinutes]
+      required: [reason, utcTimes, durationInMinutes]
       properties:
-        caseId:
-          type: string
-          format: uuid
         reason:
           type: string
         utcTimes:
@@ -7656,19 +7773,21 @@ components:
           type: string
 
     SearchCallRequestsRequest:
+      description: >
+        caseId is not part of this body — it's set server-side from the
+        {caseId} path parameter. filters.stateKeys carries ServiceNow's own
+        numeric choice-list keys (the frontend was built against the old
+        Ballerina backend and still sends these, not entity-service's own
+        string enum) — see callRequestStateKeyToEnum for the translation.
       type: object
-      required: [caseId]
       properties:
-        caseId:
-          type: string
-          format: uuid
         filters:
           type: object
           properties:
-            states:
+            stateKeys:
               type: array
               items:
-                type: string
+                type: integer
         pagination:
           $ref: '#/components/schemas/Pagination'
 
@@ -7737,13 +7856,17 @@ components:
           type: integer
 
     SearchCallRequestsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope — see PaginationResponse in
+        apps/customer-portal/webapp/src/types/common.ts.
       type: object
       properties:
         callRequests:
           type: array
           items:
             $ref: '#/components/schemas/CallRequestSummary'
-        total:
+        totalRecords:
           type: integer
         offset:
           type: integer
@@ -7754,12 +7877,17 @@ components:
       description: >
         Agent-side fields (meetingDate, assignee, notes, plan, attendees,
         actionItems, actualDurationMin) are read-only for the customer and
-        not accepted here.
+        not accepted here. stateKey carries ServiceNow's own numeric
+        choice-list key (the frontend was built against the old Ballerina
+        backend and still sends this, not entity-service's own string enum)
+        — see callRequestStateKeyToEnum for the translation. reason is also
+        not accepted: entity-service's UpdateCallRequestRequest has no
+        equivalent field to forward it to.
       type: object
-      required: [state]
+      required: [stateKey]
       properties:
-        state:
-          type: string
+        stateKey:
+          type: integer
         cancellationReason:
           type: string
         utcTimes:
