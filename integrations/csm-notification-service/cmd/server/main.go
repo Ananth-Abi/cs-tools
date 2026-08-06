@@ -58,7 +58,21 @@ func main() {
 		Spaces: parseGoogleChatSpaces(os.Getenv("GOOGLE_CHAT_SPACES")),
 	})
 
-	notificationHandler := handler.NewNotificationHandler(emailClient, googleChatClient)
+	// Twilio (sms + call channels) is likewise optional per deployment; a
+	// missing config only surfaces as an error the first time a caller
+	// requests one of those channels — moot today since PostNotification
+	// doesn't call SendSMS/MakeCall yet either (see its TODO).
+	twilioClient := notifications.NewTwilioClient(notifications.TwilioConfig{
+		AccountSID:          os.Getenv("TWILIO_ACCOUNT_SID"),
+		AuthToken:           os.Getenv("TWILIO_AUTH_TOKEN"),
+		FromNumber:          os.Getenv("TWILIO_FROM_NUMBER"),
+		MessagingServiceSid: os.Getenv("TWILIO_MESSAGING_SERVICE_SID"),
+		Voice:               os.Getenv("TWILIO_VOICE"),
+		Language:            os.Getenv("TWILIO_LANGUAGE"),
+		APIBaseURL:          os.Getenv("TWILIO_API_BASE_URL"),
+	})
+
+	notificationHandler := handler.NewNotificationHandler(emailClient, googleChatClient, twilioClient)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +173,7 @@ func loadDotEnv(path string) {
 		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
 			v = v[1 : len(v)-1]
 		}
-		if os.Getenv(k) == "" {
+		if _, present := os.LookupEnv(k); !present {
 			_ = os.Setenv(k, v)
 		}
 	}

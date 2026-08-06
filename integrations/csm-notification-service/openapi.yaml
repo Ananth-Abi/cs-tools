@@ -3,7 +3,7 @@ info:
   title: CSM Notification Service API
   version: 1.0.0
   description: >
-    Accepts notification requests (email, Google Chat, and future channels)
+    Accepts notification requests (email, Google Chat, SMS, voice calls, and future channels)
     from other services. Fronted by Choreo's API Manager gateway (subscription
     + client credentials) — this service performs no inbound auth of its own.
 security:
@@ -147,6 +147,28 @@ components:
         caseId:
           type: string
 
+    SmsNotificationPayload:
+      type: object
+      required: [to, body]
+      properties:
+        to:
+          type: string
+          description: Recipient phone number in E.164 format (e.g. "+14155552671").
+        body:
+          type: string
+          description: Message text.
+
+    CallNotificationPayload:
+      type: object
+      required: [to, body]
+      properties:
+        to:
+          type: string
+          description: Recipient phone number in E.164 format (e.g. "+14155552671").
+        body:
+          type: string
+          description: Message text read aloud on the call via text-to-speech.
+
     SendEmailNotificationRequest:
       type: object
       required: [channel, email]
@@ -169,12 +191,38 @@ components:
         googleChat:
           $ref: '#/components/schemas/GoogleChatNotificationPayload'
 
+    SendSmsNotificationRequest:
+      type: object
+      required: [channel, sms]
+      additionalProperties: false
+      properties:
+        channel:
+          type: string
+          enum: [sms]
+        sms:
+          $ref: '#/components/schemas/SmsNotificationPayload'
+
+    SendCallNotificationRequest:
+      type: object
+      required: [channel, call]
+      additionalProperties: false
+      properties:
+        channel:
+          type: string
+          enum: [call]
+        call:
+          $ref: '#/components/schemas/CallNotificationPayload'
+
     SendNotificationRequest:
       oneOf:
         - $ref: '#/components/schemas/SendEmailNotificationRequest'
         - $ref: '#/components/schemas/SendGoogleChatNotificationRequest'
+        - $ref: '#/components/schemas/SendSmsNotificationRequest'
+        - $ref: '#/components/schemas/SendCallNotificationRequest'
       discriminator:
         propertyName: channel
         mapping:
           email: '#/components/schemas/SendEmailNotificationRequest'
           googleChat: '#/components/schemas/SendGoogleChatNotificationRequest'
+          sms: '#/components/schemas/SendSmsNotificationRequest'
+          call: '#/components/schemas/SendCallNotificationRequest'
