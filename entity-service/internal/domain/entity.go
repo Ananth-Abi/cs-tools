@@ -1327,20 +1327,22 @@ type CaseFilterBranch struct {
 // where the pre-redesign per-field validation and query/payload-building
 // logic still lives, unchanged.
 type ParsedCaseFilters struct {
-	Types            []string
-	ProjectIDs       []string
-	DeploymentIDs    []string
-	States           []CaseState
-	Severities       []CaseSeverity
-	IssueTypes       []CaseIssueType
-	EngagementTypes  []EngagementType
-	ClosedStartDate  *time.Time
-	ClosedEndDate    *time.Time
-	StartCreatedDate *time.Time
-	EndCreatedDate   *time.Time
-	StartUpdatedDate *time.Time
-	EndUpdatedDate   *time.Time
-	CreatedBy        []string
+	Types             []string
+	ProjectIDs        []string
+	DeploymentIDs     []string
+	States            []CaseState
+	Severities        []CaseSeverity
+	IssueTypes        []CaseIssueType
+	EngagementTypes   []EngagementType
+	ClosedStartDate   *time.Time
+	ClosedEndDate     *time.Time
+	ResolvedStartDate *time.Time
+	ResolvedEndDate   *time.Time
+	StartCreatedDate  *time.Time
+	EndCreatedDate    *time.Time
+	StartUpdatedDate  *time.Time
+	EndUpdatedDate    *time.Time
+	CreatedBy         []string
 	// CreatedByMe is true when the array carried a createdBy+eq current-user
 	// placeholder filter. The ServiceNow backend forwards this as-is (Ballerina
 	// resolves the caller itself); the Postgres backend folds the caller's

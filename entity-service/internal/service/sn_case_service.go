@@ -323,6 +323,8 @@ type snCaseFilters struct {
 	EngagementTypeKeys []int    `json:"engagementTypeKeys,omitempty"`
 	ClosedStartDate    string   `json:"closedStartDate,omitempty"`
 	ClosedEndDate      string   `json:"closedEndDate,omitempty"`
+	ResolvedStartDate  string   `json:"resolvedStartDate,omitempty"`
+	ResolvedEndDate    string   `json:"resolvedEndDate,omitempty"`
 	StartCreatedDate   string   `json:"startCreatedDate,omitempty"`
 	EndCreatedDate     string   `json:"endCreatedDate,omitempty"`
 	StartUpdatedDate   string   `json:"startUpdatedDate,omitempty"`
@@ -2109,6 +2111,8 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		EngagementTypeKeys:        domainEngagementTypesToSNIDs(parsed.EngagementTypes),
 		ClosedStartDate:           formatSNDateTimeUTC(parsed.ClosedStartDate),
 		ClosedEndDate:             formatSNDateTimeUTC(parsed.ClosedEndDate),
+		ResolvedStartDate:         formatSNDateTimeUTC(parsed.ResolvedStartDate),
+		ResolvedEndDate:           formatSNDateTimeUTC(parsed.ResolvedEndDate),
 		StartCreatedDate:          formatSNDateTimeUTC(parsed.StartCreatedDate),
 		EndCreatedDate:            formatSNDateTimeUTC(parsed.EndCreatedDate),
 		StartUpdatedDate:          formatSNDateTimeUTC(parsed.StartUpdatedDate),
@@ -2159,6 +2163,10 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 	if req.Parsed.ClosedEndDate != nil && req.Parsed.ClosedStartDate != nil &&
 		req.Parsed.ClosedEndDate.Before(*req.Parsed.ClosedStartDate) {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "closedOn: lte value must not be before gte value"}
+	}
+	if req.Parsed.ResolvedEndDate != nil && req.Parsed.ResolvedStartDate != nil &&
+		req.Parsed.ResolvedEndDate.Before(*req.Parsed.ResolvedStartDate) {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "resolvedOn: lte value must not be before gte value"}
 	}
 	if req.Parsed.EndCreatedDate != nil && req.Parsed.StartCreatedDate != nil &&
 		req.Parsed.EndCreatedDate.Before(*req.Parsed.StartCreatedDate) {
