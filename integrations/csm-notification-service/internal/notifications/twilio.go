@@ -29,8 +29,9 @@ import (
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 )
 
-// twilioAPIBaseURL is Twilio's REST API base. Overridden in tests.
-var twilioAPIBaseURL = "https://api.twilio.com/2010-04-01"
+// defaultTwilioAPIBaseURL is Twilio's REST API base, used whenever
+// TwilioConfig.APIBaseURL isn't set.
+const defaultTwilioAPIBaseURL = "https://api.twilio.com/2010-04-01"
 
 // TwilioConfig holds the configuration for the SMS notification channel.
 // AccountSID is Twilio's own identifier for the account, not a secret (it
@@ -39,6 +40,11 @@ var twilioAPIBaseURL = "https://api.twilio.com/2010-04-01"
 type TwilioConfig struct {
 	AccountSID string
 	AuthToken  string
+	// APIBaseURL overrides Twilio's REST API base
+	// (defaultTwilioAPIBaseURL). Empty uses that default — only set this for
+	// a regional Twilio edge/API endpoint, or to point at a mock server in
+	// tests.
+	APIBaseURL string
 	// FromNumber is a fixed Twilio-provisioned sending number (E.164, e.g.
 	// "+14155552671"), used two ways: as SendSMS's fallback sender when
 	// MessagingServiceSid isn't set, and as MakeCall's caller ID — Twilio
@@ -77,6 +83,9 @@ type TwilioClient struct {
 
 // NewTwilioClient constructs a TwilioClient from cfg.
 func NewTwilioClient(cfg TwilioConfig) *TwilioClient {
+	if cfg.APIBaseURL == "" {
+		cfg.APIBaseURL = defaultTwilioAPIBaseURL
+	}
 	return &TwilioClient{
 		http: &http.Client{Timeout: 10 * time.Second},
 		cfg:  cfg,
@@ -177,7 +186,7 @@ func sayTwiML(message, voice, language string) (string, error) {
 // "Messages.json", "Calls.json") under this account, authenticated with
 // Basic Auth, and maps a non-201 response to *apierror.Error.
 func (c *TwilioClient) do(ctx context.Context, resourcePath string, form url.Values) error {
-	endpoint := twilioAPIBaseURL + "/Accounts/" + url.PathEscape(c.cfg.AccountSID) + "/" + resourcePath
+	endpoint := c.cfg.APIBaseURL + "/Accounts/" + url.PathEscape(c.cfg.AccountSID) + "/" + resourcePath
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return fmt.Errorf("notifications: build twilio request: %w", err)
