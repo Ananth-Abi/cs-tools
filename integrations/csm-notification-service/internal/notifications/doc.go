@@ -17,9 +17,11 @@
 // Package notifications groups every outbound notification channel this
 // service can dispatch to. Each channel gets its own config/client pair in
 // its own file — e.g. email.go's EmailConfig/EmailClient, googlechat.go's
-// GoogleChatConfig/GoogleChatClient — because channels are expected to differ
-// in upstream auth scheme and base URL (email via OAuth2 client credentials;
-// Google Chat via a space's incoming webhook URL; SMS and voice/Twilio calls
-// are expected to follow, likely with their own auth schemes such as
-// Twilio's Account SID/Auth Token).
+// GoogleChatConfig/GoogleChatClient, twilio.go's TwilioConfig/TwilioClient —
+// because channels differ in upstream auth scheme and base URL (email via
+// OAuth2 client credentials; Google Chat via a space's incoming webhook URL;
+// SMS and voice calls via Twilio's Account SID/Auth Token over HTTP Basic
+// Auth). SMS and voice share one TwilioClient (SendSMS/MakeCall) since both
+// are the same Twilio account and auth scheme, just different REST
+// resources.
 package notifications
