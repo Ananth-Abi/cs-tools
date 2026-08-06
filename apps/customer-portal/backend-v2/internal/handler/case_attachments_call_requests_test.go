@@ -172,7 +172,7 @@ func TestPatchCallRequest_ExtraCaseIDPathSegmentDoesNotBreakRouting(t *testing.T
 
 	callRequestID := "33333333-3333-3333-3333-333333333333"
 	req := authedRequest(http.MethodPatch, "/cases/"+testCaseID+"/call-requests/"+callRequestID,
-		`{"state":"canceled"}`)
+		`{"stateKey":6}`)
 	rec := httptest.NewRecorder()
 
 	mux.ServeHTTP(rec, req)

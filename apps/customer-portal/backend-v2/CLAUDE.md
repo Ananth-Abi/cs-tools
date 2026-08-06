@@ -397,23 +397,56 @@ leak through it by default.
 **The DTO layer's job isn't only response trimming — it also absorbs entity-service's own request
 contract changes, so the frontend never has to know they happened.**
 `POST /projects/{id}/cases/search` is the example: entity-service redesigned its case-search
-filters from named fields (`types`, `states`, `projectIds`, ...) into a generic predicate array
-(`filters: [{field, op, values}]`, `internal/entity/types.go`'s `CaseFieldFilter`) and now rejects
-any request using the old shape outright (`decodeRequest`'s `DisallowUnknownFields`). The frontend
-was never updated — it still sends the old named-field shape — so
-`dto.CaseSearchRequest`/`CaseSearchFilters` keep that exact old shape as this backend's own stable,
-unchanged contract, and `dto.BuildEntitySearchCasesRequest` is the only place that builds an
-`entity.CaseFieldFilter` array, translating each portal filter field into the "field in/eq values"
-entry entity-service's `case_filters.go` expects (see that file for the authoritative field/op
-table if entity-service adds a new filter). `CreatedByMe` becomes a `createdBy`+`eq` filter carrying
-the literal string `"__current_user_email__"` — this must match entity-service's own
-`currentUserFilterPlaceholder` constant exactly, not just be "some sentinel". If entity-service ever
-changes another request contract this way, the fix is the same shape: keep the portal-facing dto
-type frozen at whatever the frontend already sends, and write a `BuildEntityXRequest` translator
-rather than pushing the new shape onto the frontend or, worse, decoding the incoming request
-directly into an `internal/entity` type (which is how this bug happened in the first place — there
-was no dto/entity separation on the request side for this one endpoint, unlike every response,
-which already goes through `dto.Map*`).
+filters from named fields into a generic predicate array (`filters: [{field, op, values}]`,
+`internal/entity/types.go`'s `CaseFieldFilter`) and now rejects any request using the old shape
+outright (`decodeRequest`'s `DisallowUnknownFields`). The frontend was never updated — it still
+sends the *old Ballerina backend's* named-field shape (`statusIds`, `severityIds`, `issueIds`,
+`caseTypes`, `engagementTypeKeys`, date-range fields — see `CaseSearchFilters` in
+`apps/customer-portal/webapp/src/features/support/types/cases.ts`, the one shared type every
+case-search call site imports), not entity-service's own vocabulary — so
+`dto.CaseSearchRequest`/`CaseSearchFilters` mirror *that* shape as this backend's own stable
+contract, frozen at whatever the frontend already sends, and `dto.BuildEntitySearchCasesRequest` is
+the only place that builds an `entity.CaseFieldFilter` array, translating each portal filter field
+into the "field in/eq/gte/lte values" entry entity-service's `case_filters.go` expects (see that
+file for the authoritative field/op table if entity-service adds a new filter). `CreatedByMe`
+becomes a `createdBy`+`eq` filter carrying the literal string `"__current_user_email__"` — this must
+match entity-service's own `currentUserFilterPlaceholder` constant exactly, not just be "some
+sentinel". If entity-service ever changes another request contract this way, the fix is the same
+shape: keep the portal-facing dto type frozen at whatever the frontend already sends, and write a
+`BuildEntityXRequest` translator rather than pushing the new shape onto the frontend or, worse,
+decoding the incoming request directly into an `internal/entity` type (which is how this bug
+happened in the first place — there was no dto/entity separation on the request side for this one
+endpoint, unlike every response, which already goes through `dto.Map*`).
+
+**Some fields need a second translation layer on top of the dto/entity split: ServiceNow numeric
+choice-list ids ⇄ entity-service's string enums.** The frontend was built against the old Ballerina
+backend, which forwarded ServiceNow's raw numeric choice-list keys (case status/severity/issue-type/
+engagement-type, call-request state) directly — it still sends and expects those exact numbers
+today, even though `cs-tools/entity-service`'s own contract is plain lowercase-snake-case string
+enums. `internal/dto/case_enum_mapping.go` and `internal/dto/call_request_enum_mapping.go` hold this
+backend's own copies of the numeric-id↔enum tables (mirroring entity-service's private
+`snStateIDMap`/`snSeverityIDMap`/`snIssueTypeIDMap`/`snEngagementTypeIDMap`/`callRequestKeyToState`
+in `internal/service/sn_case_service.go` and `sn_call_request_service.go` — these ids are
+ServiceNow's own stable configuration, not something entity-service computes, so duplicating them
+is safe, but if entity-service's copies ever change, update both). Two directions:
+- **Request → entity-service**: the frontend's numeric filter ids (`statusIds`, `severityIds`,
+  `issueIds`, `engagementTypeKeys`, `stateKeys`) translate via an id→enum map
+  (`caseIDsToEnums`/`callRequestStateKeyToEnum`) before reaching `BuildEntityXRequest`; an
+  unrecognized id is silently dropped (search) or produces an empty enum that entity-service's own
+  validation then rejects with 400 (update) — never forwarded to entity-service as a raw number,
+  which would always 400 anyway (entity-service only accepts its own enum vocabulary).
+- **Response → frontend**: entity-service's plain-string enum-valued fields (case search's `state`/
+  `severity`/`issueType`/`engagementType`, already ServiceNow's raw display *label* text for the
+  ServiceNow-backed search path, not a normalized enum — see `SearchCaseView`'s doc comment) become
+  `{id, label}` (`IDLabelRef`) via a label-parsing helper per field (`caseStatusRef`,
+  `caseSeverityRef`, etc.) that mirrors entity-service's own label-parsing functions
+  (`snCaseStateMap`, `snSeverityLabelMap`, `snIssueTypeToEnum`) closely enough to resolve the same
+  id, falling back to a label-only ref (empty id) for a label neither table recognizes rather than
+  dropping the field.
+
+If a future endpoint has this same problem (frontend still expects a legacy numeric id/label pair
+entity-service no longer speaks), follow this same two-file, two-direction pattern rather than
+inventing a new one per endpoint.
 
 **Project scoping via a `{id}` path parameter is the source of truth — never a client-settable body
 field, even when entity-service's own request struct has one.**

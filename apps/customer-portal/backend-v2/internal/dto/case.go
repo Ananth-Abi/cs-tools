@@ -50,37 +50,60 @@ func mapNumberRef(r *entity.CaseNumberRef) *NumberRef {
 }
 
 // CaseSummary is one item of the portal's response for
-// POST /projects/{id}/cases/search.
-//
-// Deliberately excludes entity-service's InternalID (internal-only
-// identifier), Catalog/CatalogItem (CMDB implementation detail), Conversation,
-// DeployedProduct, AssignedEngineer, ParentCase/RelatedCase — kept minimal for
-// the list view; the full picture is available via GET /cases/{id}.
+// POST /projects/{id}/cases/search — shaped to match the frontend's
+// CaseListItem type (apps/customer-portal/webapp/src/features/support/types/
+// cases.ts) field-for-field, not entity-service's own SearchCaseView. Every
+// enum-valued field (status, severity, issueType, engagementType, type) is
+// an IDLabelRef, not a plain string, and status/severity/issueType/
+// engagementType's .id is a ServiceNow numeric choice-list key the frontend
+// still expects — see case_enum_mapping.go for the translation. Deliberately
+// excludes entity-service's Catalog/CatalogItem (CMDB implementation
+// detail), ParentCase/RelatedCase, Conversation — CaseListItem has no
+// equivalent fields; the full picture is available via GET /cases/{id}.
 type CaseSummary struct {
-	ID             string  `json:"id"`
-	Number         string  `json:"number"`
-	Subject        *string `json:"subject,omitempty"`
-	Description    *string `json:"description,omitempty"`
-	State          string  `json:"state"`
-	Severity       *string `json:"severity,omitempty"`
-	IssueType      *string `json:"issueType,omitempty"`
-	EngagementType *string `json:"engagementType,omitempty"`
-	WorkState      *string `json:"workState,omitempty"`
-	Type           string  `json:"type"`
-	CreatedOn      string  `json:"createdOn"`
-	Project        Ref     `json:"project"`
-	Deployment     *Ref    `json:"deployment,omitempty"`
-	Product        *Ref    `json:"product,omitempty"`
-	AssignedTeam   *Ref    `json:"assignedTeam,omitempty"`
+	ID               string      `json:"id"`
+	InternalID       string      `json:"internalId,omitempty"`
+	Number           string      `json:"number"`
+	Title            *string     `json:"title,omitempty"`
+	Description      *string     `json:"description,omitempty"`
+	AssignedEngineer *IDLabelRef `json:"assignedEngineer,omitempty"`
+	Project          IDLabelRef  `json:"project"`
+	IssueType        *IDLabelRef `json:"issueType,omitempty"`
+	EngagementType   *IDLabelRef `json:"engagementType,omitempty"`
+	DeployedProduct  *IDLabelRef `json:"deployedProduct,omitempty"`
+	Deployment       *IDLabelRef `json:"deployment,omitempty"`
+	Severity         *IDLabelRef `json:"severity,omitempty"`
+	Status           *IDLabelRef `json:"status,omitempty"`
+	Type             *IDLabelRef `json:"type,omitempty"`
+	CaseTypes        *IDLabelRef `json:"caseTypes,omitempty"`
+	CreatedOn        string      `json:"createdOn,omitempty"`
+	UpdatedOn        string      `json:"updatedOn,omitempty"`
+	CreatedBy        string      `json:"createdBy,omitempty"`
 }
 
 // SearchCasesResponse is the portal's response for
-// POST /projects/{id}/cases/search.
+// POST /projects/{id}/cases/search. TotalRecords (not Total) to match the
+// frontend's shared pagination envelope — see PaginationResponse in
+// apps/customer-portal/webapp/src/types/common.ts.
 type SearchCasesResponse struct {
-	Cases  []CaseSummary `json:"cases"`
-	Total  int           `json:"total"`
-	Limit  int           `json:"limit"`
-	Offset int           `json:"offset"`
+	Cases        []CaseSummary `json:"cases"`
+	TotalRecords int           `json:"totalRecords"`
+	Limit        int           `json:"limit"`
+	Offset       int           `json:"offset"`
+}
+
+func entityRefToIDLabel(r *entity.EntityRef) *IDLabelRef {
+	if r == nil {
+		return nil
+	}
+	return &IDLabelRef{ID: r.ID, Label: r.Name}
+}
+
+func assignedEngineerToIDLabel(r *entity.AssignedEngineerRef) *IDLabelRef {
+	if r == nil {
+		return nil
+	}
+	return &IDLabelRef{ID: r.ID, Label: r.Name}
 }
 
 // MapSearchCases builds the portal response from entity-service's SearchCasesResponse.
@@ -88,28 +111,31 @@ func MapSearchCases(r entity.SearchCasesResponse) SearchCasesResponse {
 	cases := make([]CaseSummary, 0, len(r.Cases))
 	for _, c := range r.Cases {
 		cases = append(cases, CaseSummary{
-			ID:             c.ID,
-			Number:         c.Number,
-			Subject:        c.Subject,
-			Description:    c.Description,
-			State:          c.State,
-			Severity:       c.Severity,
-			IssueType:      c.IssueType,
-			EngagementType: c.EngagementType,
-			WorkState:      c.WorkState,
-			Type:           c.Type,
-			CreatedOn:      c.CreatedOn,
-			Project:        Ref{ID: c.Project.ID, Name: c.Project.Name},
-			Deployment:     mapRef(c.Deployment),
-			Product:        mapRef(c.Product),
-			AssignedTeam:   mapRef(c.AssignedTeam),
+			ID:               c.ID,
+			InternalID:       c.InternalID,
+			Number:           c.Number,
+			Title:            c.Subject,
+			Description:      c.Description,
+			AssignedEngineer: assignedEngineerToIDLabel(c.AssignedEngineer),
+			Project:          IDLabelRef{ID: c.Project.ID, Label: c.Project.Name},
+			IssueType:        caseIssueTypeRef(c.IssueType),
+			EngagementType:   caseEngagementTypeRef(c.EngagementType),
+			DeployedProduct:  entityRefToIDLabel(c.DeployedProduct),
+			Deployment:       entityRefToIDLabel(c.Deployment),
+			Severity:         caseSeverityRef(c.Severity),
+			Status:           caseStatusRef(c.State),
+			Type:             caseTypeRef(c.Type),
+			CaseTypes:        caseTypeRef(c.Type),
+			CreatedOn:        c.CreatedOn,
+			UpdatedOn:        c.UpdatedOn,
+			CreatedBy:        c.CreatedBy,
 		})
 	}
 	return SearchCasesResponse{
-		Cases:  cases,
-		Total:  r.Total,
-		Limit:  r.Limit,
-		Offset: r.Offset,
+		Cases:        cases,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
 	}
 }
 
@@ -120,13 +146,17 @@ func MapSearchCases(r entity.SearchCasesResponse) SearchCasesResponse {
 const currentUserFilterPlaceholder = "__current_user_email__"
 
 // CaseSearchFilters holds the optional filter criteria for
-// POST /projects/{id}/cases/search. This is the portal's own request
-// contract, unchanged from before entity-service redesigned its case-search
-// wire format into a generic filter-predicate array (matching what the
-// frontend has always sent) — only the fields the portal currently exposes
-// are included; extend as needed when more filters are surfaced to the
-// frontend. See BuildEntitySearchCasesRequest for the translation into
-// entity-service's current contract.
+// POST /projects/{id}/cases/search — shaped to match the frontend's own
+// CaseSearchFilters type (apps/customer-portal/webapp/src/features/support/
+// types/cases.ts) field-for-field, the same type every case-search call site
+// in the frontend shares. StatusIDs/SeverityIDs/IssueIDs/EngagementTypeKeys
+// carry ServiceNow's numeric choice-list ids (the frontend was built against
+// the old Ballerina backend, which forwarded these ids as-is) — see
+// case_enum_mapping.go for how they're translated into entity-service's own
+// enum vocabulary. CaseTypes needs no translation: entity-service's own
+// "type"+"in" filter already accepts "default_case" as an alias for "case"
+// (case_service.go's caseTypeAliases), and every other case type value is
+// identical between the two.
 //
 // No ProjectIDs field: project scoping comes exclusively from the {id} path
 // parameter (see BuildEntitySearchCasesRequest's projectID parameter), never
@@ -135,20 +165,21 @@ const currentUserFilterPlaceholder = "__current_user_email__"
 // CreatedBy/CreatedByMe had (a body projectIds disagreeing with the path
 // silently returning an empty result instead of erroring or being ignored).
 type CaseSearchFilters struct {
-	Types           []string `json:"types,omitempty"`
-	SearchQuery     string   `json:"searchQuery,omitempty"`
-	DeploymentIDs   []string `json:"deploymentIds,omitempty"`
-	States          []string `json:"states,omitempty"`
-	Severities      []string `json:"severities,omitempty"`
-	IssueTypes      []string `json:"issueTypes,omitempty"`
-	EngagementTypes []string `json:"engagementTypes,omitempty"`
-	CreatedBy       []string `json:"createdBy,omitempty"`
-	CreatedByMe     bool     `json:"createdByMe,omitempty"`
-	WorkStates      []string `json:"workStates,omitempty"`
-	AssignedUserIDs []string `json:"assignedUserIds,omitempty"`
-	ProductNames    []string `json:"productNames,omitempty"`
-	Tags            []string `json:"tags,omitempty"`
-	ParentID        *string  `json:"parentId,omitempty"`
+	SearchQuery        string   `json:"searchQuery,omitempty"`
+	StatusIDs          []int    `json:"statusIds,omitempty"`
+	CaseTypes          []string `json:"caseTypes,omitempty"`
+	SeverityIDs        []int    `json:"severityIds,omitempty"`
+	IssueIDs           []int    `json:"issueIds,omitempty"`
+	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
+	CreatedByMe        bool     `json:"createdByMe,omitempty"`
+	CreatedBy          []string `json:"createdBy,omitempty"`
+	EngagementTypeKeys []int    `json:"engagementTypeKeys,omitempty"`
+	ClosedStartDate    string   `json:"closedStartDate,omitempty"`
+	ClosedEndDate      string   `json:"closedEndDate,omitempty"`
+	StartCreatedDate   string   `json:"startCreatedDate,omitempty"`
+	EndCreatedDate     string   `json:"endCreatedDate,omitempty"`
+	StartUpdatedDate   string   `json:"startUpdatedDate,omitempty"`
+	EndUpdatedDate     string   `json:"endUpdatedDate,omitempty"`
 }
 
 // CaseSearchRequest is the portal's request body for
@@ -162,7 +193,7 @@ type CaseSearchRequest struct {
 // BuildEntitySearchCasesRequest translates the portal's named-filter-field
 // request into entity-service's current generic filter-predicate array
 // contract (see entity.CaseFieldFilter) — every filter the portal exposes
-// becomes one "field in/eq values" entry; SearchQuery, SortBy, and
+// becomes one "field in/eq/gte/lte values" entry; SearchQuery, SortBy, and
 // Pagination pass straight through unchanged. projectID (the {id} path
 // parameter from POST /projects/{id}/cases/search — never the request body)
 // always becomes a projectId+in filter with that single value, scoping every
@@ -183,22 +214,26 @@ func BuildEntitySearchCasesRequest(projectID string, req CaseSearchRequest) enti
 			filters = append(filters, entity.CaseFieldFilter{Field: field, Op: "in", Values: values})
 		}
 	}
-
-	addIn("type", req.Filters.Types)
-	filters = append(filters, entity.CaseFieldFilter{Field: "projectId", Op: "in", Values: []string{projectID}})
-	addIn("deploymentId", req.Filters.DeploymentIDs)
-	addIn("state", req.Filters.States)
-	addIn("severity", req.Filters.Severities)
-	addIn("issueType", req.Filters.IssueTypes)
-	addIn("engagementType", req.Filters.EngagementTypes)
-	addIn("workState", req.Filters.WorkStates)
-	addIn("assignedUserId", req.Filters.AssignedUserIDs)
-	addIn("product", req.Filters.ProductNames)
-	addIn("tag", req.Filters.Tags)
-
-	if req.Filters.ParentID != nil {
-		filters = append(filters, entity.CaseFieldFilter{Field: "parentId", Op: "eq", Values: []string{*req.Filters.ParentID}})
+	addDateRange := func(field, gte, lte string) {
+		if gte != "" {
+			filters = append(filters, entity.CaseFieldFilter{Field: field, Op: "gte", Values: []string{gte}})
+		}
+		if lte != "" {
+			filters = append(filters, entity.CaseFieldFilter{Field: field, Op: "lte", Values: []string{lte}})
+		}
 	}
+
+	filters = append(filters, entity.CaseFieldFilter{Field: "projectId", Op: "in", Values: []string{projectID}})
+	addIn("type", req.Filters.CaseTypes)
+	addIn("state", caseIDsToEnums(req.Filters.StatusIDs, caseStateIDToEnum))
+	addIn("severity", caseIDsToEnums(req.Filters.SeverityIDs, caseSeverityIDToEnum))
+	addIn("issueType", caseIDsToEnums(req.Filters.IssueIDs, caseIssueTypeIDToEnum))
+	addIn("engagementType", caseIDsToEnums(req.Filters.EngagementTypeKeys, caseEngagementTypeIDToEnum))
+	addIn("deploymentId", req.Filters.DeploymentIDs)
+	addDateRange("createdOn", req.Filters.StartCreatedDate, req.Filters.EndCreatedDate)
+	addDateRange("updatedOn", req.Filters.StartUpdatedDate, req.Filters.EndUpdatedDate)
+	addDateRange("closedOn", req.Filters.ClosedStartDate, req.Filters.ClosedEndDate)
+
 	// CreatedByMe takes precedence over CreatedBy: entity-service's filters
 	// array is AND-only (case_filters.go), so a createdBy+in filter and a
 	// createdBy+eq filter together could never both match (barring CreatedBy

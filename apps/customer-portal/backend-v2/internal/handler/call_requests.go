@@ -110,17 +110,13 @@ func (h *CallRequestHandler) SearchCallRequests(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	var req entity.SearchCallRequestsRequest
+	var req dto.CallRequestSearchRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	// CaseID is always forced to the {caseId} path parameter, never a
-	// client-supplied body field — the frontend's request body carries only
-	// filters/pagination, no caseId at all.
-	req.CaseID = caseID
 
-	result, err := h.entity.SearchCallRequests(r.Context(), req)
+	result, err := h.entity.SearchCallRequests(r.Context(), dto.BuildEntitySearchCallRequestsRequest(caseID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCallRequests failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search call requests.")
@@ -157,7 +153,7 @@ func (h *CallRequestHandler) PatchCallRequest(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if req.State == "" {
+	if req.StateKey == 0 {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}

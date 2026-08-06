@@ -6031,6 +6031,13 @@ components:
     # ---- cases ----
 
     SearchCasesRequest:
+      description: >
+        filters uses the frontend's own field names and ServiceNow numeric
+        choice-list ids (statusIds/severityIds/issueIds/engagementTypeKeys),
+        not entity-service's own lowercase-snake-case string enums — this
+        backend translates between the two (see case_enum_mapping.go). There
+        is no projectIds filter: project scope comes exclusively from the
+        {id} path parameter.
       type: object
       properties:
         pagination:
@@ -6045,99 +6052,116 @@ components:
         filters:
           type: object
           properties:
-            types:
-              type: array
-              items:
-                type: string
             searchQuery:
               type: string
+            statusIds:
+              type: array
+              items:
+                type: integer
+            caseTypes:
+              type: array
+              items:
+                type: string
+            severityIds:
+              type: array
+              items:
+                type: integer
+            issueIds:
+              type: array
+              items:
+                type: integer
             deploymentIds:
-              type: array
-              items:
-                type: string
-            states:
-              type: array
-              items:
-                type: string
-            severities:
-              type: array
-              items:
-                type: string
-            issueTypes:
-              type: array
-              items:
-                type: string
-            engagementTypes:
-              type: array
-              items:
-                type: string
-            createdBy:
               type: array
               items:
                 type: string
             createdByMe:
               type: boolean
-            workStates:
+            createdBy:
               type: array
               items:
                 type: string
-            assignedUserIds:
+            engagementTypeKeys:
               type: array
               items:
-                type: string
-            productNames:
-              type: array
-              items:
-                type: string
-            tags:
-              type: array
-              items:
-                type: string
-            parentId:
+                type: integer
+            closedStartDate:
               type: string
+            closedEndDate:
+              type: string
+            startCreatedDate:
+              type: string
+            endCreatedDate:
+              type: string
+            startUpdatedDate:
+              type: string
+            endUpdatedDate:
+              type: string
+
+    IdLabelRef:
+      description: >
+        {id, label} pair. For case-search enum fields (status/severity/
+        issueType/engagementType/type), id is a ServiceNow numeric
+        choice-list key (as a string) matching what the frontend's
+        CaseType/statusIds/etc already use — see case_enum_mapping.go.
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
 
     CaseSummary:
       type: object
       properties:
         id:
           type: string
+        internalId:
+          type: string
         number:
           type: string
-        subject:
+        title:
           type: string
         description:
           type: string
-        state:
-          type: string
-        severity:
-          type: string
+        assignedEngineer:
+          $ref: '#/components/schemas/IdLabelRef'
+        project:
+          $ref: '#/components/schemas/IdLabelRef'
         issueType:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
         engagementType:
-          type: string
-        workState:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
+        deployedProduct:
+          $ref: '#/components/schemas/IdLabelRef'
+        deployment:
+          $ref: '#/components/schemas/IdLabelRef'
+        severity:
+          $ref: '#/components/schemas/IdLabelRef'
+        status:
+          $ref: '#/components/schemas/IdLabelRef'
         type:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
+        caseTypes:
+          $ref: '#/components/schemas/IdLabelRef'
         createdOn:
           type: string
-        project:
-          $ref: '#/components/schemas/Ref'
-        deployment:
-          $ref: '#/components/schemas/Ref'
-        product:
-          $ref: '#/components/schemas/Ref'
-        assignedTeam:
-          $ref: '#/components/schemas/Ref'
+        updatedOn:
+          type: string
+        createdBy:
+          type: string
 
     SearchCasesResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope — see PaginationResponse in
+        apps/customer-portal/webapp/src/types/common.ts.
       type: object
       properties:
         cases:
           type: array
           items:
             $ref: '#/components/schemas/CaseSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -7749,16 +7773,21 @@ components:
           type: string
 
     SearchCallRequestsRequest:
-      description: caseId is not part of this body — it's set server-side from the {caseId} path parameter.
+      description: >
+        caseId is not part of this body — it's set server-side from the
+        {caseId} path parameter. filters.stateKeys carries ServiceNow's own
+        numeric choice-list keys (the frontend was built against the old
+        Ballerina backend and still sends these, not entity-service's own
+        string enum) — see callRequestStateKeyToEnum for the translation.
       type: object
       properties:
         filters:
           type: object
           properties:
-            states:
+            stateKeys:
               type: array
               items:
-                type: string
+                type: integer
         pagination:
           $ref: '#/components/schemas/Pagination'
 
@@ -7848,12 +7877,17 @@ components:
       description: >
         Agent-side fields (meetingDate, assignee, notes, plan, attendees,
         actionItems, actualDurationMin) are read-only for the customer and
-        not accepted here.
+        not accepted here. stateKey carries ServiceNow's own numeric
+        choice-list key (the frontend was built against the old Ballerina
+        backend and still sends this, not entity-service's own string enum)
+        — see callRequestStateKeyToEnum for the translation. reason is also
+        not accepted: entity-service's UpdateCallRequestRequest has no
+        equivalent field to forward it to.
       type: object
-      required: [state]
+      required: [stateKey]
       properties:
-        state:
-          type: string
+        stateKey:
+          type: integer
         cancellationReason:
           type: string
         utcTimes:

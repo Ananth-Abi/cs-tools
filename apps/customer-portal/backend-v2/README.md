@@ -450,7 +450,7 @@ curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stat
 
 curl -X POST http://localhost:8080/projects/<project-id>/cases/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"pagination":{"limit":10,"offset":0},"filters":{"searchQuery":"login error"}}'
+  -d '{"pagination":{"limit":10,"offset":0},"filters":{"searchQuery":"login error","statusIds":[1,10],"severityIds":[11]}}'
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/cases/<case-id>
 
@@ -542,7 +542,7 @@ curl -X POST http://localhost:8080/cases/<case-id>/call-requests/search \
 
 curl -X PATCH http://localhost:8080/cases/<case-id>/call-requests/<call-request-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"state":"customer_rejected","cancellationReason":"No longer needed"}'
+  -d '{"stateKey":4,"cancellationReason":"No longer needed"}'
 
 curl -X PATCH http://localhost:8080/deployments/<deployment-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \

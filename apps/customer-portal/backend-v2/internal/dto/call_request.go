@@ -74,6 +74,47 @@ type CallRequestSummary struct {
 	ActualDurationMin  *int                 `json:"actualDurationMin,omitempty"`
 }
 
+// CallRequestSearchFilters holds the optional filter criteria for
+// POST /cases/{caseId}/call-requests/search — shaped to match the
+// frontend's request body (useGetCallRequests.ts's bodyObj.filters), which
+// sends numeric ServiceNow choice-list keys (stateKeys), not
+// entity-service's own string enum (see callRequestStateKeyToEnum for the
+// translation).
+type CallRequestSearchFilters struct {
+	StateKeys []int `json:"stateKeys,omitempty"`
+}
+
+// CallRequestSearchRequest is the portal's request body for
+// POST /cases/{caseId}/call-requests/search.
+type CallRequestSearchRequest struct {
+	Filters    CallRequestSearchFilters `json:"filters"`
+	Pagination entity.Pagination        `json:"pagination"`
+}
+
+// BuildEntitySearchCallRequestsRequest translates the portal's request into
+// entity-service's SearchCallRequestsRequest. caseID (the {caseId} path
+// parameter) is always forced, never taken from the request body — the
+// frontend's request body carries only filters/pagination. Unrecognized
+// state keys are silently skipped (same behavior as
+// caseIDsToEnums/BuildEntitySearchCasesRequest).
+func BuildEntitySearchCallRequestsRequest(caseID string, req CallRequestSearchRequest) entity.SearchCallRequestsRequest {
+	states := make([]string, 0, len(req.Filters.StateKeys))
+	for _, key := range req.Filters.StateKeys {
+		if enum, ok := callRequestStateKeyToEnum[key]; ok {
+			states = append(states, enum)
+		}
+	}
+	var filters *entity.SearchCallRequestsFilters
+	if len(states) > 0 {
+		filters = &entity.SearchCallRequestsFilters{States: states}
+	}
+	return entity.SearchCallRequestsRequest{
+		CaseID:     caseID,
+		Filters:    filters,
+		Pagination: req.Pagination,
+	}
+}
+
 // SearchCallRequestsResponse is the portal's response for
 // POST /cases/{caseId}/call-requests/search. TotalRecords (not Total) to
 // match the frontend's shared pagination envelope — see
@@ -119,14 +160,21 @@ func MapSearchCallRequests(r entity.SearchCallRequestsResponse) SearchCallReques
 }
 
 // CallRequestUpdateRequest is the portal's request shape for
-// PATCH /call-requests/{id} — a deliberately restricted subset of
-// entity-service's UpdateCallRequestRequest. Excluded fields are agent-side
-// actions entity-service itself documents as "set when an engineer schedules
-// or concludes the call" — MeetingDate, Assignee, Notes, Plan, Attendees,
-// ActionItems, ActualDurationMin — none of which a customer should be able
-// to set on their own call request.
+// PATCH /cases/{caseId}/call-requests/{id} — a deliberately restricted
+// subset of entity-service's UpdateCallRequestRequest. Excluded fields are
+// agent-side actions entity-service itself documents as "set when an
+// engineer schedules or concludes the call" — MeetingDate, Assignee, Notes,
+// Plan, Attendees, ActionItems, ActualDurationMin — none of which a customer
+// should be able to set on their own call request. StateKey (not State):
+// the frontend was built against the old Ballerina backend and still sends
+// ServiceNow's numeric choice-list key, not entity-service's own string
+// enum — see callRequestStateKeyToEnum for the translation. Reason is
+// excluded too: the frontend's PatchCallRequest carries an optional reason
+// field, but entity-service's UpdateCallRequestRequest has no equivalent —
+// there's no code path to forward it to, so it's silently dropped rather
+// than worked around.
 type CallRequestUpdateRequest struct {
-	State              string   `json:"state"`
+	StateKey           int      `json:"stateKey"`
 	CancellationReason *string  `json:"cancellationReason,omitempty"`
 	UTCTimes           []string `json:"utcTimes,omitempty"`
 	DurationMinutes    *int     `json:"durationInMinutes,omitempty"`
@@ -134,10 +182,13 @@ type CallRequestUpdateRequest struct {
 
 // BuildEntityUpdateCallRequestRequest converts the portal's restricted update
 // request into entity-service's full request shape, leaving every excluded
-// (agent-side) field nil.
+// (agent-side) field nil. An unrecognized StateKey (including the zero value
+// for an absent field) translates to an empty State, which entity-service's
+// own validCallRequestStates check then rejects with a 400 — this backend
+// doesn't duplicate that validation itself.
 func BuildEntityUpdateCallRequestRequest(req CallRequestUpdateRequest) entity.UpdateCallRequestRequest {
 	return entity.UpdateCallRequestRequest{
-		State:              req.State,
+		State:              callRequestStateKeyToEnum[req.StateKey],
 		CancellationReason: req.CancellationReason,
 		UTCTimes:           req.UTCTimes,
 		DurationMinutes:    req.DurationMinutes,
