@@ -5439,7 +5439,17 @@ components:
             - problem
             - product_vulnerability
             - call_request
-          description: Which resource's /search endpoint this widget's filters target
+            - service_request
+            - security_report_analysis
+            - announcement
+            - engagement
+          description: >
+            Which resource's /search endpoint this widget's filters target.
+            service_request, security_report_analysis, announcement and
+            engagement are additional values of the case-search "type" field
+            (see Case's own type enum) exposed as their own widget
+            resourceType alongside case itself — all five route to the same
+            POST /cases/search.
         shape:
           type: string
           enum:
@@ -5462,13 +5472,15 @@ components:
           type: object
           additionalProperties: true
           description: >
-            Search criteria for this widget, with any current-user
-            placeholder already substituted. Pass this directly as the
-            filters of that resourceType's own POST /{resourceType}s/search
-            request to resolve the widget's data. For shapes "pie"/"bar"
-            this is a shared base merged under every slices entry's own
-            query (caller-side; slices entry keys win on conflict) rather
-            than queried on its own.
+            Search criteria for this widget, exactly as configured — any
+            "__current_user__"/"__current_team__" placeholder a filter value
+            carries is left unresolved for the caller to substitute
+            client-side before use. Pass this directly as the filters of
+            that resourceType's own POST /{resourceType}s/search request to
+            resolve the widget's data. For shapes "pie"/"bar" this is a
+            shared base merged under every slices entry's own query
+            (caller-side; slices entry keys win on conflict) rather than
+            queried on its own.
         groupBy:
           type: string
           description: Unused
@@ -5498,9 +5510,11 @@ components:
                 type: object
                 additionalProperties: true
                 description: >
-                  This slice's own criteria only, with any current-user
-                  placeholder already substituted — merge under the parent
-                  widget's own query to resolve this slice's total.
+                  This slice's own criteria only, exactly as configured — any
+                  "__current_user__"/"__current_team__" placeholder a filter
+                  value carries is left unresolved for the caller to
+                  substitute client-side — merge under the parent widget's
+                  own query to resolve this slice's total.
         section:
           type: string
           description: >

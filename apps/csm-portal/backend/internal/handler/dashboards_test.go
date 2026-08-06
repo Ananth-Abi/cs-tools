@@ -17,9 +17,7 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -161,16 +159,17 @@ func withDashboardID(r *http.Request, dashboardID string) *http.Request {
 	return r
 }
 
-// resolvedCurrentUserID is mockEntityUserClient's default GET /users/me id
-// (helpers_test.go). It is deliberately NOT testUser.UserID (the JWT claim):
-// the handler resolves __current_user__ via the entity service's /users/me,
-// the same id GET /users/me itself returns — see
-// DashboardHandler.resolveCurrentUserID's doc comment for why.
-const resolvedCurrentUserID = "11111111-1111-1111-1111-111111111111"
+// currentUserPlaceholder is the literal string a case widget's
+// assignedUserId filter carries for "the signed-in user's own cases" — see
+// testDashboardsConfigJSON's "my-open-cases"/"Mine" entries. The handler no
+// longer resolves it (see DashboardHandler's doc comment in dashboards.go):
+// it is expected to reach the response exactly as configured, for the
+// frontend to substitute client-side.
+const currentUserPlaceholder = "__current_user__"
 
 func TestGetDashboards(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := httptest.NewRequest(http.MethodGet, "/dashboards", nil)
 		w := httptest.NewRecorder()
 		h.GetDashboards(w, r)
@@ -180,7 +179,7 @@ func TestGetDashboards(t *testing.T) {
 	})
 
 	t.Run("returns all dashboards in registry order with correct isDefault", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withUser(httptest.NewRequest(http.MethodGet, "/dashboards", nil))
 		w := httptest.NewRecorder()
 		h.GetDashboards(w, r)
@@ -266,7 +265,7 @@ func TestAllDashboardsHaveWidgets(t *testing.T) {
 
 func TestGetDashboardDetail(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-dashboard", nil), "sample-dashboard")
 		w := httptest.NewRecorder()
 		h.GetDashboardDetail(w, r)
@@ -276,7 +275,7 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 
 	t.Run("unknown dashboard id returns 404", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/bogus", nil), "bogus"))
 		w := httptest.NewRecorder()
 		h.GetDashboardDetail(w, r)
@@ -285,7 +284,7 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 
 	t.Run("sample-dashboard returns metadata and its four widgets", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-dashboard", nil), "sample-dashboard"))
 		w := httptest.NewRecorder()
 		h.GetDashboardDetail(w, r)
@@ -383,8 +382,9 @@ func TestGetDashboardDetail(t *testing.T) {
 		}
 
 		// my-open-cases carries an assignedUserId filter (the current user's
-		// open cases) — verify __current_user__ resolved to a concrete id,
-		// not the raw placeholder.
+		// open cases) — the handler no longer resolves "__current_user__"
+		// (that moved to the frontend), so it must reach the response
+		// exactly as configured.
 		openIdx, ok := byID["my-open-cases"]
 		if !ok {
 			t.Fatalf("missing widget %q in response", "my-open-cases")
@@ -393,13 +393,8 @@ func TestGetDashboardDetail(t *testing.T) {
 		if !present {
 			t.Fatalf("widget my-open-cases filters has no assignedUserId field entry")
 		}
-		if len(assigned) != 1 || assigned[0] != resolvedCurrentUserID {
-			t.Errorf("widget my-open-cases assignedUserId values = %v, want [%q]", assigned, resolvedCurrentUserID)
-		}
-		for _, uid := range assigned {
-			if uid == "__current_user__" {
-				t.Errorf("widget my-open-cases assignedUserId values leaked the unresolved placeholder")
-			}
+		if len(assigned) != 1 || assigned[0] != currentUserPlaceholder {
+			t.Errorf("widget my-open-cases assignedUserId values = %v, want the unresolved placeholder [%q]", assigned, currentUserPlaceholder)
 		}
 
 		// recent-cases has no assignedUserId filter entry in its template and
@@ -453,7 +448,7 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 
 	t.Run("sample-team-dashboard has resource-type-diverse widgets (case, incident, change_request)", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-team-dashboard", nil), "sample-team-dashboard"))
 		w := httptest.NewRecorder()
 		h.GetDashboardDetail(w, r)
@@ -512,7 +507,7 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 
 	t.Run("sample-dashboard's product_vulnerability widget has a scalar string filter", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-dashboard", nil), "sample-dashboard"))
 		w := httptest.NewRecorder()
 		h.GetDashboardDetail(w, r)
@@ -553,7 +548,7 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 
 	t.Run("sample-team-dashboard's pie widget resolves description, slices, and per-slice current-user placeholders", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-team-dashboard", nil), "sample-team-dashboard"))
 		w := httptest.NewRecorder()
 		h.GetDashboardDetail(w, r)
@@ -605,8 +600,8 @@ func TestGetDashboardDetail(t *testing.T) {
 			t.Fatalf("missing the %q slice in cases-by-severity.Slices", "Mine")
 		}
 		assigned, ok := filterValuesByField(mine.Query, "assignedUserId")
-		if !ok || len(assigned) != 1 || assigned[0] != resolvedCurrentUserID {
-			t.Errorf("Mine slice assignedUserId = %v, want [%q] (resolved, not the raw placeholder)", assigned, resolvedCurrentUserID)
+		if !ok || len(assigned) != 1 || assigned[0] != currentUserPlaceholder {
+			t.Errorf("Mine slice assignedUserId = %v, want the unresolved placeholder [%q]", assigned, currentUserPlaceholder)
 		}
 
 		// Confirm the wire keys match the updated openapi.yaml schema.
@@ -632,7 +627,7 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 
 	t.Run("sample-team-dashboard's escalated-incidents widget carries its configured section, unset for widgets with no section", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-team-dashboard", nil), "sample-team-dashboard"))
 		w := httptest.NewRecorder()
 		h.GetDashboardDetail(w, r)
@@ -665,7 +660,7 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 
 	t.Run("every dashboard in the registry now has at least one widget", func(t *testing.T) {
-		h := NewDashboardHandler(&mockEntityUserClient{})
+		h := NewDashboardHandler()
 		for _, d := range dashboard.All() {
 			r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/"+d.ID, nil), d.ID))
 			w := httptest.NewRecorder()
@@ -683,75 +678,10 @@ func TestGetDashboardDetail(t *testing.T) {
 	})
 }
 
-// TestResolveCurrentUserID_UsesEntityUsersMeNotJWTClaim guards against the
-// regression this task shipped once already: substituting the raw JWT
-// userid claim into a widget's assignedUserIds instead of the platform user
-// id GET /users/me resolves via the entity service. The two ids are
-// deliberately different here (testUser.UserID vs the mock's GetUserMe id)
-// so a reversion back to user.UserID would fail this test immediately
-// rather than silently reintroducing the bug.
-func TestResolveCurrentUserID_UsesEntityUsersMeNotJWTClaim(t *testing.T) {
-	const entityResolvedID = "22222222-2222-2222-2222-222222222222"
-	if entityResolvedID == testUser.UserID {
-		t.Fatal("test setup bug: entityResolvedID must differ from testUser.UserID")
-	}
-
-	mock := &mockEntityUserClient{
-		getUserMeFn: func(ctx context.Context) ([]byte, error) {
-			return []byte(`{"id":"` + entityResolvedID + `"}`), nil
-		},
-	}
-	h := NewDashboardHandler(mock)
-	r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-dashboard", nil), "sample-dashboard"))
-	w := httptest.NewRecorder()
-	h.GetDashboardDetail(w, r)
-	assertStatus(t, w, http.StatusOK)
-
-	var result dashboardDetailView
-	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-		t.Fatalf("decode response body: %v; raw: %s", err, w.Body.Bytes())
-	}
-	byID := make(map[string]dashboardWidgetView)
-	for _, wd := range result.Widgets {
-		byID[wd.WidgetID] = wd
-	}
-
-	assigned, ok := filterValuesByField(byID["my-open-cases"].Query, "assignedUserId")
-	if !ok || len(assigned) != 1 {
-		t.Fatalf("my-open-cases assignedUserId values = %v, want a 1-element array", assigned)
-	}
-	if assigned[0] != entityResolvedID {
-		t.Errorf("my-open-cases assignedUserId values[0] = %v, want the entity-resolved id %q (not the JWT claim %q)",
-			assigned[0], entityResolvedID, testUser.UserID)
-	}
-}
-
-// TestResolveCurrentUserID_FallsBackToJWTClaimOnEntityError confirms a
-// transient entity-service failure degrades to the previous (broken but
-// non-crashing) behavior — the endpoint still returns 200, not a 500 — since
-// dashboards are best-effort convenience data, not core functionality.
-func TestResolveCurrentUserID_FallsBackToJWTClaimOnEntityError(t *testing.T) {
-	mock := &mockEntityUserClient{
-		getUserMeFn: func(ctx context.Context) ([]byte, error) {
-			return nil, errors.New("entity unavailable")
-		},
-	}
-	h := NewDashboardHandler(mock)
-	r := withUser(withDashboardID(httptest.NewRequest(http.MethodGet, "/dashboards/sample-dashboard", nil), "sample-dashboard"))
-	w := httptest.NewRecorder()
-	h.GetDashboardDetail(w, r)
-	assertStatus(t, w, http.StatusOK)
-
-	var result dashboardDetailView
-	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
-		t.Fatalf("decode response body: %v; raw: %s", err, w.Body.Bytes())
-	}
-	byID := make(map[string]dashboardWidgetView)
-	for _, wd := range result.Widgets {
-		byID[wd.WidgetID] = wd
-	}
-	assigned, ok := filterValuesByField(byID["my-open-cases"].Query, "assignedUserId")
-	if !ok || len(assigned) != 1 || assigned[0] != testUser.UserID {
-		t.Errorf("my-open-cases assignedUserId values = %v, want the JWT-claim fallback [%q]", assigned, testUser.UserID)
-	}
-}
+// Resolving "__current_user__" into a concrete platform user id used to be
+// this handler's job (via an entity-service GET /users/me round trip) and
+// had its own regression-guard tests here (a JWT-claim vs entity-resolved-id
+// mix-up). That responsibility, and the entity dependency it required, moved
+// to the frontend — see DashboardHandler's doc comment in dashboards.go and
+// the "my-open-cases"/"Mine" assertions above in TestGetDashboardDetail,
+// which now assert the placeholder reaches the response unresolved instead.
