@@ -542,7 +542,7 @@ curl -X POST http://localhost:8080/cases/<case-id>/call-requests/search \
 
 curl -X PATCH http://localhost:8080/cases/<case-id>/call-requests/<call-request-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"stateKey":4,"cancellationReason":"No longer needed"}'
+  -d '{"stateKey":6,"cancellationReason":"No longer needed"}'
 
 curl -X PATCH http://localhost:8080/deployments/<deployment-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \

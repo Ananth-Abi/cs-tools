@@ -550,8 +550,9 @@ constants).
 frontend's existing type before picking one.** The frontend's shared `PaginationResponse` type
 (`apps/customer-portal/webapp/src/types/common.ts`) is `{offset, limit, totalRecords}`, and some
 already-built frontend consumers (`GET /cases/{id}/attachments`,
-`POST /cases/{caseId}/call-requests/search`) read exactly that field name — so their dto response
-types use `totalRecords`, not this backend's more common `total`. This is not a house-style
+`POST /cases/{caseId}/call-requests/search`, `POST /projects/{id}/cases/search`) read exactly that
+field name — so their dto response types use `totalRecords`, not this backend's more common
+`total`. This is not a house-style
 migration in progress; new endpoints should still default to `total` unless porting one that a
 specific existing frontend hook already expects `totalRecords` from (check
 `apps/customer-portal/webapp/src/api/` and `src/features/*/api/` for the exact field the relevant
