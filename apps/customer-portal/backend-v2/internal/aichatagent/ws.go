@@ -49,9 +49,8 @@ const maxMessageBytes = 64 << 10 // 64 KiB
 const idleTimeout = 5 * time.Minute
 
 // WSConfig holds the configuration for dialing the upstream AI chat agent's
-// WebSocket endpoint. Kept separate from Config since the Ballerina backend
-// this is rewriting uses a distinct OAuth2 client-credentials configuration
-// for its WebSocket connection.
+// WebSocket endpoint. Kept separate from Config because the WebSocket
+// connection uses its own distinct OAuth2 client-credentials configuration.
 type WSConfig struct {
 	BaseURL      string
 	TokenURL     string

@@ -19,8 +19,7 @@ package dto
 import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 
 // CaseFeedbackEmoji is the trimmed emoji reference on GET /cases/{id}/feedback
-// — id/name/selectedImage only, dropping unselectedImage/value/chips, matching
-// the Ballerina reference's FeedbackEmojiSummary.
+// — id/name/selectedImage only, dropping unselectedImage/value/chips.
 type CaseFeedbackEmoji struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`

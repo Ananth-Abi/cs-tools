@@ -80,7 +80,7 @@ func (h *RegistryHandler) isAdmin(roles []string) bool {
 // service's own error message (apierror.Error.Body) when available, falling
 // back to a generic message otherwise — several registry/contacts endpoints
 // deliberately forward the upstream's specific reason rather than a fixed
-// fallback, matching the Ballerina reference's response.message() passthrough.
+// fallback.
 func writeUpstreamMessage(w http.ResponseWriter, err error, fallback string) {
 	var apiErr *apierror.Error
 	if errors.As(err, &apiErr) {
@@ -280,8 +280,8 @@ func (h *RegistryHandler) DeleteRegistryToken(w http.ResponseWriter, r *http.Req
 	}
 
 	// tokenID is not UUID-validated: the registry service's own token IDs are
-	// not UUID-shaped (matching the Ballerina reference's plain `string` path
-	// param for this route, unlike the project-scoped registry routes above).
+	// not UUID-shaped, so this route takes a plain `string` path param,
+	// unlike the project-scoped registry routes above.
 	tokenID := r.PathValue("id")
 	if tokenID == "" {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)

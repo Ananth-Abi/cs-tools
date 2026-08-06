@@ -162,7 +162,7 @@ func (h *DeployedProductHandler) PatchDeployedProduct(w http.ResponseWriter, r *
 	writeJSONValue(w, http.StatusOK, dto.MapDeployedProductUpdate(result))
 }
 
-// validateDeployedProductDateRange applies the Ballerina reference's
+// validateDeployedProductDateRange applies this endpoint's own
 // isInvalidDateRange/isWithinOneYear checks, writing a 400 and returning
 // ok=false on failure.
 func validateDeployedProductDateRange(w http.ResponseWriter, startDate, endDate string) (ok bool) {
@@ -184,8 +184,8 @@ func validateDeployedProductDateRange(w http.ResponseWriter, startDate, endDate 
 
 // SearchDeployedProductMetrics handles
 // POST /deployments/{deploymentId}/products/{productId}/metrics/search.
-// productId here is the deployed-product's own ID (matching the Ballerina
-// reference's own path-naming quirk); deploymentId is injected into the
+// productId here is the deployed-product's own ID (a deliberate
+// path-naming quirk of this route); deploymentId is injected into the
 // entity request server-side.
 func (h *DeployedProductHandler) SearchDeployedProductMetrics(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())

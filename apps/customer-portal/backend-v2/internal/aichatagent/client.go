@@ -17,8 +17,7 @@
 // Package aichatagent is the HTTP client for the upstream AI chat agent — a
 // separate Python service (not entity-service) that powers the customer
 // portal's AI chat feature: case classification, chat responses, and KB
-// article recommendations. See apps/customer-portal/backend's
-// modules/ai_chat_agent for the Ballerina backend's equivalent client.
+// article recommendations.
 package aichatagent
 
 import (
@@ -142,12 +141,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		return nil, apierror.NewUpstreamError(resp.StatusCode, respBody)
 	}
 
 	return respBody, nil

@@ -165,7 +165,7 @@ func (h *ContactHandler) RemoveProjectContact(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	_ = result // Ballerina reference returns a fixed success message here, not the membership details.
+	_ = result // this endpoint returns a fixed success message here, not the membership details.
 	writeJSONValue(w, http.StatusOK, map[string]string{"message": "Project contact removed successfully!"})
 }
 

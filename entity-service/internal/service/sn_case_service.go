@@ -303,7 +303,7 @@ var snSortFieldMap = map[domain.CaseSortField]string{
 var caseGroupByFieldValues = map[string][]string{
 	"state":          {"open", "work_in_progress", "waiting_on_wso2", "awaiting_info", "reopened", "solution_proposed", "closed"},
 	"severity":       {"catastrophic", "critical", "high", "medium", "low"},
-	"type":           {"case", "service_request", "security_report_analysis", "engagement"},
+	"type":           {"case", "service_request", "security_report_analysis", "announcement", "engagement"},
 	"engagementType": {"migration", "consultancy", "new_feature_improvement", "follow_up", "onboarding"},
 	"issueType":      {"error", "partial_outage", "performance_degradation", "question", "security_or_compliance", "total_outage"},
 	"workState":      {"ongoing", "paused"},
@@ -594,7 +594,7 @@ type snCreateCaseResponse struct {
 }
 
 func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseRequest) (domain.CreateCaseResponse, error) {
-	if err := validateCreateCaseRequest(req); err != nil {
+	if err := validateCreateCaseRequest(&req); err != nil {
 		return domain.CreateCaseResponse{}, err
 	}
 

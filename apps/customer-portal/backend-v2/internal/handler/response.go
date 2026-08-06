@@ -76,8 +76,17 @@ func writeJSONValue(w http.ResponseWriter, statusCode int, v any) {
 	_, _ = w.Write(data) // #nosec G705 -- Content-Type: application/json already set; SecurityHeaders middleware adds X-Content-Type-Options: nosniff
 }
 
-// mapUpstreamError translates an entity-service error to an HTTP response,
-// mirroring the Ballerina getStatusCode pattern in the customer-portal.
+// mapUpstreamError translates an entity-service error to an HTTP response
+// using this backend's own status-code mapping.
+//
+// For 400, apiErr.Body (entity-service's own validation message — e.g.
+// "caseTypes must be valid UUIDs", "Reason is required when escalating a
+// case.") is returned verbatim instead of a generic fallback: entity-service
+// constructs these specifically to be safe and useful to show the caller
+// (see its apierror.ValidationError), and swallowing the specific reason
+// into "Invalid request payload." for every 400 makes debugging a rejected
+// request needlessly harder for API consumers. ErrMsgBadRequest is only used
+// when entity-service didn't supply a body at all.
 func mapUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
 	var apiErr *apierror.Error
 	if errors.As(err, &apiErr) {
@@ -89,7 +98,11 @@ func mapUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
 		case http.StatusNotFound:
 			writeError(w, http.StatusNotFound, ErrMsgNotFound)
 		case http.StatusBadRequest:
-			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			msg := apiErr.Body
+			if msg == "" {
+				msg = ErrMsgBadRequest
+			}
+			writeError(w, http.StatusBadRequest, msg)
 		case http.StatusConflict, http.StatusUnprocessableEntity:
 			writeError(w, apiErr.StatusCode, apiErr.Body)
 		case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
@@ -102,16 +115,23 @@ func mapUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
 	writeError(w, http.StatusInternalServerError, fallbackMsg)
 }
 
-// summarizeErr returns a short, log-safe description of err: the upstream status
-// code for a typed *apierror.Error (never its Body, which may carry upstream
-// response data not meant for logs), or a fixed generic message otherwise — an
-// unrecognized error can come from the underlying HTTP client (e.g. a
-// net/url.Error), which stringifies with the full request URL including query
-// parameters, so its raw text is not safe to log verbatim.
+// summarizeErr returns a log-safe description of err: for a typed
+// *apierror.Error, the upstream status code and, if present, its Body
+// (entity-service's own error message, extracted from its
+// {"code","message"} response shape by entity.newUpstreamError — Body is
+// left empty rather than falling back to a raw response excerpt, so this
+// never logs unbounded or non-message upstream content) — or a fixed
+// generic message otherwise. An unrecognized error can come from the
+// underlying HTTP client (e.g. a net/url.Error), which stringifies with the
+// full request URL including query parameters, so its raw text is not safe
+// to log verbatim.
 func summarizeErr(err error) string {
 	var apiErr *apierror.Error
 	if errors.As(err, &apiErr) {
-		return fmt.Sprintf("upstream status %d", apiErr.StatusCode)
+		if apiErr.Body == "" {
+			return fmt.Sprintf("upstream status %d", apiErr.StatusCode)
+		}
+		return fmt.Sprintf("upstream status %d: %s", apiErr.StatusCode, apiErr.Body)
 	}
 	return "upstream request failed"
 }

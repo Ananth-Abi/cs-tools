@@ -65,13 +65,13 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req entity.SearchCasesRequest
+	var req dto.CaseSearchRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.SearchCases(r.Context(), req)
+	result, err := h.entity.SearchCases(r.Context(), dto.BuildEntitySearchCasesRequest(req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCases failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search cases.")
@@ -321,8 +321,8 @@ func (h *CaseHandler) SubmitCaseFeedback(w http.ResponseWriter, r *http.Request)
 // PatchCaseAttachment handles PATCH /cases/{caseId}/attachments/{attachmentId}.
 // referenceId/referenceType are injected server-side (caseId path param,
 // ReferenceTypeCase). Only Name is read from the request body — Description
-// is never wired through here, matching the Ballerina reference's own
-// restriction for this route (case attachments don't carry a description).
+// is never wired through here, by design for this route (case attachments
+// don't carry a description).
 func (h *CaseHandler) PatchCaseAttachment(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -347,7 +347,7 @@ func (h *CaseHandler) PatchCaseAttachment(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	req.Description = nil // this route never forwards description, matching the Ballerina reference
+	req.Description = nil // this route never forwards description (case attachments don't carry one)
 
 	entityReq := dto.BuildEntityUpdateAttachmentRequest(req, caseID, entity.ReferenceTypeCase)
 	result, err := h.entity.UpdateAttachment(r.Context(), attachmentID, entityReq)

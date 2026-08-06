@@ -103,9 +103,9 @@ func MapDeleteAttachment(r entity.DeleteAttachmentResponse) DeleteResponse {
 
 // AttachmentDetails is the portal's response for GET /attachments/{id} —
 // metadata plus base64-encoded content. entity-service's response has no
-// fields worth restricting here (the Ballerina reference returns it as-is
-// too), so this is a direct passthrough shape kept as its own portal type
-// purely for this package's "always map through dto" convention.
+// fields worth restricting here, so this is a direct passthrough shape kept
+// as its own portal type purely for this package's "always map through dto"
+// convention.
 type AttachmentDetails struct {
 	ID          string    `json:"id"`
 	ReferenceID string    `json:"referenceId"`
@@ -142,9 +142,8 @@ func MapAttachmentDetails(r entity.AttachmentDetails) AttachmentDetails {
 // /deployments/{deploymentId}/attachments/{attachmentId} and PATCH
 // /cases/{caseId}/attachments/{attachmentId}). referenceId/referenceType are
 // never client-supplied — each handler injects them from its own path
-// params and the appropriate ReferenceType, matching the Ballerina
-// reference's two routes. The case-scoped route only ever reads Name (never
-// Description), matching that route's own restriction in the Ballerina backend.
+// params and the appropriate ReferenceType. The case-scoped route only ever
+// reads Name (never Description) by design.
 type AttachmentUpdateRequest struct {
 	Name        *string `json:"name,omitempty"`
 	Description *string `json:"description,omitempty"`
@@ -170,8 +169,8 @@ type UpdatedAttachment struct {
 }
 
 // MapUpdatedAttachment builds the portal response from entity-service's
-// UpdateAttachmentResponse — a raw passthrough of the attachment field,
-// matching the Ballerina reference (both routes return response.attachment directly).
+// UpdateAttachmentResponse — a raw passthrough of the attachment field
+// (both routes return response.attachment directly).
 func MapUpdatedAttachment(r entity.UpdateAttachmentResponse) UpdatedAttachment {
 	return UpdatedAttachment{
 		ID:        r.Attachment.ID,

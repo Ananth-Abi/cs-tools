@@ -82,9 +82,7 @@ func main() {
 
 	// The AI chat agent is a separate Python service (not entity-service),
 	// but authenticates as the same shared OAuth2 client-credentials app as
-	// entity/updates/scim above (see the Ballerina backend's Config.toml,
-	// where every module — including ai_chat_agent's WebSocket variant —
-	// reuses the same clientId/tokenUrl); only its base URLs differ.
+	// entity/updates/scim above; only its base URLs differ.
 	aiChatAgentCfg := aichatagent.Config{
 		BaseURL:      mustEnv("AI_CHAT_AGENT_BASE_URL"),
 		TokenURL:     oauth2TokenURL,
@@ -105,19 +103,17 @@ func main() {
 
 	// The product-consumption service(s) are separate services (not
 	// entity-service) that provision deployment licenses and import usage
-	// data; both authenticate as the same shared OAuth2 app. The Ballerina
-	// backend configures these as two independently-configurable base URLs
-	// (productConsumptionBaseUrl vs productConsumptionTrackingBaseUrl) —
-	// PRODUCT_CONSUMPTION_TRACKING_BASE_URL defaults to
-	// PRODUCT_CONSUMPTION_BASE_URL when unset, matching that backend's
-	// current config where both happen to point at the same host.
+	// data; both authenticate as the same shared OAuth2 app. These are two
+	// independently-configurable base URLs — PRODUCT_CONSUMPTION_TRACKING_BASE_URL
+	// defaults to PRODUCT_CONSUMPTION_SUBSCRIPTION_URL when unset, for
+	// deployments where both happen to point at the same host.
 	productConsumptionCfg := productconsumption.Config{
-		BaseURL:         mustEnv("PRODUCT_CONSUMPTION_BASE_URL"),
-		TrackingBaseURL: os.Getenv("PRODUCT_CONSUMPTION_TRACKING_BASE_URL"),
-		TokenURL:        oauth2TokenURL,
-		ClientID:        oauth2ClientID,
-		ClientSecret:    oauth2ClientSecret,
-		Scopes:          splitComma(os.Getenv("PRODUCT_CONSUMPTION_SCOPES")),
+		SubscriptionBaseURL: mustEnv("PRODUCT_CONSUMPTION_SUBSCRIPTION_URL"),
+		TrackingBaseURL:     os.Getenv("PRODUCT_CONSUMPTION_TRACKING_BASE_URL"),
+		TokenURL:            oauth2TokenURL,
+		ClientID:            oauth2ClientID,
+		ClientSecret:        oauth2ClientSecret,
+		Scopes:              splitComma(os.Getenv("PRODUCT_CONSUMPTION_SCOPES")),
 	}
 	productConsumptionClient := productconsumption.NewClient(productConsumptionCfg)
 
@@ -154,8 +150,7 @@ func main() {
 	}
 
 	// adminRole is the role string (from entity.GetUserMeResponse.Roles) that
-	// grants admin privileges for registry-token and contact management —
-	// mirrors the Ballerina reference's configurable authorizedRoles.adminRole.
+	// grants admin privileges for registry-token and contact management.
 	adminRole := mustEnv("AUTH_ADMIN_ROLE")
 
 	userHandler := handler.NewUserHandler(entityClient, scimClient)
@@ -175,7 +170,7 @@ func main() {
 	catalogHandler := handler.NewCatalogHandler(entityClient)
 	timeCardHandler := handler.NewTimeCardHandler(entityClient)
 	aiChatHandler := handler.NewAIChatHandler(aiChatAgentClient, entityClient)
-	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient, splitComma(os.Getenv("WS_ALLOWED_ORIGINS")))
+	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient, nil)
 	productConsumptionHandler := handler.NewProductConsumptionHandler(productConsumptionClient, entityClient)
 	globalHandler := handler.NewGlobalHandler(entityClient)
 	instanceHandler := handler.NewInstanceHandler(entityClient)
@@ -261,10 +256,11 @@ func main() {
 	// registered as literal patterns: net/http.ServeMux (Go 1.22+) rejects
 	// them as ambiguous (neither is more specific than the other — e.g. both
 	// match "/deployments/products/products/instances/metrics/search") and
-	// panics at startup. Both path shapes are genuine, distinct Ballerina
-	// reference routes, so they're merged under one wildcard pattern and
-	// dispatched by dispatchDeploymentsProductsMetricsSearch below instead of
-	// renaming either one.
+	// panics at startup. Both path shapes are genuine, distinct routes this
+	// backend must expose exactly as-is, so they're merged under one
+	// wildcard pattern and dispatched by
+	// dispatchDeploymentsProductsMetricsSearch below instead of renaming
+	// either one.
 	mux.HandleFunc("POST /deployments/{seg1}/{seg2}/{seg3}/metrics/search",
 		dispatchDeploymentsProductsMetricsSearch(instanceHandler, deployedProductHandler))
 	mux.HandleFunc("POST /deployments/{deploymentId}/products/{productId}/metrics/usage-counts/search", deployedProductHandler.SearchDeployedProductUsageCounts)
@@ -350,10 +346,15 @@ func main() {
 	slog.Info("Customer Portal Backend (v2) started", "addr", addr)
 
 	srv := &http.Server{
-		Handler: middleware.SecurityHeaders(
-			middleware.CorrelationID(
-				middleware.Auth(authCfg)(
-					middleware.Logger(mux),
+		// CORS must be outermost: a preflight OPTIONS request carries no JWT,
+		// so if Auth ran first it would reject every preflight with 401
+		// before the browser ever saw a CORS header.
+		Handler: middleware.CORS(nil)(
+			middleware.SecurityHeaders(
+				middleware.CorrelationID(
+					middleware.Auth(authCfg)(
+						middleware.Logger(mux),
+					),
 				),
 			),
 		),
@@ -385,8 +386,8 @@ func main() {
 	slog.Info("Customer Portal Backend (v2) stopped")
 }
 
-// dispatchDeploymentsProductsMetricsSearch resolves the two distinct
-// Ballerina reference routes merged under the "POST
+// dispatchDeploymentsProductsMetricsSearch resolves the two distinct routes
+// merged under the "POST
 // /deployments/{seg1}/{seg2}/{seg3}/metrics/search" pattern registered in
 // main() (see the comment at that registration for why they can't be
 // registered as separate literal patterns). Exactly one of the two shapes

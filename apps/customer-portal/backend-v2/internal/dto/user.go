@@ -16,9 +16,8 @@
 
 // Package dto defines the portal-facing response shapes returned to the
 // customer-portal frontend, together with Map* functions that translate
-// entity-service's raw response structs into them. This is the Go analogue
-// of the Ballerina backend's "types" module + utils.bal mapper functions:
-// the frontend never sees an entity-service struct directly, only these.
+// entity-service's raw response structs into them: the frontend never sees
+// an entity-service struct directly, only these.
 package dto
 
 import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"

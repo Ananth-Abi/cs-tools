@@ -19,10 +19,10 @@ package dto
 import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 
 // ReferenceItem is a flattened {id, label, count?} view of entity-service's
-// ChoiceListItem/ReferenceTableItem — the Ballerina backend this is
-// rewriting collapses both into one uniform shape for every project
-// metadata/stats endpoint, dropping ReferenceTableItem's number/internalId
-// fields (not useful for a filter dropdown or a stats breakdown).
+// ChoiceListItem/ReferenceTableItem — this API collapses both into one
+// uniform shape for every project metadata/stats endpoint, dropping
+// ReferenceTableItem's number/internalId fields (not useful for a filter
+// dropdown or a stats breakdown).
 type ReferenceItem struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -51,8 +51,7 @@ func mapReferenceTableItems(items []entity.ReferenceTableItem) []ReferenceItem {
 
 // restrictedChangeRequestStateIDs are excluded from ProjectFilterOptions'
 // changeRequestStates — internal ServiceNow workflow states never meant to
-// be offered as a customer-facing filter option, matching the Ballerina
-// backend's own restrictedChangeRequestStateIds default.
+// be offered as a customer-facing filter option.
 var restrictedChangeRequestStateIDs = map[string]bool{"-3": true, "-4": true, "-5": true}
 
 // ProjectFilterOptions is the portal's response for GET /projects/{id}/filters
@@ -149,17 +148,15 @@ func MapProjectFeatures(m entity.ProjectMetadataResponse) ProjectFeatures {
 }
 
 // caseStateIDOpen is the ServiceNow case state ID meaning "open", used to
-// pick the open-case count out of a case-stats state breakdown. Matches the
-// Ballerina backend's own default (stateIdOpen/caseStateIds.open) — both
-// configurable there; if cs-tools' ServiceNow instance uses different case
-// state IDs, this needs to become configurable here too.
+// pick the open-case count out of a case-stats state breakdown. This is
+// this API's own default; if cs-tools' ServiceNow instance uses different
+// case state IDs, this needs to become configurable here too.
 const caseStateIDOpen = "1"
 
 // conversationStateID{Open,Active,Resolved,Abandoned} are the ServiceNow
 // conversation state IDs used to pick specific counts out of a
-// conversation-stats state breakdown. Match the Ballerina backend's own
-// default conversationStateIds — see caseStateIDOpen's doc comment on the
-// same caveat.
+// conversation-stats state breakdown. These are this API's own defaults —
+// see caseStateIDOpen's doc comment on the same caveat.
 const (
 	conversationStateIDOpen      = "1"
 	conversationStateIDActive    = "2"
@@ -206,10 +203,9 @@ type ProjectDashboardStats struct {
 }
 
 // BuildProjectDashboardStats combines up to four independently-fetched stats
-// responses into the dashboard view, mirroring the Ballerina backend's own
-// graceful-degradation behavior: any source that failed to load is passed as
-// nil and its fields are simply omitted from the response, rather than
-// failing the whole request.
+// responses into the dashboard view, using graceful-degradation behavior:
+// any source that failed to load is passed as nil and its fields are simply
+// omitted from the response, rather than failing the whole request.
 func BuildProjectDashboardStats(
 	caseStats *entity.ProjectCaseStatsResponse,
 	conversationStats *entity.ProjectConversationStatsResponse,
@@ -321,9 +317,9 @@ func MapProjectCaseStats(r entity.ProjectCaseStatsResponse) ProjectCaseStats {
 
 // ConversationStats is the portal's response for GET /projects/{id}/conversations/stats
 // — a handful of specific counts picked out of entity-service's state
-// breakdown, matching the Ballerina backend's own thinner response (which
-// also drops the converted/session/total counts an internal
-// OverallConversationStats-equivalent would carry).
+// breakdown; this is deliberately a thinner response, which also drops the
+// converted/session/total counts an internal OverallConversationStats-equivalent
+// would carry.
 type ConversationStats struct {
 	OpenCount      *int `json:"openCount,omitempty"`
 	ActiveCount    *int `json:"activeCount,omitempty"`
@@ -352,9 +348,9 @@ type ProjectSupportStats struct {
 }
 
 // BuildProjectSupportStats combines independently-fetched case and
-// conversation stats into the support-stats view, mirroring the Ballerina
-// backend's own graceful-degradation behavior for this endpoint: either
-// source may be nil (failed to load) without failing the whole request.
+// conversation stats into the support-stats view, using graceful-degradation
+// behavior for this endpoint: either source may be nil (failed to load)
+// without failing the whole request.
 func BuildProjectSupportStats(caseStats *entity.ProjectCaseStatsResponse, conversationStats *entity.ProjectConversationStatsResponse) ProjectSupportStats {
 	var out ProjectSupportStats
 	if caseStats != nil {

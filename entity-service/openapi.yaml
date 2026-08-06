@@ -648,9 +648,15 @@ paths:
             type: array
             items:
               type: string
+              enum: [case, default_case, service_request, security_report_analysis, announcement, engagement]
           description: >
-            Restrict to these case types. Repeated for multiple values, e.g.
-            ?caseTypes=a&caseTypes=b.
+            Restrict to these case types, one of case/service_request/
+            security_report_analysis/announcement/engagement (matching the
+            case-search type filter's vocabulary — translated to ServiceNow's
+            own caseTypes values internally, e.g. case → default_case).
+            `default_case` is also accepted as an alias for `case` — see
+            CreateCaseRequest.type's description. Repeated for multiple
+            values, e.g. ?caseTypes=a&caseTypes=b.
         - name: createdBy
           in: query
           required: false
@@ -6004,12 +6010,20 @@ components:
       properties:
         type:
           type: string
-          enum: [case, service_request, security_report_analysis]
+          enum: [case, default_case, service_request, security_report_analysis, engagement]
           description: |
-            Case type.
+            Case type. `default_case` is also accepted as an alias for `case`
+            (ServiceNow's own raw caseType wire value; kept for the
+            currently-in-production customer-portal frontend, which predates
+            this API's `case` enum) and is normalized to `case` before any
+            other validation runs. `announcement` is a valid case type
+            elsewhere in this API (case search/stats filters) but cannot be
+            created through this endpoint — no code path builds a valid
+            payload for one — and is rejected with 400 if supplied here.
             - `case`: standard support case; requires `subject`, `description`, `severity`, `issueType`.
             - `service_request`: catalog-based service request (ServiceNow only); requires `catalogId`, `catalogItemId`, `variables`.
-            - `security_report_analysis`: security report (ServiceNow only); requires `subject`, `description`, and at least one entry in `attachments`.
+            - `security_report_analysis`: security report (ServiceNow only); requires `subject`, `description`; `attachments` optional.
+            - `engagement`: requires `subject`, `description`, `engagementType`.
         projectId:
           type: string
           format: uuid
@@ -6033,6 +6047,10 @@ components:
           type: string
           enum: [error, partial_outage, performance_degradation, question, security_or_compliance, total_outage]
           description: Required for `case` type.
+        engagementType:
+          type: string
+          enum: [migration, consultancy, new_feature_improvement, follow_up, onboarding]
+          description: Required for `engagement` type.
         catalogId:
           type: string
           format: uuid
@@ -6049,10 +6067,12 @@ components:
           description: Required for `service_request` type.
         attachments:
           type: array
-          minItems: 1
           items:
             $ref: '#/components/schemas/CaseAttachment'
-          description: Required for `security_report_analysis` type (at least one entry).
+          description: >-
+            Optional even for `security_report_analysis` type — the frontend
+            creates the case first, then uploads attachments in separate
+            requests per file, so this may be omitted or empty.
         relatedCaseId:
           type: string
           format: uuid
@@ -6142,9 +6162,12 @@ components:
         field with an incompatible op, is rejected with a validation error.
 
         - **type** (in): case type, one of case/service_request/
-          security_report_analysis/announcement/engagement. For the ServiceNow
-          data source each value is translated to its SN caseTypes equivalent
-          (case → default_case).
+          security_report_analysis/announcement/engagement. `default_case` is
+          also accepted as an alias for `case` (ServiceNow's own raw caseType
+          wire value; kept for the currently-in-production customer-portal
+          frontend, which predates this API's `case` enum). For the
+          ServiceNow data source each value is translated to its SN
+          caseTypes equivalent (case → default_case).
         - **state** (in): one of open/work_in_progress/waiting_on_wso2/
           awaiting_info/reopened/solution_proposed/closed.
         - **severity** (in): one of catastrophic/critical/high/medium/low.

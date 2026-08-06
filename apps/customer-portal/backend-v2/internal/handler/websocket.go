@@ -62,9 +62,9 @@ const wsAutoResolveState = "RESOLVED"
 // the upstream AI chat agent for an existing conversation.
 //
 // NOTE: entity-service has no createConversation exposed over this
-// connection, so unlike the Ballerina backend this is rewriting, a WebSocket
-// message that doesn't carry an existing conversationId cannot start a
-// brand-new conversation here — the caller must first create one via
+// connection, so a WebSocket message that doesn't carry an existing
+// conversationId cannot start a brand-new conversation here — the caller
+// must first create one via
 // POST /projects/{id}/conversations (see handler.AIChatHandler.CreateConversation).
 // The AI agent's own reply IS persisted as a comment here (see
 // handleMessage), but — like AIChatHandler.SendConversationMessage — it is
@@ -114,9 +114,9 @@ type wsEvent struct {
 }
 
 // HandleWebSocket handles GET /ws?sessionId={projectId}. The query parameter
-// is named sessionId for wire compatibility with the Ballerina backend this
-// is rewriting, but it actually carries the project ID — the AI agent's own
-// per-conversation session key is derived below as "{projectId}:{conversationId}".
+// is named sessionId for wire compatibility, but it actually carries the
+// project ID — the AI agent's own per-conversation session key is derived
+// below as "{projectId}:{conversationId}".
 func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {

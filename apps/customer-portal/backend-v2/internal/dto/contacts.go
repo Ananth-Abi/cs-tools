@@ -22,7 +22,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/usermanagement"
 )
 
-// contactEmailRE matches the Ballerina reference's constraint on
+// contactEmailRE matches this API's own constraint on
 // ContactOnboardPayload.ContactEmail exactly.
 var contactEmailRE = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
 

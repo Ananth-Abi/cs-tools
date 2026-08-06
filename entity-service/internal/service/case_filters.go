@@ -257,7 +257,9 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
 			}
-			p.Types = append(p.Types, f.Values...)
+			for _, v := range f.Values {
+				p.Types = append(p.Types, normalizeCaseType(v))
+			}
 
 		case "state":
 			if f.Op != "in" {

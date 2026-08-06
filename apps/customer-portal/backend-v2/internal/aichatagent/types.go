@@ -17,9 +17,7 @@
 package aichatagent
 
 // These types mirror the upstream Python AI chat agent's wire format 1:1
-// (see apps/customer-portal/backend's modules/ai_chat_agent/types.bal, the
-// Ballerina backend this is rewriting) so json.Unmarshal can decode its
-// responses directly.
+// so json.Unmarshal can decode its responses directly.
 
 // CaseClassificationPayload is the input for POST /case_classification.
 type CaseClassificationPayload struct {

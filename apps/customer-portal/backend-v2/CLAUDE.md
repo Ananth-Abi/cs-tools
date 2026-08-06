@@ -2,7 +2,7 @@
 
 Go HTTP server (`net/http`, Go 1.26+) that acts as a backend-for-frontend (BFF) for the customer
 portal. It authenticates callers, forwards requests to `cs-tools/entity-service`, and shapes
-responses for the frontend. This is a Go rewrite of the Ballerina backend at
+responses for the frontend. This is a rewrite of the existing backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
@@ -50,7 +50,7 @@ instances fan-out (see "Instances — fan-out, not passed through" below),
 `PATCH /projects/{id}/contacts/{email}`, `POST /projects/{id}/contacts/validate`,
 `GET /updates/product-update-levels`, `POST /updates/levels/search`.
 
-The Ballerina backend exposes a handful more routes still not ported here: escalations/incidents/
+The existing backend exposes a handful more routes still not ported here: escalations/incidents/
 problems/task SLAs/tasks are already partly covered above where they exist on `cs-tools/entity-service`;
 what remains unported is mostly generic user search, project update, groups/service-offerings/
 configuration-items, and anything genuinely lacking a `cs-tools/entity-service` equivalent (see
@@ -60,31 +60,31 @@ next one.
 ## Which entity-service
 
 This backend targets **`cs-tools/entity-service`** (this repo, `../../../entity-service`), *not*
-the `digiops-cs/entity-service` that `apps/customer-portal/backend` (the Ballerina original) calls.
-The two are different services with overlapping but not identical APIs — before porting an
+the `digiops-cs/entity-service` that `apps/customer-portal/backend` (the original implementation)
+calls. The two are different services with overlapping but not identical APIs — before porting an
 endpoint, verify it actually exists on `cs-tools/entity-service` (check
 `entity-service/internal/server/routes.go` and `entity-service/openapi.yaml`), and note that many
 of its routes are **ServiceNow-only** (registered only when the service runs with
 `DATA_SOURCE=servicenow`; see `entity-service/internal/config/config.go`) — a Postgres-mode
-deployment will 404 on those. If the Ballerina backend has an endpoint with no `cs-tools/entity-service`
+deployment will 404 on those. If the existing backend has an endpoint with no `cs-tools/entity-service`
 equivalent at all (e.g. `GET /metadata` — entity-service has no metadata endpoint), do not invent
 one; add a code comment at the call site noting the gap and flag it instead of fabricating a
 response.
 
 **Existing on `cs-tools/entity-service` is necessary but not sufficient — also confirm the
-Ballerina backend actually exposes it as a customer-portal feature.** `cs-tools/entity-service`
+existing backend actually exposes it as a customer-portal feature.** `cs-tools/entity-service`
 implements plenty of routes this backend should *not* port: some are genuinely customer-facing but
 belong to a different portal (e.g. `POST /cases/{id}/github-issues` — filing an engineering bug
-against an internal repo is a support-agent action with zero precedent anywhere in the Ballerina
-customer-portal backend), and some read like customer features but the Ballerina backend actually
+against an internal repo is a support-agent action with zero precedent anywhere in the existing
+customer-portal backend), and some read like customer features but the existing backend actually
 serves the equivalent from an entirely different, non-`cs-tools` microservice (e.g.
 `POST /accounts/{id}/contacts/search` / `POST /projects/{id}/contacts/search` look like read
-analogues of the Ballerina backend's project-contact endpoints, but those are actually backed by
+analogues of the existing backend's project-contact endpoints, but those are actually backed by
 the separate `user_management` module/microservice, not entity-service at all — porting the
 `cs-tools/entity-service` version would expose a different, unrelated dataset under a
 similar-looking URL). Before implementing anything new, grep
 `apps/customer-portal/backend/modules/entity/entity.bal` (or the relevant sibling module) for the
-Ballerina function that would call it, and check what it actually resolves to — a route only earns
+function that would call it, and check what it actually resolves to — a route only earns
 a place in this backend once both checks pass.
 
 ## Other upstream services
@@ -107,105 +107,97 @@ private `do()` shape as `internal/entity`:
 All seven service clients (entity, updates, SCIM, the AI chat agent, the product-consumption
 service, the registry service, the project-contact onboarding service) authenticate as the same
 shared OAuth2 client-credentials app in `cmd/server/main.go` — only each service's
-`*_BASE_URL`/`*_SCOPES` env vars differ (confirmed against the Ballerina backend's `Config.toml`,
-where every module, including the AI chat agent's WebSocket variant, declares the same
-`clientId`/`tokenUrl`).
+`*_BASE_URL`/`*_SCOPES` env vars differ.
 
 ## The AI chat agent
 
 `internal/aichatagent` is a fourth upstream client, but unlike entity/updates/SCIM it talks to a
-**separate Python service that has no relationship to `cs-tools/entity-service` at all** — see
-`apps/customer-portal/backend`'s `modules/ai_chat_agent` for the Ballerina backend's equivalent
-client. It has its own HTTP API (`internal/aichatagent/client.go`) and a distinct WebSocket
-endpoint (`internal/aichatagent/ws.go`, using `github.com/gorilla/websocket` — the one third-party
+**separate Python service that has no relationship to `cs-tools/entity-service` at all**. It has
+its own HTTP API (`internal/aichatagent/client.go`) and a distinct WebSocket endpoint
+(`internal/aichatagent/ws.go`, using `github.com/gorilla/websocket` — the one third-party
 dependency in this otherwise-stdlib-only backend, since `net/http` has no server-side WebSocket
 support).
 
 `internal/handler/ai_chat.go` (case classification, KB recommendations, conversation
 create/get/update/search, conversation messages, conversation summary) and
 `internal/handler/websocket.go` (the real-time chat proxy) both mix calls to the AI agent with
-calls to entity-service's conversation/comment routes — mirroring the Ballerina backend's own
-design (a conversation thread lives in entity-service; the AI agent only handles the live message
-exchange). `entity-service` now has `createConversation`/`getConversation`/`updateConversation`
-(see `internal/entity/conversations.go`), so `POST /projects/{id}/conversations`
-(`AIChatHandler.CreateConversation`) replicates the Ballerina backend's composite flow in full:
-create the conversation → call the AI agent → optionally fetch KB recommendations (only when both
-`region` and `tier` are supplied on the request) → persist the AI's reply as a comment →
-auto-resolve the conversation if the agent reports `resolved: true`. Conversation creation, the AI
-call, and comment persistence are fatal (mapped via `mapUpstreamError`) with **no compensating
-rollback** of earlier steps if a later one fails — matching the Ballerina reference exactly (a
-conversation can exist in entity-service even though the client got a 500 from a later step);
-recommendations and auto-resolve are best-effort and never fail the request. The same
+calls to entity-service's conversation/comment routes by design: a conversation thread lives in
+entity-service; the AI agent only handles the live message exchange. `entity-service` now has
+`createConversation`/`getConversation`/`updateConversation` (see
+`internal/entity/conversations.go`), so `POST /projects/{id}/conversations`
+(`AIChatHandler.CreateConversation`) implements the full composite flow: create the conversation →
+call the AI agent → optionally fetch KB recommendations (only when both `region` and `tier` are
+supplied on the request) → persist the AI's reply as a comment → auto-resolve the conversation if
+the agent reports `resolved: true`. Conversation creation, the AI call, and comment persistence are
+fatal (mapped via `mapUpstreamError`) with **no compensating rollback** of earlier steps if a later
+one fails (a conversation can exist in entity-service even though the client got a 500 from a later
+step); recommendations and auto-resolve are best-effort and never fail the request. The same
 persist-reply-and-auto-resolve pattern is replicated in `SendConversationMessage` (follow-up
-messages — no recommendations call there, matching the Ballerina reference: KB recommendations are
-attached only on a conversation's first message) and in `websocket.go`'s `handleMessage`.
+messages — no recommendations call there; KB recommendations are attached only on a conversation's
+first message) and in `websocket.go`'s `handleMessage`.
 
 One gap remains, flagged with a doc comment at each call site rather than worked around — do not
 build a workaround for this; wait for `entity.CreateCommentRequest` to gain the field:
 
-- **No `createdBy` override on `entity.CreateCommentRequest`** — the Ballerina backend attributes
-  the AI agent's own reply to a special "chat agent" identity (`entity:CHAT_SENT_AGENT`) when
-  saving it as a comment; `cs-tools/entity-service` always attributes a created comment to the
-  caller's own authenticated identity. Both the customer's message and the AI's reply are
-  therefore saved under the *same* (the caller's) identity here — there is currently no way to
-  distinguish them by author alone. See the `agentReplyCreatedByCaveat` doc comment in
+- **No `createdBy` override on `entity.CreateCommentRequest`** — a distinct "chat agent" identity
+  for the AI's own replies isn't available; `cs-tools/entity-service` always attributes a created
+  comment to the caller's own authenticated identity. Both the customer's message and the AI's
+  reply are therefore saved under the *same* (the caller's) identity here — there is currently no
+  way to distinguish them by author alone. See the `agentReplyCreatedByCaveat` doc comment in
   `internal/handler/ai_chat.go`.
 
-`GET /ws?sessionId={projectId}` keeps the Ballerina backend's query parameter name for wire
-compatibility even though it actually carries the *project* ID, not a session ID — the AI agent's
-own per-conversation session key is derived as `"{projectId}:{conversationId}"` inside the handler.
-This connection still only supports *resuming* an existing conversation — the browser must supply
-a `conversationId` in its first message, or the handler returns an `error` event rather than
+`GET /ws?sessionId={projectId}` names its query parameter `sessionId` even though it actually
+carries the *project* ID, not a session ID, for wire compatibility with existing clients — the AI
+agent's own per-conversation session key is derived as `"{projectId}:{conversationId}"` inside the
+handler. This connection still only supports *resuming* an existing conversation — the browser must
+supply a `conversationId` in its first message, or the handler returns an `error` event rather than
 silently failing; start a brand-new conversation via `POST /projects/{id}/conversations` first,
-then resume it over the WebSocket. One simplification versus the Ballerina backend: Go's
-`http.Server` runs each upgraded connection in its own goroutine, and the handler's `ReadMessage` →
-`handleMessage` loop is a single blocking sequence — it does not read or process the next frame
-until `handleMessage` returns, and never starts a concurrent read or upstream stream. So there's no
-need for the Ballerina implementation's explicit "already streaming" busy-flag/mutex; the client
+then resume it over the WebSocket. Go's `http.Server` runs each upgraded connection in its own
+goroutine, and the handler's `ReadMessage` → `handleMessage` loop is a single blocking sequence — it
+does not read or process the next frame until `handleMessage` returns, and never starts a
+concurrent read or upstream stream. So there's no need for an explicit "already streaming"
+busy-flag/mutex; the client
 can still send another frame at any time, this handler simply won't look at it until the current
 one finishes.
 
 Primary authorization on `GET /ws` is the same JWT middleware chain as every other route.
-`WebSocketHandler`'s `gorilla/websocket.Upgrader.CheckOrigin` adds a defense-in-depth check against
-cross-site WebSocket hijacking, restricting which browser `Origin`s may open the connection — set
-via the optional `WS_ALLOWED_ORIGINS` env var (comma-separated; unset allows any origin, local
-development only).
+`WebSocketHandler`'s `gorilla/websocket.Upgrader.CheckOrigin` is a defense-in-depth hook against
+cross-site WebSocket hijacking that could restrict which browser `Origin`s may open the connection,
+but `main.go` currently passes it `nil` (allow any origin) — there is no env var for this.
 
 ## The product-consumption service
 
 `internal/productconsumption` is a fifth upstream client for **another separate service unrelated
-to entity-service** — see `apps/customer-portal/backend`'s `modules/product_consumption_subscription`
-and `modules/product_consumption_tracking` for the Ballerina backend's two client modules. This
-backend models them as one Go package (one shared `*Client`, one OAuth2 app) but keeps their base
-URLs distinct: `Config.BaseURL` backs the subscription/license API, `Config.TrackingBaseURL` backs
-the usage-tracking API. They happen to point at the same host in the Ballerina backend's current
-`config.toml`, which is why `TrackingBaseURL` falls back to `BaseURL` when left unset — but they are
-two independently-configurable variables there (`productConsumptionBaseUrl` vs
-`productConsumptionTrackingBaseUrl`), not guaranteed to always match, so don't collapse them into a
-single field.
+to entity-service** — it actually covers two independently-configurable upstream endpoints, a
+subscription/license API and a usage-tracking API. This backend models them as one Go package (one
+shared `*Client`, one OAuth2 app) but keeps their base URLs distinct: `Config.SubscriptionBaseURL`
+backs the subscription/license API, `Config.TrackingBaseURL` backs the usage-tracking API. They may
+happen to point at the same host in some deployments, which is why `TrackingBaseURL` falls back to
+`SubscriptionBaseURL` when left unset — but they are independently configurable
+(`PRODUCT_CONSUMPTION_SUBSCRIPTION_URL` vs `PRODUCT_CONSUMPTION_TRACKING_BASE_URL`) and not
+guaranteed to always match, so don't collapse them into a single field.
 
 It backs two routes:
 - `POST /projects/{projectId}/deployments/{deploymentId}/license` — provisions (or resumes
   provisioning) a WSO2 API Manager application/subscription/credentials for a deployment and
   returns the resulting license. `ProcessLicenseDownload` (`internal/productconsumption/subscription.go`)
-  is a straight port of the Ballerina backend's `processLicenseDownload` state machine — it is
-  **not idempotent-by-accident-safe to reimplement casually**: it can make up to 5 sequential
-  upstream calls, several with side effects (creating an application, subscribing it, generating
-  credentials), and each step only runs if the project's upstream-tracked status hasn't reached it
-  yet. Read the whole function before touching it — a subtly wrong condition could create a
-  duplicate WSO2 API Manager application. The handler first calls `entity.GetProject` purely as an
-  access-control gate (mirroring the Ballerina backend), discarding the result — entity-service is
-  still the actual authorization boundary for "does this caller own this project." Because up to 5
-  sequential upstream calls can plausibly exceed the server's global `WriteTimeout` (see
-  `cmd/server/main.go`) even when no single step is slow, the handler extends its own write
-  deadline via `http.NewResponseController(w).SetWriteDeadline` — which only works because
-  `middleware.responseWriter` forwards `SetWriteDeadline`/`SetReadDeadline` to the underlying
-  `ResponseWriter`, the same reason it forwards `Hijack` for the WebSocket route above.
+  implements the upstream state machine — it is **not idempotent-by-accident-safe to reimplement
+  casually**: it can make up to 5 sequential upstream calls, several with side effects (creating an
+  application, subscribing it, generating credentials), and each step only runs if the project's
+  upstream-tracked status hasn't reached it yet. Read the whole function before touching it — a
+  subtly wrong condition could create a duplicate WSO2 API Manager application. The handler first
+  calls `entity.GetProject` purely as an access-control gate, discarding the result —
+  entity-service is still the actual authorization boundary for "does this caller own this
+  project." Because up to 5 sequential upstream calls can plausibly exceed the server's global
+  `WriteTimeout` (see `cmd/server/main.go`) even when no single step is slow, the handler extends
+  its own write deadline via `http.NewResponseController(w).SetWriteDeadline` — which only works
+  because `middleware.responseWriter` forwards `SetWriteDeadline`/`SetReadDeadline` to the
+  underlying `ResponseWriter`, the same reason it forwards `Hijack` for the WebSocket route above.
 - `POST /deployment-usages` — imports a deployment-usage zip file. Unlike every other endpoint in
   this backend, the request body is **raw binary**, not JSON — see `readBinaryBody` in
   `internal/handler/response.go` (a `readJSONBody` counterpart with a larger size cap,
   `maxZipUploadBytes`) and the `Content-Type: application/zip`/`application/x-zip-compressed`
-  check in the handler, both mirroring the Ballerina backend's `validateDeploymentUsageImportRequest`.
+  check in the handler, which together validate the upload the way the upstream service requires.
   The Go client base64-encodes the bytes before forwarding to the upstream service, matching its
   JSON contract exactly (`{"email": "...", "zip": "<base64>"}`).
 
@@ -214,8 +206,7 @@ It backs two routes:
 `internal/registry` is a sixth upstream client for **another separate service unrelated to
 entity-service** — a container/robot-account registry (Harbor-style) that issues registry access
 tokens ("robot accounts") scoped to a project, and looks up a project's integration (service
-account) users. See `apps/customer-portal/backend`'s `modules/registry` for the Ballerina backend's
-equivalent client.
+account) users.
 
 It backs five routes (`internal/handler/registry.go`, `RegistryHandler`):
 - `POST /projects/{id}/registry-tokens` — create a token. Only admins (per `AUTH_ADMIN_ROLE`,
@@ -240,25 +231,23 @@ It backs five routes (`internal/handler/registry.go`, `RegistryHandler`):
 Several of the registry service's own error responses are surfaced to the caller verbatim (not a
 generic fallback) — see `writeUpstreamMessage` in `internal/handler/registry.go`, which reads
 `apierror.Error.Body` (the upstream's own `message` field, extracted by the client) and maps it to
-the matching HTTP status, mirroring the Ballerina reference's `response.message()` passthrough.
+the matching HTTP status, passing through the upstream's own error text rather than a generic one.
 Regular entity-service calls in the same handlers still use the shared `mapUpstreamError`.
 
 ## The project-contact onboarding service
 
 `internal/usermanagement` is a seventh upstream client for **yet another separate service** (not
 entity-service, not SCIM) that manages a project's customer-side contacts/memberships — add,
-remove, list, update role, and validate before onboarding. See `apps/customer-portal/backend`'s
-`modules/user_management` for the Ballerina backend's equivalent client. It is keyed on the
-project's Salesforce ID (`entity.ProjectDetailsView.SfID`), same as the registry service's
-integration-users route above — not the project's `id` or `key`.
+remove, list, update role, and validate before onboarding. It is keyed on the project's Salesforce
+ID (`entity.ProjectDetailsView.SfID`), same as the registry service's integration-users route
+above — not the project's `id` or `key`.
 
 **The core reshaping this package does: the upstream service represents a contact/membership's
-roles as a single semicolon-delimited string** (e.g. `"Admin;Lead"`), but this backend (matching
-both the portal's own contract and the Ballerina reference) exposes them as four separate booleans
-(`isCsAdmin`, `isLead`, `isPortalUser`, `isSecurityContact`). `internal/usermanagement/types.go`'s
-unexported `getRoles`/`hasRole`/`toContact`/`toMembership` do this translation in both directions —
-ported field-for-field from the Ballerina reference's own functions of the same name. When adding a
-new field here, translate through these helpers, don't reach for the raw `role` string directly.
+roles as a single semicolon-delimited string** (e.g. `"Admin;Lead"`), but this backend exposes them
+as four separate booleans (`isCsAdmin`, `isLead`, `isPortalUser`, `isSecurityContact`), matching the
+portal's own contract. `internal/usermanagement/types.go`'s unexported
+`getRoles`/`hasRole`/`toContact`/`toMembership` do this translation in both directions. When adding
+a new field here, translate through these helpers, don't reach for the raw `role` string directly.
 
 It backs five routes (`internal/handler/contacts.go`, `ContactHandler`):
 - `GET /projects/{id}/contacts` — list.
@@ -284,24 +273,21 @@ Like the registry service, several of this service's error responses are surface
 `POST /projects/{id}/instances/*`, `/deployments/{id}/instances/*`, and
 `/deployments/products/{id}/instances/*` (15 routes total) all read from just 5 entity-service
 endpoints (`SearchInstances`, `SearchInstanceMetrics`, `SearchInstanceUsage`,
-`SearchInstanceMetricsStats`, `SearchInstanceUsageStats`) — the Ballerina backend fans each one out
-into three differently-scoped views (project/deployment/deployed-product) rather than exposing one
-generic filterable endpoint, and `internal/handler/instances.go` replicates that fan-out exactly.
-Each of the 5 unexported `search*` methods on `InstanceHandler` takes an `instanceIDFilters` struct
-(exactly one of `projectIDs`/`deploymentIDs`/`deployedProductIDs` non-empty by construction — never
+`SearchInstanceMetricsStats`, `SearchInstanceUsageStats`). Each is fanned out into three
+differently-scoped views (project/deployment/deployed-product) rather than exposed as one generic
+filterable endpoint, and `internal/handler/instances.go` implements that fan-out. Each of the 5
+unexported `search*` methods on `InstanceHandler` takes an `instanceIDFilters` struct (exactly one
+of `projectIDs`/`deploymentIDs`/`deployedProductIDs` non-empty by construction — never
 client-controlled, always derived from which of the 3 public wrapper methods was called) and the
 3 exported wrapper methods per metric type just supply that struct plus the path param. When adding
 a 6th instance metric type from a future entity-service endpoint, follow this same shape rather
 than inventing a new fan-out mechanism.
 
-**One deliberate asymmetry, preserved from the Ballerina reference, not "fixed":**
-`InstanceMetricsStatsRequest`'s `DataSource` field is never forwarded to entity-service in
-`searchInstanceMetricsStats` (all 3 scopes), even though the request type carries it — the
-Ballerina reference's own `.../instances/stats/metrics/search` resource functions never read
-`payload.filters.dataSource`, while the sibling `.../instances/stats/usages/search` family
-(`searchInstanceUsageStats`) does forward it. This is a genuine inconsistency in the upstream
-Ballerina backend's own code, not a bug introduced here — see the doc comment above
-`searchInstanceMetricsStats` before "fixing" it.
+**One deliberate asymmetry, by design, not "fixed":** `InstanceMetricsStatsRequest`'s `DataSource`
+field is never forwarded to entity-service in `searchInstanceMetricsStats` (all 3 scopes), even
+though the request type carries it, while the sibling `.../instances/stats/usages/search` family
+(`searchInstanceUsageStats`) does forward it. This asymmetry is intentional, not a bug — see the
+doc comment above `searchInstanceMetricsStats` before "fixing" it.
 
 ## Project metadata and stats — reshaped, not passed through
 
@@ -309,56 +295,53 @@ Ballerina backend's own code, not a bug introduced here — see the doc comment 
 `/stats/support`, `/stats/time-cards`, and `/stats/change-requests` all read from seven
 entity-service endpoints (`GetProjectMetadata`, `GetProjectCaseStats`,
 `GetProjectConversationStats`, `GetProjectDeploymentStats`, `GetProjectStats`,
-`GetProjectTimeCardStats`, and `GetProjectChangeRequestStats`) — the Ballerina backend fans a
-handful of raw entity-service responses out into eight differently-shaped, purpose-built views
-rather than exposing them 1:1, and `internal/dto/project_stats.go`
-replicates that fan-out exactly (ported from the Ballerina backend's `getProjectFilters`,
-`mapProjectFeatures`, `mapCaseStats`, `getConversationStats`, and
-`mapProjectChangeRequestStatsResponse` in `utils.bal`):
+`GetProjectTimeCardStats`, and `GetProjectChangeRequestStats`). A handful of raw entity-service
+responses are fanned out into eight differently-shaped, purpose-built views rather than exposed
+1:1, and `internal/dto/project_stats.go` implements that fan-out:
 
 - **`/filters` and `/features` both call `GetProjectMetadata`** — there is no `GET /projects/{id}/metadata`
-  passthrough endpoint in this backend at all, because the Ballerina backend never exposed one
-  either; it only ever exposes the metadata response split into these two narrower views.
-  `ChoiceListItem`/`ReferenceTableItem` (entity-service's two "list of valid options" shapes) both
-  collapse into one `dto.ReferenceItem{id, label, count?}` for the frontend, matching the Ballerina
-  backend's own `ReferenceItem` type. `/filters`' `changeRequestStates` additionally drops three
-  internal ServiceNow workflow state IDs (`dto.restrictedChangeRequestStateIDs`) that were never
-  meant to be a customer-facing filter option.
+  passthrough endpoint in this backend at all; the metadata response is only ever exposed split into
+  these two narrower views. `ChoiceListItem`/`ReferenceTableItem` (entity-service's two "list of
+  valid options" shapes) both collapse into one `dto.ReferenceItem{id, label, count?}` for the
+  frontend. `/filters`' `changeRequestStates` additionally drops three internal ServiceNow workflow
+  state IDs (`dto.restrictedChangeRequestStateIDs`) that were never meant to be a customer-facing
+  filter option.
 - **`/stats` and `/stats/support` are composite, graceful-degradation endpoints** — each combines
   multiple independent entity-service calls (`/stats` combines case/conversation/deployment/activity
   stats; `/stats/support` combines case/conversation stats) and returns `200` even if every one of
   them fails, simply omitting that source's fields from the response (`dto.BuildProjectDashboardStats`/
   `dto.BuildProjectSupportStats` take `*entity.XxxResponse`, nil meaning "this source failed to
-  load"). This exactly mirrors the Ballerina backend's own behavior — it logs each failure and moves
-  on rather than failing the whole request. `/stats/cases`, `/stats/conversations`,
-  `/stats/time-cards`, and `/stats/change-requests`, by contrast, are **not** graceful — each is a
-  single entity-service call and a failure there is a hard failure (`mapUpstreamError`), matching
-  the Ballerina backend's per-endpoint behavior exactly (verified individually, not assumed from the
-  composite endpoints' pattern).
+  load"). It logs each failure and moves on rather than failing the whole request. `/stats/cases`,
+  `/stats/conversations`, `/stats/time-cards`, and `/stats/change-requests`, by contrast, are **not**
+  graceful — each is a single entity-service call and a failure there is a hard failure
+  (`mapUpstreamError`), verified individually per endpoint rather than assumed from the composite
+  endpoints' pattern.
 - **State-ID-based derived counts are hardcoded, not configurable.** `dto.caseStateIDOpen` and the
   `conversationStateID*` constants pick specific counts out of a state-count breakdown (e.g. "how
-  many cases are in the *open* state") using the same default ServiceNow state IDs the Ballerina
-  backend's own `stateIdOpen`/`conversationStateIds` configuration defaults to. If cs-tools'
-  ServiceNow instance uses different state IDs for these, these constants need to become
-  configurable here too — they are not currently, since the Ballerina backend's own configurability
-  was never exercised away from its defaults as far as this rewrite could confirm.
-- `/stats/cases` also, in the Ballerina backend, fetches change-request stats and never uses the
-  result (dead code, presumably a leftover) — this backend does not replicate that no-op call.
+  many cases are in the *open* state") using this deployment's default ServiceNow state IDs. If
+  cs-tools' ServiceNow instance uses different state IDs for these, these constants need to become
+  configurable here too — they are not currently.
 
 ## Middleware chain
 
-`SecurityHeaders → CorrelationID → Auth → Logger → Mux`
+`CORS → SecurityHeaders → CorrelationID → Auth → Logger → Mux`
 
-Identical to `apps/csm-portal/backend`'s chain — see that backend's CLAUDE.md for the rationale of
-each layer. `middleware.ConfigureLogger()` must be called at startup.
+Apart from `CORS`, identical to `apps/csm-portal/backend`'s chain — see that backend's CLAUDE.md for
+the rationale of each layer. `middleware.ConfigureLogger()` must be called at startup.
+
+**`CORS` must be outermost, wrapping everything including `Auth`.** A CORS preflight is a bare
+`OPTIONS` request with no JWT at all; if `Auth` ran before `CORS`, it would reject every preflight
+with 401 before the browser ever received a CORS header — which the browser then reports as
+"blocked by CORS policy", masking the real cause. `main.go` currently calls `middleware.CORS(nil)`
+(allow any origin, no env var) — `middleware.CORS` accepts an allow-list parameter if this ever
+needs to be restricted, but nothing in this backend currently sets one.
 
 ## Response shaping — the "wrapper" pattern
 
 **Never return an entity-service response struct directly to the frontend.** This is the one
 deliberate difference from `apps/csm-portal/backend` (which does raw `[]byte` passthrough for most
-entity responses) — it mirrors what the Ballerina backend does with its `types` module +
-`utils.bal` mapper functions (`mapCaseResponse`, `mapProjectsResponse`, etc.), which reshape every
-`entity:*Response` into a portal-owned DTO before it reaches the frontend.
+entity responses) — every entity-service response is reshaped into a portal-owned DTO before it
+reaches the frontend.
 
 Concretely:
 
@@ -398,16 +381,35 @@ technique — e.g. `ProductVersionView.ReleaseDate` is typed `*string` even thou
 is `time.Time` and the ServiceNow shape is a plain string, because a Go `*string` field decodes a
 JSON string value regardless of which the source type actually was.
 
-**When the Ballerina backend exposes a thinner shape than entity-service's own struct, match the
-Ballerina backend, not entity-service.** `POST /time-cards/search`'s `dto.TimeCardSummary` excludes
-entity-service's per-category time breakdowns (`timeAnalyzing`, `timeSettingUp`, etc.),
+**When the frontend's contract expects a thinner shape than entity-service's own struct, match the
+frontend's contract, not entity-service.** `POST /time-cards/search`'s `dto.TimeCardSummary`
+excludes entity-service's per-category time breakdowns (`timeAnalyzing`, `timeSettingUp`, etc.),
 `issueComplexity`, `workLogComment`, `rejectionReason`, and the eligible-approvers list — not
-because any of them are individually dangerous, but because the Ballerina backend's own `TimeCard`
-type (`apps/customer-portal/backend/modules/entity/types.bal`) never exposed them either. When
-porting an endpoint, read the Ballerina backend's response type for the equivalent feature, not just
-the request/response pair on `cs-tools/entity-service` — the Ballerina shape is itself a design
-decision about what a customer should see, and entity-service's superset shouldn't leak through it
-by default.
+because any of them are individually dangerous, but because the frontend's existing contract never
+exposed them either. When porting an endpoint, read the frontend's existing response shape for the
+equivalent feature, not just the request/response pair on `cs-tools/entity-service` — that shape is
+itself a design decision about what a customer should see, and entity-service's superset shouldn't
+leak through it by default.
+
+**The DTO layer's job isn't only response trimming — it also absorbs entity-service's own request
+contract changes, so the frontend never has to know they happened.** `POST /cases/search` is the
+example: entity-service redesigned its case-search filters from named fields (`types`, `states`,
+`projectIds`, ...) into a generic predicate array (`filters: [{field, op, values}]`,
+`internal/entity/types.go`'s `CaseFieldFilter`) and now rejects any request using the old shape
+outright (`decodeRequest`'s `DisallowUnknownFields`). The frontend was never updated — it still
+sends the old named-field shape — so `dto.CaseSearchRequest`/`CaseSearchFilters` keep that exact old
+shape as this backend's own stable, unchanged contract, and `dto.BuildEntitySearchCasesRequest` is
+the only place that builds an `entity.CaseFieldFilter` array, translating each portal filter field
+into the "field in/eq values" entry entity-service's `case_filters.go` expects (see that file for
+the authoritative field/op table if entity-service adds a new filter). `CreatedByMe` becomes a
+`createdBy`+`eq` filter carrying the literal string `"__current_user_email__"` — this must match
+entity-service's own `currentUserFilterPlaceholder` constant exactly, not just be "some sentinel".
+If entity-service ever changes another request contract this way, the fix is the same shape: keep
+the portal-facing dto type frozen at whatever the frontend already sends, and write a
+`BuildEntityXRequest` translator rather than pushing the new shape onto the frontend or, worse,
+decoding the incoming request directly into an `internal/entity` type (which is how this bug
+happened in the first place — there was no dto/entity separation on the request side for this one
+endpoint, unlike every response, which already goes through `dto.Map*`).
 
 **`json.RawMessage` on a request field usually means "preserve three states," not "skip validation."**
 `entity.UpdateDeployedProductRequest.Description` is `json.RawMessage` specifically so entity-service
@@ -538,9 +540,25 @@ constants).
 - **Path params**: guard against empty string after `r.PathValue("id")`; validate UUID-shaped IDs
   with the package-level `uuidRe` and return 400 on mismatch before calling entity-service.
 - **Upstream errors**: always use `mapUpstreamError(w, err, "<fallback message>")` — never write
-  custom status mappings inline.
+  custom status mappings inline. For a 400, this now returns entity-service's own message
+  (`apiErr.Body`) verbatim to the caller instead of a generic string — entity-service's validation
+  errors are already written to be safe and specific (see its `apierror.ValidationError`), so
+  swallowing them loses real, actionable detail for no security benefit. 401/403/404 still always
+  use a fixed message regardless of the upstream body — never pass through upstream text for those
+  statuses.
 - **Logging**: use `slog.ErrorContext` with `summarizeErr(err)`, never the raw error — an
   unrecognized error can stringify with the full request URL including query params.
+  `summarizeErr` DOES include the upstream status and message for a typed `*apierror.Error` (e.g.
+  `"upstream status 400: caseTypes must be valid UUIDs"`) — entity-service's error bodies are
+  already caller-safe validation text, not sensitive internal detail, so logging them verbatim is
+  fine. `apierror.NewUpstreamError` (`internal/apierror/apierror.go`) is what populates `apiErr.Body`
+  with just the extracted `message` field (not the upstream's raw response) — every upstream
+  client in this backend (entity, registry, updates, scim, productconsumption, aichatagent,
+  usermanagement) constructs its non-2xx errors through this one shared function rather than each
+  reinventing its own inline body-truncation/excerpt fallback. Body is left empty when the response
+  isn't the expected `{"message": "..."}` shape, relying on each caller's existing "empty Body → generic
+  fallback" logic (`mapUpstreamError`'s 400 case, `writeUpstreamMessage`) — never add a new
+  upstream-error construction site that falls back to a raw excerpt instead of calling this function.
 
 ## Security
 

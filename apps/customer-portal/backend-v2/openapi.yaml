@@ -3083,8 +3083,8 @@ paths:
         This is a WebSocket upgrade endpoint — OpenAPI 3.0 has no native
         support for describing WebSocket message framing, so only the
         upgrade handshake is documented here. The sessionId query parameter
-        is named for wire compatibility with the Ballerina backend this
-        replaces, but actually carries the project ID.
+        is named for wire compatibility with existing clients, but actually
+        carries the project ID.
       operationId: getWs
       parameters:
         - name: sessionId
@@ -3093,8 +3093,8 @@ paths:
           schema:
             type: string
           description: >-
-            Project ID — named sessionId for wire compatibility with the
-            Ballerina backend this replaces.
+            Project ID — named sessionId for wire compatibility with
+            existing clients.
       responses:
         "101":
           description: Switching Protocols
@@ -3712,8 +3712,8 @@ paths:
     patch:
       summary: Update a case's attachment.
       description: >
-        Only name is forwarded here — description is always dropped,
-        matching the Ballerina reference's own restriction for this route.
+        Only name is forwarded here — description is always dropped, by
+        design for this route.
       operationId: patchCasesCaseIdAttachmentsAttachmentId
       parameters:
         - name: caseId
@@ -4309,9 +4309,8 @@ paths:
         filters.projectIds is always forced to [id] server-side. Note:
         dataSource is NOT forwarded to entity-service for this project-scoped
         metrics-stats variant — a deliberate asymmetry versus the
-        stats/usages/search family, matching the Ballerina reference exactly
-        (see InstanceStatsRequest's doc comment). One of 3 scope variants
-        fanned out from entity-service's single
+        stats/usages/search family (see InstanceStatsRequest's doc comment).
+        One of 3 scope variants fanned out from entity-service's single
         POST /instances/stats/metrics/search.
       operationId: postProjectsIdInstancesStatsMetricsSearch
       parameters:
@@ -8371,8 +8370,7 @@ components:
             $ref: '#/components/schemas/ReferenceItem'
         feedbackEmojies:
           description: >-
-            Sic — matches the Ballerina reference's own (misspelled) field
-            name on the wire.
+            Sic — this is the actual field name on the wire (misspelled).
           type: array
           items:
             $ref: '#/components/schemas/FeedbackEmoji'
@@ -8399,7 +8397,7 @@ components:
             order:
               type: string
         projectsPagination:
-          description: limit is capped at 50 server-side, matching the Ballerina reference.
+          description: limit is capped at 50 server-side.
           $ref: '#/components/schemas/Pagination'
         casesPagination:
           $ref: '#/components/schemas/Pagination'
@@ -8559,8 +8557,7 @@ components:
     CaseFeedbackEmoji:
       description: >-
         The trimmed emoji reference on GET /cases/{id}/feedback — id/name/
-        selectedImage only, matching the Ballerina reference's
-        FeedbackEmojiSummary.
+        selectedImage only.
       type: object
       required: [id, name, selectedImage]
       properties:
@@ -8674,8 +8671,7 @@ components:
         referenceId/referenceType are never client-supplied — each handler
         injects them from its own path params. The case-scoped route
         (PATCH /cases/{caseId}/attachments/{attachmentId}) only ever reads
-        name, never description, matching the Ballerina reference's own
-        restriction for that route.
+        name, never description, by design for that route.
       type: object
       properties:
         name:
@@ -9297,8 +9293,7 @@ components:
         dataSource is optional (1 = API Call, 2 = File Upload). Note: the
         project-scoped .../instances/stats/metrics/search variant does NOT
         forward dataSource to entity-service — a deliberate asymmetry versus
-        the stats/usages/search family, matching the Ballerina reference
-        exactly.
+        the stats/usages/search family.
       type: object
       required: [startDate, endDate]
       properties:
@@ -9345,8 +9340,7 @@ components:
 
     InstanceUsageStatsResponse:
       description: >-
-        Unlike InstanceMetricsStatsResponse, there is no summary block,
-        matching the Ballerina reference exactly.
+        Unlike InstanceMetricsStatsResponse, there is no summary block.
       type: object
       required: [stats, total, startDate, endDate]
       properties:

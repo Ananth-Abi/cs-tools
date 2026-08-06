@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
@@ -340,10 +341,23 @@ func (s *snProjectStatsService) GetProjectCaseStats(ctx context.Context, project
 
 	q := url.Values{}
 	if len(req.CaseTypes) > 0 {
-		if err := validateUUIDs("caseTypes", req.CaseTypes); err != nil {
-			return domain.ProjectCaseStatsResponse{}, err
+		// CaseTypes is this service's own domain vocabulary (case,
+		// service_request, security_report_analysis, announcement,
+		// engagement — see validCaseType), not UUIDs: there is no
+		// per-project-stats "case type" entity with its own id, unlike
+		// projectId above. normalizeCaseType resolves aliases like
+		// "default_case" (see caseTypeAliases) before validation, matching
+		// case search's own handling of the same field. Translate to
+		// ServiceNow's caseTypes wire values the same way case search does
+		// (domainTypeKeysToSN), so e.g. "case" is forwarded as "default_case".
+		normalized := make([]string, len(req.CaseTypes))
+		for i, t := range req.CaseTypes {
+			normalized[i] = normalizeCaseType(t)
+			if !validCaseType[normalized[i]] {
+				return domain.ProjectCaseStatsResponse{}, &apierror.ValidationError{Msg: "caseTypes contains invalid value: " + t}
+			}
 		}
-		for _, ct := range uuidsToSysids(req.CaseTypes) {
+		for _, ct := range domainTypeKeysToSN(normalized) {
 			q.Add("caseTypes", ct)
 		}
 	}

@@ -49,7 +49,35 @@ var validCaseType = map[string]bool{
 	"case":                     true,
 	"service_request":          true,
 	"security_report_analysis": true,
+	"announcement":             true,
 	"engagement":               true,
+}
+
+// caseTypeAliases maps caller-supplied case type values this API does not
+// consider canonical to the value it actually recognises. "default_case" is
+// the real, currently-in-production customer-portal frontend's value for
+// this type (it's ServiceNow's own raw caseType wire value, which the
+// frontend was built directly against before this service's Postgres-backed
+// "case" enum existed — see migrations/000008_create_cases.up.sql's
+// case_type_enum) and must keep working indefinitely, not just during a
+// migration window. Applying this alias is the FIRST thing that happens to
+// any caller-supplied case type value, before validCaseType or any
+// data-source-specific mapping (snCaseTypeMap, the Postgres repo's enum
+// cast) ever sees it, so every downstream consumer only ever has to know
+// about the canonical value "case".
+var caseTypeAliases = map[string]string{
+	"default_case": "case",
+}
+
+// normalizeCaseType resolves a caller-supplied case type value to its
+// canonical form via caseTypeAliases, or returns it unchanged if it isn't an
+// alias (including if it's already canonical, or altogether invalid --
+// validCaseType is what rejects the latter).
+func normalizeCaseType(t string) string {
+	if canonical, ok := caseTypeAliases[t]; ok {
+		return canonical
+	}
+	return t
 }
 
 var validEngagementType = map[domain.EngagementType]bool{
@@ -97,10 +125,16 @@ var validCaseWorkState = map[domain.CaseWorkState]bool{
 	domain.CaseWorkStatePaused:  true,
 }
 
-// validateCreateCaseRequest validates fields common to all CreateCase data sources.
+// validateCreateCaseRequest validates fields common to all CreateCase data
+// sources. Normalizes req.Type via normalizeCaseType FIRST (req is a
+// pointer specifically so this mutation is visible to the caller's own
+// switch on req.Type and its SN/repo payload-building afterwards) — every
+// other check in this function, and everything downstream, only ever sees
+// the canonical value.
 // UUID format of ID fields is not checked here — postgres IDs are UUIDs but
 // ServiceNow IDs are opaque hex strings; callers add format checks as needed.
-func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
+func validateCreateCaseRequest(req *domain.CreateCaseRequest) error {
+	req.Type = normalizeCaseType(req.Type)
 	if req.Type == "" {
 		return &apierror.ValidationError{Msg: "type is required"}
 	}
@@ -170,6 +204,18 @@ func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
 		if !validEngagementType[req.EngagementType] {
 			return &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(req.EngagementType)}
 		}
+	case "announcement":
+		// "announcement" is a real, valid case type (it's in the Postgres
+		// case_type_enum and is a legitimate case-search/stats filter value —
+		// see validCaseType), but nothing in this codebase knows how to build
+		// an announcement case: this switch has no field-requirement case for
+		// it, and sn_case_service.go's payload-building switch has no case
+		// for it either (so req.Subject/req.Description would be silently
+		// dropped rather than sent to ServiceNow, with no error). Reject
+		// explicitly here rather than letting it fall through and appear to
+		// succeed — remove this case only once both switches gain real
+		// support for creating one.
+		return &apierror.ValidationError{Msg: "case creation for type \"announcement\" is not supported"}
 	}
 
 	return nil
@@ -177,7 +223,7 @@ func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
 
 // CreateCase implements CaseService.
 func (s *caseService) CreateCase(ctx context.Context, req domain.CreateCaseRequest) (domain.CreateCaseResponse, error) {
-	if err := validateCreateCaseRequest(req); err != nil {
+	if err := validateCreateCaseRequest(&req); err != nil {
 		return domain.CreateCaseResponse{}, err
 	}
 	if req.Type != "case" {

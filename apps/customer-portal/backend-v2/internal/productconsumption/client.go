@@ -18,13 +18,11 @@
 // product-consumption service(s) — separate services (not entity-service)
 // that provision WSO2 API Manager applications/subscriptions/credentials to
 // generate per-deployment product licenses, and import deployment usage
-// data. See apps/customer-portal/backend's modules/product_consumption_subscription
-// and modules/product_consumption_tracking for the Ballerina backend's
-// equivalent clients: each has its own independently-configurable base URL
-// (productConsumptionBaseUrl vs productConsumptionTrackingBaseUrl) — they
-// happen to be set to the same value in that backend's current config, but
-// are not guaranteed to be, so this package keeps them as two distinct fields
-// rather than assuming they're always the same host.
+// data. The subscription/license API and the usage-tracking API are two
+// independently-configurable base URLs — they may happen to be the same
+// host in some deployments, but are not guaranteed to be, so this package
+// keeps them as two distinct fields rather than assuming they're always the
+// same host.
 package productconsumption
 
 import (
@@ -52,28 +50,26 @@ func noRedirect(_ *http.Request, _ []*http.Request) error {
 }
 
 // Config holds the configuration for the product-consumption service
-// clients. TrackingBaseURL defaults to BaseURL when left empty, matching
-// this Ballerina reference's current deployment where both configurable
-// base URLs happen to be set to the same value — set it explicitly once
-// the two services are hosted separately.
+// clients. TrackingBaseURL defaults to SubscriptionBaseURL when left empty
+// — set it explicitly once the two services are hosted separately.
 type Config struct {
-	BaseURL         string
-	TrackingBaseURL string
-	TokenURL        string
-	ClientID        string
-	ClientSecret    string
-	Scopes          []string
+	SubscriptionBaseURL string
+	TrackingBaseURL     string
+	TokenURL            string
+	ClientID            string
+	ClientSecret        string
+	Scopes              []string
 }
 
 // Client is an HTTP client for the upstream product-consumption service(s),
-// authenticated via the OAuth2 client credentials grant. baseURL backs the
-// subscription/license API; trackingBaseURL backs the usage-import API —
-// two independently-configurable upstream services in the Ballerina
-// reference, kept distinct here even though they're often the same host.
+// authenticated via the OAuth2 client credentials grant. subscriptionBaseURL
+// backs the subscription/license API; trackingBaseURL backs the
+// usage-import API — two independently-configurable upstream services,
+// kept distinct here even though they're often the same host.
 type Client struct {
-	http            *http.Client
-	baseURL         string
-	trackingBaseURL string
+	http                *http.Client
+	subscriptionBaseURL string
+	trackingBaseURL     string
 }
 
 // NewClient constructs a Client that authenticates against the
@@ -96,19 +92,19 @@ func NewClient(cfg Config) *Client {
 	oauthClient := cc.Client(tokenCtx)
 	httpClient := &http.Client{
 		Transport:     oauthClient.Transport,
-		Timeout:       300 * time.Second, // matches the Ballerina client's own 300s timeout
+		Timeout:       300 * time.Second,
 		CheckRedirect: noRedirect,
 	}
 
 	trackingBaseURL := cfg.TrackingBaseURL
 	if trackingBaseURL == "" {
-		trackingBaseURL = cfg.BaseURL
+		trackingBaseURL = cfg.SubscriptionBaseURL
 	}
 
 	return &Client{
-		http:            httpClient,
-		baseURL:         strings.TrimRight(cfg.BaseURL, "/"),
-		trackingBaseURL: strings.TrimRight(trackingBaseURL, "/"),
+		http:                httpClient,
+		subscriptionBaseURL: strings.TrimRight(cfg.SubscriptionBaseURL, "/"),
+		trackingBaseURL:     strings.TrimRight(trackingBaseURL, "/"),
 	}
 }
 
@@ -142,19 +138,14 @@ func (c *Client) doAt(ctx context.Context, baseURL, method, path, contentType st
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		return nil, apierror.NewUpstreamError(resp.StatusCode, respBody)
 	}
 
 	return respBody, nil
 }
 
 func (c *Client) do(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
-	return c.doAt(ctx, c.baseURL, method, path, contentType, body)
+	return c.doAt(ctx, c.subscriptionBaseURL, method, path, contentType, body)
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, reqBody, out any) error {
@@ -190,8 +181,7 @@ func (c *Client) postJSONTracking(ctx context.Context, path string, reqBody, out
 }
 
 // postText issues a POST with a raw text/plain body — used only for
-// subscribeApplication, which mirrors the Ballerina backend's
-// `.post(applicationId)` call: Ballerina's http:Client sends a bare `string`
+// subscribeApplication, whose upstream endpoint expects a bare string
 // payload as raw text/plain, not a JSON-quoted string.
 func (c *Client) postText(ctx context.Context, path, body string, out any) error {
 	respBody, err := c.do(ctx, http.MethodPost, path, "text/plain", []byte(body))

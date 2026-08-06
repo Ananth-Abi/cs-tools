@@ -1,9 +1,9 @@
 # Customer Portal Backend (v2)
 
-Go rewrite of the Ballerina backend at `apps/customer-portal/backend`. It is a backend-for-frontend
+Rewrite of the existing backend at `apps/customer-portal/backend`. It is a backend-for-frontend
 (BFF) for the customer portal: it authenticates callers, forwards requests to
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
-`digiops-cs/entity-service` the Ballerina backend targets), and shapes the responses for the frontend.
+`digiops-cs/entity-service` the existing backend targets), and shapes the responses for the frontend.
 
 This is a work in progress — only the 101 routes listed below are implemented so far, across
 entity-service, the WSO2 Updates service, SCIM, the AI chat agent, the product-consumption
@@ -11,7 +11,7 @@ service, the registry (robot-account) service, and the project-contact onboardin
 more separate services — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent),
 [CLAUDE.md](./CLAUDE.md#the-product-consumption-service),
 [CLAUDE.md](./CLAUDE.md#the-registry-service), and
-[CLAUDE.md](./CLAUDE.md#the-project-contact-onboarding-service)). Everything else the Ballerina
+[CLAUDE.md](./CLAUDE.md#the-project-contact-onboarding-service)). Everything else the existing
 backend exposes still needs a Go handler; add them following the pattern described in
 [CLAUDE.md](./CLAUDE.md#adding-a-new-endpoint).
 
@@ -132,18 +132,17 @@ A separate Python service (not entity-service) — see [CLAUDE.md](./CLAUDE.md#t
 | `AI_CHAT_AGENT_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 | `AI_CHAT_AGENT_WS_BASE_URL` | Base URL of the AI chat agent's WebSocket endpoint |
 | `AI_CHAT_AGENT_WS_SCOPES` | Comma-separated OAuth2 scopes (optional) |
-| `WS_ALLOWED_ORIGINS` | Comma-separated browser Origins allowed to open `GET /ws` (optional — defense in depth against cross-site WebSocket hijacking; unset allows any origin, local development only) |
 
 ### Product-consumption service
 
-Not entity-service — see [CLAUDE.md](./CLAUDE.md#the-product-consumption-service). The Ballerina
-backend configures the subscription/license API and the usage-tracking API as two independently
-configurable base URLs, so set both here too.
+Not entity-service — see [CLAUDE.md](./CLAUDE.md#the-product-consumption-service). The
+subscription/license API and the usage-tracking API are two independently configurable base URLs,
+so set both here too.
 
 | Variable | Description |
 |---|---|
-| `PRODUCT_CONSUMPTION_BASE_URL` | Base URL of the subscription/license API |
-| `PRODUCT_CONSUMPTION_TRACKING_BASE_URL` | Base URL of the usage-tracking API (optional — falls back to `PRODUCT_CONSUMPTION_BASE_URL` when unset) |
+| `PRODUCT_CONSUMPTION_SUBSCRIPTION_URL` | Base URL of the subscription/license API |
+| `PRODUCT_CONSUMPTION_TRACKING_BASE_URL` | Base URL of the usage-tracking API (optional — falls back to `PRODUCT_CONSUMPTION_SUBSCRIPTION_URL` when unset) |
 | `PRODUCT_CONSUMPTION_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 
 ### Registry service
