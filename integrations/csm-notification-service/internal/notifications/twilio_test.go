@@ -28,24 +28,24 @@ import (
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 )
 
-func withTwilioTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+// newTwilioTestServer starts a local mock Twilio server and returns it — the
+// caller passes srv.URL as TwilioConfig.APIBaseURL to point a TwilioClient
+// at it instead of the real Twilio API.
+func newTwilioTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	orig := twilioAPIBaseURL
-	twilioAPIBaseURL = srv.URL
-	t.Cleanup(func() { twilioAPIBaseURL = orig })
 	return srv
 }
 
 func TestSendSMS_ValidatesArgumentsBeforeCallingUpstream(t *testing.T) {
 	called := false
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 
 	t.Run("rejects empty to", func(t *testing.T) {
 		if err := c.SendSMS(context.Background(), "", "hello"); err == nil {
@@ -80,7 +80,7 @@ func TestSendSMS_SendsExpectedRequest_FromNumber(t *testing.T) {
 	var gotAuthUser, gotAuthPass string
 	var gotForm url.Values
 	var gotPath, gotContentType string
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotAuthUser, gotAuthPass, _ = r.BasicAuth()
 		gotPath = r.URL.Path
 		gotContentType = r.Header.Get("Content-Type")
@@ -91,7 +91,7 @@ func TestSendSMS_SendsExpectedRequest_FromNumber(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 	if err := c.SendSMS(context.Background(), "+15551234567", "On-call page: P1 incident"); err != nil {
 		t.Fatalf("SendSMS returned error: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestSendSMS_SendsExpectedRequest_FromNumber(t *testing.T) {
 
 func TestSendSMS_SendsExpectedRequest_MessagingServiceSid(t *testing.T) {
 	var gotForm url.Values
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("parse form: %v", err)
 		}
@@ -129,7 +129,7 @@ func TestSendSMS_SendsExpectedRequest_MessagingServiceSid(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", MessagingServiceSid: "MG123"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", MessagingServiceSid: "MG123", APIBaseURL: srv.URL})
 	if err := c.SendSMS(context.Background(), "+15551234567", "On-call page: P1 incident"); err != nil {
 		t.Fatalf("SendSMS returned error: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestSendSMS_SendsExpectedRequest_MessagingServiceSid(t *testing.T) {
 
 func TestSendSMS_PrefersMessagingServiceSidWhenBothConfigured(t *testing.T) {
 	var gotForm url.Values
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("parse form: %v", err)
 		}
@@ -157,6 +157,7 @@ func TestSendSMS_PrefersMessagingServiceSidWhenBothConfigured(t *testing.T) {
 		AuthToken:           "secret-token",
 		FromNumber:          "+15550000000",
 		MessagingServiceSid: "MG123",
+		APIBaseURL:          srv.URL,
 	})
 	if err := c.SendSMS(context.Background(), "+15551234567", "hello"); err != nil {
 		t.Fatalf("SendSMS returned error: %v", err)
@@ -171,12 +172,12 @@ func TestSendSMS_PrefersMessagingServiceSidWhenBothConfigured(t *testing.T) {
 }
 
 func TestSendSMS_MapsUpstreamError(t *testing.T) {
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"code":21211,"message":"The 'To' number is not a valid phone number."}`))
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 	err := c.SendSMS(context.Background(), "not-a-number", "hello")
 	if err == nil {
 		t.Fatal("expected an error, got nil")
@@ -192,12 +193,12 @@ func TestSendSMS_MapsUpstreamError(t *testing.T) {
 
 func TestMakeCall_ValidatesArgumentsBeforeCallingUpstream(t *testing.T) {
 	called := false
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 
 	t.Run("rejects empty to", func(t *testing.T) {
 		if err := c.MakeCall(context.Background(), "", "hello"); err == nil {
@@ -236,7 +237,7 @@ func TestMakeCall_SendsExpectedRequest(t *testing.T) {
 	var gotAuthUser, gotAuthPass string
 	var gotForm url.Values
 	var gotPath, gotContentType string
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotAuthUser, gotAuthPass, _ = r.BasicAuth()
 		gotPath = r.URL.Path
 		gotContentType = r.Header.Get("Content-Type")
@@ -247,7 +248,7 @@ func TestMakeCall_SendsExpectedRequest(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 	if err := c.MakeCall(context.Background(), "+15551234567", "On-call page: P1 incident"); err != nil {
 		t.Fatalf("MakeCall returned error: %v", err)
 	}
@@ -275,7 +276,7 @@ func TestMakeCall_SendsExpectedRequest(t *testing.T) {
 
 func TestMakeCall_SendsConfiguredVoiceAndLanguage(t *testing.T) {
 	var gotForm url.Values
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("parse form: %v", err)
 		}
@@ -289,6 +290,7 @@ func TestMakeCall_SendsConfiguredVoiceAndLanguage(t *testing.T) {
 		FromNumber: "+15550000000",
 		Voice:      "Polly.Raveena",
 		Language:   "en-IN",
+		APIBaseURL: srv.URL,
 	})
 	if err := c.MakeCall(context.Background(), "+15551234567", "hello"); err != nil {
 		t.Fatalf("MakeCall returned error: %v", err)
@@ -302,7 +304,7 @@ func TestMakeCall_SendsConfiguredVoiceAndLanguage(t *testing.T) {
 
 func TestMakeCall_OmitsVoiceAndLanguageAttributesWhenUnset(t *testing.T) {
 	var gotForm url.Values
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("parse form: %v", err)
 		}
@@ -310,7 +312,7 @@ func TestMakeCall_OmitsVoiceAndLanguageAttributesWhenUnset(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret-token", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 	if err := c.MakeCall(context.Background(), "+15551234567", "hello"); err != nil {
 		t.Fatalf("MakeCall returned error: %v", err)
 	}
@@ -328,7 +330,7 @@ func TestMakeCall_OmitsVoiceAndLanguageAttributesWhenUnset(t *testing.T) {
 // escapes it.
 func TestMakeCall_EscapesMessageInTwiML(t *testing.T) {
 	var gotForm url.Values
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatalf("parse form: %v", err)
 		}
@@ -336,7 +338,7 @@ func TestMakeCall_EscapesMessageInTwiML(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 	malicious := `</Say><Redirect>https://evil.example/hijack</Redirect><Say>`
 	if err := c.MakeCall(context.Background(), "+15551234567", malicious); err != nil {
 		t.Fatalf("MakeCall returned error: %v", err)
@@ -352,12 +354,12 @@ func TestMakeCall_EscapesMessageInTwiML(t *testing.T) {
 }
 
 func TestMakeCall_MapsUpstreamError(t *testing.T) {
-	withTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTwilioTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"code":21211,"message":"The 'To' number is not a valid phone number."}`))
 	})
 
-	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000"})
+	c := NewTwilioClient(TwilioConfig{AccountSID: "AC123", AuthToken: "secret", FromNumber: "+15550000000", APIBaseURL: srv.URL})
 	err := c.MakeCall(context.Background(), "not-a-number", "hello")
 	if err == nil {
 		t.Fatal("expected an error, got nil")
