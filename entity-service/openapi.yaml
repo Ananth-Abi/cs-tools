@@ -6047,6 +6047,10 @@ components:
           type: string
           enum: [error, partial_outage, performance_degradation, question, security_or_compliance, total_outage]
           description: Required for `case` type.
+        engagementType:
+          type: string
+          enum: [migration, consultancy, new_feature_improvement, follow_up, onboarding]
+          description: Required for `engagement` type.
         catalogId:
           type: string
           format: uuid
