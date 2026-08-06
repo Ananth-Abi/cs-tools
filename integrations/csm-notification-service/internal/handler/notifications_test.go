@@ -30,6 +30,7 @@ func newTestHandler() *NotificationHandler {
 	return NewNotificationHandler(
 		notifications.NewEmailClient(notifications.EmailConfig{}),
 		notifications.NewGoogleChatClient(notifications.GoogleChatConfig{}),
+		notifications.NewTwilioClient(notifications.TwilioConfig{}),
 	)
 }
 
@@ -59,6 +60,16 @@ func TestPostNotification_ValidGoogleChat(t *testing.T) {
 	assertStatus(t, w, http.StatusAccepted)
 }
 
+func TestPostNotification_ValidSms(t *testing.T) {
+	w := postNotification(t, `{"channel":"sms","sms":{"to":"+15551234567","body":"On-call page: P1 incident"}}`)
+	assertStatus(t, w, http.StatusAccepted)
+}
+
+func TestPostNotification_ValidCall(t *testing.T) {
+	w := postNotification(t, `{"channel":"call","call":{"to":"+15551234567","body":"On-call page: P1 incident"}}`)
+	assertStatus(t, w, http.StatusAccepted)
+}
+
 func TestPostNotification_RequiresFields(t *testing.T) {
 	cases := map[string]string{
 		"email missing to":                    `{"channel":"email","email":{"subject":"hi"}}`,
@@ -69,7 +80,13 @@ func TestPostNotification_RequiresFields(t *testing.T) {
 		"googleChat missing shortDescription": `{"channel":"googleChat","googleChat":{"product":"p","title":"t","caseId":"c"}}`,
 		"googleChat missing caseId":           `{"channel":"googleChat","googleChat":{"product":"p","title":"t","shortDescription":"d"}}`,
 		"googleChat missing payload":          `{"channel":"googleChat"}`,
-		"unknown channel":                     `{"channel":"sms"}`,
+		"sms missing to":                      `{"channel":"sms","sms":{"body":"hi"}}`,
+		"sms missing body":                    `{"channel":"sms","sms":{"to":"+15551234567"}}`,
+		"sms missing payload":                 `{"channel":"sms"}`,
+		"call missing to":                     `{"channel":"call","call":{"body":"hi"}}`,
+		"call missing body":                   `{"channel":"call","call":{"to":"+15551234567"}}`,
+		"call missing payload":                `{"channel":"call"}`,
+		"unknown channel":                     `{"channel":"fax"}`,
 		"empty body":                          ``,
 		"invalid json":                        `not json`,
 		"unknown top-level field":             `{"channel":"email","email":{"to":["a@example.com"],"subject":"hi"},"extra":true}`,
@@ -85,7 +102,17 @@ func TestPostNotification_RequiresFields(t *testing.T) {
 func TestPostNotification_RejectsMismatchedPayload(t *testing.T) {
 	cases := map[string]string{
 		"email channel with googleChat payload also present": `{"channel":"email","email":{"to":["a@example.com"],"subject":"hi"},"googleChat":{"product":"p","title":"t","shortDescription":"d","caseId":"c"}}`,
+		"email channel with sms payload also present":        `{"channel":"email","email":{"to":["a@example.com"],"subject":"hi"},"sms":{"to":"+15551234567","body":"hi"}}`,
+		"email channel with call payload also present":       `{"channel":"email","email":{"to":["a@example.com"],"subject":"hi"},"call":{"to":"+15551234567","body":"hi"}}`,
 		"googleChat channel with email payload also present": `{"channel":"googleChat","googleChat":{"product":"p","title":"t","shortDescription":"d","caseId":"c"},"email":{"to":["a@example.com"],"subject":"hi"}}`,
+		"googleChat channel with sms payload also present":   `{"channel":"googleChat","googleChat":{"product":"p","title":"t","shortDescription":"d","caseId":"c"},"sms":{"to":"+15551234567","body":"hi"}}`,
+		"googleChat channel with call payload also present":  `{"channel":"googleChat","googleChat":{"product":"p","title":"t","shortDescription":"d","caseId":"c"},"call":{"to":"+15551234567","body":"hi"}}`,
+		"sms channel with email payload also present":        `{"channel":"sms","sms":{"to":"+15551234567","body":"hi"},"email":{"to":["a@example.com"],"subject":"hi"}}`,
+		"sms channel with googleChat payload also present":   `{"channel":"sms","sms":{"to":"+15551234567","body":"hi"},"googleChat":{"product":"p","title":"t","shortDescription":"d","caseId":"c"}}`,
+		"sms channel with call payload also present":         `{"channel":"sms","sms":{"to":"+15551234567","body":"hi"},"call":{"to":"+15551234567","body":"hi"}}`,
+		"call channel with email payload also present":       `{"channel":"call","call":{"to":"+15551234567","body":"hi"},"email":{"to":["a@example.com"],"subject":"hi"}}`,
+		"call channel with googleChat payload also present":  `{"channel":"call","call":{"to":"+15551234567","body":"hi"},"googleChat":{"product":"p","title":"t","shortDescription":"d","caseId":"c"}}`,
+		"call channel with sms payload also present":         `{"channel":"call","call":{"to":"+15551234567","body":"hi"},"sms":{"to":"+15551234567","body":"hi"}}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
