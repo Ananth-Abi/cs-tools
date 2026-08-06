@@ -191,21 +191,21 @@ func (c *TwilioClient) do(ctx context.Context, resourcePath string, form url.Val
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	// Twilio returns 201 Created for both a successfully queued message and
+	// a successfully initiated call — the body is only needed on failure, so
+	// skip reading it here rather than reading a response we're about to
+	// discard.
+	if resp.StatusCode == http.StatusCreated {
+		return nil
+	}
+
+	// Bounded even on read failure: io.LimitReader caps how much of a
+	// misbehaving (or unexpectedly huge) error response this ever buffers in
+	// memory, rather than reading the full body before truncating it.
+	const maxErrBody = 256
+	excerpt, err := io.ReadAll(io.LimitReader(resp.Body, maxErrBody))
 	if err != nil {
 		return fmt.Errorf("notifications: read twilio response: %w", err)
 	}
-
-	// Twilio returns 201 Created for both a successfully queued message and
-	// a successfully initiated call.
-	if resp.StatusCode != http.StatusCreated {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
-	}
-
-	return nil
+	return &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
 }
