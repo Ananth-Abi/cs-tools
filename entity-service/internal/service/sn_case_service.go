@@ -696,7 +696,7 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 		return domain.CreateCaseResponse{}, fmt.Errorf("sn create case: parse response: %w", err)
 	}
 
-	createdOn, err := time.Parse(snCreatedOnLayout, snResp.Case.CreatedOn)
+	createdOn, err := parseSNDateTime(ctx, "sn create case", "createdOn", snResp.Case.CreatedOn)
 	if err != nil {
 		return domain.CreateCaseResponse{}, fmt.Errorf("sn create case: parse createdOn %q: %w", snResp.Case.CreatedOn, err)
 	}
@@ -732,13 +732,13 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 		return domain.CaseView{}, fmt.Errorf("sn get case: parse response: %w", err)
 	}
 
-	createdOn, err := time.Parse(snCreatedOnLayout, c.CreatedOn)
+	createdOn, err := parseSNDateTime(ctx, "sn get case", "createdOn", c.CreatedOn)
 	if err != nil {
 		return domain.CaseView{}, fmt.Errorf("sn get case: parse createdOn %q: %w", c.CreatedOn, err)
 	}
 	updatedOn := createdOn
 	if c.UpdatedOn != nil && *c.UpdatedOn != "" {
-		updatedOn, err = time.Parse(snCreatedOnLayout, *c.UpdatedOn)
+		updatedOn, err = parseSNDateTime(ctx, "sn get case", "updatedOn", *c.UpdatedOn)
 		if err != nil {
 			return domain.CaseView{}, fmt.Errorf("sn get case: parse updatedOn %q: %w", *c.UpdatedOn, err)
 		}
@@ -869,7 +869,7 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 	}
 	cv.ResolutionNotes = c.ResolutionNotes
 	if c.ResolvedOn != nil && *c.ResolvedOn != "" {
-		resolvedOn, err := time.Parse(snCreatedOnLayout, *c.ResolvedOn)
+		resolvedOn, err := parseSNDateTime(ctx, "sn get case", "resolvedOn", *c.ResolvedOn)
 		if err != nil {
 			return domain.CaseView{}, fmt.Errorf("sn get case: parse resolvedOn %q: %w", *c.ResolvedOn, err)
 		}
@@ -897,7 +897,7 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 	// the matching fields (see snCase field doc comments); until then these are nil.
 	cv.AutoclosureStep = c.AutoclosureStep
 	if c.AutoclosureStateTime != nil && *c.AutoclosureStateTime != "" {
-		autoclosureStateTime, err := time.Parse(snCreatedOnLayout, *c.AutoclosureStateTime)
+		autoclosureStateTime, err := parseSNDateTime(ctx, "sn get case", "autoclosureStateTime", *c.AutoclosureStateTime)
 		if err != nil {
 			return domain.CaseView{}, fmt.Errorf("sn get case: parse autoclosureStateTime %q: %w", *c.AutoclosureStateTime, err)
 		}
@@ -978,7 +978,7 @@ func (s *snCaseService) CreateCaseComment(ctx context.Context, req domain.Create
 		return domain.CreateCaseCommentResponse{}, fmt.Errorf("sn create comment: parse response: %w", err)
 	}
 
-	createdOn, err := time.Parse(snCreatedOnLayout, snResp.Comment.CreatedOn)
+	createdOn, err := parseSNDateTime(ctx, "sn create comment", "createdOn", snResp.Comment.CreatedOn)
 	if err != nil {
 		return domain.CreateCaseCommentResponse{}, fmt.Errorf("sn create comment: parse createdOn %q: %w", snResp.Comment.CreatedOn, err)
 	}
@@ -1073,7 +1073,7 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 
 	comments := make([]domain.CaseComment, 0, len(snResp.Comments))
 	for _, c := range snResp.Comments {
-		createdAt, err := time.Parse(snCreatedOnLayout, c.CreatedOn)
+		createdAt, err := parseSNDateTime(ctx, "sn search comments", "createdOn", c.CreatedOn)
 		if err != nil {
 			return domain.SearchCaseCommentsResponse{}, fmt.Errorf("sn search comments: parse createdOn %q: %w", c.CreatedOn, err)
 		}
@@ -1531,7 +1531,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		return domain.UpdateCaseResponse{}, fmt.Errorf("sn update case: parse response: %w", err)
 	}
 
-	updatedOn, err := time.Parse(snCreatedOnLayout, snResp.Case.UpdatedOn)
+	updatedOn, err := parseSNDateTime(ctx, "sn update case", "updatedOn", snResp.Case.UpdatedOn)
 	if err != nil {
 		return domain.UpdateCaseResponse{}, fmt.Errorf("sn update case: parse updatedOn %q: %w", snResp.Case.UpdatedOn, err)
 	}
@@ -1606,7 +1606,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		resp.Case.ParentCase = &domain.CaseNumberRef{ID: sysidToUUID(snResp.Case.ParentCase.ID), Number: snResp.Case.ParentCase.Number, Type: snParentCaseTypeToDomain(snResp.Case.ParentCase.Type)}
 	}
 	if snResp.Case.ResolvedOn != nil {
-		resolvedOn, err := time.Parse(snCreatedOnLayout, *snResp.Case.ResolvedOn)
+		resolvedOn, err := parseSNDateTime(ctx, "sn update case", "resolvedOn", *snResp.Case.ResolvedOn)
 		if err != nil {
 			return domain.UpdateCaseResponse{}, fmt.Errorf("sn update case: parse resolvedAt %q: %w", *snResp.Case.ResolvedOn, err)
 		}
