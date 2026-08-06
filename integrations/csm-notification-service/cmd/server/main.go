@@ -69,6 +69,7 @@ func main() {
 		MessagingServiceSid: os.Getenv("TWILIO_MESSAGING_SERVICE_SID"),
 		Voice:               os.Getenv("TWILIO_VOICE"),
 		Language:            os.Getenv("TWILIO_LANGUAGE"),
+		APIBaseURL:          os.Getenv("TWILIO_API_BASE_URL"),
 	})
 
 	notificationHandler := handler.NewNotificationHandler(emailClient, googleChatClient, twilioClient)

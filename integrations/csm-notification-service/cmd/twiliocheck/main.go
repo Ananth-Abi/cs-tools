@@ -68,6 +68,7 @@ func main() {
 		MessagingServiceSid: os.Getenv("TWILIO_MESSAGING_SERVICE_SID"),
 		Voice:               envOrFlag("TWILIO_VOICE", *voice),
 		Language:            envOrFlag("TWILIO_LANGUAGE", *language),
+		APIBaseURL:          os.Getenv("TWILIO_API_BASE_URL"),
 	}
 	client := notifications.NewTwilioClient(cfg)
 
