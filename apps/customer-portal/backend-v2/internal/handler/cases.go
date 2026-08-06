@@ -40,6 +40,7 @@ type entityCaseClient interface {
 	UpdateAttachment(ctx context.Context, id string, req entity.UpdateAttachmentRequest) (entity.UpdateAttachmentResponse, error)
 	CreateEscalation(ctx context.Context, req entity.CreateEscalationRequest) (entity.CreateEscalationResponse, error)
 	SearchEscalations(ctx context.Context, req entity.SearchEscalationsRequest) (entity.SearchEscalationsResponse, error)
+	SearchAttachments(ctx context.Context, req entity.SearchAttachmentsRequest) (entity.SearchAttachmentsResponse, error)
 }
 
 // CaseHandler handles HTTP requests for case operations.
@@ -85,6 +86,39 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONValue(w, http.StatusOK, dto.MapSearchCases(result))
+}
+
+// SearchCaseAttachments handles GET /cases/{id}/attachments?limit=&offset=.
+func (h *CaseHandler) SearchCaseAttachments(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	limit, offset, ok := parseLimitOffset(w, r)
+	if !ok {
+		return
+	}
+
+	result, err := h.entity.SearchAttachments(r.Context(), entity.SearchAttachmentsRequest{
+		ReferenceID:   id,
+		ReferenceType: entity.ReferenceTypeCase,
+		Pagination:    entity.Pagination{Limit: limit, Offset: offset},
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchAttachments failed", "userID", user.UserID, "caseID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to retrieve case attachments.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapCaseAttachments(result))
 }
 
 // GetCase handles GET /cases/{id}.

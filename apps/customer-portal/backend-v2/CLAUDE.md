@@ -25,7 +25,8 @@ all). Route list: `GET /health`, `GET`/`PATCH /users/me`, `POST /accounts/search
 `POST /comments`, `POST /comments/search`, `POST /change-requests`,
 `POST /change-requests/search`, `GET /change-requests/{id}`, `PATCH /change-requests/{id}`,
 `GET /change-requests/{id}/approvals`, `POST /change-requests/{id}/approvals/decision`,
-`POST /call-requests`, `POST /call-requests/search`, `PATCH /call-requests/{id}`,
+`POST /cases/{caseId}/call-requests`, `POST /cases/{caseId}/call-requests/search`,
+`PATCH /cases/{caseId}/call-requests/{id}`,
 `POST /cases/classify`, `POST /conversations/recommendations/search`,
 `POST /projects/{id}/conversations/search`, `POST /projects/{id}/conversations`,
 `GET /conversations/{id}`, `PATCH /conversations/{id}`, `GET /conversations/{id}/messages`,
@@ -37,7 +38,8 @@ all). Route list: `GET /health`, `GET`/`PATCH /users/me`, `POST /accounts/search
 `GET /projects/{id}/stats/support`, `GET /projects/{id}/stats/time-cards`,
 `GET /projects/{id}/stats/change-requests`, `POST /projects/{id}/cases/time-cards/search`,
 `GET /metadata`, `POST /search`, `GET /products/vulnerabilities/meta`,
-`GET /cases/{id}/feedback`, `POST /cases/{id}/feedback`, `GET /attachments/{id}`,
+`GET /cases/{id}/feedback`, `POST /cases/{id}/feedback`, `GET /cases/{id}/attachments`,
+`GET /attachments/{id}`,
 `PATCH /deployments/{deploymentId}/attachments/{attachmentId}`,
 `PATCH /cases/{caseId}/attachments/{attachmentId}`,
 `POST /deployments/{deploymentId}/products/{productId}/metrics/search`,
@@ -475,7 +477,7 @@ Two more examples, both in this same "restrict, don't mirror" category:
   `isCustomerApproved`/`isCustomerReviewed`/`requestApproval` fields (which *are* exposed, since
   they're literally the customer's own approval actions) rather than letting the customer set an
   arbitrary ServiceNow workflow state directly.
-- `PATCH /call-requests/{id}` (`dto.CallRequestUpdateRequest`) excludes `meetingDate`/`assignee`/
+- `PATCH /cases/{caseId}/call-requests/{id}` (`dto.CallRequestUpdateRequest`) excludes `meetingDate`/`assignee`/
   `notes`/`plan`/`attendees`/`actionItems`/`actualDurationMin` — entity-service's own doc comment
   labels these "agent-side fields, set when an engineer schedules or concludes the call." They're
   still exposed on the *read* side (`dto.CallRequestSummary`) since the customer should be able to
@@ -510,6 +512,26 @@ already treats `Severity`/`State` as plain strings) — skip re-declaring the co
 specific value needs to be checked in Go code (e.g. `ChangeRequestApprovalDecisionRequest.Decision`
 validation in the handler compares against literal `"approved"`/`"rejected"` strings, not enum
 constants).
+
+**Most pagination responses use `total`; a few deliberately use `totalRecords` instead — check the
+frontend's existing type before picking one.** The frontend's shared `PaginationResponse` type
+(`apps/customer-portal/webapp/src/types/common.ts`) is `{offset, limit, totalRecords}`, and some
+already-built frontend consumers (`GET /cases/{id}/attachments`,
+`POST /cases/{caseId}/call-requests/search`) read exactly that field name — so their dto response
+types use `totalRecords`, not this backend's more common `total`. This is not a house-style
+migration in progress; new endpoints should still default to `total` unless porting one that a
+specific existing frontend hook already expects `totalRecords` from (check
+`apps/customer-portal/webapp/src/api/` and `src/features/*/api/` for the exact field the relevant
+hook decodes before choosing).
+
+**Some routes nest a resource's own ID in the path purely for RESTful shape, not because the
+handler needs it.** `PATCH /cases/{caseId}/call-requests/{id}` is the example: entity-service's
+`UpdateCallRequest` is keyed on the call request's own `id` alone, so `caseId` is read from the URL
+only to make the path match the frontend's nesting (`/cases/{caseId}/call-requests/{id}`) — the
+handler never looks at it. Don't add a spurious "does this call request belong to this case" check
+just because the path implies one; that authorization already happens for `POST` and `POST .../search`
+on the same nested resource (`CaseID` is forced from the path there because entity-service's request
+struct actually carries it), and a stray extra check on `PATCH` would just be dead weight.
 
 ## Adding a new endpoint
 

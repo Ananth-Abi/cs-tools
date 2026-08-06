@@ -74,10 +74,13 @@ type CallRequestSummary struct {
 	ActualDurationMin  *int                 `json:"actualDurationMin,omitempty"`
 }
 
-// SearchCallRequestsResponse is the portal's response for POST /call-requests/search.
+// SearchCallRequestsResponse is the portal's response for
+// POST /cases/{caseId}/call-requests/search. TotalRecords (not Total) to
+// match the frontend's shared pagination envelope — see
+// PaginationResponse in apps/customer-portal/webapp/src/types/common.ts.
 type SearchCallRequestsResponse struct {
 	CallRequests []CallRequestSummary `json:"callRequests"`
-	Total        int                  `json:"total"`
+	TotalRecords int                  `json:"totalRecords"`
 	Offset       int                  `json:"offset"`
 	Limit        int                  `json:"limit"`
 }
@@ -109,7 +112,7 @@ func MapSearchCallRequests(r entity.SearchCallRequestsResponse) SearchCallReques
 	}
 	return SearchCallRequestsResponse{
 		CallRequests: items,
-		Total:        r.Total,
+		TotalRecords: r.Total,
 		Offset:       r.Offset,
 		Limit:        r.Limit,
 	}

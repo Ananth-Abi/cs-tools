@@ -48,11 +48,17 @@ func NewCallRequestHandler(entity entityCallRequestClient) *CallRequestHandler {
 	return &CallRequestHandler{entity: entity}
 }
 
-// CreateCallRequest handles POST /call-requests.
+// CreateCallRequest handles POST /cases/{caseId}/call-requests.
 func (h *CallRequestHandler) CreateCallRequest(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("caseId")
+	if caseID == "" || !uuidRe.MatchString(caseID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -66,7 +72,11 @@ func (h *CallRequestHandler) CreateCallRequest(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if !uuidRe.MatchString(req.CaseID) || req.Reason == "" || len(req.UTCTimes) == 0 || req.DurationMinutes <= 0 {
+	// CaseID is always forced to the {caseId} path parameter, never a
+	// client-supplied body field — the frontend's request body carries only
+	// reason/utcTimes/durationInMinutes, no caseId at all.
+	req.CaseID = caseID
+	if req.Reason == "" || len(req.UTCTimes) == 0 || req.DurationMinutes <= 0 {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
@@ -81,11 +91,17 @@ func (h *CallRequestHandler) CreateCallRequest(w http.ResponseWriter, r *http.Re
 	writeJSONValue(w, http.StatusCreated, dto.MapCallRequestCreate(result))
 }
 
-// SearchCallRequests handles POST /call-requests/search.
+// SearchCallRequests handles POST /cases/{caseId}/call-requests/search.
 func (h *CallRequestHandler) SearchCallRequests(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("caseId")
+	if caseID == "" || !uuidRe.MatchString(caseID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -99,10 +115,10 @@ func (h *CallRequestHandler) SearchCallRequests(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if !uuidRe.MatchString(req.CaseID) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-		return
-	}
+	// CaseID is always forced to the {caseId} path parameter, never a
+	// client-supplied body field — the frontend's request body carries only
+	// filters/pagination, no caseId at all.
+	req.CaseID = caseID
 
 	result, err := h.entity.SearchCallRequests(r.Context(), req)
 	if err != nil {
@@ -114,7 +130,10 @@ func (h *CallRequestHandler) SearchCallRequests(w http.ResponseWriter, r *http.R
 	writeJSONValue(w, http.StatusOK, dto.MapSearchCallRequests(result))
 }
 
-// PatchCallRequest handles PATCH /call-requests/{id}.
+// PatchCallRequest handles PATCH /cases/{caseId}/call-requests/{id}. caseId
+// is part of the URL only for RESTful nesting — entity-service's
+// UpdateCallRequest is keyed on the call request's own id alone, so caseId
+// is never read here.
 func (h *CallRequestHandler) PatchCallRequest(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
