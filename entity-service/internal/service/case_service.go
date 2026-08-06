@@ -204,6 +204,18 @@ func validateCreateCaseRequest(req *domain.CreateCaseRequest) error {
 		if !validEngagementType[req.EngagementType] {
 			return &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(req.EngagementType)}
 		}
+	case "announcement":
+		// "announcement" is a real, valid case type (it's in the Postgres
+		// case_type_enum and is a legitimate case-search/stats filter value —
+		// see validCaseType), but nothing in this codebase knows how to build
+		// an announcement case: this switch has no field-requirement case for
+		// it, and sn_case_service.go's payload-building switch has no case
+		// for it either (so req.Subject/req.Description would be silently
+		// dropped rather than sent to ServiceNow, with no error). Reject
+		// explicitly here rather than letting it fall through and appear to
+		// succeed — remove this case only once both switches gain real
+		// support for creating one.
+		return &apierror.ValidationError{Msg: "case creation for type \"announcement\" is not supported"}
 	}
 
 	return nil

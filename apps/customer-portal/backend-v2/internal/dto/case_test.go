@@ -77,8 +77,8 @@ func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 		{Field: "assignedUserId", Op: "in", Values: []string{"eng-1"}},
 		{Field: "product", Op: "in", Values: []string{"API Manager"}},
 		{Field: "tag", Op: "in", Values: []string{"urgent"}},
-		{Field: "createdBy", Op: "in", Values: []string{"user-1"}},
 		{Field: "parentId", Op: "eq", Values: []string{"parent-id-1"}},
+		{Field: "createdBy", Op: "in", Values: []string{"user-1"}},
 	}
 	if !reflect.DeepEqual(got.Filters.Filters, want) {
 		t.Fatalf("Filters = %+v,\nwant     %+v", got.Filters.Filters, want)
@@ -92,6 +92,28 @@ func TestBuildEntitySearchCasesRequest_AllFiltersTranslate(t *testing.T) {
 // caller.
 func TestBuildEntitySearchCasesRequest_CreatedByMe(t *testing.T) {
 	req := CaseSearchRequest{Filters: CaseSearchFilters{CreatedByMe: true}}
+
+	got := BuildEntitySearchCasesRequest(req)
+
+	want := []entity.CaseFieldFilter{
+		{Field: "createdBy", Op: "eq", Values: []string{"__current_user_email__"}},
+	}
+	if !reflect.DeepEqual(got.Filters.Filters, want) {
+		t.Fatalf("Filters = %+v, want %+v", got.Filters.Filters, want)
+	}
+}
+
+// TestBuildEntitySearchCasesRequest_CreatedByMeTakesPrecedenceOverCreatedBy
+// guards against sending both a createdBy+in and a createdBy+eq filter for
+// the same request: entity-service's filters array is AND-only, so both
+// together could (barring coincidence) never match anything, silently
+// returning an empty result set. If a client sends both, CreatedByMe must
+// win and CreatedBy must be dropped entirely, not merged.
+func TestBuildEntitySearchCasesRequest_CreatedByMeTakesPrecedenceOverCreatedBy(t *testing.T) {
+	req := CaseSearchRequest{Filters: CaseSearchFilters{
+		CreatedBy:   []string{"someone-else@example.com"},
+		CreatedByMe: true,
+	}}
 
 	got := BuildEntitySearchCasesRequest(req)
 

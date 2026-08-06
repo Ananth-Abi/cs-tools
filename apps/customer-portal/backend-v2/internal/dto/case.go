@@ -157,7 +157,12 @@ type CaseSearchRequest struct {
 // Pagination pass straight through unchanged. CreatedByMe becomes a
 // createdBy+eq filter carrying currentUserFilterPlaceholder, exactly as
 // entity-service's own case_filters.go expects, resolving the caller's
-// identity server-side from the forwarded x-user-id-token.
+// identity server-side from the forwarded x-user-id-token. CreatedByMe takes
+// precedence over CreatedBy when both are set: entity-service's filters
+// array is AND-only, so a createdBy+in filter and a createdBy+eq filter
+// together could never both match (barring CreatedBy coincidentally
+// containing the caller's own email), silently returning an empty result
+// set — CreatedBy is dropped entirely rather than combined.
 func BuildEntitySearchCasesRequest(req CaseSearchRequest) entity.SearchCasesRequest {
 	var filters []entity.CaseFieldFilter
 
@@ -178,13 +183,21 @@ func BuildEntitySearchCasesRequest(req CaseSearchRequest) entity.SearchCasesRequ
 	addIn("assignedUserId", req.Filters.AssignedUserIDs)
 	addIn("product", req.Filters.ProductNames)
 	addIn("tag", req.Filters.Tags)
-	addIn("createdBy", req.Filters.CreatedBy)
 
 	if req.Filters.ParentID != nil {
 		filters = append(filters, entity.CaseFieldFilter{Field: "parentId", Op: "eq", Values: []string{*req.Filters.ParentID}})
 	}
+	// CreatedByMe takes precedence over CreatedBy: entity-service's filters
+	// array is AND-only (case_filters.go), so a createdBy+in filter and a
+	// createdBy+eq filter together could never both match (barring CreatedBy
+	// coincidentally containing the caller's own email) — silently returning
+	// an empty result set instead of the caller's own cases. A client
+	// shouldn't send both, but if it does, honor the explicit "my cases"
+	// intent rather than the list.
 	if req.Filters.CreatedByMe {
 		filters = append(filters, entity.CaseFieldFilter{Field: "createdBy", Op: "eq", Values: []string{currentUserFilterPlaceholder}})
+	} else {
+		addIn("createdBy", req.Filters.CreatedBy)
 	}
 
 	return entity.SearchCasesRequest{

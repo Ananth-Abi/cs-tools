@@ -66,6 +66,32 @@ func TestSNCaseService_CreateCase_EngagementValidation(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_CreateCase_AnnouncementRejected verifies that
+// type="announcement" is rejected with a *apierror.ValidationError rather
+// than silently succeeding: "announcement" is valid elsewhere (case
+// search/stats filters — see validCaseType) but neither
+// validateCreateCaseRequest nor this file's payload-building switch has a
+// case for it, so letting it through would silently drop req.Subject/
+// req.Description instead of sending them to ServiceNow.
+func TestSNCaseService_CreateCase_AnnouncementRejected(t *testing.T) {
+	req := domain.CreateCaseRequest{
+		Type:              "announcement",
+		ProjectID:         testProjectUUID,
+		DeploymentID:      testDeploymentUUID,
+		DeployedProductID: testDeployedProdID,
+		Subject:           "New feature rollout",
+		Description:       "Announcing a new feature",
+	}
+
+	// client is intentionally nil: this must fail validation before touching it.
+	svc := NewServiceNowCaseService(nil, nil)
+
+	_, err := svc.CreateCase(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 // TestSNCaseService_CreateCase_Engagement verifies a valid engagement request
 // builds the expected snCreateCasePayload (title/description/engagementType)
 // and maps a successful ServiceNow response back to domain.CreateCaseResponse.

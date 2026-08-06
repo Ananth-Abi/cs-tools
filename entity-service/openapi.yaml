@@ -6010,17 +6010,19 @@ components:
       properties:
         type:
           type: string
-          enum: [case, default_case, service_request, security_report_analysis, announcement, engagement]
+          enum: [case, default_case, service_request, security_report_analysis, engagement]
           description: |
             Case type. `default_case` is also accepted as an alias for `case`
             (ServiceNow's own raw caseType wire value; kept for the
             currently-in-production customer-portal frontend, which predates
             this API's `case` enum) and is normalized to `case` before any
-            other validation runs.
+            other validation runs. `announcement` is a valid case type
+            elsewhere in this API (case search/stats filters) but cannot be
+            created through this endpoint — no code path builds a valid
+            payload for one — and is rejected with 400 if supplied here.
             - `case`: standard support case; requires `subject`, `description`, `severity`, `issueType`.
             - `service_request`: catalog-based service request (ServiceNow only); requires `catalogId`, `catalogItemId`, `variables`.
             - `security_report_analysis`: security report (ServiceNow only); requires `subject`, `description`; `attachments` optional.
-            - `announcement`: ServiceNow only.
             - `engagement`: requires `subject`, `description`, `engagementType`.
         projectId:
           type: string
