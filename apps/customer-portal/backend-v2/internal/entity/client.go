@@ -137,31 +137,6 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
-// entityErrorBody mirrors entity-service's apierror.WriteJSON output:
-// {"code": <status>, "message": "<msg>"}.
-type entityErrorBody struct {
-	Message string `json:"message"`
-}
-
-// newUpstreamError builds an *apierror.Error whose Body is entity-service's
-// own "message" field — the specific, caller-safe validation reason
-// (apierror.ValidationError et al. are written for exactly this purpose) —
-// rather than the raw {"code":...,"message":"..."} JSON blob, so callers can
-// both log the exact reason and, for 400s, surface it to the frontend
-// verbatim instead of a generic fallback string. Body is left empty if the
-// response isn't the expected shape (e.g. a gateway error page instead of an
-// entity-service response): callers already treat an empty Body as "no
-// specific message available" and fall back to a generic one, and this
-// deliberately avoids ever logging or returning to the frontend a raw
-// upstream body of unknown, unbounded content.
-func newUpstreamError(statusCode int, rawBody []byte) *apierror.Error {
-	var body entityErrorBody
-	if err := json.Unmarshal(rawBody, &body); err == nil && body.Message != "" {
-		return &apierror.Error{StatusCode: statusCode, Body: body.Message}
-	}
-	return &apierror.Error{StatusCode: statusCode}
-}
-
 // do executes an authenticated HTTP request against entity-service and
 // returns the raw JSON response body. The caller owns the returned slice.
 func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
@@ -200,7 +175,7 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, newUpstreamError(resp.StatusCode, respBody)
+		return nil, apierror.NewUpstreamError(resp.StatusCode, respBody)
 	}
 
 	return respBody, nil
@@ -243,7 +218,7 @@ func (c *Client) doBinary(ctx context.Context, path string) (body []byte, conten
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		err := newUpstreamError(resp.StatusCode, respBody)
+		err := apierror.NewUpstreamError(resp.StatusCode, respBody)
 		return nil, "", err
 	}
 

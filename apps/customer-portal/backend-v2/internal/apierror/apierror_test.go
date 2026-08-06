@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package entity
+package apierror
 
 import (
 	"net/http"
@@ -24,7 +24,7 @@ import (
 func TestNewUpstreamError_ExtractsMessageField(t *testing.T) {
 	raw := []byte(`{"code":400,"message":"caseTypes must be valid UUIDs"}`)
 
-	err := newUpstreamError(http.StatusBadRequest, raw)
+	err := NewUpstreamError(http.StatusBadRequest, raw)
 
 	if err.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected status 400, got %d", err.StatusCode)
@@ -42,7 +42,7 @@ func TestNewUpstreamError_ExtractsMessageField(t *testing.T) {
 func TestNewUpstreamError_LeavesBodyEmptyWhenNotJSON(t *testing.T) {
 	raw := []byte("<html>502 Bad Gateway</html>")
 
-	err := newUpstreamError(http.StatusBadGateway, raw)
+	err := NewUpstreamError(http.StatusBadGateway, raw)
 
 	if err.Body != "" {
 		t.Fatalf("expected empty Body for a non-JSON response, got %q", err.Body)
@@ -52,7 +52,7 @@ func TestNewUpstreamError_LeavesBodyEmptyWhenNotJSON(t *testing.T) {
 func TestNewUpstreamError_LeavesBodyEmptyWhenMessageFieldMissing(t *testing.T) {
 	raw := []byte(`{"code":500}`)
 
-	err := newUpstreamError(http.StatusInternalServerError, raw)
+	err := NewUpstreamError(http.StatusInternalServerError, raw)
 
 	if err.Body != "" {
 		t.Fatalf("expected empty Body when message field is absent, got %q", err.Body)

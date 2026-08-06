@@ -551,10 +551,14 @@ constants).
   `summarizeErr` DOES include the upstream status and message for a typed `*apierror.Error` (e.g.
   `"upstream status 400: caseTypes must be valid UUIDs"`) — entity-service's error bodies are
   already caller-safe validation text, not sensitive internal detail, so logging them verbatim is
-  fine. `internal/entity/client.go`'s `newUpstreamError` is what populates `apiErr.Body` with just
-  the extracted `message` field (not entity-service's raw `{"code","message"}` response) — every
-  new upstream-error construction site in that file must go through it rather than reinventing
-  inline body-truncation, or the message-extraction and the 400 passthrough above silently break.
+  fine. `apierror.NewUpstreamError` (`internal/apierror/apierror.go`) is what populates `apiErr.Body`
+  with just the extracted `message` field (not the upstream's raw response) — every upstream
+  client in this backend (entity, registry, updates, scim, productconsumption, aichatagent,
+  usermanagement) constructs its non-2xx errors through this one shared function rather than each
+  reinventing its own inline body-truncation/excerpt fallback. Body is left empty when the response
+  isn't the expected `{"message": "..."}` shape, relying on each caller's existing "empty Body → generic
+  fallback" logic (`mapUpstreamError`'s 400 case, `writeUpstreamMessage`) — never add a new
+  upstream-error construction site that falls back to a raw excerpt instead of calling this function.
 
 ## Security
 

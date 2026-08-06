@@ -30,6 +30,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/apierror"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -155,7 +156,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body []byte, w
 		return nil, err
 	}
 	if statusCode != wantStatus {
-		return nil, extractErrorMessage(statusCode, respBody)
+		return nil, apierror.NewUpstreamError(statusCode, respBody)
 	}
 	return respBody, nil
 }

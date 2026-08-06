@@ -138,12 +138,7 @@ func (c *Client) doAt(ctx context.Context, baseURL, method, path, contentType st
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		return nil, apierror.NewUpstreamError(resp.StatusCode, respBody)
 	}
 
 	return respBody, nil
