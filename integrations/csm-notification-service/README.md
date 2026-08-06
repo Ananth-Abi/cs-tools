@@ -61,6 +61,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | `TWILIO_FROM_NUMBER` | Fixed Twilio-provisioned sending number, E.164 format. Used for sms only if `TWILIO_MESSAGING_SERVICE_SID` is unset; **always required for the call channel** — Voice has no Messaging Service equivalent (optional overall, but the call channel won't work without it) |
 | `TWILIO_VOICE` | Call channel only: TTS voice for `<Say>` (e.g. `Polly.Raveena`). Optional — empty uses Twilio's account default voice |
 | `TWILIO_LANGUAGE` | Call channel only: TTS language/locale for `<Say>` (e.g. `en-IN`), affects pronunciation. Optional — empty uses Twilio's default for the selected voice |
+| `TWILIO_API_BASE_URL` | Overrides Twilio's REST API base (default `https://api.twilio.com/2010-04-01`). Optional — only for a regional Twilio edge/API endpoint |
 
 ### Server
 
@@ -136,7 +137,9 @@ go run ./cmd/twiliocheck -channel=call -voice=Polly.Raveena -language=en-IN
 
 A `-message` flag overrides the default test message; `-voice`/`-language`
 (call only) override `TWILIO_VOICE`/`TWILIO_LANGUAGE` for one run, to try a
-voice without changing `.env`.
+voice without changing `.env`. `TWILIO_API_BASE_URL` points either binary at
+something other than real Twilio — e.g. a local mock server, useful for
+dry-running `twiliocheck` itself without spending anything.
 
 **A `202`/`"accepted"` result only means Twilio queued the request** — it is
 not proof of delivery. Cross-check the actual outcome via Twilio's own API
