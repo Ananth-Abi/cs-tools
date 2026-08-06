@@ -137,10 +137,6 @@ func NewClient(cfg Config) *Client {
 	}
 }
 
-// maxErrBodyBytes bounds how much of an error response body newUpstreamError
-// keeps, whether or not it parses as JSON.
-const maxErrBodyBytes = 256
-
 // entityErrorBody mirrors entity-service's apierror.WriteJSON output:
 // {"code": <status>, "message": "<msg>"}.
 type entityErrorBody struct {
@@ -152,19 +148,18 @@ type entityErrorBody struct {
 // (apierror.ValidationError et al. are written for exactly this purpose) —
 // rather than the raw {"code":...,"message":"..."} JSON blob, so callers can
 // both log the exact reason and, for 400s, surface it to the frontend
-// verbatim instead of a generic fallback string. Falls back to a raw-body
-// excerpt if the response isn't the expected shape (e.g. a gateway error
-// page instead of an entity-service response).
+// verbatim instead of a generic fallback string. Body is left empty if the
+// response isn't the expected shape (e.g. a gateway error page instead of an
+// entity-service response): callers already treat an empty Body as "no
+// specific message available" and fall back to a generic one, and this
+// deliberately avoids ever logging or returning to the frontend a raw
+// upstream body of unknown, unbounded content.
 func newUpstreamError(statusCode int, rawBody []byte) *apierror.Error {
 	var body entityErrorBody
 	if err := json.Unmarshal(rawBody, &body); err == nil && body.Message != "" {
 		return &apierror.Error{StatusCode: statusCode, Body: body.Message}
 	}
-	excerpt := rawBody
-	if len(excerpt) > maxErrBodyBytes {
-		excerpt = excerpt[:maxErrBodyBytes]
-	}
-	return &apierror.Error{StatusCode: statusCode, Body: string(excerpt)}
+	return &apierror.Error{StatusCode: statusCode}
 }
 
 // do executes an authenticated HTTP request against entity-service and

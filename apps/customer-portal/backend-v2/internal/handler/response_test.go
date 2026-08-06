@@ -83,3 +83,19 @@ func TestSummarizeErr_IncludesUpstreamBody(t *testing.T) {
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+// TestSummarizeErr_OmitsEmptyBody guards against ever logging a raw,
+// unbounded upstream response body: entity.newUpstreamError leaves Body
+// empty when the upstream response isn't the documented {"message":...}
+// shape, and summarizeErr must not turn that into a misleading
+// "status N: " with a dangling empty message.
+func TestSummarizeErr_OmitsEmptyBody(t *testing.T) {
+	err := &apierror.Error{StatusCode: http.StatusBadGateway, Body: ""}
+
+	got := summarizeErr(err)
+
+	want := "upstream status 502"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}

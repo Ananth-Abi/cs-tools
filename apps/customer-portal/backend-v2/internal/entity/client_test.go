@@ -34,25 +34,27 @@ func TestNewUpstreamError_ExtractsMessageField(t *testing.T) {
 	}
 }
 
-func TestNewUpstreamError_FallsBackToRawBodyWhenNotJSON(t *testing.T) {
+// TestNewUpstreamError_LeavesBodyEmptyWhenNotJSON guards against ever
+// logging or returning to the frontend a raw, unbounded upstream response
+// body (e.g. a gateway error page) — Body must stay empty so callers'
+// existing "empty Body means no specific message" fallback kicks in,
+// instead of surfacing arbitrary upstream content.
+func TestNewUpstreamError_LeavesBodyEmptyWhenNotJSON(t *testing.T) {
 	raw := []byte("<html>502 Bad Gateway</html>")
 
 	err := newUpstreamError(http.StatusBadGateway, raw)
 
-	if err.Body != string(raw) {
-		t.Fatalf("expected raw body fallback, got %q", err.Body)
+	if err.Body != "" {
+		t.Fatalf("expected empty Body for a non-JSON response, got %q", err.Body)
 	}
 }
 
-func TestNewUpstreamError_TruncatesLongRawBody(t *testing.T) {
-	raw := make([]byte, maxErrBodyBytes+100)
-	for i := range raw {
-		raw[i] = 'x'
-	}
+func TestNewUpstreamError_LeavesBodyEmptyWhenMessageFieldMissing(t *testing.T) {
+	raw := []byte(`{"code":500}`)
 
 	err := newUpstreamError(http.StatusInternalServerError, raw)
 
-	if len(err.Body) != maxErrBodyBytes {
-		t.Fatalf("expected body truncated to %d bytes, got %d", maxErrBodyBytes, len(err.Body))
+	if err.Body != "" {
+		t.Fatalf("expected empty Body when message field is absent, got %q", err.Body)
 	}
 }

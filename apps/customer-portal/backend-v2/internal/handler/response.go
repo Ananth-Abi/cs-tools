@@ -116,16 +116,21 @@ func mapUpstreamError(w http.ResponseWriter, err error, fallbackMsg string) {
 }
 
 // summarizeErr returns a log-safe description of err: for a typed
-// *apierror.Error, the upstream status code AND its exact Body (entity-service's
-// own error message, extracted from its {"code","message"} response shape by
-// entity.newUpstreamError — never the full raw response, which could carry
-// unbounded or binary upstream data) — or a fixed generic message otherwise.
-// An unrecognized error can come from the underlying HTTP client (e.g. a
-// net/url.Error), which stringifies with the full request URL including query
-// parameters, so its raw text is not safe to log verbatim.
+// *apierror.Error, the upstream status code and, if present, its Body
+// (entity-service's own error message, extracted from its
+// {"code","message"} response shape by entity.newUpstreamError — Body is
+// left empty rather than falling back to a raw response excerpt, so this
+// never logs unbounded or non-message upstream content) — or a fixed
+// generic message otherwise. An unrecognized error can come from the
+// underlying HTTP client (e.g. a net/url.Error), which stringifies with the
+// full request URL including query parameters, so its raw text is not safe
+// to log verbatim.
 func summarizeErr(err error) string {
 	var apiErr *apierror.Error
 	if errors.As(err, &apiErr) {
+		if apiErr.Body == "" {
+			return fmt.Sprintf("upstream status %d", apiErr.StatusCode)
+		}
 		return fmt.Sprintf("upstream status %d: %s", apiErr.StatusCode, apiErr.Body)
 	}
 	return "upstream request failed"

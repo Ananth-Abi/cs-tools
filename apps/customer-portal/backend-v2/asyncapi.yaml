@@ -117,10 +117,12 @@ components:
             type: string
             format: uuid
             description: >
-              Required — the ID of an existing conversation (obtained via
-              POST /projects/{projectId}/conversations/{conversationId}/messages
-              or another entity-service-backed flow). Omitting it returns an
-              ErrorMessage; this server cannot mint a new conversation ID.
+              Required — the ID of an existing conversation, obtained from
+              the response of POST /projects/{id}/conversations (which
+              starts a new conversation) or GET /conversations/{id}. This
+              WebSocket connection only resumes a conversation; it never
+              mints a new conversation ID itself. Omitting conversationId
+              returns an ErrorMessage.
           envProducts:
             type: object
             nullable: true

@@ -69,10 +69,9 @@ const (
 )
 
 // conversationStatusToState maps the portal's PATCH /conversations/{id}
-// status values to entity-service's ConversationState enum, using this API's
-// own conversation state ID lookup (open:1, active:2, resolved:3, converted:4,
-// abandonded:5, close:6) — only the three states this endpoint can transition
-// to are represented here.
+// status values to entity-service's ConversationState enum string values —
+// only the three states this endpoint can transition to are represented
+// here.
 var conversationStatusToState = map[string]string{
 	ConversationStatusClosed:    "CLOSED",
 	ConversationStatusAbandoned: "ABANDONED",
