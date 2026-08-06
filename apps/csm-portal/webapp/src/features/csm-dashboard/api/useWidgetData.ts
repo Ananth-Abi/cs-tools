@@ -20,6 +20,7 @@ import { useBackendApi } from "@api/backend/client";
 import type { BeWidgetResourceType, BeWidgetShape } from "@api/backend/types";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveRelativeDateFilters } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
 
 /** Default number of rows fetched for a `shape: "list"` widget when the
  * template doesn't set its own `listLimit`. */
@@ -75,7 +76,9 @@ export function useWidgetData(
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   const limit = shape === "list" ? (listLimit ?? DEFAULT_LIST_LIMIT) : 1;
   const effectiveOffset = shape === "list" ? offset : 0;
-  const resolvedFilters = resolveTeamPlaceholder(filters, selectedTeamGroupId);
+  const resolvedFilters = resolveRelativeDateFilters(
+    resolveTeamPlaceholder(filters, selectedTeamGroupId),
+  );
   const effectiveSortBy = shape === "list" ? sortBy : undefined;
 
   return useQuery<WidgetData, Error>({

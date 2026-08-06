@@ -21,6 +21,7 @@ import type { BeDashboardPieSlice, BeWidgetResourceType } from "@api/backend/typ
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { mergeWidgetFilters } from "@features/csm-dashboard/utils/widgetFilterMerge";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveRelativeDateFilters } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
 
 export interface PieSliceResult extends BeDashboardPieSlice {
   value: number;
@@ -60,9 +61,11 @@ export function useWidgetPieData(
 
   const queries = useQueries({
     queries: slices.map((slice) => {
-      const filters = resolveTeamPlaceholder(
-        mergeWidgetFilters(baseFilters, slice.query),
-        selectedTeamGroupId,
+      const filters = resolveRelativeDateFilters(
+        resolveTeamPlaceholder(
+          mergeWidgetFilters(baseFilters, slice.query),
+          selectedTeamGroupId,
+        ),
       );
       return {
         queryKey: [
