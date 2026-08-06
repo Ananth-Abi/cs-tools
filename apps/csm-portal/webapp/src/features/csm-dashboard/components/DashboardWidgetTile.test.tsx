@@ -105,6 +105,7 @@ vi.mock("@wso2/oxygen-ui-charts-react", () => ({
 
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
 import { CURRENT_TEAM_PLACEHOLDER } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { CURRENT_USER_PLACEHOLDER } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 
 function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient({
@@ -201,6 +202,40 @@ describe("DashboardWidgetTile", () => {
     await waitFor(() =>
       expect(screen.getByText("Could not load this widget.")).toBeInTheDocument(),
     );
+  });
+
+  it("resolves the __current_user__ filter placeholder with the signed-in user's own id before firing its /cases/search call", async () => {
+    postMock.mockResolvedValue({ total: 1, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_cases_count"
+        displayName="My Cases"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [
+            { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+          ],
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("1")).toBeInTheDocument());
+    // "11111111-aaaa-bbbb-cccc-000000000001" is the mocked signed-in user's
+    // own id (see the CurrentUserContext mock above).
+    expect(postMock).toHaveBeenCalledWith("/cases/search", {
+      filters: {
+        filters: [
+          {
+            field: "assignedUserId",
+            op: "in",
+            values: ["11111111-aaaa-bbbb-cccc-000000000001"],
+          },
+        ],
+      },
+      pagination: { offset: 0, limit: 1 },
+    });
   });
 
   it("renders the same table the Cases tab uses for shape: list, capped at listLimit", async () => {
@@ -429,6 +464,38 @@ describe("DashboardWidgetTile", () => {
     // columns come entirely from the widget's own `columns` config.
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
     expect(screen.getByText("Case ID")).toBeInTheDocument();
+  });
+
+  it("resolves the __current_user__ placeholder (raw, as the backend now sends it unresolved) to the signed-in user's own id before it reaches the 'View more' href, where it's then masked to @me", async () => {
+    postMock.mockResolvedValue({
+      total: 6,
+      cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
+      limit: 5,
+      offset: 0,
+      hasMore: true,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_cases"
+        displayName="My Cases"
+        resourceType="case"
+        shape="list"
+        filters={{
+          filters: [
+            { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+          ],
+        }}
+        listLimit={5}
+      />,
+    );
+
+    const viewMoreLink = await screen.findByRole("link", { name: /view more/i });
+    const href = viewMoreLink.getAttribute("href") ?? "";
+    expect(href).not.toContain(CURRENT_USER_PLACEHOLDER);
+    expect(href).not.toContain("11111111-aaaa-bbbb-cccc-000000000001");
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(params.get("assignedUserId")).toBe("@me");
   });
 
   it("renders through the generic column renderer, resolving a nested dot-path, when columns are configured", async () => {

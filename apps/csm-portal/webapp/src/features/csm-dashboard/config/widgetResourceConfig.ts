@@ -20,8 +20,12 @@ import {
   Briefcase,
   Building2,
   Clock,
+  Cog,
   FolderKanban,
   GitPullRequest,
+  Handshake,
+  Megaphone,
+  Shield,
   ShieldAlert,
   Users,
   ListChecks,
@@ -29,7 +33,11 @@ import {
 } from "@wso2/oxygen-ui-icons-react";
 import type { BeWidgetResourceType } from "@api/backend/types";
 import { humanizeState } from "@features/csm-dashboard/utils/abtDashboard";
-import { casesHref } from "@features/csm-cases/utils/casesFiltersUrl";
+import {
+  casesHref,
+  DEFAULT_CASES_FILTERS,
+  writeCasesFiltersToUrl,
+} from "@features/csm-cases/utils/casesFiltersUrl";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
 import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
 import {
@@ -292,6 +300,37 @@ function operationsHref(tab: string, params?: URLSearchParams): string {
   return `/operations?${out.toString()}`;
 }
 
+/** `securityCenterHref`'s counterpart for the Security Center section's own
+ * `?tab=` tab strip (see `CsmSecurityCenterPage`) — same shape as
+ * `operationsHref`, just a different base path. */
+function securityCenterHref(tab: string, params?: URLSearchParams): string {
+  const out = new URLSearchParams();
+  out.set("tab", tab);
+  params?.forEach((value, key) => out.set(key, value));
+  return `/security-center?${out.toString()}`;
+}
+
+/**
+ * Builds a `basePath?...` href for a case-table resourceType whose own list
+ * page is a real route (not a `?tab=`-switched section) but still reuses the
+ * cases list's own `CasesFilters` URL scheme under the hood (`engagement`'s
+ * `/engagements` — see `CsmEngagementsPage`, built on the shared
+ * `CsmIssuesView` — reads/writes the identical query params `/cases` does,
+ * via `readCasesFiltersFromUrl`/`writeCasesFiltersToUrl`). The destination
+ * page locks its own `caseTypes` filter itself (`lockedFilters` in
+ * `CsmIssuesView`), so `translateCaseDashboardFilters`'s own `caseTypes`
+ * output — always just this one type — doesn't need to be (and isn't)
+ * dropped here; it's simply redundant with what the page already locks.
+ */
+function caseTypeListHref(basePath: string, filters: Record<string, unknown>): string {
+  const full: CasesFilters = {
+    ...DEFAULT_CASES_FILTERS,
+    ...translateCaseDashboardFilters(filters),
+  };
+  const qs = writeCasesFiltersToUrl(full).toString();
+  return qs ? `${basePath}?${qs}` : basePath;
+}
+
 /** Dashboard incident filters already use the real `BeIncidentPriority`
  * wire values (`CRITICAL`/`HIGH`/...), same as `IncidentFilters.priorities` —
  * no translation table needed, only a type narrowing. */
@@ -349,6 +388,73 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     iconColor: "primary",
     previewSlug: "cases",
     detailHref: (item) => (asString(item.id) ? `/cases/${asString(item.id)}` : undefined),
+  },
+  // service_request / security_report_analysis / announcement / engagement:
+  // additional values of the case-search "type" enum (see `BeCaseType` /
+  // `ALL_CASE_TYPES` in `caseType.ts`), routed to the exact same `/cases/
+  // search` endpoint and response rows as `case` above — the backend
+  // auto-injects the implied `type` filter for each at dashboard-load time.
+  // Rows are still case rows (same `BeCaseSearchView` shape), so these reuse
+  // `case`'s own primaryLabel/secondaryLabel/list renderer verbatim; only the
+  // icon/color/click-through destination differ per type, mirroring
+  // `CASE_TYPE_COLOR`'s own per-type palette in `caseType.ts`.
+  service_request: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    buildHref: (filters) =>
+      operationsHref(
+        "service_requests",
+        writeCasesFiltersToUrl({
+          ...DEFAULT_CASES_FILTERS,
+          ...translateCaseDashboardFilters(filters),
+        }),
+      ),
+    icon: Cog,
+    iconColor: "info",
+    previewSlug: "service-requests",
+  },
+  security_report_analysis: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    buildHref: (filters) =>
+      securityCenterHref(
+        "security_reports",
+        writeCasesFiltersToUrl({
+          ...DEFAULT_CASES_FILTERS,
+          ...translateCaseDashboardFilters(filters),
+        }),
+      ),
+    icon: Shield,
+    iconColor: "warning",
+    previewSlug: "security-reports",
+  },
+  announcement: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    // CsmAnnouncementsPage keeps its own filters in local component state,
+    // not the URL (unlike /cases, /operations, /engagements) — there is no
+    // query-param scheme to land a filtered click-through on yet, so this
+    // stays unfiltered, same as `problem` above.
+    buildHref: () => "/announcements",
+    icon: Megaphone,
+    iconColor: "success",
+    previewSlug: "announcements",
+  },
+  engagement: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    buildHref: (filters) => caseTypeListHref("/engagements", filters),
+    icon: Handshake,
+    iconColor: "secondary",
+    previewSlug: "engagements",
   },
   incident: {
     searchEndpoint: "/incidents/search",

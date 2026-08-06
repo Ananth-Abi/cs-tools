@@ -2759,6 +2759,14 @@ export interface BeUserSearchByEmailResponse {
  * own data by issuing a `POST /{resourceType}s/search`-shaped request (see
  * `widgetResourceConfig.ts` for the real endpoint per type) with `filters`
  * forwarded verbatim.
+ *
+ * `service_request`, `security_report_analysis`, `announcement`, and
+ * `engagement` are additional values of the case-search `type` field (see
+ * `BeCaseType`/`ALL_CASE_TYPES` in `caseType.ts`) exposed as their own widget
+ * resourceType alongside `case` itself — all five route to the same `POST
+ * /cases/search`, the backend auto-injecting the implied `type` filter for
+ * each at dashboard-load time when a widget doesn't already carry one
+ * explicitly.
  */
 export type BeWidgetResourceType =
   | "case"
@@ -2771,7 +2779,11 @@ export type BeWidgetResourceType =
   | "problem"
   | "product_vulnerability"
   | "task"
-  | "call_request";
+  | "call_request"
+  | "service_request"
+  | "security_report_analysis"
+  | "announcement"
+  | "engagement";
 
 /**
  * How a widget's resolved data should be rendered. `pie` and `bar` both

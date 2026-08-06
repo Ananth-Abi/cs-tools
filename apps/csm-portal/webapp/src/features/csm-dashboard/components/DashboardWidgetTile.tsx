@@ -33,6 +33,7 @@ import GenericColumnList from "@features/csm-dashboard/components/GenericColumnL
 import { buildWidgetPreviewHref } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 import { mergeWidgetFilters } from "@features/csm-dashboard/utils/widgetFilterMerge";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveCurrentUserPlaceholder } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 import { resolveWidgetText } from "@features/csm-dashboard/utils/widgetTextPlaceholder";
 import DashboardPieChart from "@features/csm-dashboard/components/DashboardPieChart";
 import DashboardBarChart from "@features/csm-dashboard/components/DashboardBarChart";
@@ -122,6 +123,15 @@ export default function DashboardWidgetTile({
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useCurrentUser();
+  const currentUserId = user?.id;
+  // Resolves both client-side filter placeholders a widget's own (opaque)
+  // filters may carry — `__current_team__` (see `teamFilterPlaceholder.ts`)
+  // and `__current_user__` (see `currentUserFilterPlaceholder.ts`) — in one
+  // pass, so every click-through href below (and the two data-fetching hooks,
+  // which resolve internally the same way) never sends either placeholder
+  // literally.
+  const resolvePlaceholders = (f: Record<string, unknown>): Record<string, unknown> =>
+    resolveCurrentUserPlaceholder(resolveTeamPlaceholder(f, selectedTeamGroupId), currentUserId);
   // Carried on every count/pie/bar click-through below so the resource's own
   // list page (which has no dashboard context of its own) can offer a Back
   // button straight to this exact dashboard — mirroring the list-shape
@@ -149,6 +159,7 @@ export default function DashboardWidgetTile({
     shape !== "pie" && shape !== "bar",
     selectedTeamGroupId,
     sortBy,
+    currentUserId,
   );
   const pieData = useWidgetPieData(
     widgetId,
@@ -156,6 +167,7 @@ export default function DashboardWidgetTile({
     filters,
     shape === "pie" || shape === "bar" ? (slices ?? []) : [],
     selectedTeamGroupId,
+    currentUserId,
   );
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   // Thousands separators for shape "count"'s big number -- used both in the
@@ -179,10 +191,10 @@ export default function DashboardWidgetTile({
   }
 
   // The count-shape tile's own click-through href — resolved so a "View
-  // all" link never carries the literal `__current_team__` placeholder
-  // into the destination resource's own filters (see
-  // `teamFilterPlaceholder.ts`).
-  const href = config.buildHref(resolveTeamPlaceholder(filters, selectedTeamGroupId));
+  // all" link never carries a literal `__current_team__`/`__current_user__`
+  // placeholder into the destination resource's own filters (see
+  // `teamFilterPlaceholder.ts`/`currentUserFilterPlaceholder.ts`).
+  const href = config.buildHref(resolvePlaceholders(filters));
   const Icon = config.icon;
   const isListShape = shape === "list";
 
@@ -303,8 +315,8 @@ export default function DashboardWidgetTile({
                     // placeholder here used to get silently dropped there
                     // (teamFilterPlaceholder.ts's fail-open), returning
                     // every team's cases instead of the viewer's own.
-                    filters: resolveTeamPlaceholder(filters, selectedTeamGroupId),
-                    currentUserId: user?.id,
+                    filters: resolvePlaceholders(filters),
+                    currentUserId,
                   })}
                   size="small"
                   variant="text"
@@ -342,7 +354,7 @@ export default function DashboardWidgetTile({
     // (`pointerEvents: "auto"`) for the chart specifically, letting its own
     // click and keyboard handling work exactly as before.
     const ChartComponent = shape === "pie" ? DashboardPieChart : DashboardBarChart;
-    const tileHref = config.buildHref(resolveTeamPlaceholder(filters, selectedTeamGroupId));
+    const tileHref = config.buildHref(resolvePlaceholders(filters));
     const handleTileClick = (): void => {
       void navigate(tileHref, { state: dashboardReturnState });
     };
@@ -400,12 +412,7 @@ export default function DashboardWidgetTile({
               isError={pieData.isError}
               onSliceClick={(slice: PieSliceResult) =>
                 navigate(
-                  config.buildHref(
-                    resolveTeamPlaceholder(
-                      mergeWidgetFilters(filters, slice.query),
-                      selectedTeamGroupId,
-                    ),
-                  ),
+                  config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query))),
                   { state: dashboardReturnState },
                 )
               }
