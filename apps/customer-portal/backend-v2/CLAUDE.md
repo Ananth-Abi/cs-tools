@@ -12,9 +12,10 @@ service, the registry (robot-account) service, and the project-contact onboardin
 "The AI chat agent", "The product-consumption service", "The registry service", and "The
 project-contact onboarding service" below — none of the last four is entity-service-backed at
 all). Route list: `GET /health`, `GET`/`PATCH /users/me`, `POST /accounts/search`,
-`GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`, `POST /cases/search`,
+`GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
+`POST /projects/{id}/cases/search`,
 `GET /cases/{id}`, `POST /cases`, `PATCH /cases/{id}`, `POST /cases/{id}/comments`,
-`POST /cases/{id}/activities/search`, `POST /deployments/search`, `POST /deployments`,
+`POST /cases/{id}/activities/search`, `POST /projects/{id}/deployments/search`, `POST /deployments`,
 `PATCH /deployments/{id}`, `POST /deployed-products/search`, `POST /deployed-products`,
 `PATCH /deployed-products/{id}`, `POST /attachments`, `POST /attachments/search`,
 `GET /attachments/{id}/content`, `DELETE /attachments/{id}`, `POST /products/search`,
@@ -392,24 +393,38 @@ itself a design decision about what a customer should see, and entity-service's 
 leak through it by default.
 
 **The DTO layer's job isn't only response trimming — it also absorbs entity-service's own request
-contract changes, so the frontend never has to know they happened.** `POST /cases/search` is the
-example: entity-service redesigned its case-search filters from named fields (`types`, `states`,
-`projectIds`, ...) into a generic predicate array (`filters: [{field, op, values}]`,
-`internal/entity/types.go`'s `CaseFieldFilter`) and now rejects any request using the old shape
-outright (`decodeRequest`'s `DisallowUnknownFields`). The frontend was never updated — it still
-sends the old named-field shape — so `dto.CaseSearchRequest`/`CaseSearchFilters` keep that exact old
-shape as this backend's own stable, unchanged contract, and `dto.BuildEntitySearchCasesRequest` is
-the only place that builds an `entity.CaseFieldFilter` array, translating each portal filter field
-into the "field in/eq values" entry entity-service's `case_filters.go` expects (see that file for
-the authoritative field/op table if entity-service adds a new filter). `CreatedByMe` becomes a
-`createdBy`+`eq` filter carrying the literal string `"__current_user_email__"` — this must match
-entity-service's own `currentUserFilterPlaceholder` constant exactly, not just be "some sentinel".
-If entity-service ever changes another request contract this way, the fix is the same shape: keep
-the portal-facing dto type frozen at whatever the frontend already sends, and write a
-`BuildEntityXRequest` translator rather than pushing the new shape onto the frontend or, worse,
-decoding the incoming request directly into an `internal/entity` type (which is how this bug
-happened in the first place — there was no dto/entity separation on the request side for this one
-endpoint, unlike every response, which already goes through `dto.Map*`).
+contract changes, so the frontend never has to know they happened.**
+`POST /projects/{id}/cases/search` is the example: entity-service redesigned its case-search
+filters from named fields (`types`, `states`, `projectIds`, ...) into a generic predicate array
+(`filters: [{field, op, values}]`, `internal/entity/types.go`'s `CaseFieldFilter`) and now rejects
+any request using the old shape outright (`decodeRequest`'s `DisallowUnknownFields`). The frontend
+was never updated — it still sends the old named-field shape — so
+`dto.CaseSearchRequest`/`CaseSearchFilters` keep that exact old shape as this backend's own stable,
+unchanged contract, and `dto.BuildEntitySearchCasesRequest` is the only place that builds an
+`entity.CaseFieldFilter` array, translating each portal filter field into the "field in/eq values"
+entry entity-service's `case_filters.go` expects (see that file for the authoritative field/op
+table if entity-service adds a new filter). `CreatedByMe` becomes a `createdBy`+`eq` filter carrying
+the literal string `"__current_user_email__"` — this must match entity-service's own
+`currentUserFilterPlaceholder` constant exactly, not just be "some sentinel". If entity-service ever
+changes another request contract this way, the fix is the same shape: keep the portal-facing dto
+type frozen at whatever the frontend already sends, and write a `BuildEntityXRequest` translator
+rather than pushing the new shape onto the frontend or, worse, decoding the incoming request
+directly into an `internal/entity` type (which is how this bug happened in the first place — there
+was no dto/entity separation on the request side for this one endpoint, unlike every response,
+which already goes through `dto.Map*`).
+
+**Project scoping via a `{id}` path parameter is the source of truth — never a client-settable body
+field, even when entity-service's own request struct has one.**
+`POST /projects/{id}/cases/search` and `POST /projects/{id}/deployments/search` both scope every
+search to the one project in the URL: `dto.CaseSearchFilters` has no `projectIds` field at all (the
+frontend has never sent one), and `dto.BuildEntitySearchCasesRequest(projectID, req)` always adds a
+`projectId`+`in` filter carrying that path value. `entity.SearchDeploymentsRequest` does still have
+a `ProjectIDs` field (it mirrors entity-service's own struct 1:1, per the no-DTO-layer exception for
+this endpoint — see "Response shaping" below), but the handler forcibly overwrites it with the path
+value right after decoding, the same way `AIChatHandler.SearchConversations` already does for
+`entity.SearchConversationsRequest.Filters.ProjectIDs`. Letting the body set project scope
+independently of the path would both be a needless IDOR surface and risk the same
+unsatisfiable-AND-filter bug `CreatedBy`/`CreatedByMe` had if the two values ever disagreed.
 
 **`json.RawMessage` on a request field usually means "preserve three states," not "skip validation."**
 `entity.UpdateDeployedProductRequest.Description` is `json.RawMessage` specifically so entity-service

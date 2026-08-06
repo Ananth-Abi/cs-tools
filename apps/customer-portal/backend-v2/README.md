@@ -272,7 +272,7 @@ backend-v2/
 │       ├── projects.go          # POST /projects/search, GET /projects/{id}
 │       ├── project_stats.go     # project filters/features/dashboard-stats (composite, some graceful-degradation), case-grouped time-cards
 │       ├── cases.go             # cases search/get/create/update/comment/activities/feedback/escalations, case-scoped attachment update
-│       ├── deployments.go       # POST /deployments/search, POST /deployments, PATCH /deployments/{id}, deployment-scoped attachment update
+│       ├── deployments.go       # POST /projects/{id}/deployments/search, POST /deployments, PATCH /deployments/{id}, deployment-scoped attachment update
 │       ├── deployed_products.go # deployed-product search/create/update + per-deployed-product metrics/usage-counts
 │       ├── attachments.go       # attachment create/search/download/get/delete
 │       ├── products.go          # POST /products/search, POST /products/{id}/versions/search
@@ -314,7 +314,7 @@ backend-v2/
 - `GET /projects/{id}/stats/support` — get a project's combined support statistics (case + conversation; partial failures are tolerated)
 - `GET /projects/{id}/stats/time-cards` — get a project's time-card statistics, optionally filtered by `startDate`/`endDate`
 - `GET /projects/{id}/stats/change-requests` — get a project's change-request statistics
-- `POST /cases/search` — search cases
+- `POST /projects/{id}/cases/search` — search a project's cases
 - `GET /cases/{id}` — get case by ID
 - `POST /cases` — create a case
 - `PATCH /cases/{id}` — update a case (restricted, customer-safe field subset — see CLAUDE.md)
@@ -324,7 +324,7 @@ backend-v2/
 - `PATCH /cases/{caseId}/attachments/{attachmentId}` — update a case attachment's name (description not supported on this route — see CLAUDE.md)
 - `POST /cases/{caseId}/escalations` — escalate or de-escalate a case (ServiceNow data source only)
 - `POST /cases/{caseId}/escalations/search` — search a case's escalations (ServiceNow data source only)
-- `POST /deployments/search` — search deployments
+- `POST /projects/{id}/deployments/search` — search a project's deployments
 - `POST /deployments` — create a deployment (ServiceNow data source only)
 - `PATCH /deployments/{id}` — update a deployment's name/type/description, or deactivate it
 - `PATCH /deployments/{deploymentId}/attachments/{attachmentId}` — update a deployment attachment's name/description
@@ -447,7 +447,7 @@ curl -H "x-jwt-assertion: $JWT" "http://localhost:8080/projects/<project-id>/sta
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stats/change-requests
 
-curl -X POST http://localhost:8080/cases/search \
+curl -X POST http://localhost:8080/projects/<project-id>/cases/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":10,"offset":0},"filters":{"searchQuery":"login error"}}'
 
@@ -465,7 +465,7 @@ curl -X POST http://localhost:8080/cases/<case-id>/comments \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"content":"Any update on this?"}'
 
-curl -X POST http://localhost:8080/deployments/search \
+curl -X POST http://localhost:8080/projects/<project-id>/deployments/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":10,"offset":0}}'
 

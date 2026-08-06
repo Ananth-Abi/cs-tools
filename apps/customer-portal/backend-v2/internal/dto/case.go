@@ -49,7 +49,8 @@ func mapNumberRef(r *entity.CaseNumberRef) *NumberRef {
 	return &NumberRef{ID: r.ID, Number: r.Number}
 }
 
-// CaseSummary is one item of the portal's response for POST /cases/search.
+// CaseSummary is one item of the portal's response for
+// POST /projects/{id}/cases/search.
 //
 // Deliberately excludes entity-service's InternalID (internal-only
 // identifier), Catalog/CatalogItem (CMDB implementation detail), Conversation,
@@ -73,7 +74,8 @@ type CaseSummary struct {
 	AssignedTeam   *Ref    `json:"assignedTeam,omitempty"`
 }
 
-// SearchCasesResponse is the portal's response for POST /cases/search.
+// SearchCasesResponse is the portal's response for
+// POST /projects/{id}/cases/search.
 type SearchCasesResponse struct {
 	Cases  []CaseSummary `json:"cases"`
 	Total  int           `json:"total"`
@@ -117,18 +119,24 @@ func MapSearchCases(r entity.SearchCasesResponse) SearchCasesResponse {
 // caller".
 const currentUserFilterPlaceholder = "__current_user_email__"
 
-// CaseSearchFilters holds the optional filter criteria for POST /cases/search.
-// This is the portal's own request contract, unchanged from before
-// entity-service redesigned its case-search wire format into a generic
-// filter-predicate array (matching what the frontend has always sent) —
-// only the fields
-// the portal currently exposes are included; extend as needed when more
-// filters are surfaced to the frontend. See BuildEntitySearchCasesRequest
-// for the translation into entity-service's current contract.
+// CaseSearchFilters holds the optional filter criteria for
+// POST /projects/{id}/cases/search. This is the portal's own request
+// contract, unchanged from before entity-service redesigned its case-search
+// wire format into a generic filter-predicate array (matching what the
+// frontend has always sent) — only the fields the portal currently exposes
+// are included; extend as needed when more filters are surfaced to the
+// frontend. See BuildEntitySearchCasesRequest for the translation into
+// entity-service's current contract.
+//
+// No ProjectIDs field: project scoping comes exclusively from the {id} path
+// parameter (see BuildEntitySearchCasesRequest's projectID parameter), never
+// from the request body — the frontend has never sent one, and letting the
+// body set it would invite exactly the kind of unsatisfiable-AND-filter bug
+// CreatedBy/CreatedByMe had (a body projectIds disagreeing with the path
+// silently returning an empty result instead of erroring or being ignored).
 type CaseSearchFilters struct {
 	Types           []string `json:"types,omitempty"`
 	SearchQuery     string   `json:"searchQuery,omitempty"`
-	ProjectIDs      []string `json:"projectIds,omitempty"`
 	DeploymentIDs   []string `json:"deploymentIds,omitempty"`
 	States          []string `json:"states,omitempty"`
 	Severities      []string `json:"severities,omitempty"`
@@ -143,7 +151,8 @@ type CaseSearchFilters struct {
 	ParentID        *string  `json:"parentId,omitempty"`
 }
 
-// CaseSearchRequest is the portal's request body for POST /cases/search.
+// CaseSearchRequest is the portal's request body for
+// POST /projects/{id}/cases/search.
 type CaseSearchRequest struct {
 	Filters    CaseSearchFilters `json:"filters"`
 	SortBy     entity.CaseSort   `json:"sortBy"`
@@ -154,16 +163,19 @@ type CaseSearchRequest struct {
 // request into entity-service's current generic filter-predicate array
 // contract (see entity.CaseFieldFilter) — every filter the portal exposes
 // becomes one "field in/eq values" entry; SearchQuery, SortBy, and
-// Pagination pass straight through unchanged. CreatedByMe becomes a
-// createdBy+eq filter carrying currentUserFilterPlaceholder, exactly as
-// entity-service's own case_filters.go expects, resolving the caller's
-// identity server-side from the forwarded x-user-id-token. CreatedByMe takes
-// precedence over CreatedBy when both are set: entity-service's filters
-// array is AND-only, so a createdBy+in filter and a createdBy+eq filter
-// together could never both match (barring CreatedBy coincidentally
-// containing the caller's own email), silently returning an empty result
-// set — CreatedBy is dropped entirely rather than combined.
-func BuildEntitySearchCasesRequest(req CaseSearchRequest) entity.SearchCasesRequest {
+// Pagination pass straight through unchanged. projectID (the {id} path
+// parameter from POST /projects/{id}/cases/search — never the request body)
+// always becomes a projectId+in filter with that single value, scoping every
+// search to the one project in the URL. CreatedByMe becomes a createdBy+eq
+// filter carrying currentUserFilterPlaceholder, exactly as entity-service's
+// own case_filters.go expects, resolving the caller's identity server-side
+// from the forwarded x-user-id-token. CreatedByMe takes precedence over
+// CreatedBy when both are set: entity-service's filters array is AND-only,
+// so a createdBy+in filter and a createdBy+eq filter together could never
+// both match (barring CreatedBy coincidentally containing the caller's own
+// email), silently returning an empty result set — CreatedBy is dropped
+// entirely rather than combined.
+func BuildEntitySearchCasesRequest(projectID string, req CaseSearchRequest) entity.SearchCasesRequest {
 	var filters []entity.CaseFieldFilter
 
 	addIn := func(field string, values []string) {
@@ -173,7 +185,7 @@ func BuildEntitySearchCasesRequest(req CaseSearchRequest) entity.SearchCasesRequ
 	}
 
 	addIn("type", req.Filters.Types)
-	addIn("projectId", req.Filters.ProjectIDs)
+	filters = append(filters, entity.CaseFieldFilter{Field: "projectId", Op: "in", Values: []string{projectID}})
 	addIn("deploymentId", req.Filters.DeploymentIDs)
 	addIn("state", req.Filters.States)
 	addIn("severity", req.Filters.Severities)

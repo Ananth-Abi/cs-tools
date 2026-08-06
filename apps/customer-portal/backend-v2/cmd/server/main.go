@@ -222,7 +222,7 @@ func main() {
 	mux.HandleFunc("DELETE /registry-tokens/{id}", registryHandler.DeleteRegistryToken)
 	mux.HandleFunc("POST /registry-tokens/{id}/regenerate", registryHandler.RegenerateRegistryToken)
 
-	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
+	mux.HandleFunc("POST /projects/{id}/cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /cases/{id}", caseHandler.GetCase)
 	mux.HandleFunc("POST /cases", caseHandler.CreateCase)
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
@@ -234,7 +234,7 @@ func main() {
 	mux.HandleFunc("POST /cases/{caseId}/escalations", caseHandler.CreateCaseEscalation)
 	mux.HandleFunc("POST /cases/{caseId}/escalations/search", caseHandler.SearchCaseEscalations)
 
-	mux.HandleFunc("POST /deployments/search", deploymentHandler.SearchDeployments)
+	mux.HandleFunc("POST /projects/{id}/deployments/search", deploymentHandler.SearchDeployments)
 	// POST /deployments only succeeds against entity-service's ServiceNow
 	// data source — see internal/entity/deployments.go.
 	mux.HandleFunc("POST /deployments", deploymentHandler.CreateDeployment)
