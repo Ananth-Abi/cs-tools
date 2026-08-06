@@ -34,15 +34,21 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
 )
 
 func main() {
+	loadDotEnv(".env")
+
 	channel := flag.String("channel", "", `channel to test: "sms" or "call"`)
 	message := flag.String("message", "Test notification from csm-notification-service's twiliocheck tool.", "message text to send, or speak on a call")
 	voice := flag.String("voice", "", `-channel=call only: TTS voice override (e.g. "Polly.Raveena"); empty uses the account/env default`)
@@ -91,4 +97,42 @@ func envOrFlag(envKey, flagValue string) string {
 		return flagValue
 	}
 	return os.Getenv(envKey)
+}
+
+// loadDotEnv reads a .env file and sets any unset environment variables from
+// it, matching cmd/server/main.go's own loadDotEnv — so credentials/config
+// set once in a shared .env work for both. Silently ignored if the file does
+// not exist; logs a warning for any other error.
+func loadDotEnv(path string) {
+	f, err := os.Open(path) // #nosec G304 -- path is always the hardcoded literal ".env" at the only call site
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("loadDotEnv: failed to open .env file", "err", err)
+		}
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		// Strip surrounding quotes from value.
+		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
+			v = v[1 : len(v)-1]
+		}
+		if os.Getenv(k) == "" {
+			_ = os.Setenv(k, v)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		slog.Warn("loadDotEnv: error reading .env file", "err", err)
+	}
 }
