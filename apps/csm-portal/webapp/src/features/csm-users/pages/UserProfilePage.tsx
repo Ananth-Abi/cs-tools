@@ -31,7 +31,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, type JSX, type ReactNode } from "react";
-import { Link as RouterLink, useParams } from "react-router";
+import { Link as RouterLink, useLocation, useParams } from "react-router";
 import QueryErrorState from "@components/QueryErrorState";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
@@ -391,6 +391,14 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
 export default function UserProfilePage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavTransition();
+  // This page is reachable from arbitrary contexts (any user reference —
+  // case creator/assignee, comment author, dashboard widget row), so there's
+  // no single canonical "list" to fall back to the way other detail pages
+  // have. Prefer the URL the row link captured (if any) so "back" returns to
+  // the exact view the engineer came from; browser history otherwise, same
+  // as before this carried no `from` state at all.
+  const backState = useLocation().state as { from?: string } | undefined;
+  const backTarget = backState?.from ?? -1;
 
   const { data: user, isLoading, isError, error } = useGetUserById(id);
 
@@ -406,7 +414,7 @@ export default function UserProfilePage(): JSX.Element {
   if (isError) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <BackButton onClick={() => navigate(-1)} />
+        <BackButton onClick={() => navigate(backTarget)} />
         <QueryErrorState
           message={error instanceof Error && error.message.trim() ? error.message : "Failed to load user."}
           error={error}
@@ -418,7 +426,7 @@ export default function UserProfilePage(): JSX.Element {
   if (!user) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <BackButton onClick={() => navigate(-1)} />
+        <BackButton onClick={() => navigate(backTarget)} />
         <Typography variant="h5">User not found</Typography>
         <Typography variant="body2" color="text.secondary">
           No user with id <code>{id}</code>.
@@ -431,7 +439,7 @@ export default function UserProfilePage(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
-      <BackButton onClick={() => navigate(-1)} />
+      <BackButton onClick={() => navigate(backTarget)} />
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>

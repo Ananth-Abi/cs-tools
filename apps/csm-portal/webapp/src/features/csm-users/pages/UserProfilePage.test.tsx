@@ -119,11 +119,11 @@ function mockQueryResult(
   });
 }
 
-function renderPage(): ReturnType<typeof render> {
+function renderPage(routeState?: { from?: string }): ReturnType<typeof render> {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[{ pathname: "/people/user-1", state: routeState ?? null }]}>
         <UserProfilePage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -252,5 +252,19 @@ describe("UserProfilePage", () => {
     mockQueryResult({ data: { ...BLOCKED_EXTERNAL_USER, active: false } });
     renderPage();
     expect(screen.getByText(/account is inactive/i)).toBeInTheDocument();
+  });
+
+  it("falls back to browser history when no origin was captured (e.g. a bookmarked/direct link)", () => {
+    mockQueryResult({ data: INTERNAL_USER });
+    renderPage();
+    screen.getByRole("button", { name: "Back" }).click();
+    expect(navigateMock).toHaveBeenCalledWith(-1);
+  });
+
+  it("returns to the captured origin (e.g. a dashboard widget or an admin users list) when one is known", () => {
+    mockQueryResult({ data: INTERNAL_USER });
+    renderPage({ from: "/admin/users" });
+    screen.getByRole("button", { name: "Back" }).click();
+    expect(navigateMock).toHaveBeenCalledWith("/admin/users");
   });
 });

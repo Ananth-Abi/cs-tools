@@ -22,9 +22,11 @@ import type { BeProblemDetail } from "@api/backend/types";
 
 const navigateMock = vi.fn();
 const useGetProblemMock = vi.fn();
+const useLocationMock = vi.fn<() => { state: { from?: string } | null }>(() => ({ state: null }));
 
 vi.mock("react-router", () => ({
   useParams: () => ({ id: "prb-1" }),
+  useLocation: () => useLocationMock(),
 }));
 vi.mock("@hooks/useNavTransition", () => ({
   useNavTransition: () => navigateMock,
@@ -148,10 +150,19 @@ describe("ProblemDetailPage", () => {
     expect(screen.getByText("Restart the pod.")).toBeInTheDocument();
   });
 
-  it("navigates back to the problems tab from the back button", () => {
+  it("navigates back to the problems tab from the back button when no origin is known", () => {
+    useLocationMock.mockReturnValue({ state: null });
     mockQueryResult({ data: BASE_PROBLEM });
     render(<ProblemDetailPage />);
     screen.getByRole("button", { name: /back to problems/i }).click();
     expect(navigateMock).toHaveBeenCalledWith("/operations?tab=problems");
+  });
+
+  it("navigates back to the captured origin (e.g. a dashboard widget) when one is known", () => {
+    useLocationMock.mockReturnValue({ state: { from: "/dashboard" } });
+    mockQueryResult({ data: BASE_PROBLEM });
+    render(<ProblemDetailPage />);
+    screen.getByRole("button", { name: /back to problems/i }).click();
+    expect(navigateMock).toHaveBeenCalledWith("/dashboard");
   });
 });

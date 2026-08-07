@@ -17,7 +17,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const authFetchMock = vi.fn();
@@ -84,6 +84,33 @@ function renderPageWithDestinations(
           <Route path="/admin/users" element={<CsmUsersPage />} />
           <Route path="/admin/roles/:id" element={<div>Role members page</div>} />
           <Route path="/people/:id" element={<div>User profile page</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-state-probe">{JSON.stringify(location.state ?? null)}</div>;
+}
+
+/**
+ * Same as {@link renderPageWithDestinations}, but the `/people/:id`
+ * destination renders a probe of the navigated-to `location.state` instead
+ * of a static marker — used to assert the row click actually carries the
+ * `from` state forward, not just that it navigated somewhere.
+ */
+function renderPageWithLocationProbe(
+  initialPath: string | { pathname: string; state?: unknown },
+): ReturnType<typeof render> {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route path="/admin/users" element={<CsmUsersPage />} />
+          <Route path="/people/:id" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -286,5 +313,42 @@ describe("CsmUsersPage — role truncation and row navigation", () => {
     row.focus();
     fireEvent.keyDown(row, { key: "Enter" });
     expect(await screen.findByText("User profile page")).toBeInTheDocument();
+  });
+
+  it("carries this page's own URL forward as `from` when a row navigates to a profile", async () => {
+    renderPageWithLocationProbe("/admin/users");
+
+    await waitFor(() => expect(screen.getByText("John Smith")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("John Smith").closest("tr") as HTMLElement);
+
+    expect(await screen.findByTestId("location-state-probe")).toHaveTextContent(
+      JSON.stringify({ from: "/admin/users" }),
+    );
+  });
+
+  it("renders no Back button when it wasn't reached from a dashboard widget", () => {
+    renderPage("/admin/users");
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+  });
+
+  it("renders a Back button that returns to the dashboard when reached via a dashboard widget's `from` state", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[{ pathname: "/admin/users", state: { from: "/dashboard" } }]}
+        >
+          <Routes>
+            <Route path="/admin/users" element={<CsmUsersPage />} />
+            <Route path="/dashboard" element={<div>Dashboard page</div>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const backButton = await screen.findByRole("button", { name: "Back" });
+    fireEvent.click(backButton);
+
+    expect(await screen.findByText("Dashboard page")).toBeInTheDocument();
   });
 });
