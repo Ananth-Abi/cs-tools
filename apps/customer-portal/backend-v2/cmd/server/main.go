@@ -229,6 +229,7 @@ func main() {
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
 	mux.HandleFunc("GET /cases/{id}/attachments", caseHandler.SearchCaseAttachments)
+	mux.HandleFunc("POST /cases/{id}/attachments", caseHandler.CreateCaseAttachment)
 	mux.HandleFunc("GET /cases/{id}/feedback", caseHandler.GetCaseFeedback)
 	mux.HandleFunc("POST /cases/{id}/feedback", caseHandler.SubmitCaseFeedback)
 	mux.HandleFunc("PATCH /cases/{caseId}/attachments/{attachmentId}", caseHandler.PatchCaseAttachment)
@@ -236,10 +237,10 @@ func main() {
 	mux.HandleFunc("POST /cases/{caseId}/escalations/search", caseHandler.SearchCaseEscalations)
 
 	mux.HandleFunc("POST /projects/{id}/deployments/search", deploymentHandler.SearchDeployments)
-	// POST /deployments only succeeds against entity-service's ServiceNow
-	// data source — see internal/entity/deployments.go.
-	mux.HandleFunc("POST /deployments", deploymentHandler.CreateDeployment)
-	mux.HandleFunc("PATCH /deployments/{id}", deploymentHandler.PatchDeployment)
+	// POST /projects/{id}/deployments only succeeds against entity-service's
+	// ServiceNow data source — see internal/entity/deployments.go.
+	mux.HandleFunc("POST /projects/{id}/deployments", deploymentHandler.CreateDeployment)
+	mux.HandleFunc("PATCH /projects/{projectId}/deployments/{id}", deploymentHandler.PatchDeployment)
 	mux.HandleFunc("PATCH /deployments/{deploymentId}/attachments/{attachmentId}", deploymentHandler.PatchDeploymentAttachment)
 	mux.HandleFunc("POST /deployments/{id}/instances/search", instanceHandler.SearchDeploymentInstances)
 	mux.HandleFunc("POST /deployments/{id}/instances/metrics/search", instanceHandler.SearchDeploymentInstanceMetrics)
@@ -247,11 +248,11 @@ func main() {
 	mux.HandleFunc("POST /deployments/{id}/instances/stats/metrics/search", instanceHandler.SearchDeploymentInstanceMetricsStats)
 	mux.HandleFunc("POST /deployments/{id}/instances/stats/usages/search", instanceHandler.SearchDeploymentInstanceUsageStats)
 
-	mux.HandleFunc("POST /deployed-products/search", deployedProductHandler.SearchDeployedProducts)
-	// POST/PATCH /deployed-products only succeed against entity-service's
+	mux.HandleFunc("POST /deployments/{deploymentId}/products/search", deployedProductHandler.SearchDeployedProducts)
+	// POST/PATCH .../products only succeed against entity-service's
 	// ServiceNow data source — see internal/entity/deployed_products.go.
-	mux.HandleFunc("POST /deployed-products", deployedProductHandler.CreateDeployedProduct)
-	mux.HandleFunc("PATCH /deployed-products/{id}", deployedProductHandler.PatchDeployedProduct)
+	mux.HandleFunc("POST /deployments/{deploymentId}/products", deployedProductHandler.CreateDeployedProduct)
+	mux.HandleFunc("PATCH /deployments/{deploymentId}/products/{id}", deployedProductHandler.PatchDeployedProduct)
 	// POST /deployments/{deploymentId}/products/{productId}/metrics/search and
 	// POST /deployments/products/{id}/instances/metrics/search cannot both be
 	// registered as literal patterns: net/http.ServeMux (Go 1.22+) rejects
@@ -276,6 +277,7 @@ func main() {
 	mux.HandleFunc("GET /attachments/{id}", attachmentHandler.GetAttachment)
 	mux.HandleFunc("DELETE /attachments/{id}", attachmentHandler.DeleteAttachment)
 
+	mux.HandleFunc("GET /products", productHandler.GetProducts)
 	mux.HandleFunc("POST /products/search", productHandler.SearchProducts)
 	mux.HandleFunc("POST /products/{id}/versions/search", productHandler.SearchProductVersions)
 
@@ -283,7 +285,7 @@ func main() {
 	// ServiceNow data source — see internal/entity/change_requests.go and
 	// internal/entity/call_requests.go.
 	mux.HandleFunc("POST /change-requests", changeRequestHandler.CreateChangeRequest)
-	mux.HandleFunc("POST /change-requests/search", changeRequestHandler.SearchChangeRequests)
+	mux.HandleFunc("POST /projects/{id}/change-requests/search", changeRequestHandler.SearchChangeRequests)
 	mux.HandleFunc("GET /change-requests/{id}", changeRequestHandler.GetChangeRequest)
 	mux.HandleFunc("PATCH /change-requests/{id}", changeRequestHandler.PatchChangeRequest)
 	mux.HandleFunc("GET /change-requests/{id}/approvals", changeRequestHandler.GetChangeRequestApprovals)
@@ -306,12 +308,12 @@ func main() {
 	mux.HandleFunc("GET /metadata", globalHandler.GetMetadata)
 	mux.HandleFunc("POST /search", globalHandler.GlobalSearch)
 
-	mux.HandleFunc("POST /catalogs/search", catalogHandler.SearchCatalogs)
-	mux.HandleFunc("GET /catalogs/{catalogId}/items/{catalogItemId}/variables", catalogHandler.GetCatalogItemVariables)
+	mux.HandleFunc("POST /deployments/products/{deployedProductId}/catalogs/search", catalogHandler.SearchCatalogs)
+	mux.HandleFunc("GET /catalogs/{catalogId}/items/{itemId}", catalogHandler.GetCatalogItemVariables)
 
 	// entity-service only supports time cards on its ServiceNow data source —
 	// see internal/entity/time_cards.go.
-	mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
+	mux.HandleFunc("POST /projects/{id}/time-cards/search", timeCardHandler.SearchTimeCards)
 
 	// AI chat feature: case classification and KB recommendations call the
 	// upstream AI chat agent directly; conversation search/messages/summary

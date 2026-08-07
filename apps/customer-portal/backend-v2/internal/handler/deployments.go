@@ -86,7 +86,7 @@ func (h *DeploymentHandler) SearchDeployments(w http.ResponseWriter, r *http.Req
 	writeJSONValue(w, http.StatusOK, dto.MapSearchDeployments(result))
 }
 
-// CreateDeployment handles POST /deployments.
+// CreateDeployment handles POST /projects/{id}/deployments.
 //
 // NOTE: entity-service only supports this route on its ServiceNow data
 // source — a Postgres-mode deployment returns 400 for every call, which
@@ -98,18 +98,24 @@ func (h *DeploymentHandler) CreateDeployment(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	projectID := r.PathValue("id")
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
 	body, ok := readJSONBody(w, r)
 	if !ok {
 		return
 	}
 
-	var req entity.CreateDeploymentRequest
+	var req dto.DeploymentCreateRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.CreateDeployment(r.Context(), req)
+	result, err := h.entity.CreateDeployment(r.Context(), dto.BuildEntityCreateDeploymentRequest(projectID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateDeployment failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to create deployment.")
@@ -119,7 +125,11 @@ func (h *DeploymentHandler) CreateDeployment(w http.ResponseWriter, r *http.Requ
 	writeJSONValue(w, http.StatusCreated, dto.MapDeploymentCreate(result))
 }
 
-// PatchDeployment handles PATCH /deployments/{id}.
+// PatchDeployment handles PATCH /projects/{projectId}/deployments/{id}.
+// projectId is read from the URL only to match the frontend's nesting — the
+// handler never uses it, since entity-service's UpdateDeployment is keyed on
+// the deployment's own id alone (same pattern as
+// PATCH /cases/{caseId}/call-requests/{id} — see this backend's CLAUDE.md).
 func (h *DeploymentHandler) PatchDeployment(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -138,14 +148,12 @@ func (h *DeploymentHandler) PatchDeployment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Decoded directly into entity-service's request struct (no restricted
-	// portal DTO) — every field here (name/type/description/active) is
-	// customer-appropriate, matching the deployed-product update endpoint.
-	var req entity.UpdateDeploymentRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	var portalReq dto.DeploymentUpdateRequest
+	if err := json.Unmarshal(body, &portalReq); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
+	req := dto.BuildEntityUpdateDeploymentRequest(id, portalReq)
 	// entity-service requires exactly one of the detail-fields group
 	// (name/type/description) or active=false — never both, never neither.
 	detailFieldsSet := req.Name != nil || req.Type != nil || len(req.Description) > 0

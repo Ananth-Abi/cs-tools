@@ -140,14 +140,13 @@ func (h *AIChatHandler) SearchConversations(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var req entity.SearchConversationsRequest
+	var req dto.ConversationSearchRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	req.Filters.ProjectIDs = []string{projectID}
 
-	result, err := h.entity.SearchConversations(r.Context(), req)
+	result, err := h.entity.SearchConversations(r.Context(), dto.BuildEntitySearchConversationsRequest(projectID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchConversations failed", "userID", user.UserID, "projectID", projectID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to retrieve conversations.")

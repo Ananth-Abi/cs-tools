@@ -44,14 +44,17 @@ type RegistryTokenCreateRequest struct {
 
 // RegistryTokenCreateResponse is the portal's response for
 // POST /projects/{id}/registry-tokens and POST /registry-tokens/{id}/regenerate.
+// Name is read by both GenerateTokenModal.tsx and RegenerateTokenModal.tsx
+// to display the server-assigned token name after creation.
 type RegistryTokenCreateResponse struct {
-	Secret string `json:"secret"`
+	Secret string  `json:"secret"`
+	Name   *string `json:"name,omitempty"`
 }
 
 // MapRegistryTokenCreateResponse builds the portal response from the
 // registry service's TokenCreationResponse.
 func MapRegistryTokenCreateResponse(r registry.TokenCreationResponse) RegistryTokenCreateResponse {
-	return RegistryTokenCreateResponse{Secret: r.Secret}
+	return RegistryTokenCreateResponse{Secret: r.Secret, Name: r.Name}
 }
 
 // RegistryPermission is one access grant on a registry token.
@@ -59,16 +62,22 @@ type RegistryPermission struct {
 	Namespace string `json:"namespace"`
 }
 
-// RegistryToken is a registry token as returned to the portal.
+// RegistryToken is a registry token as returned to the portal. ID and
+// ExpiresAt are numeric (not string) — the real registry service sends
+// them as JSON numbers (confirmed against the old Ballerina backend's
+// registry:Token{int id?; ...; int expiresAt?; ...}), and the frontend's
+// RegistryToken type reads them as numbers directly (registryTokens.ts:
+// registryTokenExpiresWithinDays does `token.expiresAt < nowSec`). A
+// *string here would fail to unmarshal the real response entirely.
 type RegistryToken struct {
-	ID           *string              `json:"id,omitempty"`
+	ID           *int64               `json:"id,omitempty"`
 	Name         string               `json:"name"`
 	DisplayName  *string              `json:"displayName,omitempty"`
 	CreationTime *string              `json:"creationTime,omitempty"`
 	TokenType    *registry.TokenType  `json:"tokenType,omitempty"`
 	CreatedFor   *string              `json:"createdFor,omitempty"`
 	CreatedBy    *string              `json:"createdBy,omitempty"`
-	ExpiresAt    *string              `json:"expiresAt,omitempty"`
+	ExpiresAt    *int64               `json:"expiresAt,omitempty"`
 	Disable      bool                 `json:"disable"`
 	Duration     int                  `json:"duration"`
 	Permissions  []RegistryPermission `json:"permissions"`

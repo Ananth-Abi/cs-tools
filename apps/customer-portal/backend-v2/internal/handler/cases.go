@@ -41,6 +41,7 @@ type entityCaseClient interface {
 	CreateEscalation(ctx context.Context, req entity.CreateEscalationRequest) (entity.CreateEscalationResponse, error)
 	SearchEscalations(ctx context.Context, req entity.SearchEscalationsRequest) (entity.SearchEscalationsResponse, error)
 	SearchAttachments(ctx context.Context, req entity.SearchAttachmentsRequest) (entity.SearchAttachmentsResponse, error)
+	CreateAttachment(ctx context.Context, req entity.CreateAttachmentRequest) (entity.CreateAttachmentResponse, error)
 }
 
 // CaseHandler handles HTTP requests for case operations.
@@ -121,6 +122,41 @@ func (h *CaseHandler) SearchCaseAttachments(w http.ResponseWriter, r *http.Reque
 	writeJSONValue(w, http.StatusOK, dto.MapCaseAttachments(result))
 }
 
+// CreateCaseAttachment handles POST /cases/{id}/attachments.
+func (h *CaseHandler) CreateCaseAttachment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.CreateCaseAttachmentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.CreateAttachment(r.Context(), dto.BuildEntityCreateCaseAttachmentRequest(id, req))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateAttachment failed", "userID", user.UserID, "caseID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to create case attachment.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusCreated, dto.MapAttachmentCreate(result))
+}
+
 // GetCase handles GET /cases/{id}.
 func (h *CaseHandler) GetCase(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
@@ -158,17 +194,18 @@ func (h *CaseHandler) CreateCase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req entity.CreateCaseRequest
+	var req dto.CreateCaseRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
+	entityReq := dto.BuildEntityCreateCaseRequest(req)
 	// CreatedBy is server-set from the authenticated caller, never from the
 	// request body (the struct's json:"-" tag means a client-supplied value
 	// would be silently dropped anyway, but set it explicitly for clarity).
-	req.CreatedBy = user.Email
+	entityReq.CreatedBy = user.Email
 
-	result, err := h.entity.CreateCase(r.Context(), req)
+	result, err := h.entity.CreateCase(r.Context(), entityReq)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateCase failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to create case.")
@@ -205,13 +242,13 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 	// entity-service requires exactly one of these primary fields per PATCH —
 	// see dto.UpdateCaseRequest's doc comment.
 	primaryFieldsSet := 0
-	for _, set := range []bool{req.State != nil, req.Severity != nil, req.Subject != nil, req.Description != nil, len(req.WatchList) > 0} {
+	for _, set := range []bool{req.StateKey != nil, len(req.WatchList) > 0} {
 		if set {
 			primaryFieldsSet++
 		}
 	}
 	if primaryFieldsSet != 1 {
-		writeError(w, http.StatusBadRequest, "Exactly one of state, severity, subject, description, or watchList must be provided.")
+		writeError(w, http.StatusBadRequest, "Exactly one of stateKey or watchList must be provided.")
 		return
 	}
 

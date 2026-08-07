@@ -57,13 +57,13 @@ func (h *ProductVulnerabilityHandler) SearchProductVulnerabilities(w http.Respon
 		return
 	}
 
-	var req entity.SearchProductVulnerabilitiesRequest
+	var req dto.SearchProductVulnerabilitiesRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.SearchProductVulnerabilities(r.Context(), req)
+	result, err := h.entity.SearchProductVulnerabilities(r.Context(), dto.BuildEntitySearchProductVulnerabilitiesRequest(req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProductVulnerabilities failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search product vulnerabilities.")

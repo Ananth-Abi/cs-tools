@@ -43,11 +43,18 @@ func NewCatalogHandler(entity entityCatalogClient) *CatalogHandler {
 	return &CatalogHandler{entity: entity}
 }
 
-// SearchCatalogs handles POST /catalogs/search.
+// SearchCatalogs handles
+// POST /deployments/products/{deployedProductId}/catalogs/search.
 func (h *CatalogHandler) SearchCatalogs(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	deployedProductID := r.PathValue("deployedProductId")
+	if !uuidRe.MatchString(deployedProductID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -56,17 +63,13 @@ func (h *CatalogHandler) SearchCatalogs(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req entity.SearchCatalogsRequest
+	var req dto.SearchCatalogsRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if !uuidRe.MatchString(req.DeployedProductID) {
-		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
-		return
-	}
 
-	result, err := h.entity.SearchCatalogs(r.Context(), req)
+	result, err := h.entity.SearchCatalogs(r.Context(), dto.BuildEntitySearchCatalogsRequest(deployedProductID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCatalogs failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search catalogs.")
@@ -76,7 +79,7 @@ func (h *CatalogHandler) SearchCatalogs(w http.ResponseWriter, r *http.Request) 
 	writeJSONValue(w, http.StatusOK, dto.MapSearchCatalogs(result))
 }
 
-// GetCatalogItemVariables handles GET /catalogs/{catalogId}/items/{catalogItemId}/variables.
+// GetCatalogItemVariables handles GET /catalogs/{catalogId}/items/{itemId}.
 func (h *CatalogHandler) GetCatalogItemVariables(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -85,7 +88,7 @@ func (h *CatalogHandler) GetCatalogItemVariables(w http.ResponseWriter, r *http.
 	}
 
 	catalogID := r.PathValue("catalogId")
-	catalogItemID := r.PathValue("catalogItemId")
+	catalogItemID := r.PathValue("itemId")
 	if !uuidRe.MatchString(catalogID) || !uuidRe.MatchString(catalogItemID) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return

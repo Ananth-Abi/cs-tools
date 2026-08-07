@@ -27,13 +27,15 @@ type ProductSummary struct {
 	UpdatedOn *string `json:"updatedOn,omitempty"`
 }
 
-// SearchProductsResponse is the portal's response for POST /products/search.
+// SearchProductsResponse is the portal's response for POST /products/search
+// and GET /products. TotalRecords (not Total) to match the frontend's
+// shared pagination envelope.
 type SearchProductsResponse struct {
-	Products []ProductSummary `json:"products"`
-	Total    int              `json:"total"`
-	Limit    int              `json:"limit"`
-	Offset   int              `json:"offset"`
-	HasMore  bool             `json:"hasMore"`
+	Products     []ProductSummary `json:"products"`
+	TotalRecords int              `json:"totalRecords"`
+	Limit        int              `json:"limit"`
+	Offset       int              `json:"offset"`
+	HasMore      bool             `json:"hasMore"`
 }
 
 // MapSearchProducts builds the portal response from entity-service's SearchProductsResponse.
@@ -49,12 +51,29 @@ func MapSearchProducts(r entity.SearchProductsResponse) SearchProductsResponse {
 		})
 	}
 	return SearchProductsResponse{
-		Products: items,
-		Total:    r.Total,
-		Limit:    r.Limit,
-		Offset:   r.Offset,
-		HasMore:  r.HasMore,
+		Products:     items,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
+}
+
+// GetProductsRequest is the portal's translated request for GET /products —
+// built from the offset/limit query params by the handler. entity-service's
+// SearchProductsRequest has no class filter at all (unlike the old
+// Ballerina backend's target service, which accepted filters.class), so the
+// frontend's `class=product_model` query param has no server-side
+// equivalent here — a genuine entity-service gap, not fixable in this dto
+// layer alone.
+type GetProductsRequest struct {
+	Pagination entity.Pagination
+}
+
+// BuildEntitySearchProductsRequestFromQuery translates GET /products' query
+// params into entity-service's POST /products/search request shape.
+func BuildEntitySearchProductsRequestFromQuery(req GetProductsRequest) entity.SearchProductsRequest {
+	return entity.SearchProductsRequest{Pagination: req.Pagination}
 }
 
 // ProductVersionSummary is one item of the portal's response for
@@ -71,13 +90,17 @@ type ProductVersionSummary struct {
 	UpdatedOn                      *string `json:"updatedOn,omitempty"`
 }
 
-// SearchProductVersionsResponse is the portal's response for POST /products/{id}/versions/search.
+// SearchProductVersionsResponse is the portal's response for
+// POST /products/{id}/versions/search — Versions (not ProductVersions) and
+// TotalRecords (not Total) to match the frontend's own
+// ProductVersionsSearchResponse type (apps/customer-portal/webapp/src/
+// features/project-details/types/products.ts).
 type SearchProductVersionsResponse struct {
-	ProductVersions []ProductVersionSummary `json:"productVersions"`
-	Total           int                     `json:"total"`
-	Limit           int                     `json:"limit"`
-	Offset          int                     `json:"offset"`
-	HasMore         bool                    `json:"hasMore"`
+	Versions     []ProductVersionSummary `json:"versions"`
+	TotalRecords int                     `json:"totalRecords"`
+	Limit        int                     `json:"limit"`
+	Offset       int                     `json:"offset"`
+	HasMore      bool                    `json:"hasMore"`
 }
 
 // MapSearchProductVersions builds the portal response from entity-service's SearchProductVersionsResponse.
@@ -96,10 +119,10 @@ func MapSearchProductVersions(r entity.SearchProductVersionsResponse) SearchProd
 		})
 	}
 	return SearchProductVersionsResponse{
-		ProductVersions: items,
-		Total:           r.Total,
-		Limit:           r.Limit,
-		Offset:          r.Offset,
-		HasMore:         r.HasMore,
+		Versions:     items,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
 }

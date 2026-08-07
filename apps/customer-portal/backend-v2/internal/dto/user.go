@@ -22,18 +22,19 @@ package dto
 
 import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 
-// UserMeResponse is the portal's response for GET /users/me. PhoneNumber is
-// not part of entity-service's response — the handler sets it separately from
-// the SCIM client's result, since phone numbers are sourced from SCIM, not
-// entity-service.
+// UserMeResponse is the portal's response for GET /users/me. PhoneNumber and
+// LastPasswordUpdateTime are not part of entity-service's response — the
+// handler sets them separately from the SCIM client's result, since both are
+// sourced from SCIM, not entity-service.
 type UserMeResponse struct {
-	ID          string   `json:"id"`
-	Email       string   `json:"email"`
-	FirstName   *string  `json:"firstName,omitempty"`
-	LastName    string   `json:"lastName"`
-	TimeZone    *string  `json:"timeZone,omitempty"`
-	Roles       []string `json:"roles"`
-	PhoneNumber *string  `json:"phoneNumber,omitempty"`
+	ID                     string   `json:"id"`
+	Email                  string   `json:"email"`
+	FirstName              *string  `json:"firstName,omitempty"`
+	LastName               string   `json:"lastName"`
+	TimeZone               *string  `json:"timeZone,omitempty"`
+	Roles                  []string `json:"roles"`
+	PhoneNumber            *string  `json:"phoneNumber,omitempty"`
+	LastPasswordUpdateTime *string  `json:"lastPasswordUpdateTime,omitempty"`
 }
 
 // MapUserMe builds the portal response from entity-service's GetUserMeResponse.

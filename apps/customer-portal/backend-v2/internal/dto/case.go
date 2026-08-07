@@ -17,6 +17,7 @@
 package dto
 
 import (
+	"strconv"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
@@ -279,62 +280,129 @@ type CaseTag struct {
 	Color *string `json:"color,omitempty"`
 }
 
-// CaseDetails is the portal's response for GET /cases/{id}.
+// CaseDetailsAccount is the account reference embedded in CaseDetails,
+// matching the frontend's own CaseDetailsAccount type ({type, id, label}).
+type CaseDetailsAccount struct {
+	Type  string `json:"type"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// CaseDetailsAssignedEngineer matches the frontend's own
+// CaseDetailsAssignedEngineer type.
+type CaseDetailsAssignedEngineer struct {
+	ID    string `json:"id"`
+	Label string `json:"label,omitempty"`
+	Name  string `json:"name,omitempty"`
+}
+
+// CaseWatchListUser is one entry of CaseDetails.WatchList, matching the
+// frontend's inline watchList item shape.
+type CaseWatchListUser struct {
+	ID       string `json:"id,omitempty"`
+	UserName string `json:"userName,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Email    string `json:"email,omitempty"`
+}
+
+// CaseDetails is the portal's response for GET /cases/{id} — shaped to
+// match the frontend's own CaseDetails type
+// (apps/customer-portal/webapp/src/features/support/types/cases.ts)
+// field-for-field: Title (not Subject), Status (not State), every
+// enum-valued field as IDLabelRef, every reference field as IDLabelRef (not
+// Ref), plus InternalID/Account/ChangeRequests/WatchList, which
+// entity-service's CaseView already carries but this dto previously left
+// unmapped (some under an inaccurate "CSM-engineer-only" doc comment — see
+// entity.CaseView's own doc comment on WatchList, which says otherwise).
 //
-// Deliberately excludes entity-service's InternalID, Catalog/CatalogItem
-// (CMDB detail), WatchList, AutoclosureStep/AutoclosureStateTime, and
-// BestCaseFixEta/MostLikelyFixEta/WorstCaseFixEta — entity-service documents
-// the Fix-ETA trio and WatchList as CSM-engineer-facing only, and autoclosure
-// state is internal ServiceNow workflow detail not surfaced to entity-service's
-// decoded CaseView in the first place (see internal/entity/types.go).
+// Deliberately excludes entity-service's AutoclosureStep/AutoclosureStateTime
+// and BestCaseFixEta/MostLikelyFixEta/WorstCaseFixEta — genuinely
+// CSM-engineer-facing only. SlaResponseTime, CsManager, ClosedBy,
+// CloseNotes (on this read path — it does exist on the PATCH response),
+// HasAutoClosed, FindingsResolved/FindingsTotal, EscalationLevel/
+// IsEscalated, Duration, EngagementStartDate/EngagementEndDate, and
+// Variables are all present on the frontend's type but have no
+// entity-service equivalent at all on CaseView — not fixable in this dto
+// layer alone.
 type CaseDetails struct {
-	ID                    string                 `json:"id"`
-	Number                string                 `json:"number"`
-	Subject               string                 `json:"subject"`
-	Description           string                 `json:"description"`
-	Severity              string                 `json:"severity"`
-	IssueType             string                 `json:"issueType"`
-	State                 string                 `json:"state"`
-	WorkState             *string                `json:"workState,omitempty"`
-	Type                  *string                `json:"type,omitempty"`
-	EngagementType        *string                `json:"engagementType,omitempty"`
-	CreatedOn             time.Time              `json:"createdOn"`
-	UpdatedOn             time.Time              `json:"updatedOn"`
-	ClosedOn              *time.Time             `json:"closedOn,omitempty"`
-	CreatedBy             PersonRef              `json:"createdBy"`
-	Project               Ref                    `json:"project"`
-	Deployment            *Ref                   `json:"deployment,omitempty"`
-	DeployedProduct       *Ref                   `json:"deployedProduct,omitempty"`
-	Product               *Ref                   `json:"product,omitempty"`
-	AssignedTeam          *Ref                   `json:"assignedTeam,omitempty"`
-	Conversation          *Ref                   `json:"conversation,omitempty"`
-	AssignedEngineer      *PersonRef             `json:"assignedEngineer,omitempty"`
-	ParentCase            *NumberRef             `json:"parentCase,omitempty"`
-	RelatedCase           *NumberRef             `json:"relatedCase,omitempty"`
-	LinkedServiceRequests []LinkedServiceRequest `json:"linkedServiceRequests,omitempty"`
-	ResolvedOn            *time.Time             `json:"resolvedOn,omitempty"`
-	ResolutionCode        *string                `json:"resolutionCode,omitempty"`
-	Cause                 *string                `json:"cause,omitempty"`
-	ResolutionNotes       *string                `json:"resolutionNotes,omitempty"`
-	FixEta                *time.Time             `json:"fixEta,omitempty"`
-	Tags                  []CaseTag              `json:"tags,omitempty"`
+	ID                    string                       `json:"id"`
+	InternalID            string                       `json:"internalId"`
+	Number                string                       `json:"number"`
+	Title                 string                       `json:"title"`
+	Description           string                       `json:"description"`
+	Product               *IDLabelRef                  `json:"product,omitempty"`
+	Account               *CaseDetailsAccount          `json:"account,omitempty"`
+	AssignedEngineer      *CaseDetailsAssignedEngineer `json:"assignedEngineer,omitempty"`
+	EngineerEmail         *string                      `json:"engineerEmail,omitempty"`
+	Project               *IDLabelRef                  `json:"project,omitempty"`
+	Type                  *IDLabelRef                  `json:"type,omitempty"`
+	DeployedProduct       *IDLabelRef                  `json:"deployedProduct,omitempty"`
+	RelatedCase           *IDLabelRef                  `json:"relatedCase,omitempty"`
+	Conversation          *IDLabelRef                  `json:"conversation,omitempty"`
+	IssueType             *IDLabelRef                  `json:"issueType,omitempty"`
+	EngagementType        *IDLabelRef                  `json:"engagementType,omitempty"`
+	Catalog               *IDLabelRef                  `json:"catalog,omitempty"`
+	CatalogItem           *IDLabelRef                  `json:"catalogItem,omitempty"`
+	ChangeRequests        []IDLabelRef                 `json:"changeRequests,omitempty"`
+	AssignedTeam          *IDLabelRef                  `json:"assignedTeam,omitempty"`
+	Deployment            *IDLabelRef                  `json:"deployment,omitempty"`
+	Severity              *IDLabelRef                  `json:"severity,omitempty"`
+	Status                *IDLabelRef                  `json:"status,omitempty"`
+	WorkState             *string                      `json:"workState,omitempty"`
+	CreatedOn             time.Time                    `json:"createdOn"`
+	UpdatedOn             time.Time                    `json:"updatedOn"`
+	ClosedOn              *time.Time                   `json:"closedOn,omitempty"`
+	CreatedBy             string                       `json:"createdBy"`
+	ParentCase            *NumberRef                   `json:"parentCase,omitempty"`
+	LinkedServiceRequests []LinkedServiceRequest       `json:"linkedServiceRequests,omitempty"`
+	ResolvedOn            *time.Time                   `json:"resolvedOn,omitempty"`
+	ResolutionCode        *string                      `json:"resolutionCode,omitempty"`
+	Cause                 *string                      `json:"cause,omitempty"`
+	ResolutionNotes       *string                      `json:"resolutionNotes,omitempty"`
+	WatchList             []CaseWatchListUser          `json:"watchList,omitempty"`
+	FixEta                *time.Time                   `json:"fixEta,omitempty"`
+	Tags                  []CaseTag                    `json:"tags,omitempty"`
 }
 
 // MapCaseDetails builds the portal response from entity-service's CaseView.
 func MapCaseDetails(c entity.CaseView) CaseDetails {
-	var deployedProduct *Ref
-	if c.DeployedProductDetails != nil {
-		deployedProduct = &Ref{ID: c.DeployedProductDetails.ID, Name: c.DeployedProductDetails.DisplayName}
+	var account *CaseDetailsAccount
+	if c.AccountDetails != nil {
+		account = &CaseDetailsAccount{Type: c.AccountDetails.Type, ID: c.AccountDetails.ID, Label: c.AccountDetails.Name}
 	}
 
-	var assignedEngineer *PersonRef
+	var assignedEngineer *CaseDetailsAssignedEngineer
+	var engineerEmail *string
 	if c.AssignedEngineer != nil {
-		assignedEngineer = &PersonRef{Name: c.AssignedEngineer.Name, Email: c.AssignedEngineer.Email}
+		assignedEngineer = &CaseDetailsAssignedEngineer{ID: c.AssignedEngineer.ID, Label: c.AssignedEngineer.Name, Name: c.AssignedEngineer.Name}
+		engineerEmail = c.AssignedEngineer.Email
+	}
+
+	var relatedCase *IDLabelRef
+	if c.RelatedCase != nil {
+		relatedCase = &IDLabelRef{ID: c.RelatedCase.ID, Label: c.RelatedCase.Number}
+	}
+
+	changeRequests := make([]IDLabelRef, 0, len(c.LinkedChangeRequests))
+	for _, cr := range c.LinkedChangeRequests {
+		label := cr.Number
+		if cr.Name != nil {
+			label = *cr.Name
+		}
+		changeRequests = append(changeRequests, IDLabelRef{ID: cr.ID, Label: label})
 	}
 
 	linked := make([]LinkedServiceRequest, 0, len(c.LinkedServiceRequests))
 	for _, lsr := range c.LinkedServiceRequests {
 		linked = append(linked, LinkedServiceRequest{ID: lsr.ID, Number: lsr.Number, Name: lsr.Name})
+	}
+
+	var watchList []CaseWatchListUser
+	if len(c.WatchList) > 0 {
+		watchList = make([]CaseWatchListUser, 0, len(c.WatchList))
+		for _, w := range c.WatchList {
+			watchList = append(watchList, CaseWatchListUser{ID: w.ID, UserName: w.UserName, Name: w.Name, Email: w.Email})
+		}
 	}
 
 	var tags []CaseTag
@@ -345,103 +413,203 @@ func MapCaseDetails(c entity.CaseView) CaseDetails {
 		}
 	}
 
-	email := c.CreatedByDetails.Email
 	return CaseDetails{
-		ID:              c.ID,
-		Number:          c.Number,
-		Subject:         c.Subject,
-		Description:     c.Description,
-		Severity:        c.Severity,
-		IssueType:       c.IssueType,
-		State:           c.State,
-		WorkState:       c.WorkState,
-		Type:            c.Type,
-		EngagementType:  c.EngagementType,
-		CreatedOn:       c.CreatedOn,
-		UpdatedOn:       c.UpdatedOn,
-		ClosedOn:        c.ClosedOn,
-		CreatedBy:       PersonRef{Name: c.CreatedByDetails.Name, Email: &email},
-		Project:         Ref{ID: c.ProjectDetails.ID, Name: c.ProjectDetails.Name},
-		Deployment:      mapRef(c.DeploymentDetails),
-		DeployedProduct: deployedProduct,
-		Product:         mapRef(c.ProductDetails),
-		AssignedTeam:    mapRef(c.AssignedTeam),
-		Conversation:    mapRef(c.Conversation),
-
+		ID:                    c.ID,
+		InternalID:            c.InternalID,
+		Number:                c.Number,
+		Title:                 c.Subject,
+		Description:           c.Description,
+		Product:               entityRefToIDLabel(c.ProductDetails),
+		Account:               account,
 		AssignedEngineer:      assignedEngineer,
+		EngineerEmail:         engineerEmail,
+		Project:               &IDLabelRef{ID: c.ProjectDetails.ID, Label: c.ProjectDetails.Name},
+		Type:                  caseTypeRefFromPointer(c.Type),
+		DeployedProduct:       deployedProductRefToIDLabel(c.DeployedProductDetails),
+		RelatedCase:           relatedCase,
+		Conversation:          entityRefToIDLabel(c.Conversation),
+		IssueType:             caseIssueTypeRef(&c.IssueType),
+		EngagementType:        caseEngagementTypeRef(c.EngagementType),
+		Catalog:               entityRefToIDLabel(c.Catalog),
+		CatalogItem:           entityRefToIDLabel(c.CatalogItem),
+		ChangeRequests:        changeRequests,
+		AssignedTeam:          entityRefToIDLabel(c.AssignedTeam),
+		Deployment:            entityRefToIDLabel(c.DeploymentDetails),
+		Severity:              caseSeverityRef(&c.Severity),
+		Status:                caseStatusRef(c.State),
+		WorkState:             c.WorkState,
+		CreatedOn:             c.CreatedOn,
+		UpdatedOn:             c.UpdatedOn,
+		ClosedOn:              c.ClosedOn,
+		CreatedBy:             c.CreatedByDetails.Name,
 		ParentCase:            mapNumberRef(c.ParentCase),
-		RelatedCase:           mapNumberRef(c.RelatedCase),
 		LinkedServiceRequests: linked,
 		ResolvedOn:            c.ResolvedOn,
 		ResolutionCode:        c.ResolutionCode,
 		Cause:                 c.Cause,
 		ResolutionNotes:       c.ResolutionNotes,
+		WatchList:             watchList,
 		FixEta:                c.FixEta,
 		Tags:                  tags,
 	}
 }
 
-// CaseCreateResponse is the portal's response for POST /cases. Deliberately
-// excludes entity-service's InternalID, consistent with the other case DTOs.
-type CaseCreateResponse struct {
-	ID        string    `json:"id"`
-	Number    string    `json:"number"`
-	CreatedOn time.Time `json:"createdOn"`
-	State     string    `json:"state"`
+// caseTypeRefFromPointer mirrors caseTypeRef for CaseView.Type, which is a
+// *string (nullable) unlike SearchCaseView.Type (always present).
+func caseTypeRefFromPointer(t *string) *IDLabelRef {
+	if t == nil {
+		return nil
+	}
+	return caseTypeRef(*t)
 }
 
-// MapCaseCreate builds the portal response from entity-service's CreateCaseResponse.
-func MapCaseCreate(r entity.CreateCaseResponse) CaseCreateResponse {
-	return CaseCreateResponse{
-		ID:        r.Case.ID,
-		Number:    r.Case.Number,
-		CreatedOn: r.Case.CreatedOn,
-		State:     r.Case.State,
+// deployedProductRefToIDLabel maps entity-service's DeployedProductRef
+// (id + displayName, where displayName is a "product name + version"
+// concatenation with no separately-addressable version field) to an
+// IDLabelRef. The frontend's CaseDetailsDeployedProduct type additionally
+// declares an optional version field, but there's no clean, lossless way to
+// split it back out of DisplayName, so it's left unset rather than guessed.
+func deployedProductRefToIDLabel(r *entity.DeployedProductRef) *IDLabelRef {
+	if r == nil {
+		return nil
+	}
+	return &IDLabelRef{ID: r.ID, Label: r.DisplayName}
+}
+
+// CaseCreateAttachment is one file attached at case-creation time, matching
+// the frontend's CreateCaseRequest.attachments entry ({file, name}) — the
+// same shape as entity.CaseAttachment, kept as its own type only for this
+// package's "always mirror the frontend's own type name" convention.
+type CaseCreateAttachment struct {
+	Name string `json:"name"`
+	File string `json:"file"`
+}
+
+// CreateCaseRequest is the portal's request body for POST /cases — shaped to
+// match the frontend's own CreateCaseRequest type
+// (apps/customer-portal/webapp/src/features/support/types/cases.ts)
+// field-for-field. SeverityKey/IssueTypeKey carry ServiceNow's numeric
+// choice-list ids (the frontend was built against the old Ballerina backend
+// and still sends these, not entity-service's own string enum) — see
+// case_enum_mapping.go for the translation. CatalogID/CatalogItemID/
+// Variables aren't in the frontend's current CreateCaseRequest TS type (no
+// caller creates a service_request case today), but are kept here as
+// optional fields matching entity-service's/the old Ballerina backend's
+// CaseCreatePayload contract (modules/entity/types.bal), so that flow works
+// unmodified if the frontend adds it later.
+type CreateCaseRequest struct {
+	Title             string                 `json:"title"`
+	Type              string                 `json:"type,omitempty"`
+	ProjectID         string                 `json:"projectId"`
+	DeploymentID      string                 `json:"deploymentId"`
+	DeployedProductID string                 `json:"deployedProductId,omitempty"`
+	Description       string                 `json:"description"`
+	SeverityKey       *int                   `json:"severityKey,omitempty"`
+	IssueTypeKey      *int                   `json:"issueTypeKey,omitempty"`
+	CatalogID         string                 `json:"catalogId,omitempty"`
+	CatalogItemID     string                 `json:"catalogItemId,omitempty"`
+	Variables         []entity.Variable      `json:"variables,omitempty"`
+	RelatedCaseID     string                 `json:"relatedCaseId,omitempty"`
+	ConversationID    string                 `json:"conversationId,omitempty"`
+	WatchList         []string               `json:"watchList,omitempty"`
+	Attachments       []CaseCreateAttachment `json:"attachments,omitempty"`
+}
+
+// BuildEntityCreateCaseRequest translates the portal's request into
+// entity-service's CreateCaseRequest. An unrecognized (or absent)
+// SeverityKey/IssueTypeKey translates to an empty Severity/IssueType, which
+// entity-service's own validation then rejects with 400 for case types that
+// require them — this backend doesn't duplicate that validation itself.
+func BuildEntityCreateCaseRequest(req CreateCaseRequest) entity.CreateCaseRequest {
+	var severity, issueType string
+	if req.SeverityKey != nil {
+		severity = caseSeverityIDToEnum[strconv.Itoa(*req.SeverityKey)]
+	}
+	if req.IssueTypeKey != nil {
+		issueType = caseIssueTypeIDToEnum[strconv.Itoa(*req.IssueTypeKey)]
+	}
+	attachments := make([]entity.CaseAttachment, 0, len(req.Attachments))
+	for _, a := range req.Attachments {
+		attachments = append(attachments, entity.CaseAttachment{Name: a.Name, File: a.File})
+	}
+	return entity.CreateCaseRequest{
+		Type:              req.Type,
+		ProjectID:         req.ProjectID,
+		DeploymentID:      req.DeploymentID,
+		DeployedProductID: req.DeployedProductID,
+		Subject:           req.Title,
+		Description:       req.Description,
+		Severity:          severity,
+		IssueType:         issueType,
+		CatalogID:         req.CatalogID,
+		CatalogItemID:     req.CatalogItemID,
+		Variables:         req.Variables,
+		RelatedCaseID:     req.RelatedCaseID,
+		ConversationID:    req.ConversationID,
+		WatchList:         req.WatchList,
+		Attachments:       attachments,
 	}
 }
 
-// UpdateCaseRequest is the portal's request shape for PATCH /cases/{id} — a
-// deliberately restricted subset of entity-service's UpdateCaseRequest.
-// Excluded fields are internal WSO2 support operations, not customer
-// self-service actions: WorkState (CSM engineer work-in-progress tracking),
-// AssigneeEmail (support engineer assignment), ParentID/RelatedCaseID/
-// DeploymentID/DeployedProductID (case relinking), AutocloseHoldUntil
-// (ServiceNow auto-closure workflow control), and FixEta/BestCaseFixEta/
-// MostLikelyFixEta/WorstCaseFixEta (fix-commitment dates set by support
-// engineers, not the customer). entity-service requires exactly one of
-// State/Severity/WorkState/WatchList/AssigneeEmail/ParentID/RelatedCaseID/
-// AutocloseHoldUntil/Subject/Description/DeploymentID/DeployedProductID/
-// FixEta/BestCaseFixEta/MostLikelyFixEta/WorstCaseFixEta to be set (see
-// entity.UpdateCaseRequest's doc comment) — since this portal DTO only
-// exposes State/Severity/Subject/Description/WatchList of that set, exactly
-// one of those five must be set here too. ResolutionCode/Cause/CloseNotes
-// are secondary fields, only accepted alongside a closing State transition,
-// and don't count toward the exactly-one rule.
+// CaseCreateResponse is the portal's response for POST /cases, matching the
+// frontend's CreateCaseResponse type field-for-field.
+type CaseCreateResponse struct {
+	ID         string      `json:"id"`
+	InternalID string      `json:"internalId,omitempty"`
+	Number     string      `json:"number"`
+	CreatedOn  time.Time   `json:"createdOn"`
+	State      *IDLabelRef `json:"state,omitempty"`
+	Type       *IDLabelRef `json:"type,omitempty"`
+}
+
+// MapCaseCreate builds the portal response from entity-service's
+// CreateCaseResponse. Type is left nil: entity-service's CreateCaseDetails
+// doesn't return the case type at all, so there's nothing to translate.
+func MapCaseCreate(r entity.CreateCaseResponse) CaseCreateResponse {
+	return CaseCreateResponse{
+		ID:         r.Case.ID,
+		InternalID: r.Case.InternalID,
+		Number:     r.Case.Number,
+		CreatedOn:  r.Case.CreatedOn,
+		State:      caseStatusRef(r.Case.State),
+	}
+}
+
+// UpdateCaseRequest is the portal's request shape for PATCH /cases/{id} —
+// matches the frontend's own PatchCaseRequest type
+// (apps/customer-portal/webapp/src/features/support/types/cases.ts) and the
+// old Ballerina backend's CaseUpdatePayload (modules/entity/types.bal)
+// exactly: only stateKey and watchList. Every other field
+// entity.UpdateCaseRequest supports (severity, subject, description,
+// resolutionCode, cause, closeNotes, and every internal WSO2 support
+// operation — workState, assigneeEmail, case relinking, autocloseHoldUntil,
+// fix-commitment dates) is neither sent by the frontend today nor part of
+// this endpoint's real contract; don't reintroduce them speculatively.
+// StateKey carries ServiceNow's numeric choice-list id (the frontend was
+// built against the old Ballerina backend and still sends this, not
+// entity-service's own string enum) — see case_enum_mapping.go for the
+// translation. entity-service requires exactly one of State/WatchList (of
+// the fields this portal DTO exposes) to be set — StateKey counts as State
+// for that check.
 type UpdateCaseRequest struct {
-	State          *string  `json:"state,omitempty"`
-	Severity       *string  `json:"severity,omitempty"`
-	Subject        *string  `json:"subject,omitempty"`
-	Description    *string  `json:"description,omitempty"`
-	WatchList      []string `json:"watchList,omitempty"`
-	ResolutionCode *string  `json:"resolutionCode,omitempty"`
-	Cause          *string  `json:"cause,omitempty"`
-	CloseNotes     *string  `json:"closeNotes,omitempty"`
+	StateKey  *int     `json:"stateKey,omitempty"`
+	WatchList []string `json:"watchList,omitempty"`
 }
 
 // BuildEntityUpdateCaseRequest converts the portal's restricted update
 // request into entity-service's full request shape, leaving every excluded
-// field zero/nil.
+// field zero/nil. An unrecognized StateKey translates to an empty State,
+// which entity-service's own validation then rejects with 400.
 func BuildEntityUpdateCaseRequest(id string, req UpdateCaseRequest) entity.UpdateCaseRequest {
+	var state *string
+	if req.StateKey != nil {
+		s := caseStateIDToEnum[strconv.Itoa(*req.StateKey)]
+		state = &s
+	}
 	return entity.UpdateCaseRequest{
-		ID:             id,
-		State:          req.State,
-		Severity:       req.Severity,
-		Subject:        req.Subject,
-		Description:    req.Description,
-		WatchList:      req.WatchList,
-		ResolutionCode: req.ResolutionCode,
-		Cause:          req.Cause,
-		CloseNotes:     req.CloseNotes,
+		ID:        id,
+		State:     state,
+		WatchList: req.WatchList,
 	}
 }
 
@@ -552,30 +720,38 @@ type CaseFieldChange struct {
 
 // CaseActivity is one entry in the portal's response for
 // POST /cases/{id}/activities/search — a discriminated union on Type, like
-// entity-service's CaseActivity. Deliberately excludes entity-service's
-// CreatedByFirstName/CreatedByLastName (redundant with CreatedBy, which
-// carries the full name) and the raw internal actor ID.
+// entity-service's CaseActivity. CreatedByFirstName/CreatedByLastName/
+// CreatedByFullName are all read as distinct fields by the frontend
+// (useGetCaseCommentsInfinite.ts), so all three are carried through — not
+// redundant despite an earlier assumption here. Deliberately excludes the
+// raw internal actor ID.
 type CaseActivity struct {
-	ID          string            `json:"id"`
-	Type        string            `json:"type"`
-	Content     string            `json:"content,omitempty"`
-	CreatedOn   time.Time         `json:"createdOn"`
-	CreatedBy   string            `json:"createdBy"`
-	CommentType *string           `json:"commentType,omitempty"`
-	FileName    string            `json:"fileName,omitempty"`
-	ContentType string            `json:"contentType,omitempty"`
-	SizeBytes   int               `json:"sizeBytes,omitempty"`
-	DownloadURL string            `json:"downloadUrl,omitempty"`
-	Changes     []CaseFieldChange `json:"changes,omitempty"`
+	ID                 string            `json:"id"`
+	Type               string            `json:"type"`
+	Content            string            `json:"content,omitempty"`
+	CreatedOn          time.Time         `json:"createdOn"`
+	CreatedBy          string            `json:"createdBy"`
+	CreatedByFirstName string            `json:"createdByFirstName,omitempty"`
+	CreatedByLastName  string            `json:"createdByLastName,omitempty"`
+	CreatedByFullName  string            `json:"createdByFullName,omitempty"`
+	CommentType        *string           `json:"commentType,omitempty"`
+	FileName           string            `json:"fileName,omitempty"`
+	ContentType        string            `json:"contentType,omitempty"`
+	SizeBytes          int               `json:"sizeBytes,omitempty"`
+	DownloadURL        string            `json:"downloadUrl,omitempty"`
+	Changes            []CaseFieldChange `json:"changes,omitempty"`
 }
 
-// SearchCaseActivitiesResponse is the portal's response for POST /cases/{id}/activities/search.
+// SearchCaseActivitiesResponse is the portal's response for
+// POST /cases/{id}/activities/search — Activities (not Activity) and
+// TotalRecords (not Total) to match the frontend's actual read sites
+// (useGetCaseCommentsInfinite.ts reads data.activities/data.totalRecords).
 type SearchCaseActivitiesResponse struct {
-	Activity []CaseActivity `json:"activity"`
-	Total    int            `json:"total"`
-	Limit    int            `json:"limit"`
-	Offset   int            `json:"offset"`
-	HasMore  bool           `json:"hasMore"`
+	Activities   []CaseActivity `json:"activities"`
+	TotalRecords int            `json:"totalRecords"`
+	Limit        int            `json:"limit"`
+	Offset       int            `json:"offset"`
+	HasMore      bool           `json:"hasMore"`
 }
 
 // MapSearchCaseActivities builds the portal response from entity-service's SearchCaseActivitiesResponse.
@@ -602,24 +778,27 @@ func MapSearchCaseActivities(r entity.SearchCaseActivitiesResponse) SearchCaseAc
 		}
 
 		items = append(items, CaseActivity{
-			ID:          a.ID,
-			Type:        string(a.Type),
-			Content:     a.Content,
-			CreatedOn:   a.CreatedOn,
-			CreatedBy:   a.CreatedByFullName,
-			CommentType: commentType,
-			FileName:    a.FileName,
-			ContentType: a.ContentType,
-			SizeBytes:   a.SizeBytes,
-			DownloadURL: a.DownloadURL,
-			Changes:     changes,
+			ID:                 a.ID,
+			Type:               string(a.Type),
+			Content:            a.Content,
+			CreatedOn:          a.CreatedOn,
+			CreatedBy:          a.CreatedByFullName,
+			CreatedByFirstName: a.CreatedByFirstName,
+			CreatedByLastName:  a.CreatedByLastName,
+			CreatedByFullName:  a.CreatedByFullName,
+			CommentType:        commentType,
+			FileName:           a.FileName,
+			ContentType:        a.ContentType,
+			SizeBytes:          a.SizeBytes,
+			DownloadURL:        a.DownloadURL,
+			Changes:            changes,
 		})
 	}
 	return SearchCaseActivitiesResponse{
-		Activity: items,
-		Total:    r.Total,
-		Limit:    r.Limit,
-		Offset:   r.Offset,
-		HasMore:  r.HasMore,
+		Activities:   items,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
 }

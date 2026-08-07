@@ -83,21 +83,33 @@ func BuildEntitySearchCommentsRequest(req CommentSearchRequest) entity.SearchCom
 	}
 }
 
-// CommentView is one item of the portal's response for POST /comments/search.
+// CommentView is one item of the portal's response for POST /comments/search
+// (also shared by GET /conversations/{id}/messages, which decodes the same
+// shape as its ConversationMessage type). Type and CreatedByFirstName/
+// CreatedByLastName are read by the chat-history view to distinguish the
+// AI's replies from the customer's own messages and to build a display
+// name — see apps/customer-portal/webapp/src/features/support/pages/
+// ConversationDetailsPage.tsx.
 type CommentView struct {
-	ID        string    `json:"id"`
-	Content   string    `json:"content"`
-	CreatedOn time.Time `json:"createdOn"`
-	CreatedBy string    `json:"createdBy"`
+	ID                 string    `json:"id"`
+	Content            string    `json:"content"`
+	Type               string    `json:"type,omitempty"`
+	CreatedOn          time.Time `json:"createdOn"`
+	CreatedBy          string    `json:"createdBy"`
+	CreatedByFirstName string    `json:"createdByFirstName,omitempty"`
+	CreatedByLastName  string    `json:"createdByLastName,omitempty"`
 }
 
-// SearchCommentsResponse is the portal's response for POST /comments/search.
+// SearchCommentsResponse is the portal's response for POST /comments/search
+// and GET /conversations/{id}/messages. TotalRecords (not Total) to match
+// the frontend's shared pagination envelope — useGetConversationMessages.ts's
+// getNextPageParam reads totalRecords to decide whether more pages remain.
 type SearchCommentsResponse struct {
-	Comments []CommentView `json:"comments"`
-	Total    int           `json:"total"`
-	Limit    int           `json:"limit"`
-	Offset   int           `json:"offset"`
-	HasMore  bool          `json:"hasMore"`
+	Comments     []CommentView `json:"comments"`
+	TotalRecords int           `json:"totalRecords"`
+	Limit        int           `json:"limit"`
+	Offset       int           `json:"offset"`
+	HasMore      bool          `json:"hasMore"`
 }
 
 // MapSearchComments builds the portal response from entity-service's SearchCommentsResponse.
@@ -105,17 +117,20 @@ func MapSearchComments(r entity.SearchCommentsResponse) SearchCommentsResponse {
 	comments := make([]CommentView, 0, len(r.Comments))
 	for _, c := range r.Comments {
 		comments = append(comments, CommentView{
-			ID:        c.ID,
-			Content:   c.Content,
-			CreatedOn: c.CreatedOn,
-			CreatedBy: c.CreatedBy.FullName,
+			ID:                 c.ID,
+			Content:            c.Content,
+			Type:               string(c.Type),
+			CreatedOn:          c.CreatedOn,
+			CreatedBy:          c.CreatedBy.FullName,
+			CreatedByFirstName: c.CreatedBy.FirstName,
+			CreatedByLastName:  c.CreatedBy.LastName,
 		})
 	}
 	return SearchCommentsResponse{
-		Comments: comments,
-		Total:    r.Total,
-		Limit:    r.Limit,
-		Offset:   r.Offset,
-		HasMore:  r.HasMore,
+		Comments:     comments,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
 }

@@ -87,6 +87,7 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		slog.WarnContext(r.Context(), "no SCIM user found", "userID", user.UserID)
 	} else {
 		resp.PhoneNumber = scimInfo.PhoneNumber
+		resp.LastPasswordUpdateTime = scimInfo.LastPasswordUpdateTime
 	}
 
 	writeJSONValue(w, http.StatusOK, resp)

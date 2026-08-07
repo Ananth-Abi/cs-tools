@@ -825,10 +825,10 @@ paths:
     patch:
       summary: Update a case.
       description: >
-        Exactly one of state/severity/subject/description/watchList is
-        required. This is a deliberately restricted subset of
-        entity-service's update contract — internal WSO2 support fields
-        (work state, engineer assignment, fix-ETA dates, case relinking,
+        Exactly one of stateKey or watchList is required. This is a
+        deliberately restricted subset of entity-service's update contract
+        — internal WSO2 support fields (severity, subject, description,
+        work state, engineer assignment, fix-ETA dates, case relinking,
         auto-closure control) are not customer-settable.
       operationId: patchCasesId
       parameters:
@@ -1117,13 +1117,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /deployments:
+  /projects/{id}/deployments:
     post:
       summary: Create a deployment.
       description: >
-        Only entity-service's ServiceNow data source supports this route —
-        a Postgres-mode deployment always returns 400.
-      operationId: postDeployments
+        projectId is set server-side from the path parameter. Only
+        entity-service's ServiceNow data source supports this route — a
+        Postgres-mode deployment always returns 400.
+      operationId: postProjectsIdDeployments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -1168,10 +1176,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /deployed-products/search:
+  /deployments/{deploymentId}/products/search:
     post:
       summary: Search deployed products.
-      operationId: postDeployedProductsSearch
+      description: >
+        Always scoped to the deployment in the path — the request body
+        carries no deploymentId field.
+      operationId: postDeploymentsDeploymentIdProductsSearch
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -1216,13 +1234,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /deployed-products:
+  /deployments/{deploymentId}/products:
     post:
       summary: Create a deployed product.
       description: >
-        Only entity-service's ServiceNow data source supports this route —
-        a Postgres-mode deployment always returns 400.
-      operationId: postDeployedProducts
+        deploymentId is set server-side from the path parameter. Only
+        entity-service's ServiceNow data source supports this route — a
+        Postgres-mode deployment always returns 400.
+      operationId: postDeploymentsDeploymentIdProducts
+      parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -1267,15 +1293,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /deployed-products/{id}:
+  /deployments/{deploymentId}/products/{id}:
     patch:
       summary: Update a deployed product.
       description: >
         Provide either cores/tps/description or active=false, but not both.
-        Only entity-service's ServiceNow data source supports this route —
-        a Postgres-mode deployment always returns 400.
-      operationId: patchDeployedProductsId
+        deploymentId is set server-side from the path parameter (an
+        IDOR-style scope guard — the deployed product must belong to this
+        deployment), not the request body. Only entity-service's ServiceNow
+        data source supports this route — a Postgres-mode deployment always
+        returns 400.
+      operationId: patchDeploymentsDeploymentIdProductsId
       parameters:
+        - name: deploymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
         - name: id
           in: path
           required: true
@@ -1643,6 +1678,63 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /products:
+    get:
+      summary: List products.
+      description: >
+        class is accepted but not forwarded — entity-service's
+        SearchProductsRequest has no class filter (a genuine gap).
+      operationId: getProducts
+      parameters:
+        - name: class
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 0
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 10
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchProductsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /products/search:
     post:
       summary: Search products.
@@ -1801,11 +1893,21 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /change-requests/search:
+  /projects/{id}/change-requests/search:
     post:
       summary: Search change requests.
-      description: Only entity-service's ServiceNow data source supports this route.
-      operationId: postChangeRequestsSearch
+      description: >
+        projectId is set server-side from the path parameter — any
+        client-supplied value in the request body is ignored. Only
+        entity-service's ServiceNow data source supports this route.
+      operationId: postProjectsIdChangeRequestsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -2353,13 +2455,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /deployments/{id}:
+  /projects/{projectId}/deployments/{id}:
     patch:
       summary: Update a deployment.
       description: >
-        Provide either name/type/description or active=false, but not both.
-      operationId: patchDeploymentsId
+        Provide either name/typeKey/description or active=false, but not
+        both. projectId is read from the URL only to match the frontend's
+        nesting — entity-service's update is keyed on the deployment's own
+        id alone.
+      operationId: patchProjectsProjectIdDeploymentsId
       parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
         - name: id
           in: path
           required: true
@@ -2616,10 +2727,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /catalogs/search:
+  /deployments/products/{deployedProductId}/catalogs/search:
     post:
       summary: Search service catalogs.
-      operationId: postCatalogsSearch
+      description: >
+        Always scoped to the deployed product in the path — the request
+        body carries no deployedProductId field.
+      operationId: postDeploymentsProductsDeployedProductIdCatalogsSearch
+      parameters:
+        - name: deployedProductId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -2664,10 +2785,10 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /catalogs/{catalogId}/items/{catalogItemId}/variables:
+  /catalogs/{catalogId}/items/{itemId}:
     get:
       summary: Get a catalog item's variables.
-      operationId: getCatalogsCatalogIdItemsCatalogItemIdVariables
+      operationId: getCatalogsCatalogIdItemsItemId
       parameters:
         - name: catalogId
           in: path
@@ -2675,7 +2796,7 @@ paths:
           schema:
             type: string
             format: uuid
-        - name: catalogItemId
+        - name: itemId
           in: path
           required: true
           schema:
@@ -2719,14 +2840,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /time-cards/search:
+  /projects/{id}/time-cards/search:
     post:
       summary: Search time cards.
       description: >
-        Only entity-service's ServiceNow data source supports this route —
-        a Postgres-mode deployment 404s. Excludes internal WSO2 per-category
+        projectId is set server-side from the path parameter — any
+        client-supplied value in the request body is ignored. Only
+        entity-service's ServiceNow data source supports this route — a
+        Postgres-mode deployment 404s. Excludes internal WSO2 per-category
         time breakdowns and notes — see this backend's CLAUDE.md.
-      operationId: postTimeCardsSearch
+      operationId: postProjectsIdTimeCardsSearch
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
       requestBody:
         content:
           application/json:
@@ -3619,6 +3749,62 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    post:
+      summary: Create a case attachment.
+      description: >
+        The case is scoped by the {id} path parameter — there is no
+        referenceId field in the request body.
+      operationId: postCasesIdAttachments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCaseAttachmentRequest'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentCreateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
           content:
             application/json:
               schema:
@@ -5828,6 +6014,8 @@ components:
             type: string
         phoneNumber:
           type: string
+        lastPasswordUpdateTime:
+          type: string
 
     UserUpdateRequest:
       type: object
@@ -5940,23 +6128,22 @@ components:
 
     # ---- projects ----
 
+    SearchProjectsFilters:
+      type: object
+      properties:
+        searchQuery:
+          type: string
+
     SearchProjectsRequest:
+      description: >
+        filters is nested, matching the frontend's own request shape — not
+        entity-service's flat searchQuery field.
       type: object
       properties:
         pagination:
           $ref: '#/components/schemas/Pagination'
-        searchQuery:
-          type: string
-        closureStatus:
-          type: string
-        endDateFrom:
-          type: string
-        endDateTo:
-          type: string
-        sortBy:
-          type: string
-        sortOrder:
-          type: string
+        filters:
+          $ref: '#/components/schemas/SearchProjectsFilters'
 
     ProjectSummary:
       type: object
@@ -5969,6 +6156,8 @@ components:
           type: string
         subscriptionType:
           type: string
+        startDate:
+          type: string
         endDate:
           type: string
         createdOn:
@@ -5977,13 +6166,16 @@ components:
           type: string
 
     SearchProjectsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         projects:
           type: array
           items:
             $ref: '#/components/schemas/ProjectSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -5993,15 +6185,23 @@ components:
           type: boolean
 
     ProjectAccount:
+      description: >
+        supportTier (not tier) to match the frontend's read site.
       type: object
       properties:
         id:
           type: string
         name:
           type: string
-        tier:
+        supportTier:
           type: string
         region:
+          type: string
+        hasAgent:
+          type: boolean
+        hasKbReferences:
+          type: boolean
+        activationDate:
           type: string
 
     ProjectDetails:
@@ -6186,28 +6386,90 @@ components:
         name:
           type: string
 
+    CaseDetailsAccount:
+      type: object
+      properties:
+        type:
+          type: string
+        id:
+          type: string
+        label:
+          type: string
+
+    CaseDetailsAssignedEngineer:
+      type: object
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        name:
+          type: string
+
+    CaseWatchListUser:
+      type: object
+      properties:
+        id:
+          type: string
+        userName:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+
     CaseDetails:
       type: object
       properties:
         id:
           type: string
+        internalId:
+          type: string
         number:
           type: string
-        subject:
+        title:
           type: string
         description:
           type: string
-        severity:
+        product:
+          $ref: '#/components/schemas/IdLabelRef'
+        account:
+          $ref: '#/components/schemas/CaseDetailsAccount'
+        assignedEngineer:
+          $ref: '#/components/schemas/CaseDetailsAssignedEngineer'
+        engineerEmail:
           type: string
-        issueType:
-          type: string
-        state:
-          type: string
-        workState:
-          type: string
+        project:
+          $ref: '#/components/schemas/IdLabelRef'
         type:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
+        deployedProduct:
+          $ref: '#/components/schemas/IdLabelRef'
+        relatedCase:
+          $ref: '#/components/schemas/IdLabelRef'
+        conversation:
+          $ref: '#/components/schemas/IdLabelRef'
+        issueType:
+          $ref: '#/components/schemas/IdLabelRef'
         engagementType:
+          $ref: '#/components/schemas/IdLabelRef'
+        catalog:
+          $ref: '#/components/schemas/IdLabelRef'
+        catalogItem:
+          $ref: '#/components/schemas/IdLabelRef'
+        changeRequests:
+          type: array
+          items:
+            $ref: '#/components/schemas/IdLabelRef'
+        assignedTeam:
+          $ref: '#/components/schemas/IdLabelRef'
+        deployment:
+          $ref: '#/components/schemas/IdLabelRef'
+        severity:
+          $ref: '#/components/schemas/IdLabelRef'
+        status:
+          $ref: '#/components/schemas/IdLabelRef'
+        workState:
           type: string
         createdOn:
           type: string
@@ -6216,24 +6478,8 @@ components:
         closedOn:
           type: string
         createdBy:
-          $ref: '#/components/schemas/PersonRef'
-        project:
-          $ref: '#/components/schemas/Ref'
-        deployment:
-          $ref: '#/components/schemas/Ref'
-        deployedProduct:
-          $ref: '#/components/schemas/Ref'
-        product:
-          $ref: '#/components/schemas/Ref'
-        assignedTeam:
-          $ref: '#/components/schemas/Ref'
-        conversation:
-          $ref: '#/components/schemas/Ref'
-        assignedEngineer:
-          $ref: '#/components/schemas/PersonRef'
+          type: string
         parentCase:
-          $ref: '#/components/schemas/NumberRef'
-        relatedCase:
           $ref: '#/components/schemas/NumberRef'
         linkedServiceRequests:
           type: array
@@ -6247,6 +6493,10 @@ components:
           type: string
         resolutionNotes:
           type: string
+        watchList:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseWatchListUser'
         fixEta:
           type: string
         tags:
@@ -6256,8 +6506,10 @@ components:
 
     CaseCreateRequest:
       type: object
-      required: [type, projectId, deploymentId, subject, description, severity, issueType]
+      required: [title, projectId, deploymentId, description]
       properties:
+        title:
+          type: string
         type:
           type: string
           description: "\"case\", \"service_request\", or \"security_report_analysis\""
@@ -6270,14 +6522,14 @@ components:
         deployedProductId:
           type: string
           format: uuid
-        subject:
-          type: string
         description:
           type: string
-        severity:
-          type: string
-        issueType:
-          type: string
+        severityKey:
+          type: integer
+          description: ServiceNow numeric choice-list id — see case_enum_mapping.go.
+        issueTypeKey:
+          type: integer
+          description: ServiceNow numeric choice-list id — see case_enum_mapping.go.
         catalogId:
           type: string
           description: Required when type is "service_request".
@@ -6320,38 +6572,30 @@ components:
       properties:
         id:
           type: string
+        internalId:
+          type: string
         number:
           type: string
         createdOn:
           type: string
         state:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
+        type:
+          $ref: '#/components/schemas/IdLabelRef'
 
     CaseUpdateRequest:
       description: >
-        Exactly one of state/severity/subject/description/watchList is
-        required. resolutionCode/cause/closeNotes are only accepted
-        alongside a closing state transition.
+        Exactly one of stateKey or watchList is required. stateKey carries
+        ServiceNow's numeric choice-list id (see case_enum_mapping.go), not
+        entity-service's own string enum.
       type: object
       properties:
-        state:
-          type: string
-        severity:
-          type: string
-        subject:
-          type: string
-        description:
-          type: string
+        stateKey:
+          type: integer
         watchList:
           type: array
           items:
             type: string
-        resolutionCode:
-          type: string
-        cause:
-          type: string
-        closeNotes:
-          type: string
 
     CaseUpdateResponse:
       type: object
@@ -6433,26 +6677,29 @@ components:
         name:
           type: string
         type:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
         description:
           type: string
         createdBy:
           $ref: '#/components/schemas/Ref'
         project:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         createdOn:
           type: string
         updatedOn:
           type: string
 
     SearchDeploymentsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         deployments:
           type: array
           items:
             $ref: '#/components/schemas/DeploymentSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -6462,17 +6709,18 @@ components:
           type: boolean
 
     CreateDeploymentRequest:
+      description: >
+        projectId is set server-side from the {id} path parameter — the
+        request body carries no projectId field. deploymentTypeKey carries
+        ServiceNow's numeric choice-list id (see deployment_enum_mapping.go).
       type: object
-      required: [projectId, name]
+      required: [deploymentTypeKey, description, name]
       properties:
-        projectId:
-          type: string
-          format: uuid
-        name:
-          type: string
-        type:
-          type: string
+        deploymentTypeKey:
+          type: integer
         description:
+          type: string
+        name:
           type: string
 
     DeploymentCreateResponse:
@@ -6484,18 +6732,21 @@ components:
           type: string
 
     UpdateDeploymentRequest:
-      description: Provide either name/type/description or active=false, but not both.
+      description: >
+        Provide either name/typeKey/description or active=false, but not
+        both. typeKey carries ServiceNow's numeric choice-list id (see
+        deployment_enum_mapping.go).
       type: object
       properties:
-        name:
-          type: string
-        type:
-          type: string
+        active:
+          type: boolean
         description:
           type: string
           nullable: true
-        active:
-          type: boolean
+        name:
+          type: string
+        typeKey:
+          type: integer
 
     DeploymentUpdateResponse:
       type: object
@@ -6508,42 +6759,47 @@ components:
     # ---- deployed products ----
 
     SearchDeployedProductsRequest:
+      description: >
+        Always scoped to the deployment in the {deploymentId} path
+        parameter — the request body carries no deploymentId field.
       type: object
       properties:
         pagination:
           $ref: '#/components/schemas/Pagination'
-        deploymentIds:
-          type: array
-          items:
-            type: string
 
     DeployedProductVersion:
+      description: >
+        label (not name), releasedOn/endOfLifeOn (not releasedDate/
+        supportEoLDate) to match the frontend's IdLabelRef shape.
       type: object
       properties:
         id:
           type: string
-        name:
+        label:
           type: string
-        releasedDate:
+        releasedOn:
           type: string
-        supportEoLDate:
+        endOfLifeOn:
           type: string
 
     DeployedProductSummary:
+      description: >
+        cores/tps are numbers (not strings) — parsed from entity-service's
+        ServiceNow-string wire format.
       type: object
       properties:
         id:
           type: string
         deployment:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         product:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         version:
           $ref: '#/components/schemas/DeployedProductVersion'
         cores:
-          type: string
+          type: integer
         tps:
-          type: string
+          type: number
         category:
           type: string
         createdOn:
@@ -6552,13 +6808,16 @@ components:
           type: string
 
     SearchDeployedProductsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         deployedProducts:
           type: array
           items:
             $ref: '#/components/schemas/DeployedProductSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -6568,13 +6827,13 @@ components:
           type: boolean
 
     CreateDeployedProductRequest:
+      description: >
+        deploymentId is set server-side from the {deploymentId} path
+        parameter — the request body carries no deploymentId field.
       type: object
-      required: [projectId, deploymentId, productId, versionId]
+      required: [projectId, productId, versionId]
       properties:
         projectId:
-          type: string
-          format: uuid
-        deploymentId:
           type: string
           format: uuid
         productId:
@@ -6599,13 +6858,13 @@ components:
           type: string
 
     UpdateDeployedProductRequest:
-      description: Provide either cores/tps/description or active=false, but not both.
+      description: >
+        Provide either cores/tps/description or active=false, but not both.
+        deploymentId is always injected server-side from the
+        {deploymentId} path parameter (an IDOR-style scope guard) — the
+        request body carries no deploymentId field.
       type: object
       properties:
-        deploymentId:
-          type: string
-          format: uuid
-          description: Optional — scopes the update to this deployment.
         cores:
           type: integer
         tps:
@@ -6624,6 +6883,24 @@ components:
           type: string
 
     # ---- attachments ----
+
+    CreateCaseAttachmentRequest:
+      description: >
+        The case is scoped by the {id} path parameter — referenceId/
+        referenceType are injected server-side, not client-supplied.
+      type: object
+      required: [name, type, content]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          description: MIME/content type of the file.
+        content:
+          type: string
+          description: Base64-encoded file content.
+        description:
+          type: string
 
     CreateAttachmentRequest:
       type: object
@@ -6768,6 +7045,12 @@ components:
           type: string
         createdBy:
           type: string
+        createdByFirstName:
+          type: string
+        createdByLastName:
+          type: string
+        createdByFullName:
+          type: string
         commentType:
           type: string
         fileName:
@@ -6793,13 +7076,16 @@ components:
           description: When false or omitted, only comment and attachment entries are returned.
 
     SearchCaseActivitiesResponse:
+      description: >
+        activities (not activity) and totalRecords (not total) to match the
+        frontend's actual read sites.
       type: object
       properties:
-        activity:
+        activities:
           type: array
           items:
             $ref: '#/components/schemas/CaseActivity'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -6856,25 +7142,39 @@ components:
           $ref: '#/components/schemas/Pagination'
 
     CommentView:
+      description: >
+        Shared by POST /comments/search and GET /conversations/{id}/messages.
+        type/createdByFirstName/createdByLastName let the chat-history view
+        distinguish the AI's replies from the customer's own messages.
       type: object
       properties:
         id:
           type: string
         content:
           type: string
+        type:
+          type: string
         createdOn:
           type: string
         createdBy:
           type: string
+        createdByFirstName:
+          type: string
+        createdByLastName:
+          type: string
 
     SearchCommentsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope. Shared by POST /comments/search and
+        GET /conversations/{id}/messages.
       type: object
       properties:
         comments:
           type: array
           items:
             $ref: '#/components/schemas/CommentView'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -6908,13 +7208,16 @@ components:
           type: string
 
     SearchProductsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope. Shared by POST /products/search and GET /products.
       type: object
       properties:
         products:
           type: array
           items:
             $ref: '#/components/schemas/ProductSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -6952,13 +7255,16 @@ components:
           type: string
 
     SearchProductVersionsResponse:
+      description: >
+        versions (not productVersions) and totalRecords (not total) to
+        match the frontend's own ProductVersionsSearchResponse type.
       type: object
       properties:
-        productVersions:
+        versions:
           type: array
           items:
             $ref: '#/components/schemas/ProductVersionSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -6970,6 +7276,10 @@ components:
     # ---- product vulnerabilities ----
 
     SearchProductVulnerabilitiesRequest:
+      description: >
+        statusId is accepted but not forwarded — entity-service's
+        SearchProductVulnerabilitiesFilters has no status field (a genuine
+        gap).
       type: object
       properties:
         filters:
@@ -6977,9 +7287,11 @@ components:
           properties:
             searchQuery:
               type: string
-            priority:
-              type: string
-              enum: [info, low, medium, high, critical, unknown]
+            severityId:
+              type: integer
+              description: ServiceNow numeric choice-list id — see product_vulnerability_enum_mapping.go.
+            statusId:
+              type: integer
             productName:
               type: string
             productVersion:
@@ -6988,6 +7300,9 @@ components:
           $ref: '#/components/schemas/Pagination'
 
     ProductVulnerability:
+      description: >
+        severity (not priority) as an IdLabelRef to match the frontend's
+        own ProductVulnerability type.
       type: object
       properties:
         id:
@@ -6996,8 +7311,8 @@ components:
           type: string
         vulnerabilityId:
           type: string
-        priority:
-          type: string
+        severity:
+          $ref: '#/components/schemas/IdLabelRef'
         productName:
           type: string
           nullable: true
@@ -7027,13 +7342,16 @@ components:
           nullable: true
 
     SearchProductVulnerabilitiesResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         productVulnerabilities:
           type: array
           items:
             $ref: '#/components/schemas/ProductVulnerability'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -7043,22 +7361,22 @@ components:
     # ---- catalogs ----
 
     SearchCatalogsRequest:
-      description: Scopes the search to catalogs available for the given deployed product.
+      description: >
+        Always scoped to the deployed product in the {deployedProductId}
+        path parameter — the request body carries no deployedProductId
+        field.
       type: object
-      required: [deployedProductId]
       properties:
-        deployedProductId:
-          type: string
-          format: uuid
         pagination:
           $ref: '#/components/schemas/Pagination'
 
     CatalogItem:
+      description: label (not name) to match the frontend's own CatalogItem type.
       type: object
       properties:
         id:
           type: string
-        name:
+        label:
           type: string
 
     Catalog:
@@ -7074,13 +7392,16 @@ components:
             $ref: '#/components/schemas/CatalogItem'
 
     SearchCatalogsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         catalogs:
           type: array
           items:
             $ref: '#/components/schemas/Catalog'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -7111,21 +7432,17 @@ components:
 
     SearchTimeCardsRequest:
       description: >
-        entity-service also accepts userId/approverId/approvedById/userIds
-        filters that scope results to a specific WSO2 engineer — deliberately
-        not exposed here since the portal has no notion of a customer
-        selecting a WSO2 engineer to filter by.
+        projectId is set server-side from the {id} path parameter — the
+        request body carries no projectIds/caseId field. entity-service
+        also accepts userId/approverId/approvedById/userIds filters that
+        scope results to a specific WSO2 engineer — deliberately not
+        exposed here since the portal has no notion of a customer selecting
+        a WSO2 engineer to filter by.
       type: object
       properties:
         filters:
           type: object
           properties:
-            projectIds:
-              type: array
-              items:
-                type: string
-            caseId:
-              type: string
             startDate:
               type: string
             endDate:
@@ -7149,7 +7466,7 @@ components:
       properties:
         id:
           type: string
-        name:
+        label:
           type: string
         number:
           type: string
@@ -7159,37 +7476,40 @@ components:
         Deliberately excludes entity-service's per-category time breakdowns,
         issueComplexity, workLogComment, rejectionReason, and the
         eligible-approvers list — internal WSO2 support bookkeeping never
-        exposed to the customer portal.
+        exposed to the customer portal. createdOn (not workDate), and
+        state/reportedBy/approvedBy/project as IdLabelRef.
       type: object
       properties:
         id:
           type: string
         totalTime:
           type: number
-        workDate:
+        createdOn:
           type: string
         hasBillable:
           type: boolean
         state:
-          type: string
-          nullable: true
-        user:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
+        reportedBy:
+          $ref: '#/components/schemas/IdLabelRef'
         approvedBy:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         project:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         case:
           $ref: '#/components/schemas/TimeCardCaseRef'
 
     SearchTimeCardsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         timeCards:
           type: array
           items:
             $ref: '#/components/schemas/TimeCardSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -7414,20 +7734,18 @@ components:
     SearchConversationsRequest:
       description: >
         projectIds is set server-side from the path parameter and any
-        client-supplied value in filters.projectIds is ignored.
+        client-supplied value in filters.projectIds is ignored. stateKeys
+        carries ServiceNow's numeric choice-list ids (see
+        conversation_enum_mapping.go), not entity-service's own string enum.
       type: object
       properties:
         filters:
           type: object
           properties:
-            projectIds:
+            stateKeys:
               type: array
               items:
-                type: string
-            states:
-              type: array
-              items:
-                type: string
+                type: integer
             searchQuery:
               type: string
             createdByMe:
@@ -7443,6 +7761,7 @@ components:
           $ref: '#/components/schemas/Pagination'
 
     ConversationSummary:
+      description: project/case/state as IdLabelRef.
       type: object
       properties:
         id:
@@ -7453,23 +7772,28 @@ components:
           type: string
         messageCount:
           type: integer
+        project:
+          $ref: '#/components/schemas/IdLabelRef'
         case:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         state:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
         createdOn:
           type: string
         createdBy:
           type: string
 
     SearchConversationsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         conversations:
           type: array
           items:
             $ref: '#/components/schemas/ConversationSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -7533,25 +7857,27 @@ components:
           type: string
 
     SearchChangeRequestsRequest:
+      description: >
+        projectId is set server-side from the {id} path parameter — the
+        request body carries no projectIds field. stateKeys/impactKeys
+        carry ServiceNow's numeric choice-list ids (see
+        change_request_enum_mapping.go), not entity-service's own string
+        enum.
       type: object
       properties:
         filters:
           type: object
           properties:
-            projectIds:
-              type: array
-              items:
-                type: string
             searchQuery:
               type: string
-            states:
+            stateKeys:
               type: array
               items:
-                type: string
-            impacts:
+                type: integer
+            impactKeys:
               type: array
               items:
-                type: string
+                type: integer
             closedStartDate:
               type: string
             closedEndDate:
@@ -7567,55 +7893,62 @@ components:
           $ref: '#/components/schemas/Pagination'
 
     ChangeRequestSummary:
+      description: >
+        title (not subject), startDate/endDate (not plannedStartOn/
+        plannedEndOn), and every reference field as IdLabelRef to match the
+        frontend's own ChangeRequestItem type.
       type: object
       properties:
         id:
           type: string
         number:
           type: string
-        subject:
+        title:
           type: string
         description:
           type: string
         project:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         case:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         deployment:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         deployedProduct:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         product:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         assignedEngineer:
-          $ref: '#/components/schemas/Ref'
+          $ref: '#/components/schemas/IdLabelRef'
         assignedTeam:
-          $ref: '#/components/schemas/Ref'
-        plannedStartOn:
+          $ref: '#/components/schemas/IdLabelRef'
+        startDate:
           type: string
-        plannedEndOn:
+        endDate:
           type: string
         duration:
           type: string
         impact:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
         state:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
         type:
-          type: string
+          $ref: '#/components/schemas/IdLabelRef'
         createdOn:
           type: string
         updatedOn:
           type: string
 
     SearchChangeRequestsResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
       properties:
         changeRequests:
           type: array
           items:
             $ref: '#/components/schemas/ChangeRequestSummary'
-        total:
+        totalRecords:
           type: integer
         offset:
           type: integer
@@ -7646,7 +7979,7 @@ components:
             hasCustomerReviewed:
               type: boolean
             approvedBy:
-              $ref: '#/components/schemas/Ref'
+              $ref: '#/components/schemas/IdLabelRef'
             approvedOn:
               type: string
             legalNextStates:
@@ -9194,14 +9527,17 @@ components:
           $ref: '#/components/schemas/CaseTimeCardBillingInfo'
 
     CaseTimeCardSearchResponse:
+      description: >
+        totalRecords (not total) to match the frontend's shared
+        PaginationResponse envelope.
       type: object
-      required: [caseTimeCards, total, offset, limit]
+      required: [caseTimeCards, totalRecords, offset, limit]
       properties:
         caseTimeCards:
           type: array
           items:
             $ref: '#/components/schemas/CaseTimeCard'
-        total:
+        totalRecords:
           type: integer
         offset:
           type: integer
@@ -9214,14 +9550,18 @@ components:
     InstanceSearchRequest:
       description: >-
         Exactly one path-scoped ID filter (project/deployment/deployed
-        product) is injected server-side by the calling handler.
+        product) is injected server-side by the calling handler. startDate/
+        endDate are nested under filters, not top-level.
       type: object
       required: [pagination]
       properties:
-        startDate:
-          type: string
-        endDate:
-          type: string
+        filters:
+          type: object
+          properties:
+            startDate:
+              type: string
+            endDate:
+              type: string
         pagination:
           $ref: '#/components/schemas/Pagination'
 
@@ -9288,14 +9628,17 @@ components:
             - $ref: '#/components/schemas/InstanceMetadata'
 
     InstanceSearchResponse:
+      description: >-
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
-      required: [instances, total, offset, limit]
+      required: [instances, totalRecords, offset, limit]
       properties:
         instances:
           type: array
           items:
             $ref: '#/components/schemas/Instance'
-        total:
+        totalRecords:
           type: integer
         offset:
           type: integer
@@ -9466,8 +9809,11 @@ components:
           type: number
 
     InstanceMetricsStatsResponse:
+      description: >-
+        totalRecords (not total) to match the frontend's shared pagination
+        envelope.
       type: object
-      required: [stats, summary, total, startDate, endDate]
+      required: [stats, summary, totalRecords, startDate, endDate]
       properties:
         stats:
           description: Keyed by instance ID, then by metric bucket.
@@ -9478,7 +9824,7 @@ components:
               type: integer
         summary:
           $ref: '#/components/schemas/InstanceMetricSummary'
-        total:
+        totalRecords:
           type: integer
         startDate:
           type: string
@@ -9488,8 +9834,10 @@ components:
     InstanceUsageStatsResponse:
       description: >-
         Unlike InstanceMetricsStatsResponse, there is no summary block.
+        totalRecords (not total) to match the frontend's own
+        InstanceUsageStatsResponse type.
       type: object
-      required: [stats, total, startDate, endDate]
+      required: [stats, totalRecords, startDate, endDate]
       properties:
         stats:
           description: Keyed by instance ID, then by usage bucket.
@@ -9498,7 +9846,7 @@ components:
             type: object
             additionalProperties:
               type: integer
-        total:
+        totalRecords:
           type: integer
         startDate:
           type: string
@@ -9526,10 +9874,16 @@ components:
           type: string
 
     RegistryTokenCreateResponse:
+      description: >-
+        name is read by both GenerateTokenModal.tsx and
+        RegenerateTokenModal.tsx to display the server-assigned token name
+        after creation.
       type: object
       required: [secret]
       properties:
         secret:
+          type: string
+        name:
           type: string
 
     RegistryPermission:
@@ -9543,12 +9897,14 @@ components:
       description: >-
         Description is deliberately omitted — it's an internal encoding the
         backend uses to recover project/type/owner for authorization, not
-        something the frontend should render.
+        something the frontend should render. id and expiresAt are numeric
+        (not string) — the real registry service sends them as JSON numbers.
       type: object
       required: [name, disable, duration, permissions]
       properties:
         id:
-          type: string
+          type: integer
+          format: int64
         name:
           type: string
         displayName:
@@ -9563,7 +9919,8 @@ components:
         createdBy:
           type: string
         expiresAt:
-          type: string
+          type: integer
+          format: int64
         disable:
           type: boolean
         duration:

@@ -6,7 +6,7 @@ responses for the frontend. This is a rewrite of the existing backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** 101 routes are wired up so far, across seven upstream services:
+**Status: in progress.** 104 routes are wired up so far, across seven upstream services:
 entity-service, the WSO2 Updates service, SCIM, the AI chat agent, the product-consumption
 service, the registry (robot-account) service, and the project-contact onboarding service (see
 "The AI chat agent", "The product-consumption service", "The registry service", and "The
@@ -15,15 +15,19 @@ all). Route list: `GET /health`, `GET`/`PATCH /users/me`, `POST /accounts/search
 `GET /accounts/{id}`, `POST /projects/search`, `GET /projects/{id}`,
 `POST /projects/{id}/cases/search`,
 `GET /cases/{id}`, `POST /cases`, `PATCH /cases/{id}`, `POST /cases/{id}/comments`,
-`POST /cases/{id}/activities/search`, `POST /projects/{id}/deployments/search`, `POST /deployments`,
-`PATCH /deployments/{id}`, `POST /deployed-products/search`, `POST /deployed-products`,
-`PATCH /deployed-products/{id}`, `POST /attachments`, `POST /attachments/search`,
-`GET /attachments/{id}/content`, `DELETE /attachments/{id}`, `POST /products/search`,
+`POST /cases/{id}/activities/search`, `POST /cases/{id}/attachments`,
+`POST /projects/{id}/deployments/search`, `POST /projects/{id}/deployments`,
+`PATCH /projects/{projectId}/deployments/{id}`,
+`POST /deployments/{deploymentId}/products/search`, `POST /deployments/{deploymentId}/products`,
+`PATCH /deployments/{deploymentId}/products/{id}`, `POST /attachments`, `POST /attachments/search`,
+`GET /attachments/{id}/content`, `DELETE /attachments/{id}`, `GET /products`,
+`POST /products/search`,
 `POST /products/{id}/versions/search`, `POST /products/vulnerabilities/search`,
-`GET /products/vulnerabilities/{id}`, `POST /catalogs/search`,
-`GET /catalogs/{catalogId}/items/{catalogItemId}/variables`, `POST /time-cards/search`,
+`GET /products/vulnerabilities/{id}`,
+`POST /deployments/products/{deployedProductId}/catalogs/search`,
+`GET /catalogs/{catalogId}/items/{itemId}`, `POST /projects/{id}/time-cards/search`,
 `POST /comments`, `POST /comments/search`, `POST /change-requests`,
-`POST /change-requests/search`, `GET /change-requests/{id}`, `PATCH /change-requests/{id}`,
+`POST /projects/{id}/change-requests/search`, `GET /change-requests/{id}`, `PATCH /change-requests/{id}`,
 `GET /change-requests/{id}/approvals`, `POST /change-requests/{id}/approvals/decision`,
 `POST /cases/{caseId}/call-requests`, `POST /cases/{caseId}/call-requests/search`,
 `PATCH /cases/{caseId}/call-requests/{id}`,
@@ -353,12 +357,22 @@ Concretely:
 - `internal/dto` defines the portal's own response structs and one `Map*` function per entity type
   that translates entity → portal, dropping fields the customer portal has no business showing:
   - Salesforce/internal IDs (e.g. `ProjectDetailsView.SfID`)
-  - Internal feature-flags (e.g. `ProjectAccountRef.AgentEnabled`/`KbReferencesEnabled`)
   - CSM/WSO2-internal-only fields that entity-service itself documents as such (e.g.
-    `CaseView`'s `BestCaseFixEta`/`MostLikelyFixEta`/`WorstCaseFixEta`, `WatchList` — see the
-    comments in `entity-service/internal/domain/entity.go` on `CaseView`)
+    `CaseView`'s `BestCaseFixEta`/`MostLikelyFixEta`/`WorstCaseFixEta` — see the comments in
+    `entity-service/internal/domain/entity.go` on `CaseView`)
   - WSO2-internal team routing (e.g. `AccountRef.CreTeam`/`SreTeam`)
-  - Internal opaque identifiers not meaningful to a customer (e.g. `SearchCaseView.InternalID`)
+  - Internal opaque identifiers not meaningful to a customer (e.g. `SearchCaseView.InternalID`,
+    though `CaseDetails.internalId` on the single-case read path IS exposed — the frontend's own
+    `CaseDetails` type reads it directly, unlike the search-list item)
+
+  Not everything that looks internal-only actually is — `ProjectAccountRef.AgentEnabled`/
+  `KbReferencesEnabled` and `CaseView.WatchList` both looked like CSM/engineer-only fields from
+  their entity-service-side doc comments, but the frontend reads both directly
+  (`ProjectAccount.hasAgent`/`hasKbReferences`, `CaseDetails.watchList` — a customer's own
+  self-service watch-list, not an internal annotation) — see `internal/dto/project.go`'s
+  `ProjectAccount` and `internal/dto/case.go`'s `CaseDetails` for the corrected mapping. Verify
+  against the live frontend TypeScript, not just an entity-service doc comment, before excluding a
+  field as "obviously internal."
 - `internal/handler` calls the entity client, passes the result through the matching `dto.Map*`
   function, and writes the DTO with `writeJSONValue`.
 
@@ -385,7 +399,7 @@ is `time.Time` and the ServiceNow shape is a plain string, because a Go `*string
 JSON string value regardless of which the source type actually was.
 
 **When the frontend's contract expects a thinner shape than entity-service's own struct, match the
-frontend's contract, not entity-service.** `POST /time-cards/search`'s `dto.TimeCardSummary`
+frontend's contract, not entity-service.** `POST /projects/{id}/time-cards/search`'s `dto.TimeCardSummary`
 excludes entity-service's per-category time breakdowns (`timeAnalyzing`, `timeSettingUp`, etc.),
 `issueComplexity`, `workLogComment`, `rejectionReason`, and the eligible-approvers list — not
 because any of them are individually dangerous, but because the frontend's existing contract never
@@ -418,17 +432,26 @@ decoding the incoming request directly into an `internal/entity` type (which is 
 happened in the first place — there was no dto/entity separation on the request side for this one
 endpoint, unlike every response, which already goes through `dto.Map*`).
 
-**Some fields need a second translation layer on top of the dto/entity split: ServiceNow numeric
-choice-list ids ⇄ entity-service's string enums.** The frontend was built against the old Ballerina
-backend, which forwarded ServiceNow's raw numeric choice-list keys (case status/severity/issue-type/
-engagement-type, call-request state) directly — it still sends and expects those exact numbers
-today, even though `cs-tools/entity-service`'s own contract is plain lowercase-snake-case string
-enums. `internal/dto/case_enum_mapping.go` and `internal/dto/call_request_enum_mapping.go` hold this
-backend's own copies of the numeric-id↔enum tables (mirroring entity-service's private
-`snStateIDMap`/`snSeverityIDMap`/`snIssueTypeIDMap`/`snEngagementTypeIDMap`/`callRequestKeyToState`
-in `internal/service/sn_case_service.go` and `sn_call_request_service.go` — these ids are
-ServiceNow's own stable configuration, not something entity-service computes, so duplicating them
-is safe, but if entity-service's copies ever change, update both). Two directions:
+**Some fields need a second translation layer on top of the dto/entity split: ServiceNow/Choreo
+numeric choice-list ids ⇄ entity-service's string enums.** The frontend was built against the old
+Ballerina backend, which forwarded these raw numeric choice-list keys (case status/severity/
+issue-type/engagement-type, call-request state, change-request state/impact, conversation state,
+deployment type, product-vulnerability severity) directly — it still sends and expects those exact
+numbers today, even though `cs-tools/entity-service`'s own contract is plain lowercase-snake-case
+string enums (or, for conversation state, an upper-snake-case one). Six files hold this backend's
+own copies of the numeric-id↔enum tables, one pair of directions each:
+`internal/dto/case_enum_mapping.go` (mirrors `snStateIDMap`/`snSeverityIDMap`/`snIssueTypeIDMap`/
+`snEngagementTypeIDMap` in `internal/service/sn_case_service.go`),
+`internal/dto/call_request_enum_mapping.go` (mirrors `callRequestKeyToState` in
+`sn_call_request_service.go`), `internal/dto/change_request_enum_mapping.go` (mirrors
+`snCRStateIDMap`/`snCRImpactIDMap` in `sn_change_request_service.go`),
+`internal/dto/conversation_enum_mapping.go` (mirrors `snConversationStateKeyMap` in
+`sn_conversation_service.go`), `internal/dto/deployment_enum_mapping.go` (mirrors
+`deploymentTypeToKey` in `sn_deployment_service.go`), and
+`internal/dto/product_vulnerability_enum_mapping.go` (mirrors `vulnerabilityPriorityToSeverityID`
+in `sn_product_vulnerability_service.go`). These ids are each service's own stable upstream
+configuration, not something entity-service computes, so duplicating them is safe, but if
+entity-service's copies ever change, update the matching file here too. Two directions:
 - **Request → entity-service**: the frontend's numeric filter ids (`statusIds`, `severityIds`,
   `issueIds`, `engagementTypeKeys`, `stateKeys`) translate via an id→enum map
   (`caseIDsToEnums`/`callRequestStateKeyToEnum`) before reaching `BuildEntityXRequest`; an
@@ -523,13 +546,18 @@ Two more examples, both in this same "restrict, don't mirror" category:
   entries verbatim unless the caller filters them out, and those are internal WSO2 annotations that
   must never reach the customer regardless of which reference entity they're attached to.
 
-**Not every field worth restricting is a security decision — some are just an unenforced entity-service
-scoping convenience.** `PATCH /deployed-products/{id}`'s `deploymentId` field looks similar to the
-fields above (an id referencing another resource) but isn't restricted, because entity-service
-documents it as an IDOR-style scope guard the caller supplies voluntarily (verify the deployed
-product belongs to this deployment before mutating it), not a way to relink the resource. Read the
-entity-service doc comment on the field before deciding which category it falls into — don't
-pattern-match on field name alone (e.g. "any ID field" or "any assignee-shaped field").
+**Not every field worth restricting is a security decision — some are just an entity-service scoping
+convenience, and the path (not the body) is the more reliable source for it.**
+`PATCH /deployments/{deploymentId}/products/{id}`'s `deploymentId` field is an IDOR-style scope
+guard entity-service documents (verify the deployed product belongs to this deployment before
+mutating it), not a way to relink the resource — but the frontend's own `PatchDeploymentProductRequest`
+body never actually carries a `deploymentId` field, so trusting the body would leave the guard
+permanently unset. `dto.BuildEntityUpdateDeployedProductRequest` always injects it from the URL's
+`{deploymentId}` path segment instead, the same way project/deployment scoping is forced from the
+path everywhere else in this backend (see "Project scoping via a `{id}` path parameter" below). Read
+the entity-service doc comment on a field like this before deciding whether path-injection or
+body-passthrough is the right source — don't pattern-match on field name alone (e.g. "any ID field"
+or "any assignee-shaped field").
 
 **"Exactly one" vs. "at least one" is per-entity, read entity-service's own doc comment.**
 `PATCH /cases/{id}` requires *exactly one* of its primary fields (entity-service's doc comment says
@@ -546,17 +574,18 @@ specific value needs to be checked in Go code (e.g. `ChangeRequestApprovalDecisi
 validation in the handler compares against literal `"approved"`/`"rejected"` strings, not enum
 constants).
 
-**Most pagination responses use `total`; a few deliberately use `totalRecords` instead — check the
-frontend's existing type before picking one.** The frontend's shared `PaginationResponse` type
-(`apps/customer-portal/webapp/src/types/common.ts`) is `{offset, limit, totalRecords}`, and some
-already-built frontend consumers (`GET /cases/{id}/attachments`,
-`POST /cases/{caseId}/call-requests/search`, `POST /projects/{id}/cases/search`) read exactly that
-field name — so their dto response types use `totalRecords`, not this backend's more common
-`total`. This is not a house-style
-migration in progress; new endpoints should still default to `total` unless porting one that a
-specific existing frontend hook already expects `totalRecords` from (check
-`apps/customer-portal/webapp/src/api/` and `src/features/*/api/` for the exact field the relevant
-hook decodes before choosing).
+**Most pagination responses use `totalRecords`; a handful of not-yet-audited endpoints still use
+`total` — check the frontend's existing type before picking one.** The frontend's shared
+`PaginationResponse` type (`apps/customer-portal/webapp/src/types/common.ts`) is
+`{offset, limit, totalRecords}`, and the large majority of this backend's paginated responses were
+renamed to match it during a full request/response type-alignment pass against the old Ballerina
+backend and the live frontend (see git history for `fix/customer-portal-v2-align-response-types`).
+A few endpoints not yet touched by that pass (`internal/dto/account.go`, `attachment.go`,
+`escalation.go`, `project_stats.go`) still send `total` — this is leftover drift, not a deliberate
+split, and each should be renamed to `totalRecords` the next time one of them is revisited. New
+endpoints should default to `totalRecords`; verify against the specific frontend hook's decoded
+field name before assuming (check `apps/customer-portal/webapp/src/api/` and
+`src/features/*/api/`).
 
 **Some routes nest a resource's own ID in the path purely for RESTful shape, not because the
 handler needs it.** `PATCH /cases/{caseId}/call-requests/{id}` is the example: entity-service's

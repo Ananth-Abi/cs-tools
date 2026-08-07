@@ -56,13 +56,13 @@ func (h *ProjectHandler) SearchProjects(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req entity.SearchProjectsRequest
+	var req dto.SearchProjectsRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.SearchProjects(r.Context(), req)
+	result, err := h.entity.SearchProjects(r.Context(), dto.BuildEntitySearchProjectsRequest(req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProjects failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search projects.")

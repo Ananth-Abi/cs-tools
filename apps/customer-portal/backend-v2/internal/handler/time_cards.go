@@ -48,11 +48,17 @@ func NewTimeCardHandler(entity entityTimeCardClient) *TimeCardHandler {
 	return &TimeCardHandler{entity: entity}
 }
 
-// SearchTimeCards handles POST /time-cards/search.
+// SearchTimeCards handles POST /projects/{id}/time-cards/search.
 func (h *TimeCardHandler) SearchTimeCards(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	projectID := r.PathValue("id")
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -61,13 +67,13 @@ func (h *TimeCardHandler) SearchTimeCards(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var req entity.SearchTimeCardsRequest
+	var req dto.TimeCardSearchRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.SearchTimeCards(r.Context(), req)
+	result, err := h.entity.SearchTimeCards(r.Context(), dto.BuildEntitySearchTimeCardsRequest(projectID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchTimeCards failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search time cards.")
