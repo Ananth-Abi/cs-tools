@@ -192,6 +192,11 @@ export default function ChatMessageBubble({
    * Show 👍/👎 on a completed assistant answer that carries a stable
    * feedbackMessageId (from the WS `final` event). Never on user, error,
    * streaming, or history messages that lack an id.
+   *
+   * Feedback is delivered over the chat socket, so it is only offered while
+   * that socket is open: the pages pass the handlers as undefined when
+   * disconnected, and the last clause below then hides the row. Hidden rather
+   * than disabled — a greyed-out thumb invites a click that cannot succeed.
    */
   const showFeedbackRow =
     message.sender === ChatSender.BOT &&

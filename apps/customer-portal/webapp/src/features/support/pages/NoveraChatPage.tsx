@@ -508,7 +508,7 @@ export default function NoveraChatPage(): JSX.Element {
     return () => window.clearInterval(id);
   }, [dequeueOneTypedToken, flushPendingFinalIfReady, TYPING_INTERVAL_MS]);
 
-  const { connect, sendUserMessage } = useChatWebSocket({
+  const { connect, sendUserMessage, isConnected } = useChatWebSocket({
     onEvent: (event) => {
       switch (event.type) {
         case "conversation_created": {
@@ -865,8 +865,8 @@ export default function NoveraChatPage(): JSX.Element {
               messages={messages}
               messagesEndRef={messagesEndRef}
               onCreateCase={handleCreateCase}
-              onThumbsUp={handleThumbsUp}
-              onThumbsDown={handleThumbsDown}
+              onThumbsUp={isConnected ? handleThumbsUp : undefined}
+              onThumbsDown={isConnected ? handleThumbsDown : undefined}
               onSolutionWorked={handleSolutionWorked}
               onRequestTokenIncrease={
                 tokenRequestEnabled
