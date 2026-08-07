@@ -18,25 +18,34 @@ package dto
 
 import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 
-// CatalogItem is a single selectable item within a service catalog.
+// CatalogItem is a single selectable item within a service catalog — Label
+// (not Name) to match the frontend's own CatalogItem type
+// (apps/customer-portal/webapp/src/features/operations/types/
+// serviceRequests.ts: CatalogItem = MetadataItem = {id, label}). Note the
+// catalog container itself (Catalog.Name below) keeps Name — only items
+// need Label.
 type CatalogItem struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
 }
 
-// Catalog is one item of the portal's response for POST /catalogs/search.
+// Catalog is one item of the portal's response for
+// POST /deployments/products/{deployedProductId}/catalogs/search.
 type Catalog struct {
 	ID           string        `json:"id"`
 	Name         string        `json:"name"`
 	CatalogItems []CatalogItem `json:"catalogItems"`
 }
 
-// SearchCatalogsResponse is the portal's response for POST /catalogs/search.
+// SearchCatalogsResponse is the portal's response for
+// POST /deployments/products/{deployedProductId}/catalogs/search.
+// TotalRecords (not Total) to match the frontend's shared pagination
+// envelope.
 type SearchCatalogsResponse struct {
-	Catalogs []Catalog `json:"catalogs"`
-	Total    int       `json:"total"`
-	Limit    int       `json:"limit"`
-	Offset   int       `json:"offset"`
+	Catalogs     []Catalog `json:"catalogs"`
+	TotalRecords int       `json:"totalRecords"`
+	Limit        int       `json:"limit"`
+	Offset       int       `json:"offset"`
 }
 
 // MapSearchCatalogs builds the portal response from entity-service's SearchCatalogsResponse.
@@ -45,7 +54,7 @@ func MapSearchCatalogs(r entity.SearchCatalogsResponse) SearchCatalogsResponse {
 	for _, c := range r.Catalogs {
 		items := make([]CatalogItem, 0, len(c.CatalogItems))
 		for _, item := range c.CatalogItems {
-			items = append(items, CatalogItem{ID: item.ID, Name: item.Name})
+			items = append(items, CatalogItem{ID: item.ID, Label: item.Name})
 		}
 		catalogs = append(catalogs, Catalog{
 			ID:           c.ID,
@@ -54,10 +63,27 @@ func MapSearchCatalogs(r entity.SearchCatalogsResponse) SearchCatalogsResponse {
 		})
 	}
 	return SearchCatalogsResponse{
-		Catalogs: catalogs,
-		Total:    r.Total,
-		Limit:    r.Limit,
-		Offset:   r.Offset,
+		Catalogs:     catalogs,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+	}
+}
+
+// SearchCatalogsRequest is the portal's request body for
+// POST /deployments/products/{deployedProductId}/catalogs/search.
+type SearchCatalogsRequest struct {
+	Pagination entity.Pagination `json:"pagination"`
+}
+
+// BuildEntitySearchCatalogsRequest translates the portal's search request
+// into entity-service's request shape, always scoping to the deployed
+// product in the URL — never a client-settable body field (same reasoning
+// as BuildEntitySearchCasesRequest's projectID parameter).
+func BuildEntitySearchCatalogsRequest(deployedProductID string, req SearchCatalogsRequest) entity.SearchCatalogsRequest {
+	return entity.SearchCatalogsRequest{
+		DeployedProductID: deployedProductID,
+		Pagination:        req.Pagination,
 	}
 }
 

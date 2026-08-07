@@ -71,10 +71,15 @@ type CaseTimeCard struct {
 }
 
 // CaseTimeCardSearchResponse is the portal's response for
-// POST /projects/{id}/cases/time-cards/search.
+// POST /projects/{id}/cases/time-cards/search. TotalRecords (not Total) to
+// match the frontend's shared PaginationResponse envelope —
+// useSearchProjectCaseTimeCards.ts's getNextPageParam and
+// fetchAllCaseTimeCards.ts's export pagination both read totalRecords, so a
+// mismatch here stalls "load more" and truncates CSV/PDF exports to the
+// first page.
 type CaseTimeCardSearchResponse struct {
 	CaseTimeCards []CaseTimeCard `json:"caseTimeCards"`
-	Total         int            `json:"total"`
+	TotalRecords  int            `json:"totalRecords"`
 	Offset        int            `json:"offset"`
 	Limit         int            `json:"limit"`
 }
@@ -103,7 +108,7 @@ func MapCaseTimeCardSearchResponse(r entity.SearchCaseTimeCardsResponse) CaseTim
 	}
 	return CaseTimeCardSearchResponse{
 		CaseTimeCards: items,
-		Total:         r.Total,
+		TotalRecords:  r.Total,
 		Offset:        r.Offset,
 		Limit:         r.Limit,
 	}

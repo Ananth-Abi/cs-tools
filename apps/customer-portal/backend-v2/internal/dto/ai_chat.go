@@ -209,23 +209,29 @@ func MapConversationSummary(r aichatagent.ConversationSummaryResponse) Conversat
 }
 
 // ConversationSummary is one item of the portal's response for
-// POST /projects/{id}/conversations/search.
+// POST /projects/{id}/conversations/search — shaped to match the frontend's
+// own Conversation type (apps/customer-portal/webapp/src/features/support/
+// types/conversations.ts) field-for-field: State and Project as IDLabelRef
+// (not a plain string / not missing) — see conversation_enum_mapping.go for
+// the State translation.
 type ConversationSummary struct {
-	ID             string `json:"id"`
-	Number         string `json:"number,omitempty"`
-	InitialMessage string `json:"initialMessage,omitempty"`
-	MessageCount   int    `json:"messageCount"`
-	Case           *Ref   `json:"case,omitempty"`
-	State          string `json:"state,omitempty"`
-	CreatedOn      string `json:"createdOn"`
-	CreatedBy      string `json:"createdBy"`
+	ID             string      `json:"id"`
+	Number         string      `json:"number,omitempty"`
+	InitialMessage string      `json:"initialMessage,omitempty"`
+	MessageCount   int         `json:"messageCount"`
+	Project        *IDLabelRef `json:"project,omitempty"`
+	Case           *IDLabelRef `json:"case,omitempty"`
+	State          *IDLabelRef `json:"state,omitempty"`
+	CreatedOn      string      `json:"createdOn"`
+	CreatedBy      string      `json:"createdBy"`
 }
 
 // SearchConversationsResponse is the portal's response for
-// POST /projects/{id}/conversations/search.
+// POST /projects/{id}/conversations/search. TotalRecords (not Total) to
+// match the frontend's shared pagination envelope.
 type SearchConversationsResponse struct {
 	Conversations []ConversationSummary `json:"conversations"`
-	Total         int                   `json:"total"`
+	TotalRecords  int                   `json:"totalRecords"`
 	Limit         int                   `json:"limit"`
 	Offset        int                   `json:"offset"`
 }
@@ -237,7 +243,9 @@ func MapSearchConversations(r entity.SearchConversationsResponse) SearchConversa
 	for _, c := range r.Conversations {
 		summary := ConversationSummary{
 			MessageCount: c.MessageCount,
-			Case:         mapRef(c.Case),
+			Project:      entityRefToIDLabel(c.Project),
+			Case:         entityRefToIDLabel(c.Case),
+			State:        conversationStateRef(c.State),
 			CreatedOn:    c.CreatedOn,
 			CreatedBy:    c.CreatedBy,
 		}
@@ -250,15 +258,50 @@ func MapSearchConversations(r entity.SearchConversationsResponse) SearchConversa
 		if c.InitialMessage != nil {
 			summary.InitialMessage = *c.InitialMessage
 		}
-		if c.State != nil {
-			summary.State = *c.State
-		}
 		items = append(items, summary)
 	}
 	return SearchConversationsResponse{
 		Conversations: items,
-		Total:         r.Total,
+		TotalRecords:  r.Total,
 		Limit:         r.Limit,
 		Offset:        r.Offset,
+	}
+}
+
+// ConversationSearchFilters holds the optional filter criteria for
+// POST /projects/{id}/conversations/search — shaped to match the frontend's
+// actual request body. StateKeys carries ServiceNow's numeric choice-list
+// ids (the frontend was built against the old Ballerina backend and still
+// sends these, not entity-service's own string enum) — see
+// conversation_enum_mapping.go for the translation. No ProjectIDs field:
+// project scoping comes exclusively from the {id} path parameter.
+type ConversationSearchFilters struct {
+	StateKeys   []int  `json:"stateKeys,omitempty"`
+	SearchQuery string `json:"searchQuery,omitempty"`
+	CreatedByMe bool   `json:"createdByMe,omitempty"`
+}
+
+// ConversationSearchRequest is the portal's request body for
+// POST /projects/{id}/conversations/search.
+type ConversationSearchRequest struct {
+	Filters    ConversationSearchFilters `json:"filters"`
+	SortBy     entity.ConversationSort   `json:"sortBy"`
+	Pagination entity.Pagination         `json:"pagination"`
+}
+
+// BuildEntitySearchConversationsRequest translates the portal's request
+// into entity-service's SearchConversationsRequest. projectID (the {id}
+// path parameter) always populates Filters.ProjectIDs — never the request
+// body.
+func BuildEntitySearchConversationsRequest(projectID string, req ConversationSearchRequest) entity.SearchConversationsRequest {
+	return entity.SearchConversationsRequest{
+		Filters: entity.SearchConversationsFilters{
+			ProjectIDs:  []string{projectID},
+			States:      conversationIDsToEnums(req.Filters.StateKeys),
+			SearchQuery: req.Filters.SearchQuery,
+			CreatedByMe: req.Filters.CreatedByMe,
+		},
+		SortBy:     req.SortBy,
+		Pagination: req.Pagination,
 	}
 }

@@ -17,33 +17,37 @@
 package dto
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 )
 
 // DeploymentSummary is one item of the portal's response for
-// POST /projects/{id}/deployments/search.
+// POST /projects/{id}/deployments/search — Type and Project as IDLabelRef
+// to match the frontend's own ProjectDeploymentItem type
+// (apps/customer-portal/webapp/src/features/project-details/types/deployments.ts).
 type DeploymentSummary struct {
-	ID          string    `json:"id"`
-	Number      string    `json:"number"`
-	Name        string    `json:"name"`
-	Type        string    `json:"type"`
-	Description *string   `json:"description,omitempty"`
-	CreatedBy   *Ref      `json:"createdBy,omitempty"`
-	Project     Ref       `json:"project"`
-	CreatedOn   time.Time `json:"createdOn"`
-	UpdatedOn   time.Time `json:"updatedOn"`
+	ID          string      `json:"id"`
+	Number      string      `json:"number"`
+	Name        string      `json:"name"`
+	Type        *IDLabelRef `json:"type,omitempty"`
+	Description *string     `json:"description,omitempty"`
+	CreatedBy   *Ref        `json:"createdBy,omitempty"`
+	Project     *IDLabelRef `json:"project,omitempty"`
+	CreatedOn   time.Time   `json:"createdOn"`
+	UpdatedOn   time.Time   `json:"updatedOn"`
 }
 
 // SearchDeploymentsResponse is the portal's response for
-// POST /projects/{id}/deployments/search.
+// POST /projects/{id}/deployments/search. TotalRecords (not Total) to match
+// the frontend's shared pagination envelope.
 type SearchDeploymentsResponse struct {
-	Deployments []DeploymentSummary `json:"deployments"`
-	Total       int                 `json:"total"`
-	Limit       int                 `json:"limit"`
-	Offset      int                 `json:"offset"`
-	HasMore     bool                `json:"hasMore"`
+	Deployments  []DeploymentSummary `json:"deployments"`
+	TotalRecords int                 `json:"totalRecords"`
+	Limit        int                 `json:"limit"`
+	Offset       int                 `json:"offset"`
+	HasMore      bool                `json:"hasMore"`
 }
 
 // MapSearchDeployments builds the portal response from entity-service's SearchDeploymentsResponse.
@@ -54,21 +58,76 @@ func MapSearchDeployments(r entity.SearchDeploymentsResponse) SearchDeploymentsR
 			ID:          d.ID,
 			Number:      d.Number,
 			Name:        d.Name,
-			Type:        d.Type,
+			Type:        deploymentTypeRef(d.Type),
 			Description: d.Description,
 			CreatedBy:   mapRef(d.CreatedBy),
-			Project:     Ref{ID: d.Project.ID, Name: d.Project.Name},
+			Project:     entityRefToIDLabel(&d.Project),
 			CreatedOn:   d.CreatedOn,
 			UpdatedOn:   d.UpdatedOn,
 		})
 	}
 	return SearchDeploymentsResponse{
-		Deployments: deployments,
-		Total:       r.Total,
-		Limit:       r.Limit,
-		Offset:      r.Offset,
-		HasMore:     r.HasMore,
+		Deployments:  deployments,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
+}
+
+// DeploymentCreateRequest is the portal's request body for
+// POST /projects/{id}/deployments — DeploymentTypeKey is the ServiceNow
+// numeric choice-list key the frontend sends (CreateDeploymentRequest.
+// deploymentTypeKey), translated to entity-service's string enum by
+// BuildEntityCreateDeploymentRequest.
+type DeploymentCreateRequest struct {
+	DeploymentTypeKey int    `json:"deploymentTypeKey"`
+	Description       string `json:"description"`
+	Name              string `json:"name"`
+}
+
+// BuildEntityCreateDeploymentRequest translates the portal's create request
+// into entity-service's request shape, forcing ProjectID from the path.
+func BuildEntityCreateDeploymentRequest(projectID string, req DeploymentCreateRequest) entity.CreateDeploymentRequest {
+	return entity.CreateDeploymentRequest{
+		ProjectID:   projectID,
+		Name:        req.Name,
+		Type:        deploymentTypeIDToEnumPtr(req.DeploymentTypeKey),
+		Description: req.Description,
+	}
+}
+
+// DeploymentUpdateRequest is the portal's request body for
+// PATCH /projects/{id}/deployments/{deploymentId} — TypeKey is the
+// ServiceNow numeric choice-list key the frontend sends
+// (PatchDeploymentRequest.typeKey), translated to entity-service's string
+// enum by BuildEntityUpdateDeploymentRequest. Description is json.RawMessage
+// (not *string) to preserve the three-state absent/null/value semantic
+// entity-service's own UpdateDeploymentRequest.Description expects — a
+// *string can't distinguish an omitted field from an explicit
+// {"description": null}, which would silently drop a customer's attempt to
+// clear the description (see the analogous convention already documented
+// for UpdateDeployedProductRequest.Description in this backend's CLAUDE.md).
+type DeploymentUpdateRequest struct {
+	Active      *bool           `json:"active,omitempty"`
+	Description json.RawMessage `json:"description,omitempty"`
+	Name        *string         `json:"name,omitempty"`
+	TypeKey     *int            `json:"typeKey,omitempty"`
+}
+
+// BuildEntityUpdateDeploymentRequest translates the portal's update request
+// into entity-service's request shape.
+func BuildEntityUpdateDeploymentRequest(id string, req DeploymentUpdateRequest) entity.UpdateDeploymentRequest {
+	out := entity.UpdateDeploymentRequest{
+		ID:          id,
+		Name:        req.Name,
+		Active:      req.Active,
+		Description: req.Description,
+	}
+	if req.TypeKey != nil {
+		out.Type = deploymentTypeIDToEnumPtr(*req.TypeKey)
+	}
+	return out
 }
 
 // DeploymentCreateResponse is the portal's response for POST /deployments.

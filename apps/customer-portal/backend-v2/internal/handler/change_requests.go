@@ -84,11 +84,17 @@ func (h *ChangeRequestHandler) CreateChangeRequest(w http.ResponseWriter, r *htt
 	writeJSONValue(w, http.StatusCreated, dto.MapChangeRequestCreate(result))
 }
 
-// SearchChangeRequests handles POST /change-requests/search.
+// SearchChangeRequests handles POST /projects/{id}/change-requests/search.
 func (h *ChangeRequestHandler) SearchChangeRequests(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	projectID := r.PathValue("id")
+	if projectID == "" || !uuidRe.MatchString(projectID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -97,13 +103,13 @@ func (h *ChangeRequestHandler) SearchChangeRequests(w http.ResponseWriter, r *ht
 		return
 	}
 
-	var req entity.SearchChangeRequestsRequest
+	var req dto.ChangeRequestSearchRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.SearchChangeRequests(r.Context(), req)
+	result, err := h.entity.SearchChangeRequests(r.Context(), dto.BuildEntitySearchChangeRequestsRequest(projectID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchChangeRequests failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search change requests.")

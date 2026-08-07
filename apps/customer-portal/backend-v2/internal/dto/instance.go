@@ -33,14 +33,23 @@ func toOptionalRef(r *entity.ReferenceTableItem) *ReferenceItem {
 	return &ReferenceItem{ID: r.ID, Label: r.Name}
 }
 
+// InstanceSearchDateFilters holds the optional date-range filter nested
+// under InstanceSearchRequest.Filters, matching the frontend's own
+// InstanceSearchFilters type (apps/customer-portal/webapp/src/features/
+// project-details/types/usage.ts: filters?: { startDate?, endDate? }) —
+// the frontend sends these nested, not top-level.
+type InstanceSearchDateFilters struct {
+	StartDate *string `json:"startDate,omitempty"`
+	EndDate   *string `json:"endDate,omitempty"`
+}
+
 // InstanceSearchRequest is the portal's request body for the three
 // instances/search routes. Exactly one path param (project/deployment/
 // deployed-product ID) is injected server-side into the corresponding
 // entity filter field by the calling handler.
 type InstanceSearchRequest struct {
-	StartDate  *string           `json:"startDate,omitempty"`
-	EndDate    *string           `json:"endDate,omitempty"`
-	Pagination entity.Pagination `json:"pagination"`
+	Filters    *InstanceSearchDateFilters `json:"filters,omitempty"`
+	Pagination entity.Pagination          `json:"pagination"`
 }
 
 // InstanceMetadata is the portal's own copy of entity.InstanceMetadata.
@@ -86,12 +95,14 @@ type Instance struct {
 	Metadata        *InstanceMetadata `json:"metadata"`
 }
 
-// InstanceSearchResponse is the portal's response for the three instances/search routes.
+// InstanceSearchResponse is the portal's response for the three
+// instances/search routes. TotalRecords (not Total) to match the frontend's
+// shared pagination envelope (InstancesResponse extends PaginationResponse).
 type InstanceSearchResponse struct {
-	Instances []Instance `json:"instances"`
-	Total     int        `json:"total"`
-	Offset    int        `json:"offset"`
-	Limit     int        `json:"limit"`
+	Instances    []Instance `json:"instances"`
+	TotalRecords int        `json:"totalRecords"`
+	Offset       int        `json:"offset"`
+	Limit        int        `json:"limit"`
 }
 
 // MapInstanceSearchResponse builds the portal response from entity-service's
@@ -111,7 +122,7 @@ func MapInstanceSearchResponse(r entity.SearchInstancesResponse) InstanceSearchR
 			Metadata:        toOptionalInstanceMetadata(i.Metadata),
 		})
 	}
-	return InstanceSearchResponse{Instances: items, Total: r.Total, Offset: r.Offset, Limit: r.Limit}
+	return InstanceSearchResponse{Instances: items, TotalRecords: r.Total, Offset: r.Offset, Limit: r.Limit}
 }
 
 // InstanceDateRangeRequest is the portal's request body for the
@@ -269,13 +280,15 @@ type InstanceMetricSummary struct {
 }
 
 // InstanceMetricsStatsResponse is the portal's response for the
-// instances/stats/metrics/search routes.
+// instances/stats/metrics/search routes. TotalRecords (not Total) for
+// consistency with InstanceUsageStatsResponse, which the frontend's own
+// type confirms reads totalRecords.
 type InstanceMetricsStatsResponse struct {
-	Stats     map[string]map[string]int `json:"stats"`
-	Summary   InstanceMetricSummary     `json:"summary"`
-	Total     int                       `json:"total"`
-	StartDate string                    `json:"startDate"`
-	EndDate   string                    `json:"endDate"`
+	Stats        map[string]map[string]int `json:"stats"`
+	Summary      InstanceMetricSummary     `json:"summary"`
+	TotalRecords int                       `json:"totalRecords"`
+	StartDate    string                    `json:"startDate"`
+	EndDate      string                    `json:"endDate"`
 }
 
 // MapInstanceMetricsStatsResponse builds the portal response from
@@ -289,29 +302,30 @@ func MapInstanceMetricsStatsResponse(r entity.InstanceMetricsStatsResponse) Inst
 			Max:     r.Summary.Max,
 			Avg:     r.Summary.Avg,
 		},
-		Total:     r.Total,
-		StartDate: r.StartDate,
-		EndDate:   r.EndDate,
+		TotalRecords: r.Total,
+		StartDate:    r.StartDate,
+		EndDate:      r.EndDate,
 	}
 }
 
 // InstanceUsageStatsResponse is the portal's response for the
 // instances/stats/usages/search routes. Unlike InstanceMetricsStatsResponse,
-// there is no summary block, by design.
+// there is no summary block, by design. TotalRecords (not Total) to match
+// the frontend's own InstanceUsageStatsResponse type.
 type InstanceUsageStatsResponse struct {
-	Stats     map[string]map[string]int `json:"stats"`
-	Total     int                       `json:"total"`
-	StartDate string                    `json:"startDate"`
-	EndDate   string                    `json:"endDate"`
+	Stats        map[string]map[string]int `json:"stats"`
+	TotalRecords int                       `json:"totalRecords"`
+	StartDate    string                    `json:"startDate"`
+	EndDate      string                    `json:"endDate"`
 }
 
 // MapInstanceUsageStatsResponse builds the portal response from
 // entity-service's InstanceUsageStatsResponse.
 func MapInstanceUsageStatsResponse(r entity.InstanceUsageStatsResponse) InstanceUsageStatsResponse {
 	return InstanceUsageStatsResponse{
-		Stats:     r.Stats,
-		Total:     r.Total,
-		StartDate: r.StartDate,
-		EndDate:   r.EndDate,
+		Stats:        r.Stats,
+		TotalRecords: r.Total,
+		StartDate:    r.StartDate,
+		EndDate:      r.EndDate,
 	}
 }

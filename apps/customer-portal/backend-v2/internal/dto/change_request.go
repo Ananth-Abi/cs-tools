@@ -92,56 +92,71 @@ func MapChangeRequestCreate(r entity.CreateChangeRequestResponse) ChangeRequestC
 }
 
 // ChangeRequestSummary is one item of the portal's response for
-// POST /change-requests/search.
+// POST /projects/{id}/change-requests/search — shaped to match the
+// frontend's own ChangeRequestItem type
+// (apps/customer-portal/webapp/src/features/operations/types/
+// changeRequests.ts) field-for-field: Title (not Subject), StartDate/
+// EndDate (not PlannedStartOn/PlannedEndOn), every reference field as
+// IDLabelRef (not Ref), and Impact/State/Type as IDLabelRef too — see
+// change_request_enum_mapping.go for the translation. InternalID and
+// HasServiceOutage are in the frontend's type but have no entity-service
+// equivalent at all (entity.SearchChangeRequestView carries neither) — not
+// fixable in this DTO layer alone.
 type ChangeRequestSummary struct {
-	ID               string  `json:"id"`
-	Number           string  `json:"number"`
-	Subject          *string `json:"subject,omitempty"`
-	Description      *string `json:"description,omitempty"`
-	Project          Ref     `json:"project"`
-	Case             *Ref    `json:"case,omitempty"`
-	Deployment       *Ref    `json:"deployment,omitempty"`
-	DeployedProduct  *Ref    `json:"deployedProduct,omitempty"`
-	Product          *Ref    `json:"product,omitempty"`
-	AssignedEngineer *Ref    `json:"assignedEngineer,omitempty"`
-	AssignedTeam     *Ref    `json:"assignedTeam,omitempty"`
-	PlannedStartOn   *string `json:"plannedStartOn,omitempty"`
-	PlannedEndOn     *string `json:"plannedEndOn,omitempty"`
-	Duration         *string `json:"duration,omitempty"`
-	Impact           *string `json:"impact,omitempty"`
-	State            *string `json:"state,omitempty"`
-	Type             *string `json:"type,omitempty"`
-	CreatedOn        string  `json:"createdOn"`
-	UpdatedOn        string  `json:"updatedOn"`
+	ID               string      `json:"id"`
+	Number           string      `json:"number"`
+	Title            string      `json:"title"`
+	Description      *string     `json:"description,omitempty"`
+	Project          IDLabelRef  `json:"project"`
+	Case             *IDLabelRef `json:"case,omitempty"`
+	Deployment       *IDLabelRef `json:"deployment,omitempty"`
+	DeployedProduct  *IDLabelRef `json:"deployedProduct,omitempty"`
+	Product          *IDLabelRef `json:"product,omitempty"`
+	AssignedEngineer *IDLabelRef `json:"assignedEngineer,omitempty"`
+	AssignedTeam     *IDLabelRef `json:"assignedTeam,omitempty"`
+	StartDate        *string     `json:"startDate,omitempty"`
+	EndDate          *string     `json:"endDate,omitempty"`
+	Duration         *string     `json:"duration,omitempty"`
+	Impact           *IDLabelRef `json:"impact,omitempty"`
+	State            *IDLabelRef `json:"state,omitempty"`
+	Type             *IDLabelRef `json:"type,omitempty"`
+	CreatedOn        string      `json:"createdOn"`
+	UpdatedOn        string      `json:"updatedOn"`
 }
 
-// SearchChangeRequestsResponse is the portal's response for POST /change-requests/search.
+// SearchChangeRequestsResponse is the portal's response for
+// POST /projects/{id}/change-requests/search. TotalRecords (not Total) to
+// match the frontend's shared pagination envelope.
 type SearchChangeRequestsResponse struct {
 	ChangeRequests []ChangeRequestSummary `json:"changeRequests"`
-	Total          int                    `json:"total"`
+	TotalRecords   int                    `json:"totalRecords"`
 	Offset         int                    `json:"offset"`
 	Limit          int                    `json:"limit"`
 }
 
 func mapChangeRequestSummary(v entity.SearchChangeRequestView) ChangeRequestSummary {
+	var title string
+	if v.Subject != nil {
+		title = *v.Subject
+	}
 	return ChangeRequestSummary{
 		ID:               v.ID,
 		Number:           v.Number,
-		Subject:          v.Subject,
+		Title:            title,
 		Description:      v.Description,
-		Project:          Ref{ID: v.Project.ID, Name: v.Project.Name},
-		Case:             mapRef(v.Case),
-		Deployment:       mapRef(v.Deployment),
-		DeployedProduct:  mapRef(v.DeployedProduct),
-		Product:          mapRef(v.Product),
-		AssignedEngineer: mapRef(v.AssignedEngineer),
-		AssignedTeam:     mapRef(v.AssignedTeam),
-		PlannedStartOn:   v.PlannedStartOn,
-		PlannedEndOn:     v.PlannedEndOn,
+		Project:          IDLabelRef{ID: v.Project.ID, Label: v.Project.Name},
+		Case:             entityRefToIDLabel(v.Case),
+		Deployment:       entityRefToIDLabel(v.Deployment),
+		DeployedProduct:  entityRefToIDLabel(v.DeployedProduct),
+		Product:          entityRefToIDLabel(v.Product),
+		AssignedEngineer: entityRefToIDLabel(v.AssignedEngineer),
+		AssignedTeam:     entityRefToIDLabel(v.AssignedTeam),
+		StartDate:        v.PlannedStartOn,
+		EndDate:          v.PlannedEndOn,
 		Duration:         v.Duration,
-		Impact:           v.Impact,
-		State:            v.State,
-		Type:             v.Type,
+		Impact:           crImpactRef(v.Impact),
+		State:            crStateRef(v.State),
+		Type:             crTypeRef(v.Type),
 		CreatedOn:        v.CreatedOn,
 		UpdatedOn:        v.UpdatedOn,
 	}
@@ -155,9 +170,53 @@ func MapSearchChangeRequests(r entity.SearchChangeRequestsResponse) SearchChange
 	}
 	return SearchChangeRequestsResponse{
 		ChangeRequests: items,
-		Total:          r.Total,
+		TotalRecords:   r.Total,
 		Offset:         r.Offset,
 		Limit:          r.Limit,
+	}
+}
+
+// ChangeRequestSearchFilters holds the optional filter criteria for
+// POST /projects/{id}/change-requests/search — shaped to match the
+// frontend's own ChangeRequestSearchFilters type. StateKeys/ImpactKeys
+// carry ServiceNow's numeric choice-list ids (the frontend was built
+// against the old Ballerina backend and still sends these, not
+// entity-service's own string enum) — see change_request_enum_mapping.go
+// for the translation. No ProjectIDs field: project scoping comes
+// exclusively from the {id} path parameter, same reasoning as
+// dto.CaseSearchFilters.
+type ChangeRequestSearchFilters struct {
+	SearchQuery     string  `json:"searchQuery,omitempty"`
+	StateKeys       []int   `json:"stateKeys,omitempty"`
+	ImpactKeys      []int   `json:"impactKeys,omitempty"`
+	ClosedStartDate *string `json:"closedStartDate,omitempty"`
+	ClosedEndDate   *string `json:"closedEndDate,omitempty"`
+}
+
+// ChangeRequestSearchRequest is the portal's request body for
+// POST /projects/{id}/change-requests/search.
+type ChangeRequestSearchRequest struct {
+	Filters    ChangeRequestSearchFilters `json:"filters"`
+	SortBy     entity.ChangeRequestSort   `json:"sortBy"`
+	Pagination entity.Pagination          `json:"pagination"`
+}
+
+// BuildEntitySearchChangeRequestsRequest translates the portal's request
+// into entity-service's SearchChangeRequestsRequest. projectID (the {id}
+// path parameter) always populates Filters.ProjectIDs — never the request
+// body, which the frontend never sends one in.
+func BuildEntitySearchChangeRequestsRequest(projectID string, req ChangeRequestSearchRequest) entity.SearchChangeRequestsRequest {
+	return entity.SearchChangeRequestsRequest{
+		Filters: entity.SearchChangeRequestsFilters{
+			ProjectIDs:      []string{projectID},
+			SearchQuery:     req.Filters.SearchQuery,
+			States:          crIDsToEnums(req.Filters.StateKeys, crStateIDToEnum),
+			Impacts:         crIDsToEnums(req.Filters.ImpactKeys, crImpactIDToEnum),
+			ClosedStartDate: req.Filters.ClosedStartDate,
+			ClosedEndDate:   req.Filters.ClosedEndDate,
+		},
+		SortBy:     req.SortBy,
+		Pagination: req.Pagination,
 	}
 }
 
@@ -165,18 +224,18 @@ func MapSearchChangeRequests(r entity.SearchChangeRequestsResponse) SearchChange
 // and PATCH /change-requests/{id}.
 type ChangeRequestDetails struct {
 	ChangeRequestSummary
-	CreatedBy           string   `json:"createdBy"`
-	Justification       *string  `json:"justification,omitempty"`
-	ImpactDescription   *string  `json:"impactDescription,omitempty"`
-	ServiceOutage       *string  `json:"serviceOutage,omitempty"`
-	CommunicationPlan   *string  `json:"communicationPlan,omitempty"`
-	RollbackPlan        *string  `json:"rollbackPlan,omitempty"`
-	TestPlan            *string  `json:"testPlan,omitempty"`
-	HasCustomerApproved bool     `json:"hasCustomerApproved"`
-	HasCustomerReviewed bool     `json:"hasCustomerReviewed"`
-	ApprovedBy          *Ref     `json:"approvedBy,omitempty"`
-	ApprovedOn          *string  `json:"approvedOn,omitempty"`
-	LegalNextStates     []string `json:"legalNextStates,omitempty"`
+	CreatedBy           string      `json:"createdBy"`
+	Justification       *string     `json:"justification,omitempty"`
+	ImpactDescription   *string     `json:"impactDescription,omitempty"`
+	ServiceOutage       *string     `json:"serviceOutage,omitempty"`
+	CommunicationPlan   *string     `json:"communicationPlan,omitempty"`
+	RollbackPlan        *string     `json:"rollbackPlan,omitempty"`
+	TestPlan            *string     `json:"testPlan,omitempty"`
+	HasCustomerApproved bool        `json:"hasCustomerApproved"`
+	HasCustomerReviewed bool        `json:"hasCustomerReviewed"`
+	ApprovedBy          *IDLabelRef `json:"approvedBy,omitempty"`
+	ApprovedOn          *string     `json:"approvedOn,omitempty"`
+	LegalNextStates     []string    `json:"legalNextStates,omitempty"`
 }
 
 // MapChangeRequestDetails builds the portal response from entity-service's ChangeRequest.
@@ -192,7 +251,7 @@ func MapChangeRequestDetails(r entity.ChangeRequest) ChangeRequestDetails {
 		TestPlan:             r.TestPlan,
 		HasCustomerApproved:  r.HasCustomerApproved,
 		HasCustomerReviewed:  r.HasCustomerReviewed,
-		ApprovedBy:           mapRef(r.ApprovedBy),
+		ApprovedBy:           entityRefToIDLabel(r.ApprovedBy),
 		ApprovedOn:           r.ApprovedOn,
 		LegalNextStates:      r.LegalNextStates,
 	}

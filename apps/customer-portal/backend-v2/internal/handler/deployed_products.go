@@ -47,11 +47,18 @@ func NewDeployedProductHandler(entity entityDeployedProductClient) *DeployedProd
 	return &DeployedProductHandler{entity: entity}
 }
 
-// SearchDeployedProducts handles POST /deployed-products/search.
+// SearchDeployedProducts handles
+// POST /deployments/{deploymentId}/products/search.
 func (h *DeployedProductHandler) SearchDeployedProducts(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	deploymentID := r.PathValue("deploymentId")
+	if deploymentID == "" || !uuidRe.MatchString(deploymentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
 
@@ -60,13 +67,13 @@ func (h *DeployedProductHandler) SearchDeployedProducts(w http.ResponseWriter, r
 		return
 	}
 
-	var req entity.SearchDeployedProductsRequest
+	var req dto.DeployedProductSearchRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.SearchDeployedProducts(r.Context(), req)
+	result, err := h.entity.SearchDeployedProducts(r.Context(), dto.BuildEntitySearchDeployedProductsRequest(deploymentID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchDeployedProducts failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to search deployed products.")
@@ -76,7 +83,7 @@ func (h *DeployedProductHandler) SearchDeployedProducts(w http.ResponseWriter, r
 	writeJSONValue(w, http.StatusOK, dto.MapSearchDeployedProducts(result))
 }
 
-// CreateDeployedProduct handles POST /deployed-products.
+// CreateDeployedProduct handles POST /deployments/{deploymentId}/products.
 //
 // NOTE: entity-service only supports this route on its ServiceNow data
 // source — see internal/entity/deployed_products.go.
@@ -87,18 +94,24 @@ func (h *DeployedProductHandler) CreateDeployedProduct(w http.ResponseWriter, r 
 		return
 	}
 
+	deploymentID := r.PathValue("deploymentId")
+	if deploymentID == "" || !uuidRe.MatchString(deploymentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
 	body, ok := readJSONBody(w, r)
 	if !ok {
 		return
 	}
 
-	var req entity.CreateDeployedProductRequest
+	var req dto.DeployedProductCreateRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
-	result, err := h.entity.CreateDeployedProduct(r.Context(), req)
+	result, err := h.entity.CreateDeployedProduct(r.Context(), dto.BuildEntityCreateDeployedProductRequest(deploymentID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateDeployedProduct failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to create deployed product.")
@@ -108,7 +121,11 @@ func (h *DeployedProductHandler) CreateDeployedProduct(w http.ResponseWriter, r 
 	writeJSONValue(w, http.StatusCreated, dto.MapDeployedProductCreate(result))
 }
 
-// PatchDeployedProduct handles PATCH /deployed-products/{id}.
+// PatchDeployedProduct handles
+// PATCH /deployments/{deploymentId}/products/{id}. DeploymentID is always
+// injected from the path (entity-service documents it as an IDOR-style
+// scope guard) — the frontend's own request body never carries it, so the
+// path is the only reliable source.
 //
 // NOTE: entity-service only supports this route on its ServiceNow data
 // source — see internal/entity/deployed_products.go.
@@ -119,8 +136,9 @@ func (h *DeployedProductHandler) PatchDeployedProduct(w http.ResponseWriter, r *
 		return
 	}
 
+	deploymentID := r.PathValue("deploymentId")
 	id := r.PathValue("id")
-	if id == "" || !uuidRe.MatchString(id) {
+	if deploymentID == "" || !uuidRe.MatchString(deploymentID) || id == "" || !uuidRe.MatchString(id) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
@@ -130,19 +148,12 @@ func (h *DeployedProductHandler) PatchDeployedProduct(w http.ResponseWriter, r *
 		return
 	}
 
-	// Decoded directly into entity-service's request struct (no restricted
-	// portal DTO) — every field here is customer-appropriate, including
-	// DeploymentID: per entity-service's own doc comment on
-	// UpdateDeployedProductRequest, it isn't a mutation field but an
-	// IDOR-style scope guard ("the deployed product must belong to that
-	// deployment or the operation returns a NotFoundError") — a legitimate
-	// safety check for the frontend to supply, unlike the case-update
-	// endpoint's genuinely internal-only fields (see dto.UpdateCaseRequest).
-	var req entity.UpdateDeployedProductRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	var portalReq dto.DeployedProductUpdateRequest
+	if err := json.Unmarshal(body, &portalReq); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
+	req := dto.BuildEntityUpdateDeployedProductRequest(id, deploymentID, portalReq)
 	// entity-service requires exactly one of the detail-fields group
 	// (cores/tps/description) or active=false — never both, never neither.
 	detailFieldsSet := req.Cores != nil || req.TPS != nil || len(req.Description) > 0

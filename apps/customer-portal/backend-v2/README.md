@@ -5,7 +5,7 @@ Rewrite of the existing backend at `apps/customer-portal/backend`. It is a backe
 [`entity-service`](../../../entity-service) (this repo's `cs-tools/entity-service`, not the
 `digiops-cs/entity-service` the existing backend targets), and shapes the responses for the frontend.
 
-This is a work in progress — only the 101 routes listed below are implemented so far, across
+This is a work in progress — only the 104 routes listed below are implemented so far, across
 entity-service, the WSO2 Updates service, SCIM, the AI chat agent, the product-consumption
 service, the registry (robot-account) service, and the project-contact onboarding service (six
 more separate services — see [CLAUDE.md](./CLAUDE.md#the-ai-chat-agent),
@@ -272,13 +272,13 @@ backend-v2/
 │       ├── projects.go          # POST /projects/search, GET /projects/{id}
 │       ├── project_stats.go     # project filters/features/dashboard-stats (composite, some graceful-degradation), case-grouped time-cards
 │       ├── cases.go             # cases search/get/create/update/comment/activities/feedback/escalations, case-scoped attachment update
-│       ├── deployments.go       # POST /projects/{id}/deployments/search, POST /deployments, PATCH /deployments/{id}, deployment-scoped attachment update
-│       ├── deployed_products.go # deployed-product search/create/update + per-deployed-product metrics/usage-counts
+│       ├── deployments.go       # POST /projects/{id}/deployments/search, POST /projects/{id}/deployments, PATCH /projects/{projectId}/deployments/{id}, deployment-scoped attachment update
+│       ├── deployed_products.go # deployed-product search/create/update (scoped under /deployments/{deploymentId}/products) + per-deployed-product metrics/usage-counts
 │       ├── attachments.go       # attachment create/search/download/get/delete
-│       ├── products.go          # POST /products/search, POST /products/{id}/versions/search
+│       ├── products.go          # GET /products, POST /products/search, POST /products/{id}/versions/search
 │       ├── product_vulnerabilities.go # vulnerability search/get
-│       ├── catalogs.go          # catalog search, catalog item variables
-│       ├── time_cards.go        # POST /time-cards/search
+│       ├── catalogs.go          # catalog search (scoped under /deployments/products/{deployedProductId}), catalog item variables
+│       ├── time_cards.go        # POST /projects/{id}/time-cards/search
 │       ├── comments.go          # generic comment create/search
 │       ├── ai_chat.go           # case classification, recommendations, conversation create/get/update/search/messages/summary
 │       ├── websocket.go         # GET /ws — real-time AI chat proxy
@@ -322,16 +322,17 @@ backend-v2/
 - `GET /cases/{id}/feedback` — get feedback previously submitted for a case (ServiceNow data source only)
 - `POST /cases/{id}/feedback` — submit feedback for a case (ServiceNow data source only)
 - `GET /cases/{id}/attachments` — search a case's attachments, paginated via `limit`/`offset` query params
+- `POST /cases/{id}/attachments` — add an attachment to a case
 - `PATCH /cases/{caseId}/attachments/{attachmentId}` — update a case attachment's name (description not supported on this route — see CLAUDE.md)
 - `POST /cases/{caseId}/escalations` — escalate or de-escalate a case (ServiceNow data source only)
 - `POST /cases/{caseId}/escalations/search` — search a case's escalations (ServiceNow data source only)
 - `POST /projects/{id}/deployments/search` — search a project's deployments
-- `POST /deployments` — create a deployment (ServiceNow data source only)
-- `PATCH /deployments/{id}` — update a deployment's name/type/description, or deactivate it
+- `POST /projects/{id}/deployments` — create a deployment (ServiceNow data source only)
+- `PATCH /projects/{projectId}/deployments/{id}` — update a deployment's name/type/description, or deactivate it
 - `PATCH /deployments/{deploymentId}/attachments/{attachmentId}` — update a deployment attachment's name/description
-- `POST /deployed-products/search` — search deployed products
-- `POST /deployed-products` — create a deployed product (ServiceNow data source only)
-- `PATCH /deployed-products/{id}` — update a deployed product's cores/tps/description, or deactivate it (ServiceNow data source only)
+- `POST /deployments/{deploymentId}/products/search` — search a deployment's deployed products
+- `POST /deployments/{deploymentId}/products` — create a deployed product (ServiceNow data source only)
+- `PATCH /deployments/{deploymentId}/products/{id}` — update a deployed product's cores/tps/description, or deactivate it (ServiceNow data source only)
 - `POST /deployments/{deploymentId}/products/{productId}/metrics/search` — get core-count metrics for a deployed product over a date range (`productId` is the deployed product's own ID; ServiceNow data source only)
 - `POST /deployments/{deploymentId}/products/{productId}/metrics/usage-counts/search` — get usage-count metrics for a deployed product over a date range (ServiceNow data source only)
 - `POST /attachments` — create an attachment
@@ -341,7 +342,7 @@ backend-v2/
 - `DELETE /attachments/{id}` — delete an attachment
 - `POST /cases/{id}/activities/search` — search a case's activity feed (comments, attachments, field changes)
 - `POST /change-requests` — create a change request (ServiceNow data source only)
-- `POST /change-requests/search` — search change requests (ServiceNow data source only)
+- `POST /projects/{id}/change-requests/search` — search a project's change requests (ServiceNow data source only)
 - `GET /change-requests/{id}` — get change request by ID (ServiceNow data source only)
 - `PATCH /change-requests/{id}` — update a change request (restricted, customer-safe field subset — see CLAUDE.md; ServiceNow data source only)
 - `GET /change-requests/{id}/approvals` — get a change request's approval stages (ServiceNow data source only)
@@ -349,14 +350,15 @@ backend-v2/
 - `POST /cases/{caseId}/call-requests` — create a call request for a case (ServiceNow data source only)
 - `POST /cases/{caseId}/call-requests/search` — search a case's call requests (ServiceNow data source only)
 - `PATCH /cases/{caseId}/call-requests/{id}` — update a call request (restricted, excludes agent-only fields — see CLAUDE.md; ServiceNow data source only)
+- `GET /products` — browse products, paginated via `class`/`offset`/`limit` query params (`class` is accepted but not forwarded — entity-service has no class filter)
 - `POST /products/search` — search products
 - `POST /products/{id}/versions/search` — search a product's versions
 - `POST /products/vulnerabilities/search` — search product vulnerabilities
 - `GET /products/vulnerabilities/{id}` — get a product vulnerability by ID
 - `GET /products/vulnerabilities/meta` — get valid vulnerability severity choices
-- `POST /catalogs/search` — search service catalogs, scoped by deployedProductId
-- `GET /catalogs/{catalogId}/items/{catalogItemId}/variables` — get a catalog item's form variables
-- `POST /time-cards/search` — search time cards (read-only; ServiceNow data source only)
+- `POST /deployments/products/{deployedProductId}/catalogs/search` — search service catalogs available for a deployed product
+- `GET /catalogs/{catalogId}/items/{itemId}` — get a catalog item's form variables
+- `POST /projects/{id}/time-cards/search` — search a project's time cards (read-only; ServiceNow data source only)
 - `POST /projects/{id}/cases/time-cards/search` — search time cards rolled up by case for a project (ServiceNow data source only)
 - `POST /comments` — add a comment to any reference entity (case, conversation, change_request, deployment, incident) — always a plain customer comment
 - `POST /comments/search` — search comments on a reference entity — always filtered to plain customer comments
@@ -470,19 +472,19 @@ curl -X POST http://localhost:8080/projects/<project-id>/deployments/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":10,"offset":0}}'
 
-curl -X POST http://localhost:8080/deployments \
+curl -X POST http://localhost:8080/projects/<project-id>/deployments \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"projectId":"<project-id>","name":"Production"}'
+  -d '{"name":"Production","deploymentTypeKey":6,"description":"Primary production"}'
 
-curl -X POST http://localhost:8080/deployed-products/search \
+curl -X POST http://localhost:8080/deployments/<deployment-id>/products/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"pagination":{"limit":10,"offset":0},"deploymentIds":["<deployment-id>"]}'
+  -d '{"pagination":{"limit":10,"offset":0}}'
 
-curl -X POST http://localhost:8080/deployed-products \
+curl -X POST http://localhost:8080/deployments/<deployment-id>/products \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"projectId":"<project-id>","deploymentId":"<deployment-id>","productId":"<product-id>","versionId":"<version-id>"}'
+  -d '{"projectId":"<project-id>","productId":"<product-id>","versionId":"<version-id>"}'
 
-curl -X PATCH http://localhost:8080/deployed-products/<deployed-product-id> \
+curl -X PATCH http://localhost:8080/deployments/<deployment-id>/products/<deployed-product-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"cores":4}'
 
@@ -504,6 +506,8 @@ curl -X POST http://localhost:8080/cases/<case-id>/activities/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":20,"offset":0}}'
 
+curl -H "x-jwt-assertion: $JWT" "http://localhost:8080/products?class=product_model&offset=0&limit=10"
+
 curl -X POST http://localhost:8080/products/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":10,"offset":0},"searchQuery":"wso2am"}'
@@ -516,7 +520,7 @@ curl -X POST http://localhost:8080/change-requests \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"subject":"Upgrade WSO2 API Manager to 4.3.0"}'
 
-curl -X POST http://localhost:8080/change-requests/search \
+curl -X POST http://localhost:8080/projects/<project-id>/change-requests/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"pagination":{"limit":10,"offset":0}}'
 
@@ -544,7 +548,7 @@ curl -X PATCH http://localhost:8080/cases/<case-id>/call-requests/<call-request-
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"stateKey":6,"cancellationReason":"No longer needed"}'
 
-curl -X PATCH http://localhost:8080/deployments/<deployment-id> \
+curl -X PATCH http://localhost:8080/projects/<project-id>/deployments/<deployment-id> \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
   -d '{"name":"Production (EU)"}'
 
@@ -554,15 +558,15 @@ curl -X POST http://localhost:8080/products/vulnerabilities/search \
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/products/vulnerabilities/<vulnerability-id>
 
-curl -X POST http://localhost:8080/catalogs/search \
+curl -X POST http://localhost:8080/deployments/products/<deployed-product-id>/catalogs/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"deployedProductId":"<deployed-product-id>","pagination":{"limit":10,"offset":0}}'
+  -d '{"pagination":{"limit":10,"offset":0}}'
 
-curl -H "x-jwt-assertion: $JWT" http://localhost:8080/catalogs/<catalog-id>/items/<catalog-item-id>/variables
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/catalogs/<catalog-id>/items/<item-id>
 
-curl -X POST http://localhost:8080/time-cards/search \
+curl -X POST http://localhost:8080/projects/<project-id>/time-cards/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
-  -d '{"pagination":{"limit":10,"offset":0},"filters":{"projectIds":["<project-id>"]}}'
+  -d '{"pagination":{"limit":10,"offset":0}}'
 
 curl -X POST http://localhost:8080/comments \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \

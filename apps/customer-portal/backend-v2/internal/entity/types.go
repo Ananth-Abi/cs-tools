@@ -93,6 +93,7 @@ type ProjectView struct {
 	Name             string     `json:"name"`
 	Key              string     `json:"key"`
 	SubscriptionType string     `json:"subscriptionType"`
+	StartDate        *time.Time `json:"startDate"`
 	EndDate          *time.Time `json:"endDate"`
 	CreatedOn        time.Time  `json:"createdOn"`
 	ProjectClosureFields
@@ -466,6 +467,14 @@ type LinkedServiceRequestRef struct {
 	Name   string `json:"name"`
 }
 
+// LinkedChangeRequestRef is a compact reference to a change request raised
+// from a service-request case.
+type LinkedChangeRequestRef struct {
+	ID     string  `json:"id"`
+	Number string  `json:"number"`
+	Name   *string `json:"name"`
+}
+
 // AccountRef is a compact reference to an account.
 type AccountRef struct {
 	ID      string     `json:"id"`
@@ -712,11 +721,18 @@ type CaseView struct {
 	RelatedCase            *CaseNumberRef            `json:"relatedCase"`
 	AccountDetails         *AccountRef               `json:"account"`
 	LinkedServiceRequests  []LinkedServiceRequestRef `json:"linkedServiceRequests"`
-	ResolvedOn             *time.Time                `json:"resolvedOn"`
-	ResolutionCode         *string                   `json:"resolutionCode"`
-	Cause                  *string                   `json:"cause"`
-	ResolutionNotes        *string                   `json:"resolutionNotes"`
-	// WatchList, AutoclosureStep/AutoclosureStateTime and the Best/MostLikely/
+	// LinkedChangeRequests lists the change requests raised from this case
+	// (populated for service-request cases only; empty otherwise).
+	LinkedChangeRequests []LinkedChangeRequestRef `json:"linkedChangeRequests"`
+	ResolvedOn           *time.Time               `json:"resolvedOn"`
+	ResolutionCode       *string                  `json:"resolutionCode"`
+	Cause                *string                  `json:"cause"`
+	ResolutionNotes      *string                  `json:"resolutionNotes"`
+	// WatchList is the set of users watching the case (ServiceNow data
+	// source only) — a customer self-service feature (the customer's own
+	// PATCH /cases/{id} request can set it), not CSM-engineer-only.
+	WatchList []WatchListUser `json:"watchList,omitempty"`
+	// AutoclosureStep/AutoclosureStateTime and the Best/MostLikely/
 	// WorstCaseFixEta fields are intentionally NOT decoded here — entity-service
 	// documents them as CSM-engineer-facing only (see entity.go comments on
 	// CaseView), and the customer portal must not surface internal WSO2 support

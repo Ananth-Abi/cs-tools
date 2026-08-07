@@ -41,7 +41,8 @@ type TokenCreatePayload struct {
 // — an open record upstream; Secret is the only field this backend reads
 // directly, the rest is passed through as-is.
 type TokenCreationResponse struct {
-	Secret string `json:"secret"`
+	Secret string  `json:"secret"`
+	Name   *string `json:"name,omitempty"`
 }
 
 // Permission is one access grant on a registry token.
@@ -51,7 +52,7 @@ type Permission struct {
 
 // Token is a registry token as returned by the registry service.
 type Token struct {
-	ID           *string      `json:"id,omitempty"`
+	ID           *int64       `json:"id,omitempty"`
 	Name         string       `json:"name"`
 	DisplayName  *string      `json:"displayName,omitempty"`
 	Description  string       `json:"description"`
@@ -59,7 +60,7 @@ type Token struct {
 	TokenType    *TokenType   `json:"tokenType,omitempty"`
 	CreatedFor   *string      `json:"createdFor,omitempty"`
 	CreatedBy    *string      `json:"createdBy,omitempty"`
-	ExpiresAt    *string      `json:"expiresAt,omitempty"`
+	ExpiresAt    *int64       `json:"expiresAt,omitempty"`
 	Disable      bool         `json:"disable"`
 	Duration     int          `json:"duration"`
 	Permissions  []Permission `json:"permissions"`

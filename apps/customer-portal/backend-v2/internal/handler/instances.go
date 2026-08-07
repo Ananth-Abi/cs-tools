@@ -94,10 +94,14 @@ func (h *InstanceHandler) searchInstances(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	var startDate, endDate *string
+	if req.Filters != nil {
+		startDate, endDate = req.Filters.StartDate, req.Filters.EndDate
+	}
 	entityReq := entity.SearchInstancesRequest{
 		Filters: &entity.InstanceSearchFilters{
-			StartDate:          req.StartDate,
-			EndDate:            req.EndDate,
+			StartDate:          startDate,
+			EndDate:            endDate,
 			ProjectIDs:         scope.projectIDs,
 			DeploymentIDs:      scope.deploymentIDs,
 			DeployedProductIDs: scope.deployedProductIDs,

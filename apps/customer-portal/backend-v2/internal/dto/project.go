@@ -33,18 +33,21 @@ type ProjectSummary struct {
 	Name             string     `json:"name"`
 	Key              string     `json:"key"`
 	SubscriptionType string     `json:"subscriptionType"`
+	StartDate        *time.Time `json:"startDate,omitempty"`
 	EndDate          *time.Time `json:"endDate,omitempty"`
 	CreatedOn        time.Time  `json:"createdOn"`
 	ClosureState     *string    `json:"closureState,omitempty"`
 }
 
 // SearchProjectsResponse is the portal's response for POST /projects/search.
+// TotalRecords (not Total) to match the frontend's shared pagination
+// envelope.
 type SearchProjectsResponse struct {
-	Projects []ProjectSummary `json:"projects"`
-	Total    int              `json:"total"`
-	Limit    int              `json:"limit"`
-	Offset   int              `json:"offset"`
-	HasMore  bool             `json:"hasMore"`
+	Projects     []ProjectSummary `json:"projects"`
+	TotalRecords int              `json:"totalRecords"`
+	Limit        int              `json:"limit"`
+	Offset       int              `json:"offset"`
+	HasMore      bool             `json:"hasMore"`
 }
 
 // MapSearchProjects builds the portal response from entity-service's SearchProjectsResponse.
@@ -56,30 +59,59 @@ func MapSearchProjects(r entity.SearchProjectsResponse) SearchProjectsResponse {
 			Name:             p.Name,
 			Key:              p.Key,
 			SubscriptionType: p.SubscriptionType,
+			StartDate:        p.StartDate,
 			EndDate:          p.EndDate,
 			CreatedOn:        p.CreatedOn,
 			ClosureState:     p.ClosureState,
 		})
 	}
 	return SearchProjectsResponse{
-		Projects: projects,
-		Total:    r.Total,
-		Limit:    r.Limit,
-		Offset:   r.Offset,
-		HasMore:  r.HasMore,
+		Projects:     projects,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
 }
 
-// ProjectAccount is the account summary embedded in ProjectDetails.
-//
-// Deliberately excludes entity-service's AgentEnabled/KbReferencesEnabled
-// (internal feature-flags gating WSO2 agent behavior, not customer-facing)
-// and ActivationDate (redundant with the project's own dates for this view).
+// SearchProjectsFilters holds the optional filter criteria for
+// POST /projects/search, matching the frontend's nested filters.searchQuery
+// body shape (apps/customer-portal/webapp/src/api/useGetProjects.ts) rather
+// than entity-service's own flat SearchQuery field.
+type SearchProjectsFilters struct {
+	SearchQuery string `json:"searchQuery,omitempty"`
+}
+
+// SearchProjectsRequest is the portal's request body for POST /projects/search.
+type SearchProjectsRequest struct {
+	Pagination entity.Pagination     `json:"pagination"`
+	Filters    SearchProjectsFilters `json:"filters"`
+}
+
+// BuildEntitySearchProjectsRequest translates the portal's nested-filters
+// request into entity-service's flat SearchProjectsRequest.
+func BuildEntitySearchProjectsRequest(req SearchProjectsRequest) entity.SearchProjectsRequest {
+	return entity.SearchProjectsRequest{
+		Pagination:  req.Pagination,
+		SearchQuery: req.Filters.SearchQuery,
+	}
+}
+
+// ProjectAccount is the account summary embedded in ProjectDetails —
+// SupportTier (not Tier) to match the frontend's read site
+// (ProjectInformationCard.tsx: project?.account?.supportTier). HasAgent/
+// HasKbReferences/ActivationDate are read as a fallback path (e.g.
+// DashboardPage.tsx, SettingsAiAssistant.tsx: project.hasAgent ??
+// project.account?.hasAgent) — not actually internal-only despite this
+// struct's earlier doc comment claiming so.
 type ProjectAccount struct {
-	ID     string  `json:"id"`
-	Name   string  `json:"name"`
-	Tier   string  `json:"tier"`
-	Region *string `json:"region,omitempty"`
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	SupportTier     string     `json:"supportTier"`
+	Region          *string    `json:"region,omitempty"`
+	HasAgent        bool       `json:"hasAgent"`
+	HasKbReferences bool       `json:"hasKbReferences"`
+	ActivationDate  *time.Time `json:"activationDate,omitempty"`
 }
 
 // ProjectDetails is the portal's response for GET /projects/{id}.
@@ -105,10 +137,13 @@ func MapProjectDetails(p entity.ProjectDetailsView) ProjectDetails {
 	return ProjectDetails{
 		ID: p.ID,
 		Account: ProjectAccount{
-			ID:     p.Account.ID,
-			Name:   p.Account.Name,
-			Tier:   p.Account.Tier,
-			Region: p.Account.Region,
+			ID:              p.Account.ID,
+			Name:            p.Account.Name,
+			SupportTier:     p.Account.Tier,
+			Region:          p.Account.Region,
+			HasAgent:        p.Account.AgentEnabled,
+			HasKbReferences: p.Account.KbReferencesEnabled,
+			ActivationDate:  p.Account.ActivationDate,
 		},
 		Name:             p.Name,
 		Key:              p.Key,

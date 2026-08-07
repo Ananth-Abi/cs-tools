@@ -22,6 +22,34 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 )
 
+// CreateCaseAttachmentRequest is the portal's request body for
+// POST /cases/{id}/attachments, matching the frontend's own
+// PostCaseAttachmentRequest type
+// (apps/customer-portal/webapp/src/features/support/types/attachments.ts)
+// field-for-field. There's no referenceId field: the case is scoped by the
+// {id} path parameter, never the body.
+type CreateCaseAttachmentRequest struct {
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	Content     string  `json:"content"`
+	Description *string `json:"description,omitempty"`
+}
+
+// BuildEntityCreateCaseAttachmentRequest translates the portal's request
+// into entity-service's CreateAttachmentRequest, forcing ReferenceID (from
+// the {id} path parameter) and ReferenceType to case, and renaming
+// Content->File to match entity-service's own field name.
+func BuildEntityCreateCaseAttachmentRequest(caseID string, req CreateCaseAttachmentRequest) entity.CreateAttachmentRequest {
+	return entity.CreateAttachmentRequest{
+		ReferenceID:   caseID,
+		ReferenceType: entity.ReferenceTypeCase,
+		Name:          req.Name,
+		Type:          req.Type,
+		File:          req.Content,
+		Description:   req.Description,
+	}
+}
+
 // AttachmentCreateResponse is the portal's response for POST /attachments.
 type AttachmentCreateResponse struct {
 	ID          string    `json:"id"`
