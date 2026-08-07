@@ -2275,6 +2275,17 @@ public type CatalogSearchResponse record {|
     *Pagination;
 |};
 
+# Choice option for a catalog item variable.
+public type CatalogItemVariableChoice record {|
+    # Value submitted for this choice
+    string value;
+    # Display text for this choice
+    string text;
+    # Display order of the choice
+    int 'order;
+    json...;
+|};
+
 # Catalog item variable information.
 public type CatalogItemVariable record {|
     # Variable ID
@@ -2285,6 +2296,8 @@ public type CatalogItemVariable record {|
     int 'order;
     # Type of the variable (e.g., "Single Line Text", "Multi Line Text")
     string 'type;
+    # Available choices for the variable, when applicable (e.g., "Multiple Choice")
+    CatalogItemVariableChoice[]? choices?;
     json...;
 |};
 
