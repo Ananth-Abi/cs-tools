@@ -449,12 +449,16 @@ export default function NoveraChatPage(): JSX.Element {
           ? (payload.actions as NoveraAction[])
           : undefined;
         const next = [...prev];
+        const answerId =
+          typeof payload.messageId === "string" ? payload.messageId : undefined;
         next[idx] = {
           ...msg,
           isLoading: false,
           isError: false,
           text: finalMessage || msg.text,
           showCreateCaseAction: payload.actions != null,
+          showFeedbackActions: !!answerId,
+          feedbackMessageId: answerId,
           slotState: payload.slotState as SlotState | undefined,
           thinkingSteps: [],
           thinkingLabel: null,
@@ -504,7 +508,7 @@ export default function NoveraChatPage(): JSX.Element {
     return () => window.clearInterval(id);
   }, [dequeueOneTypedToken, flushPendingFinalIfReady, TYPING_INTERVAL_MS]);
 
-  const { connect, sendUserMessage } = useChatWebSocket({
+  const { connect, sendUserMessage, isConnected } = useChatWebSocket({
     onEvent: (event) => {
       switch (event.type) {
         case "conversation_created": {
@@ -603,6 +607,21 @@ export default function NoveraChatPage(): JSX.Element {
             queryClient.invalidateQueries({
               queryKey: [ApiQueryKeys.CONVERSATION_MESSAGES, activeConversationId, 10],
             });
+          }
+          break;
+        }
+        case "feedback_ack": {
+          const ackId = String(event.messageId ?? "");
+          const ackRating =
+            event.rating === 1 ? 1 : event.rating === -1 ? -1 : null;
+          if (ackId) {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.feedbackMessageId === ackId
+                  ? { ...m, feedbackRating: ackRating }
+                  : m,
+              ),
+            );
           }
           break;
         }
@@ -718,6 +737,67 @@ export default function NoveraChatPage(): JSX.Element {
     void sendViaWebSocket("This Resolved My Issue");
   }, [isSending, sendViaWebSocket]);
 
+  // Answer feedback (👍/👎) over the existing chat socket (#2534). Optimistic:
+  // reflect the vote immediately, revert if the send fails. feedback_ack later
+  // confirms the persisted value.
+  // Latest feedback submission per messageId, so a stale rejection cannot
+  // roll back a newer vote. A ref, not state: it must not trigger a render.
+  const feedbackSeqRef = useRef<Map<string, number>>(new Map());
+
+  const submitFeedback = useCallback(
+    (messageId: string, rating: 1 | -1) => {
+      if (!projectId) return;
+
+      // Mark this as the latest submission for the message. Clicking 👍 then
+      // 👎 leaves two sends in flight; if the first rejects after the second
+      // resolved, its rollback must not undo the newer vote.
+      const seq = (feedbackSeqRef.current.get(messageId) ?? 0) + 1;
+      feedbackSeqRef.current.set(messageId, seq);
+
+      // Remember what was showing so a failure restores it, rather than
+      // clearing a rating the user had already given (and we had persisted).
+      let previousRating: 1 | -1 | null = null;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.feedbackMessageId !== messageId) return m;
+          previousRating = m.feedbackRating ?? null;
+          return { ...m, feedbackRating: rating };
+        }),
+      );
+
+      void connect(projectId)
+        .then(() =>
+          sendUserMessage({
+            type: "feedback",
+            messageId,
+            rating,
+            conversationId: conversationId ?? undefined,
+            accountId: accountId || undefined,
+          }),
+        )
+        .catch(() => {
+          if (feedbackSeqRef.current.get(messageId) !== seq) return;
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.feedbackMessageId === messageId
+                ? { ...m, feedbackRating: previousRating }
+                : m,
+            ),
+          );
+        });
+    },
+    [accountId, connect, conversationId, projectId, sendUserMessage],
+  );
+
+  const handleThumbsUp = useCallback(
+    (messageId: string) => submitFeedback(messageId, 1),
+    [submitFeedback],
+  );
+  const handleThumbsDown = useCallback(
+    (messageId: string) => submitFeedback(messageId, -1),
+    [submitFeedback],
+  );
+
   // Feature-flagged (config.js): request a token limit increase over the chat
   // WebSocket. Kept off until the backend handler is ready.
   const tokenRequestEnabled =
@@ -803,6 +883,8 @@ export default function NoveraChatPage(): JSX.Element {
               messages={messages}
               messagesEndRef={messagesEndRef}
               onCreateCase={handleCreateCase}
+              onThumbsUp={isConnected ? handleThumbsUp : undefined}
+              onThumbsDown={isConnected ? handleThumbsDown : undefined}
               onSolutionWorked={handleSolutionWorked}
               onRequestTokenIncrease={
                 tokenRequestEnabled

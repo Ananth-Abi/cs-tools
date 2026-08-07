@@ -19,13 +19,15 @@ import {
   Avatar,
   Box,
   Button,
+  IconButton,
   Paper,
   Stack,
+  Tooltip,
   Typography,
   alpha,
   useTheme,
 } from "@wso2/oxygen-ui";
-import { Bot, User } from "@wso2/oxygen-ui-icons-react";
+import { Bot, ThumbsDown, ThumbsUp, User } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -139,6 +141,8 @@ function MarkdownContent({ text }: { text: string }) {
  */
 export default function ChatMessageBubble({
   message,
+  onThumbsUp,
+  onThumbsDown,
   onRequestTokenIncrease,
 }: ChatMessageBubbleProps): JSX.Element {
   const isUser = message.sender === ChatSender.USER;
@@ -183,6 +187,23 @@ export default function ChatMessageBubble({
 
   /** Faded frame wraps analyzing, live thinking steps, and streamed tokens. */
   const showThinkingStreamFrame = hideFeedbackRow;
+
+  /**
+   * Show 👍/👎 on a completed assistant answer that carries a stable
+   * feedbackMessageId (from the WS `final` event). Never on user, error,
+   * streaming, or history messages that lack an id.
+   *
+   * Feedback is delivered over the chat socket, so it is only offered while
+   * that socket is open: the pages pass the handlers as undefined when
+   * disconnected, and the last clause below then hides the row. Hidden rather
+   * than disabled — a greyed-out thumb invites a click that cannot succeed.
+   */
+  const showFeedbackRow =
+    message.sender === ChatSender.BOT &&
+    !message.isError &&
+    !hideFeedbackRow &&
+    !!message.feedbackMessageId &&
+    (!!onThumbsUp || !!onThumbsDown);
 
   const streamBodyText = collapseStreamLineBreaks(displayText);
   const analyzingLeadText = "Novera is analyzing your request...";
@@ -425,6 +446,52 @@ export default function ChatMessageBubble({
               </Box>
             )}
           </Box>
+
+          {showFeedbackRow && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ mt: 0.25, ml: -0.75 }}
+            >
+              <Tooltip title="Good response">
+                <IconButton
+                  size="small"
+                  aria-label="Good response"
+                  aria-pressed={message.feedbackRating === 1}
+                  onClick={() =>
+                    onThumbsUp?.(message.feedbackMessageId as string)
+                  }
+                  sx={{
+                    color:
+                      message.feedbackRating === 1
+                        ? "primary.main"
+                        : "text.secondary",
+                  }}
+                >
+                  <ThumbsUp size={16} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Bad response">
+                <IconButton
+                  size="small"
+                  aria-label="Bad response"
+                  aria-pressed={message.feedbackRating === -1}
+                  onClick={() =>
+                    onThumbsDown?.(message.feedbackMessageId as string)
+                  }
+                  sx={{
+                    color:
+                      message.feedbackRating === -1
+                        ? "error.main"
+                        : "text.secondary",
+                  }}
+                >
+                  <ThumbsDown size={16} />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          )}
 
           {showTokenRequestCta && (
             <Box sx={{ mt: 1 }}>
