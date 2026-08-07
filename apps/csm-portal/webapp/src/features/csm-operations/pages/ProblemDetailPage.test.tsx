@@ -165,4 +165,14 @@ describe("ProblemDetailPage", () => {
     screen.getByRole("button", { name: /back to problems/i }).click();
     expect(navigateMock).toHaveBeenCalledWith("/dashboard");
   });
+
+  it("navigates back to a captured origin's exact pathname + search (e.g. the Operations tab's own filters)", () => {
+    useLocationMock.mockReturnValue({
+      state: { from: "/operations?tab=problems&state=closed" },
+    });
+    mockQueryResult({ data: BASE_PROBLEM });
+    render(<ProblemDetailPage />);
+    screen.getByRole("button", { name: /back to problems/i }).click();
+    expect(navigateMock).toHaveBeenCalledWith("/operations?tab=problems&state=closed");
+  });
 });

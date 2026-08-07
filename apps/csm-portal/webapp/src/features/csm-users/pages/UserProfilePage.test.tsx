@@ -14,23 +14,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { QueryClient, QueryClientProvider, type UseQueryResult } from "@tanstack/react-query";
 import type { NormalizedUserDetail } from "@features/csm-users/types/csmUsers";
 
-const navigateMock = vi.fn();
 const useGetUserByIdMock = vi.fn();
 
-vi.mock("react-router", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react-router")>();
-  return { ...actual, useParams: () => ({ id: "user-1" }) };
-});
-vi.mock("@hooks/useNavTransition", () => ({
-  useNavTransition: () => navigateMock,
-}));
 // The backend client reads runtime config (`CSM_PORTAL_BACKEND_BASE_URL`) at
 // module load, which isn't present under vitest. `QueryErrorState` imports
 // `BackendApiError` from it directly, so stub the module with a real class
@@ -119,12 +111,31 @@ function mockQueryResult(
   });
 }
 
-function renderPage(routeState?: { from?: string }): ReturnType<typeof render> {
+/** Destination probe: renders wherever a Back click actually lands, showing
+ * both the resulting path and the location.state that came with it — so
+ * tests assert on real router navigation, not a mocked navigate function. */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <>
+      <div data-testid="location-probe">{location.pathname + location.search}</div>
+      <div data-testid="location-state-probe">{JSON.stringify(location.state ?? null)}</div>
+    </>
+  );
+}
+
+function renderPage(
+  routeState?: { from?: string; parentState?: unknown },
+): ReturnType<typeof render> {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[{ pathname: "/people/user-1", state: routeState ?? null }]}>
-        <UserProfilePage />
+        <Routes>
+          <Route path="/people/:id" element={<UserProfilePage />} />
+          <Route path="/admin/users" element={<LocationProbe />} />
+          <Route path="/dashboard" element={<LocationProbe />} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -256,15 +267,47 @@ describe("UserProfilePage", () => {
 
   it("falls back to browser history when no origin was captured (e.g. a bookmarked/direct link)", () => {
     mockQueryResult({ data: INTERNAL_USER });
-    renderPage();
-    screen.getByRole("button", { name: "Back" }).click();
-    expect(navigateMock).toHaveBeenCalledWith(-1);
+    // Two history entries (unlike renderPage's single-entry default) so
+    // `navigate(-1)` has something real to pop back to — verified through
+    // the actual router, not a mocked navigate function.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={["/admin/users", "/people/user-1"]}
+          initialIndex={1}
+        >
+          <Routes>
+            <Route path="/people/:id" element={<UserProfilePage />} />
+            <Route path="/admin/users" element={<LocationProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/admin/users");
   });
 
   it("returns to the captured origin (e.g. a dashboard widget or an admin users list) when one is known", () => {
     mockQueryResult({ data: INTERNAL_USER });
     renderPage({ from: "/admin/users" });
-    screen.getByRole("button", { name: "Back" }).click();
-    expect(navigateMock).toHaveBeenCalledWith("/admin/users");
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/admin/users");
+  });
+
+  it("restores the users list's own dashboard-return state after a round trip (dashboard → users → profile → users → dashboard)", () => {
+    mockQueryResult({ data: INTERNAL_USER });
+    renderPage({ from: "/admin/users", parentState: { from: "/dashboard" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/admin/users");
+    expect(screen.getByTestId("location-state-probe")).toHaveTextContent(
+      JSON.stringify({ from: "/dashboard" }),
+    );
   });
 });

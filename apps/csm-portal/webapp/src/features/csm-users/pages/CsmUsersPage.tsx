@@ -392,9 +392,19 @@ export default function CsmUsersPage(): JSX.Element {
               ) : (
                 users.map((u) => {
                   const profilePath = `/people/${encodeURIComponent(u.id)}`;
+                  // `parentState` nests this page's OWN inherited state
+                  // (e.g. `{ from: "/dashboard" }`, when this page was
+                  // itself reached from a dashboard widget) so the profile
+                  // page can restore it on its own way back — otherwise a
+                  // dashboard → here → profile → Back round trip would land
+                  // back on this page with no `from`, silently dropping its
+                  // own Back button.
                   const goToProfile = (): void =>
                     navigate(profilePath, {
-                      state: { from: `${location.pathname}${location.search}` },
+                      state: {
+                        from: `${location.pathname}${location.search}`,
+                        parentState: backState ?? null,
+                      },
                     });
                   const handleRowKeyDown = (e: KeyboardEvent<HTMLTableRowElement>): void => {
                     if (e.key === "Enter" || e.key === " ") {

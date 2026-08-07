@@ -191,7 +191,17 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
                   const detailPath = `/security-center/vulnerabilities/${encodeURIComponent(
                     vuln.id,
                   )}`;
-                  const detailState = { from: `${location.pathname}${location.search}` };
+                  // `parentState` nests this tab's OWN inherited state (e.g.
+                  // `{ from: "/dashboard" }`, when this page was itself
+                  // reached from a dashboard widget) so the detail page can
+                  // restore it on its own way back — otherwise a
+                  // dashboard → here → detail → Back round trip would land
+                  // back on this tab with no `from`, silently dropping its
+                  // own Back button.
+                  const detailState = {
+                    from: `${location.pathname}${location.search}`,
+                    parentState: location.state ?? null,
+                  };
                   return (
                   <TableRow
                     key={vuln.id}

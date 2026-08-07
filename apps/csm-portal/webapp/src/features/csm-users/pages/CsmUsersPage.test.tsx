@@ -90,16 +90,25 @@ function renderPageWithDestinations(
   );
 }
 
+/** Destination probe: renders wherever a navigation actually lands, showing
+ * both the resulting path and the location.state that came with it — so
+ * tests assert on real router navigation, not a static marker or a mocked
+ * navigate function. */
 function LocationProbe() {
   const location = useLocation();
-  return <div data-testid="location-state-probe">{JSON.stringify(location.state ?? null)}</div>;
+  return (
+    <>
+      <div data-testid="location-probe">{location.pathname + location.search}</div>
+      <div data-testid="location-state-probe">{JSON.stringify(location.state ?? null)}</div>
+    </>
+  );
 }
 
 /**
- * Same as {@link renderPageWithDestinations}, but the `/people/:id`
- * destination renders a probe of the navigated-to `location.state` instead
- * of a static marker — used to assert the row click actually carries the
- * `from` state forward, not just that it navigated somewhere.
+ * Same as {@link renderPageWithDestinations}, but `/people/:id` and
+ * `/dashboard` both render {@link LocationProbe} instead of a static marker
+ * — used to assert a navigation actually carries the right `location.state`
+ * forward, not just that it landed on the right page.
  */
 function renderPageWithLocationProbe(
   initialPath: string | { pathname: string; state?: unknown },
@@ -111,6 +120,7 @@ function renderPageWithLocationProbe(
         <Routes>
           <Route path="/admin/users" element={<CsmUsersPage />} />
           <Route path="/people/:id" element={<LocationProbe />} />
+          <Route path="/dashboard" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -322,7 +332,7 @@ describe("CsmUsersPage — role truncation and row navigation", () => {
     fireEvent.click(screen.getByText("John Smith").closest("tr") as HTMLElement);
 
     expect(await screen.findByTestId("location-state-probe")).toHaveTextContent(
-      JSON.stringify({ from: "/admin/users" }),
+      JSON.stringify({ from: "/admin/users", parentState: null }),
     );
   });
 
@@ -332,23 +342,26 @@ describe("CsmUsersPage — role truncation and row navigation", () => {
   });
 
   it("renders a Back button that returns to the dashboard when reached via a dashboard widget's `from` state", async () => {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(
-      <QueryClientProvider client={queryClient}>
-        <MemoryRouter
-          initialEntries={[{ pathname: "/admin/users", state: { from: "/dashboard" } }]}
-        >
-          <Routes>
-            <Route path="/admin/users" element={<CsmUsersPage />} />
-            <Route path="/dashboard" element={<div>Dashboard page</div>} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+    renderPageWithLocationProbe({ pathname: "/admin/users", state: { from: "/dashboard" } });
 
     const backButton = await screen.findByRole("button", { name: "Back" });
     fireEvent.click(backButton);
 
-    expect(await screen.findByText("Dashboard page")).toBeInTheDocument();
+    expect(await screen.findByTestId("location-probe")).toHaveTextContent("/dashboard");
+  });
+
+  it("restores its own dashboard-return state after a round trip through a profile (dashboard → users → profile → users → dashboard)", async () => {
+    renderPageWithLocationProbe({ pathname: "/admin/users", state: { from: "/dashboard" } });
+
+    // Users list, reached from the dashboard, still shows its own Back button.
+    expect(await screen.findByRole("button", { name: "Back" })).toBeInTheDocument();
+
+    // Row click into a profile carries both this page's own URL (`from`) and
+    // the dashboard state it was itself carrying (`parentState`).
+    await waitFor(() => expect(screen.getByText("John Smith")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("John Smith").closest("tr") as HTMLElement);
+    expect(await screen.findByTestId("location-state-probe")).toHaveTextContent(
+      JSON.stringify({ from: "/admin/users", parentState: { from: "/dashboard" } }),
+    );
   });
 });

@@ -53,7 +53,6 @@ import { resolveAccountTier, type Account } from "@features/csm-accounts/types/c
 import type { Project } from "@features/csm-projects/types/csmProjects";
 import ClosureStateChip from "@features/csm-projects/components/ClosureStateChip";
 import { normalizeUser, type User, type SnUser } from "@features/csm-users/types/csmUsers";
-import UserRefLink from "@components/UserRefLink";
 import { vulnerabilityPriorityColor } from "@features/csm-security-center/utils/vulnerabilities";
 import type { BeProductVulnerabilityView } from "@api/backend/types";
 import type { BeCallRequestView } from "@api/backend/types";
@@ -384,8 +383,16 @@ function UserWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Elem
         key: u.id,
         href: `/people/${encodeURIComponent(u.id)}`,
         state: dashboardReturnState,
+        // Plain text, not `UserRefLink` — that renders its own nested
+        // RouterLink with no `state`, so clicking the name specifically
+        // (vs. elsewhere in the row) would silently drop `dashboardReturnState`
+        // and land on a plain default back target instead. The row itself
+        // is already the link (with state), matching every sibling widget's
+        // "name" cell (see AccountWidgetList/ProjectWidgetList above).
         cells: [
-          <UserRefLink key="user" name={u.userName} email={u.email} userId={u.id} />,
+          <Typography key="user" variant="body2" noWrap>
+            {u.userName}
+          </Typography>,
           <Typography key="email" variant="body2" noWrap>
             {u.email}
           </Typography>,

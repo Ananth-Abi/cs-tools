@@ -396,9 +396,17 @@ export default function UserProfilePage(): JSX.Element {
   // no single canonical "list" to fall back to the way other detail pages
   // have. Prefer the URL the row link captured (if any) so "back" returns to
   // the exact view the engineer came from; browser history otherwise, same
-  // as before this carried no `from` state at all.
-  const backState = useLocation().state as { from?: string } | undefined;
+  // as before this carried no `from` state at all. `parentState` is
+  // whatever state that captured list page was itself carrying (e.g.
+  // `{ from: "/dashboard" }`) — forwarded back onto it below so a
+  // dashboard → list → here → Back round trip restores the list's own Back
+  // button instead of silently dropping it. Ignored (harmlessly) when
+  // `backTarget` falls back to the numeric `-1` history pop.
+  const backState = useLocation().state as
+    | { from?: string; parentState?: unknown }
+    | undefined;
   const backTarget = backState?.from ?? -1;
+  const backNavState = backState?.parentState ?? undefined;
 
   const { data: user, isLoading, isError, error } = useGetUserById(id);
 
@@ -414,7 +422,7 @@ export default function UserProfilePage(): JSX.Element {
   if (isError) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <BackButton onClick={() => navigate(backTarget)} />
+        <BackButton onClick={() => navigate(backTarget, { state: backNavState })} />
         <QueryErrorState
           message={error instanceof Error && error.message.trim() ? error.message : "Failed to load user."}
           error={error}
@@ -426,7 +434,7 @@ export default function UserProfilePage(): JSX.Element {
   if (!user) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <BackButton onClick={() => navigate(backTarget)} />
+        <BackButton onClick={() => navigate(backTarget, { state: backNavState })} />
         <Typography variant="h5">User not found</Typography>
         <Typography variant="body2" color="text.secondary">
           No user with id <code>{id}</code>.
@@ -439,7 +447,7 @@ export default function UserProfilePage(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
-      <BackButton onClick={() => navigate(backTarget)} />
+      <BackButton onClick={() => navigate(backTarget, { state: backNavState })} />
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
