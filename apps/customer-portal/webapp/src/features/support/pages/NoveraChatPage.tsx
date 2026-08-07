@@ -740,14 +740,31 @@ export default function NoveraChatPage(): JSX.Element {
   // Answer feedback (👍/👎) over the existing chat socket (#2534). Optimistic:
   // reflect the vote immediately, revert if the send fails. feedback_ack later
   // confirms the persisted value.
+  // Latest feedback submission per messageId, so a stale rejection cannot
+  // roll back a newer vote. A ref, not state: it must not trigger a render.
+  const feedbackSeqRef = useRef<Map<string, number>>(new Map());
+
   const submitFeedback = useCallback(
     (messageId: string, rating: 1 | -1) => {
       if (!projectId) return;
+
+      // Mark this as the latest submission for the message. Clicking 👍 then
+      // 👎 leaves two sends in flight; if the first rejects after the second
+      // resolved, its rollback must not undo the newer vote.
+      const seq = (feedbackSeqRef.current.get(messageId) ?? 0) + 1;
+      feedbackSeqRef.current.set(messageId, seq);
+
+      // Remember what was showing so a failure restores it, rather than
+      // clearing a rating the user had already given (and we had persisted).
+      let previousRating: 1 | -1 | null = null;
       setMessages((prev) =>
-        prev.map((m) =>
-          m.feedbackMessageId === messageId ? { ...m, feedbackRating: rating } : m,
-        ),
+        prev.map((m) => {
+          if (m.feedbackMessageId !== messageId) return m;
+          previousRating = m.feedbackRating ?? null;
+          return { ...m, feedbackRating: rating };
+        }),
       );
+
       void connect(projectId)
         .then(() =>
           sendUserMessage({
@@ -759,10 +776,11 @@ export default function NoveraChatPage(): JSX.Element {
           }),
         )
         .catch(() => {
+          if (feedbackSeqRef.current.get(messageId) !== seq) return;
           setMessages((prev) =>
             prev.map((m) =>
               m.feedbackMessageId === messageId
-                ? { ...m, feedbackRating: null }
+                ? { ...m, feedbackRating: previousRating }
                 : m,
             ),
           );
