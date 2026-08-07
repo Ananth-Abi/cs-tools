@@ -30,10 +30,10 @@ import { ArrowLeft, ChevronDown, Plus } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX, type MouseEvent, type ReactNode } from "react";
 import { Link as RouterLink, useLocation, useParams } from "react-router";
 import { useGetProject } from "@features/csm-projects/api/useGetProject";
-import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ClosureStateChip from "@features/csm-projects/components/ClosureStateChip";
 import DeploymentsTab from "@features/csm-projects/components/DeploymentsTab";
 import ProjectContactsTab from "@features/csm-projects/components/ProjectContactsTab";
+import WorkItemsTab from "@features/csm-projects/components/WorkItemsTab";
 import {
   endDateLabel,
   startDateLabel,
@@ -323,13 +323,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
 
       {activeTab === "contacts" && <ProjectContactsTab projectId={p.id} />}
 
-      {activeTab === "workItems" && (
-        <CsmIssuesView
-          entityNoun="work items"
-          lockedFilters={{ projects: [p.id] }}
-          hideProjectFilter
-        />
-      )}
+      {activeTab === "workItems" && <WorkItemsTab projectId={p.id} />}
     </Box>
   );
 }
