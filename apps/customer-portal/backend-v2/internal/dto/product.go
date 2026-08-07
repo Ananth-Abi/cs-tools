@@ -16,7 +16,11 @@
 
 package dto
 
-import "github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
+import (
+	"strings"
+
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
+)
 
 // ProductSummary is one item of the portal's response for POST /products/search.
 type ProductSummary struct {
@@ -60,20 +64,53 @@ func MapSearchProducts(r entity.SearchProductsResponse) SearchProductsResponse {
 }
 
 // GetProductsRequest is the portal's translated request for GET /products —
-// built from the offset/limit query params by the handler. entity-service's
-// SearchProductsRequest has no class filter at all (unlike the old
-// Ballerina backend's target service, which accepted filters.class), so the
-// frontend's `class=product_model` query param has no server-side
-// equivalent here — a genuine entity-service gap, not fixable in this dto
-// layer alone.
+// built from the class/offset/limit query params by the handler.
+// entity-service's SearchProductsRequest has no class filter parameter at
+// all (unlike the old Ballerina backend's target service, which accepted
+// filters.class server-side), so Class can't be forwarded upstream — see
+// FilterProductsByClass, which applies it after the fact instead of
+// silently dropping it.
 type GetProductsRequest struct {
 	Pagination entity.Pagination
+	Class      string
 }
 
 // BuildEntitySearchProductsRequestFromQuery translates GET /products' query
-// params into entity-service's POST /products/search request shape.
+// params into entity-service's POST /products/search request shape. Class
+// is intentionally not forwarded — entity-service has nowhere to put it.
 func BuildEntitySearchProductsRequestFromQuery(req GetProductsRequest) entity.SearchProductsRequest {
 	return entity.SearchProductsRequest{Pagination: req.Pagination}
+}
+
+// FilterProductsByClass keeps only products whose Class matches want
+// (case-insensitive), applied after MapSearchProducts since entity-service
+// can't filter by class server-side (see GetProductsRequest's doc comment).
+// This is necessarily best-effort: TotalRecords/HasMore still describe
+// entity-service's unfiltered page, since entity-service computed pagination
+// before this backend ever saw (or could exclude) an off-class item — a
+// page can come back with fewer than Limit on-class items even when more
+// exist on a later page. A product with no Class at all (nil) never
+// matches, so it's excluded rather than kept as "unknown". On the Postgres
+// data source, entity-service's Class vocabulary is only "software"/
+// "service" (see domain.ProductClass in entity-service/internal/domain/
+// entity.go) — the frontend's own class value ("product_model") only ever
+// matches something on the ServiceNow data source, whose Class field is a
+// free-form passthrough label; requesting this endpoint against a
+// Postgres-mode deployment will therefore always return zero products, the
+// same "ServiceNow data source only" limitation documented elsewhere in
+// this backend.
+func FilterProductsByClass(r SearchProductsResponse, want string) SearchProductsResponse {
+	if want == "" {
+		return r
+	}
+	filtered := make([]ProductSummary, 0, len(r.Products))
+	for _, p := range r.Products {
+		if p.Class != nil && strings.EqualFold(*p.Class, want) {
+			filtered = append(filtered, p)
+		}
+	}
+	r.Products = filtered
+	return r
 }
 
 // ProductVersionSummary is one item of the portal's response for

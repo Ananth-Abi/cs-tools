@@ -825,11 +825,16 @@ paths:
     patch:
       summary: Update a case.
       description: >
-        Exactly one of stateKey or watchList is required. This is a
-        deliberately restricted subset of entity-service's update contract
-        — internal WSO2 support fields (severity, subject, description,
-        work state, engineer assignment, fix-ETA dates, case relinking,
-        auto-closure control) are not customer-settable.
+        Exactly one of stateKey or watchList is required; watchList must be
+        a non-empty array — an empty array does not count as "provided" and
+        is rejected the same as an omitted field. This is not a bug in this
+        endpoint: entity-service's own ServiceNow implementation only
+        forwards watchList upstream when it is non-empty, so there is
+        currently no way to clear every watcher via this API at all, at any
+        layer. This is a deliberately restricted subset of entity-service's
+        update contract — internal WSO2 support fields (severity, subject,
+        description, work state, engineer assignment, fix-ETA dates, case
+        relinking, auto-closure control) are not customer-settable.
       operationId: patchCasesId
       parameters:
         - name: id
@@ -1682,8 +1687,17 @@ paths:
     get:
       summary: List products.
       description: >
-        class is accepted but not forwarded — entity-service's
-        SearchProductsRequest has no class filter (a genuine gap).
+        class cannot be forwarded to entity-service as a request filter —
+        SearchProductsRequest has no such parameter — so it is instead
+        applied server-side against each returned product's own class
+        field, case-insensitively, after the page is fetched. Because
+        entity-service computes offset/limit/totalRecords before this
+        filter is applied, a page can come back with fewer than limit
+        matching items even when more exist on a later page. On the
+        Postgres data source, class is only ever "software" or "service"
+        (entity-service's own domain.ProductClass enum) — this endpoint is
+        effectively ServiceNow-data-source-only for any other class value
+        such as the frontend's "product_model".
       operationId: getProducts
       parameters:
         - name: class
@@ -6743,6 +6757,9 @@ components:
         description:
           type: string
           nullable: true
+          description: >
+            Three states: omit the field to leave the description
+            unchanged, send null to clear it, send a string to set it.
         name:
           type: string
         typeKey:
@@ -7277,9 +7294,11 @@ components:
 
     SearchProductVulnerabilitiesRequest:
       description: >
-        statusId is accepted but not forwarded — entity-service's
-        SearchProductVulnerabilitiesFilters has no status field (a genuine
-        gap).
+        statusId is deliberately not a supported field — entity-service's
+        ProductVulnerabilityView has no status data anywhere in its response
+        (unlike severity/priority, which does have a numeric-id mirror
+        table), so there is nothing to filter or even post-filter by. It is
+        not accepted by this endpoint.
       type: object
       properties:
         filters:
@@ -7290,8 +7309,6 @@ components:
             severityId:
               type: integer
               description: ServiceNow numeric choice-list id — see product_vulnerability_enum_mapping.go.
-            statusId:
-              type: integer
             productName:
               type: string
             productVersion:

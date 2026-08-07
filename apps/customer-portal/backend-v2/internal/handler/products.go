@@ -53,9 +53,11 @@ func NewProductHandler(entity entityProductClient) *ProductHandler {
 // live product-browsing flow (matching the old Ballerina backend's own
 // GET /products). entity-service has no GET /products route at all, only
 // POST /products/search, so this translates the query params into that
-// call; class is accepted but not forwarded — entity-service's
-// SearchProductsRequest has no class filter (a genuine gap, see
-// dto.GetProductsRequest's doc comment).
+// call; class can't be forwarded as a request filter — entity-service's
+// SearchProductsRequest has no such parameter — so it's applied afterward
+// against each returned item's own Class field instead (see
+// dto.FilterProductsByClass's doc comment, including the pagination and
+// Postgres-data-source caveats).
 func (h *ProductHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -82,7 +84,8 @@ func (h *ProductHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 
-	req := dto.GetProductsRequest{Pagination: entity.Pagination{Offset: offset, Limit: limit}}
+	class := r.URL.Query().Get("class")
+	req := dto.GetProductsRequest{Pagination: entity.Pagination{Offset: offset, Limit: limit}, Class: class}
 	result, err := h.entity.SearchProducts(r.Context(), dto.BuildEntitySearchProductsRequestFromQuery(req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProducts failed", "userID", user.UserID, "err", summarizeErr(err))
@@ -90,7 +93,7 @@ func (h *ProductHandler) GetProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSONValue(w, http.StatusOK, dto.MapSearchProducts(result))
+	writeJSONValue(w, http.StatusOK, dto.FilterProductsByClass(dto.MapSearchProducts(result), class))
 }
 
 // SearchProducts handles POST /products/search.

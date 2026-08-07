@@ -591,6 +591,17 @@ func MapCaseCreate(r entity.CreateCaseResponse) CaseCreateResponse {
 // translation. entity-service requires exactly one of State/WatchList (of
 // the fields this portal DTO exposes) to be set — StateKey counts as State
 // for that check.
+//
+// WatchList cannot be used to clear every watcher via an explicit empty
+// array — this is a genuine end-to-end platform limitation, not something
+// fixable in this dto layer: entity-service's own ServiceNow implementation
+// checks `len(req.WatchList) > 0` before forwarding it upstream at all (see
+// sn_case_service.go), so even an explicit `{"watchList": []}` would be
+// silently dropped several layers up, regardless of whether this struct
+// distinguished absent from empty. Validating watchList as "must be
+// non-empty to count as provided" (see the handler) is therefore accurate,
+// not a bug — don't change this to a `*[]string` to "fix" an empty-array
+// case that entity-service can't honor anyway.
 type UpdateCaseRequest struct {
 	StateKey  *int     `json:"stateKey,omitempty"`
 	WatchList []string `json:"watchList,omitempty"`

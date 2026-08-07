@@ -101,29 +101,31 @@ func BuildEntityCreateDeploymentRequest(projectID string, req DeploymentCreateRe
 // PATCH /projects/{id}/deployments/{deploymentId} — TypeKey is the
 // ServiceNow numeric choice-list key the frontend sends
 // (PatchDeploymentRequest.typeKey), translated to entity-service's string
-// enum by BuildEntityUpdateDeploymentRequest.
+// enum by BuildEntityUpdateDeploymentRequest. Description is json.RawMessage
+// (not *string) to preserve the three-state absent/null/value semantic
+// entity-service's own UpdateDeploymentRequest.Description expects — a
+// *string can't distinguish an omitted field from an explicit
+// {"description": null}, which would silently drop a customer's attempt to
+// clear the description (see the analogous convention already documented
+// for UpdateDeployedProductRequest.Description in this backend's CLAUDE.md).
 type DeploymentUpdateRequest struct {
-	Active      *bool   `json:"active,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Name        *string `json:"name,omitempty"`
-	TypeKey     *int    `json:"typeKey,omitempty"`
+	Active      *bool           `json:"active,omitempty"`
+	Description json.RawMessage `json:"description,omitempty"`
+	Name        *string         `json:"name,omitempty"`
+	TypeKey     *int            `json:"typeKey,omitempty"`
 }
 
 // BuildEntityUpdateDeploymentRequest translates the portal's update request
 // into entity-service's request shape.
 func BuildEntityUpdateDeploymentRequest(id string, req DeploymentUpdateRequest) entity.UpdateDeploymentRequest {
 	out := entity.UpdateDeploymentRequest{
-		ID:     id,
-		Name:   req.Name,
-		Active: req.Active,
+		ID:          id,
+		Name:        req.Name,
+		Active:      req.Active,
+		Description: req.Description,
 	}
 	if req.TypeKey != nil {
 		out.Type = deploymentTypeIDToEnumPtr(*req.TypeKey)
-	}
-	if req.Description != nil {
-		if raw, err := json.Marshal(*req.Description); err == nil {
-			out.Description = raw
-		}
 	}
 	return out
 }

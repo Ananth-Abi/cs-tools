@@ -282,3 +282,58 @@ func TestMapRegistryToken_NumericIDAndExpiresAt(t *testing.T) {
 		t.Fatalf("ExpiresAt = %v, want %d", got.ExpiresAt, expiresAt)
 	}
 }
+
+// TestFilterProductsByClass_KeepsOnlyMatchingCaseInsensitive verifies
+// GET /products' post-fetch class filter (entity-service has no class
+// filter parameter to forward to, see FilterProductsByClass's doc comment)
+// matches case-insensitively and drops products with no Class at all rather
+// than treating them as a match.
+func TestFilterProductsByClass_KeepsOnlyMatchingCaseInsensitive(t *testing.T) {
+	software := "software"
+	service := "Service"
+	r := SearchProductsResponse{
+		Products: []ProductSummary{
+			{ID: "p1", Class: &software},
+			{ID: "p2", Class: &service},
+			{ID: "p3", Class: nil},
+		},
+		TotalRecords: 3,
+	}
+
+	got := FilterProductsByClass(r, "service")
+	if len(got.Products) != 1 || got.Products[0].ID != "p2" {
+		t.Fatalf("Products = %+v, want only p2 (case-insensitive match on Service)", got.Products)
+	}
+
+	// An empty want (no ?class= supplied) must pass every product through
+	// unfiltered, not exclude everything.
+	unfiltered := FilterProductsByClass(r, "")
+	if len(unfiltered.Products) != 3 {
+		t.Fatalf("FilterProductsByClass with empty want dropped items: got %d, want 3", len(unfiltered.Products))
+	}
+}
+
+// TestBuildEntityUpdateDeploymentRequest_PreservesExplicitNullDescription
+// guards against collapsing an explicit {"description": null} into "field
+// absent" — entity-service's own UpdateDeploymentRequest.Description is
+// json.RawMessage specifically to distinguish the three states (absent /
+// null / value); a *string on this portal's request DTO couldn't represent
+// the null case at all.
+func TestBuildEntityUpdateDeploymentRequest_PreservesExplicitNullDescription(t *testing.T) {
+	var absent DeploymentUpdateRequest
+	if len(BuildEntityUpdateDeploymentRequest("dep-1", absent).Description) != 0 {
+		t.Fatalf("absent Description must not populate entity.UpdateDeploymentRequest.Description")
+	}
+
+	explicitNull := DeploymentUpdateRequest{Description: []byte("null")}
+	gotNull := BuildEntityUpdateDeploymentRequest("dep-1", explicitNull)
+	if string(gotNull.Description) != "null" {
+		t.Fatalf("Description = %q, want the literal JSON null preserved through", string(gotNull.Description))
+	}
+
+	withValue := DeploymentUpdateRequest{Description: []byte(`"Updated description"`)}
+	gotValue := BuildEntityUpdateDeploymentRequest("dep-1", withValue)
+	if string(gotValue.Description) != `"Updated description"` {
+		t.Fatalf("Description = %q, want the raw JSON string value preserved through", string(gotValue.Description))
+	}
+}
