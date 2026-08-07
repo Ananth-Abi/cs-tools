@@ -30,23 +30,17 @@ import { ArrowLeft, ChevronDown, Plus } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX, type MouseEvent, type ReactNode } from "react";
 import { Link as RouterLink, useLocation, useParams } from "react-router";
 import { useGetProject } from "@features/csm-projects/api/useGetProject";
-import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ClosureStateChip from "@features/csm-projects/components/ClosureStateChip";
-import ConversationsTab from "@features/csm-projects/components/ConversationsTab";
 import DeploymentsTab from "@features/csm-projects/components/DeploymentsTab";
 import ProjectContactsTab from "@features/csm-projects/components/ProjectContactsTab";
+import WorkItemsTab from "@features/csm-projects/components/WorkItemsTab";
 import {
   endDateLabel,
   startDateLabel,
 } from "@features/csm-projects/utils/projectLifecycle";
 import { useNavTransition } from "@hooks/useNavTransition";
 
-type ProjectTabId =
-  | "overview"
-  | "deployments"
-  | "contacts"
-  | "workItems"
-  | "conversations";
+type ProjectTabId = "overview" | "deployments" | "contacts" | "workItems";
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -271,7 +265,6 @@ export default function CsmProjectDetailPage(): JSX.Element {
           <Tab value="deployments" label="Deployments" />
           <Tab value="contacts" label="Project contacts" />
           <Tab value="workItems" label="Work items" />
-          <Tab value="conversations" label="Conversations" />
         </Tabs>
       </Box>
 
@@ -330,15 +323,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
 
       {activeTab === "contacts" && <ProjectContactsTab projectId={p.id} />}
 
-      {activeTab === "workItems" && (
-        <CsmIssuesView
-          entityNoun="work items"
-          lockedFilters={{ projects: [p.id] }}
-          hideProjectFilter
-        />
-      )}
-
-      {activeTab === "conversations" && <ConversationsTab projectId={p.id} />}
+      {activeTab === "workItems" && <WorkItemsTab projectId={p.id} />}
     </Box>
   );
 }
