@@ -432,7 +432,7 @@ export default function ConversationDetailsPage(): JSX.Element {
     return () => window.clearInterval(id);
   }, [dequeueOneTypedToken, flushPendingFinalIfReady]);
 
-  const { connect, sendUserMessage } = useChatWebSocket({
+  const { connect, sendUserMessage, isConnected } = useChatWebSocket({
     onEvent: (event) => {
       switch (event.type) {
         case "thinking_start":
@@ -878,8 +878,8 @@ export default function ConversationDetailsPage(): JSX.Element {
                       <ChatMessageBubble
                         key={m.id}
                         message={m}
-                        onThumbsUp={handleThumbsUp}
-                        onThumbsDown={handleThumbsDown}
+                        onThumbsUp={isConnected ? handleThumbsUp : undefined}
+                        onThumbsDown={isConnected ? handleThumbsDown : undefined}
                       />
                     ),
                   )}
