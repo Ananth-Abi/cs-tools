@@ -987,6 +987,50 @@ export interface BeCommentSearchResponse extends BeSearchResponseBase {
 }
 
 // ---------------------------------------------------------------------------
+// Conversations (Novera chat sessions)
+// ---------------------------------------------------------------------------
+
+export type BeConversationState = "ACTIVE" | "RESOLVED";
+
+/**
+ * A chat session as returned by `POST /conversations/search` — the ServiceNow
+ * "conversation" record a case may originate from. `id`/`number`/`state` are
+ * nullable on the wire (a conversation that never resolved to a real SN
+ * record can have gaps); `case` is null for a chat that never became a case.
+ */
+export interface BeConversationView {
+  id: string | null;
+  number: string | null;
+  initialMessage: string | null;
+  messageCount: number;
+  project: BeEntityRef | null;
+  case: BeEntityRef | null;
+  state: BeConversationState | null;
+  createdOn: string;
+  createdBy: string;
+}
+
+export interface BeSearchConversationsFilters {
+  projectIds?: string[];
+  states?: BeConversationState[];
+}
+
+export interface BeSearchConversationsPayload {
+  filters?: BeSearchConversationsFilters;
+  sortBy?: { field: "createdOn" | "updatedOn"; order: "asc" | "desc" };
+  pagination?: BePagination;
+}
+
+/** No `hasMore` on this response (unlike {@link BeSearchResponseBase}) —
+ * `total` is the only continuation signal the entity service gives here. */
+export interface BeSearchConversationsResponse {
+  conversations: BeConversationView[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+// ---------------------------------------------------------------------------
 // Case activities (unified comment / attachment / field-change stream)
 // ---------------------------------------------------------------------------
 

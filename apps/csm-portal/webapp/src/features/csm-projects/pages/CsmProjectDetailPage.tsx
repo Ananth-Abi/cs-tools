@@ -32,6 +32,7 @@ import { Link as RouterLink, useLocation, useParams } from "react-router";
 import { useGetProject } from "@features/csm-projects/api/useGetProject";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ClosureStateChip from "@features/csm-projects/components/ClosureStateChip";
+import ConversationsTab from "@features/csm-projects/components/ConversationsTab";
 import DeploymentsTab from "@features/csm-projects/components/DeploymentsTab";
 import ProjectContactsTab from "@features/csm-projects/components/ProjectContactsTab";
 import {
@@ -40,7 +41,12 @@ import {
 } from "@features/csm-projects/utils/projectLifecycle";
 import { useNavTransition } from "@hooks/useNavTransition";
 
-type ProjectTabId = "overview" | "deployments" | "contacts" | "workItems";
+type ProjectTabId =
+  | "overview"
+  | "deployments"
+  | "contacts"
+  | "workItems"
+  | "conversations";
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -265,6 +271,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
           <Tab value="deployments" label="Deployments" />
           <Tab value="contacts" label="Project contacts" />
           <Tab value="workItems" label="Work items" />
+          <Tab value="conversations" label="Conversations" />
         </Tabs>
       </Box>
 
@@ -330,6 +337,8 @@ export default function CsmProjectDetailPage(): JSX.Element {
           hideProjectFilter
         />
       )}
+
+      {activeTab === "conversations" && <ConversationsTab projectId={p.id} />}
     </Box>
   );
 }
