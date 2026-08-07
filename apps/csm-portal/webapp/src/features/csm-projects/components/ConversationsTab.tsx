@@ -54,9 +54,21 @@ interface ConversationsTabProps {
  * through to it from there instead of duplicating that action inline here.
  */
 export default function ConversationsTab({ projectId }: ConversationsTabProps): JSX.Element {
+  // Guarded set during render (React's documented pattern for adjusting state
+  // from a changed prop, not an effect) — resets pagination and the open
+  // transcript when the surrounding page switches to a different project's
+  // Work items tab, rather than carrying over the previous project's page
+  // number or selected conversation into this one.
+  const [previousProjectId, setPreviousProjectId] = useState(projectId);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
   const [selected, setSelected] = useState<BeConversationView | null>(null);
+
+  if (projectId !== previousProjectId) {
+    setPreviousProjectId(projectId);
+    setPage(0);
+    setSelected(null);
+  }
 
   const { data, isLoading, isError, error } = useSearchConversations(projectId, {
     page,
@@ -111,27 +123,39 @@ export default function ConversationsTab({ projectId }: ConversationsTabProps): 
                   </TableCell>
                 </TableRow>
               ) : (
-                conversations.map((c, i) => (
-                  <TableRow
-                    key={c.id ?? `${c.createdOn}-${i}`}
-                    hover
-                    onClick={() => setSelected(c)}
-                    sx={{ cursor: "pointer" }}
-                  >
-                    <TableCell>
-                      <RelativeTime iso={c.createdOn} />
-                    </TableCell>
-                    <TableCell>{c.createdBy || "—"}</TableCell>
-                    <TableCell>{c.messageCount}</TableCell>
-                    <TableCell>
-                      {c.state ? (
-                        <SemanticChip role={STATE_META[c.state].role} label={STATE_META[c.state].label} />
-                      ) : (
-                        "—"
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))
+                conversations.map((c, i) => {
+                  const open = (): void => setSelected(c);
+                  return (
+                    <TableRow
+                      key={c.id ?? `${c.createdOn}-${i}`}
+                      hover
+                      onClick={open}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          open();
+                        }
+                      }}
+                      tabIndex={0}
+                      role="button"
+                      aria-label={`View chat session started by ${c.createdBy || "unknown"}`}
+                      sx={{ cursor: "pointer" }}
+                    >
+                      <TableCell>
+                        <RelativeTime iso={c.createdOn} />
+                      </TableCell>
+                      <TableCell>{c.createdBy || "—"}</TableCell>
+                      <TableCell>{c.messageCount}</TableCell>
+                      <TableCell>
+                        {c.state ? (
+                          <SemanticChip role={STATE_META[c.state].role} label={STATE_META[c.state].label} />
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>

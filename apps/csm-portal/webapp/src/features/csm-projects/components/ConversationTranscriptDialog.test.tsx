@@ -15,7 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import ConversationTranscriptDialog from "@features/csm-projects/components/ConversationTranscriptDialog";
@@ -46,6 +46,11 @@ function conversation(overrides: Partial<BeConversationView> = {}): BeConversati
     createdBy: "Jane Doe",
     ...overrides,
   };
+}
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
 }
 
 function message(overrides: Partial<CsmCaseComment> = {}): CsmCaseComment {
@@ -147,6 +152,35 @@ describe("ConversationTranscriptDialog", () => {
 
     const link = screen.getByText("View case").closest("a");
     expect(link).toHaveAttribute("href", "/cases/case-1");
+  });
+
+  it("navigates to the linked case when 'View case' is clicked", () => {
+    mockUseGetCsmConversationMessages.mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/projects/proj-1"]}>
+        <Routes>
+          <Route
+            path="/projects/proj-1"
+            element={
+              <ConversationTranscriptDialog
+                conversation={conversation({ case: { id: "case-1", name: "CS0000001" } })}
+                onClose={vi.fn()}
+              />
+            }
+          />
+          <Route path="/cases/:caseId" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByText("View case"));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/cases/case-1");
   });
 
   it("calls onClose when the Close button is clicked", () => {

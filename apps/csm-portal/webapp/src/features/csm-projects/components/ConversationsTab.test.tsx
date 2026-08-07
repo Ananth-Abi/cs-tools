@@ -145,4 +145,64 @@ describe("ConversationsTab", () => {
     expect(screen.queryByText("Active")).not.toBeInTheDocument();
     expect(screen.queryByText("Resolved")).not.toBeInTheDocument();
   });
+
+  it("opens the transcript dialog when a row is activated with Enter", () => {
+    mockUseSearchConversations.mockReturnValue({
+      data: { conversations: [conversation()], total: 1 },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<ConversationsTab projectId="proj-1" />);
+
+    const row = screen.getByRole("button", { name: "View chat session started by Jane Doe" });
+    expect(row).toHaveAttribute("tabIndex", "0");
+    fireEvent.keyDown(row, { key: "Enter" });
+
+    expect(screen.getByText("Transcript for conv-1")).toBeInTheDocument();
+  });
+
+  it("opens the transcript dialog when a row is activated with Space", () => {
+    mockUseSearchConversations.mockReturnValue({
+      data: { conversations: [conversation()], total: 1 },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+
+    render(<ConversationsTab projectId="proj-1" />);
+
+    const row = screen.getByRole("button", { name: "View chat session started by Jane Doe" });
+    fireEvent.keyDown(row, { key: " " });
+
+    expect(screen.getByText("Transcript for conv-1")).toBeInTheDocument();
+  });
+
+  it("resets pagination and closes any open transcript when projectId changes", () => {
+    mockUseSearchConversations.mockReturnValue({
+      data: { conversations: [conversation()], total: 100 },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+
+    const { rerender } = render(<ConversationsTab projectId="proj-1" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    fireEvent.click(screen.getByText("Jane Doe"));
+    expect(screen.getByText("Transcript for conv-1")).toBeInTheDocument();
+    expect(mockUseSearchConversations).toHaveBeenLastCalledWith(
+      "proj-1",
+      expect.objectContaining({ page: 1 }),
+    );
+
+    rerender(<ConversationsTab projectId="proj-2" />);
+
+    expect(screen.queryByText("Transcript for conv-1")).not.toBeInTheDocument();
+    expect(mockUseSearchConversations).toHaveBeenLastCalledWith(
+      "proj-2",
+      expect.objectContaining({ page: 0 }),
+    );
+  });
 });
