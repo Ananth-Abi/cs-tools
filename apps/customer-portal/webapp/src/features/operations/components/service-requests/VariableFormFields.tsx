@@ -326,14 +326,16 @@ export default function VariableFormFields({
               onChange={(e) => onChange(variable.id, e.target.value as string)}
               displayEmpty
               disabled={isContext}
+              sx={{
+                "& .MuiSelect-select": {
+                  color: !value ? "text.secondary" : undefined,
+                },
+              }}
               renderValue={(v) =>
                 sortedChoices.find((c) => c.value === v)?.text ||
                 "Select..."
               }
             >
-              <MenuItem value="">
-                <em>Select...</em>
-              </MenuItem>
               {sortedChoices.map((choice) => (
                 <MenuItem key={choice.value} value={choice.value}>
                   {choice.text}
