@@ -60,6 +60,7 @@ import { htmlToPlainText } from "@features/support/utils/richTextEditor";
 import { usePiiGuard } from "@features/support/hooks/usePiiGuard";
 import PiiWarningDialog from "@features/support/components/dialogs/PiiWarningDialog";
 import { ChatSender } from "@features/support/types/conversations";
+import { MAX_FEEDBACK_TAGS } from "@features/support/constants/feedbackTags";
 import type {
   ChatNavState,
   Message,
@@ -614,11 +615,26 @@ export default function NoveraChatPage(): JSX.Element {
           const ackId = String(event.messageId ?? "");
           const ackRating =
             event.rating === 1 ? 1 : event.rating === -1 ? -1 : null;
+          // The server echoes what it actually stored, after dropping any tag it
+          // does not recognise — so adopt its list unconditionally. An absent
+          // `tags` field means it stored none (an older backend ignores the
+          // field entirely), so fall back to [] rather than keeping our
+          // optimistic value: showing chips as selected when nothing was saved
+          // tells the user something untrue.
+          const ackTags = Array.isArray(event.tags)
+            ? (event.tags as unknown[]).filter(
+                (t): t is string => typeof t === "string",
+              )
+            : undefined;
           if (ackId) {
             setMessages((prev) =>
               prev.map((m) =>
                 m.feedbackMessageId === ackId
-                  ? { ...m, feedbackRating: ackRating }
+                  ? {
+                      ...m,
+                      feedbackRating: ackRating,
+                      feedbackTags: ackTags ?? [],
+                    }
                   : m,
               ),
             );
@@ -745,7 +761,7 @@ export default function NoveraChatPage(): JSX.Element {
   const feedbackSeqRef = useRef<Map<string, number>>(new Map());
 
   const submitFeedback = useCallback(
-    (messageId: string, rating: 1 | -1) => {
+    (messageId: string, rating: 1 | -1, tags?: string[]) => {
       if (!projectId) return;
 
       // Mark this as the latest submission for the message. Clicking 👍 then
@@ -761,7 +777,11 @@ export default function NoveraChatPage(): JSX.Element {
         prev.map((m) => {
           if (m.feedbackMessageId !== messageId) return m;
           previousRating = m.feedbackRating ?? null;
-          return { ...m, feedbackRating: rating };
+          return {
+            ...m,
+            feedbackRating: rating,
+            ...(tags ? { feedbackTags: tags } : {}),
+          };
         }),
       );
 
@@ -773,6 +793,7 @@ export default function NoveraChatPage(): JSX.Element {
             rating,
             conversationId: conversationId ?? undefined,
             accountId: accountId || undefined,
+            ...(tags ? { tags } : {}),
           }),
         )
         .catch(() => {
@@ -787,6 +808,28 @@ export default function NoveraChatPage(): JSX.Element {
         });
     },
     [accountId, connect, conversationId, projectId, sendUserMessage],
+  );
+
+  /**
+   * Toggle a reason tag on an answer that has already been rated. Re-sends the
+   * same feedback event with the new list — the backend upserts on
+   * (conversation, message), so this replaces rather than accumulating rows.
+   * Capped client-side at MAX_FEEDBACK_TAGS; the server enforces the same limit.
+   */
+  const handleFeedbackTag = useCallback(
+    (messageId: string, tag: string) => {
+      const msg = messages.find((m) => m.feedbackMessageId === messageId);
+      if (!msg?.feedbackRating) return;
+      const current = msg.feedbackTags ?? [];
+      const next = current.includes(tag)
+        ? current.filter((t) => t !== tag)
+        : current.length >= MAX_FEEDBACK_TAGS
+          ? current
+          : [...current, tag];
+      if (next === current) return;
+      submitFeedback(messageId, msg.feedbackRating, next);
+    },
+    [messages, submitFeedback],
   );
 
   const handleThumbsUp = useCallback(
@@ -885,6 +928,7 @@ export default function NoveraChatPage(): JSX.Element {
               onCreateCase={handleCreateCase}
               onThumbsUp={isConnected ? handleThumbsUp : undefined}
               onThumbsDown={isConnected ? handleThumbsDown : undefined}
+            onFeedbackTag={isConnected ? handleFeedbackTag : undefined}
               onSolutionWorked={handleSolutionWorked}
               onRequestTokenIncrease={
                 tokenRequestEnabled

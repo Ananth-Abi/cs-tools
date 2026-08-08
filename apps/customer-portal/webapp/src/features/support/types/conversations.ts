@@ -216,6 +216,8 @@ export type Message = {
   feedbackMessageId?: string;
   /** The rating the user has given this answer, if any (+1 up / -1 down). */
   feedbackRating?: 1 | -1 | null;
+  /** Reason tags chosen alongside the rating. Slugs, not labels. */
+  feedbackTags?: string[];
   isLoading?: boolean;
   isError?: boolean;
   slotState?: SlotState;
