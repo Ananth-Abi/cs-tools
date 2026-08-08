@@ -497,8 +497,12 @@ export default function ConversationDetailsPage(): JSX.Element {
           const ackId = String(event.messageId ?? "");
           const ackRating =
             event.rating === 1 ? 1 : event.rating === -1 ? -1 : null;
-          // The server echoes what it actually stored, after dropping any tag
-          // it does not recognise — so adopt its list rather than ours.
+          // The server echoes what it actually stored, after dropping any tag it
+          // does not recognise — so adopt its list unconditionally. An absent
+          // `tags` field means it stored none (an older backend ignores the
+          // field entirely), so fall back to [] rather than keeping our
+          // optimistic value: showing chips as selected when nothing was saved
+          // tells the user something untrue.
           const ackTags = Array.isArray(event.tags)
             ? (event.tags as unknown[]).filter(
                 (t): t is string => typeof t === "string",
@@ -511,7 +515,7 @@ export default function ConversationDetailsPage(): JSX.Element {
                   ? {
                       ...m,
                       feedbackRating: ackRating,
-                      ...(ackTags ? { feedbackTags: ackTags } : {}),
+                      feedbackTags: ackTags ?? [],
                     }
                   : m,
               ),
