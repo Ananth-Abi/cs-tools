@@ -486,7 +486,7 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
 			}
-			p.ProjectTypeIDs = append(p.ProjectTypeIDs, f.Values...)
+			p.ProjectTypeNames = append(p.ProjectTypeNames, f.Values...)
 
 		case "integrationCsTeam":
 			if f.Op != "in" {
@@ -676,7 +676,7 @@ func rejectUnsupportedOrGroupFields(parsed domain.ParsedCaseFilters) error {
 		return &apierror.ValidationError{Msg: "anyOf: field \"product\" is not supported inside an OR group"}
 	case len(parsed.ProjectOnboardingStatuses) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"projectOnboardingStatus\" is not supported inside an OR group"}
-	case len(parsed.ProjectTypeIDs) > 0:
+	case len(parsed.ProjectTypeNames) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"projectType\" is not supported inside an OR group"}
 	case len(parsed.IntegrationCsTeamIDs) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"integrationCsTeam\" is not supported inside an OR group"}

@@ -345,10 +345,14 @@ type snCaseFilters struct {
 	// ParentID: see domain.SearchCasesFilters.ParentID doc comment.
 	ParentID                  string   `json:"parentId,omitempty"`
 	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses,omitempty"`
-	ProjectTypeIDs            []string `json:"projectTypeIds,omitempty"`
-	IntegrationCsTeamIDs      []string `json:"integrationCsTeamIds,omitempty"`
-	Unassigned                bool     `json:"unassigned,omitempty"`
-	ResolutionNotesEmpty      bool     `json:"resolutionNotesEmpty,omitempty"`
+	// ProjectTypeNames carries project-type NAMES (e.g. "Subscription"), not
+	// sys_ids: CaseUtils.searchCases matches project.u_project_type.u_name. The
+	// wire key stays "projectTypeIds" because that is the field name the SN
+	// scripted API reads.
+	ProjectTypeNames     []string `json:"projectTypeIds,omitempty"`
+	IntegrationCsTeamIDs []string `json:"integrationCsTeamIds,omitempty"`
+	Unassigned           bool     `json:"unassigned,omitempty"`
+	ResolutionNotesEmpty bool     `json:"resolutionNotesEmpty,omitempty"`
 	// TaskSLAFilter: SN-side join on Task SLA table, filtering by businessElapsedPercent
 	// range. Confined to SN adapter per vendor-neutral boundary; see
 	// domain.TaskSLAFilter doc comment.
@@ -2126,7 +2130,7 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		ExcludeTags:               parsed.ExcludeTags,
 		ParentID:                  snParentIDFilter(parsed.ParentID),
 		ProjectOnboardingStatuses: parsed.ProjectOnboardingStatuses,
-		ProjectTypeIDs:            uuidsToSysids(parsed.ProjectTypeIDs),
+		ProjectTypeNames:          parsed.ProjectTypeNames,
 		IntegrationCsTeamIDs:      uuidsToSysids(parsed.IntegrationCsTeamIDs),
 		Unassigned:                parsed.Unassigned,
 		ResolutionNotesEmpty:      parsed.ResolutionNotesEmpty,
@@ -2190,9 +2194,8 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 			return domain.SearchCasesResponse{}, err
 		}
 	}
-	if err := validateUUIDs("projectType", req.Parsed.ProjectTypeIDs); err != nil {
-		return domain.SearchCasesResponse{}, err
-	}
+	// projectType values are free-text project-type names (no UUID validation);
+	// integrationCsTeam values are still UUIDs.
 	if err := validateUUIDs("integrationCsTeam", req.Parsed.IntegrationCsTeamIDs); err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
