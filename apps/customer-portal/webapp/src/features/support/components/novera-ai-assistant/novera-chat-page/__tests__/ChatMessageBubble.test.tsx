@@ -173,4 +173,75 @@ describe("ChatMessageBubble", () => {
       expect(screen.queryByLabelText("Good response")).not.toBeInTheDocument();
     });
   });
+
+  describe("reason tags", () => {
+    const handlers = () => ({
+      onThumbsUp: vi.fn(),
+      onThumbsDown: vi.fn(),
+      onFeedbackTag: vi.fn(),
+    });
+
+    it("does not offer tags until the answer has been rated", () => {
+      renderBubble(botAnswer(), handlers());
+
+      expect(screen.queryByText("What went wrong?")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Inaccurate" })).not.toBeInTheDocument();
+    });
+
+    it("offers the negative vocabulary after a thumbs down", () => {
+      renderBubble(botAnswer({ feedbackRating: -1 }), handlers());
+
+      expect(screen.getByText("What went wrong?")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Inaccurate" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Too slow" })).toBeInTheDocument();
+      // Positive tags must not leak into the negative set.
+      expect(screen.queryByRole("button", { name: "Saved time" })).not.toBeInTheDocument();
+    });
+
+    it("offers the positive vocabulary after a thumbs up", () => {
+      renderBubble(botAnswer({ feedbackRating: 1 }), handlers());
+
+      expect(screen.getByText("What was good about it?")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Saved time" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Inaccurate" })).not.toBeInTheDocument();
+    });
+
+    it("reports the chosen tag and marks it pressed", () => {
+      const props = handlers();
+      renderBubble(
+        botAnswer({ feedbackRating: -1, feedbackTags: ["outdated"] }),
+        props,
+      );
+
+      expect(screen.getByRole("button", { name: "Outdated" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Incomplete" }));
+      expect(props.onFeedbackTag).toHaveBeenCalledWith("msg-123", "incomplete");
+    });
+
+    it("disables unselected tags once the cap is reached, keeping selected ones clickable", () => {
+      renderBubble(
+        botAnswer({
+          feedbackRating: -1,
+          feedbackTags: ["inaccurate", "incomplete", "irrelevant", "outdated"],
+        }),
+        handlers(),
+      );
+
+      expect(screen.getByRole("button", { name: "Too slow" })).toBeDisabled();
+      // Still removable, otherwise the user is stuck at the cap.
+      expect(screen.getByRole("button", { name: "Outdated" })).toBeEnabled();
+    });
+
+    it("hides tags when the socket is closed (no handler passed)", () => {
+      renderBubble(botAnswer({ feedbackRating: -1 }), {
+        onThumbsUp: vi.fn(),
+        onThumbsDown: vi.fn(),
+      });
+
+      expect(screen.queryByText("What went wrong?")).not.toBeInTheDocument();
+    });
+  });
 });
