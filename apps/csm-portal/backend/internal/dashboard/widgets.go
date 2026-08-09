@@ -444,7 +444,18 @@ func injectTypeFilter(query map[string]any, resourceType ResourceType, source, d
 	if query == nil {
 		query = map[string]any{}
 	}
-	filters, _ := query["filters"].([]any)
+	filters, isArray := query["filters"].([]any)
+	if raw, present := query["filters"]; present && !isArray {
+		// A non-array "filters" is silently ignored by the loop below and
+		// then overwritten by the auto-injected type filter, so the widget
+		// would search with criteria the definition does not state. Nothing
+		// downstream can detect that, so say so at load time.
+		attrs := []any{"source", source, "dashboardId", dashboardID, "widgetId", widgetID, "got", fmt.Sprintf("%T", raw)}
+		if slice != "" {
+			attrs = append(attrs, "slice", slice)
+		}
+		slog.Warn(`dashboard definitions: widget "filters" is not an array; the configured value is discarded and replaced by the auto-injected "type" filter`, attrs...)
+	}
 	for _, entry := range filters {
 		m, ok := entry.(map[string]any)
 		if !ok {
