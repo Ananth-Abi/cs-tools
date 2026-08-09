@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 )
 
 // CreateCase calls POST /cases on the entity service.
@@ -470,19 +469,8 @@ func (c *CustomerEntityClient) RemoveCaseTag(ctx context.Context, caseID, tagID 
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/cases/%s/tags/%s", url.PathEscape(caseID), url.PathEscape(tagID)), nil)
 }
 
-// SearchTags calls GET /tags/search on the entity service.
-// Response is returned as raw JSON; typed response structs are deferred.
-func (c *CustomerEntityClient) SearchTags(ctx context.Context, query string, limit int) ([]byte, error) {
-	params := url.Values{}
-	if query != "" {
-		params.Set("q", query)
-	}
-	if limit > 0 {
-		params.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/tags/search"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
-	return c.do(ctx, http.MethodGet, path, nil)
+// SearchTags calls POST /tags/search on the entity service.
+// The request body is forwarded verbatim; the response is returned as raw JSON.
+func (c *CustomerEntityClient) SearchTags(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/tags/search", body)
 }

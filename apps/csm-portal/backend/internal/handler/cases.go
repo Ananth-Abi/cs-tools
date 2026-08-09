@@ -24,7 +24,6 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
@@ -88,7 +87,7 @@ type entityCaseClient interface {
 	CreateCaseGithubIssue(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	AddCaseTag(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	RemoveCaseTag(ctx context.Context, caseID, tagID string) ([]byte, error)
-	SearchTags(ctx context.Context, query string, limit int) ([]byte, error)
+	SearchTags(ctx context.Context, body []byte) ([]byte, error)
 	// GetUserMe resolves the caller's own platform user record — the same
 	// call that backs GET /users/me. Needed by the public-comment ownership
 	// guard; see CaseHandler.resolveCurrentUserID.
@@ -682,9 +681,10 @@ func (h *CaseHandler) RemoveCaseTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SearchTags handles GET /tags/search.
-// Forwards the q and limit query parameters to the entity service and returns
-// the raw response verbatim.
+// SearchTags handles POST /tags/search.
+// The JSON body ({filters:{searchQuery}, limit}) is forwarded to the entity
+// service verbatim, and the raw response returned as-is. Limit bounds are
+// enforced upstream, so there is nothing to re-validate here.
 func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -692,19 +692,23 @@ func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := r.URL.Query().Get("q")
-
-	var limit int
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		parsed, err := strconv.Atoi(limitStr)
-		if err != nil || parsed < 0 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
 			return
 		}
-		limit = parsed
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
 	}
 
-	result, err := h.entity.SearchTags(r.Context(), q, limit)
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SearchTags(r.Context(), body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchTags failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search tags.")

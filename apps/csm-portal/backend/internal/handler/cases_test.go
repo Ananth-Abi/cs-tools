@@ -2460,7 +2460,7 @@ func TestSearchCasesPassesThroughNewFixEtaFields(t *testing.T) {
 func TestSearchTags(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=10", nil)
+		r := httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{"filters":{"searchQuery":"micro"}}`))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
 		assertStatus(t, w, http.StatusUnauthorized)
@@ -2468,9 +2468,9 @@ func TestSearchTags(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
-	t.Run("rejects a non-numeric limit", func(t *testing.T) {
+	t.Run("rejects a malformed JSON body", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=abc", nil))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{"filters":`)))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
@@ -2478,56 +2478,28 @@ func TestSearchTags(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
-	t.Run("rejects a limit above the documented maximum", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=101", nil))
-		w := httptest.NewRecorder()
-		h.SearchTags(w, r)
-		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
-		assertContentType(t, w, "application/json")
-	})
-
-	t.Run("accepts a limit of exactly 100", func(t *testing.T) {
-		var capturedLimit int
+	// The BFF is a pass-through here: it must hand the entity service the exact
+	// bytes it received. Asserting on the raw body (not a struct decoded through
+	// the same json tags) is what actually pins the wire format -- a decode-based
+	// check agrees with whichever key the payload happens to carry.
+	t.Run("forwards the request body byte-for-byte", func(t *testing.T) {
+		const reqBody = `{"filters":{"searchQuery":"micro"},"limit":20}`
+		var capturedBody []byte
 		client := &mockEntityCaseClient{
-			searchTagsFn: func(_ context.Context, _ string, limit int) ([]byte, error) {
-				capturedLimit = limit
-				return []byte(`{"tags":[]}`), nil
-			},
-		}
-		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=100", nil))
-		w := httptest.NewRecorder()
-		h.SearchTags(w, r)
-		assertStatus(t, w, http.StatusOK)
-		if capturedLimit != 100 {
-			t.Errorf("upstream received limit %d, want 100", capturedLimit)
-		}
-	})
-
-	t.Run("forwards q and limit verbatim, returns 200 with matching tags", func(t *testing.T) {
-		var capturedQuery string
-		var capturedLimit int
-		client := &mockEntityCaseClient{
-			searchTagsFn: func(_ context.Context, query string, limit int) ([]byte, error) {
-				capturedQuery = query
-				capturedLimit = limit
+			searchTagsFn: func(_ context.Context, body []byte) ([]byte, error) {
+				capturedBody = body
 				return []byte(`{"tags":[{"id":"22222222-2222-2222-2222-222222222222","label":"micro-gw","color":null}]}`), nil
 			},
 		}
 		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=10", nil))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(reqBody)))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
 
 		assertStatus(t, w, http.StatusOK)
 		assertContentType(t, w, "application/json")
-		if capturedQuery != "micro" {
-			t.Errorf("upstream received q %q, want %q", capturedQuery, "micro")
-		}
-		if capturedLimit != 10 {
-			t.Errorf("upstream received limit %d, want %d", capturedLimit, 10)
+		if string(capturedBody) != reqBody {
+			t.Errorf("upstream received body %s, want %s", capturedBody, reqBody)
 		}
 
 		var body struct {
@@ -2545,20 +2517,18 @@ func TestSearchTags(t *testing.T) {
 		}
 	})
 
-	t.Run("works with no query parameters", func(t *testing.T) {
-		var capturedQuery string
-		var capturedLimit int
+	t.Run("works with an empty filter object", func(t *testing.T) {
+		var capturedBody []byte
 		var called bool
 		client := &mockEntityCaseClient{
-			searchTagsFn: func(_ context.Context, query string, limit int) ([]byte, error) {
+			searchTagsFn: func(_ context.Context, body []byte) ([]byte, error) {
 				called = true
-				capturedQuery = query
-				capturedLimit = limit
+				capturedBody = body
 				return []byte(`{"tags":[]}`), nil
 			},
 		}
 		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search", nil))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{}`)))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
 
@@ -2566,11 +2536,8 @@ func TestSearchTags(t *testing.T) {
 		if !called {
 			t.Fatal("expected entity SearchTags to be called")
 		}
-		if capturedQuery != "" {
-			t.Errorf("upstream received q %q, want empty", capturedQuery)
-		}
-		if capturedLimit != 0 {
-			t.Errorf("upstream received limit %d, want 0", capturedLimit)
+		if string(capturedBody) != `{}` {
+			t.Errorf("upstream received body %s, want {}", capturedBody)
 		}
 	})
 
@@ -2579,12 +2546,12 @@ func TestSearchTags(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{
-					searchTagsFn: func(_ context.Context, _ string, _ int) ([]byte, error) {
+					searchTagsFn: func(_ context.Context, _ []byte) ([]byte, error) {
 						return nil, tc.err
 					},
 				}
 				h := NewCaseHandler(client)
-				r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro", nil))
+				r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{"filters":{"searchQuery":"micro"}}`)))
 				w := httptest.NewRecorder()
 				h.SearchTags(w, r)
 				assertStatus(t, w, tc.wantCode)
