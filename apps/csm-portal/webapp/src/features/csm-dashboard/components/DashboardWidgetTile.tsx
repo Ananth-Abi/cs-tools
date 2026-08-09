@@ -33,6 +33,7 @@ import GenericColumnList from "@features/csm-dashboard/components/GenericColumnL
 import { buildWidgetPreviewHref } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 import { mergeWidgetFilters } from "@features/csm-dashboard/utils/widgetFilterMerge";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveRelativeDateFilters } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
 import {
   hasCurrentUserPlaceholder,
   resolveCurrentUserPlaceholder,
@@ -127,14 +128,33 @@ export default function DashboardWidgetTile({
   const location = useLocation();
   const { user } = useCurrentUser();
   const currentUserId = user?.id;
-  // Resolves both client-side filter placeholders a widget's own (opaque)
-  // filters may carry — `__current_team__` (see `teamFilterPlaceholder.ts`)
-  // and `__current_user__` (see `currentUserFilterPlaceholder.ts`) — in one
-  // pass, so every click-through href below (and the two data-fetching hooks,
-  // which resolve internally the same way) never sends either placeholder
-  // literally.
+  // Resolves every client-side filter placeholder a widget's own (opaque)
+  // filters may carry — `__current_team__` (see `teamFilterPlaceholder.ts`),
+  // `__current_user__` (see `currentUserFilterPlaceholder.ts`) and the
+  // relative-date family `__today__`/`__daysAgo:N__`/... (see
+  // `resolveRelativeDateFilters.ts`) — in one pass, in the same order and by
+  // the same functions `useWidgetData`/`useWidgetPieData` use internally, so
+  // every click-through href below lands on exactly the rows this tile just
+  // counted.
+  //
+  // The relative-date resolution matters most here: it is browser-local, and
+  // the destination list page has no placeholder resolution of its own, so an
+  // unresolved `__today__` reaching it was forwarded verbatim and resolved by
+  // the backing service against UTC — the tile and the list it links to then
+  // disagreed by the offset between UTC midnight and the viewer's own, which
+  // is the whole discrepancy this widget-side resolution exists to close.
+  // Resolving here does freeze the instant into the href; that is the right
+  // trade, because everything else in these hrefs (team ids, states, the
+  // viewer's own user id) is already a snapshot of the moment of the click,
+  // and the destination's URL scheme is the cases list's own concrete filter
+  // encoding — carrying dashboard placeholder vocabulary into it would make
+  // `__today__` a value users can type into, and hand-edit out of, a shared
+  // list-page URL.
   const resolvePlaceholders = (f: Record<string, unknown>): Record<string, unknown> =>
-    resolveCurrentUserPlaceholder(resolveTeamPlaceholder(f, selectedTeamGroupId), currentUserId);
+    resolveCurrentUserPlaceholder(
+      resolveRelativeDateFilters(resolveTeamPlaceholder(f, selectedTeamGroupId)),
+      currentUserId,
+    );
   // Carried on every count/pie/bar click-through below so the resource's own
   // list page (which has no dashboard context of its own) can offer a Back
   // button straight to this exact dashboard — mirroring the list-shape

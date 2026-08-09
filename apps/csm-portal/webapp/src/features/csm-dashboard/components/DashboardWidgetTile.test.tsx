@@ -680,6 +680,72 @@ describe("DashboardWidgetTile", () => {
     expect(params.get("states")).toBe("open");
   });
 
+  it("resolves a relative-date filter in the click-through href, so the destination list matches the number that was clicked", async () => {
+    postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="created_today"
+        displayName="Created Today"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [{ field: "createdOn", op: "gte", values: ["__today__"] }],
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+
+    const params = new URLSearchParams(
+      (screen.getByRole("link").getAttribute("href") ?? "").split("?")[1],
+    );
+    const createdFrom = params.get("createdFrom") ?? "";
+    // An unresolved placeholder reaching the list page is forwarded to the
+    // backing service, which resolves "today" against UTC rather than the
+    // viewer's own local day — so the tile's count and the list behind it
+    // disagreed by the offset between the two midnights. The href must
+    // carry the same browser-local instant the tile itself counted with.
+    expect(createdFrom).not.toContain("__today__");
+    const now = new Date();
+    expect(createdFrom).toBe(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString(),
+    );
+  });
+
+  it("resolves a relative-date filter in the View more preview href too", async () => {
+    postMock.mockResolvedValue({
+      total: 6,
+      cases: [
+        {
+          id: "11111111-1111-1111-1111-111111111111",
+          number: "CS-1",
+          subject: "Disk full",
+          state: "open",
+        },
+      ],
+      limit: 5,
+      offset: 0,
+      hasMore: true,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="created_today_list"
+        displayName="Created Today"
+        resourceType="case"
+        shape="list"
+        filters={{
+          filters: [{ field: "createdOn", op: "gte", values: ["__today__"] }],
+        }}
+        listLimit={5}
+      />,
+    );
+
+    const viewMoreLink = await screen.findByRole("link", { name: /view more/i });
+    expect(viewMoreLink.getAttribute("href") ?? "").not.toContain("__today__");
+  });
+
   it("shape count: click-through carries a `from` location.state pointing back to this dashboard page, so the destination list can offer a Back button", async () => {
     postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
 
