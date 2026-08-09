@@ -104,7 +104,7 @@ export default function ProjectTimeTracking({
         isError={isProjectError}
       />
 
-      <Box sx={{ mb: 3 }}>
+      <Box sx={{ mb: 2 }}>
         <TimeCardsDateFilter
           startDate={startDate}
           endDate={endDate}
