@@ -17,10 +17,13 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -1116,6 +1119,137 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 		gotBody.Filters.ProjectTypeNames[1] != "Free Trial" {
 		t.Fatalf("ProjectTypeNames = %v, want [Subscription, Free Trial] passed through unchanged", gotBody.Filters.ProjectTypeNames)
 	}
+}
+
+// TestSNCaseService_SearchCases_StateNotInTranslatesToExcludeStateKeys pins
+// both halves of the state notIn filter's wire form: the key name and the
+// value representation. Both matter because the backing data source drops a
+// filter key it does not recognize instead of rejecting it, so a wrong key --
+// or the right key carrying state names where numeric keys are expected --
+// would silently widen the result set rather than fail. The assertions run
+// against the raw request body, not the decoded struct, since decoding through
+// the same struct tags would agree with any name they happened to carry.
+func TestSNCaseService_SearchCases_StateNotInTranslatesToExcludeStateKeys(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"open"}},
+				{Field: "state", Op: "notIn", Values: []string{"awaiting_info", "solution_proposed", "closed"}},
+			},
+		},
+	}
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope struct {
+		Filters map[string]json.RawMessage `json:"filters"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		t.Fatalf("decode request body: %v; raw: %s", err, rawBody)
+	}
+	got, ok := envelope.Filters["excludeStateKeys"]
+	if !ok {
+		t.Fatalf("filters has no \"excludeStateKeys\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	// awaiting_info=18, solution_proposed=6, closed=3 -- the same numeric keys
+	// the positive stateKeys list is built from.
+	if string(got) != "[18,6,3]" {
+		t.Fatalf("excludeStateKeys = %s, want [18,6,3] (numeric state keys, not names)", got)
+	}
+	// The positive list is unaffected: notIn must never be folded into it.
+	if stateKeys, ok := envelope.Filters["stateKeys"]; !ok || string(stateKeys) != "[1]" {
+		t.Fatalf("stateKeys = %s (present=%v), want [1]", stateKeys, ok)
+	}
+	// The pre-rename key must not appear at all.
+	if _, ok := envelope.Filters["excludeStates"]; ok {
+		t.Fatal("filters carries \"excludeStates\"; the wire key is \"excludeStateKeys\"")
+	}
+}
+
+// TestSNCaseService_SearchCases_StateNotInOmittedWhenUnused guards the
+// inertness of the filter: a request that does not ask for an exclusion must
+// send no exclusion key, so nothing changes for existing callers while the
+// downstream layers do not yet honor it.
+func TestSNCaseService_SearchCases_StateNotInOmittedWhenUnused(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bytes.Contains(rawBody, []byte("excludeStateKeys")) {
+		t.Fatalf("excludeStateKeys must be omitted when no notIn filter was given; body: %s", rawBody)
+	}
+}
+
+// TestSNCaseService_SearchCases_StateNotInRejectsUnknownValue guards against
+// an unrecognized state silently vanishing in the domain-to-key conversion,
+// which for an exclusion would widen the result set.
+func TestSNCaseService_SearchCases_StateNotInRejectsUnknownValue(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream must not be called for an invalid filter value")
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{{Field: "state", Op: "notIn", Values: []string{"not_a_state"}}},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	_, err := svc.SearchCases(ctx, req)
+	if err == nil {
+		t.Fatal("expected a validation error for an unknown state (notIn) value")
+	}
+	if !strings.Contains(err.Error(), "not_a_state") {
+		t.Fatalf("error = %v, want it to name the offending value", err)
+	}
+}
+
+// filterKeys returns the keys of a decoded filters object, for test failure
+// messages.
+func filterKeys(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // TestSNCaseService_SearchCases_AnyOfKeepsSNOrGroupsWireFormat is the guard

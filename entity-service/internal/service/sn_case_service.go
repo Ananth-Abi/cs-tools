@@ -328,6 +328,17 @@ type snCaseFilters struct {
 	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
 	DeployedProductIDs []string `json:"deployedProductIds,omitempty"`
 	StateKeys          []int    `json:"stateKeys,omitempty"`
+	// ExcludeStates is the inverse of StateKeys: cases whose state is none of
+	// these. It carries the same numeric state keys StateKeys does, produced by
+	// the same domainStatesToSNIDs conversion, because that is the form
+	// ServiceNow's `state` column is queried in -- a list of state names would
+	// match nothing. See domain.ParsedCaseFilters.ExcludeStates.
+	//
+	// Not honored downstream yet: CaseUtils.searchCases does not read
+	// filters.excludeStateKeys and Ballerina's CaseSearchFilters does not
+	// declare it, so until both land the key is dropped and the search behaves
+	// as if no exclusion had been requested.
+	ExcludeStates      []int    `json:"excludeStateKeys,omitempty"`
 	SeverityKeys       []int    `json:"severityKeys,omitempty"`
 	IssueTypeKeys      []int    `json:"issueTypeKeys,omitempty"`
 	EngagementTypeKeys []int    `json:"engagementTypeKeys,omitempty"`
@@ -2128,6 +2139,7 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		ProjectIDs:                uuidsToSysids(parsed.ProjectIDs),
 		DeploymentIDs:             uuidsToSysids(parsed.DeploymentIDs),
 		StateKeys:                 domainStatesToSNIDs(parsed.States),
+		ExcludeStates:             domainStatesToSNIDs(parsed.ExcludeStates),
 		SeverityKeys:              domainSeveritiesToSNIDs(parsed.Severities),
 		IssueTypeKeys:             domainIssueTypesToSNIDs(parsed.IssueTypes),
 		EngagementTypeKeys:        domainEngagementTypesToSNIDs(parsed.EngagementTypes),
@@ -2248,6 +2260,14 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 	for _, st := range req.Parsed.States {
 		if !validCaseState[st] {
 			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "state contains invalid value: " + string(st)}
+		}
+	}
+	// Same reasoning as States above, and it matters more here: an exclusion
+	// value that got silently dropped would widen the result set rather than
+	// narrow it, which is the harder failure to notice.
+	for _, st := range req.Parsed.ExcludeStates {
+		if !validCaseState[st] {
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "state (notIn) contains invalid value: " + string(st)}
 		}
 	}
 	for _, sv := range req.Parsed.Severities {

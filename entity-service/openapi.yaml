@@ -4810,8 +4810,12 @@ components:
           security_report_analysis/announcement/engagement. For the ServiceNow
           data source each value is translated to its SN caseTypes equivalent
           (case → default_case).
-        - **state** (in): one of open/work_in_progress/waiting_on_wso2/
-          awaiting_info/reopened/solution_proposed/closed.
+        - **state** (in / notIn): one of open/work_in_progress/
+          waiting_on_wso2/awaiting_info/reopened/solution_proposed/closed. in
+          matches cases in any of the given states; notIn matches cases in
+          none of them. The two are independent and may be combined. notIn is
+          not supported inside an anyOf branch, and not supported by the
+          relational data source.
         - **severity** (in): one of catastrophic/critical/high/medium/low.
           Only applicable when a type filter includes case.
         - **engagementType** (in): one of migration/consultancy/

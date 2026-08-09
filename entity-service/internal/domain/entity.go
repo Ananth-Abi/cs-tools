@@ -1352,6 +1352,13 @@ type ParsedCaseFilters struct {
 	WorkStates      []CaseWorkState
 	AssignedUserIDs []string
 	ProductNames    []string
+	// ExcludeStates filters to cases whose state is NOT one of these values
+	// (optional). Inverse of States, and the two are independent: a request may
+	// carry either, both, or neither. Only the backing data source that models
+	// case state supports it; the relational backend rejects it rather than
+	// dropping the predicate, since silently ignoring an exclusion widens the
+	// result set instead of narrowing it.
+	ExcludeStates []CaseState
 	// Tags filters cases by attached free-text label. Works end-to-end: ServiceNow's
 	// CaseUtils.searchCases honors filters.tags, and Ballerina's CaseSearchFilters
 	// forwards it.
