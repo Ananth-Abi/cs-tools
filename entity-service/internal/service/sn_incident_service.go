@@ -178,6 +178,9 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchIncidentsResponse{}, err
+	}
 	if req.SortBy.Field != "" && !validIncidentSortField[req.SortBy.Field] {
 		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "sortBy.field contains invalid value: " + string(req.SortBy.Field)}
 	}
@@ -214,7 +217,7 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 			SearchQuery:  req.Filters.SearchQuery,
 			PriorityKeys: priorityKeys,
 			ParentIDs:    uuidsToSysids(req.Filters.ParentIDs),
-			Number:       req.Filters.Number,
+			Number:       stringPtrValue(req.Filters.Number),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

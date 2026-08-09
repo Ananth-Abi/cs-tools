@@ -19,8 +19,10 @@ package service
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 )
 
@@ -45,7 +47,7 @@ func TestSNProblemService_SearchProblems_NumberFilterPassedThrough(t *testing.T)
 	svc := NewServiceNowProblemService(client)
 
 	req := domain.SearchProblemsRequest{
-		Filters: domain.SearchProblemsFilters{Number: "PRB0010001"},
+		Filters: domain.SearchProblemsFilters{Number: strPtr("PRB0010001")},
 	}
 	if _, err := svc.SearchProblems(contextWithUserIDToken("token"), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -60,5 +62,37 @@ func TestSNProblemService_SearchProblems_NumberFilterPassedThrough(t *testing.T)
 	}
 	if _, hasSearchQuery := gotFilters["searchQuery"]; hasSearchQuery {
 		t.Fatalf("filters.searchQuery: expected omitted (empty), got %v", gotFilters["searchQuery"])
+	}
+}
+
+// TestSNProblemService_SearchProblems_RejectsOverlongNumber verifies an
+// oversized exact-match Number filter is rejected as a *apierror.ValidationError
+// before the ServiceNow client is ever called.
+func TestSNProblemService_SearchProblems_RejectsOverlongNumber(t *testing.T) {
+	called := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/problems/search", func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"problems": [], "totalRecords": 0, "offset": 0, "limit": 20}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowProblemService(client)
+
+	req := domain.SearchProblemsRequest{
+		Filters: domain.SearchProblemsFilters{Number: strPtr(strings.Repeat("x", maxExactNumberLen+1))},
+	}
+	_, err := svc.SearchProblems(contextWithUserIDToken("token"), req)
+
+	var valErr *apierror.ValidationError
+	if err == nil {
+		t.Fatal("expected a validation error, got nil")
+	}
+	if ok := asValidationError(err, &valErr); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+	if called {
+		t.Fatal("ServiceNow client was called despite the invalid filter")
 	}
 }

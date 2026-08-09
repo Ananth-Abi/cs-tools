@@ -318,8 +318,17 @@ export default function QuickNav(): JSX.Element | null {
   // finds nothing), not just disappear the moment the search finishes,
   // which would leave "No matches." with no explanation of why a plain-
   // looking query didn't get the fast exact-match path.
+  //
+  // Gated on the free-text path's minimum query length (all four hooks'
+  // MIN_QUERY_LEN happen to be the same value, 2 — using the case one as
+  // the representative constant), not just `> 0`: below that length every
+  // hook is disabled (`enabled: q.length >= MIN_LEN`) and no search runs at
+  // all, so the hint's "searched all fields" framing would be describing a
+  // request that was never made.
   const showNoPatternHint =
-    !forceFreeText && exactMatchKind === null && trimmedQuery.length > 0;
+    !forceFreeText &&
+    exactMatchKind === null &&
+    trimmedQuery.length >= QUICK_CASE_MIN_QUERY_LEN;
 
   const inputRef = useRef<HTMLInputElement>(null);
 

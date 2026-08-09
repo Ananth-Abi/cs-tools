@@ -191,7 +191,7 @@ func TestSNIncidentService_SearchIncidents_NumberFilterPassedThrough(t *testing.
 	svc := NewServiceNowIncidentService(client)
 
 	req := domain.SearchIncidentsRequest{
-		Filters: domain.SearchIncidentsFilters{Number: "INC0010001"},
+		Filters: domain.SearchIncidentsFilters{Number: strPtr("INC0010001")},
 	}
 	if _, err := svc.SearchIncidents(contextWithUserIDToken("token"), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)

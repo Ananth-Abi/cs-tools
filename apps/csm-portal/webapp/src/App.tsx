@@ -180,7 +180,14 @@ const CsmAnnouncementsPage = lazy(
 function RootLanding(): JSX.Element | null {
   const pending = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY);
   const [searchParams] = useSearchParams();
-  const hasDeepLinkSearch = searchParams.has("goto") || searchParams.has("q");
+  // A present-but-empty `?q=`/`?goto=` (e.g. a link with a blank query) must
+  // not defer the redirect forever: QuickNav's own initial-params effect
+  // already no-ops on an empty value (`if (!q && !goto) return`), so nothing
+  // would ever clear the param and this component would sit blank
+  // indefinitely on `.has()` alone. Require an actual non-blank value.
+  const hasDeepLinkSearch = ["goto", "q"].some((key) =>
+    Boolean(searchParams.get(key)?.trim()),
+  );
   return pending || hasDeepLinkSearch ? null : <Navigate to="/dashboard" replace />;
 }
 

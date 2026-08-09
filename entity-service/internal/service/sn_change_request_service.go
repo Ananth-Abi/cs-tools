@@ -246,6 +246,9 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchChangeRequestsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchChangeRequestsResponse{}, err
+	}
 
 	if req.Filters.ClosedEndDate != nil && req.Filters.ClosedStartDate != nil &&
 		req.Filters.ClosedEndDate.Before(*req.Filters.ClosedStartDate) {
@@ -292,7 +295,7 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 			ImpactKeys:      domainCRImpactsToSNIDs(req.Filters.Impacts),
 			ClosedStartDate: formatSNDateTimeUTC(req.Filters.ClosedStartDate),
 			ClosedEndDate:   formatSNDateTimeUTC(req.Filters.ClosedEndDate),
-			Number:          req.Filters.Number,
+			Number:          stringPtrValue(req.Filters.Number),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

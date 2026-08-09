@@ -2221,7 +2221,7 @@ type SearchChangeRequestsFilters struct {
 	// "CHG0010001") exactly matches (optional). Exact match against
 	// ServiceNow's `number` column, routed as a first-class filter rather
 	// than through the free-text SearchQuery scan.
-	Number string `json:"number"`
+	Number *string `json:"number,omitempty"`
 }
 
 // SearchChangeRequestsRequest is the input for a change request search operation.
@@ -3267,7 +3267,7 @@ type SearchIncidentsFilters struct {
 	// "INC0010001") exactly matches (optional). Exact match against
 	// ServiceNow's `number` column, routed as a first-class filter rather
 	// than through the free-text SearchQuery scan.
-	Number string `json:"number"`
+	Number *string `json:"number,omitempty"`
 }
 
 // SearchIncidentsRequest is the input for POST /incidents/search.
@@ -3531,7 +3531,7 @@ type SearchProblemsFilters struct {
 	// "PRB0010001") exactly matches (optional). Exact match against
 	// ServiceNow's `number` column, routed as a first-class filter rather
 	// than through the free-text SearchQuery scan.
-	Number string `json:"number"`
+	Number *string `json:"number,omitempty"`
 }
 
 // SearchProblemsRequest is the input for POST /problems/search.

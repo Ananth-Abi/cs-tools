@@ -144,7 +144,7 @@ func TestSNChangeRequestService_SearchChangeRequests_NumberFilterPassedThrough(t
 	svc := NewServiceNowChangeRequestService(client)
 
 	req := domain.SearchChangeRequestsRequest{
-		Filters: domain.SearchChangeRequestsFilters{Number: "CHG0010001"},
+		Filters: domain.SearchChangeRequestsFilters{Number: strPtr("CHG0010001")},
 	}
 	if _, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
