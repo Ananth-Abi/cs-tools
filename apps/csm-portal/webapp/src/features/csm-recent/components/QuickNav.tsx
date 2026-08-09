@@ -15,7 +15,9 @@
 // under the License.
 
 import {
+  Alert,
   Box,
+  Button,
   ButtonBase,
   Form,
   InputBase,
@@ -40,6 +42,7 @@ import QuickNavEntityCard from "@features/csm-recent/components/QuickNavEntityCa
 import QuickNavResultSkeleton from "@features/csm-recent/components/QuickNavResultSkeleton";
 import SearchNoResultsIcon from "@components/empty-state/SearchNoResultsIcon";
 import {
+  classifyQuickCaseQuery,
   QUICK_CASE_MIN_QUERY_LEN,
   useQuickCaseSearch,
   type QuickCaseHit,
@@ -47,14 +50,17 @@ import {
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
 import { useNavTransition } from "@hooks/useNavTransition";
 import {
+  classifyQuickIncidentQuery,
   QUICK_INCIDENT_MIN_QUERY_LEN,
   useQuickIncidentSearch,
 } from "@features/csm-operations/api/useQuickIncidentSearch";
 import {
+  classifyQuickChangeRequestQuery,
   QUICK_CHANGE_REQUEST_MIN_QUERY_LEN,
   useQuickChangeRequestSearch,
 } from "@features/csm-operations/api/useQuickChangeRequestSearch";
 import {
+  classifyQuickProblemQuery,
   QUICK_PROBLEM_MIN_QUERY_LEN,
   useQuickProblemSearch,
 } from "@features/csm-operations/api/useQuickProblemSearch";
@@ -92,6 +98,28 @@ interface Result {
 
 const RECENT_LIMIT = 8;
 
+/**
+ * Which entity kind's exact-match search actually ran for the current query
+ * — drives the shared "showing an exact match" banner. A typed query only
+ * ever matches one of these shapes (CS/INC/PRB/CHG are distinct prefixes,
+ * all followed by exactly 7 digits), so at most one is ever non-null.
+ */
+type ExactMatchKind =
+  | "caseNumber"
+  | "caseInternalId"
+  | "incidentNumber"
+  | "problemNumber"
+  | "changeRequestNumber"
+  | null;
+
+const EXACT_MATCH_LABELS: Record<Exclude<ExactMatchKind, null>, string> = {
+  caseNumber: "case number",
+  caseInternalId: "WSO2 case id",
+  incidentNumber: "incident number",
+  problemNumber: "problem number",
+  changeRequestNumber: "change request number",
+};
+
 const isMac =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -106,6 +134,17 @@ export default function QuickNav(): JSX.Element | null {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  // Set only via the "Search in subject and description too" affordance below — opts a
+  // query that matched one of the case/incident/problem/change-request
+  // exact-match number (or WSO2-id) patterns back into free-text search for
+  // all four entity searches at once. Cleared whenever the query text itself
+  // changes, so widening one search never silently sticks for the next one
+  // typed. Shared across all four rather than one flag per type: a typed
+  // query only ever matches one of the four exact-match shapes (they have
+  // distinct prefixes — CS/INC/PRB/CHG — so widening always targets exactly
+  // the one search that was actually scoped; passing it to the other three
+  // hooks is a no-op since they're already on the free-text path).
+  const [forceFreeText, setForceFreeText] = useState(false);
 
   // Shareable-link support: `?q=` opens the palette pre-filled with a search
   // (e.g. a link like `/?q=CS0440883` someone pastes to a colleague), and
@@ -126,9 +165,109 @@ export default function QuickNav(): JSX.Element | null {
   // results stay clickable during the debounce window or after the input shrinks.
   const caseHitsSettled = trimmedQuery === debouncedQuery.trim();
 
+  // Whether the query the API actually ran (the debounced one) would be
+  // routed as an exact-match filter rather than free-text search, for each
+  // of the four searchable entity kinds — drives the shared "showing an
+  // exact match" banner below. Computed off the debounced (not live) query
+  // so the banner only reflects the search that actually ran, not what's
+  // mid-typing.
+  const caseSearchScope = classifyQuickCaseQuery(debouncedQuery.trim());
+  const incidentSearchScope = classifyQuickIncidentQuery(debouncedQuery.trim());
+  const problemSearchScope = classifyQuickProblemQuery(debouncedQuery.trim());
+  const changeRequestSearchScope = classifyQuickChangeRequestQuery(
+    debouncedQuery.trim(),
+  );
+
+  // This picks whichever of the four searches would run in exact-match mode
+  // (see {@link ExactMatchKind}), to drive both a single shared banner
+  // instead of one per entity kind (the palette is one search box, not four)
+  // and — below — which of the four hooks actually get to search at all.
+  // Computed off the classifications above (themselves off the debounced
+  // query), so this doesn't depend on any of the hooks' own results.
+  const exactMatchKind: ExactMatchKind =
+    caseSearchScope === "number"
+      ? "caseNumber"
+      : caseSearchScope === "internalId"
+        ? "caseInternalId"
+        : incidentSearchScope === "number"
+          ? "incidentNumber"
+          : problemSearchScope === "number"
+            ? "problemNumber"
+            : changeRequestSearchScope === "number"
+              ? "changeRequestNumber"
+              : null;
+
+  // Whether each of the four searches should actually run for the current
+  // debounced query. When the query matches exactly one entity kind's
+  // exact-match shape (`exactMatchKind !== null`), only that one kind's hook
+  // runs — the other three would otherwise burn a free-text request against
+  // entity types the query obviously doesn't belong to (e.g. typing a CHG
+  // number shouldn't also run a case/incident/problem search for the literal
+  // string "CHG0038721"). `forceFreeText` (the "Search in subject and description too" widen
+  // affordance) overrides this for all four at once, since widening is
+  // meant to broaden the search across every entity kind, not just the one
+  // that was originally scoped.
+  const caseSearchShouldRun =
+    forceFreeText ||
+    exactMatchKind === null ||
+    exactMatchKind === "caseNumber" ||
+    exactMatchKind === "caseInternalId";
+  const incidentSearchShouldRun =
+    forceFreeText || exactMatchKind === null || exactMatchKind === "incidentNumber";
+  const problemSearchShouldRun =
+    forceFreeText || exactMatchKind === null || exactMatchKind === "problemNumber";
+  const changeRequestSearchShouldRun =
+    forceFreeText ||
+    exactMatchKind === null ||
+    exactMatchKind === "changeRequestNumber";
+
   // API-backed case lookup: a CS/WSO2 id (or any subject text) resolves to real
-  // cases. Disabled until the query is long enough (see the hook).
-  const caseSearch = useQuickCaseSearch(open ? debouncedQuery : "");
+  // cases. Routed to an exact-match field filter when the debounced query
+  // matches the case-number/WSO2-id shape (see `classifyQuickCaseQuery`),
+  // unless the user asked to widen it via `forceFreeText`. Passed an empty
+  // query (same as when the palette is closed) when `caseSearchShouldRun` is
+  // false — that's the same `enabled: q.length >= MIN_LEN` gate the hook
+  // already uses to skip a request while the palette is closed, reused here
+  // to skip it while the query belongs to a different entity kind.
+  const caseSearch = useQuickCaseSearch(
+    open && caseSearchShouldRun ? debouncedQuery : "",
+    { forceFreeText },
+  );
+
+  // Same debounced query string fans out to the other searchable entity
+  // kinds — one shared debounce (above) rather than each hook debouncing its
+  // own copy, so a keystroke costs at most one query-string change, not four.
+  // Each is routed to its own exact-match number filter the same way cases
+  // are (see `classifyQuickIncidentQuery`/`classifyQuickProblemQuery`/
+  // `classifyQuickChangeRequestQuery`), also gated on the same shared
+  // `forceFreeText` widen flag and the same should-run suppression as cases
+  // above. Incidents/CRs/problems are ServiceNow-only and comparatively rare
+  // hits, so — unlike Cases — these don't get a dedicated skeleton: their
+  // sections simply appear once data lands, same as Pinned/Recent/Pages.
+  const incidentSearch = useQuickIncidentSearch(
+    open && incidentSearchShouldRun ? debouncedQuery : "",
+    { forceFreeText },
+  );
+  const changeRequestSearch = useQuickChangeRequestSearch(
+    open && changeRequestSearchShouldRun ? debouncedQuery : "",
+    { forceFreeText },
+  );
+  const problemSearch = useQuickProblemSearch(
+    open && problemSearchShouldRun ? debouncedQuery : "",
+    { forceFreeText },
+  );
+
+  // Only shown once every search this query feeds has actually settled (not
+  // while any is still fetching) and hasn't already been widened by the
+  // user.
+  const showExactMatchBanner =
+    !forceFreeText &&
+    exactMatchKind !== null &&
+    caseHitsSettled &&
+    !caseSearch.isFetching &&
+    !incidentSearch.isFetching &&
+    !changeRequestSearch.isFetching &&
+    !problemSearch.isFetching;
   // True while a case search is in flight (or its result is for a stale
   // query) — drives the "Cases" section's skeleton independently of whether
   // Pinned/Recent/Pages already have matches to show.
@@ -141,18 +280,46 @@ export default function QuickNav(): JSX.Element | null {
   // `caseSearch.data` still holds the previous results. Without this,
   // the skeleton block and the real "Cases" section would render together.
   const showCasesSkeleton = casesLoading && !caseSearch.data;
-
-  // Same debounced query string fans out to the other searchable entity
-  // kinds — one shared debounce (above) rather than each hook debouncing its
-  // own copy, so a keystroke costs at most one query-string change, not four.
-  // Incidents/CRs/problems are ServiceNow-only and comparatively rare hits,
-  // so — unlike Cases — these don't get a dedicated skeleton: their sections
-  // simply appear once data lands, same as Pinned/Recent/Pages.
-  const incidentSearch = useQuickIncidentSearch(open ? debouncedQuery : "");
-  const changeRequestSearch = useQuickChangeRequestSearch(
-    open ? debouncedQuery : "",
-  );
-  const problemSearch = useQuickProblemSearch(open ? debouncedQuery : "");
+  // True while any of the four searches this query feeds is actually
+  // in-flight — used below to show a quiet "didn't match a known number
+  // pattern" hint only for the duration of the wait, not once results have
+  // settled (settled-with-nothing already gets the "No matches." empty
+  // state, and settled-with-hits speaks for itself). A suppressed hook
+  // (passed an empty query per `*SearchShouldRun` above) settles to
+  // `isFetching === false` almost immediately, so this naturally reflects
+  // only whichever search(es) the current query actually feeds — no
+  // separate "which hooks are enabled" bookkeeping needed here.
+  const anySearchFetching =
+    caseSearch.isFetching ||
+    incidentSearch.isFetching ||
+    changeRequestSearch.isFetching ||
+    problemSearch.isFetching;
+  // Gates the "No matches." empty state below. `casesLoading` alone isn't
+  // enough here: it only reflects the case search, so when the query is
+  // scoped to (say) a CHG number — case search suppressed entirely per
+  // `caseSearchShouldRun` — `caseSearch.isFetching` goes false almost
+  // immediately (it isn't even running), and "No matches." would render
+  // while the change-request search that's actually relevant is still in
+  // flight. Reuses `anySearchFetching` (any of the four still fetching,
+  // which for a suppressed hook is trivially false) alongside the shared
+  // `caseHitsSettled` debounce check, so the empty state waits for BOTH
+  // "the debounce settled" AND "nothing still fetching" before it can
+  // render — same two-part wait `showExactMatchBanner` already does below.
+  const resultsSettling =
+    trimmedQuery.length >= QUICK_CASE_MIN_QUERY_LEN &&
+    (!caseHitsSettled || anySearchFetching);
+  // Passive, low-key heads-up shown for genuinely free-text queries (none of
+  // the four exact-match patterns matched) — mutually exclusive with
+  // `showExactMatchBanner` by construction: this requires
+  // `exactMatchKind === null`, that requires `exactMatchKind !== null`.
+  // Deliberately NOT gated on `anySearchFetching`/`resultsSettling`: it
+  // needs to stay visible through a settled zero-hit result too (e.g.
+  // typing "cs123" — doesn't match the exact-match shape, free-text search
+  // finds nothing), not just disappear the moment the search finishes,
+  // which would leave "No matches." with no explanation of why a plain-
+  // looking query didn't get the fast exact-match path.
+  const showNoPatternHint =
+    !forceFreeText && exactMatchKind === null && trimmedQuery.length > 0;
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -357,10 +524,31 @@ export default function QuickNav(): JSX.Element | null {
   // the end (avoids a setState-in-effect cascade).
   const safeActive = results.length ? Math.min(active, results.length - 1) : 0;
 
+  // Strips `q`/`goto` from the URL if either is present. Called whenever the
+  // palette stops being the reason `/` shouldn't redirect to `/dashboard`
+  // yet (see `RootLanding` in App.tsx) — on manual close without picking a
+  // result, and (separately, in the goto-resolution effect below) once a
+  // `?goto=` link actually resolves to a single match and navigates away.
+  const clearDeepLinkParams = () => {
+    if (!searchParams.has("q") && !searchParams.has("goto")) return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("q");
+        next.delete("goto");
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
   const close = () => {
     setOpen(false);
     setQuery("");
     setActive(0);
+    setForceFreeText(false);
+    setGotoTarget(null);
+    clearDeepLinkParams();
   };
 
   const choose = (r: Result | undefined) => {
@@ -414,17 +602,16 @@ export default function QuickNav(): JSX.Element | null {
 
     /* eslint-disable react-hooks/set-state-in-effect -- syncs palette state to the external goto/search resolution outcome, a one-shot action once the search settles */
     setGotoTarget(null);
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.delete("q");
-        next.delete("goto");
-        return next;
-      },
-      { replace: true },
-    );
 
     if (matches.length === 1) {
+      // Only clear `q`/`goto` from the URL — and only here, on the single-
+      // match path. Leaving them in place for the 0-or-multiple-match case
+      // below is deliberate: RootLanding (App.tsx) reads their presence to
+      // keep deferring its `/dashboard` redirect, so the background stays
+      // blank behind the still-open palette instead of a dashboard loading
+      // in underneath it. They get cleared once the user either picks a
+      // result (route changes away from `/` entirely) or closes the palette
+      // manually (see `close()`, which calls `clearDeepLinkParams`).
       close();
       navigate(matches[0]);
     }
@@ -568,6 +755,7 @@ export default function QuickNav(): JSX.Element | null {
                 onChange={(e) => {
                   setQuery(e.target.value);
                   setActive(0);
+                  setForceFreeText(false);
                 }}
                 inputProps={{ "aria-label": "Quick nav search" }}
               />
@@ -587,7 +775,7 @@ export default function QuickNav(): JSX.Element | null {
                 </Box>
               )}
               {results.length === 0 ? (
-                casesLoading ? null : (
+                resultsSettling ? null : (
                   <Box
                     sx={{
                       display: "flex",
@@ -683,6 +871,51 @@ export default function QuickNav(): JSX.Element | null {
                     </Box>
                   );
                 })
+              )}
+              {/*
+                Both the exact-match banner and the no-pattern-match hint
+                render below every result section, not above them — they're
+                a footnote about how the search ran, not something that
+                should push the actual results down the page. They're
+                mutually exclusive by construction (`showExactMatchBanner`
+                requires `exactMatchKind !== null`, `showNoPatternHint`
+                requires it to be `null`), so at most one renders here.
+              */}
+              {showExactMatchBanner && exactMatchKind && (
+                <Alert severity="info" sx={{ mt: results.length ? 2 : 0 }}>
+                  {/* The widen button sits on its own row below the message,
+                      not MUI's inline `action` slot — "Search in subject
+                      and description too" is long enough that the inline
+                      layout wrapped the message and button onto two
+                      cramped, misaligned rows instead. */}
+                  <Box>
+                    Showing an exact match for {EXACT_MATCH_LABELS[exactMatchKind]}
+                    &nbsp;"{debouncedQuery.trim()}".
+                  </Box>
+                  <Button
+                    size="small"
+                    sx={{ mt: 1 }}
+                    onClick={() => setForceFreeText(true)}
+                  >
+                    Search in subject and description too
+                  </Button>
+                </Alert>
+              )}
+              {showNoPatternHint && (
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{
+                    display: "block",
+                    mt: results.length ? 2 : 0,
+                    textAlign: "center",
+                  }}
+                >
+                  Didn&apos;t match a known number pattern —{" "}
+                  {anySearchFetching
+                    ? "searching all fields, this may take a moment."
+                    : "searched all fields."}
+                </Typography>
               )}
             </Box>
           </Box>

@@ -1362,6 +1362,16 @@ type ParsedCaseFilters struct {
 	// child-case relationship set via the case PATCH parentId field). Not yet
 	// available in the backing service.
 	ParentID *string
+	// Number filters to the case whose human-readable case number (e.g.
+	// "CS0441174") exactly matches (optional). Exact match against ServiceNow's
+	// `number` column, routed as a first-class filter rather than through the
+	// free-text SearchQuery scan.
+	Number *string
+	// InternalID filters to the case whose WSO2 case id exactly matches
+	// (optional). Exact match against ServiceNow's `u_wso2_case_id` column,
+	// routed as a first-class filter rather than through the free-text
+	// SearchQuery scan.
+	InternalID *string
 	// ProjectOnboardingStatuses filters to cases whose parent project's onboarding
 	// status is one of these values (optional; free-text SN choice labels, e.g.
 	// "Completed", "Not-Applicable" -- not a closed enum at this layer).
@@ -2207,6 +2217,11 @@ type SearchChangeRequestsFilters struct {
 	Impacts         []ChangeRequestImpact `json:"impacts"`
 	ClosedStartDate *time.Time            `json:"closedStartDate"`
 	ClosedEndDate   *time.Time            `json:"closedEndDate"`
+	// Number filters to the change request whose human-readable number (e.g.
+	// "CHG0010001") exactly matches (optional). Exact match against
+	// ServiceNow's `number` column, routed as a first-class filter rather
+	// than through the free-text SearchQuery scan.
+	Number string `json:"number"`
 }
 
 // SearchChangeRequestsRequest is the input for a change request search operation.
@@ -3248,6 +3263,11 @@ type SearchIncidentsFilters struct {
 	SearchQuery string             `json:"searchQuery"`
 	Priorities  []IncidentPriority `json:"priorities"`
 	ParentIDs   []string           `json:"parentIds"`
+	// Number filters to the incident whose human-readable number (e.g.
+	// "INC0010001") exactly matches (optional). Exact match against
+	// ServiceNow's `number` column, routed as a first-class filter rather
+	// than through the free-text SearchQuery scan.
+	Number string `json:"number"`
 }
 
 // SearchIncidentsRequest is the input for POST /incidents/search.
@@ -3507,6 +3527,11 @@ type IncidentView struct {
 // SearchProblemsFilters holds all optional filter criteria for a problem search.
 type SearchProblemsFilters struct {
 	SearchQuery string `json:"searchQuery"`
+	// Number filters to the problem whose human-readable number (e.g.
+	// "PRB0010001") exactly matches (optional). Exact match against
+	// ServiceNow's `number` column, routed as a first-class filter rather
+	// than through the free-text SearchQuery scan.
+	Number string `json:"number"`
 }
 
 // SearchProblemsRequest is the input for POST /problems/search.

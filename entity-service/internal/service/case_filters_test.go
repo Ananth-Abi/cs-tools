@@ -148,6 +148,24 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "number eq",
+			in:   []domain.CaseFieldFilter{{Field: "number", Op: "eq", Values: []string{"CS0441174"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.Number == nil || *p.Number != "CS0441174" {
+					t.Fatalf("Number = %v", p.Number)
+				}
+			},
+		},
+		{
+			name: "internalId eq",
+			in:   []domain.CaseFieldFilter{{Field: "internalId", Op: "eq", Values: []string{"12345"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.InternalID == nil || *p.InternalID != "12345" {
+					t.Fatalf("InternalID = %v", p.InternalID)
+				}
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -174,6 +192,8 @@ func TestParseCaseFieldFilters_Rejections(t *testing.T) {
 		{name: "resolutionNotes isNotEmpty unsupported", in: []domain.CaseFieldFilter{{Field: "resolutionNotes", Op: "isNotEmpty"}}},
 		{name: "createdBy eq non-placeholder literal", in: []domain.CaseFieldFilter{{Field: "createdBy", Op: "eq", Values: []string{"someone@example.com"}}}},
 		{name: "createdOn bad date format", in: []domain.CaseFieldFilter{{Field: "createdOn", Op: "gte", Values: []string{"not-a-date"}}}},
+		{name: "number in unsupported", in: []domain.CaseFieldFilter{{Field: "number", Op: "in", Values: []string{"CS0441174"}}}},
+		{name: "internalId in unsupported", in: []domain.CaseFieldFilter{{Field: "internalId", Op: "in", Values: []string{"12345"}}}},
 	}
 
 	for _, tc := range cases {

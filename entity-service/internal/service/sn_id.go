@@ -45,6 +45,17 @@ func snParentIDFilter(uuid *string) string {
 	return uuidToSysid(*uuid)
 }
 
+// stringPtrValue dereferences an optional string filter value, returning ""
+// (omitted via omitempty) when nil. Unlike snParentIDFilter, no sysid
+// conversion applies: number and internalId are opaque ServiceNow values,
+// not UUIDs.
+func stringPtrValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // uuidsToSysids converts a slice of UUID strings to sysids.
 // Returns the original slice unchanged if it is empty.
 func uuidsToSysids(uuids []string) []string {
