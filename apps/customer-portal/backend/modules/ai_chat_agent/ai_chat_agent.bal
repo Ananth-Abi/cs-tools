@@ -162,7 +162,13 @@ public isolated function streamChat(string sessionId, string payload, websocket:
 public isolated function sendSideChannelMessage(string sessionId, string payload,
         websocket:Caller caller) returns error? {
     websocket:Client agentClient = check createAiChatAgentWsClient(sessionId, SIDE_CHANNEL_READ_TIMEOUT);
-    check agentClient->writeTextMessage(payload);
+    // Not `check`: returning straight out of here would leave the connection we
+    // just opened dangling, which is the very thing this function exists to stop.
+    error? upstreamWriteErr = agentClient->writeTextMessage(payload);
+    if upstreamWriteErr is error {
+        closeUpstream(agentClient);
+        return upstreamWriteErr;
+    }
     boolean upstreamClosed = false;
     while true {
         string|error event = agentClient->readTextMessage();
@@ -196,10 +202,20 @@ public isolated function sendSideChannelMessage(string sessionId, string payload
         }
     }
     if !upstreamClosed {
-        error? closeErr = agentClient->close(1000, "acknowledged");
-        if closeErr is error {
-            log:printError("Failed to close upstream WebSocket connection", closeErr);
-        }
+        closeUpstream(agentClient);
     }
     return;
+}
+
+# Close a side-channel upstream connection, logging rather than raising if the
+# close itself fails. Every exit path from sendSideChannelMessage goes through
+# here, and each reaches it at most once, so the connection is always released
+# and never closed twice.
+#
+# + agentClient - The upstream AI chat agent connection to release
+isolated function closeUpstream(websocket:Client agentClient) {
+    error? closeErr = agentClient->close(1000, "acknowledged");
+    if closeErr is error {
+        log:printError("Failed to close upstream WebSocket connection", closeErr);
+    }
 }
