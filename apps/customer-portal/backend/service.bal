@@ -6887,6 +6887,46 @@ isolated service class WsProxyService {
             check caller->writeTextMessage(string `{"type":"pong","ts":${ts}}`);
             return;
         }
+
+        // Side-channel messages: an answer rating, or a request to raise a token
+        // limit. Handled before everything below, because none of it applies to
+        // them and all of it causes harm:
+        //
+        //   - the streaming lock: the agent answers these with a "*_ack" and
+        //     never a "final", so the chat-turn path held the lock until the
+        //     upstream connection gave out. The customer's next message was then
+        //     rejected with "a response is already being streamed" and never
+        //     forwarded — the chat looked dead while the socket was fine.
+        //   - conversation creation: a rating carries no "message", so a rating
+        //     arriving before the id was known minted a conversation with an
+        //     empty initial message.
+        //   - the post-stream bookkeeping: persisting the "user query" and
+        //     updating conversation state makes no sense for a rating.
+        string inboundType = parsed is map<json> ? (parsed["type"] ?: "").toString() : "";
+        if inboundType == ai_chat_agent:MSG_TYPE_FEEDBACK
+            || inboundType == ai_chat_agent:MSG_TYPE_TOKEN_INCREASE_REQUEST {
+            string sideChannelConvId;
+            lock {
+                sideChannelConvId = self.conversationId ?: "";
+            }
+            if sideChannelConvId.length() == 0 {
+                // Fall back to the id the client names. It knows which answer it
+                // is rating even when this connection has not carried a turn yet.
+                sideChannelConvId = parsed is map<json>
+                    ? (parsed["conversationId"] ?: "").toString() : "";
+            }
+            if sideChannelConvId.length() == 0 {
+                log:printError(string `Discarding ${inboundType}: no conversation id available`);
+                return;
+            }
+            error? sideChannelErr = ai_chat_agent:sendSideChannelMessage(
+                    string `${self.projectId}:${sideChannelConvId}`, data, caller);
+            if sideChannelErr is error {
+                log:printError(string `Failed to forward ${inboundType} upstream`, sideChannelErr);
+            }
+            return;
+        }
+
         boolean alreadyStreaming;
         lock {
             alreadyStreaming = self.streaming;
