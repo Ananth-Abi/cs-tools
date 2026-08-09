@@ -47,10 +47,10 @@ export default function TimeCardsBillableStats({
         display: "grid",
         gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
         gap: 2,
-        mb: 3,
+        mb: 2,
       }}
     >
-      <Card sx={{ p: 2.5 }}>
+      <Card sx={{ p: 2 }}>
         <CardContent sx={{ p: 0, "&:last-child": { pb: 0 } }}>
           <Box
             sx={{
@@ -82,7 +82,7 @@ export default function TimeCardsBillableStats({
         </CardContent>
       </Card>
 
-      <Card sx={{ p: 2.5 }}>
+      <Card sx={{ p: 2 }}>
         <CardContent sx={{ p: 0, "&:last-child": { pb: 0 } }}>
           <Box
             sx={{
