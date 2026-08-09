@@ -828,6 +828,7 @@ export default function NoveraChatPage(): JSX.Element {
             // loaded for this page, so this costs no extra request.
             accountName: projectDetails?.account?.name || undefined,
             projectName: projectDetails?.name || undefined,
+            conversationName: chatNumber || undefined,
             ...(tags ? { tags } : {}),
           }),
         )
@@ -849,6 +850,7 @@ export default function NoveraChatPage(): JSX.Element {
       projectId,
       projectDetails?.account?.name,
       projectDetails?.name,
+      chatNumber,
       sendUserMessage,
     ],
   );
