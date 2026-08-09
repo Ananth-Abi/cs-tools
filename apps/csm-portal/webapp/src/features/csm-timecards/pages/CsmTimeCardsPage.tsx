@@ -61,6 +61,7 @@ import {
   useMyTimeCards,
   type TimeCardPagination,
 } from "@features/csm-timecards/api/useTimeSheets";
+import { useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
 import AsyncProjectMultiSelect from "@features/csm-cases/components/AsyncProjectMultiSelect";
 import { BackendApiError } from "@api/backend/client";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
@@ -71,6 +72,7 @@ import RefreshButton from "@components/RefreshButton";
 import { useTimecardRole } from "@features/csm-timecards/hooks/useTimecardRole";
 import TimeCardsTable from "@features/csm-timecards/components/TimeCardsTable";
 import TimeCardReviewDialog from "@features/csm-timecards/components/TimeCardReviewDialog";
+import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDialog";
 import SearchableMultiSelect from "@components/SearchableMultiSelect";
 import { exportTimeCardsCsv } from "@features/csm-timecards/utils/timeCardCsvExport";
 import type { TimecardAction, TimecardRoleCtx } from "@features/csm-timecards/utils/timeSheetState";
@@ -149,10 +151,13 @@ type TabId = "mine" | "all" | "approvals";
 /**
  * Time cards workspace. Three tabs: **My time sheets** (own cards only),
  * **All** (everyone's cards, read only — visibility, not action), and
- * **Approvals** (approver/admin: approve/reject a submitted card). Logging
- * time happens from a case's Time tracking tab, not here. There's no
- * sheet-level bulk action, delegation, or reports — the backend has no
- * endpoints for those (see the module-level notes in `types/timeCards.ts`).
+ * **Approvals** (approver/admin: approve/reject a submitted card). Logging a
+ * *new* card still only happens from a case's Time tracking tab (this page
+ * has no case context to log against) — but editing an own still-`submitted`
+ * card is available from here too (My time sheets / All), via the same Edit
+ * action `TimeCardsTable` offers there. There's no sheet-level bulk action,
+ * delegation, or reports — the backend has no endpoints for those (see the
+ * module-level notes in `types/timeCards.ts`).
  */
 export default function CsmTimeCardsPage(): JSX.Element {
   const role = useTimecardRole();
@@ -169,6 +174,11 @@ export default function CsmTimeCardsPage(): JSX.Element {
   // the list), so the dialog reflects that one decision instead of asking
   // again — see TimeCardReviewDialog's `action` prop.
   const [review, setReview] = useState<{ card: CsmTimeCard; action: TimecardAction } | null>(null);
+  // The card open in the edit dialog, if any — this page has no case
+  // context of its own, so LogTimeCardDialog's caseId/caseNumber/projectId/
+  // projectName all come from the card being edited (see the render below).
+  const [editingCard, setEditingCard] = useState<CsmTimeCard | null>(null);
+  const updateTimeCard = useUpdateTimeCard();
 
   // How the table clusters its rows — a display-only choice (see
   // `groupTimeCards`), independent of the server-side filters below. Only
@@ -285,6 +295,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
 
   const handleCardAction = (card: CsmTimeCard, action: TimecardAction): void => {
     if (action === "approve" || action === "reject") setReview({ card, action });
+    else if (action === "edit") setEditingCard(card);
   };
 
   // "All" shows everyone's cards, own included, and is always read-only
@@ -645,6 +656,34 @@ export default function CsmTimeCardsPage(): JSX.Element {
             </>
           )}
         </Box>
+      )}
+
+      {editingCard && (
+        <LogTimeCardDialog
+          caseId={editingCard.caseId}
+          caseNumber={editingCard.caseNumber}
+          projectId={editingCard.projectId}
+          projectName={editingCard.projectName}
+          editingCard={editingCard}
+          isSubmitting={updateTimeCard.isPending}
+          onClose={() => setEditingCard(null)}
+          onSubmit={(input) => {
+            if (!("cardId" in input)) return; // always the edit shape here
+            updateTimeCard.mutate(input, {
+              onSuccess: () => {
+                setEditingCard(null);
+                showSuccess("Time card updated.");
+              },
+              onError: (err) => {
+                const msg =
+                  err instanceof BackendApiError && err.status < 500 && err.message
+                    ? err.message
+                    : "Could not save your changes.";
+                showError(msg, err);
+              },
+            });
+          }}
+        />
       )}
 
       {review && (

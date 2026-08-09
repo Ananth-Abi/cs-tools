@@ -130,7 +130,8 @@ import { CaseSlaTable } from "@features/csm-cases/components/CaseSlaTable";
 import { useGetCsmCaseSlas } from "@features/csm-cases/api/useGetCsmCaseSlas";
 import CaseTimeCardsPanel from "@features/csm-timecards/components/CaseTimeCardsPanel";
 import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDialog";
-import { usePostTimeCard } from "@features/csm-timecards/api/useTimeCards";
+import { usePostTimeCard, useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
+import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
@@ -525,6 +526,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
   } | null>(null);
   const [severityOpen, setSeverityOpen] = useState(false);
   const [logTimeOpen, setLogTimeOpen] = useState(false);
+  // The card being edited, if any — mutually exclusive with logTimeOpen
+  // (create); LogTimeCardDialog is rendered once for whichever is set.
+  const [editTimeCard, setEditTimeCard] = useState<CsmTimeCard | null>(null);
   const [githubIssueOpen, setGithubIssueOpen] = useState(false);
   // Inline error shown inside the Git-issue dialog (e.g. the SN routing 422 /
   // state 409). Cleared when the dialog opens or a submit is retried.
@@ -535,6 +539,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     useState<BeCreateCaseGithubIssueResponse | null>(null);
   const postGithubIssue = usePostCaseGithubIssue();
   const postTimeCard = usePostTimeCard();
+  const updateTimeCard = useUpdateTimeCard();
   // Attachment pending delete confirmation (drives the confirm dialog).
   const [pendingDelete, setPendingDelete] = useState<CaseAttachment | null>(
     null,
@@ -2310,6 +2315,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
           <CaseTimeCardsPanel
             caseId={c.id}
             onLogTime={() => setLogTimeOpen(true)}
+            onEditTimeCard={setEditTimeCard}
           />
         </Box>
       )}
@@ -2439,16 +2445,42 @@ export default function CsmCaseDetailPage(): JSX.Element {
         />
       )}
 
-      {logTimeOpen && (
+      {(logTimeOpen || editTimeCard) && (
         <LogTimeCardDialog
           caseId={c.id}
           caseNumber={c.caseNumber ?? c.id}
           caseSeverity={c.severity}
           projectId={c.projectId}
           projectName={c.projectName}
-          isSubmitting={postTimeCard.isPending}
-          onClose={() => setLogTimeOpen(false)}
-          onSubmit={(input) =>
+          editingCard={editTimeCard ?? undefined}
+          isSubmitting={editTimeCard ? updateTimeCard.isPending : postTimeCard.isPending}
+          onClose={() => {
+            setLogTimeOpen(false);
+            setEditTimeCard(null);
+          }}
+          onSubmit={(input) => {
+            // "cardId" only exists on an edit submission — see
+            // LogTimeCardSubmit's doc comment.
+            if ("cardId" in input) {
+              updateTimeCard.mutate(input, {
+                onSuccess: () => {
+                  setEditTimeCard(null);
+                  setFeedback({
+                    message: "Time card updated.",
+                    severity: "success",
+                    sticky: false,
+                  });
+                },
+                onError: (err) => {
+                  const msg =
+                    err instanceof BackendApiError && err.status < 500 && err.message
+                      ? err.message
+                      : "Could not save your changes.";
+                  showError(msg, err);
+                },
+              });
+              return;
+            }
             postTimeCard.mutate(input, {
               onSuccess: () => {
                 setLogTimeOpen(false);
@@ -2469,8 +2501,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
                     : "Could not log time.";
                 showError(msg, err);
               },
-            })
-          }
+            });
+          }}
         />
       )}
 

@@ -64,8 +64,10 @@ import type {
   ActivityBreakdown,
   ActivityKey,
   CreateTimeCardInput,
+  CsmTimeCard,
   IssueComplexity,
   TimeCardApprover,
+  UpdateTimeCardInput,
 } from "@features/csm-timecards/types/timeCards";
 import {
   emptyBreakdown,
@@ -75,6 +77,11 @@ import {
 import { localTodayIso } from "@features/csm-timecards/utils/timeSheetWeek";
 import { formatDateOnly, parseDateOnly } from "@utils/dateTime";
 
+/** Either a create ({@link CreateTimeCardInput}, POST) or an edit
+ * ({@link UpdateTimeCardInput}, PATCH) submission — the caller distinguishes
+ * by checking for `cardId`, present only on the edit shape. */
+export type LogTimeCardSubmit = CreateTimeCardInput | UpdateTimeCardInput;
+
 interface LogTimeCardDialogProps {
   /** The case the time was spent on — always known, this dialog only opens
    * from a case's Time tracking tab (the backend requires a real case UUID,
@@ -82,14 +89,30 @@ interface LogTimeCardDialogProps {
   caseId: string;
   caseNumber: string;
   /** Determines whether the billable switch is editable — see
-   * NON_BILLABLE_SEVERITIES. */
-  caseSeverity: Severity;
+   * NON_BILLABLE_SEVERITIES. Optional because a caller editing a card from a
+   * cross-case context (the Time cards page's "My time sheets" tab) has no
+   * severity to hand in; the switch stays enabled there rather than being
+   * force-disabled on a guess, and the backend's own business rule still
+   * enforces the real non-billable-severities constraint server-side either
+   * way (see NON_BILLABLE_SEVERITIES's doc comment). */
+  caseSeverity?: Severity;
   projectId: string;
   projectName: string;
-  /** True while the create mutation is in flight. */
+  /** True while the create/edit mutation is in flight. */
   isSubmitting: boolean;
+  /**
+   * When set, the dialog opens in **edit mode** for this already-submitted
+   * card instead of logging a new one: every field prefills from the card's
+   * current values (see `CsmTimeCard.breakdown`/`issueComplexity`, confirmed
+   * live to round-trip), the approver becomes read-only (matching
+   * ServiceNow's own UX once a card is submitted — see `UpdateTimeCardInput`),
+   * the title/submit label change, and `onSubmit` is called with an
+   * {@link UpdateTimeCardInput} (`cardId` set) instead of a
+   * {@link CreateTimeCardInput}.
+   */
+  editingCard?: CsmTimeCard;
   onClose: () => void;
-  onSubmit: (input: CreateTimeCardInput) => void;
+  onSubmit: (input: LogTimeCardSubmit) => void;
 }
 
 interface ApproverOption {
@@ -152,15 +175,17 @@ function ActivityRow({
 }
 
 /**
- * "Log time" form. Mirrors the ServiceNow fields (date, the five activity
- * buckets, work-log comment, issue complexity, approver) with a live
+ * "Log time" form, doubling as the **edit** form for an already-submitted
+ * card (see `editingCard`). Mirrors the ServiceNow fields (date, the five
+ * activity buckets, work-log comment, issue complexity, approver) with a live
  * running total, per-activity proportion bars, and inline validation. There
  * was a "Category" field here too, but it was never actually sent anywhere
  * (`usePostTimeCard`'s payload has no such field) — removed rather than kept
  * as a choice that silently did nothing.
  * Creating a card submits it immediately — the backend has no draft step, so
- * there is no "Pending" status and no edit-after-create (see the module-level
- * note in `types/timeCards.ts` on why edit isn't supported).
+ * there is no "Pending" status. Editing is only offered (see `cardActions`)
+ * to the card's own submitter while it's still `submitted`, matching what
+ * the backend itself enforces server-side.
  */
 export default function LogTimeCardDialog({
   caseId,
@@ -169,23 +194,35 @@ export default function LogTimeCardDialog({
   projectId,
   projectName,
   isSubmitting,
+  editingCard,
   onClose,
   onSubmit,
 }: LogTimeCardDialogProps): JSX.Element {
   const me = resolveUserInfo(useIdTokenClaims());
+  const isEditMode = !!editingCard;
 
-  const isAlwaysNonBillable = NON_BILLABLE_SEVERITIES.includes(caseSeverity);
+  const isAlwaysNonBillable =
+    !!caseSeverity && NON_BILLABLE_SEVERITIES.includes(caseSeverity);
 
-  const [date, setDate] = useState(localTodayIso());
+  const [date, setDate] = useState(editingCard?.workDate ?? localTodayIso());
   const [issueComplexity, setIssueComplexity] = useState<IssueComplexity>(
-    DEFAULT_ISSUE_COMPLEXITY,
+    editingCard?.issueComplexity ?? DEFAULT_ISSUE_COMPLEXITY,
   );
   const [billable, setBillable] = useState<boolean>(
-    isAlwaysNonBillable ? false : DEFAULT_BILLABLE,
+    editingCard ? editingCard.billable : isAlwaysNonBillable ? false : DEFAULT_BILLABLE,
   );
-  const [breakdown, setBreakdown] = useState<ActivityBreakdown>(emptyBreakdown());
-  const [workLogComment, setWorkLogComment] = useState("");
-  const [approver, setApprover] = useState<TimeCardApprover | null>(null);
+  const [breakdown, setBreakdown] = useState<ActivityBreakdown>(
+    editingCard?.breakdown ?? emptyBreakdown(),
+  );
+  // workLogComment is rich-text HTML (see Editor below); an edited card's
+  // existing comment is already HTML on the wire, so it loads straight in.
+  const [workLogComment, setWorkLogComment] = useState(editingCard?.workLogComment ?? "");
+  // The approver is read-only once editing (see UpdateTimeCardInput's doc
+  // comment) — this state only exists to satisfy timeCardDraftErrors'
+  // approver-required check and is never sent on an edit submit.
+  const [approver, setApprover] = useState<TimeCardApprover | null>(
+    editingCard?.approvers?.[0] ?? null,
+  );
   const [approverInput, setApproverInput] = useState("");
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const touch = (field: string): void =>
@@ -243,6 +280,17 @@ export default function LogTimeCardDialog({
       setTouched(new Set(ALL_FIELDS));
       return;
     }
+    if (isEditMode && editingCard) {
+      onSubmit({
+        cardId: editingCard.id,
+        date,
+        breakdown,
+        billable,
+        workLogComment: workLogComment.trim(),
+        issueComplexity,
+      });
+      return;
+    }
     onSubmit({
       caseId,
       caseNumber,
@@ -275,7 +323,9 @@ export default function LogTimeCardDialog({
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Log time · {caseNumber}</DialogTitle>
+      <DialogTitle>
+        {isEditMode ? "Edit time card" : "Log time"} · {caseNumber}
+      </DialogTitle>
       <DialogContent dividers>
         <Box
           onKeyDown={handleKeyDown}
@@ -297,7 +347,9 @@ export default function LogTimeCardDialog({
               >
                 {initialsOf(me.fullName)}
               </Avatar>
-              <Typography variant="body2">{me.fullName}</Typography>
+              <Typography variant="body2">
+                {isEditMode ? editingCard.userName : me.fullName}
+              </Typography>
             </Box>
             <TimeCardStatusChip state="submitted" />
           </Box>
@@ -457,10 +509,15 @@ export default function LogTimeCardDialog({
             </Typography>
           </Box>
 
-          {/* Approver */}
+          {/* Approver — read-only once editing: ServiceNow's own UX locks
+              this field after submit, and the portal follows that rather
+              than letting an edit silently reassign the approver even
+              though the backend would technically accept the change. */}
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
             <Typography variant="subtitle2">Approver (team lead)</Typography>
-            {approver ? (
+            {isEditMode ? (
+              <Chip label={approver?.name ?? "—"} sx={{ alignSelf: "flex-start" }} />
+            ) : approver ? (
               <Chip
                 label={approver.name}
                 onDelete={() => setApprover(null)}
@@ -569,7 +626,7 @@ export default function LogTimeCardDialog({
           onClick={handleSubmit}
           disabled={isSubmitting || (touched.size > 0 && !isValid)}
         >
-          Submit for review
+          {isEditMode ? "Save changes" : "Submit for review"}
         </Button>
       </DialogActions>
     </Dialog>

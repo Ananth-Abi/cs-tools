@@ -23,7 +23,7 @@ import {
   Skeleton,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Clock, Plus } from "@wso2/oxygen-ui-icons-react";
+import { Clock, Pencil, Plus } from "@wso2/oxygen-ui-icons-react";
 import RelativeTime from "@components/RelativeTime";
 import { useCaseTimeCards, useDecideTimeCard } from "@features/csm-timecards/api/useTimeCards";
 import { useCurrentEngineer } from "@features/csm-timecards/api/useTimeSheets";
@@ -42,6 +42,10 @@ interface CaseTimeCardsPanelProps {
   caseId: string;
   /** Opens the log-time dialog (owned by the page so the action bar can trigger it). */
   onLogTime: () => void;
+  /** Opens the edit dialog for one of this panel's own cards (owned by the
+   * page, same as `onLogTime` — both open the same `LogTimeCardDialog`
+   * instance, just in different modes). */
+  onEditTimeCard: (card: CsmTimeCard) => void;
 }
 
 /**
@@ -53,6 +57,7 @@ interface CaseTimeCardsPanelProps {
 export default function CaseTimeCardsPanel({
   caseId,
   onLogTime,
+  onEditTimeCard,
 }: CaseTimeCardsPanelProps): JSX.Element {
   const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } =
     useCaseTimeCards(caseId);
@@ -175,6 +180,19 @@ export default function CaseTimeCardsPanel({
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   <Typography variant="body2">{c.totalMinutes} min</Typography>
                   <TimeCardStatusChip state={c.state} />
+                  {/* Own card, still submitted: only the submitter can edit
+                   its content, matching the backend's own submitter-only +
+                   submitted-state-only enforcement (see cardActions). */}
+                  {c.state === "submitted" && !!me.id && c.userId === me.id && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<Pencil size={14} />}
+                      onClick={() => onEditTimeCard(c)}
+                    >
+                      Edit
+                    </Button>
+                  )}
                   {/* Never shown on your own card: the backend 403s a
                    self-decide regardless of approver status, so a card you
                    submitted yourself can never actually be reviewed by you.

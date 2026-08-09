@@ -15,7 +15,7 @@
 // under the License.
 
 import { describe, expect, it, vi } from "vitest";
-import { searchTimeCards } from "@features/csm-timecards/api/useTimeSheets";
+import { mapTimeCard, searchTimeCards } from "@features/csm-timecards/api/useTimeSheets";
 import type { BackendApi } from "@api/backend/client";
 import type {
   BeSearchTimeCardsPayload,
@@ -70,6 +70,51 @@ function mockApi(page: BeSearchTimeCardsResponse): { api: BackendApi; post: Retu
 function lastPayload(post: ReturnType<typeof vi.fn>): BeSearchTimeCardsPayload {
   return post.mock.calls.at(-1)![1] as BeSearchTimeCardsPayload;
 }
+
+describe("mapTimeCard", () => {
+  // Confirmed live against the real entity-service (POST /time-cards/search):
+  // the per-activity minute breakdown and issue complexity ARE echoed back on
+  // read, both for a just-created card and a pre-existing one — a previously
+  // documented "write-only" claim that turned out to be wrong.
+  it("maps the per-activity minute breakdown and issue complexity through from the wire, when present", () => {
+    const withBreakdown: BeTimeCardView = {
+      ...beCard("a", "submitted"),
+      timeAnalyzing: 11,
+      timeSettingUp: 22,
+      timeReproducingDebugging: 33,
+      timeProvidingSolution: 44,
+      timePatching: 55,
+      issueComplexity: "High",
+    };
+
+    const result = mapTimeCard(withBreakdown);
+
+    expect(result.breakdown).toEqual({
+      analysisDebugging: 11,
+      settingUp: 22,
+      reproduce: 33,
+      providingSolution: 44,
+      answering: 55,
+    });
+    expect(result.issueComplexity).toBe("High");
+  });
+
+  it("leaves breakdown/issueComplexity undefined when the wire response has none (a card logged before these fields were mapped)", () => {
+    const result = mapTimeCard(beCard("a", "submitted"));
+
+    expect(result.breakdown).toBeUndefined();
+    expect(result.issueComplexity).toBeUndefined();
+  });
+
+  it("treats an unrecognized issueComplexity value as undefined rather than passing it through uncast", () => {
+    const result = mapTimeCard({
+      ...beCard("a", "submitted"),
+      issueComplexity: "Some Future Value",
+    });
+
+    expect(result.issueComplexity).toBeUndefined();
+  });
+});
 
 describe("searchTimeCards", () => {
   it("makes a single request and returns the response as-is", async () => {

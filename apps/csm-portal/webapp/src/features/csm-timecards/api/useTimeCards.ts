@@ -35,10 +35,12 @@ import { useBackendApi } from "@api/backend/client";
 import type {
   BeCreateTimeCardPayload,
   BeTimeCardMutationResponse,
+  BeUpdateTimeCardPayload,
 } from "@api/backend/types";
 import type {
   CreateTimeCardInput,
   CsmTimeCard,
+  UpdateTimeCardInput,
 } from "@features/csm-timecards/types/timeCards";
 import {
   invalidateTimecards,
@@ -131,3 +133,43 @@ export function usePostTimeCard(): UseMutationResult<
  * they can't drift again.
  */
 export const useDecideTimeCard = useDecideCard;
+
+/**
+ * Edit an already-submitted card's own content (no `state` key — a content
+ * PATCH is mutually exclusive with the decide flow, see
+ * {@link BeUpdateTimeCardPayload}). The backend enforces submitter-only +
+ * `submitted`-state-only server-side; `LogTimeCardDialog`'s edit mode only
+ * ever offers this to the card's own owner while `submitted` (see
+ * `cardActions`), matching that same rule client-side.
+ */
+export function useUpdateTimeCard(): UseMutationResult<
+  CsmTimeCard,
+  Error,
+  UpdateTimeCardInput
+> {
+  const api = useBackendApi();
+  const queryClient = useQueryClient();
+  return useMutation<CsmTimeCard, Error, UpdateTimeCardInput>({
+    mutationFn: async (input): Promise<CsmTimeCard> => {
+      const payload: BeUpdateTimeCardPayload = {
+        date: input.date,
+        isBillable: input.billable,
+        issueComplexity: input.issueComplexity,
+        workLogComment: input.workLogComment,
+        // Same defensive round as usePostTimeCard's create payload — the
+        // form already collects minutes as whole numbers.
+        timeAnalyzing: Math.round(input.breakdown.analysisDebugging),
+        timeSettingUp: Math.round(input.breakdown.settingUp),
+        timeReproducingDebugging: Math.round(input.breakdown.reproduce),
+        timeProvidingSolution: Math.round(input.breakdown.providingSolution),
+        timePatching: Math.round(input.breakdown.answering),
+      };
+      const res = await api.patch<BeUpdateTimeCardPayload, BeTimeCardMutationResponse>(
+        `/time-cards/${encodeURIComponent(input.cardId)}`,
+        payload,
+      );
+      return mapTimeCard(res.timeCard);
+    },
+    onSuccess: () => invalidateTimecards(queryClient),
+  });
+}
