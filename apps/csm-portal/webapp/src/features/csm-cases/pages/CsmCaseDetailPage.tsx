@@ -159,6 +159,7 @@ import type {
   CaseAttachment,
   CaseLifecycleAction,
   CaseWatcher,
+  CreateChangeRequestFromCaseNavState,
   CreateIncidentFromCaseNavState,
   CreateRelatedCaseNavState,
   CreateServiceRequestFromCaseNavState,
@@ -1000,6 +1001,22 @@ export default function CsmCaseDetailPage(): JSX.Element {
             : stripHtmlTags(data.description),
         };
         navigate("/operations/incidents/new", { state: navState });
+        return;
+      }
+
+      // Create change request navigates to the change-request create form,
+      // pre-filled with this service request as the new change request's
+      // "Originating service request" — mirrors the create_incident handler
+      // above. Only offered for a service request (see CaseActionBar's
+      // caseType gate on this menu item).
+      if (action.secondary === "create_change_request" && data) {
+        const navState: CreateChangeRequestFromCaseNavState = {
+          caseId: data.id,
+          caseNumber: data.caseNumber,
+          caseSubject: data.subject,
+          projectId: data.projectId,
+        };
+        navigate("/operations/change-requests/new", { state: navState });
         return;
       }
 
