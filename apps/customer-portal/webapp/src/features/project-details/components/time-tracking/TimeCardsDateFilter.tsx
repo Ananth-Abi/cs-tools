@@ -19,8 +19,9 @@ import {
   Typography,
   TextField,
   InputAdornment,
+  Button,
 } from "@wso2/oxygen-ui";
-import { Calendar } from "@wso2/oxygen-ui-icons-react";
+import { Calendar, X } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
 import type { TimeCardsDateFilterProps } from "@features/project-details/types/projectDetailsComponents";
 
@@ -35,7 +36,10 @@ export default function TimeCardsDateFilter({
   endDate,
   onStartDateChange,
   onEndDateChange,
+  onClear,
 }: TimeCardsDateFilterProps): JSX.Element {
+  const hasFilters = Boolean(startDate || endDate);
+
   return (
     <Box
       sx={{
@@ -82,6 +86,17 @@ export default function TimeCardsDateFilter({
           ),
         }}
       />
+      {hasFilters && onClear && (
+        <Button
+          variant="text"
+          size="small"
+          onClick={onClear}
+          startIcon={<X size={16} />}
+          sx={{ color: "text.secondary" }}
+        >
+          Clear
+        </Button>
+      )}
     </Box>
   );
 }
