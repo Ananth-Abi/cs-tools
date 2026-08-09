@@ -151,6 +151,10 @@ func main() {
 	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseTag)
 	mux.HandleFunc("DELETE /cases/{id}/tags/{tagId}", caseHandler.RemoveCaseTag)
 	mux.HandleFunc("POST /tags/search", caseHandler.SearchTags)
+	// Deprecated: the query-parameter form of tag search, kept for one release
+	// so this service and its callers can be deployed independently. Remove it
+	// (and CaseHandler.SearchTagsQuery) once every caller is on the POST.
+	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)
 	mux.HandleFunc("GET /dashboards/{dashboardId}", dashboardHandler.GetDashboardDetail)

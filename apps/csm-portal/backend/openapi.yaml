@@ -2726,6 +2726,73 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+    get:
+      summary: Search existing free-text tags by label (deprecated query-parameter form).
+      description: >
+        Deprecated: use `POST /tags/search` instead. This alias accepts the old
+        `q`/`limit` query parameters, translates them into the POST request body and
+        forwards that upstream, so the response is identical. It exists only to bridge
+        one release so this service and its callers can be deployed independently, and
+        is removed after that.
+      operationId: searchTagsByQuery
+      deprecated: true
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Free-text query matched partially and case-insensitively against tag labels.
+            Equivalent to `filters.searchQuery` on the POST. Omit to return all known tags.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 0
+            maximum: 100
+          description: Maximum number of tags to return. Equivalent to `limit` on the POST.
+      responses:
+        "200":
+          description: Matching tags.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tags]
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
 
   /change-requests/{id}:
     patch:

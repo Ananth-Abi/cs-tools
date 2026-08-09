@@ -2561,3 +2561,122 @@ func TestSearchTags(t *testing.T) {
 		}
 	})
 }
+
+// TestSearchTagsQuery covers the deprecated GET /tags/search alias. It is kept
+// for one release so this service and its callers can be deployed independently
+// rather than in lockstep; delete these tests with the handler.
+func TestSearchTagsQuery(t *testing.T) {
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=5", nil)
+		w := httptest.NewRecorder()
+		h.SearchTagsQuery(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+		assertContentType(t, w, "application/json")
+	})
+
+	// The whole point of the alias: whichever form a caller uses, exactly one
+	// request shape leaves this service. Asserting on the raw outbound bytes
+	// (not a struct decoded through the same json tags) is what pins that -- a
+	// decode-based check would agree with whichever key the payload carries.
+	t.Run("sends the same body as the equivalent POST", func(t *testing.T) {
+		const postBody = `{"filters":{"searchQuery":"micro"},"limit":5}`
+
+		var postCaptured []byte
+		postClient := &mockEntityCaseClient{
+			searchTagsFn: func(_ context.Context, body []byte) ([]byte, error) {
+				postCaptured = body
+				return []byte(`{"tags":[]}`), nil
+			},
+		}
+		pr := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(postBody)))
+		pw := httptest.NewRecorder()
+		NewCaseHandler(postClient).SearchTags(pw, pr)
+		assertStatus(t, pw, http.StatusOK)
+
+		var getCaptured []byte
+		getClient := &mockEntityCaseClient{
+			searchTagsFn: func(_ context.Context, body []byte) ([]byte, error) {
+				getCaptured = body
+				return []byte(`{"tags":[]}`), nil
+			},
+		}
+		gr := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=5", nil))
+		gw := httptest.NewRecorder()
+		NewCaseHandler(getClient).SearchTagsQuery(gw, gr)
+		assertStatus(t, gw, http.StatusOK)
+		assertContentType(t, gw, "application/json")
+
+		if string(postCaptured) != postBody {
+			t.Fatalf("POST forwarded %s, want %s", postCaptured, postBody)
+		}
+		if string(getCaptured) != string(postCaptured) {
+			t.Errorf("GET alias forwarded %s, want the POST's %s", getCaptured, postCaptured)
+		}
+		if gw.Body.String() != pw.Body.String() {
+			t.Errorf("GET alias returned %s, want the POST's %s", gw.Body.String(), pw.Body.String())
+		}
+	})
+
+	t.Run("omitted parameters send the zero body", func(t *testing.T) {
+		var captured []byte
+		client := &mockEntityCaseClient{
+			searchTagsFn: func(_ context.Context, body []byte) ([]byte, error) {
+				captured = body
+				return []byte(`{"tags":[]}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search", nil))
+		w := httptest.NewRecorder()
+		h.SearchTagsQuery(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		const want = `{"filters":{"searchQuery":""},"limit":0}`
+		if string(captured) != want {
+			t.Errorf("upstream received body %s, want %s", captured, want)
+		}
+	})
+
+	t.Run("rejects a non-numeric limit", func(t *testing.T) {
+		var called bool
+		client := &mockEntityCaseClient{
+			searchTagsFn: func(_ context.Context, _ []byte) ([]byte, error) {
+				called = true
+				return []byte(`{"tags":[]}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=abc", nil))
+		w := httptest.NewRecorder()
+		h.SearchTagsQuery(w, r)
+
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+		if called {
+			t.Error("expected the request to be rejected before the upstream call")
+		}
+	})
+
+	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to search tags.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					searchTagsFn: func(_ context.Context, _ []byte) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro", nil))
+				w := httptest.NewRecorder()
+				h.SearchTagsQuery(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+}

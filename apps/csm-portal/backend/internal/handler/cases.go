@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
@@ -708,9 +709,63 @@ func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.forwardTagSearch(w, r, user.UserID, body)
+}
+
+// tagSearchRequest is the request body of POST /tags/search. It exists only so
+// the deprecated GET alias can build the exact same bytes the POST forwards;
+// the POST itself never decodes the body, it passes it through untouched.
+type tagSearchRequest struct {
+	Filters struct {
+		SearchQuery string `json:"searchQuery"`
+	} `json:"filters"`
+	Limit int `json:"limit"`
+}
+
+// SearchTagsQuery handles GET /tags/search?q={query}&limit={limit}, the
+// query-parameter form tag search used before it moved to a JSON body. The
+// parameters are translated into the POST body and forwarded through the same
+// client call, so only one request shape ever leaves this service.
+//
+// Deprecated: use POST /tags/search instead. This alias exists only to bridge
+// one release, so callers still on the GET do not get a 405 while this service
+// and its callers are deployed separately. Delete it once that release has
+// shipped.
+func (h *CaseHandler) SearchTagsQuery(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	var req tagSearchRequest
+	req.Filters.SearchQuery = r.URL.Query().Get("q")
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+			return
+		}
+		// Bounds are enforced upstream, as they are for the POST; a value that
+		// is merely out of range is forwarded and rejected there.
+		req.Limit = parsed
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	h.forwardTagSearch(w, r, user.UserID, body)
+}
+
+// forwardTagSearch is the single outbound path shared by POST /tags/search and
+// its deprecated GET alias.
+func (h *CaseHandler) forwardTagSearch(w http.ResponseWriter, r *http.Request, userID string, body []byte) {
 	result, err := h.entity.SearchTags(r.Context(), body)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchTags failed", "userID", user.UserID, "err", err)
+		slog.ErrorContext(r.Context(), "entity SearchTags failed", "userID", userID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search tags.")
 		return
 	}
