@@ -424,7 +424,17 @@ export interface BeAddCaseTagPayload {
   label: string;
 }
 
-/** `GET /tags/search?q=&limit=` response: existing free-text tag labels matching the query. */
+/** `POST /tags/search` request body. */
+export interface BeSearchTagsPayload {
+  filters?: {
+    /** Partial, case-insensitive match against tag labels. Empty returns all known tags. */
+    searchQuery?: string;
+  };
+  /** Maximum number of tags to return; defaults to 20 upstream, capped at 100. */
+  limit?: number;
+}
+
+/** `POST /tags/search` response: existing free-text tag labels matching the query. */
 export interface BeSearchTagsResponse {
   tags?: BeTag[];
   total?: number;
