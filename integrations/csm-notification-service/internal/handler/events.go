@@ -24,10 +24,38 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
 )
+
+// emailPattern is a deliberately loose "does this look like an email
+// address" check — local@domain.tld — not full RFC 5322 validation. Good
+// enough to catch the actually-costly mistake (a blank or clearly-malformed
+// recipient that would burn all of handleAttempts' retries downstream before
+// being dropped), without trying to be a real email validator.
+var emailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+
+// e164Pattern matches E.164 phone numbers (e.g. "+14155552671") — a leading
+// "+", a non-zero first digit, then up to 14 more digits.
+var e164Pattern = regexp.MustCompile(`^\+[1-9]\d{1,14}$`)
+
+// validRecipients reports whether every entry in recipients looks like an
+// email address, and there's at least one. A single malformed entry fails
+// the whole event — better to reject at the boundary than let the consumer
+// retry a delivery that cannot succeed.
+func validRecipients(recipients []string) bool {
+	if len(recipients) == 0 {
+		return false
+	}
+	for _, r := range recipients {
+		if !emailPattern.MatchString(r) {
+			return false
+		}
+	}
+	return true
+}
 
 // eventPublisher abstracts eventbus.Producer for testability.
 type eventPublisher interface {
@@ -81,7 +109,7 @@ func (h *EventsHandler) PostEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
-	if err := validateEventPayload(env.Type, env.Payload); err != nil {
+	if err := validateEventPayload(env.EntityID, env.Type, env.Payload); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
@@ -103,8 +131,13 @@ func (h *EventsHandler) PostEvent(w http.ResponseWriter, r *http.Request) {
 // unknown fields) and checks its required fields are non-empty. This is
 // deliberately duplicated per type rather than done via reflection — each
 // type's required fields are exactly the ones its Render* function in
-// internal/notifications needs.
-func validateEventPayload(t events.Type, raw json.RawMessage) error {
+// internal/notifications needs. entityID is the envelope's own EntityID
+// (already trimmed by the caller) — for the three case.* types that carry
+// their own CaseID, it must match: entityID is the Kafka partition key (see
+// events.Envelope's doc comment), so a payload whose CaseID disagrees with
+// it would be keyed under the wrong case's partition, breaking that other
+// case's ordering guarantee.
+func validateEventPayload(entityID string, t events.Type, raw json.RawMessage) error {
 	switch t {
 	case events.TypeCaseCreated:
 		var p events.CaseCreatedPayload
@@ -113,8 +146,11 @@ func validateEventPayload(t events.Type, raw json.RawMessage) error {
 		}
 		if p.ReporterName == "" || p.ProjectName == "" || p.CaseID == "" || p.CaseTitle == "" ||
 			p.CaseType == "" || p.Priority == "" || p.CreatedAt == "" || p.Description == "" ||
-			p.CaseLink == "" || p.CommentLink == "" || len(p.Recipients) == 0 {
+			p.CaseLink == "" || p.CommentLink == "" || !validRecipients(p.Recipients) {
 			return fmt.Errorf("handler: missing required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("handler: payload caseId %q does not match entityId %q", p.CaseID, entityID)
 		}
 	case events.TypeCommentAdded:
 		var p events.CommentAddedPayload
@@ -122,7 +158,7 @@ func validateEventPayload(t events.Type, raw json.RawMessage) error {
 			return err
 		}
 		if p.Name == "" || p.ProjectID == "" || p.CaseTitle == "" || p.CaseComment == "" ||
-			p.CommentLink == "" || p.CaseLink == "" || len(p.Recipients) == 0 {
+			p.CommentLink == "" || p.CaseLink == "" || !validRecipients(p.Recipients) {
 			return fmt.Errorf("handler: missing required field for %s", t)
 		}
 	case events.TypeStatusChanged:
@@ -130,8 +166,11 @@ func validateEventPayload(t events.Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.CaseID == "" || p.NewStatus == "" || p.CaseLink == "" || p.CommentLink == "" || len(p.Recipients) == 0 {
+		if p.CaseID == "" || p.NewStatus == "" || p.CaseLink == "" || p.CommentLink == "" || !validRecipients(p.Recipients) {
 			return fmt.Errorf("handler: missing required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("handler: payload caseId %q does not match entityId %q", p.CaseID, entityID)
 		}
 	case events.TypeCaseAssigned:
 		var p events.CaseAssignedPayload
@@ -139,8 +178,11 @@ func validateEventPayload(t events.Type, raw json.RawMessage) error {
 			return err
 		}
 		if p.AssignerName == "" || p.AssignerEmail == "" || p.CaseID == "" ||
-			p.CaseLink == "" || p.CommentLink == "" || len(p.Recipients) == 0 {
+			p.CaseLink == "" || p.CommentLink == "" || !validRecipients(p.Recipients) {
 			return fmt.Errorf("handler: missing required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("handler: payload caseId %q does not match entityId %q", p.CaseID, entityID)
 		}
 	case events.TypeIncidentCreated:
 		var p events.IncidentCreatedPayload
@@ -148,7 +190,7 @@ func validateEventPayload(t events.Type, raw json.RawMessage) error {
 			return err
 		}
 		if p.Product == "" || p.Title == "" || p.ShortDescription == "" ||
-			p.IncidentLink == "" || p.CallTo == "" {
+			p.IncidentLink == "" || !e164Pattern.MatchString(p.CallTo) {
 			return fmt.Errorf("handler: missing required field for %s", t)
 		}
 	default:

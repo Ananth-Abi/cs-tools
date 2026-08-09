@@ -35,7 +35,7 @@ Each channel gets its own config/client pair in its own file, since channels dif
 
 ## Event-driven notifications
 
-```
+```text
 csm-portal-backend ──┐
                       ├─POST /events─▶ EventsHandler ──▶ eventbus.Producer ──▶ Event Hub topic
 customer-portal-backend ┘                                                          │
@@ -44,7 +44,7 @@ customer-portal-backend ┘                                                     
                                                                                     │
                                                                                     ▼
                                                               dispatch.Dispatcher.Handle
-                                                            (render template, send email)
+                                                  (render email or send incident alerts)
 ```
 
 - **`internal/events`** — the event schema. `Envelope{Type, EntityID, Payload}` plus one payload struct per `Type` (`case.created`, `case.comment_added`, `case.status_changed`, `case.assigned`, `incident.created`), each carrying every value its matching reaction needs. `EntityID` is a case ID for the `case.*` types or an incident ID for `incident.created` — whatever this event is about. Payloads are deliberately denormalized (names/titles/links, not just IDs) since there's no `entity-service` client here yet to look anything up. `incident.created` is the one type with two independent reactions (a Google Chat alert *and* a voice call) rather than an email.

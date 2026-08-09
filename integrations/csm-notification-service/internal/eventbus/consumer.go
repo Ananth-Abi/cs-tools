@@ -27,12 +27,14 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 )
 
-// handleAttempts is how many times a single record's Handle func is retried
-// before giving up on it. There is no dead-letter topic yet (see the package
-// doc and the service's CLAUDE.md) — a record that still fails after this
-// many attempts is logged at ERROR and its offset is committed anyway, so one
-// permanently-failing record (e.g. a downstream outage) cannot block every
-// later record on its partition forever.
+// handleAttempts is how many times a single record's Handle func is called
+// in total before giving up on it — not additional retries on top of a first
+// call, so handleAttempts=3 means 3 calls, 2 of them retries. There is no
+// dead-letter topic yet (see the package doc and the service's CLAUDE.md) —
+// a record that still fails after this many attempts is logged at ERROR and
+// its offset is committed anyway, so one permanently-failing record (e.g. a
+// downstream outage) cannot block every later record on its partition
+// forever.
 const handleAttempts = 3
 
 // handleRetryDelay is the fixed pause between attempts. This is deliberately

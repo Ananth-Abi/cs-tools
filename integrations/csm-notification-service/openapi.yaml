@@ -32,9 +32,10 @@ paths:
     post:
       summary: >-
         Submit a domain event (case created, comment added, status changed,
-        or case assigned). Validates and publishes the event to the event
-        bus, responding 202 — the notification itself is sent asynchronously
-        by this service's own consumer, not in this request.
+        case assigned, or incident created). Validates and publishes the
+        event to the event bus, responding 202 — the notification itself is
+        sent asynchronously by this service's own consumer, not in this
+        request.
       operationId: postEvent
       requestBody:
         content:
@@ -91,6 +92,7 @@ components:
 
     CaseCreatedPayload:
       type: object
+      additionalProperties: false
       required: [reporterName, projectName, caseId, caseTitle, caseType, priority, createdAt, description, caseLink, commentLink, recipients]
       properties:
         reporterName:
@@ -131,6 +133,7 @@ components:
 
     CommentAddedPayload:
       type: object
+      additionalProperties: false
       required: [name, projectId, caseTitle, caseComment, commentLink, caseLink, recipients]
       properties:
         name:
@@ -155,6 +158,7 @@ components:
 
     StatusChangedPayload:
       type: object
+      additionalProperties: false
       required: [caseId, newStatus, caseLink, commentLink, recipients]
       properties:
         caseId:
@@ -175,6 +179,7 @@ components:
 
     CaseAssignedPayload:
       type: object
+      additionalProperties: false
       required: [assignerName, assignerEmail, caseId, caseLink, commentLink, recipients]
       properties:
         assignerName:
@@ -197,6 +202,7 @@ components:
 
     IncidentCreatedPayload:
       type: object
+      additionalProperties: false
       required: [product, title, shortDescription, incidentLink, callTo]
       properties:
         product:
