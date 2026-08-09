@@ -4772,6 +4772,7 @@ components:
             - createdOn
             - updatedOn
             - closedOn
+            - resolvedOn
             - product
             - projectOnboardingStatus
             - projectType
@@ -4834,10 +4835,13 @@ components:
           `"__current_user_email__"`, meaning "the authenticated caller" (the
           old createdByMe:true behavior) — any other literal email must use
           in with a single value instead.
-        - **createdOn** / **updatedOn** / **closedOn** (gte / lte): a single
-          RFC3339 timestamp or YYYY-MM-DD date bounding the case's created,
-          last-updated, or closed timestamp respectively. gte is inclusive
-          "on or after"; lte is inclusive "on or before".
+        - **createdOn** / **updatedOn** / **closedOn** / **resolvedOn**
+          (gte / lte): a single RFC3339 timestamp or YYYY-MM-DD date bounding
+          the case's created, last-updated, closed, or resolved timestamp
+          respectively. gte is inclusive "on or after"; lte is inclusive "on
+          or before". A lte bound earlier than its own gte bound is rejected
+          with a validation error. resolvedOn has no equivalent in the
+          relational data source and is rejected there.
         - **product** (in): product family names (e.g. "API Manager",
           "Identity Server", "Asgardeo"). Matches every version of each named
           product. Only applied by the ServiceNow data source.
