@@ -198,6 +198,20 @@ func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
 			wantMsg: `field "escalation" is not supported by this data source`,
 		},
 		{
+			name: "resolvedOn gte",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "resolvedOn", Op: "gte", Values: []string{"2026-01-01"}}},
+			}},
+			wantMsg: `field "resolvedOn" is not supported by this data source`,
+		},
+		{
+			name: "resolvedOn lte",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "resolvedOn", Op: "lte", Values: []string{"2026-01-31"}}},
+			}},
+			wantMsg: `field "resolvedOn" is not supported by this data source`,
+		},
+		{
 			name: "anyOf",
 			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
 				AnyOf: []domain.CaseFilterBranch{

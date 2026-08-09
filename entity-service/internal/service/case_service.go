@@ -425,6 +425,14 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 		parsed.EndUpdatedDate.Before(*parsed.StartUpdatedDate) {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "updatedOn: lte value must not be before gte value"}
 	}
+	// resolvedOn has no backing column in the relational schema and
+	// caseRepo.SearchCases models no predicate for it, so accepting it here
+	// would drop the bound silently and answer 200 with every case rather
+	// than the resolved-in-range ones asked for. Reject, same as every other
+	// predicate this data source cannot express.
+	if parsed.ResolvedStartDate != nil || parsed.ResolvedEndDate != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "resolvedOn" is not supported by this data source`}
+	}
 
 	// These fields dot-walk into ServiceNow-specific concepts (tags,
 	// project-onboarding-status, integration-CS-team, etc.) that have no
