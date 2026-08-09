@@ -279,6 +279,13 @@ export type ChatWebSocketPayload =
        */
       accountName?: string;
       projectName?: string;
+      /**
+       * The chat's own reference as shown in the UI, e.g. CHAT000002755, so the
+       * analytics drill-down can name the conversation a rating came from rather
+       * than showing a raw id. Absent when this page was deep-linked or
+       * refreshed, since the reference arrives in router state.
+       */
+      conversationName?: string;
     };
 
 // Model type for chat WebSocket hook options.
