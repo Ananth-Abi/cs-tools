@@ -1552,6 +1552,152 @@ func TestSNCaseService_SearchCases_PopulatesUpdatedOn(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_SearchCases_SetsIncludeExtendedFields proves SearchCases
+// always opts every outbound search request into the account/project-key/
+// fix-ETA fields on search rows -- the backing service only returns them when
+// this flag is explicitly set true, and defaults to leaving them off (the
+// customer-portal's own search calls never set it, so the flag is what keeps
+// this call additive rather than a shared-contract change).
+func TestSNCaseService_SearchCases_SetsIncludeExtendedFields(t *testing.T) {
+	var gotBody snCaseSearchPayload
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	if _, err := svc.SearchCases(contextWithUserIDToken("token"), domain.SearchCasesRequest{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !gotBody.IncludeExtendedFields {
+		t.Fatalf("expected includeExtendedFields to be sent as true on every search request")
+	}
+}
+
+// TestSNCaseService_SearchCases_MapsExtendedFieldsWhenPresent proves that when
+// the mocked SN response includes the account reference, project key, and the
+// three fix-ETA fields on a row, SearchCases maps every one of them through to
+// the returned SearchCaseView.
+func TestSNCaseService_SearchCases_MapsExtendedFieldsWhenPresent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cases": []map[string]any{
+				{
+					"id":               "case-sys-id",
+					"internalId":       "INT-1",
+					"number":           "CS0001",
+					"title":            "t",
+					"description":      "d",
+					"createdOn":        "2026-01-01 00:00:00",
+					"createdBy":        "jane.doe@example.com",
+					"project":          map[string]any{"id": "proj-sys-id", "name": "Proj", "key": "TESTQUERYSUB"},
+					"deployment":       map[string]any{"id": "", "name": ""},
+					"deployedProduct":  map[string]any{"id": "", "name": "", "product": map[string]any{"id": "", "name": ""}},
+					"account":          map[string]any{"id": "acct-sys-id", "name": "Acme Corp", "type": "premium"},
+					"bestCaseFixEta":   "2026-04-15",
+					"mostLikelyFixEta": "2026-04-22",
+					"worstCaseFixEta":  "2026-04-29",
+				},
+			},
+			"total": 1, "offset": 0, "limit": 20,
+		})
+	})
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	resp, err := svc.SearchCases(ctx, domain.SearchCasesRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(resp.Cases))
+	}
+	got := resp.Cases[0]
+
+	if got.ProjectKey == nil || *got.ProjectKey != "TESTQUERYSUB" {
+		t.Fatalf("ProjectKey = %v, want \"TESTQUERYSUB\"", got.ProjectKey)
+	}
+	if got.AccountDetails == nil {
+		t.Fatalf("expected AccountDetails to be populated")
+	}
+	if got.AccountDetails.Name != "Acme Corp" || got.AccountDetails.Type != "premium" {
+		t.Fatalf("AccountDetails = %+v, want Name=Acme Corp Type=premium", got.AccountDetails)
+	}
+	if got.BestCaseFixEta == nil || *got.BestCaseFixEta != "2026-04-15" {
+		t.Fatalf("BestCaseFixEta = %v, want \"2026-04-15\"", got.BestCaseFixEta)
+	}
+	if got.MostLikelyFixEta == nil || *got.MostLikelyFixEta != "2026-04-22" {
+		t.Fatalf("MostLikelyFixEta = %v, want \"2026-04-22\"", got.MostLikelyFixEta)
+	}
+	if got.WorstCaseFixEta == nil || *got.WorstCaseFixEta != "2026-04-29" {
+		t.Fatalf("WorstCaseFixEta = %v, want \"2026-04-29\"", got.WorstCaseFixEta)
+	}
+}
+
+// TestSNCaseService_SearchCases_ExtendedFieldsAbsentDoNotPanic proves that
+// when a mocked SN response omits the account/project-key/fix-ETA fields
+// entirely (simulating the backing service ignoring includeExtendedFields, or
+// an older response shape), SearchCases does not panic or error -- the new
+// fields come through as nil, matching this file's existing nil-handling
+// convention for every other optional reference.
+func TestSNCaseService_SearchCases_ExtendedFieldsAbsentDoNotPanic(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cases": []map[string]any{
+				{
+					"id":              "case-sys-id",
+					"internalId":      "INT-1",
+					"number":          "CS0001",
+					"title":           "t",
+					"description":     "d",
+					"createdOn":       "2026-01-01 00:00:00",
+					"createdBy":       "jane.doe@example.com",
+					"project":         map[string]any{"id": "proj-sys-id", "name": "Proj"},
+					"deployment":      map[string]any{"id": "", "name": ""},
+					"deployedProduct": map[string]any{"id": "", "name": "", "product": map[string]any{"id": "", "name": ""}},
+				},
+			},
+			"total": 1, "offset": 0, "limit": 20,
+		})
+	})
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	resp, err := svc.SearchCases(ctx, domain.SearchCasesRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(resp.Cases))
+	}
+	got := resp.Cases[0]
+
+	if got.ProjectKey != nil {
+		t.Fatalf("ProjectKey = %v, want nil", got.ProjectKey)
+	}
+	if got.AccountDetails != nil {
+		t.Fatalf("AccountDetails = %v, want nil", got.AccountDetails)
+	}
+	if got.BestCaseFixEta != nil {
+		t.Fatalf("BestCaseFixEta = %v, want nil", got.BestCaseFixEta)
+	}
+	if got.MostLikelyFixEta != nil {
+		t.Fatalf("MostLikelyFixEta = %v, want nil", got.MostLikelyFixEta)
+	}
+	if got.WorstCaseFixEta != nil {
+		t.Fatalf("WorstCaseFixEta = %v, want nil", got.WorstCaseFixEta)
+	}
+}
+
 // TestSNCaseService_SearchTags_Success pins the upstream wire format: tag search is a POST
 // with the query nested under `filters.searchQuery`, not a GET with a `q` param. The body is
 // asserted as raw JSON on purpose — decoding it through a struct with the same tags would

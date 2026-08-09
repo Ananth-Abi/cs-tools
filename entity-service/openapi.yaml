@@ -5434,6 +5434,12 @@ components:
           description: Case type value (Postgres) or SN caseType label (ServiceNow).
         project:
           $ref: '#/components/schemas/EntityRef'
+        projectKey:
+          type: string
+          nullable: true
+          description: >-
+            The project's short human-readable key (e.g. "TESTQUERYSUB").
+            Populated for the ServiceNow data source only; null otherwise.
         deployment:
           $ref: '#/components/schemas/EntityRef'
         deployedProduct:
@@ -5452,6 +5458,36 @@ components:
           nullable: true
           $ref: '#/components/schemas/EntityRef'
           description: Populated for ServiceNow data source only.
+        account:
+          nullable: true
+          $ref: '#/components/schemas/AccountRef'
+          description: >-
+            The case's account, including support tier (type). Populated for
+            the ServiceNow data source only; null otherwise.
+        bestCaseFixEta:
+          type: string
+          format: date
+          nullable: true
+          description: >-
+            Internal-only best-case fix-commitment date (date-only, YYYY-MM-DD),
+            visible to CSM engineers only. Populated for the ServiceNow data
+            source only; null otherwise.
+        mostLikelyFixEta:
+          type: string
+          format: date
+          nullable: true
+          description: >-
+            Internal-only most-likely fix-commitment date (date-only,
+            YYYY-MM-DD), visible to CSM engineers only. Populated for the
+            ServiceNow data source only; null otherwise.
+        worstCaseFixEta:
+          type: string
+          format: date
+          nullable: true
+          description: >-
+            Internal-only worst-case fix-commitment date (date-only,
+            YYYY-MM-DD), visible to CSM engineers only. Populated for the
+            ServiceNow data source only; null otherwise.
 
     SearchCasesResponse:
       type: object
