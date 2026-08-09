@@ -15,131 +15,73 @@
 // under the License.
 
 import {
-  Card,
   Box,
   Typography,
   TextField,
   InputAdornment,
-  Button,
 } from "@wso2/oxygen-ui";
-import { Calendar, X } from "@wso2/oxygen-ui-icons-react";
-import { type JSX } from "react";
+import { Calendar } from "@wso2/oxygen-ui-icons-react";
+import type { JSX } from "react";
 import type { TimeCardsDateFilterProps } from "@features/project-details/types/projectDetailsComponents";
 
 /**
- * TimeCardsDateFilter provides date range filters for time cards.
+ * TimeCardsDateFilter provides a compact time-range filter for time cards.
  *
- * @param {TimeCardsDateFilterProps} props - Date values, change handlers, and optional clear handler.
- * @returns {JSX.Element} The rendered filter card.
+ * @param {TimeCardsDateFilterProps} props - Date values and change handlers.
+ * @returns {JSX.Element} The rendered filter row.
  */
 export default function TimeCardsDateFilter({
   startDate,
   endDate,
   onStartDateChange,
   onEndDateChange,
-  onClear,
-  hasFilters,
 }: TimeCardsDateFilterProps): JSX.Element {
   return (
-    <Card
+    <Box
       sx={{
-        p: 3,
         display: "flex",
-        flexDirection: "column",
-        gap: 3,
+        alignItems: "center",
+        gap: 1.5,
+        flexWrap: "wrap",
       }}
     >
-      <Box
-        sx={{
-          display: "flex",
-          alignItems: "center",
-          gap: 2,
-          flexWrap: "wrap",
+      <Calendar size={18} />
+      <Typography variant="body2" sx={{ fontWeight: 600 }}>
+        Time Range:
+      </Typography>
+      <TextField
+        id="time-cards-start-date"
+        type="date"
+        size="small"
+        value={startDate}
+        onChange={(e) => onStartDateChange(e.target.value)}
+        sx={{ minWidth: 160 }}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <Calendar size={16} />
+            </InputAdornment>
+          ),
         }}
-      >
-        <Typography
-          variant="body2"
-          component="label"
-          sx={{
-            fontWeight: 500,
-            color: "text.secondary",
-            whiteSpace: "nowrap",
-          }}
-        >
-          Filter by Date Range:
-        </Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography
-              component="label"
-              htmlFor="time-cards-start-date"
-              variant="body2"
-              sx={{
-                fontWeight: 500,
-                color: "text.secondary",
-                whiteSpace: "nowrap",
-              }}
-            >
-              From:
-            </Typography>
-            <TextField
-              id="time-cards-start-date"
-              type="date"
-              size="small"
-              value={startDate}
-              onChange={(e) => onStartDateChange(e.target.value)}
-              sx={{ minWidth: 200 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Calendar size={16} />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Box>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography
-              component="label"
-              htmlFor="time-cards-end-date"
-              variant="body2"
-              sx={{
-                fontWeight: 500,
-                color: "text.secondary",
-                whiteSpace: "nowrap",
-              }}
-            >
-              To:
-            </Typography>
-            <TextField
-              id="time-cards-end-date"
-              type="date"
-              size="small"
-              value={endDate}
-              onChange={(e) => onEndDateChange(e.target.value)}
-              sx={{ minWidth: 200 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Calendar size={16} />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Box>
-          {hasFilters && onClear && (
-            <Button
-              variant="text"
-              size="small"
-              onClick={onClear}
-              startIcon={<X size={16} />}
-              sx={{ color: "text.secondary" }}
-            >
-              Clear
-            </Button>
-          )}
-        </Box>
-      </Box>
-    </Card>
+      />
+      <Typography variant="body2" color="text.secondary">
+        to
+      </Typography>
+      <TextField
+        id="time-cards-end-date"
+        type="date"
+        size="small"
+        value={endDate}
+        onChange={(e) => onEndDateChange(e.target.value)}
+        sx={{ minWidth: 160 }}
+        InputProps={{
+          startAdornment: (
+            <InputAdornment position="start">
+              <Calendar size={16} />
+            </InputAdornment>
+          ),
+        }}
+      />
+    </Box>
   );
 }
