@@ -801,7 +801,9 @@ export type BeCaseFieldFilterField =
   | "parentId"
   | "taskSLABusinessElapsedPercent"
   | "escalationLevel"
-  | "escalation";
+  | "escalation"
+  | "number"
+  | "internalId";
 
 /**
  * `op` enum accepted by {@link BeCaseFieldFilter}, independent of `field` —
@@ -2210,6 +2212,12 @@ export interface BeChangeRequestSearchPayload {
     impacts?: BeChangeRequestImpact[];
     closedStartDate?: string;
     closedEndDate?: string;
+    /**
+     * A single change request number (e.g. "CHG0038721"); matches exactly.
+     * Routed as a first-class filter rather than through the free-text
+     * searchQuery scan.
+     */
+    number?: string;
   };
   sortBy?: {
     field?: "createdOn" | "updatedOn";
@@ -2458,6 +2466,12 @@ export interface BeIncidentSearchPayload {
      * categories — filtering by this misses roughly half of all incidents.
      */
     productNames?: string[];
+    /**
+     * A single incident number (e.g. "INC0090472"); matches exactly. Routed
+     * as a first-class filter rather than through the free-text searchQuery
+     * scan.
+     */
+    number?: string;
   };
   sortBy?: {
     field?: "createdOn" | "updatedOn" | "openedOn";
@@ -2523,6 +2537,11 @@ export interface BeProblemSearchFilters {
    * control from `ProblemsFilterBar`.
    */
   states?: BeProblemState[];
+  /**
+   * A single problem number (e.g. "PRB0040192"); matches exactly. Routed as
+   * a first-class filter rather than through the free-text searchQuery scan.
+   */
+  number?: string;
 }
 
 export interface BeProblemSearchPayload {

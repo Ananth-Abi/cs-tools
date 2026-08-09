@@ -341,7 +341,15 @@ type snCaseFilters struct {
 	// declares it). See domain.ParsedCaseFilters.ExcludeTags.
 	ExcludeTags []string `json:"excludeTags,omitempty"`
 	// ParentID: see domain.SearchCasesFilters.ParentID doc comment.
-	ParentID                  string   `json:"parentId,omitempty"`
+	ParentID string `json:"parentId,omitempty"`
+	// Number: see domain.ParsedCaseFilters.Number doc comment. Exact
+	// match against ServiceNow's `number` column -- not part of the free-text
+	// SearchQuery scan.
+	Number string `json:"number,omitempty"`
+	// InternalID: see domain.ParsedCaseFilters.InternalID doc comment. Exact
+	// match against ServiceNow's `u_wso2_case_id` column -- not part of the
+	// free-text SearchQuery scan.
+	InternalID                string   `json:"internalId,omitempty"`
 	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses,omitempty"`
 	ProjectTypeIDs            []string `json:"projectTypeIds,omitempty"`
 	IntegrationCsTeamIDs      []string `json:"integrationCsTeamIds,omitempty"`
@@ -2121,6 +2129,8 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		Tags:                      parsed.Tags,
 		ExcludeTags:               parsed.ExcludeTags,
 		ParentID:                  snParentIDFilter(parsed.ParentID),
+		Number:                    stringPtrValue(parsed.Number),
+		InternalID:                stringPtrValue(parsed.InternalID),
 		ProjectOnboardingStatuses: parsed.ProjectOnboardingStatuses,
 		ProjectTypeIDs:            uuidsToSysids(parsed.ProjectTypeIDs),
 		IntegrationCsTeamIDs:      uuidsToSysids(parsed.IntegrationCsTeamIDs),

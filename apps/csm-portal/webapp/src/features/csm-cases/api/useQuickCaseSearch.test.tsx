@@ -27,7 +27,10 @@ vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ post: postMock }),
 }));
 
-import { useQuickCaseSearch } from "@features/csm-cases/api/useQuickCaseSearch";
+import {
+  classifyQuickCaseQuery,
+  useQuickCaseSearch,
+} from "@features/csm-cases/api/useQuickCaseSearch";
 import { ALL_CASE_TYPES } from "@features/csm-cases/utils/caseType";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -46,7 +49,9 @@ describe("useQuickCaseSearch", () => {
   });
 
   it("requests every known case sub-type, not just the default 'case' type", async () => {
-    const { result } = renderHook(() => useQuickCaseSearch("ABC-123"), {
+    // "free text" query — doesn't match the number/internalId patterns,
+    // so this goes through the free-text `searchQuery` path.
+    const { result } = renderHook(() => useQuickCaseSearch("printer jam"), {
       wrapper,
     });
 
@@ -56,7 +61,7 @@ describe("useQuickCaseSearch", () => {
       "/cases/search",
       expect.objectContaining({
         filters: expect.objectContaining({
-          searchQuery: "ABC-123",
+          searchQuery: "printer jam",
           filters: [{ field: "type", op: "in", values: ALL_CASE_TYPES }],
         }),
       }),
@@ -77,5 +82,80 @@ describe("useQuickCaseSearch", () => {
   it("does not fire a search until the query reaches the minimum length", () => {
     renderHook(() => useQuickCaseSearch("a"), { wrapper });
     expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("routes a CS case number to an exact-match number filter, not searchQuery", async () => {
+    const { result } = renderHook(() => useQuickCaseSearch("CS0441174"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const body = postMock.mock.calls[0][1];
+    expect(body.filters.searchQuery).toBeUndefined();
+    expect(body.filters.filters).toEqual([
+      { field: "type", op: "in", values: ALL_CASE_TYPES },
+      { field: "number", op: "eq", values: ["CS0441174"] },
+    ]);
+  });
+
+  it("routes a WSO2 case id to an exact-match internalId filter, not searchQuery", async () => {
+    const { result } = renderHook(() => useQuickCaseSearch("SOMEID-4"), {
+      wrapper,
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const body = postMock.mock.calls[0][1];
+    expect(body.filters.searchQuery).toBeUndefined();
+    expect(body.filters.filters).toEqual([
+      { field: "type", op: "in", values: ALL_CASE_TYPES },
+      { field: "internalId", op: "eq", values: ["SOMEID-4"] },
+    ]);
+  });
+
+  it("falls back to free-text search when forceFreeText is set, even for a matching query", async () => {
+    const { result } = renderHook(
+      () => useQuickCaseSearch("CS0441174", { forceFreeText: true }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          searchQuery: "CS0441174",
+          filters: [{ field: "type", op: "in", values: ALL_CASE_TYPES }],
+        }),
+      }),
+    );
+  });
+
+  describe("classifyQuickCaseQuery", () => {
+    it("classifies a CS case number", () => {
+      expect(classifyQuickCaseQuery("CS0441174")).toBe("number");
+    });
+
+    it("classifies a WSO2 case id", () => {
+      expect(classifyQuickCaseQuery("SOMEID-4")).toBe("internalId");
+      expect(classifyQuickCaseQuery("ABC-123")).toBe("internalId");
+      expect(classifyQuickCaseQuery("wso2-1")).toBe("internalId");
+    });
+
+    it("classifies free text as text", () => {
+      expect(classifyQuickCaseQuery("printer jam")).toBe("text");
+      // Wrong digit count for a case number.
+      expect(classifyQuickCaseQuery("CS044117")).toBe("text");
+      expect(classifyQuickCaseQuery("CS04411745")).toBe("text");
+      // Too many digits after the hyphen for a WSO2 case id.
+      expect(classifyQuickCaseQuery("SOMEID-12345")).toBe("text");
+      // No digits after the hyphen at all.
+      expect(classifyQuickCaseQuery("SOMEID-")).toBe("text");
+      // Lowercase "cs" prefix fails the strict, case-sensitive case-number
+      // shape, and there's no hyphen for it to match the internalId shape.
+      expect(classifyQuickCaseQuery("cs0441174")).toBe("text");
+    });
   });
 });

@@ -44,7 +44,7 @@ var caseFilterFieldSet = map[string]bool{
 	"createdOn": true, "updatedOn": true, "closedOn": true, "product": true,
 	"projectOnboardingStatus": true, "projectType": true, "integrationCsTeam": true,
 	"resolutionNotes": true, "parentId": true, "taskSLABusinessElapsedPercent": true,
-	"escalationLevel": true, "escalation": true,
+	"escalationLevel": true, "escalation": true, "number": true, "internalId": true,
 }
 
 // caseFilterOpSet is the exact set of CaseFieldFilter.Op values accepted by
@@ -503,6 +503,32 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			id := f.Values[0]
 			p.ParentID = &id
 
+		case "number":
+			if f.Op != "eq" {
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			if len(f.Values) != 1 {
+				return domain.ParsedCaseFilters{}, &apierror.ValidationError{Msg: "filters: number eq requires exactly one value"}
+			}
+			number := f.Values[0]
+			p.Number = &number
+
+		case "internalId":
+			if f.Op != "eq" {
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			if len(f.Values) != 1 {
+				return domain.ParsedCaseFilters{}, &apierror.ValidationError{Msg: "filters: internalId eq requires exactly one value"}
+			}
+			internalID := f.Values[0]
+			p.InternalID = &internalID
+
 		case "taskSLABusinessElapsedPercent":
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
@@ -645,6 +671,10 @@ func rejectUnsupportedOrGroupFields(parsed domain.ParsedCaseFilters) error {
 		return &apierror.ValidationError{Msg: "anyOf: field \"tag\" is not supported inside an OR group"}
 	case parsed.ParentID != nil:
 		return &apierror.ValidationError{Msg: "anyOf: field \"parentId\" is not supported inside an OR group"}
+	case parsed.Number != nil:
+		return &apierror.ValidationError{Msg: "anyOf: field \"number\" is not supported inside an OR group"}
+	case parsed.InternalID != nil:
+		return &apierror.ValidationError{Msg: "anyOf: field \"internalId\" is not supported inside an OR group"}
 	case len(parsed.CreatedBy) > 0 || parsed.CreatedByMe:
 		return &apierror.ValidationError{Msg: "anyOf: field \"createdBy\" is not supported inside an OR group"}
 	case parsed.ClosedStartDate != nil || parsed.ClosedEndDate != nil:

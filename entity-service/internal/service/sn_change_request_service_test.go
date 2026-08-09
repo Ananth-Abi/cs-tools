@@ -19,9 +19,11 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 )
 
 // TestToDownstreamUTCDateTime covers the create-path datetime conversion: the
@@ -118,5 +120,44 @@ func TestNormalizePaginationCapMatchesDownstream(t *testing.T) {
 
 	if maxLimit != 50 {
 		t.Fatalf("maxLimit is %d; the downstream layer rejects anything above 50", maxLimit)
+	}
+}
+
+// TestSNChangeRequestService_SearchChangeRequests_NumberFilterPassedThrough verifies
+// the exact-match Number filter reaches the outgoing payload under the "number" key
+// unchanged, alongside the untouched free-text searchQuery.
+func TestSNChangeRequestService_SearchChangeRequests_NumberFilterPassedThrough(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/change-requests/search", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"changeRequests": [], "totalRecords": 0, "offset": 0, "limit": 20}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowChangeRequestService(client)
+
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{Number: strPtr("CHG0010001")},
+	}
+	if _, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gotFilters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters object in payload, got %+v", gotBody["filters"])
+	}
+	if gotFilters["number"] != "CHG0010001" {
+		t.Fatalf("filters.number: got %v, want %q", gotFilters["number"], "CHG0010001")
+	}
+	if _, hasSearchQuery := gotFilters["searchQuery"]; hasSearchQuery {
+		t.Fatalf("filters.searchQuery: expected omitted (empty), got %v", gotFilters["searchQuery"])
 	}
 }

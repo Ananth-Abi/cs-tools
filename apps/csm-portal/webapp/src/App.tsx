@@ -15,7 +15,15 @@
 // under the License.
 
 import { type JSX, lazy } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router";
+import {
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router";
 import AuthGuard from "@layouts/AuthGuard";
 import { SectionIndexRedirect } from "@components/section-tabs/SectionTabs";
 import { navNodeForPath } from "@config/csmNavItems";
@@ -152,13 +160,35 @@ const CsmAnnouncementsPage = lazy(
 
 /**
  * Landing for `/`. Defers to AuthGuard's post-login deep-link restore when a
- * redirect is pending (rendering nothing so it doesn't race the restore);
- * otherwise sends the user to the default `/dashboard` landing. A pure read of
- * sessionStorage — AuthGuard owns clearing the key.
+ * redirect is pending (rendering nothing so it doesn't race the restore).
+ *
+ * Also defers — rendering nothing rather than navigating to `/dashboard` —
+ * while a `?goto=`/`?q=` deep link is still being resolved by `QuickNav`
+ * (mounted in the persistent header, above this route's `Outlet`). Without
+ * this, `/?goto=CS0441150` would navigate straight to `/dashboard` and start
+ * fetching every dashboard widget in the background, purely to sit behind
+ * the search palette while it resolves — wasted work for a link whose whole
+ * point is to jump straight to one record. `QuickNav` clears `goto`/`q` from
+ * the URL itself once it actually navigates away (the single-match case) or
+ * once the user closes the palette without picking anything (see its
+ * `close()`); either way, this component naturally proceeds to the normal
+ * `/dashboard` redirect on its next render once the params are gone.
+ *
+ * A pure read of sessionStorage/search params — AuthGuard and QuickNav own
+ * clearing their respective keys.
  */
 function RootLanding(): JSX.Element | null {
   const pending = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY);
-  return pending ? null : <Navigate to="/dashboard" replace />;
+  const [searchParams] = useSearchParams();
+  // A present-but-empty `?q=`/`?goto=` (e.g. a link with a blank query) must
+  // not defer the redirect forever: QuickNav's own initial-params effect
+  // already no-ops on an empty value (`if (!q && !goto) return`), so nothing
+  // would ever clear the param and this component would sit blank
+  // indefinitely on `.has()` alone. Require an actual non-blank value.
+  const hasDeepLinkSearch = ["goto", "q"].some((key) =>
+    Boolean(searchParams.get(key)?.trim()),
+  );
+  return pending || hasDeepLinkSearch ? null : <Navigate to="/dashboard" replace />;
 }
 
 /**
