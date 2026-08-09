@@ -1051,28 +1051,19 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   /tags/search:
-    get:
+    post:
       summary: Search existing case tags, not scoped to any single case.
       description: |
         Returns tags whose label matches the free-text query, for use in FE autocomplete when
-        attaching a tag to a case. An empty/omitted `q` returns all known tags.
-        Only supported for the ServiceNow data source.
+        attaching a tag to a case. An empty/omitted `filters.searchQuery` returns all known tags.
+        Only supported when the backing data source provides tags.
       operationId: searchTags
-      parameters:
-        - name: q
-          in: query
-          required: false
-          schema:
-            type: string
-          description: Free-text label query. Omit or leave empty to return all known tags.
-        - name: limit
-          in: query
-          required: false
-          schema:
-            type: integer
-            default: 20
-            maximum: 100
-          description: Maximum number of tags to return.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchTagsRequest'
       responses:
         "200":
           description: Tags matching the query.
@@ -1087,7 +1078,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         "503":
-          description: Case tags are only supported for the ServiceNow data source.
+          description: Case tags are not supported by the configured data source.
           content:
             application/json:
               schema:
@@ -4632,6 +4623,24 @@ components:
           type: string
           nullable: true
           description: Optional display color for the label; null if the label carries none.
+
+    SearchTagsRequest:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            searchQuery:
+              type: string
+              description: >
+                Free-text label query, matched partially and case-insensitively.
+                Omit or leave empty to return all known tags.
+        limit:
+          type: integer
+          default: 20
+          minimum: 0
+          maximum: 100
+          description: Maximum number of tags to return. Omit or 0 to use the default.
 
     SearchTagsResponse:
       type: object

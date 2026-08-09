@@ -1781,6 +1781,20 @@ type AddCaseTagRequest struct {
 	Label  string `json:"label"`
 }
 
+// SearchTagsFilters holds the optional filters for a tag search.
+type SearchTagsFilters struct {
+	// SearchQuery matches tag labels partially, case-insensitively. Empty
+	// returns all known tags.
+	SearchQuery string `json:"searchQuery"`
+}
+
+// SearchTagsRequest is the request body for POST /tags/search. Limit caps the
+// number of results (<=0 means use the backing data source's default of 20).
+type SearchTagsRequest struct {
+	Filters SearchTagsFilters `json:"filters"`
+	Limit   int               `json:"limit"`
+}
+
 // CreateCaseCommentResponse is the response for creating a new case comment.
 type CreateCaseCommentResponse struct {
 	Message string            `json:"message"`

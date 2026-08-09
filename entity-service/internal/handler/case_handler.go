@@ -20,7 +20,6 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -34,6 +33,10 @@ import (
 // The generic maxRequestBodySize (1 MiB) is far too small for this endpoint
 // and rejects legitimate small attachments (e.g. a 2 MB file).
 const maxAttachmentBodySize = int64(15 << 20)
+
+// maxTagSearchLimit caps POST /tags/search results. Tag search backs a
+// type-ahead, not a paged browse, so the ceiling is deliberately low.
+const maxTagSearchLimit = 100
 
 // attachmentTooLargeMsg is deliberately expressed as the file-size limit (10
 // MB) a caller actually cares about, not the raw request-body cap above — the
@@ -275,22 +278,23 @@ func (h *CaseHandler) RemoveCaseTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SearchTags handles GET /tags/search?q={query}&limit={limit}. Not scoped to a single case; used
+// SearchTags handles POST /tags/search. Not scoped to a single case; used
 // for FE autocomplete when attaching a tag.
 func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
-
-	limit := 0
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 0 {
-			writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must be a non-negative integer"})
-			return
-		}
-		limit = parsed
+	var req domain.SearchTagsRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	if req.Limit < 0 {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must be a non-negative integer"})
+		return
+	}
+	if req.Limit > maxTagSearchLimit {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must not exceed 100"})
+		return
 	}
 
-	tags, err := h.svc.SearchTags(r.Context(), query, limit)
+	tags, err := h.svc.SearchTags(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

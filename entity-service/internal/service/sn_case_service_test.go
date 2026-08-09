@@ -1552,11 +1552,20 @@ func TestSNCaseService_SearchCases_PopulatesUpdatedOn(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_SearchTags_Success pins the upstream wire format: tag search is a POST
+// with the query nested under `filters.searchQuery`, not a GET with a `q` param. The body is
+// asserted as raw JSON on purpose — decoding it through a struct with the same tags would
+// agree with whatever key the payload happens to carry, which is how an earlier wire-format
+// bug got through.
 func TestSNCaseService_SearchTags_Success(t *testing.T) {
-	var gotQuery string
+	var gotMethod string
+	var gotBody map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.Query().Get("q")
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tags": []map[string]any{
 				{"id": testTagSysid, "label": "micro-gw", "color": "#f97316"},
@@ -1567,12 +1576,27 @@ func TestSNCaseService_SearchTags_Success(t *testing.T) {
 	client := newTestSNClient(t, mux)
 	svc := NewServiceNowCaseService(client, nil)
 
-	tags, err := svc.SearchTags(contextWithUserIDToken("token"), "micro", 0)
+	tags, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotQuery != "micro" {
-		t.Fatalf("q sent = %q, want micro", gotQuery)
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	filters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("body has no filters object: %#v", gotBody)
+	}
+	if filters["searchQuery"] != "micro" {
+		t.Fatalf("filters.searchQuery = %v, want micro", filters["searchQuery"])
+	}
+	if _, present := gotBody["q"]; present {
+		t.Fatalf("body must not carry the legacy q key: %#v", gotBody)
+	}
+	if _, present := gotBody["limit"]; present {
+		t.Fatalf("limit must be omitted when unset: %#v", gotBody)
 	}
 	if len(tags) != 1 {
 		t.Fatalf("expected 1 tag, got %d", len(tags))
@@ -1589,49 +1613,98 @@ func TestSNCaseService_SearchTags_Success(t *testing.T) {
 }
 
 func TestSNCaseService_SearchTags_ForwardsLimit(t *testing.T) {
-	var gotLimit string
+	var rawBody []byte
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
-		gotLimit = r.URL.Query().Get("limit")
+		rawBody, _ = io.ReadAll(r.Body)
 		_ = json.NewEncoder(w).Encode(map[string]any{"tags": []map[string]any{}})
 	})
 
 	client := newTestSNClient(t, mux)
 	svc := NewServiceNowCaseService(client, nil)
 
-	if _, err := svc.SearchTags(contextWithUserIDToken("token"), "micro", 5); err != nil {
+	if _, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+		Limit:   5,
+	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotLimit != "5" {
-		t.Fatalf("limit sent = %q, want 5", gotLimit)
+	if want := `{"filters":{"searchQuery":"micro"},"limit":5}`; strings.TrimSpace(string(rawBody)) != want {
+		t.Fatalf("raw body = %s, want %s", rawBody, want)
 	}
 }
 
 func TestSNCaseService_SearchTags_EmptyQuery(t *testing.T) {
+	var rawBody []byte
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
-		if q := r.URL.Query().Get("q"); q != "" {
-			t.Fatalf("expected no q param, got %q", q)
-		}
+		rawBody, _ = io.ReadAll(r.Body)
 		_ = json.NewEncoder(w).Encode(map[string]any{"tags": []map[string]any{}})
 	})
 
 	client := newTestSNClient(t, mux)
 	svc := NewServiceNowCaseService(client, nil)
 
-	tags, err := svc.SearchTags(contextWithUserIDToken("token"), "", 0)
+	tags, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := `{"filters":{}}`; strings.TrimSpace(string(rawBody)) != want {
+		t.Fatalf("raw body = %s, want %s", rawBody, want)
 	}
 	if len(tags) != 0 {
 		t.Fatalf("expected 0 tags, got %d", len(tags))
 	}
 }
 
+// TestSNCaseService_SearchTags_NeverSendsCaseID guards the deliberate decision not to expose
+// the case-scoped variant upward: the upstream contract accepts filters.caseId, but nothing
+// above the entity service consumes it, so the entity service must never emit it.
+func TestSNCaseService_SearchTags_NeverSendsCaseID(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"tags": []map[string]any{}})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	if _, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	filters, _ := gotBody["filters"].(map[string]any)
+	if _, present := filters["caseId"]; present {
+		t.Fatalf("filters must not carry caseId: %#v", filters)
+	}
+}
+
+func TestSNCaseService_SearchTags_QueryTooLong(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream must not be called for an over-long query")
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	_, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: strings.Repeat("a", 201)},
+	})
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 func TestCaseService_SearchTags_ServiceUnavailable(t *testing.T) {
 	svc := &caseService{}
 
-	if _, err := svc.SearchTags(contextWithUserIDToken("token"), "micro", 0); err == nil {
+	if _, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+	}); err == nil {
 		t.Fatalf("expected error")
 	} else if _, ok := err.(*apierror.ServiceUnavailableError); !ok {
 		t.Fatalf("expected *apierror.ServiceUnavailableError, got %T: %v", err, err)

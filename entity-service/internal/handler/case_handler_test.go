@@ -38,6 +38,11 @@ type stubCaseService struct {
 	createAttachmentCalled bool
 	createAttachmentResp   domain.CreateAttachmentResponse
 	createAttachmentErr    error
+
+	searchTagsCalled bool
+	searchTagsReq    domain.SearchTagsRequest
+	searchTagsTags   []domain.Tag
+	searchTagsErr    error
 }
 
 func (s *stubCaseService) CreateCaseAttachment(_ context.Context, _ domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
@@ -128,5 +133,112 @@ func TestCreateCaseAttachment_OverNewLimit(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "request body too large") {
 		t.Fatalf("expected the generic message to be replaced by the attachment-specific one, got: %s", rec.Body.String())
+	}
+}
+
+// searchTagsCalled/searchTagsReq capture what the handler passes down, so the
+// tests below can assert the JSON body is decoded into the documented shape.
+func (s *stubCaseService) SearchTags(_ context.Context, req domain.SearchTagsRequest) ([]domain.Tag, error) {
+	s.searchTagsCalled = true
+	s.searchTagsReq = req
+	return s.searchTagsTags, s.searchTagsErr
+}
+
+// TestSearchTags_DecodesFiltersSearchQuery pins the request shape: the query
+// lives under filters.searchQuery and limit is top level. Asserting on the
+// decoded request here is safe only because the raw wire format one layer down
+// is separately pinned in the service package's tests.
+func TestSearchTags_DecodesFiltersSearchQuery(t *testing.T) {
+	stub := &stubCaseService{searchTagsTags: []domain.Tag{{ID: "t1", Label: "micro-gw"}}}
+	h := NewCaseHandler(stub)
+
+	req := httptest.NewRequest(http.MethodPost, "/tags/search",
+		strings.NewReader(`{"filters":{"searchQuery":"micro"},"limit":20}`))
+	rec := httptest.NewRecorder()
+
+	h.SearchTags(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !stub.searchTagsCalled {
+		t.Fatalf("expected SearchTags to reach the service layer")
+	}
+	if stub.searchTagsReq.Filters.SearchQuery != "micro" {
+		t.Fatalf("SearchQuery = %q, want micro", stub.searchTagsReq.Filters.SearchQuery)
+	}
+	if stub.searchTagsReq.Limit != 20 {
+		t.Fatalf("Limit = %d, want 20", stub.searchTagsReq.Limit)
+	}
+	if !strings.Contains(rec.Body.String(), `"tags"`) {
+		t.Fatalf("response must keep the {tags:[...]} envelope, got: %s", rec.Body.String())
+	}
+}
+
+// TestSearchTags_RejectsLegacyQueryParamShape proves the old GET contract is
+// gone: `q` is now an unknown field and the decoder rejects it outright.
+func TestSearchTags_RejectsLegacyQueryParamShape(t *testing.T) {
+	stub := &stubCaseService{}
+	h := NewCaseHandler(stub)
+
+	req := httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{"q":"micro"}`))
+	rec := httptest.NewRecorder()
+
+	h.SearchTags(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for the legacy q key, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if stub.searchTagsCalled {
+		t.Fatalf("expected the request to be rejected before the service layer")
+	}
+}
+
+func TestSearchTags_RejectsOutOfRangeLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"negative", `{"limit":-1}`},
+		{"over max", `{"limit":101}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubCaseService{}
+			h := NewCaseHandler(stub)
+
+			req := httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+
+			h.SearchTags(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if stub.searchTagsCalled {
+				t.Fatalf("expected the request to be rejected before the service layer")
+			}
+		})
+	}
+}
+
+// TestSearchTags_EmptyBodyIsValid keeps the "list all known tags" behaviour the
+// old GET had when q and limit were both omitted.
+func TestSearchTags_EmptyBodyIsValid(t *testing.T) {
+	stub := &stubCaseService{}
+	h := NewCaseHandler(stub)
+
+	req := httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{}`))
+	rec := httptest.NewRecorder()
+
+	h.SearchTags(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !stub.searchTagsCalled {
+		t.Fatalf("expected SearchTags to reach the service layer")
+	}
+	if stub.searchTagsReq.Filters.SearchQuery != "" || stub.searchTagsReq.Limit != 0 {
+		t.Fatalf("expected a zero request, got %#v", stub.searchTagsReq)
 	}
 }

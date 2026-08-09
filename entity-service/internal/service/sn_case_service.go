@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -2672,7 +2671,21 @@ func (s *snCaseService) RemoveCaseTag(ctx context.Context, caseID, tagID string)
 	return err
 }
 
-// snSearchTagsResponse mirrors the Choreo GET /tags/search response, and the shape of the
+// snSearchTagsFilters holds the filter fields of the Choreo POST /tags/search request body.
+// CaseID scopes the search to labels already used on one case; the entity service never sets
+// it (nothing upstream consumes the case-scoped variant), but it is part of the wire contract.
+type snSearchTagsFilters struct {
+	SearchQuery string `json:"searchQuery,omitempty"`
+	CaseID      string `json:"caseId,omitempty"`
+}
+
+// snSearchTagsPayload is the Choreo POST /tags/search request body.
+type snSearchTagsPayload struct {
+	Filters snSearchTagsFilters `json:"filters"`
+	Limit   int                 `json:"limit,omitempty"`
+}
+
+// snSearchTagsResponse mirrors the Choreo POST /tags/search response, and the shape of the
 // case-scoped GET /cases/{id}/tags response consumed by listCaseTags below.
 type snSearchTagsResponse struct {
 	Tags []snTag `json:"tags"`
@@ -2708,22 +2721,21 @@ func (s *snCaseService) listCaseTags(ctx context.Context, caseID string) ([]doma
 // FE autocomplete when attaching a tag to a case. SN's tagging is the generic platform label
 // mechanism (table-agnostic, not a case column), backed by the sys_label table (optionally
 // scoped to labels used against reference_table="sn_customerservice_case" label_entry rows).
-func (s *snCaseService) SearchTags(ctx context.Context, query string, limit int) ([]domain.Tag, error) {
+func (s *snCaseService) SearchTags(ctx context.Context, req domain.SearchTagsRequest) ([]domain.Tag, error) {
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return nil, err
+	}
+
 	token := middleware.UserIDTokenFromContext(ctx)
 
-	q := url.Values{}
-	if query != "" {
-		q.Set("q", query)
+	payload := snSearchTagsPayload{
+		Filters: snSearchTagsFilters{SearchQuery: req.Filters.SearchQuery},
 	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/tags/search"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
+	if req.Limit > 0 {
+		payload.Limit = req.Limit
 	}
 
-	raw, err := s.client.Get(ctx, path, token)
+	raw, err := s.client.Post(ctx, "/tags/search", token, payload)
 	if err != nil {
 		return nil, err
 	}
