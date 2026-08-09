@@ -366,6 +366,17 @@ function numberSubjectLabel(item: WidgetItem): string {
   );
 }
 
+/** Shared case-detail row link, used by every resourceType whose rows are
+ * case rows (`case` and the four case-`type` resourceTypes below, all of
+ * which read from `/cases/search` and return the same row shape). Row
+ * navigation in a `columns`-configured list goes through `detailHref` and
+ * nothing else (see `GenericColumnList`), so a case-row resource without
+ * this has rows that cannot be opened. */
+function caseDetailHref(item: WidgetItem): string | undefined {
+  const id = asString(item.id);
+  return id ? `/cases/${id}` : undefined;
+}
+
 /** Shared humanized-`state` secondary label, used by every resource whose
  * response item carries a `state` field (case, change_request, problem —
  * NOT incident, which has no state field and uses `priority` instead). */
@@ -387,7 +398,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Briefcase,
     iconColor: "primary",
     previewSlug: "cases",
-    detailHref: (item) => (asString(item.id) ? `/cases/${asString(item.id)}` : undefined),
+    detailHref: caseDetailHref,
   },
   // service_request / security_report_analysis / announcement / engagement:
   // additional values of the case-search "type" enum (see `BeCaseType` /
@@ -401,6 +412,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   service_request: {
     searchEndpoint: "/cases/search",
     itemsKey: "cases",
+    detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
     buildHref: (filters) =>
@@ -418,6 +430,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   security_report_analysis: {
     searchEndpoint: "/cases/search",
     itemsKey: "cases",
+    detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
     buildHref: (filters) =>
@@ -435,6 +448,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   announcement: {
     searchEndpoint: "/cases/search",
     itemsKey: "cases",
+    detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
     // CsmAnnouncementsPage keeps its own filters in local component state,
@@ -449,6 +463,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   engagement: {
     searchEndpoint: "/cases/search",
     itemsKey: "cases",
+    detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
     buildHref: (filters) => caseTypeListHref("/engagements", filters),
