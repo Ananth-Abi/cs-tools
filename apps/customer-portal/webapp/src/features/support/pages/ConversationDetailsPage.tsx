@@ -702,6 +702,7 @@ export default function ConversationDetailsPage(): JSX.Element {
             // loaded for this page, so this costs no extra request.
             accountName: projectDetails?.account?.name || undefined,
             projectName: projectDetails?.name || undefined,
+            conversationName: summary?.chatNumber || undefined,
             ...(tags ? { tags } : {}),
           }),
         )
@@ -723,6 +724,7 @@ export default function ConversationDetailsPage(): JSX.Element {
       projectId,
       projectDetails?.account?.name,
       projectDetails?.name,
+      summary?.chatNumber,
       sendUserMessage,
     ],
   );
