@@ -135,7 +135,7 @@ func parseSNDateTime(ctx context.Context, callSite, field, value string) (time.T
 	}
 	if alt, altErr := time.Parse(snAltCreatedOnLayout, value); altErr == nil {
 		slog.WarnContext(ctx, "sn date field in alternate MM-DD-YYYY format, applied fallback parse",
-			"callSite", callSite, "field", field, "value", value)
+			"callSite", callSite, "field", field)
 		return alt, nil
 	}
 	return time.Time{}, err
