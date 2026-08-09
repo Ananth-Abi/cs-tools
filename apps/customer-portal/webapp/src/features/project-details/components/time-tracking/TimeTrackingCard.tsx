@@ -33,6 +33,7 @@ export default function TimeTrackingCard({
 
   const caseNumber = caseData?.number?.trim() || "--";
   const caseName = caseData?.name?.trim() || "--";
+  const createdBy = caseData?.createdBy?.trim();
 
   const totalTimeDisplay = formatMinutesAsHrMin(totalTime);
 
@@ -66,6 +67,11 @@ export default function TimeTrackingCard({
           <Typography variant="body2" color="text.primary" sx={{ mb: 0.5 }}>
             {caseName}
           </Typography>
+          {createdBy && (
+            <Typography variant="caption" color="text.secondary">
+              Reported by {createdBy}
+            </Typography>
+          )}
         </Box>
         <Box sx={{ textAlign: "right", flexShrink: 0 }}>
           <Typography
