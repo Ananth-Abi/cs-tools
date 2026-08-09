@@ -3,3 +3,10 @@ module github.com/wso2-open-operations/cs-tools/integrations/csm-notification-se
 go 1.26.0
 
 require golang.org/x/oauth2 v0.27.0
+
+require github.com/segmentio/kafka-go v0.4.51
+
+require (
+	github.com/klauspost/compress v1.18.7 // indirect
+	github.com/pierrec/lz4/v4 v4.1.26 // indirect
+)
