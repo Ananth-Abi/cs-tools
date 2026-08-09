@@ -375,10 +375,14 @@ type snCaseFilters struct {
 	InternalID                string   `json:"internalId,omitempty"`
 	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses,omitempty"`
 	// ProjectTypeNames carries project-type NAMES (e.g. "Subscription"), not
-	// sys_ids: CaseUtils.searchCases matches project.u_project_type.u_name. The
-	// wire key stays "projectTypeIds" because that is the field name the SN
-	// scripted API reads.
-	ProjectTypeNames     []string `json:"projectTypeIds,omitempty"`
+	// sys_ids: CaseUtils.searchCases matches project.u_project_type.u_name.
+	// It goes out under its own key, "projectTypes", rather than reusing the
+	// old id-based "projectTypeIds": that key is typed as a 32-hex-character
+	// sys_id array in the Ballerina contract, so a name sent through it is
+	// rejected outright by request validation. "projectTypeIds" has no
+	// remaining producer or consumer on either portal and is being retired
+	// from the contract alongside this change.
+	ProjectTypeNames     []string `json:"projectTypes,omitempty"`
 	IntegrationCsTeamIDs []string `json:"integrationCsTeamIds,omitempty"`
 	Unassigned           bool     `json:"unassigned,omitempty"`
 	ResolutionNotesEmpty bool     `json:"resolutionNotesEmpty,omitempty"`

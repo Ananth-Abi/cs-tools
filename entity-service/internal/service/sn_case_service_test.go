@@ -1121,6 +1121,57 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 	}
 }
 
+// TestSNCaseService_SearchCases_ProjectTypeGoesOutAsNamesOnItsOwnKey pins the
+// projectType filter's wire form against the raw request body. The values are
+// readable project-type names and must travel untouched -- no id validation,
+// no id conversion -- under "projectTypes". They must not go out under the
+// retired id-based key: that one is declared as a fixed-width hex id array
+// upstream, so a name sent through it fails request validation outright.
+func TestSNCaseService_SearchCases_ProjectTypeGoesOutAsNamesOnItsOwnKey(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "projectType", Op: "in", Values: []string{"Subscription", "Free Trial"}},
+			},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope struct {
+		Filters map[string]json.RawMessage `json:"filters"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		t.Fatalf("decode request body: %v; raw: %s", err, rawBody)
+	}
+	got, ok := envelope.Filters["projectTypes"]
+	if !ok {
+		t.Fatalf("filters has no \"projectTypes\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	if string(got) != `["Subscription","Free Trial"]` {
+		t.Fatalf("projectTypes = %s, want the names passed through unchanged", got)
+	}
+	if _, ok := envelope.Filters["projectTypeIds"]; ok {
+		t.Fatal("filters still carries the retired id-based project-type key")
+	}
+}
+
 // TestSNCaseService_SearchCases_StateNotInTranslatesToExcludeStateKeys pins
 // both halves of the state notIn filter's wire form: the key name and the
 // value representation. Both matter because the backing data source drops a
