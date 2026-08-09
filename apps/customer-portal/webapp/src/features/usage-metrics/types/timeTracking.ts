@@ -86,7 +86,10 @@ export type CaseTimeCardCaseRef = {
   number: string;
   name: string;
   updatedOn: string;
-  project: { id: string; label: string };
+  createdOn?: string | null;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  project: { id: string; label: string } | null;
 };
 
 // Billable / non-billable breakdown in a CaseTimeCard.
