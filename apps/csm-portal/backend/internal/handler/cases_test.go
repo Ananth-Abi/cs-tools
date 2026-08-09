@@ -257,9 +257,12 @@ func TestCreateCaseComment(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
-	// user-123 is the UserID set by withUser (see helpers_test.go), so this fixture
-	// represents the requesting user being the case's assigned engineer.
-	const ongoingCase = `{"state":"work_in_progress","workState":"ongoing","assignedEngineer":{"id":"user-123"}}`
+	// testPlatformUserID is the id GET /users/me resolves for the requesting
+	// user (see helpers_test.go), so this fixture represents that user being
+	// the case's assigned engineer. Note it is NOT testUser.UserID: assignee
+	// ids live in the platform's id space, the token claim in the identity
+	// provider's, and the guard must compare within the former.
+	const ongoingCase = `{"state":"work_in_progress","workState":"ongoing","assignedEngineer":{"id":"` + testPlatformUserID + `"}}`
 
 	t.Run("rejects comment when state is not work_in_progress", func(t *testing.T) {
 		for _, state := range []string{"open", "waiting_on_wso2", "closed"} {
@@ -341,10 +344,20 @@ func TestCreateCaseComment(t *testing.T) {
 		assertErrorMessage(t, w, ErrMsgCommentNotOwnCase)
 	})
 
+	// Regression guard for the ownership check comparing two unrelated id
+	// spaces. The assignee id on a case is a platform user record id; the
+	// caller's identity on the request is the identity provider's user id.
+	// Comparing them denied everyone, the assignee included. The fixtures below
+	// deliberately keep the two values distinct so that bug cannot come back.
 	t.Run("allows public comment when requester is the assigned engineer", func(t *testing.T) {
+		var getUserMeCalls int
 		client := &mockEntityCaseClient{
 			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
 				return []byte(ongoingCase), nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				getUserMeCalls++
+				return []byte(`{"id":"` + testPlatformUserID + `","email":"agent@example.com"}`), nil
 			},
 			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
 				return []byte(`{"id":"comment-1"}`), nil
@@ -356,6 +369,105 @@ func TestCreateCaseComment(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.CreateCaseComment(w, r)
 		assertStatus(t, w, http.StatusCreated)
+		if getUserMeCalls != 1 {
+			t.Errorf("GetUserMe calls = %d, want 1: the caller's own id must be resolved, once", getUserMeCalls)
+		}
+	})
+
+	t.Run("rejects public comment when the assignee id equals the token user id", func(t *testing.T) {
+		// The identity provider's user id must never satisfy the ownership
+		// check: a case whose assignee id happens to hold that value is not
+		// assigned to the caller.
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"state":"work_in_progress","workState":"ongoing","assignedEngineer":{"id":"` + testUser.UserID + `"}}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
+		r.SetPathValue("id", "case-1")
+		w := httptest.NewRecorder()
+		h.CreateCaseComment(w, r)
+		assertStatus(t, w, http.StatusForbidden)
+		assertErrorMessage(t, w, ErrMsgCommentNotOwnCase)
+	})
+
+	t.Run("fails closed when the caller's own id cannot be resolved", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			fn   func(context.Context) ([]byte, error)
+		}{
+			{"lookup error", func(context.Context) ([]byte, error) { return nil, errors.New("entity unavailable") }},
+			{"unparseable response", func(context.Context) ([]byte, error) { return []byte(`{not json`), nil }},
+			{"empty id", func(context.Context) ([]byte, error) { return []byte(`{"id":""}`), nil }},
+		} {
+			tc := tc
+			t.Run(tc.name, func(t *testing.T) {
+				var commentCreated bool
+				client := &mockEntityCaseClient{
+					getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+						return []byte(ongoingCase), nil
+					},
+					getUserMeFn: tc.fn,
+					createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+						commentCreated = true
+						return []byte(`{"id":"comment-1"}`), nil
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
+				r.SetPathValue("id", "case-1")
+				w := httptest.NewRecorder()
+				h.CreateCaseComment(w, r)
+				assertStatus(t, w, http.StatusInternalServerError)
+				assertErrorMessage(t, w, ErrMsgInternal)
+				if commentCreated {
+					t.Error("comment was created despite the caller's identity being unresolvable")
+				}
+			})
+		}
+	})
+
+	t.Run("does not resolve the caller's id for a work_note", func(t *testing.T) {
+		// Work notes are internal-only and exempt from the ownership guard, so
+		// they must not pay the extra lookup either.
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"state":"work_in_progress"}`), nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				t.Error("GetUserMe must not be called for a work note")
+				return nil, errors.New("unexpected call")
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(`{"type":"work_note","content":"internal note"}`)))
+		r.SetPathValue("id", "case-1")
+		w := httptest.NewRecorder()
+		h.CreateCaseComment(w, r)
+		assertStatus(t, w, http.StatusCreated)
+	})
+
+	t.Run("does not resolve the caller's id when the state gate already rejects", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"state":"work_in_progress","workState":"paused","assignedEngineer":{"id":"` + testPlatformUserID + `"}}`), nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				t.Error("GetUserMe must not be called once the state gate has rejected the request")
+				return nil, errors.New("unexpected call")
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
+		r.SetPathValue("id", "case-1")
+		w := httptest.NewRecorder()
+		h.CreateCaseComment(w, r)
+		assertStatus(t, w, http.StatusConflict)
+		assertErrorMessage(t, w, ErrMsgCommentNotAllowed)
 	})
 
 	t.Run("allows work_note when case is not closed", func(t *testing.T) {

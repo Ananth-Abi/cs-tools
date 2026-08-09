@@ -89,6 +89,10 @@ type entityCaseClient interface {
 	AddCaseTag(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	RemoveCaseTag(ctx context.Context, caseID, tagID string) ([]byte, error)
 	SearchTags(ctx context.Context, query string, limit int) ([]byte, error)
+	// GetUserMe resolves the caller's own platform user record — the same
+	// call that backs GET /users/me. Needed by the public-comment ownership
+	// guard; see CaseHandler.resolveCurrentUserID.
+	GetUserMe(ctx context.Context) ([]byte, error)
 }
 
 // CaseHandler handles HTTP requests for case operations, delegating to the
@@ -100,6 +104,40 @@ type CaseHandler struct {
 // NewCaseHandler creates a CaseHandler backed by the given entity client.
 func NewCaseHandler(entity entityCaseClient) *CaseHandler {
 	return &CaseHandler{entity: entity}
+}
+
+// resolveCurrentUserID returns the caller's platform user id — the id
+// GET /users/me resolves via the entity service — for comparing against a
+// platform record's own user references (e.g. a case's assigned engineer).
+//
+// This is deliberately NOT user.UserID from the JWT: that claim is whatever
+// identity value the gateway/identity provider embeds, an identifier from a
+// completely different space than the platform's own user record id. The two
+// are never equal, so comparing them always fails. The dashboard
+// "__current_user__" placeholder had exactly this bug and was fixed the same
+// way, by resolving the caller through GET /users/me instead of trusting the
+// raw claim.
+//
+// Returns an empty id when the lookup fails or yields nothing, so callers
+// gating on it fail closed rather than falling back to an id that can never
+// match.
+func (h *CaseHandler) resolveCurrentUserID(r *http.Request, user *middleware.UserInfo) string {
+	raw, err := h.entity.GetUserMe(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetUserMe failed while resolving the caller's platform user id", "userID", user.UserID, "err", err)
+		return ""
+	}
+	var me struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &me); err != nil {
+		slog.ErrorContext(r.Context(), "entity GetUserMe: parse response failed while resolving the caller's platform user id", "userID", user.UserID, "err", err)
+		return ""
+	}
+	if me.ID == "" {
+		slog.ErrorContext(r.Context(), "entity GetUserMe returned an empty id while resolving the caller's platform user id", "userID", user.UserID)
+	}
+	return me.ID
 }
 
 // maxRequestBodyBytes caps incoming request bodies at 1 MiB to prevent memory DoS.
@@ -245,7 +283,20 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusConflict, ErrMsgCommentNotAllowed)
 			return
 		}
-		if currentCase.AssignedEngineer == nil || currentCase.AssignedEngineer.ID == nil || *currentCase.AssignedEngineer.ID != user.UserID {
+		// Ownership check. assignedEngineer.id is a platform user record id, so
+		// it can only be compared against the caller's own platform id — never
+		// against the identity provider's user id on the JWT. Resolved here,
+		// after the state gate, so the extra lookup is only paid on a request
+		// that would otherwise be accepted.
+		currentUserID := h.resolveCurrentUserID(r, user)
+		if currentUserID == "" {
+			// The caller's identity could not be established, so ownership
+			// cannot be decided either way: fail closed, but as a server-side
+			// failure rather than a misleading "you are not the assignee".
+			writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+			return
+		}
+		if currentCase.AssignedEngineer == nil || currentCase.AssignedEngineer.ID == nil || *currentCase.AssignedEngineer.ID != currentUserID {
 			writeError(w, http.StatusForbidden, ErrMsgCommentNotOwnCase)
 			return
 		}

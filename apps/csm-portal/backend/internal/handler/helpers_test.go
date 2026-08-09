@@ -29,12 +29,21 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
 
-// testUser is the authenticated user injected into request contexts.
+// testUser is the authenticated user injected into request contexts. UserID is
+// the identity provider's user id carried on the gateway-validated token — it
+// is NOT the platform's own user record id (see testPlatformUserID).
 var testUser = &middleware.UserInfo{
 	Email:  "agent@example.com",
-	UserID: "user-123",
+	UserID: "f2d9bf5b-7067-43dc-8578-802c8623af5d",
 	Groups: []string{"csm-agents"},
 }
+
+// testPlatformUserID is the id GET /users/me resolves for testUser: the
+// platform's own user record id, from a different id space than
+// testUser.UserID. Any check comparing a platform record's user reference
+// against the caller must use this one; the two values are deliberately kept
+// distinct here so a regression back to the token claim fails the tests.
+const testPlatformUserID = "94a1b01b-1b3c-f050-cb68-98aebd4bcb27"
 
 // withUser returns r with testUser stored in its context.
 func withUser(r *http.Request) *http.Request {
@@ -105,6 +114,17 @@ type mockEntityCaseClient struct {
 	addCaseTagFn               func(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	removeCaseTagFn            func(ctx context.Context, caseID, tagID string) ([]byte, error)
 	searchTagsFn               func(ctx context.Context, query string, limit int) ([]byte, error)
+	getUserMeFn                func(ctx context.Context) ([]byte, error)
+}
+
+// GetUserMe defaults to the platform user record for testUser: note the id is
+// deliberately NOT testUser.UserID, mirroring production where the identity
+// provider's user id and the platform's own record id are unrelated values.
+func (m *mockEntityCaseClient) GetUserMe(ctx context.Context) ([]byte, error) {
+	if m.getUserMeFn != nil {
+		return m.getUserMeFn(ctx)
+	}
+	return []byte(`{"id":"` + testPlatformUserID + `","email":"` + testUser.Email + `"}`), nil
 }
 
 func (m *mockEntityCaseClient) CreateCase(ctx context.Context, body []byte) ([]byte, error) {
