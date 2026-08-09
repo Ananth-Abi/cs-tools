@@ -32,10 +32,16 @@ vi.mock("@api/backend/client", () => ({
 vi.mock("@config/apiConfig", () => ({
   apiConfig: { backendUrl: "https://example.test" },
 }));
+const SIGNED_IN_USER_ID = "11111111-aaaa-bbbb-cccc-000000000001";
+// Mutable so a test can reproduce the window before `GET /users/me` resolves,
+// which is a real window: CurrentUserProvider does not gate its children on
+// that fetch. Reset to the signed-in user in `beforeEach`.
+let mockCurrentUserId: string | undefined = SIGNED_IN_USER_ID;
+
 vi.mock("@context/current-user/CurrentUserContext", () => ({
   useCurrentUser: () => ({
-    user: { id: "11111111-aaaa-bbbb-cccc-000000000001" },
-    isLoading: false,
+    user: mockCurrentUserId === undefined ? undefined : { id: mockCurrentUserId },
+    isLoading: mockCurrentUserId === undefined,
     isError: false,
   }),
 }));
@@ -149,6 +155,7 @@ function renderWithRoutes(ui: ReactNode, destinationPath: string) {
 describe("DashboardWidgetTile", () => {
   beforeEach(() => {
     postMock.mockReset();
+    mockCurrentUserId = SIGNED_IN_USER_ID;
   });
 
   it("renders a skeleton while its own count is in flight", () => {
@@ -202,6 +209,59 @@ describe("DashboardWidgetTile", () => {
     await waitFor(() =>
       expect(screen.getByText("Could not load this widget.")).toBeInTheDocument(),
     );
+  });
+
+  it("issues no search at all while the signed-in user's profile is still loading, rather than one without the user filter", async () => {
+    mockCurrentUserId = undefined;
+    postMock.mockResolvedValue({ total: 999, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    const { container } = renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_cases_count"
+        displayName="My Cases"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [{ field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] }],
+        }}
+      />,
+    );
+
+    // The regression this guards: the placeholder used to be dropped while
+    // the profile loaded, leaving an unfiltered /cases/search that painted
+    // every engineer's case count into a tile labelled "My Cases".
+    await waitFor(() =>
+      expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(1),
+    );
+    expect(postMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("999")).not.toBeInTheDocument();
+  });
+
+  it("keeps a mixed user filter's literal values while the profile is still loading", async () => {
+    mockCurrentUserId = undefined;
+    postMock.mockResolvedValue({ total: 0, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="team_and_me"
+        displayName="Team and me"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [
+            {
+              field: "assignedUserId",
+              op: "in",
+              values: ["22222222-bbbb-cccc-dddd-000000000002", CURRENT_USER_PLACEHOLDER],
+            },
+          ],
+        }}
+      />,
+    );
+
+    // Deferred, so nothing goes out; the point of the assertion is that the
+    // literal co-value is not discarded on the way to that decision.
+    expect(postMock).not.toHaveBeenCalled();
   });
 
   it("resolves the __current_user__ filter placeholder with the signed-in user's own id before firing its /cases/search call", async () => {

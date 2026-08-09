@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CURRENT_USER_PLACEHOLDER,
+  hasCurrentUserPlaceholder,
   resolveCurrentUserPlaceholder,
 } from "./currentUserFilterPlaceholder";
 
@@ -42,7 +43,11 @@ describe("resolveCurrentUserPlaceholder", () => {
       });
     });
 
-    it("drops the entry entirely when no signed-in user id is available yet", () => {
+    // Fails CLOSED: dropping the assignedUserId entry here would leave a
+    // widget filtered only by state, i.e. every engineer's cases painted into
+    // a tile labelled as the viewer's own. The caller is expected to notice
+    // via hasCurrentUserPlaceholder and hold the request instead.
+    it("leaves the filters untouched when no signed-in user id is available yet", () => {
       const filters = {
         filters: [
           { field: "state", op: "in", values: ["open"] },
@@ -50,11 +55,25 @@ describe("resolveCurrentUserPlaceholder", () => {
         ],
       };
 
-      const resolved = resolveCurrentUserPlaceholder(filters, undefined);
+      expect(resolveCurrentUserPlaceholder(filters, undefined)).toBe(filters);
+    });
 
-      expect(resolved).toEqual({
-        filters: [{ field: "state", op: "in", values: ["open"] }],
-      });
+    it("keeps the literal values of a mixed filter when no signed-in user id is available yet", () => {
+      const filters = {
+        filters: [
+          {
+            field: "assignedUserId",
+            op: "in",
+            values: ["some-literal-user-id", CURRENT_USER_PLACEHOLDER],
+          },
+        ],
+      };
+
+      const resolved = resolveCurrentUserPlaceholder(filters, undefined) as {
+        filters: { values: string[] }[];
+      };
+
+      expect(resolved.filters[0].values).toContain("some-literal-user-id");
     });
 
     it("only substitutes the placeholder entry within a values array, leaving other literal values alone", () => {
@@ -104,20 +123,16 @@ describe("resolveCurrentUserPlaceholder", () => {
       expect(resolved).toEqual({ assignedUserIds: [CURRENT_USER_ID], states: ["open"] });
     });
 
-    it("drops the placeholder from a flat string-array field, dropping the whole key if the array becomes empty", () => {
+    it("leaves a flat string-array field untouched when unresolved, rather than dropping the key", () => {
       const filters = { assignedUserIds: [CURRENT_USER_PLACEHOLDER], states: ["open"] };
 
-      const resolved = resolveCurrentUserPlaceholder(filters, undefined);
-
-      expect(resolved).toEqual({ states: ["open"] });
+      expect(resolveCurrentUserPlaceholder(filters, undefined)).toBe(filters);
     });
 
-    it("drops only the placeholder entry from a flat array carrying other literal values too", () => {
+    it("keeps the literal values of a mixed flat array when unresolved", () => {
       const filters = { assignedUserIds: ["some-literal-user-id", CURRENT_USER_PLACEHOLDER] };
 
-      const resolved = resolveCurrentUserPlaceholder(filters, undefined);
-
-      expect(resolved).toEqual({ assignedUserIds: ["some-literal-user-id"] });
+      expect(resolveCurrentUserPlaceholder(filters, undefined)).toBe(filters);
     });
 
     it("substitutes a bare placeholder string value directly (not nested in an array)", () => {
@@ -128,10 +143,10 @@ describe("resolveCurrentUserPlaceholder", () => {
       });
     });
 
-    it("drops the key entirely for a bare placeholder string value when unresolved", () => {
+    it("keeps a bare placeholder string value when unresolved, rather than dropping the key", () => {
       const filters = { createdBy: CURRENT_USER_PLACEHOLDER, states: ["open"] };
 
-      expect(resolveCurrentUserPlaceholder(filters, undefined)).toEqual({ states: ["open"] });
+      expect(resolveCurrentUserPlaceholder(filters, undefined)).toBe(filters);
     });
 
     it("returns filters unchanged (same reference) when no field carries the placeholder", () => {
@@ -139,5 +154,40 @@ describe("resolveCurrentUserPlaceholder", () => {
 
       expect(resolveCurrentUserPlaceholder(filters, CURRENT_USER_ID)).toBe(filters);
     });
+  });
+});
+
+describe("hasCurrentUserPlaceholder", () => {
+  it("detects the placeholder in the case-search DSL shape", () => {
+    expect(
+      hasCurrentUserPlaceholder({
+        filters: [
+          { field: "state", op: "in", values: ["open"] },
+          { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("detects the placeholder in a flat array field and in a bare string field", () => {
+    expect(hasCurrentUserPlaceholder({ assignedUserIds: [CURRENT_USER_PLACEHOLDER] })).toBe(true);
+    expect(hasCurrentUserPlaceholder({ createdBy: CURRENT_USER_PLACEHOLDER })).toBe(true);
+  });
+
+  it("is false once the placeholder has been substituted", () => {
+    const filters = {
+      filters: [{ field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] }],
+    };
+
+    expect(hasCurrentUserPlaceholder(resolveCurrentUserPlaceholder(filters, CURRENT_USER_ID))).toBe(
+      false,
+    );
+  });
+
+  it("is false for filters that never carried the placeholder", () => {
+    expect(hasCurrentUserPlaceholder({ states: ["open"] })).toBe(false);
+    expect(
+      hasCurrentUserPlaceholder({ filters: [{ field: "state", op: "in", values: ["open"] }] }),
+    ).toBe(false);
   });
 });

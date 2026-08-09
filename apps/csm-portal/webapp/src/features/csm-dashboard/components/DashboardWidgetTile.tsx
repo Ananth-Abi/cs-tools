@@ -33,7 +33,10 @@ import GenericColumnList from "@features/csm-dashboard/components/GenericColumnL
 import { buildWidgetPreviewHref } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 import { mergeWidgetFilters } from "@features/csm-dashboard/utils/widgetFilterMerge";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
-import { resolveCurrentUserPlaceholder } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import {
+  hasCurrentUserPlaceholder,
+  resolveCurrentUserPlaceholder,
+} from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 import { resolveWidgetText } from "@features/csm-dashboard/utils/widgetTextPlaceholder";
 import DashboardPieChart from "@features/csm-dashboard/components/DashboardPieChart";
 import DashboardBarChart from "@features/csm-dashboard/components/DashboardBarChart";
@@ -149,7 +152,7 @@ export default function DashboardWidgetTile({
   // slice) — skip this one's own network call rather than wasting it, but
   // still call the hook unconditionally (rules of hooks; a widget's shape
   // never changes across this component's lifetime).
-  const { data, isLoading, isError } = useWidgetData(
+  const { data, isLoading: isWidgetDataLoading, isError } = useWidgetData(
     widgetId,
     resourceType,
     filters,
@@ -169,6 +172,15 @@ export default function DashboardWidgetTile({
     selectedTeamGroupId,
     currentUserId,
   );
+  // True while this widget carries a `__current_user__` filter and the
+  // signed-in user's profile hasn't loaded yet. `useWidgetData`/
+  // `useWidgetPieData` hold their requests in that window (see
+  // `currentUserFilterPlaceholder.ts` — a user-scoped filter must never be
+  // dropped, which would widen the widget to every user's records), so this
+  // tile must present the wait as loading rather than paint the `0` a
+  // deferred query's absent data would otherwise resolve to.
+  const awaitingCurrentUser = currentUserId === undefined && hasCurrentUserPlaceholder(filters);
+  const isLoading = isWidgetDataLoading || awaitingCurrentUser;
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   // Thousands separators for shape "count"'s big number -- used both in the
   // visible Typography and the tile's aria-label, so both stay in sync.

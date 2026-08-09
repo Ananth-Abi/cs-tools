@@ -21,7 +21,10 @@ import type { BeWidgetResourceType, BeWidgetShape } from "@api/backend/types";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
 import { resolveRelativeDateFilters } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
-import { resolveCurrentUserPlaceholder } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import {
+  hasCurrentUserPlaceholder,
+  resolveCurrentUserPlaceholder,
+} from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 
 /** Default number of rows fetched for a `shape: "list"` widget when the
  * template doesn't set its own `listLimit`. */
@@ -90,6 +93,13 @@ export function useWidgetData(
     currentUserId,
   );
   const effectiveSortBy = shape === "list" ? sortBy : undefined;
+  // A `__current_user__` placeholder that survived resolution means the
+  // signed-in user's profile hasn't landed yet. Sending these filters would
+  // either 400 on the non-UUID value or — before this resolver started
+  // failing closed — silently widen a user-scoped widget to every user's
+  // records. Hold the request instead; the query re-enables itself on the
+  // render after `/users/me` resolves.
+  const awaitingCurrentUser = hasCurrentUserPlaceholder(resolvedFilters);
 
   return useQuery<WidgetData, Error>({
     queryKey: [
@@ -101,7 +111,7 @@ export function useWidgetData(
       effectiveOffset,
       effectiveSortBy,
     ],
-    enabled,
+    enabled: enabled && !awaitingCurrentUser,
     queryFn: async (): Promise<WidgetData> => {
       if (!config) {
         // A widget's resourceType came back from the backend (now a

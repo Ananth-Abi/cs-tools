@@ -201,10 +201,10 @@ describe("useWidgetPieData", () => {
     });
   });
 
-  it("drops the assignedUserId entry rather than sending the literal __current_user__ placeholder when the signed-in user isn't known yet", async () => {
+  it("issues no slice search at all while the signed-in user isn't known yet, rather than one without the assignedUserId entry", async () => {
     postMock.mockResolvedValue({ total: 1 });
 
-    renderHook(
+    const { result } = renderHook(
       () =>
         useWidgetPieData(
           "widget-1",
@@ -226,14 +226,12 @@ describe("useWidgetPieData", () => {
       { wrapper },
     );
 
-    await waitFor(() => expect(postMock).toHaveBeenCalled());
-
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [{ field: "state", op: "in", values: ["open"] }],
-      },
-      pagination: { offset: 0, limit: 1 },
-    });
+    // Dropping the entry would have searched on `state: open` alone — every
+    // engineer's open cases, in a slice labelled "Assigned to me". Hold the
+    // request until the profile lands instead, and report the wait as
+    // loading so the chart does not paint an empty wedge in the meantime.
+    await waitFor(() => expect(result.current.isLoading).toBe(true));
+    expect(postMock).not.toHaveBeenCalled();
   });
 
   it("surfaces isError when any one slice's search fails", async () => {

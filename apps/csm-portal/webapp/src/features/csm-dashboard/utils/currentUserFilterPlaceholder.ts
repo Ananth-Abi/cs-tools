@@ -54,19 +54,36 @@ export const CURRENT_USER_PLACEHOLDER = "__current_user__";
  * only the one field name this app's widget configs happen to use today.
  *
  * When `currentUserId` is undefined (the signed-in user's profile hasn't
- * loaded yet), the placeholder is DROPPED rather than sent to the backend
- * literally — same fail-open philosophy as `resolveTeamPlaceholder`: the
- * backend would either reject a non-UUID value with a 400 or, worse, silently
- * match zero rows (a filter that reads as "nothing to see here" rather than
- * "still loading"), where dropping the condition just widens the query back
- * to unfiltered — a visibly-too-broad result a viewer notices, and one that
- * self-corrects on the next render once the user profile loads (the
- * substitution is applied fresh on every call, not cached).
+ * loaded yet — `CurrentUserProvider` does NOT gate its children on that
+ * fetch, so every widget's first render happens while `/users/me` is still
+ * in flight), the filters are returned UNCHANGED, placeholder and all.
+ *
+ * This is deliberately not the fail-open drop `resolveTeamPlaceholder` uses.
+ * Dropping the condition widens the query: a widget whose only filter is
+ * `assignedUserId in ["__current_user__"]` would, for the width of that
+ * fetch, issue a completely unfiltered search and paint every engineer's
+ * cases into a tile labelled as the viewer's own. Widening a user-scoped
+ * filter is the one failure mode this resolver must not have, so it fails
+ * closed instead — and returning the input untouched also preserves the
+ * literal values of a mixed `["__current_user__", "<some uuid>"]` filter,
+ * which the old per-entry drop discarded along with the placeholder.
+ *
+ * Leaving the placeholder in is a backstop, not the intended path: callers
+ * must not send it. {@link hasCurrentUserPlaceholder} lets a caller detect
+ * this state and defer the request until the profile lands — which is what
+ * `useWidgetData`/`useWidgetPieData` do, so nothing is issued in the
+ * meantime and the tile stays in its loading state. `widgetPreviewUrl.ts`'s
+ * `resolveCurrentUserSentinels` already follows this same "return unchanged,
+ * caller holds off" convention for its own `@me` sentinel. Should a request
+ * still go out (a caller that skipped the check), the backend rejects the
+ * non-UUID value with a 400 and the tile shows its error state — visibly
+ * broken, but never broader than the viewer is entitled to see.
  */
 export function resolveCurrentUserPlaceholder(
   filters: Record<string, unknown>,
   currentUserId: string | undefined,
 ): Record<string, unknown> {
+  if (currentUserId === undefined) return filters;
   const fieldFilters = filters.filters;
   if (isCaseFieldFilterArray(fieldFilters)) {
     return resolveCaseFieldFilters(filters, fieldFilters, currentUserId);
@@ -74,29 +91,40 @@ export function resolveCurrentUserPlaceholder(
   return resolveFlatFilters(filters, currentUserId);
 }
 
+/**
+ * Reports whether `filters` still carries {@link CURRENT_USER_PLACEHOLDER}
+ * anywhere — in either of the two filter shapes above. True means the filters
+ * cannot be sent as they stand: the caller must hold the request until
+ * `useCurrentUser().user.id` resolves (see the fail-closed note on
+ * {@link resolveCurrentUserPlaceholder}). Cheap enough to call on every
+ * render; these objects are a handful of entries deep.
+ */
+export function hasCurrentUserPlaceholder(filters: Record<string, unknown>): boolean {
+  const fieldFilters = filters.filters;
+  if (isCaseFieldFilterArray(fieldFilters)) {
+    return fieldFilters.some((entry) => entry.values?.includes(CURRENT_USER_PLACEHOLDER) ?? false);
+  }
+  return Object.values(filters).some((value) => {
+    if (value === CURRENT_USER_PLACEHOLDER) return true;
+    return Array.isArray(value) && value.includes(CURRENT_USER_PLACEHOLDER);
+  });
+}
+
 function resolveCaseFieldFilters(
   filters: Record<string, unknown>,
   fieldFilters: WidgetCaseFieldFilterLike[],
-  currentUserId: string | undefined,
+  currentUserId: string,
 ): Record<string, unknown> {
   let changed = false;
-  const resolved: WidgetCaseFieldFilterLike[] = [];
-  for (const entry of fieldFilters) {
+  const resolved: WidgetCaseFieldFilterLike[] = fieldFilters.map((entry) => {
     const values = entry.values;
-    if (!values?.includes(CURRENT_USER_PLACEHOLDER)) {
-      resolved.push(entry);
-      continue;
-    }
+    if (!values?.includes(CURRENT_USER_PLACEHOLDER)) return entry;
     changed = true;
-    if (currentUserId === undefined) {
-      // Drop the entry entirely — see the doc comment above.
-      continue;
-    }
-    resolved.push({
+    return {
       ...entry,
       values: values.map((v) => (v === CURRENT_USER_PLACEHOLDER ? currentUserId : v)),
-    });
-  }
+    };
+  });
 
   if (!changed) return filters;
   return { ...filters, filters: resolved };
@@ -104,7 +132,7 @@ function resolveCaseFieldFilters(
 
 function resolveFlatFilters(
   filters: Record<string, unknown>,
-  currentUserId: string | undefined,
+  currentUserId: string,
 ): Record<string, unknown> {
   let changed = false;
   const resolved: Record<string, unknown> = {};
@@ -116,22 +144,12 @@ function resolveFlatFilters(
         continue;
       }
       changed = true;
-      if (currentUserId === undefined) {
-        // Drop the placeholder entry from the array (see the doc comment
-        // above); an array left empty by that drop is dropped too, rather
-        // than sent as `[]` (the backend rejects an empty values array the
-        // same way it would a literal unresolved placeholder).
-        const remaining = strings.filter((v) => v !== CURRENT_USER_PLACEHOLDER);
-        if (remaining.length > 0) resolved[key] = remaining;
-        continue;
-      }
       resolved[key] = strings.map((v) => (v === CURRENT_USER_PLACEHOLDER ? currentUserId : v));
       continue;
     }
     if (value === CURRENT_USER_PLACEHOLDER) {
       changed = true;
-      if (currentUserId !== undefined) resolved[key] = currentUserId;
-      // else: drop the key entirely — see the doc comment above.
+      resolved[key] = currentUserId;
       continue;
     }
     resolved[key] = value;
