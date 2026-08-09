@@ -279,6 +279,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseTag)
 	mux.HandleFunc("DELETE /cases/{id}/tags/{tagId}", caseHandler.RemoveCaseTag)
 	mux.HandleFunc("POST /tags/search", caseHandler.SearchTags)
+	// Deprecated: the query-parameter form of tag search, kept for one release
+	// so callers can be rolled out independently of this service. Remove it
+	// (and CaseHandler.SearchTagsQuery) once they are all on the POST.
+	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 
 	if callRequestHandler != nil {
 		mux.HandleFunc("POST /call-requests", callRequestHandler.CreateCallRequest)

@@ -242,3 +242,86 @@ func TestSearchTags_EmptyBodyIsValid(t *testing.T) {
 		t.Fatalf("expected a zero request, got %#v", stub.searchTagsReq)
 	}
 }
+
+// TestSearchTagsQuery_MatchesPostRequest is the guarantee the deprecated GET
+// alias exists for: `GET /tags/search?q=micro&limit=5` must reach the service
+// layer as the exact same domain.SearchTagsRequest as
+// `POST /tags/search {"filters":{"searchQuery":"micro"},"limit":5}`. Because the
+// upstream wire body is derived from that request and separately pinned against
+// raw bytes in the service package's tests, request equality here means the two
+// forms are byte-identical on the wire too.
+func TestSearchTagsQuery_MatchesPostRequest(t *testing.T) {
+	postStub := &stubCaseService{}
+	postReq := httptest.NewRequest(http.MethodPost, "/tags/search",
+		strings.NewReader(`{"filters":{"searchQuery":"micro"},"limit":5}`))
+	postRec := httptest.NewRecorder()
+	NewCaseHandler(postStub).SearchTags(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST: expected 200, got %d: %s", postRec.Code, postRec.Body.String())
+	}
+
+	getStub := &stubCaseService{}
+	getReq := httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=5", nil)
+	getRec := httptest.NewRecorder()
+	NewCaseHandler(getStub).SearchTagsQuery(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET: expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+
+	if !getStub.searchTagsCalled {
+		t.Fatalf("expected the GET alias to reach the service layer")
+	}
+	if getStub.searchTagsReq != postStub.searchTagsReq {
+		t.Fatalf("GET alias produced %#v, want the POST's %#v", getStub.searchTagsReq, postStub.searchTagsReq)
+	}
+	if getRec.Body.String() != postRec.Body.String() {
+		t.Fatalf("GET alias response %s, want the POST's %s", getRec.Body.String(), postRec.Body.String())
+	}
+}
+
+// TestSearchTagsQuery_NoParams keeps the "list all known tags" behaviour when q
+// and limit are both omitted.
+func TestSearchTagsQuery_NoParams(t *testing.T) {
+	stub := &stubCaseService{}
+	rec := httptest.NewRecorder()
+
+	NewCaseHandler(stub).SearchTagsQuery(rec, httptest.NewRequest(http.MethodGet, "/tags/search", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !stub.searchTagsCalled {
+		t.Fatalf("expected SearchTags to reach the service layer")
+	}
+	if (stub.searchTagsReq != domain.SearchTagsRequest{}) {
+		t.Fatalf("expected a zero request, got %#v", stub.searchTagsReq)
+	}
+}
+
+// TestSearchTagsQuery_RejectsBadLimit covers the two limit values the alias must
+// refuse: one it cannot parse, and ones outside the range the POST enforces. The
+// bounds check is shared code, so this also proves the alias runs through it.
+func TestSearchTagsQuery_RejectsBadLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		url  string
+	}{
+		{"non-numeric", "/tags/search?q=micro&limit=abc"},
+		{"negative", "/tags/search?q=micro&limit=-1"},
+		{"over max", "/tags/search?q=micro&limit=101"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubCaseService{}
+			rec := httptest.NewRecorder()
+
+			NewCaseHandler(stub).SearchTagsQuery(rec, httptest.NewRequest(http.MethodGet, tc.url, nil))
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if stub.searchTagsCalled {
+				t.Fatalf("expected the request to be rejected before the service layer")
+			}
+		})
+	}
+}

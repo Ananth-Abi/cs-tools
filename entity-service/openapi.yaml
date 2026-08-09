@@ -1089,6 +1089,58 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    get:
+      summary: Search existing case tags (deprecated query-parameter form).
+      description: |
+        Deprecated: use `POST /tags/search` instead. This alias accepts the old
+        `q`/`limit` query parameters, maps them onto the same request as the POST and
+        returns an identical response. It exists only to bridge one release so callers
+        can be rolled out independently of this service, and is removed after that.
+      operationId: searchTagsByQuery
+      deprecated: true
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >
+            Free-text query matched partially and case-insensitively against tag labels.
+            Equivalent to `filters.searchQuery` on the POST. Omit to return all known tags.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+            minimum: 0
+            maximum: 100
+          description: Maximum number of tags to return. Equivalent to `limit` on the POST.
+      responses:
+        "200":
+          description: Tags matching the query.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchTagsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Case tags are not supported by the configured data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /cases/{id}/github-issues:
     post:

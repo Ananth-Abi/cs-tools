@@ -20,6 +20,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -285,6 +286,35 @@ func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequest(w, r, &req) {
 		return
 	}
+	h.searchTags(w, r, req)
+}
+
+// SearchTagsQuery handles GET /tags/search?q={query}&limit={limit}, the
+// query-parameter form tag search used before it moved to a JSON body.
+//
+// Deprecated: use POST /tags/search instead. This alias exists only so the
+// services in front of this one can be rolled out over the following release
+// instead of having to deploy in lockstep with it; a caller still on the GET
+// would otherwise get a 405. Delete it once that release has shipped.
+func (h *CaseHandler) SearchTagsQuery(w http.ResponseWriter, r *http.Request) {
+	req := domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: r.URL.Query().Get("q")},
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must be a non-negative integer"})
+			return
+		}
+		req.Limit = parsed
+	}
+	h.searchTags(w, r, req)
+}
+
+// searchTags is the single path both /tags/search forms run through: validation,
+// the service call, and the response envelope all live here so the deprecated
+// GET alias cannot drift from the POST.
+func (h *CaseHandler) searchTags(w http.ResponseWriter, r *http.Request, req domain.SearchTagsRequest) {
 	if req.Limit < 0 {
 		writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must be a non-negative integer"})
 		return
