@@ -396,6 +396,14 @@ export default function NoveraChatPage(): JSX.Element {
   const piiGuard = usePiiGuard();
   const [resetTrigger, setResetTrigger] = useState(0);
   const [isSending, setIsSending] = useState(false);
+  // Mirrors isSending for the socket's onClose handler. The hook installs
+  // ws.onclose during connect(), so that closure captures the options object
+  // from whichever render connected — reading isSending directly there would
+  // see a stale value. A ref is always current.
+  const isSendingRef = useRef(false);
+  useEffect(() => {
+    isSendingRef.current = isSending;
+  }, [isSending]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const activeBotMessageIdRef = useRef<string | null>(null);
   const initialMessageSentRef = useRef(false);
@@ -666,6 +674,27 @@ export default function NoveraChatPage(): JSX.Element {
         isLoading: false,
         isError: true,
         text: "WebSocket connection error.",
+        thinkingSteps: [],
+        isStreaming: false,
+      }));
+      setIsSending(false);
+    },
+    // A close is not always an error — the socket can drop mid-exchange (gateway
+    // timeout, upstream reset) without onerror ever firing. Nothing else clears
+    // isSending, and both send paths are guarded by it, so leaving it set makes
+    // the composer permanently dead: the hook reconnects, isConnected flips back
+    // to true, and every later message is silently swallowed with the typing
+    // indicator still spinning. Recover only if a send was actually in flight,
+    // so an idle close does not mark a finished answer as failed.
+    onClose: () => {
+      if (!isSendingRef.current) return;
+      pendingFinalRef.current = null;
+      tokenQueueRef.current = [];
+      upsertActiveBotMessage((msg) => ({
+        ...msg,
+        isLoading: false,
+        isError: true,
+        text: "Connection lost before the answer arrived. Please try again.",
         thinkingSteps: [],
         isStreaming: false,
       }));
