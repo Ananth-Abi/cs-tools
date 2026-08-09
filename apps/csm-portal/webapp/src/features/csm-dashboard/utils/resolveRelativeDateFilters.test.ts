@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   resolveRelativeDateFilters,
   resolveRelativeDatePlaceholder,
@@ -171,15 +171,23 @@ describe("resolveRelativeDateFilters", () => {
   });
 
   it("defaults to real wall-clock time when no reference instant is passed", () => {
-    const filters = {
-      filters: [{ field: "createdOn", op: "gte", values: ["__today__"] }],
-    };
+    // The function reads `new Date()` itself and the expectation below reads
+    // it again; without a frozen clock the two reads can land on either side
+    // of local midnight and belong to different calendar days.
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    try {
+      const filters = {
+        filters: [{ field: "createdOn", op: "gte", values: ["__today__"] }],
+      };
 
-    const resolved = resolveRelativeDateFilters(filters) as {
-      filters: { values: string[] }[];
-    };
+      const resolved = resolveRelativeDateFilters(filters) as {
+        filters: { values: string[] }[];
+      };
 
-    const now = new Date();
-    expect(resolved.filters[0].values[0]).toBe(localMidnightIso(now.getFullYear(), now.getMonth(), now.getDate()));
+      expect(resolved.filters[0].values[0]).toBe(localMidnightIso(2026, 7, 15));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
