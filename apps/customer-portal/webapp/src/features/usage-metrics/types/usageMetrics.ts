@@ -169,8 +169,8 @@ export type UseSearchProjectTimeCardsParams = {
 
 export type UseGetTimeCardsStatsParams = {
   projectId: string;
-  startDate: string;
-  endDate: string;
+  startDate?: string;
+  endDate?: string;
 };
 
 export type UsageEnvironmentPanelAccent = {
