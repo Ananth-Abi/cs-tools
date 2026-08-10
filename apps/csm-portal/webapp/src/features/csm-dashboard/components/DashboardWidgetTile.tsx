@@ -18,15 +18,26 @@ import { Box, Button, Card, IconButton, Skeleton, Tooltip, Typography, alpha, us
 import { ArrowRight, Info } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, KeyboardEvent, ReactNode } from "react";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router";
-import type { BeDashboardPieSlice, BeWidgetResourceType, BeWidgetShape } from "@api/backend/types";
+import type {
+  BeDashboardPieSlice,
+  BeDashboardWidgetColumn,
+  BeWidgetResourceType,
+  BeWidgetShape,
+} from "@api/backend/types";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
 import { useWidgetPieData, type PieSliceResult } from "@features/csm-dashboard/api/useWidgetPieData";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
+import GenericColumnList from "@features/csm-dashboard/components/GenericColumnList";
 import { buildWidgetPreviewHref } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 import { mergeWidgetFilters } from "@features/csm-dashboard/utils/widgetFilterMerge";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveRelativeDateFilters } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
+import {
+  hasCurrentUserPlaceholder,
+  resolveCurrentUserPlaceholder,
+} from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 import { resolveWidgetText } from "@features/csm-dashboard/utils/widgetTextPlaceholder";
 import DashboardPieChart from "@features/csm-dashboard/components/DashboardPieChart";
 import DashboardBarChart from "@features/csm-dashboard/components/DashboardBarChart";
@@ -52,6 +63,17 @@ interface DashboardWidgetTileProps {
    * `useWidgetPieData`). Empty/absent renders an empty chart rather than
    * crashing. */
   slices?: BeDashboardPieSlice[];
+  /** Only meaningful for shape "list". When set (non-empty), this widget
+   * renders through the generic `GenericColumnList` (resolving each
+   * column's dot-path against every response item) instead of
+   * `WIDGET_LIST_RENDERERS[resourceType]`. Absent/empty is a no-op — the
+   * existing hardcoded per-resourceType renderer applies exactly as before
+   * this prop existed. */
+  columns?: BeDashboardWidgetColumn[];
+  /** Only meaningful for shape "list". Forwarded verbatim into this
+   * widget's own search request's `sortBy` (see `useWidgetData`) —
+   * opaque, like `filters`. */
+  sortBy?: Record<string, unknown>;
   /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
    * an array of every team's `groupId` in the current dashboard's family
    * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL`),
@@ -96,6 +118,8 @@ export default function DashboardWidgetTile({
   filters,
   listLimit,
   slices,
+  columns,
+  sortBy,
   selectedTeamGroupId,
   selectedTeamLabel,
 }: DashboardWidgetTileProps): JSX.Element {
@@ -103,6 +127,34 @@ export default function DashboardWidgetTile({
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useCurrentUser();
+  const currentUserId = user?.id;
+  // Resolves every client-side filter placeholder a widget's own (opaque)
+  // filters may carry — `__current_team__` (see `teamFilterPlaceholder.ts`),
+  // `__current_user__` (see `currentUserFilterPlaceholder.ts`) and the
+  // relative-date family `__today__`/`__daysAgo:N__`/... (see
+  // `resolveRelativeDateFilters.ts`) — in one pass, in the same order and by
+  // the same functions `useWidgetData`/`useWidgetPieData` use internally, so
+  // every click-through href below lands on exactly the rows this tile just
+  // counted.
+  //
+  // The relative-date resolution matters most here: it is browser-local, and
+  // the destination list page has no placeholder resolution of its own, so an
+  // unresolved `__today__` reaching it was forwarded verbatim and resolved by
+  // the backing service against UTC — the tile and the list it links to then
+  // disagreed by the offset between UTC midnight and the viewer's own, which
+  // is the whole discrepancy this widget-side resolution exists to close.
+  // Resolving here does freeze the instant into the href; that is the right
+  // trade, because everything else in these hrefs (team ids, states, the
+  // viewer's own user id) is already a snapshot of the moment of the click,
+  // and the destination's URL scheme is the cases list's own concrete filter
+  // encoding — carrying dashboard placeholder vocabulary into it would make
+  // `__today__` a value users can type into, and hand-edit out of, a shared
+  // list-page URL.
+  const resolvePlaceholders = (f: Record<string, unknown>): Record<string, unknown> =>
+    resolveCurrentUserPlaceholder(
+      resolveRelativeDateFilters(resolveTeamPlaceholder(f, selectedTeamGroupId)),
+      currentUserId,
+    );
   // Carried on every count/pie/bar click-through below so the resource's own
   // list page (which has no dashboard context of its own) can offer a Back
   // button straight to this exact dashboard — mirroring the list-shape
@@ -120,7 +172,7 @@ export default function DashboardWidgetTile({
   // slice) — skip this one's own network call rather than wasting it, but
   // still call the hook unconditionally (rules of hooks; a widget's shape
   // never changes across this component's lifetime).
-  const { data, isLoading, isError } = useWidgetData(
+  const { data, isLoading: isWidgetDataLoading, isError } = useWidgetData(
     widgetId,
     resourceType,
     filters,
@@ -129,6 +181,8 @@ export default function DashboardWidgetTile({
     0,
     shape !== "pie" && shape !== "bar",
     selectedTeamGroupId,
+    sortBy,
+    currentUserId,
   );
   const pieData = useWidgetPieData(
     widgetId,
@@ -136,7 +190,17 @@ export default function DashboardWidgetTile({
     filters,
     shape === "pie" || shape === "bar" ? (slices ?? []) : [],
     selectedTeamGroupId,
+    currentUserId,
   );
+  // True while this widget carries a `__current_user__` filter and the
+  // signed-in user's profile hasn't loaded yet. `useWidgetData`/
+  // `useWidgetPieData` hold their requests in that window (see
+  // `currentUserFilterPlaceholder.ts` — a user-scoped filter must never be
+  // dropped, which would widen the widget to every user's records), so this
+  // tile must present the wait as loading rather than paint the `0` a
+  // deferred query's absent data would otherwise resolve to.
+  const awaitingCurrentUser = currentUserId === undefined && hasCurrentUserPlaceholder(filters);
+  const isLoading = isWidgetDataLoading || awaitingCurrentUser;
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   // Thousands separators for shape "count"'s big number -- used both in the
   // visible Typography and the tile's aria-label, so both stay in sync.
@@ -159,10 +223,10 @@ export default function DashboardWidgetTile({
   }
 
   // The count-shape tile's own click-through href — resolved so a "View
-  // all" link never carries the literal `__current_team__` placeholder
-  // into the destination resource's own filters (see
-  // `teamFilterPlaceholder.ts`).
-  const href = config.buildHref(resolveTeamPlaceholder(filters, selectedTeamGroupId));
+  // all" link never carries a literal `__current_team__`/`__current_user__`
+  // placeholder into the destination resource's own filters (see
+  // `teamFilterPlaceholder.ts`/`currentUserFilterPlaceholder.ts`).
+  const href = config.buildHref(resolvePlaceholders(filters));
   const Icon = config.icon;
   const isListShape = shape === "list";
 
@@ -233,6 +297,14 @@ export default function DashboardWidgetTile({
   );
 
   if (isListShape) {
+    // A widget with `columns` configured renders through the generic,
+    // nested-path-resolving renderer instead of the hardcoded per-
+    // resourceType one — everything else about this tile (header, loading/
+    // error states, "View more") is unchanged either way. No `columns`
+    // (the common case, and every dashboard as of this field's addition) is
+    // a no-op: ListRenderer below is untouched, so existing widgets render
+    // byte-for-byte as before.
+    const hasColumns = Boolean(columns && columns.length > 0);
     const ListRenderer = WIDGET_LIST_RENDERERS[resourceType];
     return (
       <Card variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
@@ -250,7 +322,16 @@ export default function DashboardWidgetTile({
                 and the table is enforced for every resource type, so the
                 header's icon never sits flush against the table's border. */}
             <Box sx={{ mt: 1.5 }}>
-              <ListRenderer items={data?.items ?? []} isLoading={false} />
+              {hasColumns ? (
+                <GenericColumnList
+                  items={data?.items ?? []}
+                  isLoading={false}
+                  resourceType={resourceType}
+                  columns={columns ?? []}
+                />
+              ) : (
+                <ListRenderer items={data?.items ?? []} isLoading={false} />
+              )}
             </Box>
             {(data?.total ?? 0) > (listLimit ?? 4) && (
               <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 1 }}>
@@ -266,8 +347,8 @@ export default function DashboardWidgetTile({
                     // placeholder here used to get silently dropped there
                     // (teamFilterPlaceholder.ts's fail-open), returning
                     // every team's cases instead of the viewer's own.
-                    filters: resolveTeamPlaceholder(filters, selectedTeamGroupId),
-                    currentUserId: user?.id,
+                    filters: resolvePlaceholders(filters),
+                    currentUserId,
                   })}
                   size="small"
                   variant="text"
@@ -305,7 +386,7 @@ export default function DashboardWidgetTile({
     // (`pointerEvents: "auto"`) for the chart specifically, letting its own
     // click and keyboard handling work exactly as before.
     const ChartComponent = shape === "pie" ? DashboardPieChart : DashboardBarChart;
-    const tileHref = config.buildHref(resolveTeamPlaceholder(filters, selectedTeamGroupId));
+    const tileHref = config.buildHref(resolvePlaceholders(filters));
     const handleTileClick = (): void => {
       void navigate(tileHref, { state: dashboardReturnState });
     };
@@ -363,12 +444,7 @@ export default function DashboardWidgetTile({
               isError={pieData.isError}
               onSliceClick={(slice: PieSliceResult) =>
                 navigate(
-                  config.buildHref(
-                    resolveTeamPlaceholder(
-                      mergeWidgetFilters(filters, slice.query),
-                      selectedTeamGroupId,
-                    ),
-                  ),
+                  config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query))),
                   { state: dashboardReturnState },
                 )
               }

@@ -32,10 +32,16 @@ vi.mock("@api/backend/client", () => ({
 vi.mock("@config/apiConfig", () => ({
   apiConfig: { backendUrl: "https://example.test" },
 }));
+const SIGNED_IN_USER_ID = "11111111-aaaa-bbbb-cccc-000000000001";
+// Mutable so a test can reproduce the window before `GET /users/me` resolves,
+// which is a real window: CurrentUserProvider does not gate its children on
+// that fetch. Reset to the signed-in user in `beforeEach`.
+let mockCurrentUserId: string | undefined = SIGNED_IN_USER_ID;
+
 vi.mock("@context/current-user/CurrentUserContext", () => ({
   useCurrentUser: () => ({
-    user: { id: "11111111-aaaa-bbbb-cccc-000000000001" },
-    isLoading: false,
+    user: mockCurrentUserId === undefined ? undefined : { id: mockCurrentUserId },
+    isLoading: mockCurrentUserId === undefined,
     isError: false,
   }),
 }));
@@ -105,6 +111,7 @@ vi.mock("@wso2/oxygen-ui-charts-react", () => ({
 
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
 import { CURRENT_TEAM_PLACEHOLDER } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { CURRENT_USER_PLACEHOLDER } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 
 function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient({
@@ -148,6 +155,7 @@ function renderWithRoutes(ui: ReactNode, destinationPath: string) {
 describe("DashboardWidgetTile", () => {
   beforeEach(() => {
     postMock.mockReset();
+    mockCurrentUserId = SIGNED_IN_USER_ID;
   });
 
   it("renders a skeleton while its own count is in flight", () => {
@@ -201,6 +209,93 @@ describe("DashboardWidgetTile", () => {
     await waitFor(() =>
       expect(screen.getByText("Could not load this widget.")).toBeInTheDocument(),
     );
+  });
+
+  it("issues no search at all while the signed-in user's profile is still loading, rather than one without the user filter", async () => {
+    mockCurrentUserId = undefined;
+    postMock.mockResolvedValue({ total: 999, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    const { container } = renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_cases_count"
+        displayName="My Cases"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [{ field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] }],
+        }}
+      />,
+    );
+
+    // The regression this guards: the placeholder used to be dropped while
+    // the profile loaded, leaving an unfiltered /cases/search that painted
+    // every engineer's case count into a tile labelled "My Cases".
+    await waitFor(() =>
+      expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(1),
+    );
+    expect(postMock).not.toHaveBeenCalled();
+    expect(screen.queryByText("999")).not.toBeInTheDocument();
+  });
+
+  it("keeps a mixed user filter's literal values while the profile is still loading", async () => {
+    mockCurrentUserId = undefined;
+    postMock.mockResolvedValue({ total: 0, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="team_and_me"
+        displayName="Team and me"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [
+            {
+              field: "assignedUserId",
+              op: "in",
+              values: ["22222222-bbbb-cccc-dddd-000000000002", CURRENT_USER_PLACEHOLDER],
+            },
+          ],
+        }}
+      />,
+    );
+
+    // Deferred, so nothing goes out; the point of the assertion is that the
+    // literal co-value is not discarded on the way to that decision.
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("resolves the __current_user__ filter placeholder with the signed-in user's own id before firing its /cases/search call", async () => {
+    postMock.mockResolvedValue({ total: 1, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_cases_count"
+        displayName="My Cases"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [
+            { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+          ],
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("1")).toBeInTheDocument());
+    // "11111111-aaaa-bbbb-cccc-000000000001" is the mocked signed-in user's
+    // own id (see the CurrentUserContext mock above).
+    expect(postMock).toHaveBeenCalledWith("/cases/search", {
+      filters: {
+        filters: [
+          {
+            field: "assignedUserId",
+            op: "in",
+            values: ["11111111-aaaa-bbbb-cccc-000000000001"],
+          },
+        ],
+      },
+      pagination: { offset: 0, limit: 1 },
+    });
   });
 
   it("renders the same table the Cases tab uses for shape: list, capped at listLimit", async () => {
@@ -404,6 +499,159 @@ describe("DashboardWidgetTile", () => {
     expect(params.get("state")).toBe("open");
   });
 
+  it("renders through the existing hardcoded per-resourceType renderer (CasesList) when no columns are configured — byte-for-byte unaffected by the columns feature", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
+      limit: 5,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+      />,
+    );
+
+    // CasesList's own header markup ("Case ID") only appears via the
+    // hardcoded renderer — GenericColumnList never renders it, since its
+    // columns come entirely from the widget's own `columns` config.
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    expect(screen.getByText("Case ID")).toBeInTheDocument();
+  });
+
+  it("resolves the __current_user__ placeholder (raw, as the backend now sends it unresolved) to the signed-in user's own id before it reaches the 'View more' href, where it's then masked to @me", async () => {
+    postMock.mockResolvedValue({
+      total: 6,
+      cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
+      limit: 5,
+      offset: 0,
+      hasMore: true,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_cases"
+        displayName="My Cases"
+        resourceType="case"
+        shape="list"
+        filters={{
+          filters: [
+            { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+          ],
+        }}
+        listLimit={5}
+      />,
+    );
+
+    const viewMoreLink = await screen.findByRole("link", { name: /view more/i });
+    const href = viewMoreLink.getAttribute("href") ?? "";
+    expect(href).not.toContain(CURRENT_USER_PLACEHOLDER);
+    expect(href).not.toContain("11111111-aaaa-bbbb-cccc-000000000001");
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(params.get("assignedUserId")).toBe("@me");
+  });
+
+  it("renders through the generic column renderer, resolving a nested dot-path, when columns are configured", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [
+        {
+          id: "11111111-1111-1111-1111-111111111111",
+          subject: "Disk full",
+          bestCaseFixEta: "2026-08-01",
+          project: { id: "p-1", name: "Alpha", key: "ALPHA" },
+        },
+      ],
+      limit: 5,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+        columns={[
+          { path: "subject", label: "Subject" },
+          { path: "project.key", label: "Project key" },
+          { path: "bestCaseFixEta", label: "Best case ETA", format: "date" },
+        ]}
+      />,
+    );
+
+    // Column headers come from the widget's own config, not a hardcoded
+    // per-resourceType label set.
+    await waitFor(() => expect(screen.getByText("Subject")).toBeInTheDocument());
+    expect(screen.getByText("Project key")).toBeInTheDocument();
+    expect(screen.getByText("Best case ETA")).toBeInTheDocument();
+
+    // Row cells: a top-level field, a nested dot-path field, and a
+    // date-formatted field.
+    expect(screen.getByText("Disk full")).toBeInTheDocument();
+    expect(screen.getByText("ALPHA")).toBeInTheDocument();
+    expect(screen.getByText("Aug 1, 2026")).toBeInTheDocument();
+
+    // The hardcoded CasesList renderer's own "Case ID" column header must
+    // NOT appear — this widget rendered through GenericColumnList instead.
+    expect(screen.queryByText("Case ID")).not.toBeInTheDocument();
+  });
+
+  it("forwards a widget's configured sortBy into the /search request, only for shape list", async () => {
+    postMock.mockResolvedValue({ total: 0, cases: [], limit: 5, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+        sortBy={{ field: "updatedOn", order: "asc" }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/cases/search", {
+        filters: {},
+        pagination: { offset: 0, limit: 5 },
+        sortBy: { field: "updatedOn", order: "asc" },
+      }),
+    );
+  });
+
+  it("does not forward sortBy for shape count (only meaningful for shape list)", async () => {
+    postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="count"
+        filters={{}}
+        sortBy={{ field: "updatedOn", order: "asc" }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+    expect(postMock).toHaveBeenCalledWith("/cases/search", {
+      filters: {},
+      pagination: { offset: 0, limit: 1 },
+    });
+  });
+
   it("navigates to /cases with translated filters when a case-resource tile is clicked", async () => {
     postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
 
@@ -430,6 +678,72 @@ describe("DashboardWidgetTile", () => {
     const params = new URLSearchParams(href.split("?")[1]);
     expect(params.get("severities")).toBe("S1");
     expect(params.get("states")).toBe("open");
+  });
+
+  it("resolves a relative-date filter in the click-through href, so the destination list matches the number that was clicked", async () => {
+    postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="created_today"
+        displayName="Created Today"
+        resourceType="case"
+        shape="count"
+        filters={{
+          filters: [{ field: "createdOn", op: "gte", values: ["__today__"] }],
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+
+    const params = new URLSearchParams(
+      (screen.getByRole("link").getAttribute("href") ?? "").split("?")[1],
+    );
+    const createdFrom = params.get("createdFrom") ?? "";
+    // An unresolved placeholder reaching the list page is forwarded to the
+    // backing service, which resolves "today" against UTC rather than the
+    // viewer's own local day — so the tile's count and the list behind it
+    // disagreed by the offset between the two midnights. The href must
+    // carry the same browser-local instant the tile itself counted with.
+    expect(createdFrom).not.toContain("__today__");
+    const now = new Date();
+    expect(createdFrom).toBe(
+      new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).toISOString(),
+    );
+  });
+
+  it("resolves a relative-date filter in the View more preview href too", async () => {
+    postMock.mockResolvedValue({
+      total: 6,
+      cases: [
+        {
+          id: "11111111-1111-1111-1111-111111111111",
+          number: "CS-1",
+          subject: "Disk full",
+          state: "open",
+        },
+      ],
+      limit: 5,
+      offset: 0,
+      hasMore: true,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="created_today_list"
+        displayName="Created Today"
+        resourceType="case"
+        shape="list"
+        filters={{
+          filters: [{ field: "createdOn", op: "gte", values: ["__today__"] }],
+        }}
+        listLimit={5}
+      />,
+    );
+
+    const viewMoreLink = await screen.findByRole("link", { name: /view more/i });
+    expect(viewMoreLink.getAttribute("href") ?? "").not.toContain("__today__");
   });
 
   it("shape count: click-through carries a `from` location.state pointing back to this dashboard page, so the destination list can offer a Back button", async () => {

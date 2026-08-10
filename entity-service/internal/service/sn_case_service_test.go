@@ -1081,6 +1081,7 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 				{Field: "assignedUserId", Op: "isEmpty"},
 				{Field: "resolutionNotes", Op: "isEmpty"},
 				{Field: "createdBy", Op: "eq", Values: []string{currentUserFilterPlaceholder}},
+				{Field: "projectType", Op: "in", Values: []string{"Subscription", "Free Trial"}},
 			},
 		},
 	}
@@ -1107,6 +1108,13 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 	}
 	if len(gotBody.Filters.CreatedBy) != 0 {
 		t.Fatalf("expected CreatedBy to stay empty for the current-user placeholder, got %v", gotBody.Filters.CreatedBy)
+	}
+	// projectType values are project-type NAMES passed through verbatim -- no
+	// UUID validation, no id conversion (mirrors the product filter).
+	if len(gotBody.Filters.ProjectTypeNames) != 2 ||
+		gotBody.Filters.ProjectTypeNames[0] != "Subscription" ||
+		gotBody.Filters.ProjectTypeNames[1] != "Free Trial" {
+		t.Fatalf("ProjectTypeNames = %v, want [Subscription, Free Trial] passed through unchanged", gotBody.Filters.ProjectTypeNames)
 	}
 }
 
@@ -1446,8 +1454,9 @@ func TestCaseService_SearchTags_ServiceUnavailable(t *testing.T) {
 }
 
 // TestSNCaseService_GetCaseByID_MapsLinkedChangeRequests covers the reverse side of the
-// service-request <-> change-request link. Upstream sends the list under `changeRequests`
-// with 32-hex ids; the domain exposes it as `linkedChangeRequests` with canonical UUIDs.
+// service-request <-> change-request link. Upstream sends the list under `changeRequestsAll`
+// (unfiltered by change-request state, unlike the older `changeRequests` field) with 32-hex
+// ids; the domain exposes it as `linkedChangeRequests` with canonical UUIDs.
 //
 // The cardinality cases matter: a service request can have several change requests (one per
 // environment the change is promoted to), so a single-value mapping would look correct
@@ -1470,7 +1479,7 @@ func TestSNCaseService_GetCaseByID_MapsLinkedChangeRequests(t *testing.T) {
 			"deployment": {"id": "", "name": ""},
 			"deployedProduct": {"id": "", "name": "", "version": ""},
 			"state": {"id": 1, "label": "Open"},
-			"changeRequests": ` + changeRequests + `
+			"changeRequestsAll": ` + changeRequests + `
 		}`
 	}
 
