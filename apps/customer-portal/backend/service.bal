@@ -6934,6 +6934,18 @@ isolated service class WsProxyService {
                 if self.userEmail.length() > 0 {
                     parsed["requestedBy"] = self.userEmail;
                 } else {
+                    // No authenticated email to stamp. The page also sends one now,
+                    // but it is not kept: this becomes the actor on a durable audit
+                    // row, and a value the browser chose would let a caller write
+                    // someone else's name into it. Better an honest "Unknown".
+                    //
+                    // Logged because it should not happen — userInfo.email is set
+                    // for every authenticated session — and an empty one is the
+                    // difference between a named requester and an anonymous row.
+                    if parsed.hasKey("requestedBy") {
+                        log:printWarn(string `Dropping client-supplied requestedBy for ${inboundType}: `
+                                + string `no authenticated email on this session (project ${self.projectId})`);
+                    }
                     _ = parsed.removeIfHasKey("requestedBy");
                 }
                 sideChannelPayload = parsed.toJsonString();
