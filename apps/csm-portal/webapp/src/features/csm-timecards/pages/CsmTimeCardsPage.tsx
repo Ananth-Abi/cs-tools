@@ -29,7 +29,7 @@ import {
   Typography,
   Button,
 } from "@wso2/oxygen-ui";
-import { ChevronDown, ChevronUp, Download, ListFilter, X } from "@wso2/oxygen-ui-icons-react";
+import { Check, ChevronDown, ChevronUp, Download, ListFilter, X } from "@wso2/oxygen-ui-icons-react";
 
 // The plain (responsive) DatePicker switches to a mobile dialog (title bar +
 // Cancel/OK) below the sm breakpoint — this is a desktop-only portal page, so
@@ -56,6 +56,7 @@ function formatDateOnly(date: Date): string {
 import {
   useAllTimeCards,
   useApprovalQueue,
+  useBulkApproveCards,
   useCurrentEngineer,
   useDecideCard,
   useMyTimeCards,
@@ -71,9 +72,10 @@ import RefreshButton from "@components/RefreshButton";
 import { useTimecardRole } from "@features/csm-timecards/hooks/useTimecardRole";
 import TimeCardsTable from "@features/csm-timecards/components/TimeCardsTable";
 import TimeCardReviewDialog from "@features/csm-timecards/components/TimeCardReviewDialog";
+import BulkApproveDialog from "@features/csm-timecards/components/BulkApproveDialog";
 import SearchableMultiSelect from "@components/SearchableMultiSelect";
 import { exportTimeCardsCsv } from "@features/csm-timecards/utils/timeCardCsvExport";
-import type { TimecardAction, TimecardRoleCtx } from "@features/csm-timecards/utils/timeSheetState";
+import { cardActions, type TimecardAction, type TimecardRoleCtx } from "@features/csm-timecards/utils/timeSheetState";
 import type { TimeCardGroupBy } from "@features/csm-timecards/utils/timeCardGrouping";
 import type {
   CsmTimeCard,
@@ -149,10 +151,13 @@ type TabId = "mine" | "all" | "approvals";
 /**
  * Time cards workspace. Three tabs: **My time sheets** (own cards only),
  * **All** (everyone's cards, read only — visibility, not action), and
- * **Approvals** (approver/admin: approve/reject a submitted card). Logging
- * time happens from a case's Time tracking tab, not here. There's no
- * sheet-level bulk action, delegation, or reports — the backend has no
- * endpoints for those (see the module-level notes in `types/timeCards.ts`).
+ * **Approvals** (approver/admin: approve/reject a submitted card, or select
+ * several and approve them together). Logging time happens from a case's
+ * Time tracking tab, not here. There's no delegation or reports — the
+ * backend has no endpoints for those (see the module-level notes in
+ * `types/timeCards.ts`); bulk approve is a frontend-only fan-out over the
+ * same single-card endpoint (see `useBulkApproveCards`), not a real batch
+ * request.
  */
 export default function CsmTimeCardsPage(): JSX.Element {
   const role = useTimecardRole();
@@ -169,6 +174,16 @@ export default function CsmTimeCardsPage(): JSX.Element {
   // the list), so the dialog reflects that one decision instead of asking
   // again — see TimeCardReviewDialog's `action` prop.
   const [review, setReview] = useState<{ card: CsmTimeCard; action: TimecardAction } | null>(null);
+
+  // Bulk-approve selection — Approvals tab only. Holds card ids rather than
+  // whole cards so a background refetch (refresh button, or the queue
+  // shrinking after a decision) can't leave this holding stale card objects;
+  // `selectedApprovalCards` below re-derives the live card list from
+  // whatever ids are still actually present on the current page.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const bulkApprove = useBulkApproveCards();
+  const clearSelection = (): void => setSelectedIds(new Set());
 
   // How the table clusters its rows — a display-only choice (see
   // `groupTimeCards`), independent of the server-side filters below. Only
@@ -248,6 +263,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
     minePagination.setPage(0);
     allPagination.setPage(0);
     approvalsPagination.setPage(0);
+    clearSelection();
   };
   const handleFilterProjectChange = (v: string[]): void => {
     setFilterProject(v);
@@ -285,6 +301,20 @@ export default function CsmTimeCardsPage(): JSX.Element {
 
   const handleCardAction = (card: CsmTimeCard, action: TimecardAction): void => {
     if (action === "approve" || action === "reject") setReview({ card, action });
+  };
+
+  const toggleSelectCard = (card: CsmTimeCard): void => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(card.id)) next.delete(card.id);
+      else next.add(card.id);
+      return next;
+    });
+  };
+  const toggleSelectAllCards = (selectableCards: CsmTimeCard[]): void => {
+    const allAlreadySelected =
+      selectableCards.length > 0 && selectableCards.every((c) => selectedIds.has(c.id));
+    setSelectedIds(allAlreadySelected ? new Set() : new Set(selectableCards.map((c) => c.id)));
   };
 
   // "All" shows everyone's cards, own included, and is always read-only
@@ -410,7 +440,10 @@ export default function CsmTimeCardsPage(): JSX.Element {
 
       <Tabs
         value={activeTab}
-        onChange={(_, v) => setTab(v as TabId)}
+        onChange={(_, v) => {
+          setTab(v as TabId);
+          clearSelection();
+        }}
         sx={{ borderBottom: 1, borderColor: "divider" }}
       >
         <Tab value="mine" label="My time sheets" />
@@ -602,19 +635,40 @@ export default function CsmTimeCardsPage(): JSX.Element {
 
           <GroupByToggle value={groupBy} onChange={setGroupBy} />
 
-          <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1 }}>
-            <RefreshButton
-              onRefresh={() => void queue.refetch()}
-              isFetching={queue.isFetching}
-              updatedAt={queue.dataUpdatedAt}
-              label="Refresh approval queue"
-            />
-            {!queue.isError && (
-              <ExportCsvButton
-                cards={approvalsFilteredCards}
-                filename={`time-cards-approvals-${todayStamp}.csv`}
-              />
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
+            {selectedIds.size > 0 ? (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                <Typography variant="body2">{selectedIds.size} selected</Typography>
+                <Button size="small" color="inherit" onClick={clearSelection}>
+                  Clear
+                </Button>
+                <Button
+                  size="small"
+                  color="success"
+                  variant="contained"
+                  startIcon={<Check size={14} />}
+                  onClick={() => setBulkConfirmOpen(true)}
+                >
+                  Approve {selectedIds.size}
+                </Button>
+              </Box>
+            ) : (
+              <Box />
             )}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <RefreshButton
+                onRefresh={() => void queue.refetch()}
+                isFetching={queue.isFetching}
+                updatedAt={queue.dataUpdatedAt}
+                label="Refresh approval queue"
+              />
+              {!queue.isError && (
+                <ExportCsvButton
+                  cards={approvalsFilteredCards}
+                  filename={`time-cards-approvals-${todayStamp}.csv`}
+                />
+              )}
+            </Box>
           </Box>
 
           {queue.isError ? (
@@ -629,15 +683,25 @@ export default function CsmTimeCardsPage(): JSX.Element {
                 showActionsColumn
                 roleFor={approvalsRole}
                 onCardAction={handleCardAction}
+                selectable
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelectCard}
+                onToggleSelectAll={toggleSelectAllCards}
                 emptyText={anyFilterActive ? "No time cards match the current filters." : "Nothing awaiting approval."}
               />
               <TablePagination
                 component="div"
                 count={queue.data?.total ?? 0}
                 page={approvalsPagination.pagination.page}
-                onPageChange={approvalsPagination.onPageChange}
+                onPageChange={(e, p) => {
+                  clearSelection();
+                  approvalsPagination.onPageChange(e, p);
+                }}
                 rowsPerPage={approvalsPagination.pagination.rowsPerPage}
-                onRowsPerPageChange={approvalsPagination.onRowsPerPageChange}
+                onRowsPerPageChange={(e) => {
+                  clearSelection();
+                  approvalsPagination.onRowsPerPageChange(e as ChangeEvent<HTMLInputElement>);
+                }}
                 rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
                 showFirstButton
                 showLastButton
@@ -645,6 +709,41 @@ export default function CsmTimeCardsPage(): JSX.Element {
             </>
           )}
         </Box>
+      )}
+
+      {bulkConfirmOpen && (
+        <BulkApproveDialog
+          cards={approvalsFilteredCards.filter(
+            (c) => selectedIds.has(c.id) && cardActions(c.state, approvalsRole()).includes("approve"),
+          )}
+          isSubmitting={bulkApprove.isPending}
+          onClose={() => setBulkConfirmOpen(false)}
+          onConfirm={() => {
+            const ids = approvalsFilteredCards
+              .filter(
+                (c) =>
+                  selectedIds.has(c.id) && cardActions(c.state, approvalsRole()).includes("approve"),
+              )
+              .map((c) => c.id);
+            bulkApprove.mutate(ids, {
+              onSuccess: (result) => {
+                setBulkConfirmOpen(false);
+                clearSelection();
+                if (result.failed.length === 0) {
+                  showSuccess(
+                    `${result.succeededIds.length} time card${result.succeededIds.length === 1 ? "" : "s"} approved.`,
+                  );
+                } else {
+                  showError(
+                    `${result.succeededIds.length} approved, ${result.failed.length} failed: ${result.failed
+                      .map((f) => f.message)
+                      .join("; ")}`,
+                  );
+                }
+              },
+            });
+          }}
+        />
       )}
 
       {review && (
