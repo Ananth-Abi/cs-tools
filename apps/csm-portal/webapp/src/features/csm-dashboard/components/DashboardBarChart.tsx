@@ -78,26 +78,13 @@ export default function DashboardBarChart({
     );
   }
 
-  // Bars already label their own individual values (see the `label` prop
-  // below), but nothing showed the widget's overall total —
-  // `DashboardPieChart` has the same number+"Total" pairing built into its
-  // donut hole; a bar chart has no equivalent spot, so it sits above the
-  // chart instead. Computed once and reused by both the empty and non-empty
-  // returns below, so a zero-total widget still shows "0 Total" rather than
-  // silently omitting it.
-  const totalHeader = (
-    <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75, mb: 1 }}>
-      <Typography variant="h6">{total.toLocaleString()}</Typography>
-      <Typography variant="caption" color="text.secondary">
-        Total
-      </Typography>
-    </Box>
-  );
-
+  // The widget's overall total renders next to its title in
+  // `DashboardWidgetTile`'s own header row, not here — bars already label
+  // their own individual values (see the `label` prop below), so there's
+  // nothing else this chart needs to show for it.
   if (total === 0) {
     return (
       <Box sx={{ width: "100%" }}>
-        {totalHeader}
         <Box
           sx={{
             minHeight: CHART_HEIGHT_PX,
@@ -134,7 +121,6 @@ export default function DashboardBarChart({
 
   return (
     <Box sx={{ width: "100%" }}>
-      {totalHeader}
       <Box sx={{ width: "100%", height: CHART_HEIGHT_PX, "& .recharts-bar-rectangle": { cursor: "pointer" } }}>
         <BarChart
           data={chartData}

@@ -589,7 +589,7 @@ describe("DashboardWidgetTile", () => {
     expect(params.get("states")).toBe("open");
   });
 
-  it("shape bar: shows the widget's overall total (sum of every slice) above the chart", async () => {
+  it("shape bar: shows the widget's overall total (sum of every slice) next to its title", async () => {
     postMock.mockImplementation(
       (_path: string, body: { filters: { filters: { field: string; values?: string[] }[] } }) => {
         const severity = body.filters.filters.find((f) => f.field === "severity")?.values;
@@ -621,7 +621,6 @@ describe("DashboardWidgetTile", () => {
 
     await waitFor(() => expect(screen.getByText("bar:S1 · Critical:1")).toBeInTheDocument());
     expect(screen.getByText("4")).toBeInTheDocument();
-    expect(screen.getByText("Total")).toBeInTheDocument();
   });
 
   it("shape pie: issues one search per slice (own filters merged under the widget's base filters) and renders values + percentages", async () => {
@@ -1041,7 +1040,7 @@ describe("DashboardWidgetTile", () => {
     expect(params.get("states")).toBe("open");
   });
 
-  it("shape bar: still shows '0 Total' above the empty state when the widget has no slices configured yet", async () => {
+  it("shape bar: still shows a '0' total next to the title when the widget has no slices configured yet", async () => {
     renderWithClient(
       <DashboardWidgetTile
         widgetId="cases-by-severity"
@@ -1055,7 +1054,6 @@ describe("DashboardWidgetTile", () => {
     expect(screen.getByText("Cases by severity")).toBeInTheDocument();
     expect(screen.getByText("Nothing to show here right now")).toBeInTheDocument();
     expect(screen.getByText("0")).toBeInTheDocument();
-    expect(screen.getByText("Total")).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
 

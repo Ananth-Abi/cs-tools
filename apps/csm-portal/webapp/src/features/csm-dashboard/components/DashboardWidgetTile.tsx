@@ -202,7 +202,13 @@ export default function DashboardWidgetTile({
     </Tooltip>
   );
 
-  const header = (
+  // Shared title row: icon + name, with an optional total-count badge sitting
+  // immediately after the name (ServiceNow-style "Title 42" rather than a
+  // number floated off to the card's far edge or stacked in its own line).
+  // `undefined` renders no badge — shape "pie" keeps its total in the donut
+  // hole instead, and list/bar themselves pass `undefined` while their own
+  // total is still loading or errored.
+  const renderHeader = (total?: number): JSX.Element => (
     <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.25 }}>
       <Box
         sx={{
@@ -219,9 +225,19 @@ export default function DashboardWidgetTile({
       >
         <Icon size={16} />
       </Box>
-      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
-        {resolvedDisplayName}
-      </Typography>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.5, minWidth: 0 }}>
+        <Typography variant="caption" color="text.secondary">
+          {resolvedDisplayName}
+        </Typography>
+        {total !== undefined && (
+          <Chip
+            label={total.toLocaleString()}
+            size="small"
+            color="default"
+            sx={{ flexShrink: 0, fontWeight: 600 }}
+          />
+        )}
+      </Box>
     </Box>
   );
 
@@ -230,21 +246,11 @@ export default function DashboardWidgetTile({
     const total = data?.total ?? 0;
     return (
       <Card variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
-        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1 }}>
-          {header}
-          {/* The rows below are capped at `listLimit` (see `useWidgetData`'s
-              DEFAULT_LIST_LIMIT) — this is the only place the widget's own
-              full count is visible, since "View more" only appears once
-              `total` exceeds that cap. */}
-          {!isLoading && !isError && (
-            <Chip
-              label={total.toLocaleString()}
-              size="small"
-              color="default"
-              sx={{ flexShrink: 0, fontWeight: 600 }}
-            />
-          )}
-        </Box>
+        {/* The rows below are capped at `listLimit` (see `useWidgetData`'s
+            DEFAULT_LIST_LIMIT) — this badge next to the title is the only
+            place the widget's own full count is visible, since "View more"
+            only appears once `total` exceeds that cap. */}
+        {renderHeader(!isLoading && !isError ? total : undefined)}
         {isLoading ? (
           <Skeleton variant="rounded" height={28 * (listLimit ?? 4) + 40} sx={{ mt: 1 }} />
         ) : isError ? (
@@ -351,7 +357,11 @@ export default function DashboardWidgetTile({
               chart below it — so the chart's top edge (and, at the size this
               chart renders at, its tooltip) never sits flush against/behind
               the title row above it. */}
-          <Box sx={{ pb: resolvedDescription ? 1 : 2.5 }}>{header}</Box>
+          <Box sx={{ pb: resolvedDescription ? 1 : 2.5 }}>
+            {renderHeader(
+              shape === "bar" && !pieData.isLoading && !pieData.isError ? pieData.total : undefined,
+            )}
+          </Box>
           {resolvedDescription && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
               {resolvedDescription}
