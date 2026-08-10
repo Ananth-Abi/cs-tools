@@ -14,10 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Card, Box, Typography, Chip } from "@wso2/oxygen-ui";
+import { Card, Box, Typography, Chip, useTheme } from "@wso2/oxygen-ui";
 import { type JSX } from "react";
 import { formatMinutesAsHrMin } from "@features/project-details/utils/projectDetails";
-import { getPlainChipSx } from "@features/support/utils/support";
+import {
+  getPlainChipSx,
+  getSupportOverviewChipSx,
+} from "@features/support/utils/support";
 import type { TimeTrackingCardProps } from "@features/project-details/types/projectDetailsComponents";
 
 /**
@@ -29,6 +32,7 @@ import type { TimeTrackingCardProps } from "@features/project-details/types/proj
 export default function TimeTrackingCard({
   card,
 }: TimeTrackingCardProps): JSX.Element {
+  const theme = useTheme();
   const { case: caseData, totalTime, billable, nonBillable } = card;
 
   const caseNumber = caseData?.number?.trim() || "--";
@@ -71,8 +75,10 @@ export default function TimeTrackingCard({
               <Chip
                 label={hasBillable ? "Billable" : "Non-Billable"}
                 size="small"
-                variant="outlined"
-                sx={getPlainChipSx()}
+                sx={getSupportOverviewChipSx(
+                  hasBillable ? "warning.main" : "success.main",
+                  theme,
+                )}
               />
             )}
           </Box>
@@ -89,7 +95,7 @@ export default function TimeTrackingCard({
           {hasBothTypes ? (
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "flex-end" }}>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" sx={{ color: "warning.main" }}>
                   Billable
                 </Typography>
                 <Typography variant="body1" sx={{ color: "text.primary" }}>
@@ -97,7 +103,7 @@ export default function TimeTrackingCard({
                 </Typography>
               </Box>
               <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "flex-end" }}>
-                <Typography variant="caption" color="text.secondary">
+                <Typography variant="caption" sx={{ color: "success.main" }}>
                   Non-Billable
                 </Typography>
                 <Typography variant="body1" sx={{ color: "text.primary" }}>
