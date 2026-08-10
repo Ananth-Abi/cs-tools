@@ -759,7 +759,13 @@ export default function CsmTimeCardsPage(): JSX.Element {
           isSubmitting={bulkApprove.isPending}
           onClose={() => setBulkConfirmOpen(false)}
           onConfirm={() => {
-            const ids = selectedApprovalCards.map((c) => c.id);
+            // Captured here, before clearSelection() below can drop it — the
+            // only place a failed card's own label (case number, work date)
+            // is still available to resolve `f.cardId` back to something a
+            // human can actually tell apart from another failure in the same
+            // batch (see the onError banner below).
+            const cardsToApprove = selectedApprovalCards;
+            const ids = cardsToApprove.map((c) => c.id);
             bulkApprove.mutate(ids, {
               onSuccess: (result) => {
                 setBulkConfirmOpen(false);
@@ -769,10 +775,16 @@ export default function CsmTimeCardsPage(): JSX.Element {
                     `${result.succeededIds.length} time card${result.succeededIds.length === 1 ? "" : "s"} approved.`,
                   );
                 } else {
+                  const cardById = new Map(cardsToApprove.map((c) => [c.id, c]));
+                  const failureDetails = result.failed
+                    .map((f) => {
+                      const card = cardById.get(f.cardId);
+                      const label = card ? `${card.caseNumber} (${card.workDate.slice(0, 10)})` : f.cardId;
+                      return `${label}: ${f.message}`;
+                    })
+                    .join("; ");
                   showError(
-                    `${result.succeededIds.length} approved, ${result.failed.length} failed: ${result.failed
-                      .map((f) => f.message)
-                      .join("; ")}`,
+                    `${result.succeededIds.length} approved, ${result.failed.length} failed: ${failureDetails}`,
                   );
                 }
               },
