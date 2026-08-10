@@ -35,6 +35,16 @@ export const CREATE_CASE = {
   heading: "Complete Case Details",
   submitButton: "Create Support Case",
   successMessage: "Case created successfully",
+  /** Maximum title length enforced by CreateCasePage's handleSubmit and shown
+   * by the Title field's counter. */
+  titleMaxLength: 160,
+  titleCounter: /^\d+\/160$/,
+  titleTooLongError: "Title must be 160 characters or fewer.",
+  /** Banner messages from `showError` when submit validation rejects. */
+  validationErrors: {
+    missingTitle: "Please enter a case title.",
+    missingDescription: "Please enter a description.",
+  },
   placeholders: {
     deployment: "Select Deployment...",
     /** Reads "Select deployment first" until a deployment is chosen, and

@@ -15,7 +15,12 @@
 // under the License.
 
 import { type Locator, type Page, expect } from "@playwright/test";
-import { CREATE_CASE, GET_HELP_BUTTON } from "../utils/selectors";
+import { CASE_DETAIL, CREATE_CASE, GET_HELP_BUTTON } from "../utils/selectors";
+
+/** How long to allow for the create-case form to render. Well above the 5s
+ * default expect timeout: the page waits on project details, features and
+ * filters before the form appears. */
+const FORM_LOAD_TIMEOUT_MS = 60_000;
 
 /**
  * Page object for the case-creation form at
@@ -52,7 +57,61 @@ export class CaseCreatePage {
     );
     await expect(
       this.page.getByRole("heading", { name: CREATE_CASE.heading }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: FORM_LOAD_TIMEOUT_MS });
+
+    // The heading renders before the Basic Information selects do — those are
+    // Skeletons until deployments/products resolve. The Product select is the
+    // reliable readiness signal because it is present for every project type
+    // (Cloud Support hides Deployment but still shows Product), so waiting on
+    // it lets callers assert on field state without racing the load.
+    await expect(this.productVersionSelect()).toBeVisible({
+      timeout: FORM_LOAD_TIMEOUT_MS,
+    });
+  }
+
+  /** The app's <main> region, for scoping text assertions away from the
+   * surrounding chrome. */
+  private main(): Locator {
+    return this.page.getByTestId(CASE_DETAIL.mainTestId);
+  }
+
+  /** Error banner shown by `showError` for failed submit validation. */
+  errorAlert(): Locator {
+    return this.page.getByRole("alert");
+  }
+
+  /** The `<n>/160` character counter under the Title field. */
+  titleCounter(): Locator {
+    return this.main().getByText(CREATE_CASE.titleCounter);
+  }
+
+  /** Field-level error shown when the title exceeds 160 characters. */
+  titleLengthError(): Locator {
+    return this.main().getByText(CREATE_CASE.titleTooLongError);
+  }
+
+  /** Clicks submit without waiting for a create response — for cases that are
+   * expected to be rejected before any request is made. */
+  async attemptSubmit(): Promise<void> {
+    await this.submitButton().click();
+  }
+
+  /**
+   * Fills only the Basic Information fields, leaving the case details empty.
+   * Validation tests build on this and then supply just the field under test.
+   *
+   * @param deployment - Deployment label, or empty when the project
+   * auto-selects it (Cloud Support).
+   * @param productVersion - Product option label.
+   */
+  async fillBasicInformation(
+    deployment: string,
+    productVersion: string,
+  ): Promise<void> {
+    if (deployment) {
+      await this.selectDeployment(deployment);
+    }
+    await this.selectProductVersion(productVersion);
   }
 
   /** The MUI Select for Deployment, matched on its placeholder text. */
@@ -97,6 +156,12 @@ export class CaseCreatePage {
    * @param option - Exact option label to choose.
    */
   private async chooseOption(select: Locator, option: string): Promise<void> {
+    // Each of these Selects is replaced by a Skeleton while its options are
+    // being fetched (see BasicInformationSection / CaseDetailsSection), so the
+    // control genuinely does not exist yet on a cold load — waiting for it to
+    // be present and interactive is required, not belt-and-braces.
+    await expect(select).toBeVisible({ timeout: FORM_LOAD_TIMEOUT_MS });
+    await expect(select).toBeEnabled({ timeout: FORM_LOAD_TIMEOUT_MS });
     await select.click();
     await this.page.getByRole("option", { name: option, exact: true }).click();
   }
@@ -113,9 +178,10 @@ export class CaseCreatePage {
    * @param name - Exact product version label.
    */
   async selectProductVersion(name: string): Promise<void> {
-    const select = this.productVersionSelect();
-    await expect(select).toBeEnabled();
-    await this.chooseOption(select, name);
+    // chooseOption already waits for the control to be present and enabled, on
+    // the long form-load budget — which is what this needs, since the options
+    // are refetched after a deployment is picked.
+    await this.chooseOption(this.productVersionSelect(), name);
   }
 
   async fillTitle(title: string): Promise<void> {
