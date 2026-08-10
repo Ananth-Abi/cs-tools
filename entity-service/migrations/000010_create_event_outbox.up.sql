@@ -11,7 +11,7 @@ CREATE TABLE event_outbox (
   payload       JSONB NOT NULL,
   status        event_outbox_status_enum NOT NULL DEFAULT 'waiting',
   attempts      INT NOT NULL DEFAULT 0,
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   claimed_at    TIMESTAMPTZ,
   dispatched_at TIMESTAMPTZ
 );

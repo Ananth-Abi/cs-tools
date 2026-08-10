@@ -46,6 +46,15 @@ type EventOutboxRepository interface {
 	// retry), and every real caller already has this id from a prior Create
 	// or SearchWaiting, so "doesn't exist" is not an expected case in
 	// practice — not worth a second query to distinguish it from a lost race.
+	//
+	// KNOWN GAP: there is no claim lease or expiry. If a caller crashes after
+	// Claim succeeds but before calling MarkDispatched or ReleaseFailed, the
+	// row stays "dispatching" forever — SearchWaiting only returns "waiting"
+	// rows, so nothing will ever pick it back up. Closing this needs a lease
+	// (e.g. a claimed_at-based expiry) plus a fencing token so a recovered
+	// claim can't be finalized by both the original and the recovering
+	// caller. Deliberately not built yet — flagged rather than fixed pending
+	// a scoping decision.
 	Claim(ctx context.Context, id string) (domain.EventOutbox, error)
 	// SearchWaiting returns rows still "waiting", oldest first, together
 	// with the total count of waiting rows before pagination — the polling
