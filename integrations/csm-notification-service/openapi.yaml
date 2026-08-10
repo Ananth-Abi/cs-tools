@@ -3,9 +3,12 @@ info:
   title: CSM Notification Service API
   version: 1.0.0
   description: >
-    Accepts notification requests (email, Google Chat, SMS, voice calls, and future channels)
-    from other services. Fronted by Choreo's API Manager gateway (subscription
-    + client credentials) — this service performs no inbound auth of its own.
+    Accepts domain events (case created, comment added, status changed, case
+    assigned, incident created) from other services, publishes them to an
+    event bus, and asynchronously reacts by sending email, Google Chat
+    alerts, and voice calls. Fronted by Choreo's API Manager gateway
+    (subscription + client credentials) — this service performs no inbound
+    auth of its own.
 security:
   - oauth2ClientCredentials: []
 servers:
@@ -25,19 +28,20 @@ paths:
         "200":
           description: Ok
 
-  /notifications:
+  /events:
     post:
       summary: >-
-        Submit a notification for dispatch. TODO: currently only validates and
-        accepts the request (202); once the Kafka-based event backbone lands,
-        this will publish to the message queue for asynchronous dispatch
-        instead.
-      operationId: postNotification
+        Submit a domain event (case created, comment added, status changed,
+        case assigned, or incident created). Validates and publishes the
+        event to the event bus, responding 202 — the notification itself is
+        sent asynchronously by this service's own consumer, not in this
+        request.
+      operationId: postEvent
       requestBody:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SendNotificationRequest'
+              $ref: '#/components/schemas/Envelope'
         required: true
       responses:
         "202":
@@ -86,143 +90,234 @@ components:
         message:
           type: string
 
-    EmailAttachment:
+    CaseCreatedPayload:
       type: object
-      required: [contentName, contentType, attachment]
+      additionalProperties: false
+      required: [reporterName, projectName, caseId, caseTitle, caseType, priority, createdAt, description, caseLink, commentLink, recipients]
       properties:
-        contentName:
+        reporterName:
           type: string
-          description: Attachment file name (e.g. "invoice.pdf").
-        contentType:
+        projectName:
           type: string
-          description: Attachment MIME type (e.g. "application/pdf").
-        attachment:
+        caseId:
           type: string
-          format: byte
-          description: Base64-encoded file content.
+        caseTitle:
+          type: string
+        caseType:
+          type: string
+        priority:
+          type: string
+        product:
+          type: string
+        createdAt:
+          type: string
+        description:
+          type: string
+        incidentImpactDescription:
+          type: string
+          description: Optional — omitted entirely from the rendered email when empty.
+        caseLink:
+          type: string
+        commentLink:
+          type: string
+        recipients:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: email
+          description: >-
+            Who to email. Supplied by the caller (e.g. csm-portal-backend) —
+            this service has no entity-service client to resolve watchers,
+            assignee, or reporter itself.
 
-    EmailNotificationPayload:
+    CommentAddedPayload:
       type: object
-      required: [to, subject]
+      additionalProperties: false
+      required: [name, projectId, caseTitle, caseComment, commentLink, caseLink, recipients]
       properties:
-        to:
-          type: array
-          items:
-            type: string
-        cc:
-          type: array
-          items:
-            type: string
-        bcc:
-          type: array
-          items:
-            type: string
-        replyTo:
-          type: array
-          items:
-            type: string
-        subject:
+        name:
           type: string
-        htmlBody:
+        projectId:
           type: string
-        attachments:
+        caseTitle:
+          type: string
+        caseComment:
+          type: string
+        commentLink:
+          type: string
+        caseLink:
+          type: string
+        recipients:
           type: array
+          minItems: 1
           items:
-            $ref: '#/components/schemas/EmailAttachment'
+            type: string
+            format: email
+          description: Who to email. See CaseCreatedPayload.recipients.
 
-    GoogleChatNotificationPayload:
+    StatusChangedPayload:
       type: object
-      required: [product, title, shortDescription, caseId]
+      additionalProperties: false
+      required: [caseId, newStatus, caseLink, commentLink, recipients]
+      properties:
+        caseId:
+          type: string
+        newStatus:
+          type: string
+        caseLink:
+          type: string
+        commentLink:
+          type: string
+        recipients:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: email
+          description: Who to email. See CaseCreatedPayload.recipients.
+
+    CaseAssignedPayload:
+      type: object
+      additionalProperties: false
+      required: [assignerName, assignerEmail, caseId, caseLink, commentLink, recipients]
+      properties:
+        assignerName:
+          type: string
+        assignerEmail:
+          type: string
+        caseId:
+          type: string
+        caseLink:
+          type: string
+        commentLink:
+          type: string
+        recipients:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            format: email
+          description: Who to email. See CaseCreatedPayload.recipients.
+
+    IncidentCreatedPayload:
+      type: object
+      additionalProperties: false
+      required: [product, title, shortDescription, incidentLink, callTo]
       properties:
         product:
           type: string
           description: >-
             Selects which configured Google Chat space receives the alert
-            (e.g. "api-manager", "identity-server"); matched case- and
-            whitespace-insensitively against GOOGLE_CHAT_SPACES.
+            (e.g. "api-manager"); matched case- and whitespace-insensitively
+            against GOOGLE_CHAT_SPACES.
         title:
           type: string
         shortDescription:
           type: string
-        caseId:
+        incidentLink:
           type: string
+          description: The "Open in Portal" button target on the Chat card.
+        callTo:
+          type: string
+          description: On-call phone number in E.164 format (e.g. "+14155552671").
 
-    SmsNotificationPayload:
+    CaseCreatedEvent:
       type: object
-      required: [to, body]
-      properties:
-        to:
-          type: string
-          description: Recipient phone number in E.164 format (e.g. "+14155552671").
-        body:
-          type: string
-          description: Message text.
-
-    CallNotificationPayload:
-      type: object
-      required: [to, body]
-      properties:
-        to:
-          type: string
-          description: Recipient phone number in E.164 format (e.g. "+14155552671").
-        body:
-          type: string
-          description: Message text read aloud on the call via text-to-speech.
-
-    SendEmailNotificationRequest:
-      type: object
-      required: [channel, email]
+      required: [type, entityId, payload]
       additionalProperties: false
       properties:
-        channel:
+        type:
           type: string
-          enum: [email]
-        email:
-          $ref: '#/components/schemas/EmailNotificationPayload'
+          enum: [case.created]
+        entityId:
+          type: string
+        eventId:
+          type: string
+          description: >-
+            Optional, currently unused by this service — reserved for future
+            duplicate-publish detection and dead-letter correlation. Callers
+            may start generating one now (e.g. a UUID per event) while this
+            schema has no other consumers to migrate later.
+        payload:
+          $ref: '#/components/schemas/CaseCreatedPayload'
 
-    SendGoogleChatNotificationRequest:
+    CommentAddedEvent:
       type: object
-      required: [channel, googleChat]
+      required: [type, entityId, payload]
       additionalProperties: false
       properties:
-        channel:
+        type:
           type: string
-          enum: [googleChat]
-        googleChat:
-          $ref: '#/components/schemas/GoogleChatNotificationPayload'
+          enum: [case.comment_added]
+        entityId:
+          type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
+        payload:
+          $ref: '#/components/schemas/CommentAddedPayload'
 
-    SendSmsNotificationRequest:
+    StatusChangedEvent:
       type: object
-      required: [channel, sms]
+      required: [type, entityId, payload]
       additionalProperties: false
       properties:
-        channel:
+        type:
           type: string
-          enum: [sms]
-        sms:
-          $ref: '#/components/schemas/SmsNotificationPayload'
+          enum: [case.status_changed]
+        entityId:
+          type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
+        payload:
+          $ref: '#/components/schemas/StatusChangedPayload'
 
-    SendCallNotificationRequest:
+    CaseAssignedEvent:
       type: object
-      required: [channel, call]
+      required: [type, entityId, payload]
       additionalProperties: false
       properties:
-        channel:
+        type:
           type: string
-          enum: [call]
-        call:
-          $ref: '#/components/schemas/CallNotificationPayload'
+          enum: [case.assigned]
+        entityId:
+          type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
+        payload:
+          $ref: '#/components/schemas/CaseAssignedPayload'
 
-    SendNotificationRequest:
+    IncidentCreatedEvent:
+      type: object
+      required: [type, entityId, payload]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [incident.created]
+        entityId:
+          type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
+        payload:
+          $ref: '#/components/schemas/IncidentCreatedPayload'
+
+    Envelope:
       oneOf:
-        - $ref: '#/components/schemas/SendEmailNotificationRequest'
-        - $ref: '#/components/schemas/SendGoogleChatNotificationRequest'
-        - $ref: '#/components/schemas/SendSmsNotificationRequest'
-        - $ref: '#/components/schemas/SendCallNotificationRequest'
+        - $ref: '#/components/schemas/CaseCreatedEvent'
+        - $ref: '#/components/schemas/CommentAddedEvent'
+        - $ref: '#/components/schemas/StatusChangedEvent'
+        - $ref: '#/components/schemas/CaseAssignedEvent'
+        - $ref: '#/components/schemas/IncidentCreatedEvent'
       discriminator:
-        propertyName: channel
+        propertyName: type
         mapping:
-          email: '#/components/schemas/SendEmailNotificationRequest'
-          googleChat: '#/components/schemas/SendGoogleChatNotificationRequest'
-          sms: '#/components/schemas/SendSmsNotificationRequest'
-          call: '#/components/schemas/SendCallNotificationRequest'
+          case.created: '#/components/schemas/CaseCreatedEvent'
+          case.comment_added: '#/components/schemas/CommentAddedEvent'
+          case.status_changed: '#/components/schemas/StatusChangedEvent'
+          case.assigned: '#/components/schemas/CaseAssignedEvent'
+          incident.created: '#/components/schemas/IncidentCreatedEvent'

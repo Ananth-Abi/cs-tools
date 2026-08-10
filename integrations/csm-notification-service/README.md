@@ -1,16 +1,19 @@
 # CSM Notification Service
 
-Go HTTP server (`net/http`, Go 1.26+) that accepts notification requests (email, Google Chat, SMS, voice calls, and future channels) from other services — `apps/csm-portal/backend`, `apps/customer-portal/backend`, and eventually a Kafka-based event consumer.
+Go HTTP server (`net/http`, Go 1.26+) that accepts domain events (case created, comment added, status changed, case assigned, incident created) from other services via `POST /events`, publishes them to an event bus, and reacts asynchronously by sending email, Google Chat alerts, and voice calls. Both the producer (the `POST /events` ingest endpoint) and the consumer (a background poll loop) run inside this one process — see [Event-driven notifications](#event-driven-notifications).
 
 This service was extracted from `apps/csm-portal/backend/internal/notifications`, which previously hosted the same email/Google Chat clients. That backend no longer constructs or calls any notification client directly.
 
 ## Why no `Auth` middleware
 
-Like `integrations/csm-integration-service`, this service has no end-user identity to check. It's consumed by other backend services (and, later, a Kafka consumer) through Choreo's API Manager gateway, which owns the inbound trust boundary (subscription + client credentials) before a request ever reaches this app.
+Like `integrations/csm-integration-service`, this service has no end-user identity to check. It's consumed by other backend services through Choreo's API Manager gateway, which owns the inbound trust boundary (subscription + client credentials) before a request ever reaches this app.
 
 ## Current scope — TODO
 
-`POST /notifications` today only validates the request body and responds `202 Accepted` — it does **not** send an email, post to Google Chat, send an SMS, place a call, or publish anywhere yet. See the `TODO` comment on `NotificationHandler.PostNotification` (`internal/handler/notifications.go`): once the Kafka-based event backbone is in place, this handler should publish the notification event to the message queue (producer) instead, so a consumer can dispatch it asynchronously via `emailClient`/`googleChatClient`/`twilioClient`. No Kafka or Redis dependency exists in this repo yet — this is a deliberate, incremental first step.
+- **No dead-letter queue** — a record whose handler keeps failing after retries is logged loudly and dropped, not preserved anywhere for replay. See `eventbus.Consumer`'s doc comment.
+- **SMS and direct call channels are unused.** `TwilioClient.SendSMS` has no caller — `MakeCall` is only invoked by `incident.created`.
+
+Recipient resolution for `case.*` events is **not** a TODO in the same sense: the caller (e.g. `csm-portal-backend`) supplies a `recipients` array in the event payload itself, since this service has no `entity-service` client to resolve watchers/assignee/reporter on its own. That's still short of "real" resolution in the sense that the caller has to already know the audience, but it's not a fixed/hardcoded stand-in either — every event picks its own recipients.
 
 ## Middleware chain
 
@@ -28,7 +31,26 @@ Like `integrations/csm-integration-service`, this service has no end-user identi
 |---------|-------|
 | `notifications` | Hosts `EmailClient`/`SendEmail` (`email.go`, OAuth2 client-credentials auth), `GoogleChatClient`/`SendIncidentAlert` (`googlechat.go`, per-product incoming-webhook auth), and `TwilioClient`/`SendSMS`+`MakeCall` (`twilio.go`, HTTP Basic Auth — sms and call are two methods on one client, since both are the same Twilio account/auth) |
 
-Each channel gets its own config/client pair in its own file, since channels differ in upstream auth scheme. A new channel follows the same pattern and adds a case to `PostNotification`'s `channel` switch. Like `emailClient`/`googleChatClient`, `twilioClient` is constructed and held on `NotificationHandler` but not yet called from `PostNotification` — see [Current scope — TODO](#current-scope--todo).
+Each channel gets its own config/client pair in its own file, since channels differ in upstream auth scheme. All three clients are constructed once in `cmd/server/main.go` and handed to `dispatch.NewDispatcher` — a new channel follows the same client pattern, then gets wired into `Dispatcher` for whichever event type should trigger it (see "Adding a new event type" in CLAUDE.md).
+
+## Event-driven notifications
+
+```text
+csm-portal-backend ──┐
+                      ├─POST /events─▶ EventsHandler ──▶ eventbus.Producer ──▶ Event Hub topic
+customer-portal-backend ┘                                                          │
+                                                                                    ▼
+                                                            eventbus.Consumer (consumer group)
+                                                                                    │
+                                                                                    ▼
+                                                              dispatch.Dispatcher.Handle
+                                                  (render email or send incident alerts)
+```
+
+- **`internal/events`** — the event schema. `Envelope{Type, EntityID, EventID, Payload}` plus one payload struct per `Type` (`case.created`, `case.comment_added`, `case.status_changed`, `case.assigned`, `incident.created`), each carrying every value its matching reaction needs. `EntityID` is a case ID for the `case.*` types or an incident ID for `incident.created` — whatever this event is about; for the `case.*` types, it must match the payload's own `caseId`. `EventID` is optional and currently unused — reserved for future duplicate-publish detection. Payloads are deliberately denormalized (names/titles/links, not just IDs) since there's no `entity-service` client here yet to look anything up. `incident.created` is the one type with two independent reactions (a Google Chat alert *and* a voice call) rather than an email.
+- **`internal/eventbus`** — a thin wrapper around [`github.com/segmentio/kafka-go`](https://github.com/segmentio/kafka-go) (a pure-Go Kafka client, no cgo — keeps this service on Choreo's buildpack deploy, MIT licensed) for Azure Event Hub's Kafka-compatible endpoint. `Producer.Publish` does a synchronous produce; `Consumer.Run` polls a consumer group, retries a failing record `handleAttempts` (3) times with a fixed delay, then logs it at ERROR and commits anyway rather than blocking the partition forever. See CLAUDE.md for the franz-go → kafka-go swap rationale and its two known trade-offs.
+- **`internal/dispatch`** — `Dispatcher.Handle` implements `eventbus.Handle`: decode the record as an `events.Envelope`, render the matching template, email the `recipients` list carried in that event's own payload.
+- **`POST /events`** (`internal/handler/events.go`) — the producer-facing endpoint: validates the envelope and its type-specific payload, then publishes the original request body keyed by `entityId` (so every event about one case/incident stays ordered on the same partition) — it does not send anything itself.
 
 ## Configuration
 
@@ -63,6 +85,17 @@ Copy `.env.example` to `.env` and fill in the values:
 | `TWILIO_LANGUAGE` | Call channel only: TTS language/locale for `<Say>` (e.g. `en-IN`), affects pronunciation. Optional — empty uses Twilio's default for the selected voice |
 | `TWILIO_API_BASE_URL` | Overrides Twilio's REST API base (default `https://api.twilio.com/2010-04-01`). Optional — only for a regional Twilio edge/API endpoint |
 
+### Event bus (Azure Event Hub)
+
+Required — unlike the channels above, this is this service's core purpose, so a missing value fails startup loudly.
+
+| Variable | Description |
+|---|---|
+| `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` |
+| `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string (Namespace > Shared access policies > a policy's Primary Connection String); used as the SASL/PLAIN password. Never commit a real value |
+| `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` |
+| `EVENT_HUB_CONSUMER_GROUP` | Consumer group ID this service's instances join to split partitions between themselves. Optional — defaults to `csm-notification-service` |
+
 ### Server
 
 | Variable | Description |
@@ -86,9 +119,18 @@ csm-notification-service/
 │   │   ├── doc.go              # Package overview — one config/client pair per channel
 │   │   ├── email.go            # EmailConfig/EmailClient/SendEmail
 │   │   ├── googlechat.go       # GoogleChatConfig/GoogleChatClient/SendIncidentAlert
-│   │   └── twilio.go           # TwilioConfig/TwilioClient/SendSMS+MakeCall
+│   │   ├── twilio.go           # TwilioConfig/TwilioClient/SendSMS+MakeCall
+│   │   └── templates/          # HTML email templates + templates.go's Render* functions
+│   ├── events/
+│   │   └── events.go           # Envelope + per-Type payload structs (the event schema)
+│   ├── eventbus/
+│   │   ├── config.go            # Config + SASL/PLAIN setup shared by producer/consumer
+│   │   ├── producer.go          # Producer — publish a record, wait for ack
+│   │   └── consumer.go          # Consumer — consumer-group poll loop, retry, commit
+│   ├── dispatch/
+│   │   └── dispatch.go          # Dispatcher.Handle — envelope → template → EmailClient
 │   └── handler/
-│       ├── notifications.go    # POST /notifications — validates + accepts (TODO: publish to queue)
+│       ├── events.go            # POST /events — validates + publishes to the event bus
 │       └── response.go         # writeError/writeJSONValue helpers
 ├── .env                         # Local config (git-ignored)
 └── go.mod
@@ -160,7 +202,7 @@ tool. Two upstream errors we've hit doing exactly this:
 ## API Endpoints
 
 - `GET /health` — Health check
-- `POST /notifications` — Submit a notification for dispatch; body requires `channel` (`email` | `googleChat` | `sms` | `call`) plus the matching `email`/`googleChat`/`sms`/`call` payload object. Currently validates and responds `202 Accepted` only — see [Current scope — TODO](#current-scope--todo)
+- `POST /events` — Submit a domain event; body requires `type` (`case.created` | `case.comment_added` | `case.status_changed` | `case.assigned` | `incident.created`), `entityId`, and a `payload` object matching that type (see `internal/events/events.go`). Validates and publishes to the event bus, responding `202 Accepted` — the actual notification is sent asynchronously by this service's own consumer, not in this request. `incident.created` triggers both a Google Chat alert and a Twilio voice call; the other four each trigger one email, addressed to the `recipients` array in that event's own payload
 
 ## Security
 

@@ -31,6 +31,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/dispatch"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
@@ -58,10 +60,9 @@ func main() {
 		Spaces: parseGoogleChatSpaces(os.Getenv("GOOGLE_CHAT_SPACES")),
 	})
 
-	// Twilio (sms + call channels) is likewise optional per deployment; a
-	// missing config only surfaces as an error the first time a caller
-	// requests one of those channels — moot today since PostNotification
-	// doesn't call SendSMS/MakeCall yet either (see its TODO).
+	// Twilio (the call channel, used by incident.created) is likewise
+	// optional per deployment; a missing config only surfaces as an error
+	// the first time dispatch requests it.
 	twilioClient := notifications.NewTwilioClient(notifications.TwilioConfig{
 		AccountSID:          os.Getenv("TWILIO_ACCOUNT_SID"),
 		AuthToken:           os.Getenv("TWILIO_AUTH_TOKEN"),
@@ -72,13 +73,31 @@ func main() {
 		APIBaseURL:          os.Getenv("TWILIO_API_BASE_URL"),
 	})
 
-	notificationHandler := handler.NewNotificationHandler(emailClient, googleChatClient, twilioClient)
+	// The event bus (Azure Event Hub's Kafka-compatible endpoint) is this
+	// service's core purpose, unlike the notification channels above, so its
+	// config is required (mustEnv) — a misconfigured deployment should fail
+	// loudly at startup instead of silently accepting or dropping events.
+	eventBusCfg := eventbus.Config{
+		Broker:           mustEnv("EVENT_HUB_BROKER"),
+		ConnectionString: mustEnv("EVENT_HUB_CONNECTION_STRING"),
+		Topic:            mustEnv("EVENT_HUB_TOPIC"),
+	}
+	producer := eventbus.NewProducer(eventBusCfg)
+	defer producer.Close()
+
+	consumerGroup := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-notification-service")
+	consumer := eventbus.NewConsumer(eventBusCfg, consumerGroup)
+	defer consumer.Close()
+
+	eventsHandler := handler.NewEventsHandler(producer)
+
+	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("POST /notifications", notificationHandler.PostNotification)
+	mux.HandleFunc("POST /events", eventsHandler.PostEvent)
 
 	addr := ":" + mustPort("PORT", "8080")
 
@@ -114,6 +133,11 @@ func main() {
 		}
 	}()
 
+	// consumer.Run blocks polling for events until ctx is canceled (the same
+	// shutdown signal the HTTP server responds to), so both stop together.
+	go consumer.Run(ctx, dispatcher.Handle)
+	slog.Info("event bus consumer started", "topic", eventBusCfg.Topic, "consumerGroup", consumerGroup)
+
 	<-ctx.Done()
 	stop()
 
@@ -124,6 +148,15 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("CSM Notification Service stopped")
+}
+
+func mustEnv(key string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		slog.Error("required environment variable is not set", "key", key)
+		os.Exit(1)
+	}
+	return v
 }
 
 func envOrDefault(key, def string) string {
