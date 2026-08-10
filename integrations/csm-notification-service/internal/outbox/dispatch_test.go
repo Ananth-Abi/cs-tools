@@ -40,12 +40,16 @@ func (f *fakePublisher) Publish(ctx context.Context, key, value []byte) error {
 type statusCall struct{ id, status string }
 
 type fakeStatusUpdater struct {
-	err   error
-	calls []statusCall
+	err     error
+	errFunc func(status string) error // takes priority over err when set
+	calls   []statusCall
 }
 
 func (f *fakeStatusUpdater) UpdateEventOutboxStatus(ctx context.Context, id, status string) error {
 	f.calls = append(f.calls, statusCall{id, status})
+	if f.errFunc != nil {
+		return f.errFunc(status)
+	}
 	return f.err
 }
 
@@ -162,6 +166,41 @@ func TestDispatch_PublishFails_ReleasesClaimAndReturnsError(t *testing.T) {
 		if es.calls[i] != c {
 			t.Errorf("call %d = %v, want %v", i, es.calls[i], c)
 		}
+	}
+}
+
+func TestDispatch_PublishFails_ReleaseAlsoFails_StillReturnsPublishError(t *testing.T) {
+	publishErr := errors.New("event hub unreachable")
+	pub := &fakePublisher{err: publishErr}
+	es := &fakeStatusUpdater{errFunc: func(status string) error {
+		if status == StatusWaiting {
+			return errors.New("entity-service unreachable during release")
+		}
+		return nil
+	}}
+	published, err := Dispatch(t.Context(), pub, es, "outbox-1", []byte("CASE-1"), []byte("body"))
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("Dispatch err = %v, want it to wrap %v (the publish failure) even though the release also failed", err, publishErr)
+	}
+	if published {
+		t.Error("published = true, want false")
+	}
+}
+
+func TestDispatch_MarkDispatchedFails_StillReturnsSuccess(t *testing.T) {
+	pub := &fakePublisher{}
+	es := &fakeStatusUpdater{errFunc: func(status string) error {
+		if status == StatusDispatched {
+			return errors.New("entity-service unreachable while marking dispatched")
+		}
+		return nil
+	}}
+	published, err := Dispatch(t.Context(), pub, es, "outbox-1", []byte("CASE-1"), []byte("body"))
+	if err != nil {
+		t.Fatalf("Dispatch returned err = %v, want nil (publish succeeded; mark-dispatched failure is best-effort)", err)
+	}
+	if !published {
+		t.Error("published = false, want true")
 	}
 }
 

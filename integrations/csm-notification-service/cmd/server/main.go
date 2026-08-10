@@ -202,15 +202,18 @@ func envOrDefault(key, def string) string {
 }
 
 // envDuration returns the given environment variable parsed as a
-// time.Duration (e.g. "30s"), or def if unset or malformed.
+// time.Duration (e.g. "30s"), or def if unset, malformed, or not positive —
+// time.NewTicker (see outbox.Poller.Run) panics on a zero or negative
+// duration, so def (always positive) is used instead of ever letting one
+// through.
 func envDuration(key string, def time.Duration) time.Duration {
 	v := os.Getenv(key)
 	if v == "" {
 		return def
 	}
 	d, err := time.ParseDuration(v)
-	if err != nil {
-		slog.Warn("environment variable is not a valid duration; using default", "key", key, "value", v, "default", def)
+	if err != nil || d <= 0 {
+		slog.Warn("environment variable is not a valid positive duration; using default", "key", key, "value", v, "default", def)
 		return def
 	}
 	return d

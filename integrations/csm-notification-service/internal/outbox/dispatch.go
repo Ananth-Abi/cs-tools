@@ -69,9 +69,21 @@ func IsConflict(err error) bool {
 //
 // On successful publish the row is marked "dispatched"; on publish failure
 // the claim is released back to "waiting" so a later attempt can pick it up
-// again. Both of those follow-up calls are best-effort — their own failure
-// is only logged, not returned, since the event has already durably
-// published (or definitively failed to) by the time they run.
+// again. Both of those follow-up calls run on a context.WithoutCancel copy
+// of ctx, not ctx itself — ctx may be an HTTP request context that's about
+// to be canceled (the request is finishing either way), and this cleanup
+// call matters more than the original request's deadline. They're still
+// best-effort — their own failure is only logged, not returned, since the
+// event has already durably published (or definitively failed to) by the
+// time they run.
+//
+// KNOWN GAP: if the release-to-"waiting" or mark-"dispatched" call fails
+// even with an uncanceled cleanup context (entity-service down, network
+// partition, etc.), the row is left stranded in "dispatching" — Poller only
+// searches "waiting" rows, so nothing will retry it. This is the same
+// unaddressed gap documented on entity-service's EventOutboxRepository.Claim
+// (a claim lease + fencing token is the real fix); not built here for the
+// same reason.
 //
 // Returns published=false, err=nil without attempting to publish when the
 // claim conflicted (someone else already claimed or dispatched eventID) —
@@ -91,7 +103,8 @@ func Dispatch(ctx context.Context, pub Publisher, es StatusUpdater, eventID stri
 
 	if err := pub.Publish(ctx, key, value); err != nil {
 		if claimed {
-			if releaseErr := es.UpdateEventOutboxStatus(ctx, eventID, StatusWaiting); releaseErr != nil {
+			cleanupCtx := context.WithoutCancel(ctx)
+			if releaseErr := es.UpdateEventOutboxStatus(cleanupCtx, eventID, StatusWaiting); releaseErr != nil {
 				slog.ErrorContext(ctx, "failed to release event_outbox claim after publish failure", "eventId", eventID, "err", releaseErr)
 			}
 		}
@@ -99,7 +112,8 @@ func Dispatch(ctx context.Context, pub Publisher, es StatusUpdater, eventID stri
 	}
 
 	if claimed {
-		if err := es.UpdateEventOutboxStatus(ctx, eventID, StatusDispatched); err != nil {
+		cleanupCtx := context.WithoutCancel(ctx)
+		if err := es.UpdateEventOutboxStatus(cleanupCtx, eventID, StatusDispatched); err != nil {
 			slog.ErrorContext(ctx, "failed to mark event_outbox row dispatched", "eventId", eventID, "err", err)
 		}
 	}
