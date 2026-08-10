@@ -175,15 +175,17 @@ export default function TimeCardsTable({
           }}
         >
           {selectable && (
-            <Checkbox
-              size="small"
-              checked={allSelected}
-              indeterminate={someSelected && !allSelected}
-              disabled={selectableCards.length === 0}
-              onChange={() => onToggleSelectAll?.(selectableCards)}
-              inputProps={{ "aria-label": "Select all approvable time cards on this page" }}
-              sx={{ p: 0 }}
-            />
+            <Box role="columnheader" sx={{ display: "flex", alignItems: "center" }}>
+              <Checkbox
+                size="small"
+                checked={allSelected}
+                indeterminate={someSelected && !allSelected}
+                disabled={selectableCards.length === 0}
+                onChange={() => onToggleSelectAll?.(selectableCards)}
+                inputProps={{ "aria-label": "Select all approvable time cards on this page" }}
+                sx={{ p: 0 }}
+              />
+            </Box>
           )}
           {headerCells.map((label, i) => (
             <Typography
