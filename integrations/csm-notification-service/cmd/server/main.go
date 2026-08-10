@@ -32,11 +32,20 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/dispatch"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/entityservice"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/outbox"
 )
+
+// outboxPollMinAge is how old a "waiting" event_outbox row must be before
+// outbox.Poller will claim it — see Poller.MinAge's doc comment.
+const outboxPollMinAge = 10 * time.Second
+
+// outboxPollLimit caps how many waiting rows outbox.Poller fetches per tick.
+const outboxPollLimit = 50
 
 func main() {
 	loadDotEnv(".env")
@@ -89,7 +98,28 @@ func main() {
 	consumer := eventbus.NewConsumer(eventBusCfg, consumerGroup)
 	defer consumer.Close()
 
-	eventsHandler := handler.NewEventsHandler(producer)
+	// entity-service is optional per deployment — when ENTITY_SERVICE_BASE_URL
+	// is unset, outbox claim/dispatch/release (and the poller below) is
+	// skipped entirely (see handler.NewEventsHandler's doc comment).
+	// Branching here rather than handing a possibly-nil *entityservice.Client
+	// straight to NewEventsHandler avoids wrapping a nil pointer in a
+	// non-nil interface value, which would make h.entityService != nil true
+	// even when unset.
+	var eventsHandler *handler.EventsHandler
+	var outboxPoller *outbox.Poller
+	if baseURL := os.Getenv("ENTITY_SERVICE_BASE_URL"); baseURL != "" {
+		entityClient := entityservice.New(baseURL)
+		eventsHandler = handler.NewEventsHandler(producer, entityClient)
+		outboxPoller = &outbox.Poller{
+			Publisher:     producer,
+			EntityService: entityClient,
+			Interval:      envDuration("EVENT_OUTBOX_POLL_INTERVAL", 30*time.Second),
+			MinAge:        outboxPollMinAge,
+			Limit:         outboxPollLimit,
+		}
+	} else {
+		eventsHandler = handler.NewEventsHandler(producer, nil)
+	}
 
 	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient)
 
@@ -138,6 +168,11 @@ func main() {
 	go consumer.Run(ctx, dispatcher.Handle)
 	slog.Info("event bus consumer started", "topic", eventBusCfg.Topic, "consumerGroup", consumerGroup)
 
+	if outboxPoller != nil {
+		go outboxPoller.Run(ctx)
+		slog.Info("event_outbox poller started", "interval", outboxPoller.Interval, "minAge", outboxPoller.MinAge)
+	}
+
 	<-ctx.Done()
 	stop()
 
@@ -164,6 +199,21 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envDuration returns the given environment variable parsed as a
+// time.Duration (e.g. "30s"), or def if unset or malformed.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		slog.Warn("environment variable is not a valid duration; using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return d
 }
 
 // mustPort returns the value of the given environment variable (or def if

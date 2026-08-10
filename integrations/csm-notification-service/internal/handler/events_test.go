@@ -23,6 +23,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/outbox"
 )
 
 // mockPublisher is a test double for eventPublisher.
@@ -38,6 +41,28 @@ func (m *mockPublisher) Publish(ctx context.Context, key, value []byte) error {
 	return m.err
 }
 
+// entityServiceCall records one UpdateEventOutboxStatus invocation.
+type entityServiceCall struct {
+	id, status string
+}
+
+// fakeEntityService is a test double for entityServiceClient. errFunc, if
+// set, decides the error per call (e.g. conflict only on the first call);
+// otherwise err is returned for every call.
+type fakeEntityService struct {
+	err     error
+	errFunc func(id, status string) error
+	calls   []entityServiceCall
+}
+
+func (f *fakeEntityService) UpdateEventOutboxStatus(ctx context.Context, id, status string) error {
+	f.calls = append(f.calls, entityServiceCall{id, status})
+	if f.errFunc != nil {
+		return f.errFunc(id, status)
+	}
+	return f.err
+}
+
 func assertStatus(t *testing.T, w *httptest.ResponseRecorder, want int) {
 	t.Helper()
 	if w.Code != want {
@@ -47,7 +72,12 @@ func assertStatus(t *testing.T, w *httptest.ResponseRecorder, want int) {
 
 func postEvent(t *testing.T, pub *mockPublisher, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	h := NewEventsHandler(pub)
+	return postEventWithEntityService(t, pub, nil, body)
+}
+
+func postEventWithEntityService(t *testing.T, pub *mockPublisher, es entityServiceClient, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := NewEventsHandler(pub, es)
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/events", strings.NewReader(body))
 	w := httptest.NewRecorder()
 	h.PostEvent(w, r)
@@ -59,6 +89,7 @@ const validCommentAdded = `{"type":"case.comment_added","entityId":"CASE-1","pay
 const validStatusChanged = `{"type":"case.status_changed","entityId":"CASE-1","payload":{"caseId":"CASE-1","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}}`
 const validCaseAssigned = `{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"n","assignerEmail":"e@x.com","caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}}`
 const validIncidentCreated = `{"type":"incident.created","entityId":"INC-1","payload":{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}}`
+const validCaseCreatedWithEventID = `{"type":"case.created","entityId":"CASE-1","eventId":"outbox-1","payload":{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}}`
 
 func TestPostEvent_ValidEvents(t *testing.T) {
 	cases := map[string]struct {
@@ -150,4 +181,81 @@ func TestPostEvent_MapsPublishFailure(t *testing.T) {
 	pub := &mockPublisher{err: errors.New("event hub unreachable")}
 	w := postEvent(t, pub, validCaseCreated)
 	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+func TestPostEvent_NoEventID_SkipsOutboxEvenWithEntityServiceConfigured(t *testing.T) {
+	pub := &mockPublisher{}
+	es := &fakeEntityService{}
+	w := postEventWithEntityService(t, pub, es, validCaseCreated)
+	assertStatus(t, w, http.StatusAccepted)
+	if len(es.calls) != 0 {
+		t.Errorf("expected no entity-service calls for an event with no eventId, got %v", es.calls)
+	}
+	if pub.callCount != 1 {
+		t.Errorf("expected Publish to be called once, got %d", pub.callCount)
+	}
+}
+
+func TestPostEvent_ClaimsBeforePublishAndMarksDispatched(t *testing.T) {
+	pub := &mockPublisher{}
+	es := &fakeEntityService{}
+	w := postEventWithEntityService(t, pub, es, validCaseCreatedWithEventID)
+	assertStatus(t, w, http.StatusAccepted)
+	if pub.callCount != 1 {
+		t.Fatalf("expected Publish to be called once, got %d", pub.callCount)
+	}
+	want := []entityServiceCall{
+		{"outbox-1", outbox.StatusDispatching},
+		{"outbox-1", outbox.StatusDispatched},
+	}
+	if len(es.calls) != len(want) {
+		t.Fatalf("entity-service calls = %v, want %v", es.calls, want)
+	}
+	for i, c := range want {
+		if es.calls[i] != c {
+			t.Errorf("call %d = %v, want %v", i, es.calls[i], c)
+		}
+	}
+}
+
+func TestPostEvent_ClaimConflict_SkipsPublish(t *testing.T) {
+	pub := &mockPublisher{}
+	es := &fakeEntityService{err: &apierror.Error{StatusCode: http.StatusConflict, Body: "already claimed"}}
+	w := postEventWithEntityService(t, pub, es, validCaseCreatedWithEventID)
+	assertStatus(t, w, http.StatusAccepted)
+	if pub.callCount != 0 {
+		t.Errorf("expected Publish not to be called when the outbox claim conflicts, got %d calls", pub.callCount)
+	}
+	if len(es.calls) != 1 || es.calls[0].status != outbox.StatusDispatching {
+		t.Errorf("entity-service calls = %v, want a single claim attempt", es.calls)
+	}
+}
+
+func TestPostEvent_ClaimFails_FailsClosed(t *testing.T) {
+	pub := &mockPublisher{}
+	es := &fakeEntityService{err: errors.New("entity-service unreachable")}
+	w := postEventWithEntityService(t, pub, es, validCaseCreatedWithEventID)
+	assertStatus(t, w, http.StatusInternalServerError)
+	if pub.callCount != 0 {
+		t.Errorf("expected Publish not to be called when the outbox claim fails, got %d calls", pub.callCount)
+	}
+}
+
+func TestPostEvent_PublishFailure_ReleasesClaim(t *testing.T) {
+	pub := &mockPublisher{err: errors.New("event hub unreachable")}
+	es := &fakeEntityService{}
+	w := postEventWithEntityService(t, pub, es, validCaseCreatedWithEventID)
+	assertStatus(t, w, http.StatusInternalServerError)
+	want := []entityServiceCall{
+		{"outbox-1", outbox.StatusDispatching},
+		{"outbox-1", outbox.StatusWaiting},
+	}
+	if len(es.calls) != len(want) {
+		t.Fatalf("entity-service calls = %v, want %v", es.calls, want)
+	}
+	for i, c := range want {
+		if es.calls[i] != c {
+			t.Errorf("call %d = %v, want %v", i, es.calls[i], c)
+		}
+	}
 }

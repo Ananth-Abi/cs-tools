@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/outbox"
 )
 
 // emailPattern is a deliberately loose "does this look like an email
@@ -62,15 +63,25 @@ type eventPublisher interface {
 	Publish(ctx context.Context, key, value []byte) error
 }
 
+// entityServiceClient abstracts entityservice.Client for testability.
+type entityServiceClient interface {
+	UpdateEventOutboxStatus(ctx context.Context, id, status string) error
+}
+
 // EventsHandler handles HTTP requests that submit a domain event to be
 // published to the event bus.
 type EventsHandler struct {
-	publisher eventPublisher
+	publisher     eventPublisher
+	entityService entityServiceClient
 }
 
 // NewEventsHandler creates an EventsHandler backed by the given publisher.
-func NewEventsHandler(publisher eventPublisher) *EventsHandler {
-	return &EventsHandler{publisher: publisher}
+// entityService may be nil — when it is, or when a request has no EventID,
+// the outbox claim/dispatch/release calls below are skipped entirely and the
+// event is published unconditionally, matching this service's behavior
+// before entity-service's event_outbox existed.
+func NewEventsHandler(publisher eventPublisher, entityService entityServiceClient) *EventsHandler {
+	return &EventsHandler{publisher: publisher, entityService: entityService}
 }
 
 // PostEvent handles POST /events — the entry point csm-portal-backend and
@@ -122,9 +133,14 @@ func (h *EventsHandler) PostEvent(w http.ResponseWriter, r *http.Request) {
 	// Publish the original request body as received (already validated
 	// above) — the consumer decodes it the same way. Keyed by EntityID so
 	// every event about the same case/incident lands on the same partition
-	// and is processed in the order it was published.
-	if err := h.publisher.Publish(r.Context(), []byte(env.EntityID), body); err != nil {
-		slog.ErrorContext(r.Context(), "failed to publish event", "type", env.Type, "entityId", env.EntityID, "err", err)
+	// and is processed in the order it was published. outbox.Dispatch claims
+	// the event_outbox row named by env.EventID before publishing (skipping
+	// publish on a conflict — already claimed by a racing caller or
+	// entity-service's own polling fallback) — see its doc comment; a 202 is
+	// the right response either way, since from this request's perspective
+	// the event either got published just now or was already handled.
+	if _, err := outbox.Dispatch(r.Context(), h.publisher, h.entityService, env.EventID, []byte(env.EntityID), body); err != nil {
+		slog.ErrorContext(r.Context(), "failed to dispatch event", "type", env.Type, "entityId", env.EntityID, "eventId", env.EventID, "err", err)
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 		return
 	}

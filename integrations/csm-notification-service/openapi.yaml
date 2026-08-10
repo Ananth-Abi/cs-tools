@@ -35,7 +35,10 @@ paths:
         case assigned, or incident created). Validates and publishes the
         event to the event bus, responding 202 — the notification itself is
         sent asynchronously by this service's own consumer, not in this
-        request.
+        request. When eventId is set and entity-service is configured, this
+        also claims that event_outbox row before publishing; 202 is returned
+        either way, including when the row was already claimed by a racing
+        caller (in which case publish is skipped, not repeated).
       operationId: postEvent
       requestBody:
         content:
@@ -235,9 +238,13 @@ components:
         eventId:
           type: string
           description: >-
-            Optional, unused by this service — passed through unchanged for
-            whoever upstream needs it. This service has no database and
-            doesn't deduplicate on it itself.
+            Optional — an entity-service event_outbox row ID. When present
+            and entity-service is configured, this service claims that row
+            before publishing and marks it dispatched (or releases the claim
+            on failure) afterward, so a racing polling fallback or retried
+            call doesn't get double-dispatched. This service has no database
+            of its own and never talks to one directly — the claim happens
+            via entity-service's HTTP API.
         payload:
           $ref: '#/components/schemas/CaseCreatedPayload'
 
