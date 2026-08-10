@@ -54,7 +54,7 @@ func NewProducer(cfg Config) *Producer {
 				TLS:  &tls.Config{MinVersion: tls.VersionTLS12},
 				SASL: cfg.saslMechanism(),
 			},
-			Logger:      kafka.LoggerFunc(logWarn),
+			Logger:      kafka.LoggerFunc(logDebug),
 			ErrorLogger: kafka.LoggerFunc(logError),
 			// Compression is deliberately left unset (no codec). Azure Event
 			// Hub's Kafka-compatible endpoint rejected compressed batches

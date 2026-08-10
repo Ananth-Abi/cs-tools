@@ -262,6 +262,10 @@ func TestDispatcher_Handle_IncidentCreated_CallFailureStillSendsChat(t *testing.
 // a regression test: eventbus.Consumer retries the whole Handle call on any
 // error. Before the per-channel done-tracking existed, a persistently
 // failing call would cause the chat alert to be resent on every retry too.
+// It also covers the done-map cleanup on the final attempt: the call channel
+// here never succeeds, so IsFinalAttempt (not "both succeeded") is what
+// releases its and chat's tracking entries once eventbus.Consumer is done
+// retrying — without that, they'd stay in d.done forever.
 func TestDispatcher_Handle_IncidentCreated_RetryDoesNotResendSucceededChannel(t *testing.T) {
 	chat := &mockGoogleChatSender{}
 	call := &mockCallSender{err: errors.New("twilio unreachable")}
@@ -270,6 +274,7 @@ func TestDispatcher_Handle_IncidentCreated_RetryDoesNotResendSucceededChannel(t 
 	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(validIncidentRecord)}
 
 	for attempt := 1; attempt <= 3; attempt++ {
+		record.IsFinalAttempt = attempt == 3
 		if err := d.Handle(context.Background(), record); err == nil {
 			t.Fatalf("attempt %d: expected the call error to still propagate", attempt)
 		}
@@ -280,6 +285,9 @@ func TestDispatcher_Handle_IncidentCreated_RetryDoesNotResendSucceededChannel(t 
 	}
 	if len(call.calls) != 3 {
 		t.Errorf("call attempted %d times across 3 retries, want 3 (the genuinely failing channel should keep retrying)", len(call.calls))
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after the final attempt, has %d entries (leaked tracking for a channel that never succeeded)", len(d.done))
 	}
 }
 

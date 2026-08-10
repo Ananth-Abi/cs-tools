@@ -19,40 +19,29 @@ package eventbus
 import (
 	"fmt"
 	"log/slog"
-	"strings"
 )
 
-// logWarn and logError bridge kafka.Writer/kafka.Reader's Logger/ErrorLogger
-// (a bare Printf-style func) to slog, so broker warnings (e.g. disconnects,
-// rebalances) and errors show up in this service's structured logs instead
-// of nowhere — kafka-go, like the Kafka client used before it, logs nothing
-// at all without one of these explicitly set.
-func logWarn(msg string, args ...any) {
-	slog.Warn(fmt.Sprintf(msg, args...))
+// logDebug and logError bridge kafka.Writer/kafka.Reader's Logger/
+// ErrorLogger (a bare Printf-style func) to slog, so this service's logs
+// show something instead of nowhere — kafka-go, like the Kafka client used
+// before it, logs nothing at all without one of these explicitly set.
+//
+// Logger (bridged to logDebug) is kafka-go's own designation for routine,
+// non-error informational messages — join/sync/commit protocol chatter, "N
+// messages written to <topic>" on every produce, and so on. Confirmed
+// against the real Event Hub namespace: at Warn level this produced
+// thousands of log lines a day for entirely normal operation, several a
+// second during any consumer-group rebalance. ErrorLogger (bridged to
+// logError) is where kafka-go actually reports problems, so routing it to
+// slog.Error and Logger to slog.Debug matches kafka-go's own intended
+// severity split — genuine problems stay visible by default (this
+// service's configured log level is Info), routine chatter is available
+// when explicitly needed (e.g. troubleshooting a connection issue) without
+// having to filter or classify individual message strings ourselves.
+func logDebug(msg string, args ...any) {
+	slog.Debug(fmt.Sprintf(msg, args...))
 }
 
 func logError(msg string, args ...any) {
 	slog.Error(fmt.Sprintf(msg, args...))
-}
-
-// idleFetchTimeoutPrefix is the exact prefix of the message kafka.Reader logs
-// every time a long-poll fetch against an idle partition times out (once per
-// partition per MaxWait interval, ~every 10s by default) — confirmed against
-// the real Event Hub namespace: with 4 partitions and low traffic, this alone
-// produced a WARN log line roughly every 2-3 seconds. It's expected protocol
-// behavior (Kafka error code 7, "REQUEST_TIMED_OUT"), not something worth
-// paging on, so readerLogWarn demotes it to DEBUG instead of dropping it
-// outright — it's still visible if the log level is ever lowered.
-const idleFetchTimeoutPrefix = "no messages received from kafka within the allocated time"
-
-// readerLogWarn is kafka.Reader's Logger — unlike kafka.Writer, which has no
-// equivalent routine noise, Reader logs the idle-timeout message above at the
-// same level as genuinely useful warnings (rebalances, disconnects), so it
-// needs its own filter rather than reusing logWarn directly.
-func readerLogWarn(msg string, args ...any) {
-	if strings.HasPrefix(msg, idleFetchTimeoutPrefix) {
-		slog.Debug(fmt.Sprintf(msg, args...))
-		return
-	}
-	slog.Warn(fmt.Sprintf(msg, args...))
 }

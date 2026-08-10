@@ -232,6 +232,13 @@ components:
           enum: [case.created]
         entityId:
           type: string
+        eventId:
+          type: string
+          description: >-
+            Optional, currently unused by this service — reserved for future
+            duplicate-publish detection and dead-letter correlation. Callers
+            may start generating one now (e.g. a UUID per event) while this
+            schema has no other consumers to migrate later.
         payload:
           $ref: '#/components/schemas/CaseCreatedPayload'
 
@@ -245,6 +252,9 @@ components:
           enum: [case.comment_added]
         entityId:
           type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
         payload:
           $ref: '#/components/schemas/CommentAddedPayload'
 
@@ -258,6 +268,9 @@ components:
           enum: [case.status_changed]
         entityId:
           type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
         payload:
           $ref: '#/components/schemas/StatusChangedPayload'
 
@@ -271,6 +284,9 @@ components:
           enum: [case.assigned]
         entityId:
           type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
         payload:
           $ref: '#/components/schemas/CaseAssignedPayload'
 
@@ -284,6 +300,9 @@ components:
           enum: [incident.created]
         entityId:
           type: string
+        eventId:
+          type: string
+          description: See CaseCreatedEvent.eventId.
         payload:
           $ref: '#/components/schemas/IncidentCreatedPayload'
 

@@ -52,6 +52,14 @@ type Record struct {
 	Offset    int64
 	Key       []byte
 	Value     []byte
+	// IsFinalAttempt is true on the last of handleAttempts calls to Handle
+	// for this record — set by handleAndCommit, which is about to commit
+	// and move on regardless of this call's outcome. A Handle implementation
+	// that tracks its own per-record state (e.g. dispatch.Dispatcher's
+	// per-channel idempotency map) can use this to release that state once
+	// no further retry will ever come for this exact record, instead of
+	// only releasing it on success and leaking otherwise.
+	IsFinalAttempt bool
 }
 
 // Consumer reads records from a topic as a member of a named consumer group,
@@ -85,7 +93,7 @@ func NewConsumer(cfg Config, groupID string) *Consumer {
 			// set explicitly to avoid dropping events published just before
 			// its first join — confirmed against the real namespace.
 			StartOffset: kafka.FirstOffset,
-			Logger:      kafka.LoggerFunc(readerLogWarn),
+			Logger:      kafka.LoggerFunc(logDebug),
 			ErrorLogger: kafka.LoggerFunc(logError),
 			// kafka-go's consumer-group rebalancing only offers Range and
 			// RoundRobin balancers (its default, left unset here) — there is
@@ -130,6 +138,7 @@ func (c *Consumer) handleAndCommit(ctx context.Context, msg kafka.Message, handl
 
 	var err error
 	for attempt := 1; attempt <= handleAttempts; attempt++ {
+		record.IsFinalAttempt = attempt == handleAttempts
 		if err = handle(ctx, record); err == nil {
 			break
 		}

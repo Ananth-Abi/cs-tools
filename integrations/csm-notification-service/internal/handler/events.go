@@ -110,6 +110,11 @@ func (h *EventsHandler) PostEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateEventPayload(env.EntityID, env.Type, env.Payload); err != nil {
+		// The response is intentionally the generic ErrMsgBadRequest — err's
+		// detail (which field, which mismatch) isn't for the caller — but
+		// it's still worth this service's own logs, or a caller integrating
+		// against this API for the first time is a black box to debug.
+		slog.DebugContext(r.Context(), "rejected event", "type", env.Type, "entityId", env.EntityID, "err", err)
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}

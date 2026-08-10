@@ -205,7 +205,14 @@ func (d *Dispatcher) send(ctx context.Context, recipients []string, subject, htm
 // paging on-call once but posting 3 duplicate Chat cards, or vice versa.
 // alreadyDone/markDone key on this specific record (topic/partition/offset,
 // unique per record) plus which channel, so a retry only re-attempts the
-// channel that's still actually failing.
+// channel that's still actually failing. Both keys are released once either
+// both channels have succeeded, or record.IsFinalAttempt is true — the
+// latter matters because a channel that never succeeds (e.g. Twilio stays
+// down for all 3 attempts) would otherwise never hit the "both succeeded"
+// branch, and its key would sit in d.done forever: IsFinalAttempt tells us
+// eventbus.Consumer is about to commit and move on regardless of outcome,
+// so there's no future retry left to protect against, and it's safe to
+// stop tracking.
 func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
 	var p events.IncidentCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -232,7 +239,7 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 		}
 	}
 
-	if chatErr == nil && callErr == nil {
+	if (chatErr == nil && callErr == nil) || record.IsFinalAttempt {
 		d.forget(chatKey)
 		d.forget(callKey)
 	}
