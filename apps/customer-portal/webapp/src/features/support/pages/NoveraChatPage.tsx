@@ -908,11 +908,19 @@ export default function NoveraChatPage(): JSX.Element {
         type: "token_increase_request",
         accountId,
         accountName: projectDetails?.account?.name || undefined,
+        requestedBy: currentUserEmail || undefined,
         reason,
         limitType: "session",
       });
     },
-    [projectId, accountId, projectDetails?.account?.name, connect, sendUserMessage],
+    [
+      projectId,
+      accountId,
+      projectDetails?.account?.name,
+      currentUserEmail,
+      connect,
+      sendUserMessage,
+    ],
   );
 
   const handleSendMessage = useCallback(async (): Promise<boolean> => {
