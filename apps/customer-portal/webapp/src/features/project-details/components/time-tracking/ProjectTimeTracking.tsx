@@ -22,6 +22,7 @@ import {
 } from "react";
 import useSearchProjectCaseTimeCards from "@features/usage-metrics/api/useSearchProjectCaseTimeCards";
 import ServiceHoursStatCards from "@time-tracking/ServiceHoursStatCards";
+import TimeCardsBillableStats from "@time-tracking/TimeCardsBillableStats";
 import TimeCardsDateFilter from "@time-tracking/TimeCardsDateFilter";
 import TimeTrackingCard from "@time-tracking/TimeTrackingCard";
 import TimeTrackingCardSkeleton from "@time-tracking/TimeTrackingCardSkeleton";
@@ -103,7 +104,7 @@ export default function ProjectTimeTracking({
         isError={isProjectError}
       />
 
-      <Box sx={{ mb: 3 }}>
+      <Box sx={{ mb: 2 }}>
         <TimeCardsDateFilter
           startDate={startDate}
           endDate={endDate}
@@ -113,6 +114,12 @@ export default function ProjectTimeTracking({
           hasFilters={hasDateFilters}
         />
       </Box>
+
+      <TimeCardsBillableStats
+        projectId={projectId}
+        startDate={startDate}
+        endDate={endDate}
+      />
 
       <Box sx={{ mb: 2, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

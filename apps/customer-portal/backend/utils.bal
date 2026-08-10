@@ -1178,6 +1178,9 @@ public isolated function mapTimeCardSearchResponseGroupedByCases(entity:CaseTime
                 number: caseTimeCard.case.number,
                 name: caseTimeCard.case.name,
                 updatedOn: caseTimeCard.case.updatedOn,
+                createdOn: caseTimeCard.case?.createdOn,
+                createdBy: caseTimeCard.case?.createdBy,
+                updatedBy: caseTimeCard.case?.updatedBy,
                 project: project != () ? {id: project.id, label: project.name} : ()
             },
             totalTime: caseTimeCard.totalTime,
