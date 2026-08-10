@@ -284,13 +284,21 @@ func (m *mockUpdatesClient) SearchUpdatesBetweenUpdateLevels(ctx context.Context
 // ----- mock SCIM client -----
 
 type mockSCIMClient struct {
-	searchUserFn      func(ctx context.Context, email string) (*scim.UserInfo, error)
-	updateUserPhoneFn func(ctx context.Context, userID, mobile string) (*string, error)
+	searchUserFn         func(ctx context.Context, email string) (*scim.UserInfo, error)
+	searchExternalUserFn func(ctx context.Context, email string) (*scim.ExternalUserInfo, error)
+	updateUserPhoneFn    func(ctx context.Context, userID, mobile string) (*string, error)
 }
 
 func (m *mockSCIMClient) SearchUser(ctx context.Context, email string) (*scim.UserInfo, error) {
 	if m.searchUserFn != nil {
 		return m.searchUserFn(ctx, email)
+	}
+	return nil, nil
+}
+
+func (m *mockSCIMClient) SearchExternalUser(ctx context.Context, email string) (*scim.ExternalUserInfo, error) {
+	if m.searchExternalUserFn != nil {
+		return m.searchExternalUserFn(ctx, email)
 	}
 	return nil, nil
 }

@@ -33,6 +33,7 @@ import (
 // allowing the handler to be tested independently of the real HTTP client.
 type scimClient interface {
 	SearchUser(ctx context.Context, email string) (*scim.UserInfo, error)
+	SearchExternalUser(ctx context.Context, email string) (*scim.ExternalUserInfo, error)
 	UpdateUserPhone(ctx context.Context, userID, mobile string) (*string, error)
 }
 
@@ -304,9 +305,12 @@ func (h *UsersHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "entity GetUser: could not derive team membership",
 			"userID", user.UserID, "err", err)
-		writeJSON(w, http.StatusOK, result)
-		return
+		enriched = result
 	}
+
+	// SCIM's "external" org existence/lock check is independent of the teams
+	// enrichment above, so a failure in either never blocks the other.
+	enriched = h.withExternalAccountStatus(r.Context(), enriched, user.UserID)
 
 	writeJSON(w, http.StatusOK, enriched)
 }

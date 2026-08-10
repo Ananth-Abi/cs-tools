@@ -293,6 +293,7 @@ backend/
 - `GET /users/me` — Get current user profile (`id`, `email`, `firstName`, `lastName`, `timeZone`, `roles` from entity service; `phoneNumber` from SCIM)
 - `PATCH /users/me` — Update current user profile (`phoneNumber` via SCIM, `timeZone` via entity service)
 - `POST /users/search` — Search users; optional `filters` (`searchQuery`, `roles`, `userNames`, `emails`, `active`) and `sortBy` (`field`, `order`); response shape depends on data source (`User` for postgres, `SNUser` for ServiceNow)
+- `GET /users/{id}` — Get one user's full profile (ServiceNow data source only); adds `teams` (derived from `groups`) and, for external contacts only, `externalAccount` (`exists`/`locked`, from SCIM's "external" org search). Both are best-effort — absent rather than failing the request if their lookup fails
 
 ### Accounts
 

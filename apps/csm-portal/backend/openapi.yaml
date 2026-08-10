@@ -6526,8 +6526,9 @@ components:
     SNUserDetail:
       type: object
       description: >
-        One user's full profile. The membership and project-access blocks are best-effort:
-        each is empty rather than absent when its upstream lookup fails.
+        One user's full profile. The membership, project-access, and externalAccount blocks
+        are best-effort: each is empty/absent rather than failing the whole request when its
+        upstream lookup fails.
       allOf:
         - $ref: '#/components/schemas/SNUser'
         - type: object
@@ -6545,6 +6546,27 @@ components:
               description: Present for external contacts only.
               items:
                 $ref: '#/components/schemas/UserProjectAccess'
+            externalAccount:
+              allOf:
+                - $ref: '#/components/schemas/ExternalAccountStatus'
+              description: >
+                SCIM "external" org existence/lock status. Present for external contacts only
+                (userType other than internal); absent when the SCIM lookup itself failed.
+
+    ExternalAccountStatus:
+      type: object
+      description: SCIM "external" org existence/lock status for one user.
+      required: [exists, locked]
+      properties:
+        exists:
+          type: boolean
+          description: Whether the user's account exists in the SCIM "external" org.
+        locked:
+          type: boolean
+          nullable: true
+          description: >
+            Whether the account is locked. Null when the account does not exist or the lock
+            state could not be determined.
 
     UserSearchFilters:
       type: object

@@ -30,6 +30,28 @@ const COMPANY_NAME = "WSO2 LLC";
 const TERMS_OF_SERVICE_URL = "https://wso2.com/terms-of-use/";
 const PRIVACY_POLICY_URL = "https://wso2.com/privacy-policy/";
 
+// Persists the last resolved section across a full page reload — a fresh
+// mount's `useRef` default can't remember it otherwise. sessionStorage (not
+// localStorage) because this is transient nav context for the current tab,
+// not a durable preference like SIDEBAR_COLLAPSED_KEY.
+const LAST_SECTION_KEY = "csm.sidebar.lastSection";
+
+function getLastSectionId(): string {
+  try {
+    return sessionStorage.getItem(LAST_SECTION_KEY) ?? "dashboard";
+  } catch {
+    return "dashboard";
+  }
+}
+
+function setLastSectionId(id: string): void {
+  try {
+    sessionStorage.setItem(LAST_SECTION_KEY, id);
+  } catch {
+    /* ignore */
+  }
+}
+
 interface CsmSideBarProps {
   collapsed: boolean;
   expandedMenus?: Record<string, boolean>;
@@ -54,10 +76,11 @@ export default function CsmSideBar({
   onToggleExpand,
 }: CsmSideBarProps): JSX.Element {
   const location = useLocation();
-  const lastSectionId = useRef("dashboard");
+  const lastSectionId = useRef(getLastSectionId());
   const activeItem = pickActiveId(location.pathname, lastSectionId.current);
   useEffect(() => {
     lastSectionId.current = activeItem;
+    setLastSectionId(activeItem);
   }, [activeItem]);
 
   return (

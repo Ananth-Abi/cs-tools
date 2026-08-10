@@ -265,6 +265,47 @@ describe("UserProfilePage", () => {
     expect(screen.getByText(/account is inactive/i)).toBeInTheDocument();
   });
 
+  it("renders the external account's exists/locked chips for an external user", () => {
+    mockQueryResult({
+      data: { ...BLOCKED_EXTERNAL_USER, externalAccount: { exists: true, locked: false } },
+    });
+    renderPage();
+    expect(screen.getByText("External account")).toBeInTheDocument();
+    expect(screen.getByText("Exists", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.getByText("Unlocked", { selector: ".MuiChip-label" })).toBeInTheDocument();
+  });
+
+  it("calls out a locked external account, both as a chip and as a blocking alert", () => {
+    mockQueryResult({
+      data: { ...BLOCKED_EXTERNAL_USER, externalAccount: { exists: true, locked: true } },
+    });
+    renderPage();
+    expect(screen.getByText("Locked", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.getByText(/external account is locked/i)).toBeInTheDocument();
+  });
+
+  it("renders 'Not found' without a lock chip when the external account doesn't exist", () => {
+    mockQueryResult({
+      data: { ...BLOCKED_EXTERNAL_USER, externalAccount: { exists: false, locked: null } },
+    });
+    renderPage();
+    expect(screen.getByText("Not found", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.queryByText("Locked", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Unlocked", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
+  });
+
+  it("renders 'Unavailable' rather than a false 'Not found' when the SCIM lookup itself failed", () => {
+    mockQueryResult({ data: { ...BLOCKED_EXTERNAL_USER, externalAccount: undefined } });
+    renderPage();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+  });
+
+  it("does not render an External account field for an internal user", () => {
+    mockQueryResult({ data: INTERNAL_USER });
+    renderPage();
+    expect(screen.queryByText("External account")).not.toBeInTheDocument();
+  });
+
   it("falls back to browser history when no origin was captured (e.g. a bookmarked/direct link)", () => {
     mockQueryResult({ data: INTERNAL_USER });
     // Two history entries (unlike renderPage's single-entry default) so
