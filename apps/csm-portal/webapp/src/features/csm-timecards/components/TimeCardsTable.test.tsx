@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import TimeCardsTable from "@features/csm-timecards/components/TimeCardsTable";
@@ -34,7 +34,16 @@ const CARD: CsmTimeCard = {
   totalMinutes: 30,
 };
 
+const APPROVED_CARD: CsmTimeCard = {
+  ...CARD,
+  id: "tc-2",
+  caseNumber: "CS0352585",
+  userName: "John Roe",
+  state: "approved",
+};
+
 const ROLE_CTX = { isOwner: false, isApprover: false, isAdmin: false };
+const APPROVER_ROLE_CTX = { isOwner: false, isApprover: true, isAdmin: false };
 
 describe("TimeCardsTable column visibility", () => {
   it("shows the Case column but not the Engineer column on the personal view (My time sheets)", () => {
@@ -76,5 +85,132 @@ describe("TimeCardsTable column visibility", () => {
 
     expect(screen.getByText("CS0352584")).toBeInTheDocument();
     expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+  });
+});
+
+describe("TimeCardsTable bulk-select (Approvals tab)", () => {
+  it("renders no checkboxes at all when selectable is omitted (default, every other tab)", () => {
+    render(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryAllByRole("checkbox")).toHaveLength(0);
+  });
+
+  it("only shows a row checkbox for cards the viewer can actually approve, not e.g. an already-approved one", () => {
+    render(
+      <TimeCardsTable
+        cards={[CARD, APPROVED_CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        selectable
+        selectedIds={new Set()}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    // One header select-all checkbox + one row checkbox (the submitted card
+    // only) — the approved card gets no checkbox at all.
+    expect(screen.getAllByRole("checkbox")).toHaveLength(2);
+    expect(
+      screen.getByRole("checkbox", { name: /select time card cs0352584/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", { name: /select time card cs0352585/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("calls onToggleSelect with the card when its row checkbox is clicked", () => {
+    const onToggleSelect = vi.fn();
+    render(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        selectable
+        selectedIds={new Set()}
+        onToggleSelect={onToggleSelect}
+        onToggleSelectAll={vi.fn()}
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /select time card cs0352584/i }));
+    expect(onToggleSelect).toHaveBeenCalledWith(CARD);
+  });
+
+  it("reflects selectedIds on the row checkbox and shows the header checkbox checked once every selectable row is selected", () => {
+    render(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        selectable
+        selectedIds={new Set([CARD.id])}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    const rowCheckbox = screen.getByRole("checkbox", { name: /select time card cs0352584/i });
+    const headerCheckbox = screen.getByRole("checkbox", { name: /select all approvable/i });
+    expect(rowCheckbox).toBeChecked();
+    expect(headerCheckbox).toBeChecked();
+  });
+
+  it("calls onToggleSelectAll with only the selectable cards on the page when the header checkbox is clicked", () => {
+    const onToggleSelectAll = vi.fn();
+    render(
+      <TimeCardsTable
+        cards={[CARD, APPROVED_CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        selectable
+        selectedIds={new Set()}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={onToggleSelectAll}
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /select all approvable/i }));
+    expect(onToggleSelectAll).toHaveBeenCalledWith([CARD]);
+  });
+
+  it("disables the header select-all checkbox when no row on the page is approvable", () => {
+    render(
+      <TimeCardsTable
+        cards={[APPROVED_CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        selectable
+        selectedIds={new Set()}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("checkbox", { name: /select all approvable/i })).toBeDisabled();
   });
 });

@@ -15,7 +15,7 @@
 // under the License.
 
 import { Fragment, useState, type JSX } from "react";
-import { Box, Button, IconButton, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Checkbox, IconButton, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { Check, Eye, X } from "@wso2/oxygen-ui-icons-react";
 import RelativeTime from "@components/RelativeTime";
 import TimeCardDetailModal from "@features/csm-timecards/components/TimeCardDetailModal";
@@ -58,6 +58,19 @@ interface TimeCardsTableProps {
    * submitted that specific card), constant on "My time sheets"/"Approvals". */
   roleFor: (card: CsmTimeCard) => TimecardRoleCtx;
   onCardAction: (card: CsmTimeCard, action: TimecardAction) => void;
+  /** Adds a leading checkbox column for multi-select bulk approve — Approvals
+   * tab only. A row only gets a checkbox when its own `cardActions` include
+   * "approve" (same eligibility check the per-row Approve button already
+   * uses); every other row gets an empty placeholder cell instead, so the
+   * grid's columns stay aligned. Omitted/false renders no checkbox column at
+   * all, byte-for-byte the same as before this prop existed. */
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (card: CsmTimeCard) => void;
+  /** Called with the current page's full set of selectable cards (not just
+   * the ones already selected) — the caller decides select-all vs
+   * clear-all based on whether every one of those is already selected. */
+  onToggleSelectAll?: (selectableCards: CsmTimeCard[]) => void;
 }
 
 const ACTION_BUTTONS: Record<
@@ -85,6 +98,10 @@ export default function TimeCardsTable({
   showActionsColumn = false,
   roleFor,
   onCardAction,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
+  onToggleSelectAll,
 }: TimeCardsTableProps): JSX.Element {
   // The card currently open in the read-only detail modal — local to this
   // table (no mutation involved, unlike `review` on the page, which needs to
@@ -101,6 +118,7 @@ export default function TimeCardsTable({
     "Actions",
   ];
   const grid = [
+    ...(selectable ? ["40px"] : []),
     ...(showCaseColumn ? ["minmax(120px, 0.9fr)"] : []),
     ...(showEngineerColumn ? ["minmax(140px, 1fr)"] : []),
     "minmax(160px, 1.4fr)",
@@ -114,6 +132,15 @@ export default function TimeCardsTable({
   // first within it) — flattened back into one ordered list since rows no
   // longer render a group header, just Case/Engineer as columns.
   const orderedCards = groupTimeCards(cards, groupBy).flatMap((g) => g.cards);
+  // Same eligibility check the per-row Approve button uses (line ~207 below)
+  // — computed once up front so the header's select-all checkbox can reflect
+  // "every selectable row on this page", not every row.
+  const selectableCards = selectable
+    ? orderedCards.filter((c) => cardActions(c.state, roleFor(c)).includes("approve"))
+    : [];
+  const allSelected =
+    selectableCards.length > 0 && selectableCards.every((c) => selectedIds?.has(c.id));
+  const someSelected = selectableCards.some((c) => selectedIds?.has(c.id));
 
   return (
     <Fragment>
@@ -144,6 +171,17 @@ export default function TimeCardsTable({
             borderColor: "divider",
           }}
         >
+          {selectable && (
+            <Checkbox
+              size="small"
+              checked={allSelected}
+              indeterminate={someSelected && !allSelected}
+              disabled={selectableCards.length === 0}
+              onChange={() => onToggleSelectAll?.(selectableCards)}
+              inputProps={{ "aria-label": "Select all approvable time cards on this page" }}
+              sx={{ p: 0 }}
+            />
+          )}
           {headerCells.map((label, i) => (
             <Typography
               key={`${label}-${i}`}
@@ -209,6 +247,19 @@ export default function TimeCardsTable({
                   borderColor: "divider",
                 }}
               >
+                {selectable && (
+                  <Box role="cell" sx={{ display: "flex", alignItems: "center" }}>
+                    {actions.includes("approve") && (
+                      <Checkbox
+                        size="small"
+                        checked={selectedIds?.has(c.id) ?? false}
+                        onChange={() => onToggleSelect?.(c)}
+                        inputProps={{ "aria-label": `Select time card ${c.caseNumber} for bulk approve` }}
+                        sx={{ p: 0 }}
+                      />
+                    )}
+                  </Box>
+                )}
                 {showCaseColumn && (
                   <Typography role="cell" variant="body2" noWrap title={c.caseNumber}>
                     {c.caseNumber}
