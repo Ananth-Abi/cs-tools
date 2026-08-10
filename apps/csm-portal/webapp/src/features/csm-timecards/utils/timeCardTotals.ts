@@ -55,12 +55,20 @@ export interface TimeCardDraft {
   breakdown: ActivityBreakdown;
   workLogComment: string;
   approverId?: string;
+  /**
+   * Whether an approver must be chosen. True (the default) when creating a
+   * card. False when editing an existing one: the approver is fixed at
+   * submission time, shown read-only, and never sent on an edit — and a card
+   * may come back with no approver at all, which must not block the edit.
+   */
+  requireApprover?: boolean;
 }
 
 /**
  * Validate a log-time draft. Returns an errors object; an empty object means the
- * draft is submittable. Mirrors the ServiceNow required fields (Date, Task —
- * preset from the case, Work Log Comment, Approver) plus a "log some time" rule.
+ * draft is submittable. Mirrors the required fields of the backing work-log
+ * record (Date, Task — preset from the case, Work Log Comment, and Approver on
+ * create) plus a "log some time" rule.
  */
 export function timeCardDraftErrors(draft: TimeCardDraft): TimeCardDraftErrors {
   const errors: TimeCardDraftErrors = {};
@@ -78,6 +86,8 @@ export function timeCardDraftErrors(draft: TimeCardDraft): TimeCardDraftErrors {
   } else if (draft.workLogComment.length > WORK_LOG_MAX) {
     errors.workLogComment = `Comment must be ${WORK_LOG_MAX} characters or fewer.`;
   }
-  if (!draft.approverId) errors.approver = "Choose an approver.";
+  if (draft.requireApprover !== false && !draft.approverId) {
+    errors.approver = "Choose an approver.";
+  }
   return errors;
 }

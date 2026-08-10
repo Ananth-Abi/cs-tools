@@ -1352,6 +1352,13 @@ type ParsedCaseFilters struct {
 	WorkStates      []CaseWorkState
 	AssignedUserIDs []string
 	ProductNames    []string
+	// ExcludeStates filters to cases whose state is NOT one of these values
+	// (optional). Inverse of States, and the two are independent: a request may
+	// carry either, both, or neither. Only the backing data source that models
+	// case state supports it; the relational backend rejects it rather than
+	// dropping the predicate, since silently ignoring an exclusion widens the
+	// result set instead of narrowing it.
+	ExcludeStates []CaseState
 	// Tags filters cases by attached free-text label. Works end-to-end: ServiceNow's
 	// CaseUtils.searchCases honors filters.tags, and Ballerina's CaseSearchFilters
 	// forwards it.
@@ -1474,22 +1481,25 @@ type SearchCaseView struct {
 	// CreatedBy is the canonical user reference for the case creator. Its id is
 	// populated only where the backing data source already supplies one, and
 	// null otherwise: see UserReference.
-	CreatedBy       *UserReference `json:"createdBy"`
-	Subject         *string        `json:"subject"`
-	Description     *string        `json:"description"`
-	IssueType       *string        `json:"issueType"`
-	State           string         `json:"state"`
-	Severity        *string        `json:"severity"`
-	Catalog         *EntityRef     `json:"catalog"`
-	CatalogItem     *EntityRef     `json:"catalogItem"`
-	AssignedTeam    *EntityRef     `json:"assignedTeam"`
-	Product         *EntityRef     `json:"product"`
-	EngagementType  *string        `json:"engagementType"`
-	WorkState       *string        `json:"workState"`
-	Type            string         `json:"type"`
-	Project         EntityRef      `json:"project"`
-	Deployment      *EntityRef     `json:"deployment"`
-	DeployedProduct *EntityRef     `json:"deployedProduct"`
+	CreatedBy      *UserReference `json:"createdBy"`
+	Subject        *string        `json:"subject"`
+	Description    *string        `json:"description"`
+	IssueType      *string        `json:"issueType"`
+	State          string         `json:"state"`
+	Severity       *string        `json:"severity"`
+	Catalog        *EntityRef     `json:"catalog"`
+	CatalogItem    *EntityRef     `json:"catalogItem"`
+	AssignedTeam   *EntityRef     `json:"assignedTeam"`
+	Product        *EntityRef     `json:"product"`
+	EngagementType *string        `json:"engagementType"`
+	WorkState      *string        `json:"workState"`
+	Type           string         `json:"type"`
+	Project        EntityRef      `json:"project"`
+	// ProjectKey is the project's short human-readable key (e.g. "TESTQUERYSUB").
+	// Populated for the ServiceNow data source only; null otherwise.
+	ProjectKey      *string    `json:"projectKey"`
+	Deployment      *EntityRef `json:"deployment"`
+	DeployedProduct *EntityRef `json:"deployedProduct"`
 	// AssignedEngineer is the canonical user reference for the assigned
 	// engineer. Its id is populated from the assignee id the response already
 	// carries. Null when unassigned.
@@ -1497,6 +1507,24 @@ type SearchCaseView struct {
 	ParentCase       *EntityRef     `json:"parentCase"`
 	RelatedCase      *EntityRef     `json:"relatedCase"`
 	Conversation     *EntityRef     `json:"conversation"`
+	// AccountDetails is the case's account reference, including support tier
+	// (Type). Populated for the ServiceNow data source only; null otherwise.
+	AccountDetails *AccountRef `json:"account"`
+	// BestCaseFixEta is the internal-only best-case fix-commitment date, as a
+	// date-only "YYYY-MM-DD" string. Populated for the ServiceNow data source
+	// only; null otherwise. CSM-engineer-facing only, never shared with the
+	// customer.
+	BestCaseFixEta *string `json:"bestCaseFixEta"`
+	// MostLikelyFixEta is the internal-only most-likely fix-commitment date, as
+	// a date-only "YYYY-MM-DD" string. Populated for the ServiceNow data source
+	// only; null otherwise. CSM-engineer-facing only, never shared with the
+	// customer.
+	MostLikelyFixEta *string `json:"mostLikelyFixEta"`
+	// WorstCaseFixEta is the internal-only worst-case fix-commitment date, as a
+	// date-only "YYYY-MM-DD" string. Populated for the ServiceNow data source
+	// only; null otherwise. CSM-engineer-facing only, never shared with the
+	// customer.
+	WorstCaseFixEta *string `json:"worstCaseFixEta"`
 }
 
 // SearchCasesResponse is the paginated result of a case search. When the
@@ -1772,6 +1800,20 @@ type CreateCaseCommentRequest struct {
 type AddCaseTagRequest struct {
 	CaseID string `json:"-"`
 	Label  string `json:"label"`
+}
+
+// SearchTagsFilters holds the optional filters for a tag search.
+type SearchTagsFilters struct {
+	// SearchQuery matches tag labels partially, case-insensitively. Empty
+	// returns all known tags.
+	SearchQuery string `json:"searchQuery"`
+}
+
+// SearchTagsRequest is the request body for POST /tags/search. Limit caps the
+// number of results (<=0 means use the backing data source's default of 20).
+type SearchTagsRequest struct {
+	Filters SearchTagsFilters `json:"filters"`
+	Limit   int               `json:"limit"`
 }
 
 // CreateCaseCommentResponse is the response for creating a new case comment.

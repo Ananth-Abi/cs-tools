@@ -16,7 +16,7 @@
 
 import { Fragment, useState, type JSX } from "react";
 import { Box, Button, Checkbox, IconButton, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
-import { Check, Eye, X } from "@wso2/oxygen-ui-icons-react";
+import { Check, Eye, Pencil, X } from "@wso2/oxygen-ui-icons-react";
 import RelativeTime from "@components/RelativeTime";
 import TimeCardDetailModal from "@features/csm-timecards/components/TimeCardDetailModal";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
@@ -73,8 +73,11 @@ interface TimeCardsTableProps {
   onToggleSelectAll?: (selectableCards: CsmTimeCard[]) => void;
 }
 
+// "edit" isn't in here — unlike approve/reject, it renders as its own icon
+// button (matching the Eye view icon) shown unconditionally when a card is
+// editable, not as a text button gated by showActionsColumn (see below).
 const ACTION_BUTTONS: Record<
-  TimecardAction,
+  Exclude<TimecardAction, "edit">,
   { label: string; color: "success" | "error"; variant: "contained" | "outlined"; icon: JSX.Element }
 > = {
   approve: { label: "Approve", color: "success", variant: "outlined", icon: <Check size={14} /> },
@@ -303,22 +306,38 @@ export default function TimeCardsTable({
                   >
                     <Eye size={16} />
                   </IconButton>
+                  {/* Own actionable button regardless of showActionsColumn —
+                      unlike approve/reject, editing is offered to the card's
+                      own owner on every tab it can appear on (My time
+                      sheets, All), not just the Approvals queue. */}
+                  {actions.includes("edit") && (
+                    <IconButton
+                      size="small"
+                      aria-label="Edit time card"
+                      data-testid={`timecard-edit-${c.id}`}
+                      onClick={() => onCardAction(c, "edit")}
+                    >
+                      <Pencil size={16} />
+                    </IconButton>
+                  )}
                   {showActionsColumn &&
-                    actions.map((a) => {
-                      const b = ACTION_BUTTONS[a];
-                      return (
-                        <Button
-                          key={a}
-                          size="small"
-                          color={b.color}
-                          variant={b.variant}
-                          startIcon={b.icon}
-                          onClick={() => onCardAction(c, a)}
-                        >
-                          {b.label}
-                        </Button>
-                      );
-                    })}
+                    actions
+                      .filter((a): a is Exclude<TimecardAction, "edit"> => a !== "edit")
+                      .map((a) => {
+                        const b = ACTION_BUTTONS[a];
+                        return (
+                          <Button
+                            key={a}
+                            size="small"
+                            color={b.color}
+                            variant={b.variant}
+                            startIcon={b.icon}
+                            onClick={() => onCardAction(c, a)}
+                          >
+                            {b.label}
+                          </Button>
+                        );
+                      })}
                 </Box>
               </Box>
             );

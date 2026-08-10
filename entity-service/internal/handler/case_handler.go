@@ -35,6 +35,10 @@ import (
 // and rejects legitimate small attachments (e.g. a 2 MB file).
 const maxAttachmentBodySize = int64(15 << 20)
 
+// maxTagSearchLimit caps POST /tags/search results. Tag search backs a
+// type-ahead, not a paged browse, so the ceiling is deliberately low.
+const maxTagSearchLimit = 100
+
 // attachmentTooLargeMsg is deliberately expressed as the file-size limit (10
 // MB) a caller actually cares about, not the raw request-body cap above — the
 // extra headroom in maxAttachmentBodySize exists only to absorb base64/JSON
@@ -275,22 +279,52 @@ func (h *CaseHandler) RemoveCaseTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SearchTags handles GET /tags/search?q={query}&limit={limit}. Not scoped to a single case; used
+// SearchTags handles POST /tags/search. Not scoped to a single case; used
 // for FE autocomplete when attaching a tag.
 func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
+	var req domain.SearchTagsRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	h.searchTags(w, r, req)
+}
 
-	limit := 0
+// SearchTagsQuery handles GET /tags/search?q={query}&limit={limit}, the
+// query-parameter form tag search used before it moved to a JSON body.
+//
+// Deprecated: use POST /tags/search instead. This alias exists only so the
+// services in front of this one can be rolled out over the following release
+// instead of having to deploy in lockstep with it; a caller still on the GET
+// would otherwise get a 405. Delete it once that release has shipped.
+func (h *CaseHandler) SearchTagsQuery(w http.ResponseWriter, r *http.Request) {
+	req := domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: r.URL.Query().Get("q")},
+	}
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 0 {
+		if err != nil {
 			writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must be a non-negative integer"})
 			return
 		}
-		limit = parsed
+		req.Limit = parsed
+	}
+	h.searchTags(w, r, req)
+}
+
+// searchTags is the single path both /tags/search forms run through: validation,
+// the service call, and the response envelope all live here so the deprecated
+// GET alias cannot drift from the POST.
+func (h *CaseHandler) searchTags(w http.ResponseWriter, r *http.Request, req domain.SearchTagsRequest) {
+	if req.Limit < 0 {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must be a non-negative integer"})
+		return
+	}
+	if req.Limit > maxTagSearchLimit {
+		writeServiceError(w, r, &apierror.ValidationError{Msg: "limit must not exceed 100"})
+		return
 	}
 
-	tags, err := h.svc.SearchTags(r.Context(), query, limit)
+	tags, err := h.svc.SearchTags(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

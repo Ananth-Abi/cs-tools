@@ -336,6 +336,11 @@ export default function ConversationDetailsPage(): JSX.Element {
   const [inputValue, setInputValueState] = useState("");
   const [resetTrigger, setResetTrigger] = useState(0);
   const [isSending, setIsSending] = useState(false);
+  // Feature-flagged (config.js): 👍/👎 on Novera answers. Passing the handlers
+  // as undefined is what hides the row — ChatMessageBubble only renders it when
+  // it has somewhere to send a rating — so no separate prop is needed.
+  const feedbackEnabled =
+    window.config?.CUSTOMER_PORTAL_NOVERA_FEEDBACK_ENABLED ?? false;
   // Mirrors isSending for the socket's onClose handler. The hook installs
   // ws.onclose during connect(), so that closure captures the options object
   // from whichever render connected — reading isSending directly there would
@@ -984,8 +989,8 @@ export default function ConversationDetailsPage(): JSX.Element {
                       <ChatMessageBubble
                         key={m.id}
                         message={m}
-                        onThumbsUp={isConnected ? handleThumbsUp : undefined}
-                        onThumbsDown={isConnected ? handleThumbsDown : undefined}
+                        onThumbsUp={feedbackEnabled && isConnected ? handleThumbsUp : undefined}
+                        onThumbsDown={feedbackEnabled && isConnected ? handleThumbsDown : undefined}
                         onFeedbackTag={isConnected ? handleFeedbackTag : undefined}
                       />
                     ),

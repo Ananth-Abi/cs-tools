@@ -261,6 +261,12 @@ export type ChatWebSocketPayload =
        * addresses the account by sys_id. Display only — the id stays the key.
        */
       accountName?: string;
+      /**
+       * The signed-in user, for the admin notification and the audit trail. The
+       * portal proxy overwrites this from the authenticated session whenever it
+       * can, so treat it as a fallback rather than the source of truth.
+       */
+      requestedBy?: string;
       reason: string;
       limitType: "session" | "monthly";
     }

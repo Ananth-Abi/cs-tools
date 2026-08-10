@@ -20,15 +20,19 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query";
 import { useBackendApi } from "@api/backend/client";
-import type { BeSearchTagsResponse, BeTag } from "@api/backend/types";
+import type {
+  BeSearchTagsPayload,
+  BeSearchTagsResponse,
+  BeTag,
+} from "@api/backend/types";
 
 /** Cap on how many matching tags a search returns — this is a type-ahead list, not a paged browse. */
 const TAG_SEARCH_LIMIT = 20;
 
 /**
- * Searches existing free-text tag labels via `GET /tags/search?q=&limit=`, for
+ * Searches existing free-text tag labels via `POST /tags/search`, for
  * the {@link AddTagDialog} type-ahead. Tags are genuinely free-text on the
- * backing data source (SN's generic label mechanism) — this only offers
+ * backing data source's generic label mechanism — this only offers
  * already-used labels as suggestions; the dialog still allows creating a
  * label with no match. Runs even for an empty query (lists recently/commonly
  * used tags) while `enabled` — callers gate that on the dialog being open.
@@ -43,11 +47,9 @@ export function useSearchTags(
   return useQuery<BeTag[], Error>({
     queryKey: ["csm-tags-search", q],
     queryFn: async (): Promise<BeTag[]> => {
-      const params = new URLSearchParams();
-      if (q) params.set("q", q);
-      params.set("limit", String(TAG_SEARCH_LIMIT));
-      const res = await api.get<BeSearchTagsResponse>(
-        `/tags/search?${params.toString()}`,
+      const res = await api.post<BeSearchTagsPayload, BeSearchTagsResponse>(
+        "/tags/search",
+        { filters: { searchQuery: q }, limit: TAG_SEARCH_LIMIT },
       );
       return res?.tags ?? [];
     },

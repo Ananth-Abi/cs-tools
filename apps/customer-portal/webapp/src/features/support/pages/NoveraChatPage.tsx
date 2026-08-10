@@ -890,6 +890,12 @@ export default function NoveraChatPage(): JSX.Element {
   // WebSocket. Kept off until the backend handler is ready.
   const tokenRequestEnabled =
     window.config?.CUSTOMER_PORTAL_NOVERA_TOKEN_REQUEST_ENABLED ?? false;
+
+  // Feature-flagged (config.js): 👍/👎 on Novera answers. Passing the handlers
+  // as undefined is what hides the row — ChatMessageBubble only renders it when
+  // it has somewhere to send a rating — so no separate prop is needed.
+  const feedbackEnabled =
+    window.config?.CUSTOMER_PORTAL_NOVERA_FEEDBACK_ENABLED ?? false;
   const [isTokenModalOpen, setIsTokenModalOpen] = useState(false);
 
   const handleTokenIncreaseSubmit = useCallback(
@@ -902,11 +908,19 @@ export default function NoveraChatPage(): JSX.Element {
         type: "token_increase_request",
         accountId,
         accountName: projectDetails?.account?.name || undefined,
+        requestedBy: currentUserEmail || undefined,
         reason,
         limitType: "session",
       });
     },
-    [projectId, accountId, projectDetails?.account?.name, connect, sendUserMessage],
+    [
+      projectId,
+      accountId,
+      projectDetails?.account?.name,
+      currentUserEmail,
+      connect,
+      sendUserMessage,
+    ],
   );
 
   const handleSendMessage = useCallback(async (): Promise<boolean> => {
@@ -972,8 +986,8 @@ export default function NoveraChatPage(): JSX.Element {
               messages={messages}
               messagesEndRef={messagesEndRef}
               onCreateCase={handleCreateCase}
-              onThumbsUp={isConnected ? handleThumbsUp : undefined}
-              onThumbsDown={isConnected ? handleThumbsDown : undefined}
+              onThumbsUp={feedbackEnabled && isConnected ? handleThumbsUp : undefined}
+              onThumbsDown={feedbackEnabled && isConnected ? handleThumbsDown : undefined}
             onFeedbackTag={isConnected ? handleFeedbackTag : undefined}
               onSolutionWorked={handleSolutionWorked}
               onRequestTokenIncrease={

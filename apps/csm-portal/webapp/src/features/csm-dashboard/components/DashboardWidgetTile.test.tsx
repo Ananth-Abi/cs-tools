@@ -336,6 +336,32 @@ describe("DashboardWidgetTile", () => {
     });
   });
 
+  it("shape list: shows the widget's own total count, not just the capped row count shown below it", async () => {
+    postMock.mockResolvedValue({
+      total: 42,
+      cases: [
+        { id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" },
+      ],
+      limit: 5,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_critical_open"
+        displayName="My Critical & High Cases"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    expect(screen.getByText("42")).toBeInTheDocument();
+  });
+
   it("shows a 'View more' link through to the full tab only when more records exist than shown", async () => {
     postMock.mockResolvedValue({
       total: 1,
@@ -975,6 +1001,40 @@ describe("DashboardWidgetTile", () => {
     expect(params.get("states")).toBe("open");
   });
 
+  it("shape bar: shows the widget's overall total (sum of every slice) next to its title", async () => {
+    postMock.mockImplementation(
+      (_path: string, body: { filters: { filters: { field: string; values?: string[] }[] } }) => {
+        const severity = body.filters.filters.find((f) => f.field === "severity")?.values;
+        if (severity?.includes("critical")) return Promise.resolve({ total: 1 });
+        if (severity?.includes("high")) return Promise.resolve({ total: 3 });
+        return Promise.resolve({ total: 0 });
+      },
+    );
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="cases_by_severity"
+        displayName="Open Cases by Severity"
+        resourceType="case"
+        shape="bar"
+        filters={{}}
+        slices={[
+          {
+            label: "S1 · Critical",
+            query: { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+          },
+          {
+            label: "S2 · High",
+            query: { filters: [{ field: "severity", op: "in", values: ["high"] }] },
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("bar:S1 · Critical:1")).toBeInTheDocument());
+    expect(screen.getByText("4")).toBeInTheDocument();
+  });
+
   it("shape pie: issues one search per slice (own filters merged under the widget's base filters) and renders values + percentages", async () => {
     postMock.mockImplementation(
       (_path: string, body: { filters: { filters: { field: string; values?: string[] }[] } }) => {
@@ -1448,6 +1508,23 @@ describe("DashboardWidgetTile", () => {
     const params = new URLSearchParams(probeText.split("?")[1]);
     expect(params.get("severities")).toBe("S1");
     expect(params.get("states")).toBe("open");
+  });
+
+  it("shape bar: still shows a '0' total next to the title when the widget has no slices configured yet", async () => {
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="cases-by-severity"
+        displayName="Cases by severity"
+        resourceType="case"
+        shape="bar"
+        filters={{}}
+      />,
+    );
+
+    expect(screen.getByText("Cases by severity")).toBeInTheDocument();
+    expect(screen.getByText("Nothing to show here right now")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
   });
 
   it("shape pie: renders an empty state (no slices, zero total) rather than crashing when a widget has no slices configured yet", async () => {

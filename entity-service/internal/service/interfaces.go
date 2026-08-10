@@ -222,10 +222,11 @@ type CaseService interface {
 	// RemoveCaseTag removes the tag identified by tagID from the case identified by caseID.
 	// A NotFoundError is returned if the tag does not exist on the case.
 	RemoveCaseTag(ctx context.Context, caseID, tagID string) error
-	// SearchTags returns the tags (not scoped to any single case) whose label matches query,
-	// for FE autocomplete when attaching a tag to a case. An empty query returns all known tags.
-	// limit caps the number of results (<=0 means use the downstream default).
-	SearchTags(ctx context.Context, query string, limit int) ([]domain.Tag, error)
+	// SearchTags returns the tags (not scoped to any single case) whose label matches
+	// req.Filters.SearchQuery, for FE autocomplete when attaching a tag to a case. An empty
+	// query returns all known tags. req.Limit caps the number of results (<=0 means use the
+	// downstream default).
+	SearchTags(ctx context.Context, req domain.SearchTagsRequest) ([]domain.Tag, error)
 }
 
 // CaseGithubIssueService defines the operation for filing a GitHub issue from a case.

@@ -424,7 +424,17 @@ export interface BeAddCaseTagPayload {
   label: string;
 }
 
-/** `GET /tags/search?q=&limit=` response: existing free-text tag labels matching the query. */
+/** `POST /tags/search` request body. */
+export interface BeSearchTagsPayload {
+  filters?: {
+    /** Partial, case-insensitive match against tag labels. Empty returns all known tags. */
+    searchQuery?: string;
+  };
+  /** Maximum number of tags to return; defaults to 20 upstream, capped at 100. */
+  limit?: number;
+}
+
+/** `POST /tags/search` response: existing free-text tag labels matching the query. */
 export interface BeSearchTagsResponse {
   tags?: BeTag[];
   total?: number;
@@ -2677,12 +2687,14 @@ export interface BeTimeCardCaseRef {
 }
 
 /**
- * A time card as returned by search and the mutation endpoints. The backend
- * never echoes back category / issue complexity / hour breakdown / lead
- * comment, even though those are accepted on write — see
- * {@link BeCreateTimeCardPayload}. `workLogComment` is the one write field
- * that IS echoed back — confirmed live; it was previously assumed missing
- * and left unmapped, but the wire response does include it.
+ * A time card as returned by search and the mutation endpoints. Previously
+ * documented as never echoing back category / issue complexity / hour
+ * breakdown / lead comment, even though those are accepted on write — that
+ * was wrong for issue complexity and the hour breakdown: confirmed live
+ * against the real entity-service (`POST /time-cards/search`) that both come
+ * back on every card, not just the one just created. `workLogComment` is also
+ * echoed back — confirmed live separately. "Category" and any lead comment
+ * other than {@link rejectionReason} are still write-only/unconfirmed.
  */
 export interface BeTimeCardView {
   id: string;
@@ -2727,6 +2739,15 @@ export interface BeTimeCardView {
    * list, regardless of team-lead status.
    */
   approvers?: BeTimeCardRef[];
+  /** Per-activity whole minutes — confirmed live on `POST /time-cards/search`
+   * responses, both for a just-created card and a pre-existing one. */
+  timeAnalyzing?: number;
+  timeSettingUp?: number;
+  timeReproducingDebugging?: number;
+  timeProvidingSolution?: number;
+  timePatching?: number;
+  /** Confirmed live on `POST /time-cards/search` responses. */
+  issueComplexity?: string;
 }
 
 /**
@@ -2789,13 +2810,24 @@ export interface BeCreateTimeCardPayload {
 /**
  * Either editable fields (no `state`), or a state transition (`state`:
  * "approved", or "rejected" with a `leadComment`) — mutually exclusive, per
- * the backend contract. The portal only ever sends the state-transition form
- * (see ISSU-009 Edit-card gap: editable fields can't be safely round-tripped
- * since reads never return them).
+ * the backend contract, and enforced server-side as submitter-only +
+ * `submitted`-state-only (matches ServiceNow's own edit-in-place behavior).
+ * Confirmed live: a content-fields PATCH with no `state` key persists and
+ * round-trips correctly on the next search.
  */
 export interface BeUpdateTimeCardPayload {
   state?: Extract<BeTimeCardState, "approved" | "rejected">;
   leadComment?: string;
+  /** ISO 8601 date (YYYY-MM-DD). */
+  date?: string;
+  isBillable?: boolean;
+  issueComplexity?: string;
+  workLogComment?: string;
+  timeAnalyzing?: number;
+  timeSettingUp?: number;
+  timeReproducingDebugging?: number;
+  timeProvidingSolution?: number;
+  timePatching?: number;
 }
 
 export interface BeTimeCardMutationResponse {

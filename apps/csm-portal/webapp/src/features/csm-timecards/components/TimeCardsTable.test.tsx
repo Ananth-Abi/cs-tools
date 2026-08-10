@@ -214,3 +214,72 @@ describe("TimeCardsTable bulk-select (Approvals tab)", () => {
     expect(screen.getByRole("checkbox", { name: /select all approvable/i })).toBeDisabled();
   });
 });
+
+describe("TimeCardsTable edit action", () => {
+  it("shows the edit icon for the card's own owner on a submitted card, and calls onCardAction with \"edit\"", () => {
+    const onCardAction = vi.fn();
+    render(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ({ isOwner: true, isApprover: false, isAdmin: false })}
+        onCardAction={onCardAction}
+      />,
+    );
+
+    const editButton = screen.getByTestId(`timecard-edit-${CARD.id}`);
+    expect(editButton).toBeInTheDocument();
+    fireEvent.click(editButton);
+    expect(onCardAction).toHaveBeenCalledWith(CARD, "edit");
+  });
+
+  it("shows the edit icon regardless of showActionsColumn (unlike approve/reject)", () => {
+    render(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        showActionsColumn={false}
+        roleFor={() => ({ isOwner: true, isApprover: false, isAdmin: false })}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId(`timecard-edit-${CARD.id}`)).toBeInTheDocument();
+  });
+
+  it("hides the edit icon for a non-owner (e.g. an approver viewing someone else's card)", () => {
+    render(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        showActionsColumn
+        roleFor={() => ({ isOwner: false, isApprover: true, isAdmin: false })}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId(`timecard-edit-${CARD.id}`)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+  });
+
+  it("hides the edit icon once the card is no longer submitted, even for the owner", () => {
+    render(
+      <TimeCardsTable
+        cards={[{ ...CARD, state: "approved" }]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ({ isOwner: true, isApprover: false, isAdmin: false })}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId(`timecard-edit-${CARD.id}`)).not.toBeInTheDocument();
+  });
+});
