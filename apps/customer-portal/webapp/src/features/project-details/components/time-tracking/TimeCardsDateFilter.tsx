@@ -59,6 +59,7 @@ export default function TimeCardsDateFilter({
         size="small"
         value={startDate}
         onChange={(e) => onStartDateChange(e.target.value)}
+        inputProps={{ "aria-label": "Start date" }}
         sx={{ minWidth: 160 }}
         InputProps={{
           startAdornment: (
@@ -77,6 +78,7 @@ export default function TimeCardsDateFilter({
         size="small"
         value={endDate}
         onChange={(e) => onEndDateChange(e.target.value)}
+        inputProps={{ "aria-label": "End date" }}
         sx={{ minWidth: 160 }}
         InputProps={{
           startAdornment: (
