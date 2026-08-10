@@ -211,6 +211,26 @@ describe("useAuthApiClient", () => {
     expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
   });
 
+  it("recovers a POST Request with a body from a resolved 401 via the bare retry, without the body being consumed", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(401))
+      .mockResolvedValue(jsonResponse(200, { ok: true }));
+
+    const request = new Request("https://example.test/api/thing", {
+      method: "POST",
+      body: JSON.stringify({ hello: "world" }),
+    });
+
+    const { result } = renderHook(() => useAuthApiClient());
+    const response = await result.current(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    // The original Request must stay pristine (not directly fetched) so it
+    // remains clonable across every retry attempt.
+    expect(request.bodyUsed).toBe(false);
+  });
+
   it("loop guard: still redirects for a stale marker well outside the guard window", async () => {
     sessionStorage.setItem(
       "csm.auth.lastForcedSignInAt",

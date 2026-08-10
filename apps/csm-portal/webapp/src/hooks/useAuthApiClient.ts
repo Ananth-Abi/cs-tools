@@ -311,7 +311,15 @@ export function useAuthApiClient() {
       // middleware: every backend call is logged once here with the same
       // correlation ID that backend + entity-service stamp on their log lines.
       try {
-        const response = await fetch(input, { ...options, headers });
+        // `runAttempt` may invoke this same `input` up to three times across
+        // the retry/reauth chain below. A `Request`'s body is a single-read
+        // stream, so passing the original `input` straight to `fetch()` would
+        // consume it on the first attempt and throw "body used already" on
+        // any retry. Clone a fresh copy for the actual network call every
+        // time instead, leaving `input` itself untouched (and re-clonable)
+        // for the next attempt.
+        const requestToSend = input instanceof Request ? input.clone() : input;
+        const response = await fetch(requestToSend, { ...options, headers });
         const line = `[api] ${method} ${url.pathname} -> ${response.status} correlationID=${correlationId}`;
         if (response.ok) {
           logger.debug(line);
