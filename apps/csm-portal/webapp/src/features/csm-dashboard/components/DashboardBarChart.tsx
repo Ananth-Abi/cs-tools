@@ -78,35 +78,54 @@ export default function DashboardBarChart({
     );
   }
 
+  // Bars already label their own individual values (see the `label` prop
+  // below), but nothing showed the widget's overall total —
+  // `DashboardPieChart` has the same number+"Total" pairing built into its
+  // donut hole; a bar chart has no equivalent spot, so it sits above the
+  // chart instead. Computed once and reused by both the empty and non-empty
+  // returns below, so a zero-total widget still shows "0 Total" rather than
+  // silently omitting it.
+  const totalHeader = (
+    <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75, mb: 1 }}>
+      <Typography variant="h6">{total.toLocaleString()}</Typography>
+      <Typography variant="caption" color="text.secondary">
+        Total
+      </Typography>
+    </Box>
+  );
+
   if (total === 0) {
     return (
-      <Box
-        sx={{
-          minHeight: CHART_HEIGHT_PX,
-          width: "100%",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 1.5,
-        }}
-      >
+      <Box sx={{ width: "100%" }}>
+        {totalHeader}
         <Box
           sx={{
-            width: 52,
-            height: 52,
-            borderRadius: "50%",
-            bgcolor: alpha(theme.palette.grey[500], 0.08),
+            minHeight: CHART_HEIGHT_PX,
+            width: "100%",
             display: "flex",
+            flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
+            gap: 1.5,
           }}
         >
-          <Inbox size={24} color={isDarkMode ? theme.palette.grey[400] : theme.palette.grey[500]} />
+          <Box
+            sx={{
+              width: 52,
+              height: 52,
+              borderRadius: "50%",
+              bgcolor: alpha(theme.palette.grey[500], 0.08),
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Inbox size={24} color={isDarkMode ? theme.palette.grey[400] : theme.palette.grey[500]} />
+          </Box>
+          <Typography variant="body2" sx={{ color: isDarkMode ? theme.palette.grey[400] : theme.palette.text.disabled }}>
+            Nothing to show here right now
+          </Typography>
         </Box>
-        <Typography variant="body2" sx={{ color: isDarkMode ? theme.palette.grey[400] : theme.palette.text.disabled }}>
-          Nothing to show here right now
-        </Typography>
       </Box>
     );
   }
@@ -115,17 +134,7 @@ export default function DashboardBarChart({
 
   return (
     <Box sx={{ width: "100%" }}>
-      {/* Bars already label their own individual values (see the `label`
-          prop below), but nothing showed the widget's overall total —
-          `DashboardPieChart` has the same number+"Total" pairing built into
-          its donut hole; a bar chart has no equivalent spot, so it sits
-          above the chart instead. */}
-      <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75, mb: 1 }}>
-        <Typography variant="h6">{total.toLocaleString()}</Typography>
-        <Typography variant="caption" color="text.secondary">
-          Total
-        </Typography>
-      </Box>
+      {totalHeader}
       <Box sx={{ width: "100%", height: CHART_HEIGHT_PX, "& .recharts-bar-rectangle": { cursor: "pointer" } }}>
         <BarChart
           data={chartData}

@@ -1041,6 +1041,24 @@ describe("DashboardWidgetTile", () => {
     expect(params.get("states")).toBe("open");
   });
 
+  it("shape bar: still shows '0 Total' above the empty state when the widget has no slices configured yet", async () => {
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="cases-by-severity"
+        displayName="Cases by severity"
+        resourceType="case"
+        shape="bar"
+        filters={{}}
+      />,
+    );
+
+    expect(screen.getByText("Cases by severity")).toBeInTheDocument();
+    expect(screen.getByText("Nothing to show here right now")).toBeInTheDocument();
+    expect(screen.getByText("0")).toBeInTheDocument();
+    expect(screen.getByText("Total")).toBeInTheDocument();
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
   it("shape pie: renders an empty state (no slices, zero total) rather than crashing when a widget has no slices configured yet", async () => {
     renderWithClient(
       <DashboardWidgetTile
