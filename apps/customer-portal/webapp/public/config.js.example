@@ -131,6 +131,14 @@ window.config = {
   //   false – feature hidden. Keep false until the backend handler is ready.
   CUSTOMER_PORTAL_NOVERA_TOKEN_REQUEST_ENABLED: false,
 
+  // ── Novera answer feedback ──────────────────────────────────────────────────
+  //
+  // CUSTOMER_PORTAL_NOVERA_FEEDBACK_ENABLED  (optional — default: false)
+  //   true  – shows thumbs up/down on each Novera answer, with reason tags once
+  //           a rating is given (sent over the chat WebSocket).
+  //   false – feature hidden. Ratings already stored are unaffected.
+  CUSTOMER_PORTAL_NOVERA_FEEDBACK_ENABLED: false,
+
   // ── Top banners ─────────────────────────────────────────────────────────────
   //
   // CUSTOMER_PORTAL_TOP_BANNERS  (optional — default: [])
