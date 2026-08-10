@@ -114,63 +114,76 @@ export default function DashboardBarChart({
   const chartData = slices.map((slice) => ({ name: slice.label, value: slice.value }));
 
   return (
-    <Box sx={{ width: "100%", height: CHART_HEIGHT_PX, "& .recharts-bar-rectangle": { cursor: "pointer" } }}>
-      <BarChart
-        data={chartData}
-        xAxisDataKey="name"
-        // height is a fixed constant (the parent Box's own height, CHART_HEIGHT_PX),
-        // not a percentage -- passing it directly avoids the same first-render
-        // ResizeObserver race as DashboardPieChart's width/height (see that
-        // component's comment). width genuinely must stay "100%": this tile's
-        // rendered width varies with its grid column count, so it still depends
-        // on a ResizeObserver measurement, which is the expected/correct
-        // behavior for a responsive dimension -- only the height half of the
-        // warning is avoidable here.
-        height={CHART_HEIGHT_PX}
-        width="100%"
-        legend={{ show: false }}
-        yAxis={{ show: false }}
-        grid={{ show: false }}
-        // Library default top margin (12px) is too tight once each bar has
-        // its own always-visible value label sitting above it.
-        margin={{ top: 24, right: 8, bottom: 8, left: 0 }}
-        // cursor: false drops the library's default full-height highlight
-        // box behind the hovered bar — the bar's own hover color/border is
-        // enough of a highlight on its own.
-        tooltip={{ show: true, wrapperStyle: { zIndex: 1000 }, cursor: false }}
-      >
-        <Bar
-          dataKey="value"
-          radius={[4, 4, 0, 0]}
-          isAnimationActive={false}
-          label={{
-            position: "top",
-            fill: isDarkMode ? theme.palette.common.white : theme.palette.text.primary,
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-          onMouseEnter={(_data: unknown, i: number) => setActiveIndex(i)}
-          onMouseLeave={() => setActiveIndex(undefined)}
-          // Stops the click from also bubbling up to the tile-level
-          // click-through `DashboardWidgetTile` attaches to the whole card
-          // for shape "pie"/"bar" — see `DashboardPieChart`'s wedge onClick
-          // for the same fix and full rationale.
-          onClick={(_data: unknown, i: number, event?: SyntheticEvent) => {
-            event?.stopPropagation();
-            const slice = slices[i];
-            if (slice) onSliceClick(slice);
-          }}
+    <Box sx={{ width: "100%" }}>
+      {/* Bars already label their own individual values (see the `label`
+          prop below), but nothing showed the widget's overall total —
+          `DashboardPieChart` has the same number+"Total" pairing built into
+          its donut hole; a bar chart has no equivalent spot, so it sits
+          above the chart instead. */}
+      <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75, mb: 1 }}>
+        <Typography variant="h6">{total.toLocaleString()}</Typography>
+        <Typography variant="caption" color="text.secondary">
+          Total
+        </Typography>
+      </Box>
+      <Box sx={{ width: "100%", height: CHART_HEIGHT_PX, "& .recharts-bar-rectangle": { cursor: "pointer" } }}>
+        <BarChart
+          data={chartData}
+          xAxisDataKey="name"
+          // height is a fixed constant (the parent Box's own height, CHART_HEIGHT_PX),
+          // not a percentage -- passing it directly avoids the same first-render
+          // ResizeObserver race as DashboardPieChart's width/height (see that
+          // component's comment). width genuinely must stay "100%": this tile's
+          // rendered width varies with its grid column count, so it still depends
+          // on a ResizeObserver measurement, which is the expected/correct
+          // behavior for a responsive dimension -- only the height half of the
+          // warning is avoidable here.
+          height={CHART_HEIGHT_PX}
+          width="100%"
+          legend={{ show: false }}
+          yAxis={{ show: false }}
+          grid={{ show: false }}
+          // Library default top margin (12px) is too tight once each bar has
+          // its own always-visible value label sitting above it.
+          margin={{ top: 24, right: 8, bottom: 8, left: 0 }}
+          // cursor: false drops the library's default full-height highlight
+          // box behind the hovered bar — the bar's own hover color/border is
+          // enough of a highlight on its own.
+          tooltip={{ show: true, wrapperStyle: { zIndex: 1000 }, cursor: false }}
         >
-          {slices.map((slice, i) => (
-            <Cell
-              key={slice.label}
-              fill={colorFor(slice, i)}
-              stroke={activeIndex === i ? colorFor(slice, i) : "none"}
-              strokeWidth={activeIndex === i ? 2 : 0}
-            />
-          ))}
-        </Bar>
-      </BarChart>
+          <Bar
+            dataKey="value"
+            radius={[4, 4, 0, 0]}
+            isAnimationActive={false}
+            label={{
+              position: "top",
+              fill: isDarkMode ? theme.palette.common.white : theme.palette.text.primary,
+              fontSize: 13,
+              fontWeight: 600,
+            }}
+            onMouseEnter={(_data: unknown, i: number) => setActiveIndex(i)}
+            onMouseLeave={() => setActiveIndex(undefined)}
+            // Stops the click from also bubbling up to the tile-level
+            // click-through `DashboardWidgetTile` attaches to the whole card
+            // for shape "pie"/"bar" — see `DashboardPieChart`'s wedge onClick
+            // for the same fix and full rationale.
+            onClick={(_data: unknown, i: number, event?: SyntheticEvent) => {
+              event?.stopPropagation();
+              const slice = slices[i];
+              if (slice) onSliceClick(slice);
+            }}
+          >
+            {slices.map((slice, i) => (
+              <Cell
+                key={slice.label}
+                fill={colorFor(slice, i)}
+                stroke={activeIndex === i ? colorFor(slice, i) : "none"}
+                strokeWidth={activeIndex === i ? 2 : 0}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </Box>
     </Box>
   );
 }

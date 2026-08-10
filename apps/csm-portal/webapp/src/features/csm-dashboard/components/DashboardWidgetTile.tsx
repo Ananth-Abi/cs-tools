@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Card, IconButton, Skeleton, Tooltip, Typography, alpha, useTheme } from "@wso2/oxygen-ui";
+import { Box, Button, Card, Chip, IconButton, Skeleton, Tooltip, Typography, alpha, useTheme } from "@wso2/oxygen-ui";
 import { ArrowRight, Info } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, KeyboardEvent, ReactNode } from "react";
 import { Link as RouterLink, useNavigate } from "react-router";
@@ -227,9 +227,24 @@ export default function DashboardWidgetTile({
 
   if (isListShape) {
     const ListRenderer = WIDGET_LIST_RENDERERS[resourceType];
+    const total = data?.total ?? 0;
     return (
       <Card variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
-        {header}
+        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1 }}>
+          {header}
+          {/* The rows below are capped at `listLimit` (see `useWidgetData`'s
+              DEFAULT_LIST_LIMIT) — this is the only place the widget's own
+              full count is visible, since "View more" only appears once
+              `total` exceeds that cap. */}
+          {!isLoading && !isError && (
+            <Chip
+              label={total.toLocaleString()}
+              size="small"
+              color="default"
+              sx={{ flexShrink: 0, fontWeight: 600 }}
+            />
+          )}
+        </Box>
         {isLoading ? (
           <Skeleton variant="rounded" height={28 * (listLimit ?? 4) + 40} sx={{ mt: 1 }} />
         ) : isError ? (
