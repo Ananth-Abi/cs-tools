@@ -33,6 +33,7 @@ import {
   Copy,
   Gauge,
   GitBranch,
+  GitPullRequest,
   Inbox,
   Link as LinkIcon,
   ListChecks,
@@ -209,6 +210,10 @@ interface SecondaryItem {
  *   - Link to incident               → ISSU-021 (PATCH /cases/{id} { parentId }, see
  *                                       LinkIncidentDialog.tsx)
  *   - Raise Git issue                → ISSU-020
+ *   - Create change request          → service-request-only. Navigates to the change-request
+ *                                       create form pre-filled with this service request as the
+ *                                       "Originating service request" (POST /change-requests, then
+ *                                       PATCH { caseId } — see CreateChangeRequestPage.tsx).
  *   - Create task                    → ISSU-025 (POST /cases/{caseId}/tasks, see CreateTaskDialog.tsx).
  *                                       Kept here even though a Tasks tab exists: that tab is
  *                                       still `hidden` in CsmCaseDetailPage's TAB_DEFS, so this
@@ -284,6 +289,21 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
   const gitIssueStateBlocked = !GIT_ISSUE_ALLOWED_STATES.includes(
     caseDetail.state,
   );
+
+  // Only a service request can be the "Originating service request" a change
+  // request links back to (see the create form's picker), so the action is
+  // offered only there — mirrors the same `caseType === "service_request"`
+  // gate the Related tab already applies to LinkedChangeRequestsWidget.
+  if (caseDetail.caseType === "service_request") {
+    items.push({
+      key: "create_change_request",
+      label: "Create change request…",
+      icon: <GitPullRequest size={16} />,
+      divider: true,
+      disabled: caseClosed,
+      tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
+    });
+  }
 
   items.push(
     {

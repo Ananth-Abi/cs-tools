@@ -444,6 +444,11 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if len(parsed.ExcludeTags) > 0 {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "tag" (notIn) is not supported by this data source`}
 	}
+	// state+in is supported here; state+notIn has no repository query support,
+	// and dropping an exclusion silently would widen the result set.
+	if len(parsed.ExcludeStates) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "state" (notIn) is not supported by this data source`}
+	}
 	if parsed.ParentID != nil {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "parentId" is not supported by this data source`}
 	}
@@ -543,6 +548,6 @@ func (s *caseService) RemoveCaseTag(_ context.Context, _, _ string) error {
 	return &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
 }
 
-func (s *caseService) SearchTags(_ context.Context, _ string, _ int) ([]domain.Tag, error) {
+func (s *caseService) SearchTags(_ context.Context, _ domain.SearchTagsRequest) ([]domain.Tag, error) {
 	return nil, &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
 }

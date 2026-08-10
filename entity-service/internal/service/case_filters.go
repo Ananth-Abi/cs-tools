@@ -262,14 +262,23 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			p.Types = append(p.Types, f.Values...)
 
 		case "state":
-			if f.Op != "in" {
+			switch f.Op {
+			case "in":
+				if err := requireCaseFilterValues(f); err != nil {
+					return domain.ParsedCaseFilters{}, err
+				}
+				for _, v := range f.Values {
+					p.States = append(p.States, domain.CaseState(v))
+				}
+			case "notIn":
+				if err := requireCaseFilterValues(f); err != nil {
+					return domain.ParsedCaseFilters{}, err
+				}
+				for _, v := range f.Values {
+					p.ExcludeStates = append(p.ExcludeStates, domain.CaseState(v))
+				}
+			default:
 				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
-			}
-			if err := requireCaseFilterValues(f); err != nil {
-				return domain.ParsedCaseFilters{}, err
-			}
-			for _, v := range f.Values {
-				p.States = append(p.States, domain.CaseState(v))
 			}
 
 		case "severity":
@@ -710,6 +719,10 @@ func rejectUnsupportedOrGroupFields(parsed domain.ParsedCaseFilters) error {
 		return &apierror.ValidationError{Msg: "anyOf: field \"projectType\" is not supported inside an OR group"}
 	case len(parsed.IntegrationCsTeamIDs) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"integrationCsTeam\" is not supported inside an OR group"}
+	case len(parsed.ExcludeStates) > 0:
+		// state+in is supported inside a branch (CaseFilterGroup.States);
+		// state+notIn is not modeled there.
+		return &apierror.ValidationError{Msg: "anyOf: field \"state\" (notIn) is not supported inside an OR group"}
 	case parsed.Unassigned:
 		return &apierror.ValidationError{Msg: "anyOf: field \"assignedUserId\" (isEmpty) is not supported inside an OR group"}
 	case parsed.ResolutionNotesEmpty:

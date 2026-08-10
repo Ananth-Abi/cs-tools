@@ -90,6 +90,12 @@ export function invalidateTimecards(queryClient: QueryClient): void {
   }
 }
 
+/** Wire `issueComplexity` values the entity-service is confirmed to return
+ * (see `IssueComplexity`) — anything else (an older/renamed value) maps to
+ * `undefined` rather than a bogus cast, since the edit form's `<select>`
+ * would otherwise silently show nothing selected for an unrecognized value. */
+const KNOWN_ISSUE_COMPLEXITIES: readonly string[] = ["N/A", "Low", "Medium", "High"];
+
 /**
  * Map the backend's `TimeCardView` to the portal's `CsmTimeCard`. `totalTime`
  * is already whole minutes on the wire (see `usePostTimeCard`'s note on why),
@@ -101,8 +107,20 @@ export function invalidateTimecards(queryClient: QueryClient): void {
  * read the same underlying value, so the fallback is a no-op in practice.
  * `approvedBy` / `rejectionReason` are mutually exclusive: only one of them is
  * ever populated (see {@link CsmTimeCard}).
+ *
+ * `breakdown`/`issueComplexity` are only set when the wire response actually
+ * carries the per-activity minute fields — confirmed live to be present on
+ * every real card, but a defensive per-field fallback (rather than assuming
+ * the whole group is always there) costs nothing and matches how the rest of
+ * this mapper already treats every other optional wire field.
  */
 export function mapTimeCard(v: BeTimeCardView): CsmTimeCard {
+  const hasBreakdown =
+    v.timeAnalyzing !== undefined ||
+    v.timeSettingUp !== undefined ||
+    v.timeReproducingDebugging !== undefined ||
+    v.timeProvidingSolution !== undefined ||
+    v.timePatching !== undefined;
   return {
     id: v.id,
     caseId: v.case?.id ?? "",
@@ -120,6 +138,19 @@ export function mapTimeCard(v: BeTimeCardView): CsmTimeCard {
     rejectionReason: v.rejectionReason ?? undefined,
     approvers: v.approvers,
     workLogComment: v.workLogComment ?? undefined,
+    breakdown: hasBreakdown
+      ? {
+          analysisDebugging: v.timeAnalyzing ?? 0,
+          reproduce: v.timeReproducingDebugging ?? 0,
+          settingUp: v.timeSettingUp ?? 0,
+          providingSolution: v.timeProvidingSolution ?? 0,
+          answering: v.timePatching ?? 0,
+        }
+      : undefined,
+    issueComplexity:
+      v.issueComplexity && KNOWN_ISSUE_COMPLEXITIES.includes(v.issueComplexity)
+        ? (v.issueComplexity as CsmTimeCard["issueComplexity"])
+        : undefined,
   };
 }
 

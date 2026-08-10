@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -53,7 +52,7 @@ type snCase struct {
 	UpdatedOn             *string                     `json:"updatedOn"`
 	CreatedBy             string                      `json:"createdBy"`
 	CreatedByFullName     string                      `json:"createdByFullName"`
-	Project               snCaseEntityRef             `json:"project"`
+	Project               snCaseProjectRef            `json:"project"`
 	Deployment            snCaseEntityRef             `json:"deployment"`
 	DeployedProduct       snCaseDeployedProduct       `json:"deployedProduct"`
 	Product               *snCaseEntityRef            `json:"product"`
@@ -112,22 +111,22 @@ type snCase struct {
 	// "eligible again after" date for a held case).
 	AutoclosureStateTime *string `json:"autoclosureStateTime"`
 	// BestCaseFixEta is the internal-only best-case fix-commitment date
-	// (u_best_case_fix_eta). Not yet available in the backing service: no Ballerina
-	// field currently surfaces this — the Choreo GET /cases/{id} response does not
-	// include a "bestCaseFixEta" key today, so this always unmarshals to nil. Ask:
-	// add a "bestCaseFixEta" (glide_date) field to the case response.
+	// (u_best_case_fix_eta). Populated on the Choreo GET /cases/{id} response
+	// unconditionally, and on POST /cases/search rows only when the search
+	// request set includeExtendedFields — nil otherwise, so this must tolerate
+	// absence.
 	BestCaseFixEta *string `json:"bestCaseFixEta"`
 	// MostLikelyFixEta is the internal-only most-likely fix-commitment date
-	// (u_most_likely_fix_eta). Not yet available in the backing service: no Ballerina
-	// field currently surfaces this — the Choreo GET /cases/{id} response does not
-	// include a "mostLikelyFixEta" key today, so this always unmarshals to nil. Ask:
-	// add a "mostLikelyFixEta" (glide_date) field to the case response.
+	// (u_most_likely_fix_eta). Populated on the Choreo GET /cases/{id} response
+	// unconditionally, and on POST /cases/search rows only when the search
+	// request set includeExtendedFields — nil otherwise, so this must tolerate
+	// absence.
 	MostLikelyFixEta *string `json:"mostLikelyFixEta"`
 	// WorstCaseFixEta is the internal-only worst-case fix-commitment date
-	// (u_worst_case_fix_eta). Not yet available in the backing service: no Ballerina
-	// field currently surfaces this — the Choreo GET /cases/{id} response does not
-	// include a "worstCaseFixEta" key today, so this always unmarshals to nil. Ask:
-	// add a "worstCaseFixEta" (glide_date) field to the case response.
+	// (u_worst_case_fix_eta). Populated on the Choreo GET /cases/{id} response
+	// unconditionally, and on POST /cases/search rows only when the search
+	// request set includeExtendedFields — nil otherwise, so this must tolerate
+	// absence.
 	WorstCaseFixEta *string `json:"worstCaseFixEta"`
 }
 
@@ -144,6 +143,15 @@ type snWatchListUser struct {
 type snCaseEntityRef struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
+}
+
+// snCaseProjectRef is the case's project reference. Key is the project's short
+// human-readable key (e.g. "TESTQUERYSUB"); it is only present on search rows when
+// the search request set includeExtendedFields, so it must tolerate absence.
+type snCaseProjectRef struct {
+	ID   string  `json:"id"`
+	Name string  `json:"name"`
+	Key  *string `json:"key"`
 }
 
 type snCaseDeployedProduct struct {
@@ -207,6 +215,13 @@ type snCaseSearchPayload struct {
 	Filters    snCaseFilters       `json:"filters,omitempty"`
 	SortBy     *snCaseSort         `json:"sortBy,omitempty"`
 	Pagination snProjectPagination `json:"pagination"`
+	// IncludeExtendedFields opts a search row into the account reference, project
+	// key, and fix-ETA fields (see snCase's Account/Project/BestCaseFixEta/
+	// MostLikelyFixEta/WorstCaseFixEta doc comments). Left unset (false) on the
+	// group-count fan-out in searchCasesGroupCount, which reads only
+	// totalRecords and never touches a row's fields, to keep that call as
+	// lightweight as it is today. SearchCases itself always sets this to true.
+	IncludeExtendedFields bool `json:"includeExtendedFields,omitempty"`
 }
 
 type snCaseSort struct {
@@ -328,6 +343,22 @@ type snCaseFilters struct {
 	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
 	DeployedProductIDs []string `json:"deployedProductIds,omitempty"`
 	StateKeys          []int    `json:"stateKeys,omitempty"`
+	// ExcludeStates is the inverse of StateKeys: cases whose state is none of
+	// these. It carries the same numeric state keys StateKeys does, produced by
+	// the same domainStatesToSNIDs conversion, because that is the form
+	// ServiceNow's `state` column is queried in -- a list of state names would
+	// match nothing. See domain.ParsedCaseFilters.ExcludeStates.
+	//
+	// Deployment ordering: the downstream service must be deployed before this
+	// one. Its search-filter record is closed, so an undeclared key is
+	// rejected outright rather than ignored -- if this service ships first, a
+	// search carrying a state exclusion fails loudly instead of quietly
+	// returning an unfiltered result set. That is the intended direction: a
+	// dropped exclusion widens the result set, which is the harder failure to
+	// notice. omitempty keeps the key off the wire entirely unless a
+	// `state notIn` filter was actually requested, so no search that does not
+	// use one is affected by the ordering.
+	ExcludeStates      []int    `json:"excludeStateKeys,omitempty"`
 	SeverityKeys       []int    `json:"severityKeys,omitempty"`
 	IssueTypeKeys      []int    `json:"issueTypeKeys,omitempty"`
 	EngagementTypeKeys []int    `json:"engagementTypeKeys,omitempty"`
@@ -364,10 +395,14 @@ type snCaseFilters struct {
 	InternalID                string   `json:"internalId,omitempty"`
 	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses,omitempty"`
 	// ProjectTypeNames carries project-type NAMES (e.g. "Subscription"), not
-	// sys_ids: CaseUtils.searchCases matches project.u_project_type.u_name. The
-	// wire key stays "projectTypeIds" because that is the field name the SN
-	// scripted API reads.
-	ProjectTypeNames     []string `json:"projectTypeIds,omitempty"`
+	// sys_ids: CaseUtils.searchCases matches project.u_project_type.u_name.
+	// It goes out under its own key, "projectTypes", rather than reusing the
+	// old id-based "projectTypeIds": that key is typed as a 32-hex-character
+	// sys_id array in the Ballerina contract, so a name sent through it is
+	// rejected outright by request validation. "projectTypeIds" has no
+	// remaining producer or consumer on either portal and is being retired
+	// from the contract alongside this change.
+	ProjectTypeNames     []string `json:"projectTypes,omitempty"`
 	IntegrationCsTeamIDs []string `json:"integrationCsTeamIds,omitempty"`
 	Unassigned           bool     `json:"unassigned,omitempty"`
 	ResolutionNotesEmpty bool     `json:"resolutionNotesEmpty,omitempty"`
@@ -2128,6 +2163,7 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		ProjectIDs:                uuidsToSysids(parsed.ProjectIDs),
 		DeploymentIDs:             uuidsToSysids(parsed.DeploymentIDs),
 		StateKeys:                 domainStatesToSNIDs(parsed.States),
+		ExcludeStates:             domainStatesToSNIDs(parsed.ExcludeStates),
 		SeverityKeys:              domainSeveritiesToSNIDs(parsed.Severities),
 		IssueTypeKeys:             domainIssueTypesToSNIDs(parsed.IssueTypes),
 		EngagementTypeKeys:        domainEngagementTypesToSNIDs(parsed.EngagementTypes),
@@ -2250,6 +2286,14 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "state contains invalid value: " + string(st)}
 		}
 	}
+	// Same reasoning as States above, and it matters more here: an exclusion
+	// value that got silently dropped would widen the result set rather than
+	// narrow it, which is the harder failure to notice.
+	for _, st := range req.Parsed.ExcludeStates {
+		if !validCaseState[st] {
+			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "state (notIn) contains invalid value: " + string(st)}
+		}
+	}
 	for _, sv := range req.Parsed.Severities {
 		if !validCaseSeverity[sv] {
 			return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "severity contains invalid value: " + string(sv)}
@@ -2334,6 +2378,9 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 		Filters:    snFilters,
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
+		// Requests the account reference, project key, and fix-ETA fields on every
+		// row (see snCaseSearchPayload.IncludeExtendedFields doc comment).
+		IncludeExtendedFields: true,
 	}
 
 	raw, err := s.client.Post(ctx, "/cases/search", token, payload)
@@ -2387,6 +2434,16 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 			WorkState:      workStateLabel,
 			Type:           caseTypeDomain,
 			Project:        domain.EntityRef{ID: sysidToUUID(c.Project.ID), Name: c.Project.Name},
+			ProjectKey:     c.Project.Key,
+			// BestCaseFixEta/MostLikelyFixEta/WorstCaseFixEta are already date-only
+			// "YYYY-MM-DD" strings on both sides, so no parsing/reformatting is
+			// needed — nil when includeExtendedFields data is absent from a row.
+			BestCaseFixEta:   c.BestCaseFixEta,
+			MostLikelyFixEta: c.MostLikelyFixEta,
+			WorstCaseFixEta:  c.WorstCaseFixEta,
+		}
+		if c.Account != nil {
+			cv.AccountDetails = &domain.AccountRef{ID: sysidToUUID(c.Account.ID), Name: c.Account.Name, Type: c.Account.Type}
 		}
 		if depID := sysidToUUID(c.Deployment.ID); depID != "" {
 			cv.Deployment = &domain.EntityRef{ID: depID, Name: c.Deployment.Name}
@@ -2648,7 +2705,21 @@ func (s *snCaseService) RemoveCaseTag(ctx context.Context, caseID, tagID string)
 	return err
 }
 
-// snSearchTagsResponse mirrors the Choreo GET /tags/search response, and the shape of the
+// snSearchTagsFilters holds the filter fields of the Choreo POST /tags/search request body.
+// CaseID scopes the search to labels already used on one case; the entity service never sets
+// it (nothing upstream consumes the case-scoped variant), but it is part of the wire contract.
+type snSearchTagsFilters struct {
+	SearchQuery string `json:"searchQuery,omitempty"`
+	CaseID      string `json:"caseId,omitempty"`
+}
+
+// snSearchTagsPayload is the Choreo POST /tags/search request body.
+type snSearchTagsPayload struct {
+	Filters snSearchTagsFilters `json:"filters"`
+	Limit   int                 `json:"limit,omitempty"`
+}
+
+// snSearchTagsResponse mirrors the Choreo POST /tags/search response, and the shape of the
 // case-scoped GET /cases/{id}/tags response consumed by listCaseTags below.
 type snSearchTagsResponse struct {
 	Tags []snTag `json:"tags"`
@@ -2684,22 +2755,21 @@ func (s *snCaseService) listCaseTags(ctx context.Context, caseID string) ([]doma
 // FE autocomplete when attaching a tag to a case. SN's tagging is the generic platform label
 // mechanism (table-agnostic, not a case column), backed by the sys_label table (optionally
 // scoped to labels used against reference_table="sn_customerservice_case" label_entry rows).
-func (s *snCaseService) SearchTags(ctx context.Context, query string, limit int) ([]domain.Tag, error) {
+func (s *snCaseService) SearchTags(ctx context.Context, req domain.SearchTagsRequest) ([]domain.Tag, error) {
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return nil, err
+	}
+
 	token := middleware.UserIDTokenFromContext(ctx)
 
-	q := url.Values{}
-	if query != "" {
-		q.Set("q", query)
+	payload := snSearchTagsPayload{
+		Filters: snSearchTagsFilters{SearchQuery: req.Filters.SearchQuery},
 	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/tags/search"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
+	if req.Limit > 0 {
+		payload.Limit = req.Limit
 	}
 
-	raw, err := s.client.Get(ctx, path, token)
+	raw, err := s.client.Post(ctx, "/tags/search", token, payload)
 	if err != nil {
 		return nil, err
 	}

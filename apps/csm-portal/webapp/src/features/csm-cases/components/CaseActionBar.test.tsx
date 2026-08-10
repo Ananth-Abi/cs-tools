@@ -567,6 +567,54 @@ describe("CaseActionBar — Change severity is blocked on a closed case", () => 
   });
 });
 
+describe("CaseActionBar — Create change request (service requests only)", () => {
+  it("is offered for a service request", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...caseInState("awaiting_info", ["waiting_on_wso2"]),
+          caseType: "service_request",
+        }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /create change request/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "create_change_request" });
+  });
+
+  it("is not offered for a plain case", () => {
+    render(
+      <CaseActionBar
+        caseDetail={{ ...caseInState("awaiting_info", ["waiting_on_wso2"]), caseType: "case" }}
+        onAction={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    expect(
+      screen.queryByRole("menuitem", { name: /create change request/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables it once the service request is closed", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{ ...caseInState("closed", []), caseType: "service_request" }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /create change request/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+});
+
 describe("acknowledge action", () => {
   const renderBar = (
     overrides: Partial<CsmCaseDetail>,

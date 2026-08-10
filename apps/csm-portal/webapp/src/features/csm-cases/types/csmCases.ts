@@ -421,6 +421,28 @@ export interface CreateServiceRequestFromCaseNavState {
 }
 
 /**
+ * Router (`navigate(..., { state })`) payload carried from a service
+ * request's "Create change request…" action (case detail action bar) to
+ * `/operations/change-requests/new`, so the create-change-request form's
+ * "Originating service request" picker can pre-select the service request the
+ * action was opened from and scope its search to the same project — see
+ * CsmCaseDetailPage.tsx's `create_change_request` handler and
+ * CreateChangeRequestPage.tsx's read of `useLocation().state`. Distinct from
+ * ChangeRequestsTab.tsx's own "Create change request" button, which navigates
+ * to the same route with no state at all — that entry point has no service
+ * request to prefill or scope by, so its picker searches the whole system
+ * exactly as it always has. `projectId` is optional here (unlike the sibling
+ * nav states above) because a legacy case row can omit it; the picker simply
+ * skips scoping when it's absent.
+ */
+export interface CreateChangeRequestFromCaseNavState {
+  caseId: string;
+  caseNumber?: string;
+  caseSubject?: string;
+  projectId?: string;
+}
+
+/**
  * Router (`navigate(..., { state })`) payload carried from a case's "Create
  * incident from case…" action to `/operations/incidents/new`, so the
  * create-incident form can prefill from the originating case without a
