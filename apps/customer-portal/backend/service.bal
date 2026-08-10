@@ -6919,8 +6919,27 @@ isolated service class WsProxyService {
                 log:printError(string `Discarding ${inboundType}: no conversation id available`);
                 return;
             }
+            // Stamp the requester from the authenticated session rather than
+            // trusting the browser to say who it is: a token increase lands in
+            // the durable audit trail as the actor.
+            //
+            // Rewritten unconditionally. When there is no authenticated email to
+            // stamp, any requestedBy the page supplied is *removed* rather than
+            // forwarded — otherwise that one path would let a caller name
+            // themselves in the audit trail. So the field is either this
+            // session's user or absent, never client-supplied; the backend falls
+            // back to the account when it is absent.
+            string sideChannelPayload = data;
+            if parsed is map<json> {
+                if self.userEmail.length() > 0 {
+                    parsed["requestedBy"] = self.userEmail;
+                } else {
+                    _ = parsed.removeIfHasKey("requestedBy");
+                }
+                sideChannelPayload = parsed.toJsonString();
+            }
             error? sideChannelErr = ai_chat_agent:sendSideChannelMessage(
-                    string `${self.projectId}:${sideChannelConvId}`, data, caller);
+                    string `${self.projectId}:${sideChannelConvId}`, sideChannelPayload, caller);
             if sideChannelErr is error {
                 log:printError(string `Failed to forward ${inboundType} upstream`, sideChannelErr);
             }

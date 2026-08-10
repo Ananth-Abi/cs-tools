@@ -901,11 +901,12 @@ export default function NoveraChatPage(): JSX.Element {
       await sendUserMessage({
         type: "token_increase_request",
         accountId,
+        accountName: projectDetails?.account?.name || undefined,
         reason,
         limitType: "session",
       });
     },
-    [projectId, accountId, connect, sendUserMessage],
+    [projectId, accountId, projectDetails?.account?.name, connect, sendUserMessage],
   );
 
   const handleSendMessage = useCallback(async (): Promise<boolean> => {
