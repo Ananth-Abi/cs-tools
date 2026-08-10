@@ -16,9 +16,19 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { JSX } from "react";
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@testing-library/jest-dom/vitest";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
+
+// `@api/backend/client` -> `useAuthApiClient` -> `@config/apiConfig`, which
+// throws at module load when `window.config` isn't set — not present under
+// vitest. Same stub other page tests use (e.g. CsmAccountDetailPage.test.tsx).
+vi.mock("@config/apiConfig", () => ({
+  apiConfig: { backendUrl: "https://example.test" },
+}));
 
 // The backend client reads runtime config at module load, which isn't
 // present under vitest. The page imports `BackendApiError` from it directly,
@@ -32,30 +42,6 @@ vi.mock("@api/backend/client", () => ({
       this.status = status;
     }
   },
-}));
-
-// `currentCaseId` is read by the react-router mock below on every render, so
-// the test can move the page from one case to another by mutating it and
-// calling `rerender`. `vi.hoisted` is required because `vi.mock` factories
-// are hoisted above regular module-scope declarations.
-const { getCurrentCaseId, setCurrentCaseId } = vi.hoisted(() => {
-  let caseId = "case-1";
-  return {
-    getCurrentCaseId: () => caseId,
-    setCurrentCaseId: (next: string) => {
-      caseId = next;
-    },
-  };
-});
-
-vi.mock("react-router", () => ({
-  useParams: () => ({ caseId: getCurrentCaseId() }),
-  useLocation: () => ({
-    pathname: `/cases/${getCurrentCaseId()}`,
-    search: "",
-    hash: "",
-    state: undefined,
-  }),
 }));
 
 const navigateMock = vi.fn();
@@ -372,10 +358,51 @@ vi.mock("@features/csm-timecards/components/LogTimeCardDialog", () => ({
 // Imported after the mocks above so the module picks them up.
 import CsmCaseDetailPage from "@features/csm-cases/pages/CsmCaseDetailPage";
 
+// Renders the real route pathname, so the test can assert the router itself
+// actually transitioned (not just that the page re-rendered) — same
+// convention as CsmAccountDetailPage.test.tsx's `LocationProbe`.
+function LocationProbe(): JSX.Element {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
+
+// Fires a real `navigate("/cases/case-2")` from inside the router, the same
+// way an in-app link (e.g. the sidebar's recent-cases list) would move the
+// user from one case to another without unmounting this page — the route
+// pattern is identical, only the `:caseId` param changes.
+function NavigateToCaseTwoButton(): JSX.Element {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate("/cases/case-2")}>
+      Go to case 2
+    </button>
+  );
+}
+
+function renderPage(): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/cases/case-1"]}>
+        <NavigateToCaseTwoButton />
+        <LocationProbe />
+        <Routes>
+          <Route path="/cases/:caseId" element={<CsmCaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () => {
   it("stops showing the previous case's edit dialog once the route moves to a new case", () => {
-    setCurrentCaseId("case-1");
-    const { rerender } = render(<CsmCaseDetailPage />);
+    renderPage();
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/cases/case-1",
+    );
 
     // Switch to the "Time tracking" tab, where CaseTimeCardsPanel (stubbed
     // above) lives, and open the edit dialog for a card on case-1.
@@ -388,10 +415,14 @@ describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () 
       "editingCardId=card-1 caseId=case-1",
     );
 
-    // Navigate to a different case (same route, only :caseId changes — this
-    // page stays mounted, so the render-time reset block is what has to run).
-    setCurrentCaseId("case-2");
-    rerender(<CsmCaseDetailPage />);
+    // Navigate to a different case through a real router transition (same
+    // route, only :caseId changes — this page stays mounted, so the
+    // render-time reset block is what has to run).
+    fireEvent.click(screen.getByRole("button", { name: /go to case 2/i }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/cases/case-2",
+    );
 
     // Without `setEditTimeCard(null)` in the reset block, the dialog would
     // still be mounted here, showing case-1's card while the rest of the
