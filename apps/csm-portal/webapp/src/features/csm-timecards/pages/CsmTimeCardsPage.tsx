@@ -279,6 +279,16 @@ export default function CsmTimeCardsPage(): JSX.Element {
     setFilterProject(v);
     resetAllPages();
   };
+  // Unlike the other filters, work item is purely client-side (narrows an
+  // already-fetched page — see byWorkItem below), so it doesn't strictly
+  // need a page reset. It still needs resetAllPages() for the selection
+  // clear bundled into it, though: narrowing to a different set of visible
+  // cards on the Approvals tab can silently drop some of the current
+  // selection out of view otherwise.
+  const handleFilterWorkItemChange = (v: string[]): void => {
+    setFilterWorkItem(v);
+    resetAllPages();
+  };
   const handleFilterStateChange = (v: TimeCardState | ""): void => {
     setFilterState(v);
     resetAllPages();
@@ -436,6 +446,27 @@ export default function CsmTimeCardsPage(): JSX.Element {
     () => byWorkItem(queue.data?.cards),
     [queue.data, byWorkItem],
   );
+  // The actually-actionable selection: `selectedIds` alone can outlive its
+  // own basis (a queue refetch — e.g. the Refresh button, or another
+  // approver deciding a card first — can drop a card that was selected a
+  // moment ago), so this re-derives from whatever `approvalsFilteredCards`
+  // holds *right now* rather than trusting the raw id set. Used everywhere
+  // a "how many/which cards am I about to approve" answer is needed (the
+  // toolbar's count and the confirm dialog) so they can never disagree with
+  // each other, even though nothing here mutates `selectedIds` itself to
+  // prune the stale ids out — the next real toggle/clear naturally drops
+  // them.
+  const selectedApprovalCards = useMemo(
+    () =>
+      approvalsFilteredCards.filter(
+        (c) =>
+          selectedIds.has(c.id) &&
+          cardActions(c.state, { isOwner: false, isApprover: true, isAdmin: role.isAdmin }).includes(
+            "approve",
+          ),
+      ),
+    [approvalsFilteredCards, selectedIds, role.isAdmin],
+  );
 
   return (
     <Box
@@ -470,7 +501,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
             filterProject={filterProject}
             setFilterProject={handleFilterProjectChange}
             filterWorkItem={filterWorkItem}
-            setFilterWorkItem={setFilterWorkItem}
+            setFilterWorkItem={handleFilterWorkItemChange}
             workItemOptions={mineWorkItemOptions}
             filterState={filterState}
             setFilterState={handleFilterStateChange}
@@ -543,7 +574,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
             filterProject={filterProject}
             setFilterProject={handleFilterProjectChange}
             filterWorkItem={filterWorkItem}
-            setFilterWorkItem={setFilterWorkItem}
+            setFilterWorkItem={handleFilterWorkItemChange}
             workItemOptions={allWorkItemOptions}
             filterState={filterState}
             setFilterState={handleFilterStateChange}
@@ -620,7 +651,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
             filterProject={filterProject}
             setFilterProject={handleFilterProjectChange}
             filterWorkItem={filterWorkItem}
-            setFilterWorkItem={setFilterWorkItem}
+            setFilterWorkItem={handleFilterWorkItemChange}
             workItemOptions={approvalsWorkItemOptions}
             filterState={filterState}
             setFilterState={handleFilterStateChange}
@@ -647,9 +678,9 @@ export default function CsmTimeCardsPage(): JSX.Element {
           <GroupByToggle value={groupBy} onChange={setGroupBy} />
 
           <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
-            {selectedIds.size > 0 ? (
+            {selectedApprovalCards.length > 0 ? (
               <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                <Typography variant="body2">{selectedIds.size} selected</Typography>
+                <Typography variant="body2">{selectedApprovalCards.length} selected</Typography>
                 <Button size="small" color="inherit" onClick={clearSelection}>
                   Clear
                 </Button>
@@ -660,7 +691,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
                   startIcon={<Check size={14} />}
                   onClick={() => setBulkConfirmOpen(true)}
                 >
-                  Approve {selectedIds.size}
+                  Approve {selectedApprovalCards.length}
                 </Button>
               </Box>
             ) : (
@@ -724,18 +755,11 @@ export default function CsmTimeCardsPage(): JSX.Element {
 
       {bulkConfirmOpen && (
         <BulkApproveDialog
-          cards={approvalsFilteredCards.filter(
-            (c) => selectedIds.has(c.id) && cardActions(c.state, approvalsRole()).includes("approve"),
-          )}
+          cards={selectedApprovalCards}
           isSubmitting={bulkApprove.isPending}
           onClose={() => setBulkConfirmOpen(false)}
           onConfirm={() => {
-            const ids = approvalsFilteredCards
-              .filter(
-                (c) =>
-                  selectedIds.has(c.id) && cardActions(c.state, approvalsRole()).includes("approve"),
-              )
-              .map((c) => c.id);
+            const ids = selectedApprovalCards.map((c) => c.id);
             bulkApprove.mutate(ids, {
               onSuccess: (result) => {
                 setBulkConfirmOpen(false);
