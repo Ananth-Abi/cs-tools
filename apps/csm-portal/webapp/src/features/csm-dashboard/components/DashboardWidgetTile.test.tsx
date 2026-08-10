@@ -23,26 +23,8 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 
 const postMock = vi.fn();
 
-// A minimal stand-in for the real BackendApiError (see client.ts) — carries
-// just the `status` field this test suite's 401/403-vs-other-failure
-// assertions need `instanceof` to see through the mock. Declared via
-// `vi.hoisted` since `vi.mock`'s factory is itself hoisted above any
-// top-level `const`/`class` in this file.
-const { MockBackendApiError } = vi.hoisted(() => {
-  class MockBackendApiError extends Error {
-    status: number;
-    constructor(status: number, message: string) {
-      super(message);
-      this.name = "BackendApiError";
-      this.status = status;
-    }
-  }
-  return { MockBackendApiError };
-});
-
 vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ post: postMock }),
-  BackendApiError: MockBackendApiError,
 }));
 // A `shape: "list"` tile now renders through widgetListConfig.tsx, which
 // pulls in useTimeSheets.ts (time_card's mapper) — that module reads
@@ -128,7 +110,6 @@ vi.mock("@wso2/oxygen-ui-charts-react", () => ({
 }));
 
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
-import { BackendApiError } from "@api/backend/client";
 import { CURRENT_TEAM_PLACEHOLDER } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
 import { CURRENT_USER_PLACEHOLDER } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 
@@ -228,68 +209,6 @@ describe("DashboardWidgetTile", () => {
     await waitFor(() =>
       expect(screen.getByText("Could not load this widget.")).toBeInTheDocument(),
     );
-  });
-
-  it("shows a distinct access-denied message (not the generic one) when its /cases/search call fails with a genuine 401", async () => {
-    postMock.mockRejectedValue(new BackendApiError(401, "no valid session"));
-
-    renderWithClient(
-      <DashboardWidgetTile
-        widgetId="my_patches"
-        displayName="My Patches"
-        resourceType="case"
-        shape="count"
-        filters={{}}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(
-        screen.getByText("You don't have access to this data. Contact support if this looks wrong."),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.queryByText("Could not load this widget.")).not.toBeInTheDocument();
-  });
-
-  it("shows the same distinct access-denied message when its /cases/search call fails with a 403", async () => {
-    postMock.mockRejectedValue(new BackendApiError(403, "forbidden"));
-
-    renderWithClient(
-      <DashboardWidgetTile
-        widgetId="my_patches"
-        displayName="My Patches"
-        resourceType="case"
-        shape="count"
-        filters={{}}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(
-        screen.getByText("You don't have access to this data. Contact support if this looks wrong."),
-      ).toBeInTheDocument(),
-    );
-  });
-
-  it("keeps the generic message for a non-401/403 failure (e.g. 500), even though it's still a BackendApiError", async () => {
-    postMock.mockRejectedValue(new BackendApiError(500, "internal error"));
-
-    renderWithClient(
-      <DashboardWidgetTile
-        widgetId="my_patches"
-        displayName="My Patches"
-        resourceType="case"
-        shape="count"
-        filters={{}}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(screen.getByText("Could not load this widget.")).toBeInTheDocument(),
-    );
-    expect(
-      screen.queryByText("You don't have access to this data. Contact support if this looks wrong."),
-    ).not.toBeInTheDocument();
   });
 
   it("issues no search at all while the signed-in user's profile is still loading, rather than one without the user filter", async () => {
@@ -441,50 +360,6 @@ describe("DashboardWidgetTile", () => {
 
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
     expect(screen.getByText("42")).toBeInTheDocument();
-  });
-
-  it("shape list: shows a distinct access-denied message (not the generic one) for a genuine 401", async () => {
-    postMock.mockRejectedValue(new BackendApiError(401, "no valid session"));
-
-    renderWithClient(
-      <DashboardWidgetTile
-        widgetId="my_critical_open"
-        displayName="My Critical & High Cases"
-        resourceType="case"
-        shape="list"
-        filters={{}}
-        listLimit={5}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(
-        screen.getByText("You don't have access to this data. Contact support if this looks wrong."),
-      ).toBeInTheDocument(),
-    );
-    expect(screen.queryByText("Could not load this widget.")).not.toBeInTheDocument();
-  });
-
-  it("shape list: keeps the generic message for a non-401/403 failure (e.g. 500)", async () => {
-    postMock.mockRejectedValue(new BackendApiError(500, "internal error"));
-
-    renderWithClient(
-      <DashboardWidgetTile
-        widgetId="my_critical_open"
-        displayName="My Critical & High Cases"
-        resourceType="case"
-        shape="list"
-        filters={{}}
-        listLimit={5}
-      />,
-    );
-
-    await waitFor(() =>
-      expect(screen.getByText("Could not load this widget.")).toBeInTheDocument(),
-    );
-    expect(
-      screen.queryByText("You don't have access to this data. Contact support if this looks wrong."),
-    ).not.toBeInTheDocument();
   });
 
   it("shows a 'View more' link through to the full tab only when more records exist than shown", async () => {

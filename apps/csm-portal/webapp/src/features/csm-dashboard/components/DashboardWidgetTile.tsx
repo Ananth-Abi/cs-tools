@@ -18,7 +18,6 @@ import { Box, Button, Card, Chip, IconButton, Skeleton, Tooltip, Typography, alp
 import { ArrowRight, Info } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, KeyboardEvent, ReactNode } from "react";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router";
-import { BackendApiError } from "@api/backend/client";
 import type {
   BeDashboardPieSlice,
   BeDashboardWidgetColumn,
@@ -42,23 +41,6 @@ import {
 import { resolveWidgetText } from "@features/csm-dashboard/utils/widgetTextPlaceholder";
 import DashboardPieChart from "@features/csm-dashboard/components/DashboardPieChart";
 import DashboardBarChart from "@features/csm-dashboard/components/DashboardBarChart";
-
-const GENERIC_WIDGET_ERROR_MESSAGE = "Could not load this widget.";
-const ACCESS_DENIED_WIDGET_ERROR_MESSAGE =
-  "You don't have access to this data. Contact support if this looks wrong.";
-
-/** Distinguishes a genuine 401/403 (the signed-in user's own access to this
- * data was rejected) from every other widget-load failure (500, network
- * error, an unsupported resourceType, ...), which all still fall back to the
- * generic message below — this is a message choice only, not a retry/
- * sign-in trigger; see `useAuthApiClient.ts` for the token-expiry path,
- * which this leaves untouched. */
-function widgetErrorMessage(error: unknown): string {
-  if (error instanceof BackendApiError && (error.status === 401 || error.status === 403)) {
-    return ACCESS_DENIED_WIDGET_ERROR_MESSAGE;
-  }
-  return GENERIC_WIDGET_ERROR_MESSAGE;
-}
 
 interface DashboardWidgetTileProps {
   widgetId: string;
@@ -190,7 +172,7 @@ export default function DashboardWidgetTile({
   // slice) — skip this one's own network call rather than wasting it, but
   // still call the hook unconditionally (rules of hooks; a widget's shape
   // never changes across this component's lifetime).
-  const { data, isLoading: isWidgetDataLoading, isError, error: widgetDataError } = useWidgetData(
+  const { data, isLoading: isWidgetDataLoading, isError } = useWidgetData(
     widgetId,
     resourceType,
     filters,
@@ -352,7 +334,7 @@ export default function DashboardWidgetTile({
           <Skeleton variant="rounded" height={28 * (listLimit ?? 4) + 40} sx={{ mt: 1 }} />
         ) : isError ? (
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            {widgetErrorMessage(widgetDataError)}
+            Could not load this widget.
           </Typography>
         ) : (
           <>
@@ -504,7 +486,7 @@ export default function DashboardWidgetTile({
   } else if (isError) {
     body = (
       <Typography variant="body2" color="text.secondary">
-        {widgetErrorMessage(widgetDataError)}
+        Could not load this widget.
       </Typography>
     );
   } else {
