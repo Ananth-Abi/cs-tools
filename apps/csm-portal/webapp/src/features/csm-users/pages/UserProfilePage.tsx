@@ -41,6 +41,7 @@ import DirectoryEntityChip from "@features/csm-admin/components/DirectoryEntityC
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import {
   INTERNAL_USER_ROLES,
+  type ExternalAccountStatus,
   type NormalizedUserDetail,
   type UserProjectAccess,
 } from "@features/csm-users/types/csmUsers";
@@ -201,6 +202,52 @@ function TeamMetaCell({ user }: { user: NormalizedUserDetail }): JSX.Element {
 }
 
 /**
+ * SCIM "external" org exists/locked chips for an external contact, rendered
+ * in the Overview grid — the slot an internal user's Team/Phone cells
+ * occupy, since the two are mutually exclusive. Absent `status` (the SCIM
+ * lookup itself failed, best-effort per the backend) reads "Unavailable"
+ * rather than a false "Not found".
+ */
+function ExternalAccountMetaCell({
+  status,
+}: {
+  status?: ExternalAccountStatus;
+}): JSX.Element {
+  return (
+    <MetaCell label="External account">
+      {!status ? (
+        <Typography variant="body2" color="text.secondary">
+          Unavailable
+        </Typography>
+      ) : (
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+          <Chip
+            size="small"
+            label={status.exists ? "Exists" : "Not found"}
+            color={status.exists ? "success" : "warning"}
+            variant="outlined"
+          />
+          {status.exists && (
+            <Chip
+              size="small"
+              label={
+                status.locked === null
+                  ? "Lock status unknown"
+                  : status.locked
+                    ? "Locked"
+                    : "Unlocked"
+              }
+              color={status.locked ? "error" : "default"}
+              variant="outlined"
+            />
+          )}
+        </Box>
+      )}
+    </MetaCell>
+  );
+}
+
+/**
  * Roles and (for internal users) groups as two side-by-side chip clusters in
  * one card, rather than three separate cards — a user rarely has enough
  * groups to justify a card of its own, and putting roles and groups next to
@@ -272,6 +319,12 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
         <Alert severity="error" variant="outlined">
           This user's account is inactive — they can't access any project's cases,
           regardless of the per-project rows below.
+        </Alert>
+      )}
+
+      {user.externalAccount?.locked === true && (
+        <Alert severity="error" variant="outlined">
+          This user's external account is locked — they can't sign in until it's unlocked.
         </Alert>
       )}
 
@@ -386,7 +439,8 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
  * team (internal users only), roles, created/updated times, plus — split by
  * `userType` — an internal user's group memberships or an external user's
  * per-project access (with the reason surfaced whenever a project doesn't
- * grant case access, per `UserProjectAccess.grantsCaseAccess`).
+ * grant case access, per `UserProjectAccess.grantsCaseAccess`) and SCIM
+ * "external" org exists/locked status (`externalAccount`).
  */
 export default function UserProfilePage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
@@ -502,6 +556,7 @@ export default function UserProfilePage(): JSX.Element {
               <Typography variant="body2">{user.phone ?? "Not set"}</Typography>
             </MetaCell>
           )}
+          {!internal && <ExternalAccountMetaCell status={user.externalAccount} />}
           <MetaCell label="Created on">
             <Typography variant="body2">{formatDateTime(user.createdOn)}</Typography>
           </MetaCell>
