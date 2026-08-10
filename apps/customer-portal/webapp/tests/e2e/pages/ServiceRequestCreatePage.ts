@@ -23,6 +23,11 @@ import {
   GET_HELP_MENU,
 } from "../utils/selectors";
 
+/** How long to allow for the project dashboard's header to finish loading.
+ * Well above the 5s default expect timeout, because the header is skeletonised
+ * until the projects list resolves. */
+const DASHBOARD_LOAD_TIMEOUT_MS = 60_000;
+
 /**
  * Page object for the create-service-request form at
  * `/projects/:projectId/support/service-requests/create`
@@ -56,11 +61,14 @@ export class ServiceRequestCreatePage {
    */
   async openViaGetHelpMenu(projectId: string): Promise<void> {
     await this.page.goto(`/projects/${projectId}/dashboard`);
-    // The header renders skeletons until the projects list resolves; waiting on
-    // the primary button confirms the real split button is mounted.
+    // The header renders skeletons until the projects list resolves, which on a
+    // cold dashboard load can exceed the 5s default expect timeout — observed
+    // failing here when this spec ran last in a full-suite run. The wait is for
+    // the real split button to replace the skeleton, so it needs the longer
+    // budget rather than the default.
     await expect(
       this.page.getByRole("button", { name: GET_HELP_BUTTON, exact: true }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: DASHBOARD_LOAD_TIMEOUT_MS });
 
     await this.page
       .getByRole("button", { name: GET_HELP_MENU.trigger })

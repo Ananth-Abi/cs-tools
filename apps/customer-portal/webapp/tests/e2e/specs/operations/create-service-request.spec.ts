@@ -34,7 +34,7 @@ import {
   ProjectType,
   SERVICE_REQUEST_INPUT,
 } from "../../config/testData";
-import { skipWhenUnconfigured } from "../../utils/caseFlows";
+import { isSuccess, skipWhenUnconfigured } from "../../utils/caseFlows";
 import { CREATE_SERVICE_REQUEST } from "../../utils/selectors";
 
 withSession(test);
@@ -77,7 +77,7 @@ test.describe("Service Request", () => {
         (r) =>
           r.url().includes("/cases") &&
           r.request().method() === "POST" &&
-          r.status() < 400,
+          isSuccess(r.status()),
       ),
       serviceRequest.submit(),
     ]);

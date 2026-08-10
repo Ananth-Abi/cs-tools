@@ -32,6 +32,19 @@ export interface CreatedCase {
   number?: string;
 }
 
+/**
+ * Whether a response status means the mutation actually succeeded.
+ *
+ * Deliberately 2xx-only rather than `< 400`: a 3xx is not a completed write, and
+ * matching one would hand the caller a redirect to parse as JSON.
+ *
+ * @param status - HTTP status code.
+ * @returns True for 200-299.
+ */
+export function isSuccess(status: number): boolean {
+  return status >= 200 && status < 300;
+}
+
 /** Fixture fields a create-case run cannot proceed without. `deployment` is
  * required only when the form actually offers the field — types that
  * auto-select it legitimately leave it empty. */
@@ -101,7 +114,7 @@ export async function createCaseViaGetHelp(
       (r) =>
         r.url().includes("/cases") &&
         r.request().method() === "POST" &&
-        r.status() < 400,
+        isSuccess(r.status()),
     ),
     createCase.submit(),
   ]);

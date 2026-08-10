@@ -16,6 +16,7 @@
 
 import { type Locator, type Page, expect } from "@playwright/test";
 import { CASE_DETAIL } from "../utils/selectors";
+import { isSuccess } from "../utils/caseFlows";
 
 /**
  * Page object for the case detail page
@@ -87,7 +88,7 @@ export class CaseDetailPage {
         (r) =>
           r.url().includes("/cases/") &&
           r.request().method() === "PATCH" &&
-          r.status() < 400,
+          isSuccess(r.status()),
       ),
       this.confirmButton().click(),
     ]);
