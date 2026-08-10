@@ -102,9 +102,10 @@ describe("useGetTimeCardsStats", () => {
     expect(data?.billableHours).toBe(6.67);
     expect(data?.nonBillableHours).toBe(0);
 
-    const requestedUrl = String(authFetchMock.mock.calls[0][0]);
-    expect(requestedUrl).toContain("startDate=2025-01-01");
-    expect(requestedUrl).toContain("endDate=2025-12-31");
+    const requestedUrl = new URL(String(authFetchMock.mock.calls[0][0]));
+    expect(requestedUrl.searchParams.size).toBe(2);
+    expect(requestedUrl.searchParams.get("startDate")).toBe("2025-01-01");
+    expect(requestedUrl.searchParams.get("endDate")).toBe("2025-12-31");
   });
 
   it("should request stats without any query params when no dates are provided", async () => {
@@ -128,9 +129,10 @@ describe("useGetTimeCardsStats", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    const requestedUrl = String(authFetchMock.mock.calls[0][0]);
-    expect(requestedUrl).toContain("startDate=2025-01-01");
-    expect(requestedUrl).not.toContain("endDate=");
+    const requestedUrl = new URL(String(authFetchMock.mock.calls[0][0]));
+    expect(requestedUrl.searchParams.size).toBe(1);
+    expect(requestedUrl.searchParams.get("startDate")).toBe("2025-01-01");
+    expect(requestedUrl.searchParams.has("endDate")).toBe(false);
   });
 
   it("should include only endDate when startDate is not provided", async () => {
@@ -142,8 +144,9 @@ describe("useGetTimeCardsStats", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    const requestedUrl = String(authFetchMock.mock.calls[0][0]);
-    expect(requestedUrl).toContain("endDate=2025-12-31");
-    expect(requestedUrl).not.toContain("startDate=");
+    const requestedUrl = new URL(String(authFetchMock.mock.calls[0][0]));
+    expect(requestedUrl.searchParams.size).toBe(1);
+    expect(requestedUrl.searchParams.get("endDate")).toBe("2025-12-31");
+    expect(requestedUrl.searchParams.has("startDate")).toBe(false);
   });
 });
