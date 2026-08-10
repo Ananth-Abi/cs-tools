@@ -212,13 +212,18 @@ describe("useAuthApiClient", () => {
   });
 
   it("recovers a POST Request with a body from a resolved 401 via the bare retry, without the body being consumed", async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse(401))
-      .mockResolvedValue(jsonResponse(200, { ok: true }));
+    const body = JSON.stringify({ hello: "world" });
+    const requestBodies: string[] = [];
+    fetchMock.mockImplementation(async (input) => {
+      requestBodies.push(await (input as Request).text());
+      return requestBodies.length === 1
+        ? jsonResponse(401)
+        : jsonResponse(200, { ok: true });
+    });
 
     const request = new Request("https://example.test/api/thing", {
       method: "POST",
-      body: JSON.stringify({ hello: "world" }),
+      body,
     });
 
     const { result } = renderHook(() => useAuthApiClient());
@@ -226,6 +231,7 @@ describe("useAuthApiClient", () => {
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestBodies).toEqual([body, body]);
     // The original Request must stay pristine (not directly fetched) so it
     // remains clonable across every retry attempt.
     expect(request.bodyUsed).toBe(false);
