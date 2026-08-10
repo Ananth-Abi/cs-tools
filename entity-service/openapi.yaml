@@ -19,6 +19,116 @@ paths:
         "200":
           description: Ok
 
+  /event-outbox:
+    post:
+      summary: Create a new event_outbox row in "waiting" status.
+      operationId: createEventOutbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventOutboxRequest'
+      responses:
+        "201":
+          description: Row created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventOutbox'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /event-outbox/search:
+    post:
+      summary: Search event_outbox rows by status. Defaults to status=waiting — the polling fallback's candidate list, oldest first.
+      operationId: searchEventOutbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchEventOutboxRequest'
+      responses:
+        "200":
+          description: Rows matching the filters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEventOutboxResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /event-outbox/{id}:
+    patch:
+      summary: >-
+        Transition a row's status. The single endpoint behind all three legal
+        transitions: status=dispatching claims the row (must currently be
+        waiting — the operation that closes the outbox race, since only one
+        of two racing callers ever succeeds); status=dispatched marks a
+        claimed row successful (must currently be dispatching); status=waiting
+        releases a failed dispatch attempt for the polling fallback to retry
+        later (must currently be dispatching).
+      operationId: updateEventOutboxStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEventOutboxStatusRequest'
+      responses:
+        "200":
+          description: Status updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventOutbox'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Row is not in the required state for the requested transition.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /users/me:
     get:
       summary: Get the profile of the currently authenticated user.
@@ -11294,3 +11404,97 @@ components:
           type: string
         endDate:
           type: string
+
+    EventOutbox:
+      description: >
+        A durable record of one event a caller wants dispatched to
+        csm-notification-service's POST /events. Has no ServiceNow
+        equivalent — always backed by Postgres. status is returned exactly
+        as stored (lowercase), not mapped to an UPPER_SNAKE_CASE label,
+        since this entity's only callers are csm-portal-backend and its own
+        polling fallback, not a rendered UI.
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+        entityId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [waiting, dispatching, dispatched]
+        attempts:
+          type: integer
+        createdOn:
+          type: string
+          format: date-time
+        claimedOn:
+          type: string
+          format: date-time
+          nullable: true
+        dispatchedOn:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateEventOutboxRequest:
+      type: object
+      required: [eventType, entityId, payload]
+      properties:
+        eventType:
+          type: string
+          description: e.g. "case.created", "incident.created" — the csm-notification-service event type this row will eventually publish as.
+        entityId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+          description: The exact payload body csm-notification-service's POST /events expects for eventType.
+
+    UpdateEventOutboxStatusRequest:
+      description: >
+        status is the requested target state. Only three transitions are
+        legal, each with its own guard on the row's current status — not a
+        free-form field update. See PATCH /event-outbox/{id}'s summary.
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [dispatching, dispatched, waiting]
+
+    SearchEventOutboxFilters:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [waiting, dispatching, dispatched]
+
+    SearchEventOutboxRequest:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        filters:
+          $ref: '#/components/schemas/SearchEventOutboxFilters'
+
+    SearchEventOutboxResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventOutbox'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean

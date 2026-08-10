@@ -56,16 +56,14 @@ var KnownTypes = []Type{TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, Ty
 // Payload first. Everything with the same EntityID lands on the same
 // partition and is processed in publish order.
 //
-// EventID is optional and currently unused by this service — nothing
-// validates, indexes, or dedupes on it yet. It exists so a caller can start
-// generating one now (e.g. a UUID per event), while this schema has no
-// external consumers to migrate: retrying a POST /events call that the
-// broker actually acked (e.g. after a client-side timeout) publishes a
-// second, distinct Kafka record that today's per-channel idempotency
-// tracking can't recognize as a duplicate, since that tracking keys on
-// topic/partition/offset, which differ for the retried copy. EventID is the
-// natural key for detecting that case, and for future dead-letter
-// correlation — once a durable store exists to actually use it.
+// EventID is optional and unused by this service — it's passed through
+// unchanged (this service publishes the original request body as received)
+// for whoever upstream needs it. Deduplicating a caller that retries a
+// POST /events call the broker actually acked, or two independent callers
+// racing to publish the same logical event (e.g. an outbox's
+// immediate-dispatch path and its polling fallback), is handled upstream —
+// this service has no database and deliberately doesn't talk to one
+// directly; see entity-service for where that persistence lives.
 type Envelope struct {
 	Type     Type            `json:"type"`
 	EntityID string          `json:"entityId"`

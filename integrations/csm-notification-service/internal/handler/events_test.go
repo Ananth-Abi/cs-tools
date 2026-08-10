@@ -28,12 +28,12 @@ import (
 // mockPublisher is a test double for eventPublisher.
 type mockPublisher struct {
 	err              error
-	called           bool
+	callCount        int
 	gotKey, gotValue []byte
 }
 
 func (m *mockPublisher) Publish(ctx context.Context, key, value []byte) error {
-	m.called = true
+	m.callCount++
 	m.gotKey, m.gotValue = key, value
 	return m.err
 }
@@ -76,8 +76,8 @@ func TestPostEvent_ValidEvents(t *testing.T) {
 			pub := &mockPublisher{}
 			w := postEvent(t, pub, c.body)
 			assertStatus(t, w, http.StatusAccepted)
-			if !pub.called {
-				t.Fatal("expected Publish to be called")
+			if pub.callCount != 1 {
+				t.Fatalf("expected Publish to be called once, got %d", pub.callCount)
 			}
 			if string(pub.gotKey) != c.key {
 				t.Errorf("publish key = %q, want %q", pub.gotKey, c.key)
@@ -122,7 +122,7 @@ func TestPostEvent_RequiresFields(t *testing.T) {
 			pub := &mockPublisher{}
 			w := postEvent(t, pub, body)
 			assertStatus(t, w, http.StatusBadRequest)
-			if pub.called {
+			if pub.callCount != 0 {
 				t.Error("Publish should not be called for an invalid event")
 			}
 		})
@@ -133,7 +133,7 @@ func TestPostEvent_RejectsTrailingData(t *testing.T) {
 	pub := &mockPublisher{}
 	w := postEvent(t, pub, validCaseCreated+`{"garbage":true}`)
 	assertStatus(t, w, http.StatusBadRequest)
-	if pub.called {
+	if pub.callCount != 0 {
 		t.Error("Publish should not be called when trailing data is present")
 	}
 }

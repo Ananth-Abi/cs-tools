@@ -235,10 +235,9 @@ components:
         eventId:
           type: string
           description: >-
-            Optional, currently unused by this service — reserved for future
-            duplicate-publish detection and dead-letter correlation. Callers
-            may start generating one now (e.g. a UUID per event) while this
-            schema has no other consumers to migrate later.
+            Optional, unused by this service — passed through unchanged for
+            whoever upstream needs it. This service has no database and
+            doesn't deduplicate on it itself.
         payload:
           $ref: '#/components/schemas/CaseCreatedPayload'
 

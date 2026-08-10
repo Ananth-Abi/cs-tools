@@ -59,13 +59,11 @@ func main() {
 	}
 	service.SetUserRoles(roles)
 
-	pool, err := db.NewPoolIfNeeded(cfg)
+	pool, err := db.NewPoolFromConfig(cfg)
 	if err != nil {
 		log.Fatalf("connect to database: %v", err)
 	}
-	if pool != nil {
-		defer pool.Close()
-	}
+	defer pool.Close()
 
 	addr := ":" + cfg.ServerPort
 	srv := server.New(addr, pool, cfg)
