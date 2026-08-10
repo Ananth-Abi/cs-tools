@@ -27,6 +27,7 @@ vi.mock("@api/backend/client", () => ({
 
 import { useWidgetPieData } from "@features/csm-dashboard/api/useWidgetPieData";
 import { CURRENT_TEAM_PLACEHOLDER } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { CURRENT_USER_PLACEHOLDER } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 
 function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({
@@ -156,6 +157,81 @@ describe("useWidgetPieData", () => {
       },
       pagination: { offset: 0, limit: 1 },
     });
+  });
+
+  it("resolves __current_user__ (in either the base or a slice's own filters) after merging, using the signed-in user's own id", async () => {
+    postMock.mockResolvedValue({ total: 1 });
+
+    const { result } = renderHook(
+      () =>
+        useWidgetPieData(
+          "widget-1",
+          "case",
+          { filters: [{ field: "state", op: "in", values: ["open"] }] },
+          [
+            {
+              label: "Assigned to me",
+              query: {
+                filters: [
+                  { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+                ],
+              },
+            },
+          ],
+          undefined,
+          "11111111-aaaa-bbbb-cccc-000000000001",
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(postMock).toHaveBeenCalledWith("/cases/search", {
+      filters: {
+        filters: [
+          { field: "state", op: "in", values: ["open"] },
+          {
+            field: "assignedUserId",
+            op: "in",
+            values: ["11111111-aaaa-bbbb-cccc-000000000001"],
+          },
+        ],
+      },
+      pagination: { offset: 0, limit: 1 },
+    });
+  });
+
+  it("issues no slice search at all while the signed-in user isn't known yet, rather than one without the assignedUserId entry", async () => {
+    postMock.mockResolvedValue({ total: 1 });
+
+    const { result } = renderHook(
+      () =>
+        useWidgetPieData(
+          "widget-1",
+          "case",
+          { filters: [{ field: "state", op: "in", values: ["open"] }] },
+          [
+            {
+              label: "Assigned to me",
+              query: {
+                filters: [
+                  { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+                ],
+              },
+            },
+          ],
+          undefined,
+          undefined,
+        ),
+      { wrapper },
+    );
+
+    // Dropping the entry would have searched on `state: open` alone — every
+    // engineer's open cases, in a slice labelled "Assigned to me". Hold the
+    // request until the profile lands instead, and report the wait as
+    // loading so the chart does not paint an empty wedge in the meantime.
+    await waitFor(() => expect(result.current.isLoading).toBe(true));
+    expect(postMock).not.toHaveBeenCalled();
   });
 
   it("surfaces isError when any one slice's search fails", async () => {

@@ -21,6 +21,11 @@ import type { BeDashboardPieSlice, BeWidgetResourceType } from "@api/backend/typ
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { mergeWidgetFilters } from "@features/csm-dashboard/utils/widgetFilterMerge";
 import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveRelativeDateFilters } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
+import {
+  hasCurrentUserPlaceholder,
+  resolveCurrentUserPlaceholder,
+} from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 
 export interface PieSliceResult extends BeDashboardPieSlice {
   value: number;
@@ -54,16 +59,38 @@ export function useWidgetPieData(
    * `mergeWidgetFilters`, since a slice's own `query` may carry the
    * placeholder too, not just the widget's base `query`. */
   selectedTeamGroupId?: string | string[],
+  /** The signed-in user's own platform id (`useCurrentUser().user.id`), for
+   * resolving a `__current_user__` filter placeholder (see
+   * `currentUserFilterPlaceholder.ts`) — applied AFTER `mergeWidgetFilters`,
+   * same as `selectedTeamGroupId`, since a slice's own `query` may carry the
+   * placeholder too, not just the widget's base `query`. */
+  currentUserId?: string,
 ): WidgetPieData {
   const api = useBackendApi();
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
 
+  const resolvedSliceFilters = slices.map((slice) =>
+    resolveCurrentUserPlaceholder(
+      resolveRelativeDateFilters(
+        resolveTeamPlaceholder(
+          mergeWidgetFilters(baseFilters, slice.query),
+          selectedTeamGroupId,
+        ),
+      ),
+      currentUserId,
+    ),
+  );
+  // See useWidgetData: a surviving `__current_user__` means the signed-in
+  // user's profile hasn't landed yet, so every slice holds rather than
+  // searching unscoped. Computed here rather than inside the query factory
+  // so the returned isLoading can report the wait — a disabled query is not
+  // "loading" to react-query, and a pie/bar tile must not paint an empty
+  // chart while it is really still waiting on identity.
+  const awaitingCurrentUser = resolvedSliceFilters.some(hasCurrentUserPlaceholder);
+
   const queries = useQueries({
-    queries: slices.map((slice) => {
-      const filters = resolveTeamPlaceholder(
-        mergeWidgetFilters(baseFilters, slice.query),
-        selectedTeamGroupId,
-      );
+    queries: slices.map((_slice, index) => {
+      const filters = resolvedSliceFilters[index];
       return {
         queryKey: [
           ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA,
@@ -85,12 +112,13 @@ export function useWidgetPieData(
           });
           return typeof res.total === "number" ? res.total : 0;
         },
+        enabled: !awaitingCurrentUser,
         staleTime: 60_000,
       };
     }),
   });
 
-  const isLoading = queries.some((q) => q.isLoading);
+  const isLoading = awaitingCurrentUser || queries.some((q) => q.isLoading);
   const isError = queries.some((q) => q.isError);
   const results: PieSliceResult[] = slices.map((slice, i) => ({
     ...slice,

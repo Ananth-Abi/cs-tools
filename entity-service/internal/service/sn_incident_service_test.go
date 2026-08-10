@@ -169,3 +169,42 @@ func TestSNIncidentService_UpdateIncident_WatchList_InvalidUUID(t *testing.T) {
 		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
 	}
 }
+
+// TestSNIncidentService_SearchIncidents_NumberFilterPassedThrough verifies the
+// exact-match Number filter reaches the outgoing payload under the "number" key
+// unchanged, alongside the untouched free-text searchQuery.
+func TestSNIncidentService_SearchIncidents_NumberFilterPassedThrough(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/incidents/search", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"incidents": [], "totalRecords": 0, "offset": 0, "limit": 20}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowIncidentService(client)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{Number: strPtr("INC0010001")},
+	}
+	if _, err := svc.SearchIncidents(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gotFilters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters object in payload, got %+v", gotBody["filters"])
+	}
+	if gotFilters["number"] != "INC0010001" {
+		t.Fatalf("filters.number: got %v, want %q", gotFilters["number"], "INC0010001")
+	}
+	if _, hasSearchQuery := gotFilters["searchQuery"]; hasSearchQuery {
+		t.Fatalf("filters.searchQuery: expected omitted (empty), got %v", gotFilters["searchQuery"])
+	}
+}

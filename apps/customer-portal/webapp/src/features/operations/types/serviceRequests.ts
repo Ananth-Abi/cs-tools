@@ -55,12 +55,20 @@ export type CatalogSearchResponse = PaginationResponse & {
   catalogs: Catalog[];
 };
 
+/** Choice option for a catalog item variable. */
+export type CatalogItemVariableChoice = {
+  value: string;
+  text: string;
+  order: number;
+};
+
 /** Item type for a variable definition for a catalog item. */
 export type CatalogItemVariable = {
   id: string;
   questionText: string;
   order: number;
   type: string;
+  choices?: CatalogItemVariableChoice[] | null;
 };
 
 /** Response type for catalog item variables. */

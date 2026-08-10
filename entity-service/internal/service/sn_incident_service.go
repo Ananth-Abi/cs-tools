@@ -85,6 +85,10 @@ type snIncidentFilters struct {
 	SearchQuery  string   `json:"searchQuery,omitempty"`
 	PriorityKeys []int    `json:"priorityKeys,omitempty"` // SN expects int keys
 	ParentIDs    []string `json:"parentIds,omitempty"`
+	// Number: see domain.SearchIncidentsFilters.Number doc comment. Exact
+	// match against ServiceNow's `number` column -- not part of the
+	// free-text SearchQuery scan.
+	Number string `json:"number,omitempty"`
 }
 
 // snIncidentPriorityKeyMap maps domain IncidentPriority enums to SN numeric priority keys.
@@ -174,6 +178,9 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchIncidentsResponse{}, err
+	}
 	if req.SortBy.Field != "" && !validIncidentSortField[req.SortBy.Field] {
 		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "sortBy.field contains invalid value: " + string(req.SortBy.Field)}
 	}
@@ -210,6 +217,7 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 			SearchQuery:  req.Filters.SearchQuery,
 			PriorityKeys: priorityKeys,
 			ParentIDs:    uuidsToSysids(req.Filters.ParentIDs),
+			Number:       stringPtrValue(req.Filters.Number),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

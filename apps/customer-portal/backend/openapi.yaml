@@ -1790,6 +1790,10 @@ paths:
       responses:
         "200":
           description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogItemVariablesResponse'
         "401":
           description: Unauthorized
         "500":
@@ -2420,6 +2424,10 @@ paths:
       responses:
         "200":
           description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseTimeCardsSearchResponse'
         "400":
           description: BadRequest
           content:
@@ -4171,6 +4179,101 @@ components:
             $ref: '#/components/schemas/Email'
       additionalProperties: false
       description: Request payload for updating a case.
+    CaseTimeCardBillingInfo:
+      required:
+      - count
+      - totalTime
+      type: object
+      properties:
+        totalTime:
+          type: number
+          description: Total time
+          format: double
+        count:
+          type: integer
+          description: Count of time cards
+          format: int64
+      description: Billing summary for time cards (billable or non-billable).
+    CaseTimeCard:
+      required:
+      - case
+      - totalCount
+      - totalTime
+      type: object
+      properties:
+        case:
+          required:
+          - id
+          - name
+          - number
+          - updatedOn
+          type: object
+          properties:
+            id:
+              $ref: '#/components/schemas/IdString'
+            number:
+              type: string
+              description: Case number
+            name:
+              type: string
+              description: Case name/summary
+            updatedOn:
+              type: string
+              description: Last updated date and time
+            createdOn:
+              type: string
+              description: Created date and time
+              nullable: true
+            createdBy:
+              type: string
+              description: User who created the case
+              nullable: true
+            updatedBy:
+              type: string
+              description: User who last updated the case
+              nullable: true
+            project:
+              $ref: '#/components/schemas/ReferenceItem'
+              nullable: true
+          description: Case information
+        totalTime:
+          type: number
+          description: Total time logged for this case
+          format: double
+        totalCount:
+          type: integer
+          description: Total count of time cards
+          format: int64
+        billable:
+          $ref: '#/components/schemas/CaseTimeCardBillingInfo'
+        nonBillable:
+          $ref: '#/components/schemas/CaseTimeCardBillingInfo'
+      description: Time card grouped by case.
+    CaseTimeCardsSearchResponse:
+      required:
+      - caseTimeCards
+      - totalRecords
+      type: object
+      properties:
+        caseTimeCards:
+          type: array
+          description: List of case time card summaries
+          items:
+            $ref: '#/components/schemas/CaseTimeCard'
+        totalRecords:
+          type: integer
+          description: Total records count
+          format: int64
+        offset:
+          minimum: 0
+          type: integer
+          description: Offset for pagination
+          format: int64
+        limit:
+          type: integer
+          description: Limit for pagination
+          format: int64
+      description: Cases time cards search response.
     CasesTrend:
       required:
       - period
@@ -4186,6 +4289,64 @@ components:
           items:
             $ref: '#/components/schemas/ChoiceListItem'
       description: Cases trend by time unit.
+    CatalogItemVariable:
+      required:
+      - id
+      - order
+      - questionText
+      - type
+      type: object
+      properties:
+        id:
+          $ref: '#/components/schemas/IdString'
+        questionText:
+          type: string
+          description: Question text for the variable
+        order:
+          type: integer
+          description: Display order of the variable
+          format: int64
+        type:
+          type: string
+          description: "Type of the variable (e.g., \"Single Line Text\", \"Multi\
+            \ Line Text\")"
+        choices:
+          type: array
+          description: "Available choices for the variable, when applicable (e.g.,\
+            \ \"Multiple Choice\")"
+          nullable: true
+          items:
+            $ref: '#/components/schemas/CatalogItemVariableChoice'
+      description: Catalog item variable information.
+    CatalogItemVariableChoice:
+      required:
+      - order
+      - text
+      - value
+      type: object
+      properties:
+        value:
+          type: string
+          description: Value submitted for this choice
+        text:
+          type: string
+          description: Display text for this choice
+        order:
+          type: integer
+          description: Display order of the choice
+          format: int64
+      description: Choice option for a catalog item variable.
+    CatalogItemVariablesResponse:
+      required:
+      - variables
+      type: object
+      properties:
+        variables:
+          type: array
+          description: List of catalog item variables
+          items:
+            $ref: '#/components/schemas/CatalogItemVariable'
+      description: Catalog item variables response.
     CatalogSearchPayload:
       type: object
       properties:

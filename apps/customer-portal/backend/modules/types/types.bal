@@ -1441,6 +1441,12 @@ public type CaseTimeCard record {|
         string name;
         # Last updated date and time
         string updatedOn;
+        # Created date and time
+        string? createdOn?;
+        # User who created the case
+        string? createdBy?;
+        # User who last updated the case
+        string? updatedBy?;
         # Associated project information
         ReferenceItem? project;
         json...;

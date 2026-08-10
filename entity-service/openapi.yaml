@@ -4772,6 +4772,7 @@ components:
             - createdOn
             - updatedOn
             - closedOn
+            - resolvedOn
             - product
             - projectOnboardingStatus
             - projectType
@@ -4781,6 +4782,8 @@ components:
             - taskSLABusinessElapsedPercent
             - escalationLevel
             - escalation
+            - number
+            - internalId
         op:
           type: string
           enum: [eq, in, notIn, isEmpty, isNotEmpty, gte, lte]
@@ -4834,18 +4837,21 @@ components:
           `"__current_user_email__"`, meaning "the authenticated caller" (the
           old createdByMe:true behavior) — any other literal email must use
           in with a single value instead.
-        - **createdOn** / **updatedOn** / **closedOn** (gte / lte): a single
-          RFC3339 timestamp or YYYY-MM-DD date bounding the case's created,
-          last-updated, or closed timestamp respectively. gte is inclusive
-          "on or after"; lte is inclusive "on or before".
+        - **createdOn** / **updatedOn** / **closedOn** / **resolvedOn**
+          (gte / lte): a single RFC3339 timestamp or YYYY-MM-DD date bounding
+          the case's created, last-updated, closed, or resolved timestamp
+          respectively. gte is inclusive "on or after"; lte is inclusive "on
+          or before". A lte bound earlier than its own gte bound is rejected
+          with a validation error. resolvedOn has no equivalent in the
+          relational data source and is rejected there.
         - **product** (in): product family names (e.g. "API Manager",
           "Identity Server", "Asgardeo"). Matches every version of each named
           product. Only applied by the ServiceNow data source.
         - **projectOnboardingStatus** (in): free-text SN choice labels for the
           parent project's onboarding status (e.g. "Completed",
           "Not-Applicable" -- not a closed enum at this layer).
-        - **projectType** (in): the parent project's type, as project-type
-          UUIDs.
+        - **projectType** (in): the parent project's type, matched by the
+          project type's name (e.g. "Subscription").
         - **integrationCsTeam** (in): the parent account's integration CS
           team, as team UUIDs.
         - **resolutionNotes** (isEmpty): values ignored; matches cases with
@@ -4870,6 +4876,12 @@ components:
         - **escalation** (isEmpty / isNotEmpty): values ignored; isEmpty
           matches cases with no active escalation, isNotEmpty matches cases
           with an active escalation.
+        - **number** (eq): a single case number (e.g. "CS0441174"); matches
+          exactly. Routed as a first-class filter rather than through the
+          free-text searchQuery scan.
+        - **internalId** (eq): a single WSO2 case id; matches exactly. Routed
+          as a first-class filter rather than through the free-text
+          searchQuery scan.
 
     CaseFilterBranch:
       type: object
@@ -5801,6 +5813,12 @@ components:
               type: string
               format: date-time
               description: "ISO-8601 UTC datetime (YYYY-MM-DDTHH:MM:SSZ)"
+            number:
+              type: string
+              description: >-
+                A single change request number (e.g. "CHG0010001"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
         sortBy:
           type: object
           required: [field, order]
@@ -7749,6 +7767,12 @@ components:
               items:
                 type: string
                 format: uuid
+            number:
+              type: string
+              description: >-
+                A single incident number (e.g. "INC0010001"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
         sortBy:
           type: object
           properties:
@@ -8181,6 +8205,12 @@ components:
           properties:
             searchQuery:
               type: string
+            number:
+              type: string
+              description: >-
+                A single problem number (e.g. "PRB0010001"); matches exactly.
+                Routed as a first-class filter rather than through the
+                free-text searchQuery scan.
         pagination:
           $ref: '#/components/schemas/Pagination'
 

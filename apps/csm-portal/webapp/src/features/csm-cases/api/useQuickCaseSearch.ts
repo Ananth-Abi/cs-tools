@@ -19,6 +19,8 @@ import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import { severityFromPriority, uiStateFromBe } from "@api/backend/mappers";
 import type {
+  BeCaseFieldFilter,
+  BeCaseSearchFilters,
   BeCaseSearchPayload,
   BeCaseSearchResponse,
   BeCaseType,
@@ -35,6 +37,40 @@ export const QUICK_CASE_MIN_QUERY_LEN = 2;
 
 /** A small result page — the palette only shows the top few hits. */
 const QUICK_CASE_LIMIT = 8;
+
+/** A CS case number, e.g. "CS0441174" — always "CS" plus exactly 7 digits. */
+const CASE_NUMBER_RE = /^CS\d{7}$/;
+
+/**
+ * A WSO2 case id, e.g. "SOMEID-4" — an alphanumeric project/product prefix, a
+ * hyphen, then 1-4 digits. Deliberately looser than {@link CASE_NUMBER_RE}
+ * (no fixed prefix), so it's checked second, after the case-number pattern
+ * has already had first refusal.
+ */
+const WSO2_CASE_ID_RE = /^[a-zA-Z0-9]+-\d{1,4}$/;
+
+/**
+ * What kind of lookup a typed quick-search string should run as:
+ * - `"number"` / `"internalId"`: an exact-match, first-class filter — the
+ *   entity-service resolves these against an indexed column instead of the
+ *   free-text `searchQuery` scan. Named to match the response field names
+ *   (`BeCaseSearchView.number` / `.internalId`), not a UI-facing label.
+ * - `"text"`: the existing free-text search across subject/description
+ *   (and number/internalId, case-insensitively) — unchanged behavior.
+ */
+export type QuickCaseSearchScope = "number" | "internalId" | "text";
+
+/**
+ * Classifies a typed (already-trimmed) quick-search string into the scope
+ * {@link useQuickCaseSearch} should route it through. Order matters: a case
+ * number is checked first since `CS\d{7}` is a strict subset of the looser
+ * WSO2-case-id shape.
+ */
+export function classifyQuickCaseQuery(query: string): QuickCaseSearchScope {
+  if (CASE_NUMBER_RE.test(query)) return "number";
+  if (WSO2_CASE_ID_RE.test(query)) return "internalId";
+  return "text";
+}
 
 /**
  * One hit from the global-search case lookup. Carries the UUID `id` (for the
@@ -57,10 +93,14 @@ export interface QuickCaseHit {
 }
 
 /**
- * Free-text case lookup for the global quick-nav palette. Calls
- * `POST /cases/search` with the typed text as `searchQuery` (the same search the
- * cases list uses), so a CS/WSO2 case id — or any subject text — resolves to
- * matching cases the user can jump straight into.
+ * Case lookup for the global quick-nav palette. Calls `POST /cases/search`,
+ * routing the typed text one of three ways (see {@link classifyQuickCaseQuery}):
+ * a `CS\d{7}` case number or a `<prefix>-<digits>` WSO2 case id goes through
+ * as an exact-match, first-class field filter (an indexed lookup); anything
+ * else falls back to the same free-text `searchQuery` search the cases list
+ * uses. Pass `forceFreeText` to opt back into the free-text path even when
+ * the query matches one of the exact patterns — the quick-nav palette's
+ * "search in subject and description too" affordance uses this to widen a scoped result.
  *
  * Explicitly requests every known case sub-type ({@link ALL_CASE_TYPES}) —
  * `entity-service`'s `/cases/search` defaults `filters.types` to `["case"]`
@@ -72,21 +112,34 @@ export interface QuickCaseHit {
  */
 export function useQuickCaseSearch(
   query: string,
+  options?: { forceFreeText?: boolean },
 ): UseQueryResult<QuickCaseHit[], Error> {
   const api = useBackendApi();
   const q = query.trim();
+  const scope = options?.forceFreeText ? "text" : classifyQuickCaseQuery(q);
 
   return useQuery<QuickCaseHit[], Error>({
-    queryKey: [ApiQueryKeys.CSM_CASES, "quick-search", q],
+    queryKey: [ApiQueryKeys.CSM_CASES, "quick-search", q, scope],
     queryFn: async (): Promise<QuickCaseHit[]> => {
+      const typeFilter: BeCaseFieldFilter = {
+        field: "type",
+        op: "in",
+        values: ALL_CASE_TYPES,
+      };
+      const filters: BeCaseSearchFilters =
+        scope === "text"
+          ? { searchQuery: q, filters: [typeFilter] }
+          : {
+              filters: [
+                typeFilter,
+                { field: scope, op: "eq", values: [q] },
+              ],
+            };
       const res = await api.post<BeCaseSearchPayload, BeCaseSearchResponse>(
         "/cases/search",
         {
           pagination: { offset: 0, limit: QUICK_CASE_LIMIT },
-          filters: {
-            searchQuery: q,
-            filters: [{ field: "type", op: "in", values: ALL_CASE_TYPES }],
-          },
+          filters,
         },
       );
       return (res.cases ?? []).map((c) => ({

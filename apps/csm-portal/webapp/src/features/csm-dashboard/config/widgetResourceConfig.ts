@@ -20,8 +20,12 @@ import {
   Briefcase,
   Building2,
   Clock,
+  Cog,
   FolderKanban,
   GitPullRequest,
+  Handshake,
+  Megaphone,
+  Shield,
   ShieldAlert,
   Users,
   ListChecks,
@@ -29,7 +33,11 @@ import {
 } from "@wso2/oxygen-ui-icons-react";
 import type { BeWidgetResourceType } from "@api/backend/types";
 import { humanizeState } from "@features/csm-dashboard/utils/abtDashboard";
-import { casesHref } from "@features/csm-cases/utils/casesFiltersUrl";
+import {
+  casesHref,
+  DEFAULT_CASES_FILTERS,
+  writeCasesFiltersToUrl,
+} from "@features/csm-cases/utils/casesFiltersUrl";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
 import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
 import {
@@ -77,6 +85,15 @@ export interface WidgetResourceConfig {
    * resource's own tab path (`buildHref`'s destination) — this route is
    * dashboard-widget-scoped, not the resource's real list page. */
   previewSlug: string;
+  /** One search-result item's own detail-page href, given the raw item —
+   * used by the generic `columns`-driven list renderer (see
+   * `GenericColumnList`), which has no resourceType-specific row-link logic
+   * of its own the way each hardcoded renderer in `widgetListConfig.tsx`
+   * does. `undefined` for a resourceType with no standalone detail route
+   * (task, call_request's own record — `call_request` links to its owning
+   * case instead, handled the same way the hardcoded `CallRequestWidgetList`
+   * does) or when the item carries no usable id. */
+  detailHref?: (item: WidgetItem) => string | undefined;
 }
 
 function asString(v: unknown): string | undefined {
@@ -283,6 +300,37 @@ function operationsHref(tab: string, params?: URLSearchParams): string {
   return `/operations?${out.toString()}`;
 }
 
+/** `securityCenterHref`'s counterpart for the Security Center section's own
+ * `?tab=` tab strip (see `CsmSecurityCenterPage`) — same shape as
+ * `operationsHref`, just a different base path. */
+function securityCenterHref(tab: string, params?: URLSearchParams): string {
+  const out = new URLSearchParams();
+  out.set("tab", tab);
+  params?.forEach((value, key) => out.set(key, value));
+  return `/security-center?${out.toString()}`;
+}
+
+/**
+ * Builds a `basePath?...` href for a case-table resourceType whose own list
+ * page is a real route (not a `?tab=`-switched section) but still reuses the
+ * cases list's own `CasesFilters` URL scheme under the hood (`engagement`'s
+ * `/engagements` — see `CsmEngagementsPage`, built on the shared
+ * `CsmIssuesView` — reads/writes the identical query params `/cases` does,
+ * via `readCasesFiltersFromUrl`/`writeCasesFiltersToUrl`). The destination
+ * page locks its own `caseTypes` filter itself (`lockedFilters` in
+ * `CsmIssuesView`), so `translateCaseDashboardFilters`'s own `caseTypes`
+ * output — always just this one type — doesn't need to be (and isn't)
+ * dropped here; it's simply redundant with what the page already locks.
+ */
+function caseTypeListHref(basePath: string, filters: Record<string, unknown>): string {
+  const full: CasesFilters = {
+    ...DEFAULT_CASES_FILTERS,
+    ...translateCaseDashboardFilters(filters),
+  };
+  const qs = writeCasesFiltersToUrl(full).toString();
+  return qs ? `${basePath}?${qs}` : basePath;
+}
+
 /** Dashboard incident filters already use the real `BeIncidentPriority`
  * wire values (`CRITICAL`/`HIGH`/...), same as `IncidentFilters.priorities` —
  * no translation table needed, only a type narrowing. */
@@ -318,6 +366,17 @@ function numberSubjectLabel(item: WidgetItem): string {
   );
 }
 
+/** Shared case-detail row link, used by every resourceType whose rows are
+ * case rows (`case` and the four case-`type` resourceTypes below, all of
+ * which read from `/cases/search` and return the same row shape). Row
+ * navigation in a `columns`-configured list goes through `detailHref` and
+ * nothing else (see `GenericColumnList`), so a case-row resource without
+ * this has rows that cannot be opened. */
+function caseDetailHref(item: WidgetItem): string | undefined {
+  const id = asString(item.id);
+  return id ? `/cases/${id}` : undefined;
+}
+
 /** Shared humanized-`state` secondary label, used by every resource whose
  * response item carries a `state` field (case, change_request, problem —
  * NOT incident, which has no state field and uses `priority` instead). */
@@ -339,6 +398,78 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Briefcase,
     iconColor: "primary",
     previewSlug: "cases",
+    detailHref: caseDetailHref,
+  },
+  // service_request / security_report_analysis / announcement / engagement:
+  // additional values of the case-search "type" enum (see `BeCaseType` /
+  // `ALL_CASE_TYPES` in `caseType.ts`), routed to the exact same `/cases/
+  // search` endpoint and response rows as `case` above — the backend
+  // auto-injects the implied `type` filter for each at dashboard-load time.
+  // Rows are still case rows (same `BeCaseSearchView` shape), so these reuse
+  // `case`'s own primaryLabel/secondaryLabel/list renderer verbatim; only the
+  // icon/color/click-through destination differ per type, mirroring
+  // `CASE_TYPE_COLOR`'s own per-type palette in `caseType.ts`.
+  service_request: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    detailHref: caseDetailHref,
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    buildHref: (filters) =>
+      operationsHref(
+        "service_requests",
+        writeCasesFiltersToUrl({
+          ...DEFAULT_CASES_FILTERS,
+          ...translateCaseDashboardFilters(filters),
+        }),
+      ),
+    icon: Cog,
+    iconColor: "info",
+    previewSlug: "service-requests",
+  },
+  security_report_analysis: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    detailHref: caseDetailHref,
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    buildHref: (filters) =>
+      securityCenterHref(
+        "security_reports",
+        writeCasesFiltersToUrl({
+          ...DEFAULT_CASES_FILTERS,
+          ...translateCaseDashboardFilters(filters),
+        }),
+      ),
+    icon: Shield,
+    iconColor: "warning",
+    previewSlug: "security-reports",
+  },
+  announcement: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    detailHref: caseDetailHref,
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    // CsmAnnouncementsPage keeps its own filters in local component state,
+    // not the URL (unlike /cases, /operations, /engagements) — there is no
+    // query-param scheme to land a filtered click-through on yet, so this
+    // stays unfiltered, same as `problem` above.
+    buildHref: () => "/announcements",
+    icon: Megaphone,
+    iconColor: "success",
+    previewSlug: "announcements",
+  },
+  engagement: {
+    searchEndpoint: "/cases/search",
+    itemsKey: "cases",
+    detailHref: caseDetailHref,
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: stateSecondaryLabel,
+    buildHref: (filters) => caseTypeListHref("/engagements", filters),
+    icon: Handshake,
+    iconColor: "secondary",
+    previewSlug: "engagements",
   },
   incident: {
     searchEndpoint: "/incidents/search",
@@ -356,6 +487,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: AlertTriangle,
     iconColor: "warning",
     previewSlug: "incidents",
+    detailHref: (item) =>
+      asString(item.id) ? `/operations/incidents/${asString(item.id)}` : undefined,
   },
   change_request: {
     searchEndpoint: "/change-requests/search",
@@ -373,6 +506,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: GitPullRequest,
     iconColor: "info",
     previewSlug: "change-requests",
+    detailHref: (item) =>
+      asString(item.id) ? `/operations/change-requests/${asString(item.id)}` : undefined,
   },
   problem: {
     searchEndpoint: "/problems/search",
@@ -385,6 +520,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: AlertOctagon,
     iconColor: "error",
     previewSlug: "problems",
+    detailHref: (item) =>
+      asString(item.id) ? `/operations/problems/${asString(item.id)}` : undefined,
   },
   account: {
     searchEndpoint: "/accounts/search",
@@ -395,6 +532,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Building2,
     iconColor: "secondary",
     previewSlug: "accounts",
+    detailHref: (item) =>
+      asString(item.id) ? `/customers/accounts/${asString(item.id)}` : undefined,
   },
   project: {
     searchEndpoint: "/projects/search",
@@ -405,6 +544,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: FolderKanban,
     iconColor: "secondary",
     previewSlug: "projects",
+    detailHref: (item) =>
+      asString(item.id) ? `/customers/projects/${asString(item.id)}` : undefined,
   },
   user: {
     searchEndpoint: "/users/search",
@@ -420,6 +561,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Users,
     iconColor: "info",
     previewSlug: "users",
+    detailHref: (item) =>
+      asString(item.id) ? `/people/${encodeURIComponent(asString(item.id) ?? "")}` : undefined,
   },
   time_card: {
     searchEndpoint: "/time-cards/search",
@@ -437,6 +580,9 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Clock,
     iconColor: "warning",
     previewSlug: "time-cards",
+    // TimeCardsTable opens a details dialog in place rather than navigating
+    // — no standalone route for the generic renderer to link to either.
+    detailHref: () => undefined,
   },
   product_vulnerability: {
     searchEndpoint: "/products/vulnerabilities/search",
@@ -452,6 +598,10 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: ShieldAlert,
     iconColor: "error",
     previewSlug: "vulnerabilities",
+    detailHref: (item) =>
+      asString(item.id)
+        ? `/security-center/vulnerabilities/${encodeURIComponent(asString(item.id) ?? "")}`
+        : undefined,
   },
   task: {
     searchEndpoint: "/tasks/search",
@@ -469,6 +619,11 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: ListChecks,
     iconColor: "warning",
     previewSlug: "tasks",
+    // Same reasoning as buildHref above: no standalone detail route exists.
+    // The hardcoded TaskWidgetList opens TaskDetailDialog instead, which the
+    // generic column renderer doesn't replicate — a columns-configured task
+    // widget's rows render inert rather than opening that dialog.
+    detailHref: () => undefined,
   },
   call_request: {
     searchEndpoint: "/call-requests/search",
@@ -491,6 +646,12 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     icon: Clock,
     iconColor: "info",
     previewSlug: "call-requests",
+    // Same as the hardcoded CallRequestWidgetList: a call request has no
+    // standalone detail page of its own, so rows link to the owning case.
+    detailHref: (item) => {
+      const caseId = nestedID(item.case);
+      return caseId ? `/cases/${caseId}` : undefined;
+    },
   },
 };
 
@@ -509,6 +670,15 @@ export function resourceTypeForPreviewSlug(
 function nestedNumber(v: unknown): string | undefined {
   if (v && typeof v === "object" && "number" in v) {
     return asString((v as { number?: unknown }).number);
+  }
+  return undefined;
+}
+
+/** Reads `id` off a nested entity reference (e.g. `CallRequestView.case`),
+ * mirroring `nestedNumber` above. */
+function nestedID(v: unknown): string | undefined {
+  if (v && typeof v === "object" && "id" in v) {
+    return asString((v as { id?: unknown }).id);
   }
   return undefined;
 }

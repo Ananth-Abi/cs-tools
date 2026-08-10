@@ -53,6 +53,10 @@ type snProblemSearchPayload struct {
 
 type snProblemFilters struct {
 	SearchQuery string `json:"searchQuery,omitempty"`
+	// Number: see domain.SearchProblemsFilters.Number doc comment. Exact
+	// match against ServiceNow's `number` column -- not part of the
+	// free-text SearchQuery scan.
+	Number string `json:"number,omitempty"`
 }
 
 type snProblemService struct {
@@ -71,11 +75,14 @@ func (s *snProblemService) SearchProblems(ctx context.Context, req domain.Search
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchProblemsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchProblemsResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
 	payload := snProblemSearchPayload{
-		Filters:    snProblemFilters{SearchQuery: req.Filters.SearchQuery},
+		Filters:    snProblemFilters{SearchQuery: req.Filters.SearchQuery, Number: stringPtrValue(req.Filters.Number)},
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
 	}
 

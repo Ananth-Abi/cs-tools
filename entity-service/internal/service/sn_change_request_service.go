@@ -88,6 +88,10 @@ type snChangeRequestFilters struct {
 	ImpactKeys      []int    `json:"impactKeys,omitempty"`
 	ClosedStartDate string   `json:"closedStartDate,omitempty"`
 	ClosedEndDate   string   `json:"closedEndDate,omitempty"`
+	// Number: see domain.SearchChangeRequestsFilters.Number doc comment.
+	// Exact match against ServiceNow's `number` column -- not part of the
+	// free-text SearchQuery scan.
+	Number string `json:"number,omitempty"`
 }
 
 // snCRTypeIDMap maps domain ChangeRequestType enums to SN numeric type IDs.
@@ -242,6 +246,9 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchChangeRequestsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchChangeRequestsResponse{}, err
+	}
 
 	if req.Filters.ClosedEndDate != nil && req.Filters.ClosedStartDate != nil &&
 		req.Filters.ClosedEndDate.Before(*req.Filters.ClosedStartDate) {
@@ -288,6 +295,7 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 			ImpactKeys:      domainCRImpactsToSNIDs(req.Filters.Impacts),
 			ClosedStartDate: formatSNDateTimeUTC(req.Filters.ClosedStartDate),
 			ClosedEndDate:   formatSNDateTimeUTC(req.Filters.ClosedEndDate),
+			Number:          stringPtrValue(req.Filters.Number),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
