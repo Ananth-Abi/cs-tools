@@ -29,13 +29,17 @@ import type { TimeTrackingCardProps } from "@features/project-details/types/proj
 export default function TimeTrackingCard({
   card,
 }: TimeTrackingCardProps): JSX.Element {
-  const { case: caseData, totalTime } = card;
+  const { case: caseData, totalTime, billable, nonBillable } = card;
 
   const caseNumber = caseData?.number?.trim() || "--";
   const caseName = caseData?.name?.trim() || "--";
   const createdBy = caseData?.createdBy?.trim();
 
   const totalTimeDisplay = formatMinutesAsHrMin(totalTime);
+
+  const hasBillable = (billable?.count ?? 0) > 0;
+  const hasNonBillable = (nonBillable?.count ?? 0) > 0;
+  const hasBothTypes = hasBillable && hasNonBillable;
 
   return (
     <Card sx={{ p: "20px", display: "flex", flexDirection: "column", gap: 2 }}>
@@ -63,6 +67,14 @@ export default function TimeTrackingCard({
               variant="outlined"
               sx={getPlainChipSx()}
             />
+            {!hasBothTypes && (hasBillable || hasNonBillable) && (
+              <Chip
+                label={hasBillable ? "Billable" : "Non-Billable"}
+                size="small"
+                variant="outlined"
+                sx={getPlainChipSx()}
+              />
+            )}
           </Box>
           <Typography variant="body2" color="text.primary" sx={{ mb: 0.5 }}>
             {caseName}
@@ -74,12 +86,33 @@ export default function TimeTrackingCard({
           )}
         </Box>
         <Box sx={{ textAlign: "right", flexShrink: 0 }}>
-          <Typography
-            variant="h5"
-            sx={{ fontWeight: 400, fontSize: "1.5rem", color: "text.primary" }}
-          >
-            {totalTimeDisplay === "Not Available" ? "--" : totalTimeDisplay}
-          </Typography>
+          {hasBothTypes ? (
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "flex-end" }}>
+                <Typography variant="caption" color="text.secondary">
+                  Billable
+                </Typography>
+                <Typography variant="body1" sx={{ color: "text.primary" }}>
+                  {formatMinutesAsHrMin(billable.totalTime)}
+                </Typography>
+              </Box>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "flex-end" }}>
+                <Typography variant="caption" color="text.secondary">
+                  Non-Billable
+                </Typography>
+                <Typography variant="body1" sx={{ color: "text.primary" }}>
+                  {formatMinutesAsHrMin(nonBillable.totalTime)}
+                </Typography>
+              </Box>
+            </Box>
+          ) : (
+            <Typography
+              variant="h5"
+              sx={{ fontWeight: 400, fontSize: "1.5rem", color: "text.primary" }}
+            >
+              {totalTimeDisplay === "Not Available" ? "--" : totalTimeDisplay}
+            </Typography>
+          )}
         </Box>
       </Box>
     </Card>
