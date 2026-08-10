@@ -1104,9 +1104,11 @@ paths:
           required: false
           schema:
             type: string
+            maxLength: 200
           description: >
             Free-text query matched partially and case-insensitively against tag labels.
             Equivalent to `filters.searchQuery` on the POST. Omit to return all known tags.
+            A longer value is rejected with a validation error.
         - name: limit
           in: query
           required: false
@@ -4684,9 +4686,11 @@ components:
           properties:
             searchQuery:
               type: string
+              maxLength: 200
               description: >
                 Free-text label query, matched partially and case-insensitively.
-                Omit or leave empty to return all known tags.
+                Omit or leave empty to return all known tags. A longer value is
+                rejected with a validation error.
         limit:
           type: integer
           default: 20

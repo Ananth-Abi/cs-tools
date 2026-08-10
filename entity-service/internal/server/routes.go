@@ -282,6 +282,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	// Deprecated: the query-parameter form of tag search, kept for one release
 	// so callers can be rolled out independently of this service. Remove it
 	// (and CaseHandler.SearchTagsQuery) once they are all on the POST.
+	//nolint:staticcheck // SA1019: intentional one-release compatibility route; remove with the handler.
 	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 
 	if callRequestHandler != nil {

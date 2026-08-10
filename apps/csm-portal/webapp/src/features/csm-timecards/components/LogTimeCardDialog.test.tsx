@@ -201,4 +201,42 @@ describe("LogTimeCardDialog — edit mode", () => {
     expect(input).not.toHaveProperty("approver");
     expect(input).not.toHaveProperty("caseId");
   });
+
+  // Regression: approvers is optional on a card. Requiring an approver in edit
+  // mode made the form invalid and then disabled Save, blocking the edit
+  // outright for a submitted card that has no mapped approver — even though the
+  // field is read-only here and never sent.
+  it("still saves a card that came back with no approver", () => {
+    const onSubmit = vi.fn();
+    const { approvers: _omitted, ...cardWithoutApprover } = EDITING_CARD;
+    render(
+      <LogTimeCardDialog
+        caseId={EDITING_CARD.caseId}
+        caseNumber={EDITING_CARD.caseNumber}
+        projectId={EDITING_CARD.projectId}
+        projectName={EDITING_CARD.projectName}
+        editingCard={cardWithoutApprover as CsmTimeCard}
+        isSubmitting={false}
+        onClose={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("work-log-editor"), {
+      target: { value: "<p>Updated with no approver on the card.</p>" },
+    });
+
+    const save = screen.getByRole("button", { name: "Save changes" });
+    expect(save).not.toBeDisabled();
+
+    fireEvent.click(save);
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const input = onSubmit.mock.calls[0][0];
+    expect(input).toMatchObject({
+      cardId: "card-1",
+      workLogComment: "<p>Updated with no approver on the card.</p>",
+    });
+    expect(input).not.toHaveProperty("approver");
+  });
 });

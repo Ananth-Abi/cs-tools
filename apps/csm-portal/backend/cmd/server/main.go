@@ -154,6 +154,7 @@ func main() {
 	// Deprecated: the query-parameter form of tag search, kept for one release
 	// so this service and its callers can be deployed independently. Remove it
 	// (and CaseHandler.SearchTagsQuery) once every caller is on the POST.
+	//nolint:staticcheck // SA1019: intentional one-release compatibility route; remove with the handler.
 	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)

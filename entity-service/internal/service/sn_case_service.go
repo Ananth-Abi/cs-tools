@@ -349,10 +349,15 @@ type snCaseFilters struct {
 	// ServiceNow's `state` column is queried in -- a list of state names would
 	// match nothing. See domain.ParsedCaseFilters.ExcludeStates.
 	//
-	// Not honored downstream yet: CaseUtils.searchCases does not read
-	// filters.excludeStateKeys and Ballerina's CaseSearchFilters does not
-	// declare it, so until both land the key is dropped and the search behaves
-	// as if no exclusion had been requested.
+	// Deployment ordering: the downstream service must be deployed before this
+	// one. Its search-filter record is closed, so an undeclared key is
+	// rejected outright rather than ignored -- if this service ships first, a
+	// search carrying a state exclusion fails loudly instead of quietly
+	// returning an unfiltered result set. That is the intended direction: a
+	// dropped exclusion widens the result set, which is the harder failure to
+	// notice. omitempty keeps the key off the wire entirely unless a
+	// `state notIn` filter was actually requested, so no search that does not
+	// use one is affected by the ordering.
 	ExcludeStates      []int    `json:"excludeStateKeys,omitempty"`
 	SeverityKeys       []int    `json:"severityKeys,omitempty"`
 	IssueTypeKeys      []int    `json:"issueTypeKeys,omitempty"`

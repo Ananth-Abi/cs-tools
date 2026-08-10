@@ -571,6 +571,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setResolutionDialog(null);
     setSeverityOpen(false);
     setLogTimeOpen(false);
+    // Not just cosmetic: the edit dialog renders on editTimeCard alone, so a
+    // card left open here would stay mounted against the new case and submit
+    // a PATCH for the *previous* case's card.
+    setEditTimeCard(null);
     setGithubIssueOpen(false);
     setGithubIssueError(null);
     setGithubIssueResult(null);

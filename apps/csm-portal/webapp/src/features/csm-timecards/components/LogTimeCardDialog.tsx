@@ -235,6 +235,11 @@ export default function LogTimeCardDialog({
     breakdown,
     workLogComment,
     approverId: approver?.id,
+    // approvers is optional on a card, so an edited card may legitimately have
+    // none. The field is read-only in edit mode and never sent, so requiring it
+    // here would only make Save invalid and then disabled, blocking the edit
+    // outright for exactly those cards.
+    requireApprover: !isEditMode,
   });
   const isValid = Object.keys(errors).length === 0;
 
@@ -276,7 +281,7 @@ export default function LogTimeCardDialog({
 
   const ALL_FIELDS = ["date", "minutes", "workLogComment", "approver"];
   const handleSubmit = (): void => {
-    if (!isValid || !approver) {
+    if (!isValid) {
       setTouched(new Set(ALL_FIELDS));
       return;
     }
@@ -289,6 +294,12 @@ export default function LogTimeCardDialog({
         workLogComment: workLogComment.trim(),
         issueComplexity,
       });
+      return;
+    }
+    // Create only: an approver is mandatory here, and isValid already covers
+    // it (requireApprover is true outside edit mode). This narrows the type.
+    if (!approver) {
+      setTouched(new Set(ALL_FIELDS));
       return;
     }
     onSubmit({
