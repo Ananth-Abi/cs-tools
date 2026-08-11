@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 )
 
@@ -87,9 +88,12 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.Name == "" || p.ProjectID == "" || p.CaseTitle == "" || p.CaseComment == "" ||
+		if p.Name == "" || p.ProjectID == "" || p.CaseID == "" || p.CaseTitle == "" || p.CaseComment == "" ||
 			p.CommentLink == "" || p.CaseLink == "" || !validRecipients(p.Recipients) {
 			return fmt.Errorf("events: missing required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
 		}
 	case TypeStatusChanged:
 		var p StatusChangedPayload
@@ -130,9 +134,19 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 }
 
 // decodeStrict unmarshals raw into v, rejecting any field not present in v's
-// struct definition.
+// struct definition, or any trailing value after the first — raw is always
+// exactly one JSON value in today's only call path (env.Payload, extracted
+// by the outer Unmarshal in dispatch.Dispatcher.Handle, which already
+// rejects trailing garbage on the envelope itself), but this stays defensive
+// against a future caller passing something less strictly bounded.
 func decodeStrict(raw json.RawMessage, v any) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	return d.Decode(v)
+	if err := d.Decode(v); err != nil {
+		return err
+	}
+	if err := d.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("events: unexpected trailing data after payload")
+	}
+	return nil
 }

@@ -19,6 +19,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -45,6 +46,13 @@ func (s *eventPublishFailureService) CreateEventPublishFailure(ctx context.Conte
 	}
 	if len(req.Payload) == 0 {
 		return domain.EventPublishFailure{}, &apierror.ValidationError{Msg: "payload is required"}
+	}
+	// json.RawMessage accepts any valid JSON (null, a string, a number, an
+	// array, ...), but the documented (and stored) shape is an object —
+	// unmarshaling into a map is the cheapest way to reject anything else.
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(req.Payload, &obj); err != nil {
+		return domain.EventPublishFailure{}, &apierror.ValidationError{Msg: "payload must be a JSON object"}
 	}
 	if req.Error == "" {
 		return domain.EventPublishFailure{}, &apierror.ValidationError{Msg: "error is required"}

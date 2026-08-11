@@ -102,10 +102,13 @@ type CaseCreatedPayload struct {
 }
 
 // CommentAddedPayload is TypeCommentAdded's payload. See CaseCreatedPayload's
-// doc comment for why Recipients is here.
+// doc comment for why Recipients is here. CaseID must match the envelope's
+// EntityID — see Validate's doc comment — same requirement as the other
+// three case.* payloads below.
 type CommentAddedPayload struct {
 	Name        string   `json:"name"`
 	ProjectID   string   `json:"projectId"`
+	CaseID      string   `json:"caseId"`
 	CaseTitle   string   `json:"caseTitle"`
 	CaseComment string   `json:"caseComment"`
 	CommentLink string   `json:"commentLink"`

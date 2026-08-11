@@ -104,7 +104,7 @@ func TestDispatcher_Handle_CommentAdded(t *testing.T) {
 	mock := &mockEmailSender{}
 	d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
 
-	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentLink":"https://x#c","caseLink":"https://x","recipients":["test-recipient@example.com"]}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"CASE-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentLink":"https://x#c","caseLink":"https://x","recipients":["test-recipient@example.com"]}}`)}
 
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)

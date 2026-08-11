@@ -33,7 +33,7 @@ func TestValidate_Valid(t *testing.T) {
 		payload  string
 	}{
 		"case.created":        {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
-		"case.comment_added":  {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
+		"case.comment_added":  {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-1","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
 		"case.status_changed": {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-1","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
 		"case.assigned":       {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
 		"incident.created":    {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}`},
@@ -60,8 +60,10 @@ func TestValidate_RequiresFields(t *testing.T) {
 		"case.created malformed recipient":        {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["not-an-email"]}`},
 		"case.created caseId/entityId mismatch":   {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-2","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
 		"case.created unknown field":              {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"],"extra":true}`},
-		"comment_added missing caseComment":       {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseTitle":"t","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
-		"comment_added missing recipients":        {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x"}`},
+		"comment_added missing caseComment":       {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-1","caseTitle":"t","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
+		"comment_added missing recipients":        {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-1","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x"}`},
+		"comment_added missing caseId":            {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
+		"comment_added caseId/entityId mismatch":  {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-2","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
 		"status_changed missing newStatus":        {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
 		"status_changed missing recipients":       {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-1","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c"}`},
 		"status_changed caseId/entityId mismatch": {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-2","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},

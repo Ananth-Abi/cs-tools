@@ -28,6 +28,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"time"
 
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
@@ -63,6 +64,12 @@ func (c Config) saslMechanism() sasl.Mechanism {
 	}
 }
 
+// partitionCountProbeTimeout bounds PartitionCount's entire dial+read —
+// without it, an unreachable broker would block startConsumers (and
+// therefore the whole service's startup) indefinitely, since the ctx main.go
+// passes in has no deadline of its own (it only cancels on SIGINT/SIGTERM).
+const partitionCountProbeTimeout = 10 * time.Second
+
 // PartitionCount returns cfg.Topic's current partition count — used at
 // startup to sanity-check a configured consumer count against reality (see
 // cmd/server/main.go): a Kafka consumer group only ever hands out as many
@@ -70,6 +77,10 @@ func (c Config) saslMechanism() sasl.Mechanism {
 // consumers permanently idle rather than doing anything wrong. Not used for
 // anything at runtime beyond that one startup check.
 func PartitionCount(ctx context.Context, cfg Config) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, partitionCountProbeTimeout)
+	defer cancel()
+	deadline, _ := ctx.Deadline() // always ok immediately after WithTimeout
+
 	dialer := &kafka.Dialer{
 		TLS:           &tls.Config{MinVersion: tls.VersionTLS12},
 		SASLMechanism: cfg.saslMechanism(),
@@ -78,7 +89,16 @@ func PartitionCount(ctx context.Context, cfg Config) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("eventbus: dial %s: %w", cfg.Broker, err)
 	}
-	defer conn.Close()
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	// DialContext's own deadline only bounds the dial above — ReadPartitions
+	// takes no context and does its own network I/O, so it needs the
+	// connection's read deadline set explicitly to stay bounded too.
+	if err := conn.SetDeadline(deadline); err != nil {
+		return 0, fmt.Errorf("eventbus: set deadline for topic %s: %w", cfg.Topic, err)
+	}
 
 	partitions, err := conn.ReadPartitions(cfg.Topic)
 	if err != nil {
