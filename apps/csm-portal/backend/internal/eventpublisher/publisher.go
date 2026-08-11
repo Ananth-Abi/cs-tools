@@ -29,7 +29,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 )
+
+// recordFailureTimeout bounds the failure-recording call below — it runs on
+// a context.WithoutCancel copy of the caller's ctx (see Publish), so without
+// its own bound it could hang indefinitely if entity-service is slow or
+// unreachable, now that it's no longer tied to the caller's own deadline.
+const recordFailureTimeout = 10 * time.Second
 
 // kafkaProducer abstracts eventbus.Producer for testability.
 type kafkaProducer interface {
@@ -72,10 +79,24 @@ type envelope struct {
 // (for manual remediation later — see domain.EventPublishFailure on the
 // entity-service side), then still returns the original publish error: from
 // the caller's perspective the event was not delivered to the bus, and
-// recording that fact is a side effect, not a substitute for delivery. If
-// the failure-recording call *also* fails, that's logged here (not
-// returned) rather than compounding the error the caller already has to
-// handle.
+// recording that fact is a side effect, not a substitute for delivery. That
+// call runs on a context.WithoutCancel copy of ctx (bounded by its own
+// recordFailureTimeout, not ctx's deadline) — ctx may already be canceled or
+// about to expire by the time a slow Kafka write finally errors out, and a
+// canceled context would make the HTTP call to entity-service fail
+// instantly, defeating the whole point of recording the failure. If the
+// failure-recording call *also* fails, that's logged here (not returned)
+// rather than compounding the error the caller already has to handle.
+//
+// KNOWN GAP: a publish error does not prove Event Hub rejected the record —
+// the write can still land while only the acknowledgement is lost (a network
+// blip after the broker appended it). Manually republishing from the
+// recorded failure in that case would duplicate the event, since neither the
+// envelope nor the failure record carries a stable event ID a consumer could
+// dedupe on. Closing this needs an event ID threaded through the envelope,
+// the failure record, and a durable dedupe check on the consumer side (or
+// entity-service) — a real design addition, not a quick fix, so it's flagged
+// here rather than built speculatively.
 func (p *Publisher) Publish(ctx context.Context, eventType, entityID string, payload json.RawMessage) error {
 	body, err := json.Marshal(envelope{Type: eventType, EntityID: entityID, Payload: payload})
 	if err != nil {
@@ -98,7 +119,9 @@ func (p *Publisher) Publish(ctx context.Context, eventType, entityID string, pay
 		return fmt.Errorf("eventpublisher: publish %s for entity %s: %w", eventType, entityID, pubErr)
 	}
 
-	if _, recErr := p.entity.CreateEventPublishFailure(ctx, failureBody); recErr != nil {
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordFailureTimeout)
+	defer cancel()
+	if _, recErr := p.entity.CreateEventPublishFailure(recordCtx, failureBody); recErr != nil {
 		slog.ErrorContext(ctx, "eventpublisher: publish failed and recording the failure also failed", "eventType", eventType, "entityId", entityID, "publishErr", pubErr, "recordErr", recErr)
 	}
 

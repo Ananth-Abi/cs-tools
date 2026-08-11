@@ -36,7 +36,9 @@ func (f *fakeKafkaProducer) Publish(ctx context.Context, key, value []byte) erro
 }
 
 type entityCall struct {
-	body []byte
+	body        []byte
+	ctxWasDone  bool
+	hadDeadline bool
 }
 
 type fakeEntityClient struct {
@@ -45,7 +47,8 @@ type fakeEntityClient struct {
 }
 
 func (f *fakeEntityClient) CreateEventPublishFailure(ctx context.Context, body []byte) ([]byte, error) {
-	f.calls = append(f.calls, entityCall{body: body})
+	_, hasDeadline := ctx.Deadline()
+	f.calls = append(f.calls, entityCall{body: body, ctxWasDone: ctx.Err() != nil, hadDeadline: hasDeadline})
 	return nil, f.err
 }
 
@@ -101,6 +104,30 @@ func TestPublish_KafkaFails_RecordsFailureAndReturnsOriginalError(t *testing.T) 
 	}
 	if failure.EventType != "case.created" || failure.EntityID != "CASE-1" || string(failure.Payload) != `{"a":1}` || failure.Error != publishErr.Error() {
 		t.Errorf("failure record = %+v, want eventType=case.created entityId=CASE-1 payload={\"a\":1} error=%q", failure, publishErr.Error())
+	}
+}
+
+func TestPublish_CanceledContext_StillRecordsFailure(t *testing.T) {
+	publishErr := errors.New("event hub unreachable")
+	kafka := &fakeKafkaProducer{err: publishErr}
+	entity := &fakeEntityClient{}
+	p := New(kafka, entity)
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // simulate ctx already canceled/expired by the time Publish errors out
+
+	err := p.Publish(ctx, "case.created", "CASE-1", json.RawMessage(`{"a":1}`))
+	if !errors.Is(err, publishErr) {
+		t.Fatalf("Publish() err = %v, want it to wrap %v", err, publishErr)
+	}
+	if len(entity.calls) != 1 {
+		t.Fatalf("expected 1 CreateEventPublishFailure call even with a canceled ctx, got %d", len(entity.calls))
+	}
+	if entity.calls[0].ctxWasDone {
+		t.Error("CreateEventPublishFailure received a canceled context — it should run on a context.WithoutCancel copy")
+	}
+	if !entity.calls[0].hadDeadline {
+		t.Error("CreateEventPublishFailure's context has no deadline — it should be bounded by recordFailureTimeout")
 	}
 }
 
