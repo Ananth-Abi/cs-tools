@@ -22,6 +22,7 @@ import {
   Divider,
   MenuItem,
   Paper,
+  Switch,
   Tab,
   Tabs,
   TablePagination,
@@ -29,7 +30,7 @@ import {
   Typography,
   Button,
 } from "@wso2/oxygen-ui";
-import { Check, ChevronDown, ChevronUp, Download, ListFilter, X } from "@wso2/oxygen-ui-icons-react";
+import { ChevronDown, ChevronUp, Download, ListFilter, X } from "@wso2/oxygen-ui-icons-react";
 
 // The plain (responsive) DatePicker switches to a mobile dialog (title bar +
 // Cancel/OK) below the sm breakpoint — this is a desktop-only portal page, so
@@ -686,12 +687,11 @@ export default function CsmTimeCardsPage(): JSX.Element {
                 </Button>
                 <Button
                   size="small"
-                  color="success"
-                  variant="contained"
-                  startIcon={<Check size={14} />}
+                  color="primary"
+                  variant="outlined"
                   onClick={() => setBulkConfirmOpen(true)}
                 >
-                  Approve {selectedApprovalCards.length}
+                  Approve
                 </Button>
               </Box>
             ) : (
@@ -1106,26 +1106,33 @@ function GroupByToggle({
   value: TimeCardGroupBy;
   onChange: (v: TimeCardGroupBy) => void;
 }): JSX.Element {
-  const options: { value: TimeCardGroupBy; label: string }[] = [
-    { value: "case", label: "Case" },
-    { value: "engineer", label: "Engineer" },
-  ];
+  const isEngineer = value === "engineer";
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
       <Typography variant="body2" color="text.secondary">
         Group by
       </Typography>
-      <Box sx={{ display: "flex", gap: 0.5 }}>
-        {options.map((o) => (
-          <Button
-            key={o.value}
-            size="small"
-            variant={value === o.value ? "contained" : "outlined"}
-            onClick={() => onChange(o.value)}
-          >
-            {o.label}
-          </Button>
-        ))}
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+        <Typography
+          variant="body2"
+          color={isEngineer ? "text.secondary" : "text.primary"}
+          sx={{ fontWeight: isEngineer ? 400 : 600 }}
+        >
+          Case
+        </Typography>
+        <Switch
+          size="small"
+          checked={isEngineer}
+          onChange={(e) => onChange(e.target.checked ? "engineer" : "case")}
+          inputProps={{ "aria-label": "Group by Case or Engineer" }}
+        />
+        <Typography
+          variant="body2"
+          color={isEngineer ? "text.primary" : "text.secondary"}
+          sx={{ fontWeight: isEngineer ? 600 : 400 }}
+        >
+          Engineer
+        </Typography>
       </Box>
     </Box>
   );
