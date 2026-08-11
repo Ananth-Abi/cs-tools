@@ -58,13 +58,17 @@ export function sanitizeDescriptionHtml(html: string): string {
 }
 
 /**
- * Strips pure-white inline background declarations from style attributes so
- * dark-mode containers no longer render white boxes on a dark background.
- * Everything else (code-block backgrounds, borders, shadows, text colors) is
- * intentionally left untouched so light-mode and structural styling stay intact.
+ * Strips light/pastel inline background declarations from style attributes so
+ * dark-mode containers don't end up with washed-out, low-contrast backgrounds
+ * (default dark-mode text is light, so any sufficiently light background —
+ * not just near-white — reads poorly against it; a ServiceNow call note with
+ * e.g. a light pastel teal background is a real example that a pure-white-only
+ * check misses). Everything else (code-block backgrounds, borders, shadows,
+ * text colors) is intentionally left untouched so light-mode and structural
+ * styling stay intact.
  *
  * @param html - Raw HTML string.
- * @returns HTML with pure-white background declarations removed.
+ * @returns HTML with light background declarations removed.
  */
 export function stripLightModeInlineStyles(html: string): string {
   return html.replace(
@@ -74,13 +78,7 @@ export function stripLightModeInlineStyles(html: string): string {
       const filtered = declarations.filter((decl) => {
         const normalized = decl.toLowerCase().replace(/\s+/g, " ").trim();
         if (!normalized) return false;
-        if (
-          /^background(-color)?\s*:\s*(#fff(fff)?|white|#f4f4f4|#f5f5f5|#f0f0f0|#f9f9f9|#f8f8f8|#fafafa|#e9e9e9)\s*$/.test(
-            normalized,
-          )
-        )
-          return false;
-        if (/^background(-color)?\s*:/.test(normalized) && isNearWhiteRgb(normalized))
+        if (/^background(-color)?\s*:/.test(normalized) && isLightBackground(normalized))
           return false;
         if (/^color\s*:/.test(normalized) && isDarkColor(normalized))
           return false;
@@ -93,13 +91,72 @@ export function stripLightModeInlineStyles(html: string): string {
   );
 }
 
-function isNearWhiteRgb(bgDecl: string): boolean {
+// Small set of named CSS colors that show up in ServiceNow-authored HTML
+// backgrounds; not a full CSS color table, just enough to mirror the parsing
+// coverage (hex3/hex6/rgb/named) already used for the dark-text-color check.
+const NAMED_BACKGROUND_COLORS: Record<string, [number, number, number]> = {
+  white: [255, 255, 255],
+  black: [0, 0, 0],
+  whitesmoke: [245, 245, 245],
+  silver: [192, 192, 192],
+  gainsboro: [220, 220, 220],
+};
+
+/**
+ * WCAG relative luminance (0 = black, 1 = white) of an sRGB color, used to
+ * catch any background light enough to wash out light dark-mode text —
+ * not just backgrounds near pure white.
+ */
+function relativeLuminance(r: number, g: number, b: number): number {
+  const [rl, gl, bl] = [r, g, b].map((c) => {
+    const cs = c / 255;
+    return cs <= 0.03928 ? cs / 12.92 : ((cs + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
+}
+
+// Above this, a background reads as "light" against light dark-mode text.
+// Pure/near-white (~1.0) and #bce4e8-style pastels (~0.72) both clear it;
+// genuinely dark or saturated backgrounds (that already contrast fine with
+// light text) stay well under it.
+const LIGHT_BACKGROUND_LUMINANCE_THRESHOLD = 0.55;
+
+function isLightBackground(bgDecl: string): boolean {
+  const rgb = parseBackgroundColorRgb(bgDecl);
+  if (!rgb) return false;
+  return relativeLuminance(...rgb) > LIGHT_BACKGROUND_LUMINANCE_THRESHOLD;
+}
+
+function parseBackgroundColorRgb(bgDecl: string): [number, number, number] | null {
   const rgbMatch = bgDecl.match(
     /^background(?:-color)?\s*:\s*rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)\s*$/,
   );
-  if (!rgbMatch) return false;
-  const [, r, g, b] = rgbMatch.map(Number);
-  return r > 230 && g > 230 && b > 230;
+  if (rgbMatch) {
+    const [, r, g, b] = rgbMatch.map(Number);
+    return [r, g, b];
+  }
+  const hex6Match = bgDecl.match(/^background(?:-color)?\s*:\s*#([0-9a-f]{6})\s*$/);
+  if (hex6Match) {
+    const hex = hex6Match[1];
+    return [
+      parseInt(hex.slice(0, 2), 16),
+      parseInt(hex.slice(2, 4), 16),
+      parseInt(hex.slice(4, 6), 16),
+    ];
+  }
+  const hex3Match = bgDecl.match(/^background(?:-color)?\s*:\s*#([0-9a-f]{3})\s*$/);
+  if (hex3Match) {
+    return hex3Match[1].split("").map((c) => parseInt(c + c, 16)) as [
+      number,
+      number,
+      number,
+    ];
+  }
+  const namedMatch = bgDecl.match(/^background(?:-color)?\s*:\s*([a-z]+)\s*$/);
+  if (namedMatch && namedMatch[1] in NAMED_BACKGROUND_COLORS) {
+    return NAMED_BACKGROUND_COLORS[namedMatch[1]];
+  }
+  return null;
 }
 
 function isDarkColor(colorDecl: string): boolean {

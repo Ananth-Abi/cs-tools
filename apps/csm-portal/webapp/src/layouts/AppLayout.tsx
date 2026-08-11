@@ -15,13 +15,7 @@
 // under the License.
 
 import { notificationBannerConfig } from "@config/notificationBannerConfig";
-import {
-  AppShell,
-  Box,
-  useAppShell,
-  LinearProgress,
-  Typography,
-} from "@wso2/oxygen-ui";
+import { Box, useAppShell, LinearProgress, Typography } from "@wso2/oxygen-ui";
 import {
   type JSX,
   type ReactNode,
@@ -43,6 +37,7 @@ import TopBanner from "@components/top-banner/TopBanner";
 import Header from "@components/header/Header";
 import CsmSideBar from "@components/side-nav-bar/CsmSideBar";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
+import AppShellLayout from "@layouts/AppShellLayout";
 
 const SIDEBAR_COLLAPSED_KEY = "csm.sidebar.collapsed";
 
@@ -135,95 +130,91 @@ export default function AppLayout({ children }: AppLayoutProps): JSX.Element {
         <MobileAppBanner />
         <GlobalNotificationBanner visible={notificationBannerConfig.visible} />
         <HtmlAnnouncementBanner />
-        <AppShell sx={{ flex: 1, minHeight: 0, height: "auto" }}>
-          <AppShell.Navbar>
+        <AppShellLayout
+          header={
             <Header
               onToggleSidebar={shellActions.toggleSidebar}
               collapsed={shellState.sidebarCollapsed}
               hideProjectControls={!isSignedIn || !hasInitialized}
             />
-          </AppShell.Navbar>
-
-          {hasInitialized && isSignedIn && !isErrorPageDisplayed && (
-            <AppShell.Sidebar>
+          }
+          sidebar={
+            hasInitialized && isSignedIn && !isErrorPageDisplayed ? (
               <CsmSideBar
                 collapsed={shellState.sidebarCollapsed}
                 expandedMenus={shellState.expandedMenus}
                 onSelect={shellActions.setActiveMenuItem}
                 onToggleExpand={shellActions.toggleMenu}
               />
-            </AppShell.Sidebar>
-          )}
-
-          <AppShell.Main>
+            ) : undefined
+          }
+        >
+          <Box
+            sx={{
+              display: "flex",
+              flexDirection: "column",
+              height: "100%",
+              width: "100%",
+              flex: 1,
+              minHeight: 0,
+              overflow: "hidden",
+              position: "relative",
+            }}
+          >
+            {isVisible && (
+              <LinearProgress
+                color="inherit"
+                sx={{
+                  color: "primary.main",
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  zIndex: 1300,
+                  height: 3,
+                }}
+              />
+            )}
             <Box
+              ref={mainContentRef}
               sx={{
-                display: "flex",
-                flexDirection: "column",
-                height: "100%",
-                width: "100%",
                 flex: 1,
                 minHeight: 0,
-                overflow: "hidden",
-                position: "relative",
+                minWidth: 0,
+                display: "flex",
+                flexDirection: "column",
+                overflow: "auto",
+                ...(isAuthLoading ? { p: 0 } : { p: 3 }),
               }}
             >
-              {isVisible && (
-                <LinearProgress
-                  color="inherit"
+              {!hasInitialized ? (
+                <Box
                   sx={{
-                    color: "primary.main",
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    zIndex: 1300,
-                    height: 3,
+                    flex: 1,
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 2,
                   }}
-                />
+                >
+                  <LinearProgress
+                    color="inherit"
+                    sx={{ color: "primary.main", width: "80%", maxWidth: 400, height: 4 }}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    {loadingMessage}
+                  </Typography>
+                </Box>
+              ) : (
+                <Suspense fallback={<RouteSuspenseFallback />}>
+                  {children || <Outlet />}
+                </Suspense>
               )}
-              <Box
-                ref={mainContentRef}
-                sx={{
-                  flex: 1,
-                  minHeight: 0,
-                  minWidth: 0,
-                  display: "flex",
-                  flexDirection: "column",
-                  overflowY: "auto",
-                  overflowX: "hidden",
-                  ...(isAuthLoading ? { p: 0 } : { p: 3 }),
-                }}
-              >
-                {!hasInitialized ? (
-                  <Box
-                    sx={{
-                      flex: 1,
-                      minHeight: 0,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 2,
-                    }}
-                  >
-                    <LinearProgress
-                      color="inherit"
-                      sx={{ color: "primary.main", width: "80%", maxWidth: 400, height: 4 }}
-                    />
-                    <Typography variant="body2" color="text.secondary">
-                      {loadingMessage}
-                    </Typography>
-                  </Box>
-                ) : (
-                  <Suspense fallback={<RouteSuspenseFallback />}>
-                    {children || <Outlet />}
-                  </Suspense>
-                )}
-              </Box>
             </Box>
-          </AppShell.Main>
-        </AppShell>
+          </Box>
+        </AppShellLayout>
       </Box>
     </IdleTimeoutProvider>
   );
