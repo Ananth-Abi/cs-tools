@@ -468,6 +468,18 @@ export default function CsmTimeCardsPage(): JSX.Element {
       ),
     [approvalsFilteredCards, selectedIds, role.isAdmin],
   );
+  // The ids actually reflected in selectedApprovalCards -- passed to
+  // TimeCardsTable instead of the raw selectedIds state so its row-disabling
+  // "is a selection active" check (and its row/header checkbox state) can
+  // never go stale: a queue refetch dropping every selected card (someone
+  // else deciding it first, a filter/refresh) would otherwise leave
+  // selectedIds non-empty with nothing left to act on, silently disabling
+  // every row's own Approve/Reject with no visible selection (and no Clear
+  // button, gated on selectedApprovalCards.length) to unstick it.
+  const selectedApprovalCardIds = useMemo(
+    () => new Set(selectedApprovalCards.map((c) => c.id)),
+    [selectedApprovalCards],
+  );
 
   return (
     <Box
@@ -726,7 +738,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
                 roleFor={approvalsRole}
                 onCardAction={handleCardAction}
                 selectable
-                selectedIds={selectedIds}
+                selectedIds={selectedApprovalCardIds}
                 onToggleSelect={toggleSelectCard}
                 onToggleSelectAll={toggleSelectAllCards}
                 emptyText={anyFilterActive ? "No time cards match the current filters." : "Nothing awaiting approval."}
