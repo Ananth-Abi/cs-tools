@@ -332,6 +332,28 @@ export default function CsmCaseCommentBubble({
         <Box
           sx={{
             minWidth: 0,
+            maxWidth: "100%",
+            // Backend HTML can put an explicit pixel width on *any* element — a
+            // Word/Excel paste arrives as `<div style="width:2400px">`, and a
+            // `<pre>`/`<p>` can carry one just as easily — so the per-tag rules
+            // below can never cover every case.
+            //
+            // `contain: inline-size` is what actually stops it: it makes this
+            // box's own width independent of its contents, so an over-wide child
+            // can no longer inflate the *intrinsic* min-content width that
+            // otherwise propagates up the whole chain (bubble → feed → tab →
+            // page root → AppShell.Main) and drags the page off-screen, cutting
+            // off the header actions, the Overview grid's last column, and the
+            // timeline toolbar. `min-width: 0` / `overflow` alone do NOT do this:
+            // they zero a *flex item's* automatic minimum size, not the
+            // min-content contribution travelling up through block ancestors —
+            // verified empirically against this exact layout chain, where the
+            // page still blew out to 3080px with overflow set but no containment.
+            //
+            // `overflowX` then makes that over-wide content reachable by
+            // scrolling inside the comment, rather than being clipped away.
+            contain: "inline-size",
+            overflowX: "auto",
             overflowWrap: "anywhere",
             wordBreak: "break-word",
             "& p": { m: 0 },
@@ -345,11 +367,15 @@ export default function CsmCaseCommentBubble({
               fontSize: "0.85em",
               overflowWrap: "anywhere",
             },
+            // `maxWidth` matters as much as `overflowX` here: a `<pre>` carrying
+            // an explicit `width` would otherwise just *be* that wide, and
+            // `overflow-x` would have nothing to scroll.
             "& pre": {
               bgcolor: "background.default",
               p: 1,
               borderRadius: 1,
               overflowX: "auto",
+              maxWidth: "100%",
               fontFamily: "monospace",
               fontSize: "0.85em",
             },
