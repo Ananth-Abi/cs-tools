@@ -20,6 +20,7 @@ import {
   type JSX,
   type ChangeEvent,
 } from "react";
+import { format } from "date-fns";
 import useSearchProjectCaseTimeCards from "@features/usage-metrics/api/useSearchProjectCaseTimeCards";
 import ServiceHoursStatCards from "@time-tracking/ServiceHoursStatCards";
 import TimeCardsBillableStats from "@time-tracking/TimeCardsBillableStats";
@@ -47,7 +48,17 @@ export default function ProjectTimeTracking({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [page, setPage] = useState(1);
+  const [hasAppliedDefaultDates, setHasAppliedDefaultDates] = useState(false);
   const pageSize = 10;
+
+  // Default the date range to the project's start date through today once it loads.
+  useEffect(() => {
+    if (hasAppliedDefaultDates || !project?.startDate) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHasAppliedDefaultDates(true);
+    setStartDate(project.startDate);
+    setEndDate(format(new Date(), "yyyy-MM-dd"));
+  }, [hasAppliedDefaultDates, project?.startDate]);
 
   const {
     data,
@@ -64,10 +75,12 @@ export default function ProjectTimeTracking({
     enabled: !!projectId,
   });
 
-  // Reset pagination when the project changes
+  // Reset pagination and default dates when the project changes
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHasAppliedDefaultDates(false);
   }, [projectId]);
 
   const paginatedTimeCards = data?.caseTimeCards ?? [];
