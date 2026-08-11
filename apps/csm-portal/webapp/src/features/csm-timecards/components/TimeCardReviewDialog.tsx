@@ -25,7 +25,6 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Check, X } from "@wso2/oxygen-ui-icons-react";
 import RelativeTime from "@components/RelativeTime";
 import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 import {
@@ -190,7 +189,6 @@ export default function TimeCardReviewDialog({
           <Button
             color="error"
             variant="outlined"
-            startIcon={<X size={16} />}
             onClick={() => decide("rejected")}
             disabled={isDeciding}
           >
@@ -199,9 +197,8 @@ export default function TimeCardReviewDialog({
         )}
         {action !== "reject" && (
           <Button
-            color="success"
+            color="primary"
             variant="outlined"
-            startIcon={<Check size={16} />}
             onClick={() => decide("approved")}
             disabled={isDeciding}
           >
