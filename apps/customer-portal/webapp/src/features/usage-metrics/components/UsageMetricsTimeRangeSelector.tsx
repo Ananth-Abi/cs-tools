@@ -167,6 +167,7 @@ export default function UsageMetricsTimeRangeSelector({
                           size: "small",
                           error: !!customRangeError,
                           sx: { minWidth: 160, maxWidth: "100%" },
+                          slotProps: { htmlInput: { "aria-label": "Custom range start date" } },
                         },
                         field: { clearable: true },
                       }}
@@ -190,6 +191,7 @@ export default function UsageMetricsTimeRangeSelector({
                           size: "small",
                           error: !!customRangeError,
                           sx: { minWidth: 160, maxWidth: "100%" },
+                          slotProps: { htmlInput: { "aria-label": "Custom range end date" } },
                         },
                         field: { clearable: true },
                       }}
