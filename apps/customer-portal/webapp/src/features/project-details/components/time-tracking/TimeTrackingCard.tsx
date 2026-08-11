@@ -87,7 +87,7 @@ export default function TimeTrackingCard({
           </Typography>
           {createdBy && (
             <Typography variant="caption" color="text.secondary">
-              Reported by {createdBy}
+              Created by {createdBy}
             </Typography>
           )}
         </Box>

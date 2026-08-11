@@ -14,16 +14,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import {
-  Box,
-  Typography,
-  TextField,
-  InputAdornment,
-  Button,
-} from "@wso2/oxygen-ui";
+import { Box, Typography, Button, DatePickers, AdapterDateFns } from "@wso2/oxygen-ui";
 import { Calendar, X } from "@wso2/oxygen-ui-icons-react";
+import { format } from "date-fns";
+
+const { LocalizationProvider, DatePicker } = DatePickers;
 import type { JSX } from "react";
 import type { TimeCardsDateFilterProps } from "@features/project-details/types/projectDetailsComponents";
+
+function parseDateOnly(value: string): Date | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateOnly(date: Date): string {
+  return format(date, "yyyy-MM-dd");
+}
 
 /**
  * TimeCardsDateFilter provides a compact time-range filter for time cards.
@@ -39,66 +48,72 @@ export default function TimeCardsDateFilter({
   onClear,
 }: TimeCardsDateFilterProps): JSX.Element {
   const hasFilters = Boolean(startDate || endDate);
+  const parsedStart = parseDateOnly(startDate);
+  const parsedEnd = parseDateOnly(endDate);
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: 1.5,
-        flexWrap: "wrap",
-      }}
-    >
-      <Calendar size={18} />
-      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-        Time Range:
-      </Typography>
-      <TextField
-        id="time-cards-start-date"
-        type="date"
-        size="small"
-        value={startDate}
-        onChange={(e) => onStartDateChange(e.target.value)}
-        inputProps={{ "aria-label": "Start date" }}
-        sx={{ minWidth: 160 }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <Calendar size={16} />
-            </InputAdornment>
-          ),
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          flexWrap: "wrap",
         }}
-      />
-      <Typography variant="body2" color="text.secondary">
-        to
-      </Typography>
-      <TextField
-        id="time-cards-end-date"
-        type="date"
-        size="small"
-        value={endDate}
-        onChange={(e) => onEndDateChange(e.target.value)}
-        inputProps={{ "aria-label": "End date" }}
-        sx={{ minWidth: 160 }}
-        InputProps={{
-          startAdornment: (
-            <InputAdornment position="start">
-              <Calendar size={16} />
-            </InputAdornment>
-          ),
-        }}
-      />
-      {hasFilters && onClear && (
-        <Button
-          variant="text"
-          size="small"
-          onClick={onClear}
-          startIcon={<X size={16} />}
-          sx={{ color: "text.secondary" }}
-        >
-          Clear
-        </Button>
-      )}
-    </Box>
+      >
+        <Calendar size={18} />
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          Time Range:
+        </Typography>
+        <DatePicker
+          value={parsedStart}
+          disableFuture
+          maxDate={parsedEnd ?? undefined}
+          onChange={(date) => {
+            onStartDateChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
+          }}
+          slotProps={{
+            textField: {
+              id: "time-cards-start-date",
+              size: "small",
+              sx: { minWidth: 160 },
+              slotProps: { htmlInput: { "aria-label": "Start date" } },
+            },
+            field: { clearable: true },
+          }}
+        />
+        <Typography variant="body2" color="text.secondary">
+          to
+        </Typography>
+        <DatePicker
+          value={parsedEnd}
+          disableFuture
+          minDate={parsedStart ?? undefined}
+          onChange={(date) => {
+            onEndDateChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
+          }}
+          slotProps={{
+            textField: {
+              id: "time-cards-end-date",
+              size: "small",
+              sx: { minWidth: 160 },
+              slotProps: { htmlInput: { "aria-label": "End date" } },
+            },
+            field: { clearable: true },
+          }}
+        />
+        {hasFilters && onClear && (
+          <Button
+            variant="text"
+            size="small"
+            onClick={onClear}
+            startIcon={<X size={16} />}
+            sx={{ color: "text.secondary" }}
+          >
+            Clear
+          </Button>
+        )}
+      </Box>
+    </LocalizationProvider>
   );
 }
