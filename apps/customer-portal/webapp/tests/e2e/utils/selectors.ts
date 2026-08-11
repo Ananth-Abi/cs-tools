@@ -44,6 +44,8 @@ export const CREATE_CASE = {
   validationErrors: {
     missingTitle: "Please enter a case title.",
     missingDescription: "Please enter a description.",
+    missingDeployment: "Please select a deployment type.",
+    missingProduct: "Please select a product version.",
   },
   placeholders: {
     deployment: "Select Deployment...",
@@ -91,6 +93,31 @@ export const CREATE_SERVICE_REQUEST = {
     /** The shared rich-text Editor hardcodes this id, so the description field
      * carries the same test id here as on the case form. */
     description: "case-description-editor",
+  },
+} as const;
+
+/** Create-security-report form
+ * (`/projects/:projectId/support/security-report/create`).
+ *
+ * Rendered by the same CreateCasePage as a normal case, with `isSecurityReport`
+ * derived from the path. That flag hides Issue Type and Severity, adds the
+ * attachment section, and forces skipChat — so unlike the case form, this route
+ * can be opened directly by URL. */
+export const CREATE_SECURITY_REPORT = {
+  submitButton: "Submit Security Report",
+  attachSectionLabel: "Attach Security Report",
+  /** The dropzone that opens the upload modal. */
+  uploadDropzone: "Upload files",
+  /** Shown when submitting with no attachment. */
+  missingAttachmentError:
+    "Please attach at least one security report file.",
+  /** The shared UploadAttachmentModal, opened by the dropzone. Its confirm
+   * button reads "Add" (not "Upload") because CreateCasePage passes `onSelect`,
+   * so the file is held locally until the report itself is submitted. */
+  uploadModal: {
+    title: "Upload Attachment",
+    confirmButton: "Add",
+    nameField: "Attachment name",
   },
 } as const;
 
