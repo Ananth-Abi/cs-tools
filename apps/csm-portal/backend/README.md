@@ -128,6 +128,16 @@ Backs `entity.EngineeringEntityClient.CreateGitIssue` (a separate internal engin
 | `ENGINEERING_ENTITY_BASE_URL` | Base URL of the engineering entity service (optional) |
 | `ENGINEERING_ENTITY_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 
+### Event Hub (not yet wired in)
+
+Backs `internal/eventpublisher.Publisher`, which publishes domain events for `csm-notification-service` to consume (that service is now a pure Kafka consumer — see its own docs) — but `Publisher` is not constructed in `cmd/server/main.go` either, no handler calls it yet. These variables are not read by any code today.
+
+| Variable | Description |
+|---|---|
+| `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` (optional) |
+| `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string — must be namespace-scoped (no `EntityPath`), not scoped to a single Event Hub (optional) |
+| `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (optional) |
+
 ### Updates service
 
 | Variable | Description |
@@ -169,6 +179,12 @@ backend/
 │   │   ├── customer_client.go   # OAuth2 HTTP client for the customer entity service (this repo's entity-service)
 │   │   ├── customer.go          # CustomerEntityClient operations (cases, accounts, projects, ...)
 │   │   └── engineering.go       # EngineeringEntityClient — CreateGitIssue (not yet wired into main.go — no caller)
+│   ├── eventbus/
+│   │   ├── config.go            # Config + SASL/PLAIN setup for Azure Event Hub's Kafka-compatible endpoint
+│   │   ├── producer.go          # Producer — publish a record, wait for ack (no Consumer — this backend never consumes)
+│   │   └── logger.go           # Bridges kafka-go's Logger/ErrorLogger to slog
+│   ├── eventpublisher/
+│   │   └── publisher.go         # Publisher.Publish — builds the envelope csm-notification-service expects, publishes it, records a failure to entity-service if Event Hub doesn't ack (not yet wired into main.go — no caller)
 │   ├── scim/
 │   │   └── client.go           # OAuth2 HTTP client for the SCIM operations service
 │   ├── updates/
