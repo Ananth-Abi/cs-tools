@@ -115,11 +115,20 @@ function relativeLuminance(r: number, g: number, b: number): number {
   return 0.2126 * rl + 0.7152 * gl + 0.0722 * bl;
 }
 
-// Above this, a background reads as "light" against light dark-mode text.
-// Pure/near-white (~1.0) and #bce4e8-style pastels (~0.72) both clear it;
-// genuinely dark or saturated backgrounds (that already contrast fine with
-// light text) stay well under it.
-const LIGHT_BACKGROUND_LUMINANCE_THRESHOLD = 0.55;
+// WCAG AA minimum contrast ratio for normal-size text.
+const MIN_CONTRAST_RATIO = 4.5;
+// Dark-mode default text renders effectively white; used only to derive the
+// background threshold below, not to special-case any particular text color.
+const DARK_MODE_TEXT_LUMINANCE = 1;
+
+// A background is stripped once its own contrast against dark-mode text would
+// drop below MIN_CONTRAST_RATIO — i.e. WCAG contrast = (L_text + 0.05) /
+// (L_bg + 0.05) solved for the L_bg at which that ratio equals the minimum.
+// Deriving it this way (rather than an eyeballed constant) means a background
+// like #808080 (luminance ~0.22, ~3.95:1 against white — below AA) is caught:
+// a fixed 0.55 threshold missed it.
+const LIGHT_BACKGROUND_LUMINANCE_THRESHOLD =
+  (DARK_MODE_TEXT_LUMINANCE + 0.05) / MIN_CONTRAST_RATIO - 0.05;
 
 function isLightBackground(bgDecl: string): boolean {
   const rgb = parseBackgroundColorRgb(bgDecl);
