@@ -198,6 +198,26 @@ describe("WidgetEditorDialog", () => {
     expect(screen.queryByText("patch")).not.toBeInTheDocument();
   });
 
+  it("clears configured columns when the resource type changes, since a column path is resource-specific", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "My list",
+      resourceType: "case",
+      shape: "list",
+      gridWidth: 4,
+      query: {},
+      columns: [{ path: "project.key", label: "Project" }],
+    };
+    renderDialog({ widget: existing });
+
+    expect(screen.getByLabelText("Column path")).toHaveValue("project.key");
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Resource type" }));
+    fireEvent.click(screen.getByRole("option", { name: "incident" }));
+
+    expect(screen.queryByLabelText("Column path")).not.toBeInTheDocument();
+  });
+
   it("clamps Row limit to a minimum of 1, same as Grid width, rather than accepting zero/negative", () => {
     const existing: BeDashboardWidget = {
       widgetId: "w1",
@@ -362,6 +382,88 @@ describe("WidgetEditorDialog", () => {
     // a list-shape preview now sizes to the dialog's own content width
     // instead.
     expect(container.querySelector('[style*="max-width: 420px"]')).toBeNull();
+  });
+
+  it("shows a helper hint instead of a populated dropdown before Preview has ever run", () => {
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+
+    expect(screen.getByText("Preview to see available fields")).toBeInTheDocument();
+
+    // Still a plain text field — free text works even with no discovered
+    // options, so column configuration is never blocked on previewing first.
+    fireEvent.change(screen.getByLabelText("Column path"), {
+      target: { value: "some.made.up.path" },
+    });
+    expect(screen.getByLabelText("Column path")).toHaveValue("some.made.up.path");
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("populates the Column path autocomplete with real paths discovered from Preview data, and still accepts free text", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "c-1", project: { key: "PROJ-1", name: "Foo" } }],
+      limit: 4,
+      offset: 0,
+      hasMore: false,
+    });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    await waitFor(() =>
+      expect(screen.queryByText("Preview to see available fields")).not.toBeInTheDocument(),
+    );
+
+    const pathInput = screen.getByLabelText("Column path");
+    fireEvent.mouseDown(pathInput);
+    expect(await screen.findByRole("option", { name: "project.key" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "project.name" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "id" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: "project.key" }));
+    expect(pathInput).toHaveValue("project.key");
+
+    // Free text still works — not every real field shows up in a sampled
+    // preview (e.g. null/absent on every sampled row but valid elsewhere).
+    fireEvent.change(pathInput, { target: { value: "some.other.field" } });
+    expect(pathInput).toHaveValue("some.other.field");
+  });
+
+  it("fetches Preview data for column-path discovery exactly once, sharing the Preview tile's own request rather than firing a second one", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "c-1", project: { key: "PROJ-1" } }],
+      limit: 4,
+      offset: 0,
+      hasMore: false,
+    });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.mouseDown(screen.getByLabelText("Column path"));
+    await screen.findByRole("option", { name: "project.key" });
+
+    expect(postMock).toHaveBeenCalledTimes(1);
   });
 
   it("clearing Row limit entirely unsets it, rather than writing NaN through", () => {

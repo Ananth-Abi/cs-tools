@@ -41,8 +41,11 @@ import type {
 } from "@api/backend/types";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
+import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
+import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import WidgetFilterConditionEditor from "@features/csm-admin/dashboards/components/WidgetFilterConditionEditor";
 import { newWidgetId } from "@features/csm-admin/dashboards/utils/dashboardDraftsStorage";
+import { discoverAttributePaths } from "@features/csm-admin/dashboards/utils/discoverAttributePaths";
 import {
   filterConditionsFromQuery,
   queryFromFilterConditions,
@@ -186,13 +189,52 @@ export default function WidgetEditorDialog({
   // (see widgetQueryConditions.ts's own doc comment) — rather than silently
   // reinterpreting stale rows against a contract they were never written
   // for, clear them and let the admin rebuild for the new resourceType.
+  // Column `path`s are resource-specific too (e.g. `project.key` only
+  // resolves for a case) — a stale path after switching resourceType would
+  // render an empty cell under a now-misleading header, so those are
+  // cleared right alongside the filter/slice conditions.
   const handleResourceTypeChange = (next: BeWidgetResourceType): void => {
     setResourceType(next);
     setConditions([]);
     setSliceDrafts((prev) => prev.map((d) => ({ ...d, conditions: [] })));
+    setColumnDrafts([]);
   };
 
   const [previewSnapshot, setPreviewSnapshot] = useState<BeDashboardWidget | undefined>();
+
+  const { user } = useCurrentUser();
+  // Only meaningful for a list-shape widget (columns are the only thing
+  // that needs real attribute paths) — and gated on `previewSnapshot`
+  // rather than fetched eagerly on dialog open, so this piggybacks on the
+  // exact same "admin clicked Preview" trigger the `DashboardWidgetTile`
+  // below already reacts to instead of firing a second, earlier request.
+  // Called with the *same* arguments `DashboardWidgetTile` passes to this
+  // same hook internally (see that component's own `useWidgetData` call) —
+  // matching args means a matching TanStack Query cache key, so this never
+  // costs a second real network request; it just reads the one the Preview
+  // tile is already making (or about to make).
+  const columnPathSampleEnabled = previewSnapshot?.shape === "list";
+  const { data: columnPathSampleData } = useWidgetData(
+    previewSnapshot?.widgetId ?? widgetId,
+    previewSnapshot?.resourceType ?? resourceType,
+    previewSnapshot?.query ?? {},
+    previewSnapshot?.shape ?? shape,
+    previewSnapshot?.listLimit,
+    0,
+    columnPathSampleEnabled,
+    selectedTeamGroupId,
+    previewSnapshot?.sortBy,
+    user?.id,
+  );
+  // Paths actually reachable in the widget's own real Preview data, offered
+  // as autocomplete options for a column's `path` field below — empty until
+  // Preview has been run at least once for a list-shape widget, in which
+  // case the path field just behaves like a plain text input (see its own
+  // helper text).
+  const discoveredColumnPaths = useMemo(
+    () => (columnPathSampleData ? discoverAttributePaths(columnPathSampleData.items) : []),
+    [columnPathSampleData],
+  );
 
   const canSave = displayName.trim().length > 0 && gridWidth >= 1 && gridWidth <= 12;
 
@@ -374,14 +416,28 @@ export default function WidgetEditorDialog({
               </Typography>
               {columnDrafts.map((column, index) => (
                 <Box key={index} sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                  <TextField
-                    label="Path"
-                    value={column.path}
-                    onChange={(e) => updateColumn(index, { path: e.target.value })}
-                    placeholder="e.g. project.key"
+                  <Autocomplete
+                    freeSolo
                     size="small"
+                    options={discoveredColumnPaths}
+                    value={column.path}
+                    onInputChange={(_e, value) => updateColumn(index, { path: value })}
                     sx={{ flex: "1 1 200px" }}
-                    slotProps={{ htmlInput: { "aria-label": "Column path" } }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Path"
+                        placeholder="e.g. project.key"
+                        helperText={
+                          discoveredColumnPaths.length === 0
+                            ? "Preview to see available fields"
+                            : undefined
+                        }
+                        slotProps={{
+                          htmlInput: { ...params.inputProps, "aria-label": "Column path" },
+                        }}
+                      />
+                    )}
                   />
                   <TextField
                     label="Label"
