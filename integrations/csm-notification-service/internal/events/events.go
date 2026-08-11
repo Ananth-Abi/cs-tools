@@ -15,9 +15,12 @@
 // under the License.
 
 // Package events defines the domain events csm-portal-backend and
-// customer-portal-backend publish to this service (via POST /events), and
-// that this service's consumer reads back off the event bus to decide what
-// notification to send.
+// customer-portal-backend publish directly to the event bus (this service
+// has no HTTP ingest endpoint — see internal/dispatch and cmd/server/main.go)
+// and that this service's consumer reads back to decide what notification to
+// send. Validate is the only structural check this service still performs on
+// them, since there's no HTTP handler upstream doing it before publish
+// anymore.
 //
 // v1 payloads are deliberately denormalized: they carry every display value
 // a template needs (names, titles, links), plus who to notify (Recipients),
@@ -46,30 +49,23 @@ const (
 // that enumerate valid values.
 var KnownTypes = []Type{TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeIncidentCreated}
 
-// Envelope is the wire shape for both POST /events and the record published
-// to the event bus: Payload's shape depends on Type (see the Type constants'
-// matching Payload struct below). EntityID is whatever this event is about —
-// a case ID for the case.* types, an incident ID for incident.created — and
-// is duplicated at the envelope level (also present inside most payloads)
-// because it's used as the Kafka record's partition key — see
-// eventbus.Producer.Publish — so it must be readable without unmarshaling
-// Payload first. Everything with the same EntityID lands on the same
-// partition and is processed in publish order.
+// Envelope is the wire shape of every record on the event bus: Payload's
+// shape depends on Type (see the Type constants' matching Payload struct
+// below). EntityID is whatever this event is about — a case ID for the
+// case.* types, an incident ID for incident.created — and is duplicated at
+// the envelope level (also present inside most payloads) because it's used
+// as the Kafka record's partition key — see eventbus.Producer.Publish — so
+// it must be readable without unmarshaling Payload first. Everything with
+// the same EntityID lands on the same partition and is processed in publish
+// order.
 //
-// EventID is optional and currently unused by this service — nothing
-// validates, indexes, or dedupes on it yet. It exists so a caller can start
-// generating one now (e.g. a UUID per event), while this schema has no
-// external consumers to migrate: retrying a POST /events call that the
-// broker actually acked (e.g. after a client-side timeout) publishes a
-// second, distinct Kafka record that today's per-channel idempotency
-// tracking can't recognize as a duplicate, since that tracking keys on
-// topic/partition/offset, which differ for the retried copy. EventID is the
-// natural key for detecting that case, and for future dead-letter
-// correlation — once a durable store exists to actually use it.
+// Deduplicating a retried publish, or two independent callers racing to
+// publish the same logical event, is the publishing backend's own concern —
+// this service has no database and deliberately doesn't talk to one
+// directly.
 type Envelope struct {
 	Type     Type            `json:"type"`
 	EntityID string          `json:"entityId"`
-	EventID  string          `json:"eventId,omitempty"`
 	Payload  json.RawMessage `json:"payload"`
 }
 
@@ -106,10 +102,13 @@ type CaseCreatedPayload struct {
 }
 
 // CommentAddedPayload is TypeCommentAdded's payload. See CaseCreatedPayload's
-// doc comment for why Recipients is here.
+// doc comment for why Recipients is here. CaseID must match the envelope's
+// EntityID — see Validate's doc comment — same requirement as the other
+// three case.* payloads below.
 type CommentAddedPayload struct {
 	Name        string   `json:"name"`
 	ProjectID   string   `json:"projectId"`
+	CaseID      string   `json:"caseId"`
 	CaseTitle   string   `json:"caseTitle"`
 	CaseComment string   `json:"caseComment"`
 	CommentLink string   `json:"commentLink"`

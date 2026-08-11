@@ -1,0 +1,85 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package events
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func rawJSON(t *testing.T, s string) json.RawMessage {
+	t.Helper()
+	return json.RawMessage(s)
+}
+
+func TestValidate_Valid(t *testing.T) {
+	cases := map[string]struct {
+		entityID string
+		typ      Type
+		payload  string
+	}{
+		"case.created":        {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"case.comment_added":  {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-1","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
+		"case.status_changed": {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-1","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"case.assigned":       {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"incident.created":    {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}`},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := Validate(c.entityID, c.typ, rawJSON(t, c.payload)); err != nil {
+				t.Errorf("Validate() = %v, want nil", err)
+			}
+		})
+	}
+}
+
+func TestValidate_RequiresFields(t *testing.T) {
+	cases := map[string]struct {
+		entityID string
+		typ      Type
+		payload  string
+	}{
+		"case.created missing caseTitle":          {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"case.created missing recipients":         {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c"}`},
+		"case.created empty recipients":           {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":[]}`},
+		"case.created blank recipient":            {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":[""]}`},
+		"case.created malformed recipient":        {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["not-an-email"]}`},
+		"case.created caseId/entityId mismatch":   {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-2","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"case.created unknown field":              {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"],"extra":true}`},
+		"comment_added missing caseComment":       {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-1","caseTitle":"t","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
+		"comment_added missing recipients":        {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-1","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x"}`},
+		"comment_added missing caseId":            {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
+		"comment_added caseId/entityId mismatch":  {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"p","caseId":"CASE-2","caseTitle":"t","caseComment":"c","commentLink":"https://x#c","caseLink":"https://x","recipients":["r@x.com"]}`},
+		"status_changed missing newStatus":        {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"status_changed missing recipients":       {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-1","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c"}`},
+		"status_changed caseId/entityId mismatch": {"CASE-1", TypeStatusChanged, `{"caseId":"CASE-2","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"assigned missing assignerEmail":          {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"assigned missing recipients":             {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c"}`},
+		"assigned caseId/entityId mismatch":       {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","caseId":"CASE-2","caseLink":"https://x","commentLink":"https://x#c","recipients":["r@x.com"]}`},
+		"incident missing callTo":                 {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"t","shortDescription":"d","incidentLink":"https://x/INC-1"}`},
+		"incident malformed callTo":               {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"t","shortDescription":"d","incidentLink":"https://x/INC-1","callTo":"555-1234"}`},
+		"incident missing product":                {"INC-1", TypeIncidentCreated, `{"title":"t","shortDescription":"d","incidentLink":"https://x/INC-1","callTo":"+15551234567"}`},
+		"unknown type":                            {"CASE-1", Type("case.deleted"), `{}`},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := Validate(c.entityID, c.typ, rawJSON(t, c.payload)); err == nil {
+				t.Error("Validate() = nil, want an error")
+			}
+		})
+	}
+}

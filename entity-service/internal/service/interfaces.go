@@ -61,6 +61,24 @@ type AccountService interface {
 	GetAccountByID(ctx context.Context, id string) (domain.Account, error)
 }
 
+// EventPublishFailureService defines the operations available on the
+// event_publish_failures entity — see domain.EventPublishFailure's doc
+// comment for what it's for.
+type EventPublishFailureService interface {
+	// CreateEventPublishFailure inserts a new unresolved failure row. A
+	// ValidationError is returned if eventType, entityId, payload, or error
+	// is missing.
+	CreateEventPublishFailure(ctx context.Context, req domain.CreateEventPublishFailureRequest) (domain.EventPublishFailure, error)
+	// ResolveEventPublishFailure marks id resolved and returns the updated
+	// row. Idempotent — resolving an already-resolved row is a no-op
+	// success. A ValidationError is returned for a malformed UUID; a
+	// NotFoundError if id does not exist.
+	ResolveEventPublishFailure(ctx context.Context, id string) (domain.EventPublishFailure, error)
+	// SearchEventPublishFailures returns a paginated list of rows matching
+	// the filters in req, newest first.
+	SearchEventPublishFailures(ctx context.Context, req domain.SearchEventPublishFailuresRequest) (domain.SearchEventPublishFailuresResponse, error)
+}
+
 // SNAccountService defines the account operations backed by the ServiceNow data source.
 type SNAccountService interface {
 	// SearchAccounts returns a paginated list of ServiceNow accounts matching the

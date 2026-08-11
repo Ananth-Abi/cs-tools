@@ -1,17 +1,20 @@
 # CSM Notification Service
 
-Go HTTP server (`net/http`, Go 1.26+) that accepts domain events (case created, comment added, status changed, case assigned, incident created) from other services via `POST /events`, publishes them to an event bus, and reacts asynchronously by sending email, Google Chat alerts, and voice calls. Both the producer (the `POST /events` ingest endpoint) and the consumer (a background poll loop) run inside this one process — see [Event-driven notifications](#event-driven-notifications).
+Go background worker (`net/http`, Go 1.26+) with no inbound API beyond a health check. `csm-portal-backend` and `customer-portal-backend` publish domain events (case created, comment added, status changed, case assigned, incident created) directly to Azure Event Hub; this service's own consumers read them back and react asynchronously by sending email, Google Chat alerts, and voice calls. See [Event-driven notifications](#event-driven-notifications).
 
-This service was extracted from `apps/csm-portal/backend/internal/notifications`, which previously hosted the same email/Google Chat clients. That backend no longer constructs or calls any notification client directly.
+This service was extracted from `apps/csm-portal/backend/internal/notifications`, which previously hosted the same email/Google Chat clients. That backend no longer constructs or calls any notification client directly. This service itself used to expose `POST /events` (backends called it, and it published to Event Hub on their behalf) — that producer-side hop was removed once the backends took over publishing directly; this service is a pure consumer now.
 
 ## Why no `Auth` middleware
 
-Like `integrations/csm-integration-service`, this service has no end-user identity to check. It's consumed by other backend services through Choreo's API Manager gateway, which owns the inbound trust boundary (subscription + client credentials) before a request ever reaches this app.
+The only route this service exposes is `GET /health` (Choreo's liveness probe) — there's no end-user or caller identity to check, since everything else is Kafka consumption, not an HTTP request.
 
 ## Current scope — TODO
 
-- **No dead-letter queue** — a record whose handler keeps failing after retries is logged loudly and dropped, not preserved anywhere for replay. See `eventbus.Consumer`'s doc comment.
 - **SMS and direct call channels are unused.** `TwilioClient.SendSMS` has no caller — `MakeCall` is only invoked by `incident.created`.
+
+A dead-letter queue exists (see [Event-driven notifications](#event-driven-notifications)) — a record that exhausts the main consumer's retries is published there and gets a fresh retry pass from a separate DLQ consumer, rather than being dropped immediately. There is still no third tier past that.
+
+This service deliberately has no database connection and never talks to one directly. Deduplicating a publish, or recovering one Event Hub never acknowledged, is now entirely the publishing backend's job — `entity-service`'s `event_publish_failures` table exists for that, written to only when Event Hub doesn't ack a publish, and this service never reads or writes it.
 
 Recipient resolution for `case.*` events is **not** a TODO in the same sense: the caller (e.g. `csm-portal-backend`) supplies a `recipients` array in the event payload itself, since this service has no `entity-service` client to resolve watchers/assignee/reporter on its own. That's still short of "real" resolution in the sense that the caller has to already know the audience, but it's not a fixed/hardcoded stand-in either — every event picks its own recipients.
 
@@ -37,20 +40,22 @@ Each channel gets its own config/client pair in its own file, since channels dif
 
 ```text
 csm-portal-backend ──┐
-                      ├─POST /events─▶ EventsHandler ──▶ eventbus.Producer ──▶ Event Hub topic
-customer-portal-backend ┘                                                          │
-                                                                                    ▼
-                                                            eventbus.Consumer (consumer group)
-                                                                                    │
-                                                                                    ▼
-                                                              dispatch.Dispatcher.Handle
-                                                  (render email or send incident alerts)
+                      ├──▶ Event Hub topic ──▶ main consumer group ──▶ dispatch.Dispatcher.Handle
+customer-portal-backend ┘                           │                  (render email or send incident alerts)
+                                                      │ (retries exhausted)
+                                                      ▼
+                                              Event Hub DLQ topic ──▶ DLQ consumer group ──▶ dispatch.Dispatcher.Handle
+                                                                       (fresh retry pass, same Handle;
+                                                                        exhausting it here just logs+drops)
 ```
 
-- **`internal/events`** — the event schema. `Envelope{Type, EntityID, EventID, Payload}` plus one payload struct per `Type` (`case.created`, `case.comment_added`, `case.status_changed`, `case.assigned`, `incident.created`), each carrying every value its matching reaction needs. `EntityID` is a case ID for the `case.*` types or an incident ID for `incident.created` — whatever this event is about; for the `case.*` types, it must match the payload's own `caseId`. `EventID` is optional and currently unused — reserved for future duplicate-publish detection. Payloads are deliberately denormalized (names/titles/links, not just IDs) since there's no `entity-service` client here yet to look anything up. `incident.created` is the one type with two independent reactions (a Google Chat alert *and* a voice call) rather than an email.
-- **`internal/eventbus`** — a thin wrapper around [`github.com/segmentio/kafka-go`](https://github.com/segmentio/kafka-go) (a pure-Go Kafka client, no cgo — keeps this service on Choreo's buildpack deploy, MIT licensed) for Azure Event Hub's Kafka-compatible endpoint. `Producer.Publish` does a synchronous produce; `Consumer.Run` polls a consumer group, retries a failing record `handleAttempts` (3) times with a fixed delay, then logs it at ERROR and commits anyway rather than blocking the partition forever. See CLAUDE.md for the franz-go → kafka-go swap rationale and its two known trade-offs.
-- **`internal/dispatch`** — `Dispatcher.Handle` implements `eventbus.Handle`: decode the record as an `events.Envelope`, render the matching template, email the `recipients` list carried in that event's own payload.
-- **`POST /events`** (`internal/handler/events.go`) — the producer-facing endpoint: validates the envelope and its type-specific payload, then publishes the original request body keyed by `entityId` (so every event about one case/incident stays ordered on the same partition) — it does not send anything itself.
+Both backends publish directly to the main topic — there is no HTTP hop through this service. Two packages implement the bus→consumer side; `internal/notifications` (templates + channel clients) is the last-mile sender they call.
+
+- **`internal/events`** — the event schema and its only remaining validation boundary. `Envelope{Type, EntityID, Payload}` plus one payload struct per `Type` (`case.created`, `case.comment_added`, `case.status_changed`, `case.assigned`, `incident.created`), each carrying every value its matching reaction needs. `EntityID` is a case ID for the `case.*` types or an incident ID for `incident.created` — whatever this event is about; for the `case.*` types, it must match the payload's own `caseId`. `Validate(entityID, type, payload)` decodes strictly and checks required fields — moved here from a since-removed HTTP handler, since there's no request boundary to validate at anymore; `dispatch.Dispatcher.Handle` calls it before rendering/sending anything. Payloads are deliberately denormalized (names/titles/links, not just IDs) since there's no `entity-service` client here yet to look up display data. `incident.created` is the one type with two independent reactions (a Google Chat alert *and* a voice call) rather than an email.
+- **`internal/eventbus`** — a thin wrapper around [`github.com/segmentio/kafka-go`](https://github.com/segmentio/kafka-go) (a pure-Go Kafka client, no cgo — keeps this service on Choreo's buildpack deploy, MIT licensed) for Azure Event Hub's Kafka-compatible endpoint. `Producer.Publish` does a synchronous produce — this service's own use of it today is only for publishing to the dead-letter topic, since the main topic's producer side now lives in the backends. `Consumer.Run(ctx, handle, onExhausted)` polls a consumer group, retries a failing record `handleAttempts` (3) times with a fixed delay, then calls `onExhausted` (or logs at ERROR and drops, if `onExhausted` is nil) before committing either way. `PartitionCount(ctx, cfg)` reports a topic's real partition count, used at startup to sanity-check a configured consumer count. See CLAUDE.md for the franz-go → kafka-go swap rationale and its two known trade-offs.
+- **`internal/dispatch`** — `Dispatcher.Handle` implements `eventbus.Handle`: decode the record as an `events.Envelope`, validate it (`events.Validate`), render the matching template, email the `recipients` list carried in that event's own payload (or, for `incident.created`, send a Google Chat alert and place a voice call).
+- **Dead-letter queue** — when the main consumer's `Handle` call fails on all `handleAttempts` attempts, the record is published to `EVENT_HUB_DLQ_TOPIC` instead of being dropped. A second, independent consumer group runs against that topic, using the same `Dispatcher.Handle` — so a dead-lettered record gets its own fresh retry pass — but with nowhere further to escalate to: exhausting retries there just logs and drops. Provision `EVENT_HUB_DLQ_TOPIC` as its own Event Hub in Azure before deploying; this service doesn't create topics itself.
+- **Configurable consumer counts** — `MAIN_CONSUMER_COUNT`/`DLQ_CONSUMER_COUNT` each start that many independent `eventbus.Consumer` instances, all joining the same consumer group; Kafka's own rebalancing splits a topic's partitions across however many are actually running. Keep each count at or below its topic's real partition count — a startup check logs a warning (not a hard failure) if it isn't, since excess consumers just sit idle rather than causing an error.
 
 ## Configuration
 
@@ -87,14 +92,25 @@ Copy `.env.example` to `.env` and fill in the values:
 
 ### Event bus (Azure Event Hub)
 
-Required — unlike the channels above, this is this service's core purpose, so a missing value fails startup loudly.
+Required — unlike the channels above, this is this service's core purpose, so a missing value fails startup loudly. This service is a pure consumer; the backends publish directly to `EVENT_HUB_TOPIC` themselves.
 
 | Variable | Description |
 |---|---|
 | `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` |
 | `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string (Namespace > Shared access policies > a policy's Primary Connection String); used as the SASL/PLAIN password. Never commit a real value |
 | `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` |
-| `EVENT_HUB_CONSUMER_GROUP` | Consumer group ID this service's instances join to split partitions between themselves. Optional — defaults to `csm-notification-service` |
+| `EVENT_HUB_CONSUMER_GROUP` | Consumer group ID the main consumer's instances join. Optional — defaults to `csm-notification-service` |
+| `MAIN_CONSUMER_COUNT` | How many concurrent consumer instances to run for `EVENT_HUB_TOPIC`. Optional — defaults to `1`; keep at or below the topic's real partition count |
+
+### Dead-letter queue
+
+Required — a record that exhausts the main consumer's retries is published here rather than dropped; without a valid topic here, that would fail loudly at publish time instead.
+
+| Variable | Description |
+|---|---|
+| `EVENT_HUB_DLQ_TOPIC` | A second Event Hub in the same namespace, provisioned separately in Azure |
+| `EVENT_HUB_DLQ_CONSUMER_GROUP` | Consumer group ID the DLQ consumer's instances join. Optional — defaults to `csm-notification-service-dlq` |
+| `DLQ_CONSUMER_COUNT` | How many concurrent consumer instances to run for `EVENT_HUB_DLQ_TOPIC`. Optional — defaults to `1`; same partition-count guidance as `MAIN_CONSUMER_COUNT` |
 
 ### Server
 
@@ -107,7 +123,7 @@ Required — unlike the channels above, this is this service's core purpose, so 
 ```text
 csm-notification-service/
 ├── cmd/
-│   ├── server/main.go           # Entry point — routes + server startup
+│   ├── server/main.go           # Entry point — starts the HTTP health server + both consumer groups
 │   └── twiliocheck/main.go      # Manual live-verification CLI (real SMS/call, not a test — see below)
 ├── internal/
 │   ├── apierror/               # Typed upstream error type (4xx/5xx passthrough)
@@ -122,16 +138,14 @@ csm-notification-service/
 │   │   ├── twilio.go           # TwilioConfig/TwilioClient/SendSMS+MakeCall
 │   │   └── templates/          # HTML email templates + templates.go's Render* functions
 │   ├── events/
-│   │   └── events.go           # Envelope + per-Type payload structs (the event schema)
+│   │   ├── events.go           # Envelope + per-Type payload structs (the event schema)
+│   │   └── validate.go         # Validate — the only remaining validation boundary
 │   ├── eventbus/
-│   │   ├── config.go            # Config + SASL/PLAIN setup shared by producer/consumer
+│   │   ├── config.go            # Config + SASL/PLAIN setup + PartitionCount, shared by producer/consumer
 │   │   ├── producer.go          # Producer — publish a record, wait for ack
-│   │   └── consumer.go          # Consumer — consumer-group poll loop, retry, commit
-│   ├── dispatch/
-│   │   └── dispatch.go          # Dispatcher.Handle — envelope → template → EmailClient
-│   └── handler/
-│       ├── events.go            # POST /events — validates + publishes to the event bus
-│       └── response.go         # writeError/writeJSONValue helpers
+│   │   └── consumer.go          # Consumer — consumer-group poll loop, retry, OnExhausted, commit
+│   └── dispatch/
+│       └── dispatch.go          # Dispatcher.Handle — envelope → validate → template → EmailClient
 ├── .env                         # Local config (git-ignored)
 └── go.mod
 ```
@@ -201,13 +215,12 @@ tool. Two upstream errors we've hit doing exactly this:
 
 ## API Endpoints
 
-- `GET /health` — Health check
-- `POST /events` — Submit a domain event; body requires `type` (`case.created` | `case.comment_added` | `case.status_changed` | `case.assigned` | `incident.created`), `entityId`, and a `payload` object matching that type (see `internal/events/events.go`). Validates and publishes to the event bus, responding `202 Accepted` — the actual notification is sent asynchronously by this service's own consumer, not in this request. `incident.created` triggers both a Google Chat alert and a Twilio voice call; the other four each trigger one email, addressed to the `recipients` array in that event's own payload
+- `GET /health` — Health check (Choreo's liveness probe). This is the only inbound HTTP route this service has — everything else happens via the two Kafka consumer groups described in [Event-driven notifications](#event-driven-notifications).
 
 ## Security
 
 - **Never commit secrets** — client IDs/secrets, webhook URLs, and service URLs with credentials must not appear in source code or config files; use environment variables
 - **No sensitive data in logs** — log only IDs and error summaries
 - **No app-level inbound auth** — this is intentional (see above), not an oversight
-- **Input validation** — validate and reject unexpected input at the boundary (body size, JSON structure, required fields) before any future dispatch
+- **Input validation** — `events.Validate`, called from `dispatch.Dispatcher.Handle`, is the only validation boundary this service has left; keep rejecting unexpected input there rather than letting it reach a notification client
 - **Security fixes in PRs** — describe security-related changes in neutral functional terms only, not called out as security fixes in the title/description

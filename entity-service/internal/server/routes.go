@@ -37,6 +37,12 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	userSvc := service.NewUserService(userRepo)
 	userHandler := handler.NewUserHandler(userSvc)
 
+	// event_publish_failures has no ServiceNow equivalent — always backed by
+	// Postgres regardless of cfg.DataSource, same as the pool itself (see
+	// db.NewPool's call site in cmd/api/main.go).
+	eventPublishFailureRepo := repository.NewEventPublishFailureRepository(db)
+	eventPublishFailureHandler := handler.NewEventPublishFailureHandler(service.NewEventPublishFailureService(eventPublishFailureRepo))
+
 	accountRepo := repository.NewAccountRepository(db)
 	accountHandler := handler.NewAccountHandler(service.NewAccountService(accountRepo))
 
@@ -98,7 +104,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	var snProductVersionHandler *handler.SNProductVersionHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		snProductVersionHandler = handler.NewSNProductVersionHandler(service.NewServiceNowProductVersionService(serviceNowIntegrationServiceClient))
-	} else if db != nil {
+	} else {
 		productVersionRepo := repository.NewProductVersionRepository(db)
 		productVersionSvc := service.NewProductVersionService(productVersionRepo)
 		productVersionHandler = handler.NewProductVersionHandler(productVersionSvc)
@@ -246,6 +252,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /health", handler.HealthCheck)
+
+	// event_publish_failures is not data-source specific, same rationale as
+	// the role catalogue and team registry below — registered unconditionally.
+	mux.HandleFunc("POST /event-publish-failures", eventPublishFailureHandler.CreateEventPublishFailure)
+	mux.HandleFunc("POST /event-publish-failures/search", eventPublishFailureHandler.SearchEventPublishFailures)
+	mux.HandleFunc("POST /event-publish-failures/{id}/resolve", eventPublishFailureHandler.ResolveEventPublishFailure)
+
 	if snUserHandler != nil {
 		mux.HandleFunc("GET /users/{id}", snUserHandler.GetUser)
 		mux.HandleFunc("GET /users/me", snUserHandler.GetMe)

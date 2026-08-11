@@ -100,14 +100,25 @@ func getEnvOrDefault(key, defaultVal string) string {
 }
 
 // Validate checks that the configuration is self-consistent. It returns an
-// error if DATA_SOURCE is an unrecognised value, or if SERVICENOW_INTEGRATION_SERVICE_BASE_URL is missing
-// when DATA_SOURCE=servicenow.
+// error if DATA_SOURCE is an unrecognised value, if DB_USER/DB_PASSWORD/DB_NAME
+// are missing (required regardless of DATA_SOURCE — see db.NewPoolFromConfig),
+// or if SERVICENOW_INTEGRATION_SERVICE_BASE_URL is missing when
+// DATA_SOURCE=servicenow.
 func (c *Config) Validate() error {
 	switch c.DataSource {
 	case DataSourcePostgres, DataSourceServiceNow:
 		// valid
 	default:
 		return fmt.Errorf("invalid DATA_SOURCE %q: must be %q or %q", c.DataSource, DataSourcePostgres, DataSourceServiceNow)
+	}
+	if c.DBUser == "" {
+		return fmt.Errorf("DB_USER is required")
+	}
+	if c.DBPassword == "" {
+		return fmt.Errorf("DB_PASSWORD is required")
+	}
+	if c.DBName == "" {
+		return fmt.Errorf("DB_NAME is required")
 	}
 	if c.DataSource == DataSourceServiceNow {
 		if c.ServiceNowIntegrationServiceBaseURL == "" {

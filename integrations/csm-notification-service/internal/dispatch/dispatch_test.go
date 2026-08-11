@@ -104,7 +104,7 @@ func TestDispatcher_Handle_CommentAdded(t *testing.T) {
 	mock := &mockEmailSender{}
 	d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
 
-	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentLink":"https://x#c","caseLink":"https://x","recipients":["test-recipient@example.com"]}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"CASE-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentLink":"https://x#c","caseLink":"https://x","recipients":["test-recipient@example.com"]}}`)}
 
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -145,10 +145,10 @@ func TestDispatcher_Handle_CaseAssigned(t *testing.T) {
 	}
 }
 
-// TestDispatcher_Handle_EmptyRecipients is a defensive-backstop test:
-// handler.validateEventPayload should already reject a published event with
-// an empty recipients list, so this only exercises Dispatcher.send's own
-// guard in case that first line of defense is ever bypassed.
+// TestDispatcher_Handle_EmptyRecipients exercises events.Validate, the only
+// validation boundary this service has left (see Handle's doc comment) —
+// Dispatcher.send has its own defensive backstop for the same case, but
+// Validate should reject this before send is ever reached.
 func TestDispatcher_Handle_EmptyRecipients(t *testing.T) {
 	mock := &mockEmailSender{}
 	d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
@@ -160,6 +160,34 @@ func TestDispatcher_Handle_EmptyRecipients(t *testing.T) {
 	}
 	if len(mock.calls) != 0 {
 		t.Error("SendEmail should not be called when recipients is empty")
+	}
+}
+
+func TestDispatcher_Handle_InvalidPayload_MissingRequiredField(t *testing.T) {
+	mock := &mockEmailSender{}
+	d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.status_changed","entityId":"CASE-1","payload":{"caseId":"CASE-1","caseLink":"https://x","commentLink":"https://x#c","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err == nil {
+		t.Fatal("expected an error for a payload missing newStatus")
+	}
+	if len(mock.calls) != 0 {
+		t.Error("SendEmail should not be called for an invalid payload")
+	}
+}
+
+func TestDispatcher_Handle_InvalidPayload_EntityIDMismatch(t *testing.T) {
+	mock := &mockEmailSender{}
+	d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.status_changed","entityId":"CASE-1","payload":{"caseId":"CASE-2","newStatus":"Open","caseLink":"https://x","commentLink":"https://x#c","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err == nil {
+		t.Fatal("expected an error when the payload's caseId disagrees with the envelope's entityId")
+	}
+	if len(mock.calls) != 0 {
+		t.Error("SendEmail should not be called for a mismatched entityId/caseId")
 	}
 }
 

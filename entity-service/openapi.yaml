@@ -19,6 +19,111 @@ paths:
         "200":
           description: Ok
 
+  /event-publish-failures:
+    post:
+      summary: >-
+        Record that a backend's publish to the event bus was never
+        acknowledged by Event Hub. Replaces the old event_outbox — there is
+        no claim/dispatch lifecycle here, since csm-notification-service is a
+        pure Kafka consumer now and never talks to this table; this exists
+        purely for visibility and manual remediation.
+      operationId: createEventPublishFailure
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventPublishFailureRequest'
+      responses:
+        "201":
+          description: Row created successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPublishFailure'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /event-publish-failures/search:
+    post:
+      summary: Search event_publish_failures rows, newest first, optionally filtered by resolution state.
+      operationId: searchEventPublishFailures
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchEventPublishFailuresRequest'
+      responses:
+        "200":
+          description: Rows matching the filters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchEventPublishFailuresResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /event-publish-failures/{id}/resolve:
+    post:
+      summary: >-
+        Mark a row resolved (e.g. after successfully republishing the event
+        by hand). Idempotent — resolving an already-resolved row is a no-op
+        success that preserves the original resolvedOn.
+      operationId: resolveEventPublishFailure
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Row resolved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventPublishFailure'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Row not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /users/me:
     get:
       summary: Get the profile of the currently authenticated user.
@@ -11294,3 +11399,82 @@ components:
           type: string
         endDate:
           type: string
+
+    EventPublishFailure:
+      description: >
+        A durable record that a backend's publish to the event bus was never
+        acknowledged by Event Hub. Has no ServiceNow equivalent — always
+        backed by Postgres. Replaces the old event_outbox — there is no
+        claim/dispatch lifecycle here, since csm-notification-service is a
+        pure Kafka consumer now and never talks to this table.
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+        entityId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        error:
+          type: string
+          description: The caller-supplied reason Event Hub didn't ack the publish.
+        createdOn:
+          type: string
+          format: date-time
+        resolvedOn:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreateEventPublishFailureRequest:
+      type: object
+      required: [eventType, entityId, payload, error]
+      properties:
+        eventType:
+          type: string
+          description: e.g. "case.created", "incident.created" — the event type that failed to publish.
+        entityId:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+          description: The exact event payload that failed to publish.
+        error:
+          type: string
+          description: Why Event Hub didn't ack the publish.
+
+    SearchEventPublishFailuresFilters:
+      type: object
+      properties:
+        resolved:
+          type: boolean
+          nullable: true
+          description: Omit to match every row regardless of resolution state.
+
+    SearchEventPublishFailuresRequest:
+      type: object
+      properties:
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+        filters:
+          $ref: '#/components/schemas/SearchEventPublishFailuresFilters'
+
+    SearchEventPublishFailuresResponse:
+      type: object
+      properties:
+        failures:
+          type: array
+          items:
+            $ref: '#/components/schemas/EventPublishFailure'
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        hasMore:
+          type: boolean

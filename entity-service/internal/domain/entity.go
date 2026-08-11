@@ -4497,3 +4497,70 @@ type InstanceUsageStatsResponse struct {
 	StartDate string                    `json:"startDate"`
 	EndDate   string                    `json:"endDate"`
 }
+
+// EventPublishFailure is a durable record that a backend's publish to the
+// event bus was never acknowledged by Event Hub — e.g. csm-portal-backend
+// tried to publish a case.comment_added event and Event Hub didn't ack it.
+// It replaces what used to be called event_outbox: that table existed to
+// close a race between a caller's immediate-dispatch HTTP call to
+// csm-notification-service and that service's own polling fallback, both of
+// which could try to publish the same logical event. Neither exists anymore
+// — csm-notification-service is a pure Kafka consumer now, with no HTTP
+// ingest endpoint and no database client — so there is no contention here
+// at all: exactly one writer (the publishing backend) ever creates or
+// resolves a given row. This exists purely for visibility and manual
+// remediation of a publish that never made it onto the bus, not as a queue
+// anything polls.
+//
+// Unlike every other entity in this file, this has no ServiceNow equivalent
+// — it is this service's own operational bookkeeping, not platform data. It
+// is always backed by Postgres regardless of DATA_SOURCE (see
+// internal/db/postgres.go).
+type EventPublishFailure struct {
+	ID        string          `json:"id"`
+	EventType string          `json:"eventType"`
+	EntityID  string          `json:"entityId"`
+	Payload   json.RawMessage `json:"payload"`
+	// Error is the caller-supplied reason Event Hub didn't ack the publish
+	// (e.g. a timeout or broker error message) — for a human triaging this
+	// table, not machine-parsed by anything.
+	Error      string     `json:"error"`
+	CreatedOn  time.Time  `json:"createdOn"`
+	ResolvedOn *time.Time `json:"resolvedOn,omitempty"`
+}
+
+// CreateEventPublishFailureRequest is the request body for
+// POST /event-publish-failures.
+type CreateEventPublishFailureRequest struct {
+	EventType string          `json:"eventType"`
+	EntityID  string          `json:"entityId"`
+	Payload   json.RawMessage `json:"payload"`
+	Error     string          `json:"error"`
+}
+
+// SearchEventPublishFailuresFilters holds the optional filter criteria for
+// an event_publish_failures search. Resolved lets a caller ask for only the
+// unresolved backlog (false) or only resolved history (true); omitted,
+// every row matches regardless of resolution state.
+type SearchEventPublishFailuresFilters struct {
+	Resolved *bool `json:"resolved"`
+}
+
+// SearchEventPublishFailuresRequest is the input for
+// POST /event-publish-failures/search. Results are ordered newest-first
+// (createdOn descending) — this is an operator-triage view, not a work
+// queue, so the most recent failures are what's usually relevant first.
+type SearchEventPublishFailuresRequest struct {
+	Pagination Pagination                        `json:"pagination"`
+	Filters    SearchEventPublishFailuresFilters `json:"filters"`
+}
+
+// SearchEventPublishFailuresResponse is the paginated result of an
+// event_publish_failures search.
+type SearchEventPublishFailuresResponse struct {
+	Failures []EventPublishFailure `json:"failures"`
+	Total    int                   `json:"total"`
+	Limit    int                   `json:"limit"`
+	Offset   int                   `json:"offset"`
+	HasMore  bool                  `json:"hasMore"`
+}

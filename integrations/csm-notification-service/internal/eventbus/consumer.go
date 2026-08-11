@@ -29,12 +29,15 @@ import (
 
 // handleAttempts is how many times a single record's Handle func is called
 // in total before giving up on it — not additional retries on top of a first
-// call, so handleAttempts=3 means 3 calls, 2 of them retries. There is no
-// dead-letter topic yet (see the package doc and the service's CLAUDE.md) —
-// a record that still fails after this many attempts is logged at ERROR and
-// its offset is committed anyway, so one permanently-failing record (e.g. a
-// downstream outage) cannot block every later record on its partition
-// forever.
+// call, so handleAttempts=3 means 3 calls, 2 of them retries. A record that
+// still fails after this many attempts is handed to OnExhausted (see Run) —
+// typically published to a dead-letter topic rather than dropped — and its
+// offset is committed anyway either way, so one permanently-failing record
+// (e.g. a downstream outage) cannot block every later record on its
+// partition forever. The DLQ topic's own Consumer uses the same
+// handleAttempts/handleRetryDelay for its own retry pass over a
+// dead-lettered record (see cmd/server/main.go) — there is deliberately no
+// third tier past that: an OnExhausted of nil there just logs and drops.
 const handleAttempts = 3
 
 // handleRetryDelay is the fixed pause between attempts. This is deliberately
@@ -110,10 +113,30 @@ func NewConsumer(cfg Config, groupID string) *Consumer {
 // handleAttempts).
 type Handle func(context.Context, Record) error
 
+// OnExhausted is called once a record's Handle call has failed on every one
+// of handleAttempts attempts. Run commits the record's offset right after
+// this call returns regardless of its outcome — either way nothing will
+// attempt this record again on this topic, so there's nothing left to gate
+// the commit on.
+//
+// Passing nil (as the DLQ consumer's own Run call does — see cmd/server/
+// main.go) falls back to logging the failure at ERROR and dropping the
+// record — the right default for a queue with nowhere further to escalate
+// to. The main consumer instead passes a func that publishes the record to
+// the dead-letter topic, so a persistently-failing record (e.g. a downstream
+// outage) doesn't just vanish once its content ages out of Event Hub's own
+// retention window.
+//
+// A non-nil return only affects logging (Run logs it at ERROR alongside the
+// original handleErr) — it does not change whether Run commits, since a
+// failure here (e.g. the dead-letter topic itself is unreachable) has no
+// lower tier to fall back to either.
+type OnExhausted func(ctx context.Context, record Record, handleErr error) error
+
 // Run polls for records and calls handle for each one, committing its offset
 // once handle succeeds or its retries are exhausted. Run blocks until ctx is
 // canceled or the Consumer is closed; call it from its own goroutine.
-func (c *Consumer) Run(ctx context.Context, handle Handle) {
+func (c *Consumer) Run(ctx context.Context, handle Handle, onExhausted OnExhausted) {
 	for {
 		msg, err := c.reader.FetchMessage(ctx)
 		if err != nil {
@@ -123,47 +146,62 @@ func (c *Consumer) Run(ctx context.Context, handle Handle) {
 			slog.ErrorContext(ctx, "eventbus: fetch error", "err", err)
 			continue
 		}
-		c.handleAndCommit(ctx, msg, handle)
+		record := Record{
+			Topic:     msg.Topic,
+			Partition: msg.Partition,
+			Offset:    msg.Offset,
+			Key:       msg.Key,
+			Value:     msg.Value,
+		}
+		if !processRecord(ctx, record, handle, onExhausted, handleAttempts, handleRetryDelay) {
+			// ctx was canceled mid-retry-wait (shutdown) — skip the commit,
+			// same as the fetch loop above; the next FetchMessage call will
+			// see ctx.Err() != nil and return.
+			continue
+		}
+		if cerr := c.reader.CommitMessages(ctx, msg); cerr != nil {
+			slog.ErrorContext(ctx, "eventbus: commit failed", "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", cerr)
+		}
 	}
 }
 
-func (c *Consumer) handleAndCommit(ctx context.Context, msg kafka.Message, handle Handle) {
-	record := Record{
-		Topic:     msg.Topic,
-		Partition: msg.Partition,
-		Offset:    msg.Offset,
-		Key:       msg.Key,
-		Value:     msg.Value,
-	}
-
+// processRecord calls handle up to attempts times (pausing retryDelay
+// between attempts), then, if every attempt failed, calls onExhausted (or
+// logs and drops if onExhausted is nil). Factored out of Run so the
+// retry/escalation logic is testable without a real Kafka broker — it never
+// touches c.reader itself.
+//
+// Returns whether Run should commit the record's offset afterward — false
+// only when ctx was canceled mid-retry-wait (a shutdown in progress), so a
+// record that was never actually finished being handled isn't marked done.
+func processRecord(ctx context.Context, record Record, handle Handle, onExhausted OnExhausted, attempts int, retryDelay time.Duration) bool {
 	var err error
-	for attempt := 1; attempt <= handleAttempts; attempt++ {
-		record.IsFinalAttempt = attempt == handleAttempts
+	for attempt := 1; attempt <= attempts; attempt++ {
+		record.IsFinalAttempt = attempt == attempts
 		if err = handle(ctx, record); err == nil {
-			break
+			return true
 		}
 		slog.ErrorContext(ctx, "eventbus: handler failed",
 			"topic", record.Topic, "partition", record.Partition, "offset", record.Offset,
-			"attempt", attempt, "maxAttempts", handleAttempts, "err", err)
-		if attempt < handleAttempts {
+			"attempt", attempt, "maxAttempts", attempts, "err", err)
+		if attempt < attempts {
 			select {
 			case <-ctx.Done():
-				return
-			case <-time.After(handleRetryDelay):
+				return false
+			case <-time.After(retryDelay):
 			}
 		}
 	}
-	if err != nil {
-		// TODO: publish (record, err) to a dead-letter topic once one exists
-		// (see the package doc) instead of only logging — for now this
-		// record's content is only recoverable from Event Hub's own
-		// retention window.
-		slog.ErrorContext(ctx, "eventbus: handler exhausted retries, dropping record",
-			"topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", err)
+	if onExhausted != nil {
+		if dlqErr := onExhausted(ctx, record, err); dlqErr != nil {
+			slog.ErrorContext(ctx, "eventbus: dead-letter publish also failed; record is now unrecoverable outside Event Hub's retention window",
+				"topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "handleErr", err, "onExhaustedErr", dlqErr)
+		}
+		return true
 	}
-	if cerr := c.reader.CommitMessages(ctx, msg); cerr != nil {
-		slog.ErrorContext(ctx, "eventbus: commit failed", "topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", cerr)
-	}
+	slog.ErrorContext(ctx, "eventbus: handler exhausted retries, dropping record",
+		"topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", err)
+	return true
 }
 
 // Close leaves the consumer group and closes the underlying connection.

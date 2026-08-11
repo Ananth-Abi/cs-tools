@@ -33,7 +33,6 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/dispatch"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
 )
@@ -77,27 +76,51 @@ func main() {
 	// service's core purpose, unlike the notification channels above, so its
 	// config is required (mustEnv) — a misconfigured deployment should fail
 	// loudly at startup instead of silently accepting or dropping events.
+	// This service is a pure consumer now: csm-portal-backend and
+	// customer-portal-backend publish directly to eventBusCfg's topic
+	// themselves (see internal/events's package doc) — there is no HTTP
+	// ingest endpoint here anymore.
 	eventBusCfg := eventbus.Config{
 		Broker:           mustEnv("EVENT_HUB_BROKER"),
 		ConnectionString: mustEnv("EVENT_HUB_CONNECTION_STRING"),
 		Topic:            mustEnv("EVENT_HUB_TOPIC"),
 	}
-	producer := eventbus.NewProducer(eventBusCfg)
-	defer producer.Close()
+	// The dead-letter topic is a second, separate Event Hub in the same
+	// namespace — also required, since a main consumer with nowhere to
+	// dead-letter an exhausted record would otherwise silently drop it (see
+	// eventbus.OnExhausted's doc comment).
+	dlqCfg := eventbus.Config{
+		Broker:           eventBusCfg.Broker,
+		ConnectionString: eventBusCfg.ConnectionString,
+		Topic:            mustEnv("EVENT_HUB_DLQ_TOPIC"),
+	}
+
+	dlqProducer := eventbus.NewProducer(dlqCfg)
+	defer dlqProducer.Close()
 
 	consumerGroup := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-notification-service")
-	consumer := eventbus.NewConsumer(eventBusCfg, consumerGroup)
-	defer consumer.Close()
-
-	eventsHandler := handler.NewEventsHandler(producer)
+	dlqConsumerGroup := envOrDefault("EVENT_HUB_DLQ_CONSUMER_GROUP", "csm-notification-service-dlq")
+	mainConsumerCount := envInt("MAIN_CONSUMER_COUNT", 1)
+	dlqConsumerCount := envInt("DLQ_CONSUMER_COUNT", 1)
 
 	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient)
+
+	// The main consumer's OnExhausted: publish the exhausted record to the
+	// dead-letter topic instead of just logging and dropping it. The DLQ's
+	// own consumer (started below) gets onExhausted=nil — there is
+	// deliberately no third tier past the DLQ; see handleAttempts' doc
+	// comment in eventbus/consumer.go.
+	toDeadLetter := func(ctx context.Context, record eventbus.Record, handleErr error) error {
+		slog.WarnContext(ctx, "eventbus: handler exhausted retries, publishing to dead-letter topic",
+			"topic", record.Topic, "partition", record.Partition, "offset", record.Offset,
+			"dlqTopic", dlqCfg.Topic, "err", handleErr)
+		return dlqProducer.Publish(ctx, record.Key, record.Value)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("POST /events", eventsHandler.PostEvent)
 
 	addr := ":" + mustPort("PORT", "8080")
 
@@ -110,7 +133,8 @@ func main() {
 
 	// No Auth layer in this middleware chain — inbound requests are trusted at the
 	// Choreo API Manager gateway (subscription + M2M app auth), not validated again
-	// in this service.
+	// in this service. The only route left is /health — Choreo's own liveness
+	// probe — since this service has no other inbound HTTP surface anymore.
 	srv := &http.Server{
 		Handler: middleware.SecurityHeaders(
 			middleware.CorrelationID(
@@ -133,13 +157,18 @@ func main() {
 		}
 	}()
 
-	// consumer.Run blocks polling for events until ctx is canceled (the same
-	// shutdown signal the HTTP server responds to), so both stop together.
-	go consumer.Run(ctx, dispatcher.Handle)
-	slog.Info("event bus consumer started", "topic", eventBusCfg.Topic, "consumerGroup", consumerGroup)
+	mainConsumers := startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter)
+	dlqConsumers := startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil)
 
 	<-ctx.Done()
 	stop()
+
+	for _, c := range mainConsumers {
+		c.Close()
+	}
+	for _, c := range dlqConsumers {
+		c.Close()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -148,6 +177,37 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("CSM Notification Service stopped")
+}
+
+// startConsumers starts count independent eventbus.Consumer instances, all
+// joining group and consuming cfg.Topic — Kafka's own consumer-group
+// rebalancing splits cfg.Topic's partitions across however many of them are
+// actually running, so count is a plain concurrency knob, not something this
+// function has to implement partition assignment for itself. Each instance
+// runs handle (and onExhausted, on retry exhaustion) in its own goroutine,
+// sharing ctx for shutdown.
+//
+// Before starting anything, checks cfg.Topic's real partition count and logs
+// a warning (never fails startup over this) if count exceeds it — a Kafka
+// consumer group never hands out more partitions than exist, so a consumer
+// count higher than the partition count just leaves the excess consumers
+// permanently idle rather than doing anything actively wrong.
+func startConsumers(ctx context.Context, name string, cfg eventbus.Config, group string, count int, handle eventbus.Handle, onExhausted eventbus.OnExhausted) []*eventbus.Consumer {
+	if partitions, err := eventbus.PartitionCount(ctx, cfg); err != nil {
+		slog.Warn("failed to check partition count; skipping the consumer-count sanity check", "consumer", name, "topic", cfg.Topic, "err", err)
+	} else if count > partitions {
+		slog.Warn("consumer count exceeds the topic's partition count; excess consumers will sit idle",
+			"consumer", name, "topic", cfg.Topic, "consumerCount", count, "partitions", partitions)
+	}
+
+	consumers := make([]*eventbus.Consumer, count)
+	for i := range consumers {
+		c := eventbus.NewConsumer(cfg, group)
+		consumers[i] = c
+		go c.Run(ctx, handle, onExhausted)
+	}
+	slog.Info("consumer group started", "consumer", name, "topic", cfg.Topic, "consumerGroup", group, "count", count)
+	return consumers
 }
 
 func mustEnv(key string) string {
@@ -164,6 +224,22 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envInt returns the given environment variable parsed as an int, or def if
+// unset, malformed, or not positive — used for the MAIN_CONSUMER_COUNT/
+// DLQ_CONSUMER_COUNT knobs, where zero or negative would be meaningless.
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		slog.Warn("environment variable is not a valid positive integer; using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return n
 }
 
 // mustPort returns the value of the given environment variable (or def if
