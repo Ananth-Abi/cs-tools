@@ -43,6 +43,14 @@ export class ProjectDeploymentsPage {
    * Navigates from the project dashboard to the Deployments tab via the side
    * nav, then waits for the deployments list.
    *
+   * Readiness is signalled by the Add Deployment button, which is permission
+   * gated — `ProjectDeployments` withholds it entirely for a Restricted project.
+   * That is fine for every fixture this suite has (none is Restricted) but means
+   * this method cannot be pointed at a Restricted project as-is: it would time
+   * out waiting for a button that is deliberately absent. A Restricted fixture
+   * would need a readiness signal independent of the button — the deployments
+   * list or its empty state.
+   *
    * @param projectId - Project whose deployments to open.
    */
   async openDeploymentsTab(projectId: string): Promise<void> {
@@ -125,8 +133,13 @@ export class ProjectDeploymentsPage {
   async openAddDeploymentModal(): Promise<void> {
     await this.addDeploymentButton().click();
     await expect(this.modal()).toBeVisible();
+    // Scoped to the dialog so nothing elsewhere on the page can satisfy it.
+    // Substring, not exact: the title is a bare text node inside DialogTitle
+    // alongside the description Typography, so the element's full text is
+    // "Add New Deployment" + "Create a new deployment environment…" and no
+    // element's text equals the title on its own.
     await expect(
-      this.page.getByText(ADD_DEPLOYMENT.dialogTitle),
+      this.modal().getByText(ADD_DEPLOYMENT.dialogTitle),
     ).toBeVisible();
   }
 
