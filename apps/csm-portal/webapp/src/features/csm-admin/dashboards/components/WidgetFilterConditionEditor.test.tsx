@@ -98,4 +98,37 @@ describe("WidgetFilterConditionEditor", () => {
     fireEvent.click(screen.getByRole("option", { name: "is not empty" }));
     expect(onChangeSpy).toHaveBeenCalledWith([{ field: "escalation", op: "isNotEmpty", values: [] }]);
   });
+
+  it("offers every operator for a case-like resourceType", () => {
+    render(<Harness initial={[{ field: "state", op: "eq", values: [] }]} resourceType="case" />);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Operator" }));
+    for (const label of ["is", "is any of", "is none of", "is on/after (≥)", "is on/before (≤)", "is empty", "is not empty"]) {
+      expect(screen.getByRole("option", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("only offers eq/in for a non-case resourceType, since notIn/gte/lte/isEmpty have no real query shape there", () => {
+    render(<Harness initial={[{ field: "priorities", op: "eq", values: [] }]} resourceType="incident" />);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Operator" }));
+    expect(screen.getByRole("option", { name: "is" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "is any of" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "is none of" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "is on/after (≥)" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "is on/before (≤)" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "is empty" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "is not empty" })).not.toBeInTheDocument();
+  });
+
+  it("still represents a row's own out-of-list op (legacy data) in the Select rather than rendering it blank", () => {
+    render(
+      <Harness
+        initial={[{ field: "slaViolated", op: "gte", values: ["1"] }]}
+        resourceType="incident"
+      />,
+    );
+    // The row's current op ("is on/after (≥)", i.e. gte) isn't one of the
+    // two ops offered for a non-case resourceType, but it must still show up
+    // as the Select's own displayed value.
+    expect(screen.getByRole("combobox", { name: "Operator" })).toHaveTextContent("is on/after (≥)");
+  });
 });

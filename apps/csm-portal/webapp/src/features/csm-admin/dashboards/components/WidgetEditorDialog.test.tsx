@@ -134,6 +134,51 @@ describe("WidgetEditorDialog", () => {
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
+  it("threads selectedTeamGroupId/selectedTeamLabel into the Preview tile, exactly as the live dashboard grid does", async () => {
+    postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
+    renderDialog({ selectedTeamGroupId: "team-group-1", selectedTeamLabel: "Castor" });
+
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Cases — {{currentTeam}}" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    // The Preview tile resolves the widget's own `{{currentTeam}}` text
+    // token using the team label passed in — before this fix, no team
+    // props reached the Preview tile at all, so a team-scoped widget's
+    // display name (or filters) previewed unresolved/unfiltered instead of
+    // what the admin would actually see on the live dashboard.
+    await waitFor(() => expect(screen.getByText("Cases — Castor")).toBeInTheDocument());
+  });
+
+  it("resolves an integrationCsTeam __current_team__ filter placeholder in Preview using the given selectedTeamGroupId", async () => {
+    postMock.mockResolvedValue({ total: 0, cases: [], limit: 1, offset: 0, hasMore: false });
+    renderDialog({ selectedTeamGroupId: "team-group-1", selectedTeamLabel: "Castor" });
+
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "My team's cases" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+    fireEvent.change(screen.getByLabelText("Filter field"), {
+      target: { value: "integrationCsTeam" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Operator" }));
+    fireEvent.click(screen.getByRole("option", { name: "is any of" }));
+    fireEvent.change(screen.getByLabelText("Filter value"), {
+      target: { value: "__current_team__" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Filter value"), { key: "Enter" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith("/cases/search", {
+        filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-group-1"] }] },
+        pagination: { offset: 0, limit: 1 },
+      }),
+    );
+  });
+
   it("clears filter conditions when the resource type changes, rather than carrying over a shape the new endpoint won't accept", () => {
     const existing: BeDashboardWidget = {
       widgetId: "w1",
@@ -151,5 +196,78 @@ describe("WidgetEditorDialog", () => {
     fireEvent.click(screen.getByRole("option", { name: "incident" }));
 
     expect(screen.queryByText("patch")).not.toBeInTheDocument();
+  });
+
+  it("clamps Row limit to a minimum of 1, same as Grid width, rather than accepting zero/negative", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "My list",
+      resourceType: "case",
+      shape: "list",
+      gridWidth: 4,
+      query: {},
+      listLimit: 5,
+    };
+    renderDialog({ widget: existing });
+
+    const rowLimitInput = screen.getByLabelText(/row limit/i);
+    fireEvent.change(rowLimitInput, { target: { value: "0" } });
+    expect(rowLimitInput).toHaveValue(1);
+
+    fireEvent.change(rowLimitInput, { target: { value: "-5" } });
+    expect(rowLimitInput).toHaveValue(1);
+  });
+
+  it("truncates a decimal Row limit rather than saving a fractional value", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "My list",
+      resourceType: "case",
+      shape: "list",
+      gridWidth: 4,
+      query: {},
+      listLimit: 5,
+    };
+    const { onSave } = renderDialog({ widget: existing });
+
+    const rowLimitInput = screen.getByLabelText(/row limit/i);
+    fireEvent.change(rowLimitInput, { target: { value: "7.9" } });
+    expect(rowLimitInput).toHaveValue(7);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save widget" }));
+    const saved = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(saved.listLimit).toBe(7);
+    expect(Number.isNaN(saved.listLimit)).toBe(false);
+  });
+
+  it("clearing Row limit entirely unsets it, rather than writing NaN through", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "My list",
+      resourceType: "case",
+      shape: "list",
+      gridWidth: 4,
+      query: {},
+      listLimit: 5,
+    };
+    // `<input type="number">` sanitizes genuinely non-numeric text (verified
+    // directly against jsdom's own `HTMLInputElement` — it never lets a
+    // change event carry a value `Number()` would turn into `NaN`) down to
+    // an empty string before a change event ever fires, so the reachable
+    // "invalid input" case through this field is the empty string, which
+    // this asserts resolves to `undefined` (no limit), not `NaN` (which
+    // `JSON.stringify`s to `null` and would silently corrupt the deployable
+    // widget JSON — see `Number.isFinite` guard in the field's own
+    // `onChange`).
+    const { onSave } = renderDialog({ widget: existing });
+
+    const rowLimitInput = screen.getByLabelText(/row limit/i);
+    fireEvent.change(rowLimitInput, { target: { value: "" } });
+    expect(rowLimitInput).toHaveValue(null);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save widget" }));
+    const saved = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(saved.listLimit).toBeUndefined();
+    expect(Number.isNaN(saved.listLimit)).toBe(false);
   });
 });

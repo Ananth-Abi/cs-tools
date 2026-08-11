@@ -73,6 +73,53 @@ export function usesCaseFieldFilterDsl(resourceType: BeWidgetResourceType): bool
   return CASE_FIELD_DSL_RESOURCE_TYPES.has(resourceType);
 }
 
+/**
+ * The only two ops a non-case resourceType's own flat named-key search
+ * contract is proven to support anywhere in this app (see every
+ * `BeXxxSearchPayload.filters` shape in `types.ts`: `priorities`/`states`/
+ * `impacts` as plain arrays, `slaViolated`/`number` etc. as plain scalars —
+ * there is no generic `notIn`/`gte`/`lte`/`isEmpty`/`isNotEmpty` key
+ * convention across those bespoke, per-field contracts the way the case DSL
+ * has one uniform `field`/`op`/`values` shape). Offering the other five ops
+ * for a non-case resourceType would let the admin build a filter this app
+ * cannot serialize correctly — see `queryFromFilterConditions`'s own doc
+ * comment on what happens to an unsupported op that slips through anyway
+ * (legacy/hand-edited data only; the editor never creates one).
+ */
+const NON_CASE_SUPPORTED_OPS: FilterConditionOp[] = ["eq", "in"];
+
+/** The operators that make sense to offer in the condition editor for a
+ * given resourceType — every op for the case DSL, only `eq`/`in` for
+ * anything else (see `NON_CASE_SUPPORTED_OPS`). */
+export function operatorsForResourceType(
+  resourceType: BeWidgetResourceType,
+): FilterConditionOp[] {
+  return usesCaseFieldFilterDsl(resourceType) ? FILTER_CONDITION_OPS : NON_CASE_SUPPORTED_OPS;
+}
+
+/**
+ * Best-effort scalar type recovery for a condition row's freeform text
+ * value(s): a non-case resourceType's own contract carries real JSON types
+ * (e.g. `BeIncidentSearchPayload.filters.slaViolated: boolean`), not the
+ * string this editor's text inputs always produce — writing the raw string
+ * back (`"true"` instead of `true`) either fails that endpoint's own
+ * validation or silently never matches. `"true"`/`"false"` (case-sensitive,
+ * matching how a boolean stringifies) become real booleans, a value that
+ * parses as a plain integer or decimal becomes a real number, everything
+ * else stays a string. Never applied to the case field/op/values DSL, whose
+ * `values` are always `string[]` on the wire regardless of the field's own
+ * semantic type (see `BeCaseFieldFilter`).
+ */
+function coerceScalar(value: string): unknown {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (value.trim().length > 0 && /^-?\d+(\.\d+)?$/.test(value.trim())) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+  return value;
+}
+
 /** Every field the case-search DSL accepts (mirrors `BeCaseFieldFilterField`
  * — see `types.ts`), offered as autocomplete suggestions in the field
  * picker for a case-like resourceType. Freeform text is still accepted:
@@ -172,8 +219,15 @@ export function queryFromFilterConditions(
     // array (see this module's own doc comment) — `in` writes the array,
     // every other op collapses to a single scalar value (the first one
     // entered), since none of those endpoints understand
-    // isEmpty/isNotEmpty/gte/lte as a bare top-level key.
-    out[c.field] = c.op === "in" ? c.values : (c.values[0] ?? "");
+    // isEmpty/isNotEmpty/gte/lte as a bare top-level key. The editor itself
+    // (see `operatorsForResourceType`) never offers those five ops for a
+    // non-case resourceType, so this fallback only ever fires for
+    // already-existing data that predates that restriction — it degrades to
+    // the same best-effort scalar rather than crashing or dropping the row.
+    // Either way, each value is type-recovered (`coerceScalar`) rather than
+    // left as the raw editor string, so a boolean/numeric field round-trips
+    // as its real JSON type instead of always as a stringified one.
+    out[c.field] = c.op === "in" ? c.values.map(coerceScalar) : coerceScalar(c.values[0] ?? "");
   }
   return out;
 }

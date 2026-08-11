@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { BeDashboardWidget } from "@api/backend/types";
 
 /**
@@ -176,13 +176,4 @@ export function useDashboardDraft(id: string | undefined): DashboardDraft | unde
     };
   }, [id]);
   return draft;
-}
-
-/** Stable `saveDashboardDraft` wrapper for a component that only ever saves
- * its own single draft id — a small convenience so callers don't re-import
- * the free function directly. */
-export function useSaveDashboardDraft(): (draft: Omit<DashboardDraft, "updatedAt">) => void {
-  return useCallback((draft: Omit<DashboardDraft, "updatedAt">) => {
-    saveDashboardDraft(draft);
-  }, []);
 }

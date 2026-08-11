@@ -65,11 +65,18 @@ export interface DashboardWidgetGridProps {
   renderWidgetAction?: (widget: BeDashboardWidget) => ReactNode;
   /** Per-section actions rendered in that section's own header row,
    * alongside its refresh button (e.g. the builder's "Add widget to this
-   * section" / "Remove section"). Receives the section's own display
-   * title (`undefined` for the untitled default group) and every widget id
-   * currently in it. */
+   * section" / "Remove section"). Receives the section's own RAW,
+   * unresolved `widget.section` value (`undefined` for the untitled default
+   * group) — the same identity `groupWidgetsBySection` groups by and the
+   * draft's own `widget.section`/`emptySections` are keyed on — followed by
+   * the display-resolved title (post `{{currentTeam}}` substitution, for
+   * rendering only) and every widget id currently in the section. A caller
+   * that uses the resolved title as an identity key instead of the raw one
+   * splits a placeholder-named section in two the moment it's edited — see
+   * `groupWidgetsBySection` in `dashboardWidgetGridLayout.ts`. */
   renderSectionActions?: (
-    sectionTitle: string | undefined,
+    rawSection: string | undefined,
+    resolvedSectionTitle: string | undefined,
     sectionWidgetIds: Set<string>,
   ) => ReactNode;
   /** Rendered once, after every existing section — e.g. the builder's own
@@ -193,7 +200,7 @@ export default function DashboardWidgetGrid({
                   </Typography>
                 )}
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                  {renderSectionActions?.(resolvedSectionTitle, sectionWidgetIds)}
+                  {renderSectionActions?.(group.section, resolvedSectionTitle, sectionWidgetIds)}
                   <RefreshButton
                     onRefresh={() => void handleSectionRefresh(sectionKey, sectionWidgetIds)}
                     isFetching={refreshingSections.has(sectionKey)}

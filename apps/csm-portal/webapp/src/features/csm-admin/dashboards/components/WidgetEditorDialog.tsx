@@ -94,6 +94,18 @@ interface WidgetEditorDialogProps {
    * autocomplete suggestions (freeform text is still accepted — a widget
    * can also start a brand-new section right here). */
   sectionSuggestions: string[];
+  /** The team the Preview tile below should scope its data to, threaded
+   * through exactly as `DashboardWidgetGrid` threads it to every real tile
+   * (see that component's own doc comment) — otherwise a widget using the
+   * `__current_team__` filter placeholder or a `{{currentTeam}}` display-text
+   * token previews unfiltered data / an unresolved placeholder instead of
+   * what an admin would actually see on the live dashboard. `undefined` for
+   * a non-team-based dashboard, or while the team isn't resolved yet — see
+   * the editor page's own doc comment for where this comes from. */
+  selectedTeamGroupId?: string | string[];
+  /** See `selectedTeamGroupId` above; the human-readable counterpart for the
+   * `{{currentTeam}}` text token — see `DashboardWidgetGrid`. */
+  selectedTeamLabel?: string;
   onClose: () => void;
   onSave: (widget: BeDashboardWidget) => void;
   onDelete?: () => void;
@@ -112,6 +124,8 @@ export default function WidgetEditorDialog({
   widget,
   defaultSection,
   sectionSuggestions,
+  selectedTeamGroupId,
+  selectedTeamLabel,
   onClose,
   onSave,
   onDelete,
@@ -259,7 +273,23 @@ export default function WidgetEditorDialog({
                 label="Row limit (optional)"
                 type="number"
                 value={listLimit ?? ""}
-                onChange={(e) => setListLimit(e.target.value === "" ? undefined : Number(e.target.value))}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  if (raw === "") {
+                    setListLimit(undefined);
+                    return;
+                  }
+                  const parsed = Number(raw);
+                  // Same clamp `gridWidth` above applies, plus a guard
+                  // `gridWidth` doesn't need: an invalid (non-numeric, e.g.
+                  // pasted text) keystroke is ignored outright rather than
+                  // written through as `NaN` — `JSON.stringify`s a `NaN` to
+                  // `null` in the deployable widget JSON, silently corrupting
+                  // it. Falls back to the previous valid value, not a
+                  // default, since "no explicit limit" (`undefined`) is
+                  // already reachable via the empty-string case above.
+                  if (Number.isFinite(parsed)) setListLimit(Math.max(1, Math.trunc(parsed)));
+                }}
                 size="small"
                 sx={{ width: 180 }}
                 slotProps={{ htmlInput: { min: 1 } }}
@@ -364,6 +394,8 @@ export default function WidgetEditorDialog({
                 listLimit={previewSnapshot.listLimit}
                 slices={previewSnapshot.slices}
                 sortBy={previewSnapshot.sortBy}
+                selectedTeamGroupId={selectedTeamGroupId}
+                selectedTeamLabel={selectedTeamLabel}
               />
             </Box>
           ) : (

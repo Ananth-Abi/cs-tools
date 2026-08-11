@@ -29,7 +29,7 @@ import type { JSX } from "react";
 import type { BeWidgetResourceType } from "@api/backend/types";
 import {
   CASE_FIELD_OPTIONS,
-  FILTER_CONDITION_OPS,
+  operatorsForResourceType,
   usesCaseFieldFilterDsl,
   type FilterCondition,
   type FilterConditionOp,
@@ -67,6 +67,12 @@ export default function WidgetFilterConditionEditor({
 }: WidgetFilterConditionEditorProps): JSX.Element {
   const isCaseLike = usesCaseFieldFilterDsl(resourceType);
   const fieldOptions = isCaseLike ? CASE_FIELD_OPTIONS : [];
+  // Only offer operators this resourceType's own search contract can
+  // actually express (see `operatorsForResourceType`'s doc comment) — a
+  // non-case resourceType has no generic notIn/gte/lte/isEmpty/isNotEmpty
+  // convention, so offering them here would let the admin build a filter
+  // this app cannot serialize correctly.
+  const availableOps = operatorsForResourceType(resourceType);
 
   const updateRow = (index: number, patch: Partial<FilterCondition>): void => {
     const next = conditions.map((c, i) => (i === index ? { ...c, ...patch } : c));
@@ -88,73 +94,84 @@ export default function WidgetFilterConditionEditor({
           No filters — this widget matches every {resourceType.replace(/_/g, " ")} record.
         </Typography>
       )}
-      {conditions.map((condition, index) => (
-        <Box
-          key={index}
-          sx={{
-            display: "flex",
-            flexWrap: "wrap",
-            alignItems: "flex-start",
-            gap: 1,
-          }}
-        >
-          <Autocomplete
-            freeSolo
-            size="small"
-            options={fieldOptions}
-            value={condition.field}
-            onInputChange={(_e, value) => updateRow(index, { field: value })}
-            sx={{ minWidth: 180, flex: "1 1 180px" }}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label="Field"
-                slotProps={{ htmlInput: { ...params.inputProps, "aria-label": "Filter field" } }}
-              />
-            )}
-          />
-          <TextField
-            select
-            size="small"
-            label="Operator"
-            value={condition.op}
-            onChange={(e) => updateRow(index, { op: e.target.value as FilterConditionOp })}
-            sx={{ minWidth: 160 }}
+      {conditions.map((condition, index) => {
+        // A row whose op isn't in this resourceType's own supported list
+        // (only possible from data written before that restriction existed,
+        // or a resourceType switch elsewhere clearing conditions
+        // notwithstanding) still needs its own current value represented in
+        // the Select, or MUI renders it blank — offered alongside the real
+        // list rather than silently swapped out from under the admin.
+        const rowOps = availableOps.includes(condition.op)
+          ? availableOps
+          : [...availableOps, condition.op];
+        return (
+          <Box
+            key={index}
+            sx={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "flex-start",
+              gap: 1,
+            }}
           >
-            {FILTER_CONDITION_OPS.map((op) => (
-              <MenuItem key={op} value={op}>
-                {OP_LABEL[op]}
-              </MenuItem>
-            ))}
-          </TextField>
-          {!NO_VALUE_OPS.has(condition.op) && (
             <Autocomplete
-              multiple
               freeSolo
               size="small"
-              options={[]}
-              value={condition.values}
-              onChange={(_e, next) =>
-                updateRow(index, { values: next.map((v) => v.trim()).filter((v) => v.length > 0) })
-              }
-              sx={{ minWidth: 220, flex: "2 1 220px" }}
+              options={fieldOptions}
+              value={condition.field}
+              onInputChange={(_e, value) => updateRow(index, { field: value })}
+              sx={{ minWidth: 180, flex: "1 1 180px" }}
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Value(s)"
-                  placeholder={condition.values.length ? undefined : "Type a value and press Enter…"}
-                  slotProps={{ htmlInput: { ...params.inputProps, "aria-label": "Filter value" } }}
+                  label="Field"
+                  slotProps={{ htmlInput: { ...params.inputProps, "aria-label": "Filter field" } }}
                 />
               )}
             />
-          )}
-          <Tooltip title="Remove this filter">
-            <IconButton size="small" onClick={() => removeRow(index)} aria-label="Remove filter">
-              <Trash2 size={16} />
-            </IconButton>
-          </Tooltip>
-        </Box>
-      ))}
+            <TextField
+              select
+              size="small"
+              label="Operator"
+              value={condition.op}
+              onChange={(e) => updateRow(index, { op: e.target.value as FilterConditionOp })}
+              sx={{ minWidth: 160 }}
+            >
+              {rowOps.map((op) => (
+                <MenuItem key={op} value={op}>
+                  {OP_LABEL[op]}
+                </MenuItem>
+              ))}
+            </TextField>
+            {!NO_VALUE_OPS.has(condition.op) && (
+              <Autocomplete
+                multiple
+                freeSolo
+                size="small"
+                options={[]}
+                value={condition.values}
+                onChange={(_e, next) =>
+                  updateRow(index, { values: next.map((v) => v.trim()).filter((v) => v.length > 0) })
+                }
+                sx={{ minWidth: 220, flex: "2 1 220px" }}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Value(s)"
+                    placeholder={condition.values.length ? undefined : "Type a value and press Enter…"}
+                    slotProps={{ htmlInput: { ...params.inputProps, "aria-label": "Filter value" } }}
+                  />
+                )}
+              />
+            )}
+            <Tooltip title="Remove this filter">
+              <IconButton size="small" onClick={() => removeRow(index)} aria-label="Remove filter">
+                <Trash2 size={16} />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        );
+      })}
       <Button
         size="small"
         variant="text"

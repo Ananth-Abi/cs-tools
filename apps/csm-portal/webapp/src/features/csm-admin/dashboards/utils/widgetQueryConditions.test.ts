@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import {
   filterConditionsFromQuery,
+  operatorsForResourceType,
   queryFromFilterConditions,
   usesCaseFieldFilterDsl,
 } from "@features/csm-admin/dashboards/utils/widgetQueryConditions";
@@ -119,5 +120,56 @@ describe("filterConditionsFromQuery / queryFromFilterConditions — non-case res
     const conditions = [{ field: "priorities", op: "in" as const, values: ["HIGH"] }];
     const query = queryFromFilterConditions("incident", conditions);
     expect(query).not.toHaveProperty("filters");
+  });
+
+  it("serializes a boolean-looking eq value as a real boolean, not the string 'true'/'false'", () => {
+    const conditions = [{ field: "slaViolated", op: "eq" as const, values: ["true"] }];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({ slaViolated: true });
+    expect(
+      queryFromFilterConditions("incident", [
+        { field: "slaViolated", op: "eq" as const, values: ["false"] },
+      ]),
+    ).toEqual({ slaViolated: false });
+  });
+
+  it("serializes a numeric-looking eq value as a real number, not a string", () => {
+    const conditions = [{ field: "someCount", op: "eq" as const, values: ["42"] }];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({ someCount: 42 });
+  });
+
+  it("leaves a non-numeric, non-boolean value as a plain string (e.g. a case/incident number)", () => {
+    const conditions = [{ field: "number", op: "eq" as const, values: ["INC0001"] }];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({ number: "INC0001" });
+  });
+
+  it("type-recovers each element of an 'in' array too", () => {
+    const conditions = [{ field: "flags", op: "in" as const, values: ["true", "1", "no"] }];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({
+      flags: [true, 1, "no"],
+    });
+  });
+
+  it("still degrades an unsupported op (legacy data) to a type-recovered scalar rather than crashing", () => {
+    const conditions = [{ field: "slaViolated", op: "notIn" as const, values: ["true", "false"] }];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({ slaViolated: true });
+  });
+});
+
+describe("operatorsForResourceType", () => {
+  it("offers every op for a case-like resourceType", () => {
+    expect(operatorsForResourceType("case")).toEqual([
+      "eq",
+      "in",
+      "notIn",
+      "gte",
+      "lte",
+      "isEmpty",
+      "isNotEmpty",
+    ]);
+  });
+
+  it("offers only eq/in for a non-case resourceType, since no other op has a real, proven query shape", () => {
+    expect(operatorsForResourceType("incident")).toEqual(["eq", "in"]);
+    expect(operatorsForResourceType("account")).toEqual(["eq", "in"]);
   });
 });

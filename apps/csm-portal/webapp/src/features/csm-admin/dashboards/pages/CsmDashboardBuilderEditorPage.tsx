@@ -23,9 +23,11 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControl,
   FormControlLabel,
   IconButton,
   MenuItem,
+  Select,
   Skeleton,
   TextField,
   Tooltip,
@@ -36,6 +38,9 @@ import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { useNavigate, useParams } from "react-router";
 import type { BeDashboardWidget } from "@api/backend/types";
 import { useDashboard } from "@features/csm-dashboard/api/useDashboard";
+import { abtFamilyForDashboardType, useTeams } from "@features/csm-dashboard/api/useTeams";
+import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import DashboardWidgetGrid from "@features/csm-dashboard/components/DashboardWidgetGrid";
 import SectionCard from "@features/csm-dashboard/components/SectionCard";
 import { WIDGET_GRID_SX } from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
@@ -139,9 +144,31 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
     setWorking(localDraft);
   }
 
+  // True while `working`'s NEXT change is a re-seed from storage (a draft
+  // load, or switching to a different draftId) rather than something the
+  // admin actually edited — re-armed by the effect below every time
+  // `loadedDraftId` changes, and cleared once the autosave effect further
+  // down has consumed it. Refs (not render-time mutation, which the
+  // `react-hooks/refs` lint rule rejects) so setting it never itself
+  // triggers a render. Without this, the autosave effect re-stamps
+  // `updatedAt` (and bumps this draft to the top of the local-drafts list)
+  // on every single open of an existing, completely unmodified draft — the
+  // two effects below run in declaration order within the same commit (the
+  // `loadedDraftId` change and the resulting `working` change land
+  // together), so this is always armed before the autosave effect below
+  // ever gets a chance to see it.
+  const skipNextAutosaveRef = useRef(true);
+  useEffect(() => {
+    skipNextAutosaveRef.current = true;
+  }, [loadedDraftId]);
+
   const [savedAt, setSavedAt] = useState<string | undefined>(localDraft?.updatedAt);
   useEffect(() => {
     if (!working) return;
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false;
+      return;
+    }
     const timer = setTimeout(() => {
       const saved = saveDashboardDraft(working);
       setSavedAt(saved.updatedAt);
@@ -157,7 +184,58 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
   >(undefined);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  const drifted = working ? isDraftDrifted(working, live.data ?? undefined) : false;
+  // The drift check needs `GET /dashboards/{draftId}` to have actually
+  // resolved: `live.data` is `undefined` both "definitely not deployed" and
+  // "haven't heard back yet", and `isDraftDrifted` treats an `undefined`
+  // live value as "drifted" either way (see its own doc comment) — without
+  // gating on `live.isLoading`, the "not yet deployed" banner flashes on
+  // every single open of an existing, completely unmodified dashboard while
+  // the fetch is still in flight. A failed fetch (`isError`) is its own
+  // distinct state, not silently treated as "no drift" (which would hide a
+  // real drift) or "always drifted" (which would false-alarm a dashboard
+  // that's actually fine) — surfaced as its own "couldn't check" notice
+  // below instead. Memoized (bug: this used to recompute a full recursive
+  // canonicalize+stringify of the whole draft/live shape on every render,
+  // including every keystroke).
+  const driftStatus = useMemo<"checking" | "clean" | "drifted" | "check-failed">(() => {
+    if (!working) return "checking";
+    if (live.isLoading) return "checking";
+    if (live.isError) return "check-failed";
+    return isDraftDrifted(working, live.data ?? undefined) ? "drifted" : "clean";
+  }, [working, live.data, live.isLoading, live.isError]);
+
+  // Team context for the Preview tile (and this page's own widget grid),
+  // threaded through exactly the way `CsmDashboardPage` resolves it for the
+  // live dashboard (see that page's own doc comment): the signed-in user's
+  // own team defaults the selector once their profile resolves, "All ABTs"
+  // otherwise, and the admin can override it here to preview any team.
+  // Unlike `CsmDashboardPage`, the team list itself is fetched already
+  // scoped to `working.type`'s family (see `abtFamilyForDashboardType`) —
+  // there's no separate unscoped query for resolving a default team outside
+  // that family the way the live page needs (a signed-in admin's own team
+  // being outside the dashboard's family is an edge case not worth the
+  // extra query here; the selector simply starts blank in that case until
+  // the admin picks one).
+  const isTeamBased = working?.isTeamBased ?? false;
+  const currentUser = useCurrentUser();
+  const teamFamily = abtFamilyForDashboardType(working?.type);
+  const teams = useTeams(isTeamBased, teamFamily);
+  const [previewTeamOverride, setPreviewTeamOverride] = useState<string | undefined>(undefined);
+  const userHasTeam = Boolean(currentUser.user?.team);
+  const defaultPreviewTeamId = isTeamBased
+    ? userHasTeam
+      ? currentUser.user?.team?.teamKey
+      : ALL_TEAMS_SENTINEL
+    : undefined;
+  const previewTeamId = previewTeamOverride ?? defaultPreviewTeamId;
+  const previewTeam = teams.data?.find((t) => t.id === previewTeamId);
+  const selectedTeamGroupId: string | string[] | undefined =
+    previewTeamId === ALL_TEAMS_SENTINEL
+      ? (teams.data ?? []).map((t) => t.groupId).filter((g): g is string => Boolean(g))
+      : previewTeam?.groupId;
+  const selectedTeamLabel: string | undefined =
+    previewTeamId === ALL_TEAMS_SENTINEL ? "All ABTs" : previewTeam?.name;
+
   const sectionNames = useMemo(
     () =>
       working
@@ -271,11 +349,17 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
         </Box>
       </Box>
 
-      {drifted && (
+      {driftStatus === "drifted" && (
         <Alert severity="warning">
           {working.sourceDashboardId
             ? "This local draft has changes that are not yet deployed — it differs from what GET /dashboards currently returns. Use “Copy as JSON” and hand it to a maintainer to redeploy."
             : "This dashboard has never been deployed — it exists only in this browser's local storage until a maintainer ships its JSON."}
+        </Alert>
+      )}
+      {driftStatus === "check-failed" && (
+        <Alert severity="info">
+          Couldn't check this draft against what's currently deployed (GET /dashboards/{draftId}{" "}
+          failed) — edits are still saved locally regardless.
         </Alert>
       )}
 
@@ -330,6 +414,23 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
             }
             label="Team-based"
           />
+          {isTeamBased && (
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <Select
+                value={previewTeamId ?? ""}
+                onChange={(e) => setPreviewTeamOverride(e.target.value || undefined)}
+                displayEmpty
+                aria-label="Preview team"
+              >
+                <MenuItem value={ALL_TEAMS_SENTINEL}>All ABTs</MenuItem>
+                {(teams.data ?? []).map((t) => (
+                  <MenuItem key={t.id} value={t.id}>
+                    {t.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
         </Box>
       </SectionCard>
 
@@ -358,6 +459,8 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
         ) : (
           <DashboardWidgetGrid
             widgets={working.widgets}
+            selectedTeamGroupId={selectedTeamGroupId}
+            selectedTeamLabel={selectedTeamLabel}
             renderWidgetAction={(widget) => (
               <Box sx={{ display: "flex", gap: 0.5 }}>
                 <Tooltip title={`Edit ${widget.displayName}`}>
@@ -388,22 +491,32 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
                 </Tooltip>
               </Box>
             )}
-            renderSectionActions={(sectionTitle, widgetIds) =>
-              sectionTitle ? (
+            renderSectionActions={(section, sectionTitle, widgetIds) =>
+              section ? (
                 <>
                   <Button
                     size="small"
                     variant="text"
                     startIcon={<Plus size={14} />}
-                    onClick={() => setEditingWidget({ widget: undefined, defaultSection: sectionTitle })}
+                    // The RAW section key, not the display-resolved title —
+                    // a widget added here must land in the same section it
+                    // was opened from (`widget.section === section`), which
+                    // a placeholder-resolved title (e.g. "{{currentTeam}}
+                    // Escalations" -> "All ABTs Escalations") would silently
+                    // fork into a brand-new section instead.
+                    onClick={() => setEditingWidget({ widget: undefined, defaultSection: section })}
                   >
                     Add widget
                   </Button>
-                  <Tooltip title={`Remove section "${sectionTitle}" and every widget in it (${widgetIds.size})`}>
+                  <Tooltip
+                    title={`Remove section "${sectionTitle ?? section}" and every widget in it (${widgetIds.size})`}
+                  >
                     <IconButton
                       size="small"
-                      aria-label={`Remove section ${sectionTitle}`}
-                      onClick={() => setPendingRemoval({ kind: "section", section: sectionTitle })}
+                      aria-label={`Remove section ${sectionTitle ?? section}`}
+                      // Same reasoning as above: `pendingRemoval.section` is
+                      // matched against `widget.section` (raw) on confirm.
+                      onClick={() => setPendingRemoval({ kind: "section", section })}
                     >
                       <Trash2 size={14} />
                     </IconButton>
@@ -461,6 +574,8 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
           widget={editingWidget.widget}
           defaultSection={editingWidget.defaultSection}
           sectionSuggestions={sectionNames}
+          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamLabel={selectedTeamLabel}
           onClose={() => setEditingWidget(undefined)}
           onSave={handleSaveWidget}
           onDelete={
