@@ -22,6 +22,7 @@ import {
   Divider,
   MenuItem,
   Paper,
+  Switch,
   Tab,
   Tabs,
   TablePagination,
@@ -56,6 +57,7 @@ function formatDateOnly(date: Date): string {
 import {
   useAllTimeCards,
   useApprovalQueue,
+  useBulkApproveCards,
   useCurrentEngineer,
   useDecideCard,
   useMyTimeCards,
@@ -72,10 +74,11 @@ import RefreshButton from "@components/RefreshButton";
 import { useTimecardRole } from "@features/csm-timecards/hooks/useTimecardRole";
 import TimeCardsTable from "@features/csm-timecards/components/TimeCardsTable";
 import TimeCardReviewDialog from "@features/csm-timecards/components/TimeCardReviewDialog";
+import BulkApproveDialog from "@features/csm-timecards/components/BulkApproveDialog";
 import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDialog";
 import SearchableMultiSelect from "@components/SearchableMultiSelect";
 import { exportTimeCardsCsv } from "@features/csm-timecards/utils/timeCardCsvExport";
-import type { TimecardAction, TimecardRoleCtx } from "@features/csm-timecards/utils/timeSheetState";
+import { cardActions, type TimecardAction, type TimecardRoleCtx } from "@features/csm-timecards/utils/timeSheetState";
 import type { TimeCardGroupBy } from "@features/csm-timecards/utils/timeCardGrouping";
 import type {
   CsmTimeCard,
@@ -151,13 +154,16 @@ type TabId = "mine" | "all" | "approvals";
 /**
  * Time cards workspace. Three tabs: **My time sheets** (own cards only),
  * **All** (everyone's cards, read only — visibility, not action), and
- * **Approvals** (approver/admin: approve/reject a submitted card). Logging a
- * *new* card still only happens from a case's Time tracking tab (this page
- * has no case context to log against) — but editing an own still-`submitted`
- * card is available from here too (My time sheets / All), via the same Edit
- * action `TimeCardsTable` offers there. There's no sheet-level bulk action,
- * delegation, or reports — the backend has no endpoints for those (see the
- * module-level notes in `types/timeCards.ts`).
+ * **Approvals** (approver/admin: approve/reject a submitted card, or select
+ * several and approve them together). Logging a *new* card still only
+ * happens from a case's Time tracking tab (this page has no case context to
+ * log against) — but editing an own still-`submitted` card is available
+ * from here too (My time sheets / All), via the same Edit action
+ * `TimeCardsTable` offers there. There's no delegation or reports — the
+ * backend has no endpoints for those (see the module-level notes in
+ * `types/timeCards.ts`); bulk approve is a frontend-only fan-out over the
+ * same single-card endpoint (see `useBulkApproveCards`), not a real batch
+ * request.
  */
 export default function CsmTimeCardsPage(): JSX.Element {
   const role = useTimecardRole();
@@ -179,6 +185,16 @@ export default function CsmTimeCardsPage(): JSX.Element {
   // projectName all come from the card being edited (see the render below).
   const [editingCard, setEditingCard] = useState<CsmTimeCard | null>(null);
   const updateTimeCard = useUpdateTimeCard();
+
+  // Bulk-approve selection — Approvals tab only. Holds card ids rather than
+  // whole cards so a background refetch (refresh button, or the queue
+  // shrinking after a decision) can't leave this holding stale card objects;
+  // `selectedApprovalCards` below re-derives the live card list from
+  // whatever ids are still actually present on the current page.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkConfirmOpen, setBulkConfirmOpen] = useState(false);
+  const bulkApprove = useBulkApproveCards();
+  const clearSelection = (): void => setSelectedIds(new Set());
 
   // How the table clusters its rows — a display-only choice (see
   // `groupTimeCards`), independent of the server-side filters below. Only
@@ -258,9 +274,20 @@ export default function CsmTimeCardsPage(): JSX.Element {
     minePagination.setPage(0);
     allPagination.setPage(0);
     approvalsPagination.setPage(0);
+    clearSelection();
   };
   const handleFilterProjectChange = (v: string[]): void => {
     setFilterProject(v);
+    resetAllPages();
+  };
+  // Unlike the other filters, work item is purely client-side (narrows an
+  // already-fetched page — see byWorkItem below), so it doesn't strictly
+  // need a page reset. It still needs resetAllPages() for the selection
+  // clear bundled into it, though: narrowing to a different set of visible
+  // cards on the Approvals tab can silently drop some of the current
+  // selection out of view otherwise.
+  const handleFilterWorkItemChange = (v: string[]): void => {
+    setFilterWorkItem(v);
     resetAllPages();
   };
   const handleFilterStateChange = (v: TimeCardState | ""): void => {
@@ -296,6 +323,20 @@ export default function CsmTimeCardsPage(): JSX.Element {
   const handleCardAction = (card: CsmTimeCard, action: TimecardAction): void => {
     if (action === "approve" || action === "reject") setReview({ card, action });
     else if (action === "edit") setEditingCard(card);
+  };
+
+  const toggleSelectCard = (card: CsmTimeCard): void => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(card.id)) next.delete(card.id);
+      else next.add(card.id);
+      return next;
+    });
+  };
+  const toggleSelectAllCards = (selectableCards: CsmTimeCard[]): void => {
+    const allAlreadySelected =
+      selectableCards.length > 0 && selectableCards.every((c) => selectedIds.has(c.id));
+    setSelectedIds(allAlreadySelected ? new Set() : new Set(selectableCards.map((c) => c.id)));
   };
 
   // "All" shows everyone's cards, own included, and is always read-only
@@ -406,6 +447,55 @@ export default function CsmTimeCardsPage(): JSX.Element {
     () => byWorkItem(queue.data?.cards),
     [queue.data, byWorkItem],
   );
+  // The actually-actionable selection: `selectedIds` alone can outlive its
+  // own basis (a queue refetch — e.g. the Refresh button, or another
+  // approver deciding a card first — can drop a card that was selected a
+  // moment ago), so this re-derives from whatever `approvalsFilteredCards`
+  // holds *right now* rather than trusting the raw id set. Used everywhere
+  // a "how many/which cards am I about to approve" answer is needed (the
+  // toolbar's count and the confirm dialog) so they can never disagree with
+  // each other, even though nothing here mutates `selectedIds` itself to
+  // prune the stale ids out — the next real toggle/clear naturally drops
+  // them.
+  const selectedApprovalCards = useMemo(
+    () =>
+      approvalsFilteredCards.filter(
+        (c) =>
+          selectedIds.has(c.id) &&
+          cardActions(c.state, { isOwner: false, isApprover: true, isAdmin: role.isAdmin }).includes(
+            "approve",
+          ),
+      ),
+    [approvalsFilteredCards, selectedIds, role.isAdmin],
+  );
+  // The ids actually reflected in selectedApprovalCards -- passed to
+  // TimeCardsTable instead of the raw selectedIds state so its row-disabling
+  // "is a selection active" check (and its row/header checkbox state) can
+  // never go stale: a queue refetch dropping every selected card (someone
+  // else deciding it first, a filter/refresh) would otherwise leave
+  // selectedIds non-empty with nothing left to act on, silently disabling
+  // every row's own Approve/Reject with no visible selection (and no Clear
+  // button, gated on selectedApprovalCards.length) to unstick it.
+  const selectedApprovalCardIds = useMemo(
+    () => new Set(selectedApprovalCards.map((c) => c.id)),
+    [selectedApprovalCards],
+  );
+  // Prunes selectedIds itself (not just how it's displayed above) down to
+  // the still-actionable subset whenever the approvals queue refetches with
+  // different content -- otherwise an id dropped by a refetch (another
+  // approver deciding it first, a stale sync) lingers in state forever,
+  // ready to silently reappear as "selected" if a card with that id is ever
+  // eligible again. Explicit clears (tab/page/filter change, a successful
+  // decide/bulk-approve) already call clearSelection() directly and are
+  // unaffected by this. Same render-time reconciliation pattern as
+  // projectNameCache/lastSeenCards above.
+  const [lastPrunedQueueData, setLastPrunedQueueData] = useState(queue.data);
+  if (lastPrunedQueueData !== queue.data) {
+    setLastPrunedQueueData(queue.data);
+    if (selectedApprovalCardIds.size !== selectedIds.size) {
+      setSelectedIds(selectedApprovalCardIds);
+    }
+  }
 
   return (
     <Box
@@ -421,7 +511,10 @@ export default function CsmTimeCardsPage(): JSX.Element {
 
       <Tabs
         value={activeTab}
-        onChange={(_, v) => setTab(v as TabId)}
+        onChange={(_, v) => {
+          setTab(v as TabId);
+          clearSelection();
+        }}
         sx={{ borderBottom: 1, borderColor: "divider" }}
       >
         <Tab value="mine" label="My time sheets" />
@@ -437,7 +530,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
             filterProject={filterProject}
             setFilterProject={handleFilterProjectChange}
             filterWorkItem={filterWorkItem}
-            setFilterWorkItem={setFilterWorkItem}
+            setFilterWorkItem={handleFilterWorkItemChange}
             workItemOptions={mineWorkItemOptions}
             filterState={filterState}
             setFilterState={handleFilterStateChange}
@@ -510,7 +603,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
             filterProject={filterProject}
             setFilterProject={handleFilterProjectChange}
             filterWorkItem={filterWorkItem}
-            setFilterWorkItem={setFilterWorkItem}
+            setFilterWorkItem={handleFilterWorkItemChange}
             workItemOptions={allWorkItemOptions}
             filterState={filterState}
             setFilterState={handleFilterStateChange}
@@ -587,7 +680,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
             filterProject={filterProject}
             setFilterProject={handleFilterProjectChange}
             filterWorkItem={filterWorkItem}
-            setFilterWorkItem={setFilterWorkItem}
+            setFilterWorkItem={handleFilterWorkItemChange}
             workItemOptions={approvalsWorkItemOptions}
             filterState={filterState}
             setFilterState={handleFilterStateChange}
@@ -613,19 +706,39 @@ export default function CsmTimeCardsPage(): JSX.Element {
 
           <GroupByToggle value={groupBy} onChange={setGroupBy} />
 
-          <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1 }}>
-            <RefreshButton
-              onRefresh={() => void queue.refetch()}
-              isFetching={queue.isFetching}
-              updatedAt={queue.dataUpdatedAt}
-              label="Refresh approval queue"
-            />
-            {!queue.isError && (
-              <ExportCsvButton
-                cards={approvalsFilteredCards}
-                filename={`time-cards-approvals-${todayStamp}.csv`}
-              />
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
+            {selectedApprovalCards.length > 0 ? (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                <Typography variant="body2">{selectedApprovalCards.length} selected</Typography>
+                <Button size="small" color="inherit" onClick={clearSelection}>
+                  Clear
+                </Button>
+                <Button
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  onClick={() => setBulkConfirmOpen(true)}
+                >
+                  Approve
+                </Button>
+              </Box>
+            ) : (
+              <Box />
             )}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <RefreshButton
+                onRefresh={() => void queue.refetch()}
+                isFetching={queue.isFetching}
+                updatedAt={queue.dataUpdatedAt}
+                label="Refresh approval queue"
+              />
+              {!queue.isError && (
+                <ExportCsvButton
+                  cards={approvalsFilteredCards}
+                  filename={`time-cards-approvals-${todayStamp}.csv`}
+                />
+              )}
+            </Box>
           </Box>
 
           {queue.isError ? (
@@ -640,15 +753,25 @@ export default function CsmTimeCardsPage(): JSX.Element {
                 showActionsColumn
                 roleFor={approvalsRole}
                 onCardAction={handleCardAction}
+                selectable
+                selectedIds={selectedApprovalCardIds}
+                onToggleSelect={toggleSelectCard}
+                onToggleSelectAll={toggleSelectAllCards}
                 emptyText={anyFilterActive ? "No time cards match the current filters." : "Nothing awaiting approval."}
               />
               <TablePagination
                 component="div"
                 count={queue.data?.total ?? 0}
                 page={approvalsPagination.pagination.page}
-                onPageChange={approvalsPagination.onPageChange}
+                onPageChange={(e, p) => {
+                  clearSelection();
+                  approvalsPagination.onPageChange(e, p);
+                }}
                 rowsPerPage={approvalsPagination.pagination.rowsPerPage}
-                onRowsPerPageChange={approvalsPagination.onRowsPerPageChange}
+                onRowsPerPageChange={(e) => {
+                  clearSelection();
+                  approvalsPagination.onRowsPerPageChange(e as ChangeEvent<HTMLInputElement>);
+                }}
                 rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
                 showFirstButton
                 showLastButton
@@ -656,6 +779,46 @@ export default function CsmTimeCardsPage(): JSX.Element {
             </>
           )}
         </Box>
+      )}
+
+      {bulkConfirmOpen && (
+        <BulkApproveDialog
+          cards={selectedApprovalCards}
+          isSubmitting={bulkApprove.isPending}
+          onClose={() => setBulkConfirmOpen(false)}
+          onConfirm={() => {
+            // Captured here, before clearSelection() below can drop it — the
+            // only place a failed card's own label (case number, work date)
+            // is still available to resolve `f.cardId` back to something a
+            // human can actually tell apart from another failure in the same
+            // batch (see the onError banner below).
+            const cardsToApprove = selectedApprovalCards;
+            const ids = cardsToApprove.map((c) => c.id);
+            bulkApprove.mutate(ids, {
+              onSuccess: (result) => {
+                setBulkConfirmOpen(false);
+                clearSelection();
+                if (result.failed.length === 0) {
+                  showSuccess(
+                    `${result.succeededIds.length} time card${result.succeededIds.length === 1 ? "" : "s"} approved.`,
+                  );
+                } else {
+                  const cardById = new Map(cardsToApprove.map((c) => [c.id, c]));
+                  const failureDetails = result.failed
+                    .map((f) => {
+                      const card = cardById.get(f.cardId);
+                      const label = card ? `${card.caseNumber} (${card.workDate.slice(0, 10)})` : f.cardId;
+                      return `${label}: ${f.message}`;
+                    })
+                    .join("; ");
+                  showError(
+                    `${result.succeededIds.length} approved, ${result.failed.length} failed: ${failureDetails}`,
+                  );
+                }
+              },
+            });
+          }}
+        />
       )}
 
       {editingCard && (
@@ -971,26 +1134,33 @@ function GroupByToggle({
   value: TimeCardGroupBy;
   onChange: (v: TimeCardGroupBy) => void;
 }): JSX.Element {
-  const options: { value: TimeCardGroupBy; label: string }[] = [
-    { value: "case", label: "Case" },
-    { value: "engineer", label: "Engineer" },
-  ];
+  const isEngineer = value === "engineer";
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
       <Typography variant="body2" color="text.secondary">
         Group by
       </Typography>
-      <Box sx={{ display: "flex", gap: 0.5 }}>
-        {options.map((o) => (
-          <Button
-            key={o.value}
-            size="small"
-            variant={value === o.value ? "contained" : "outlined"}
-            onClick={() => onChange(o.value)}
-          >
-            {o.label}
-          </Button>
-        ))}
+      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+        <Typography
+          variant="body2"
+          color={isEngineer ? "text.secondary" : "text.primary"}
+          sx={{ fontWeight: isEngineer ? 400 : 600 }}
+        >
+          Case
+        </Typography>
+        <Switch
+          size="small"
+          checked={isEngineer}
+          onChange={(e) => onChange(e.target.checked ? "engineer" : "case")}
+          inputProps={{ "aria-label": "Group by Case or Engineer" }}
+        />
+        <Typography
+          variant="body2"
+          color={isEngineer ? "text.primary" : "text.secondary"}
+          sx={{ fontWeight: isEngineer ? 600 : 400 }}
+        >
+          Engineer
+        </Typography>
       </Box>
     </Box>
   );

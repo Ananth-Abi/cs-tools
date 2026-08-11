@@ -14,9 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { describe, expect, it, vi } from "vitest";
-import { mapTimeCard, searchTimeCards } from "@features/csm-timecards/api/useTimeSheets";
-import type { BackendApi } from "@api/backend/client";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { ReactNode } from "react";
+import {
+  mapTimeCard,
+  searchTimeCards,
+  useBulkApproveCards,
+} from "@features/csm-timecards/api/useTimeSheets";
+import { BackendApiError, type BackendApi } from "@api/backend/client";
 import type {
   BeSearchTimeCardsPayload,
   BeSearchTimeCardsResponse,
@@ -29,8 +36,20 @@ import type {
 // and throw outside a configured runtime. Mock both so importing
 // searchTimeCards below doesn't trip either (vi.mock calls are hoisted above
 // these imports by vitest). searchTimeCards takes its own BackendApi instance
-// directly, so neither the hook nor the real config is ever exercised here.
-vi.mock("@api/backend/client", () => ({ useBackendApi: vi.fn() }));
+// directly, so neither the hook nor the real config is ever exercised by
+// those tests — only the useBulkApproveCards tests further down actually
+// exercise this mocked patch.
+const patchMock = vi.fn();
+vi.mock("@api/backend/client", () => ({
+  BackendApiError: class BackendApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  },
+  useBackendApi: () => ({ patch: patchMock }),
+}));
 vi.mock("@config/apiConfig", () => ({ apiConfig: { backendUrl: "https://example.test" } }));
 
 function beCard(id: string, state: BeTimeCardState): BeTimeCardView {
@@ -188,5 +207,71 @@ describe("searchTimeCards", () => {
     expect(filters?.caseId).toBeUndefined();
     expect(filters?.states).toBeUndefined();
     expect(filters?.userIds).toBeUndefined();
+  });
+});
+
+function wrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+}
+
+describe("useBulkApproveCards", () => {
+  beforeEach(() => {
+    patchMock.mockReset();
+  });
+
+  it("PATCHes every given card id in parallel with state: approved", async () => {
+    patchMock.mockResolvedValue({ timeCard: beCard("ignored", "approved") });
+    const { result } = renderHook(() => useBulkApproveCards(), { wrapper });
+
+    act(() => {
+      result.current.mutate(["tc-1", "tc-2", "tc-3"]);
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(patchMock).toHaveBeenCalledTimes(3);
+    expect(patchMock).toHaveBeenCalledWith("/time-cards/tc-1", { state: "approved" });
+    expect(patchMock).toHaveBeenCalledWith("/time-cards/tc-2", { state: "approved" });
+    expect(patchMock).toHaveBeenCalledWith("/time-cards/tc-3", { state: "approved" });
+    expect(result.current.data?.succeededIds).toEqual(["tc-1", "tc-2", "tc-3"]);
+    expect(result.current.data?.failed).toEqual([]);
+  });
+
+  // One approver-ineligible card in an otherwise-fine batch must not sink the
+  // whole request — Promise.allSettled is the whole point here (see the
+  // hook's own doc comment): the other two still succeed, and the failing
+  // one is reported individually rather than the mutation itself rejecting.
+  it("reports a partial result when some cards fail and others succeed, without failing the whole mutation", async () => {
+    patchMock.mockImplementation((path: string) => {
+      if (path === "/time-cards/tc-2") {
+        return Promise.reject(new BackendApiError(403, "boom"));
+      }
+      return Promise.resolve({ timeCard: beCard("ignored", "approved") });
+    });
+    const { result } = renderHook(() => useBulkApproveCards(), { wrapper });
+
+    act(() => {
+      result.current.mutate(["tc-1", "tc-2", "tc-3"]);
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.succeededIds).toEqual(["tc-1", "tc-3"]);
+    expect(result.current.data?.failed).toEqual([{ cardId: "tc-2", message: "boom" }]);
+  });
+
+  it("falls back to a generic message when the failure isn't a client-facing BackendApiError", async () => {
+    patchMock.mockRejectedValue(new Error("ECONNRESET"));
+    const { result } = renderHook(() => useBulkApproveCards(), { wrapper });
+
+    act(() => {
+      result.current.mutate(["tc-1"]);
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.failed).toEqual([
+      { cardId: "tc-1", message: "Could not approve this time card." },
+    ]);
   });
 });
