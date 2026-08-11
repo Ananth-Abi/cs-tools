@@ -47,6 +47,12 @@ interface CsmCaseCommentBubbleProps {
   onImageClick?: (src: string, alt?: string) => void;
   /** Opens the call-request detail popup for a call-request link embedded in the comment body. */
   onCallRequestClick?: (sysId: string) => void;
+  /** Drops the author avatar and prefixes the name with "Commented by "
+   * instead — the avatar column eats a disproportionate share of a narrow
+   * container's width (e.g. `CasePreviewContent`'s ~420px drawer); the full
+   * Activities tab and the chat transcript dialog have room for it, so this
+   * defaults to off rather than changing either of those. */
+  compact?: boolean;
 }
 
 const SAFE_PROTOCOLS = ["http:", "https:"];
@@ -82,6 +88,7 @@ export default function CsmCaseCommentBubble({
   comment,
   onImageClick,
   onCallRequestClick,
+  compact = false,
 }: CsmCaseCommentBubbleProps): JSX.Element | null {
   const theme = useTheme();
   const isDarkMode = useDarkMode();
@@ -278,17 +285,19 @@ export default function CsmCaseCommentBubble({
       id={comment.id}
       sx={{ display: "flex", gap: 1.5, alignItems: "flex-start", scrollMarginTop: 96 }}
     >
-      <Avatar
-        sx={{
-          bgcolor: avatarBg,
-          color: avatarFg,
-          width: 32,
-          height: 32,
-          fontSize: "0.85rem",
-        }}
-      >
-        {isBot ? <Bot size={16} /> : initialsOf(comment.authorName)}
-      </Avatar>
+      {!compact && (
+        <Avatar
+          sx={{
+            bgcolor: avatarBg,
+            color: avatarFg,
+            width: 32,
+            height: 32,
+            fontSize: "0.85rem",
+          }}
+        >
+          {isBot ? <Bot size={16} /> : initialsOf(comment.authorName)}
+        </Avatar>
+      )}
       <Paper
         variant="outlined"
         sx={{
@@ -308,6 +317,7 @@ export default function CsmCaseCommentBubble({
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
           <Typography variant="subtitle2">
+            {compact && "Commented by "}
             <UserRefLink
               name={comment.authorName}
               email={comment.authorUser?.email || comment.authorEmail}
