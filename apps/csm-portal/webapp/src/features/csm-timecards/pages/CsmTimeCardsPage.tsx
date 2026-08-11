@@ -480,6 +480,22 @@ export default function CsmTimeCardsPage(): JSX.Element {
     () => new Set(selectedApprovalCards.map((c) => c.id)),
     [selectedApprovalCards],
   );
+  // Prunes selectedIds itself (not just how it's displayed above) down to
+  // the still-actionable subset whenever the approvals queue refetches with
+  // different content -- otherwise an id dropped by a refetch (another
+  // approver deciding it first, a stale sync) lingers in state forever,
+  // ready to silently reappear as "selected" if a card with that id is ever
+  // eligible again. Explicit clears (tab/page/filter change, a successful
+  // decide/bulk-approve) already call clearSelection() directly and are
+  // unaffected by this. Same render-time reconciliation pattern as
+  // projectNameCache/lastSeenCards above.
+  const [lastPrunedQueueData, setLastPrunedQueueData] = useState(queue.data);
+  if (lastPrunedQueueData !== queue.data) {
+    setLastPrunedQueueData(queue.data);
+    if (selectedApprovalCardIds.size !== selectedIds.size) {
+      setSelectedIds(selectedApprovalCardIds);
+    }
+  }
 
   return (
     <Box
