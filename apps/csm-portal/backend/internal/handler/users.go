@@ -137,20 +137,25 @@ func (h *UsersHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	entityRaw, err := h.entity.GetUserMe(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetUserMe failed", "userID", user.UserID, "err", err)
+		// A caller cannot distinguish "no roles/team" from "upstream identity
+		// resolution failed" if this falls through to a 200 with zeroed
+		// fields, so the failure must surface as an error response.
+		mapUpstreamErrorGeneric(w, err, "Failed to fetch the current user.")
+		return
+	}
+
+	var entityResp entityUserMeResponse
+	if jsonErr := json.Unmarshal(entityRaw, &entityResp); jsonErr != nil {
+		slog.ErrorContext(r.Context(), "entity GetUserMe: parse response failed", "userID", user.UserID, "err", jsonErr)
 	} else {
-		var entityResp entityUserMeResponse
-		if jsonErr := json.Unmarshal(entityRaw, &entityResp); jsonErr != nil {
-			slog.ErrorContext(r.Context(), "entity GetUserMe: parse response failed", "userID", user.UserID, "err", jsonErr)
-		} else {
-			resp.ID = &entityResp.ID
-			resp.FirstName = entityResp.FirstName
-			resp.LastName = &entityResp.LastName
-			resp.TimeZone = entityResp.TimeZone
-			if entityResp.Roles != nil {
-				resp.Roles = entityResp.Roles
-			}
-			resp.Team = h.teamForGroups(entityResp.Groups)
+		resp.ID = &entityResp.ID
+		resp.FirstName = entityResp.FirstName
+		resp.LastName = &entityResp.LastName
+		resp.TimeZone = entityResp.TimeZone
+		if entityResp.Roles != nil {
+			resp.Roles = entityResp.Roles
 		}
+		resp.Team = h.teamForGroups(entityResp.Groups)
 	}
 
 	scimInfo, err := h.scim.SearchUser(r.Context(), user.Email)
