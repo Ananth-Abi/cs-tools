@@ -28,30 +28,90 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
 
 import CsmAdminLayout from "@features/csm-admin/pages/CsmAdminLayout";
 
-function renderLayout() {
+function renderLayout(initialEntry: string) {
   return render(
-    <MemoryRouter initialEntries={["/admin/users"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/admin" element={<CsmAdminLayout />}>
-          <Route path="users" element={<div>Users content</div>} />
+          <Route path="user-management/users" element={<div>Users content</div>} />
+          <Route path="user-management/roles" element={<div>Roles content</div>} />
+          <Route path="user-management/groups" element={<div>Groups content</div>} />
+          <Route path="user-management/teams" element={<div>Teams content</div>} />
+          <Route path="user-management/permissions" element={<div>Permissions content</div>} />
+          <Route path="dashboards" element={<div>Dashboards content</div>} />
         </Route>
       </Routes>
     </MemoryRouter>,
   );
 }
 
-describe("CsmAdminLayout — Dashboards tab gating", () => {
-  it("shows the Dashboards tab for an admin user", () => {
+describe("CsmAdminLayout — top-level tabs", () => {
+  it("shows only User management and Dashboards at the top level, for an admin user", () => {
     mockRoles = ["admin"];
-    renderLayout();
+    // Dashboards active, so the nested User management strip is absent —
+    // isolates the top-level strip's own two tabs from its sub-tabs.
+    renderLayout("/admin/dashboards");
+    expect(screen.getByRole("tab", { name: "User management" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Dashboards" })).toBeInTheDocument();
+    // The five directory pages are only reachable as User management's nested
+    // sub-tabs, never as top-level tabs.
+    expect(screen.queryByRole("tab", { name: "Users" })).not.toBeInTheDocument();
   });
 
-  it("hides the Dashboards tab for a non-admin user, while every other tab still shows", () => {
+  it("hides the Dashboards tab for a non-admin user, while User management still shows", () => {
     mockRoles = ["agent"];
-    renderLayout();
+    renderLayout("/admin/user-management/users");
     expect(screen.queryByRole("tab", { name: "Dashboards" })).not.toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Users" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Roles" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "User management" })).toBeInTheDocument();
+  });
+});
+
+describe("CsmAdminLayout — nested User management tabs", () => {
+  it("shows User management's five sub-tabs when it is the active top-level tab", () => {
+    mockRoles = ["admin"];
+    renderLayout("/admin/user-management/users");
+    expect(screen.getByRole("tab", { name: "User management" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    for (const label of ["Users", "Roles", "Groups", "Teams", "Permissions"]) {
+      expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
+    }
+  });
+
+  it("marks the sub-tab matching the current route as active", () => {
+    mockRoles = ["admin"];
+    renderLayout("/admin/user-management/roles");
+    expect(screen.getByRole("tab", { name: "Roles" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Roles content")).toBeInTheDocument();
+  });
+
+  it("deep-links directly to a sub-page with both levels active and the right outlet rendered", () => {
+    mockRoles = ["admin"];
+    renderLayout("/admin/user-management/groups");
+    expect(screen.getByRole("tab", { name: "User management" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "Groups" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByText("Groups content")).toBeInTheDocument();
+  });
+
+  it("does not render the nested strip when Dashboards is the active top-level tab", () => {
+    mockRoles = ["admin"];
+    renderLayout("/admin/dashboards");
+    expect(screen.getByRole("tab", { name: "Dashboards" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByRole("tab", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Roles" })).not.toBeInTheDocument();
+    expect(screen.getByText("Dashboards content")).toBeInTheDocument();
   });
 });

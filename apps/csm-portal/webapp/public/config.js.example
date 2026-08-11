@@ -37,14 +37,15 @@ window.config = {
   // Available ids: dashboard, support, operations{.service-requests,
   // .change-requests, .incidents, .problems}, engagements, security-center
   // {.reports, .vulnerabilities}, updates, time-cards, announcements,
-  // customers{.accounts, .projects}, admin{.users, .roles, .groups,
-  // .permissions}. Unknown ids are ignored with a console warning.
+  // customers{.accounts, .projects}, admin{.user-management{.users, .roles,
+  // .groups, .teams, .permissions}, .dashboards}. Unknown ids are ignored
+  // with a console warning.
   CSM_PORTAL_FEATURE_OVERRIDES: {
     "operations": "wip",
     "operations.incidents": "enabled",
     "customers": "wip",
     "admin": "wip",
-    "admin.users": "enabled",
+    "admin.user-management.users": "enabled",
   },
 
   // Mock data: when true, data hooks short-circuit to seeded fixtures instead

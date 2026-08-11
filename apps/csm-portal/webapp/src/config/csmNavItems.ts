@@ -204,10 +204,41 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     href: "/admin",
     icon: Settings,
     children: [
-      { id: "admin.users", label: "Users", href: "/admin/users" },
-      { id: "admin.roles", label: "Roles", href: "/admin/roles" },
-      { id: "admin.groups", label: "Groups", href: "/admin/groups" },
-      { id: "admin.teams", label: "Teams", href: "/admin/teams" },
+      {
+        id: "admin.user-management",
+        label: "User management",
+        href: "/admin/user-management",
+        children: [
+          {
+            id: "admin.user-management.users",
+            label: "Users",
+            href: "/admin/user-management/users",
+          },
+          {
+            id: "admin.user-management.roles",
+            label: "Roles",
+            href: "/admin/user-management/roles",
+          },
+          {
+            id: "admin.user-management.groups",
+            label: "Groups",
+            href: "/admin/user-management/groups",
+          },
+          {
+            id: "admin.user-management.teams",
+            label: "Teams",
+            href: "/admin/user-management/teams",
+          },
+          // Routes to a placeholder that already names its backend blocker, so
+          // it renders itself rather than the generic WIP page.
+          {
+            id: "admin.user-management.permissions",
+            label: "Permissions",
+            href: "/admin/user-management/permissions",
+            rendersOwnWipPage: true,
+          },
+        ],
+      },
       // Admin-role-gated (see `isDashboardBuilderVisibleForRoles` in
       // `csmAdminAccess.ts`) — unlike every sibling tab above, this one is
       // hidden from a non-admin signed-in user rather than merely relying
@@ -222,14 +253,6 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         id: "admin.dashboards",
         label: "Dashboards",
         href: "/admin/dashboards",
-      },
-      // Routes to a placeholder that already names its backend blocker, so it
-      // renders itself rather than the generic WIP page.
-      {
-        id: "admin.permissions",
-        label: "Permissions",
-        href: "/admin/permissions",
-        rendersOwnWipPage: true,
       },
     ],
   },
