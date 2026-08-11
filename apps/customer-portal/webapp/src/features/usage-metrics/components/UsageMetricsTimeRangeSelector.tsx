@@ -157,6 +157,7 @@ export default function UsageMetricsTimeRangeSelector({
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
                     <DatePicker
                       value={parseDateOnly(customStart)}
+                      disableFuture
                       maxDate={parseDateOnly(customEnd) ?? undefined}
                       onChange={(date) => {
                         onCustomStartChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
@@ -179,6 +180,7 @@ export default function UsageMetricsTimeRangeSelector({
                     </Typography>
                     <DatePicker
                       value={parseDateOnly(customEnd)}
+                      disableFuture
                       minDate={parseDateOnly(customStart) ?? undefined}
                       onChange={(date) => {
                         onCustomEndChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");

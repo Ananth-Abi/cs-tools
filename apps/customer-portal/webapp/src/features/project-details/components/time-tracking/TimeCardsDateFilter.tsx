@@ -67,6 +67,7 @@ export default function TimeCardsDateFilter({
         </Typography>
         <DatePicker
           value={parsedStart}
+          disableFuture
           maxDate={parsedEnd ?? undefined}
           onChange={(date) => {
             onStartDateChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
@@ -86,6 +87,7 @@ export default function TimeCardsDateFilter({
         </Typography>
         <DatePicker
           value={parsedEnd}
+          disableFuture
           minDate={parsedStart ?? undefined}
           onChange={(date) => {
             onEndDateChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
