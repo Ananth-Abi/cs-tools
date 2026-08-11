@@ -28,11 +28,37 @@ import { LayoutGrid, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, type JSX } from "react";
 import { useNavigate } from "react-router";
 import { useDashboardList } from "@features/csm-dashboard/api/useDashboardList";
+import { useDashboard } from "@features/csm-dashboard/api/useDashboard";
+import { isDraftDrifted } from "@features/csm-admin/dashboards/utils/dashboardDrift";
 import {
   deleteDashboardDraft,
   newDraftId,
+  useDashboardDraft,
   useDashboardDrafts,
 } from "@features/csm-admin/dashboards/utils/dashboardDraftsStorage";
+
+/**
+ * Per-row drift indicator for a deployed dashboard that also has a local
+ * draft. `CsmDashboardBuilderListPage` only knows draft EXISTENCE
+ * (`draftIds`, from the cheap `useDashboardDrafts()` list) — this component
+ * fetches that one dashboard's own live detail (only for rows that actually
+ * have a draft, gated by the caller) and reuses the same `isDraftDrifted`
+ * comparison the editor page's own banner uses, so the badge only appears
+ * when the draft ACTUALLY differs from what's deployed, not merely because a
+ * draft record exists (e.g. one saved byte-identical to the live dashboard,
+ * or re-saved after "open, look, do nothing").
+ */
+function LocalDraftDriftChip({ dashboardId }: { dashboardId: string }): JSX.Element | null {
+  const draft = useDashboardDraft(dashboardId);
+  const live = useDashboard(dashboardId);
+  if (!draft || live.isLoading || live.isError) return null;
+  if (!isDraftDrifted(draft, live.data ?? undefined)) return null;
+  return (
+    <Tooltip title="A local draft for this dashboard has unsaved-to-deployment changes">
+      <Chip size="small" color="warning" label="Local draft" />
+    </Tooltip>
+  );
+}
 
 /**
  * Admin-only landing page for the dashboard builder: every deployed
@@ -115,11 +141,7 @@ export default function CsmDashboardBuilderListPage(): JSX.Element {
                 {d.isDefault && <Chip size="small" label="Default" />}
                 {d.isTeamBased && <Chip size="small" label="Team-based" variant="outlined" />}
                 {d.type && <Chip size="small" label={d.type.toUpperCase()} variant="outlined" />}
-                {draftIds.has(d.id) && (
-                  <Tooltip title="A local draft for this dashboard has unsaved-to-deployment changes">
-                    <Chip size="small" color="warning" label="Local draft" />
-                  </Tooltip>
-                )}
+                {draftIds.has(d.id) && <LocalDraftDriftChip dashboardId={d.id} />}
               </Box>
               <Button
                 variant="outlined"

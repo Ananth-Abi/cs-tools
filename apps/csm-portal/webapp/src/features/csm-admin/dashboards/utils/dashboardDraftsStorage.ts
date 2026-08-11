@@ -65,13 +65,25 @@ export interface DashboardDraft {
 const STORAGE_KEY = "csm.dashboardBuilder.drafts.v1";
 const STORAGE_EVENT = "csm:dashboard-drafts-changed";
 
+// Every REQUIRED `DashboardDraft` field is checked here — a record missing
+// any of them (e.g. hand-edited in devtools, or written by an older/newer
+// version of this feature with a different shape) is dropped by
+// `readDraftsMap` rather than accepted and handed back to a caller that
+// assumes the full shape. `updatedAt` in particular: `listDashboardDrafts`
+// sorts on `a.updatedAt.localeCompare(b.updatedAt)`, which throws on
+// `undefined` — a record missing it used to crash that sort outright rather
+// than being silently ignored.
 function isDraft(v: unknown): v is DashboardDraft {
+  if (typeof v !== "object" || v === null) return false;
+  const d = v as DashboardDraft;
   return (
-    typeof v === "object" &&
-    v !== null &&
-    typeof (v as DashboardDraft).id === "string" &&
-    typeof (v as DashboardDraft).displayName === "string" &&
-    Array.isArray((v as DashboardDraft).widgets)
+    typeof d.id === "string" &&
+    typeof d.displayName === "string" &&
+    typeof d.isDefault === "boolean" &&
+    typeof d.isTeamBased === "boolean" &&
+    Array.isArray(d.widgets) &&
+    Array.isArray(d.emptySections) &&
+    typeof d.updatedAt === "string"
   );
 }
 

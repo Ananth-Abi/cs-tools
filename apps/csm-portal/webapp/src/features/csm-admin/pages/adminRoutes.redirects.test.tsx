@@ -35,6 +35,16 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
     isError: false,
   }),
 }));
+// `CsmAdminLayout` transitively imports API-backed hooks (via the nav
+// tree/dashboard builder routes) — mocked up front, before the component
+// import below, per this repo's own convention for anything that
+// transitively imports `CsmAdminLayout` (see `CsmAdminLayout.test.tsx`).
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({ get: vi.fn(), post: vi.fn() }),
+}));
+vi.mock("@config/apiConfig", () => ({
+  apiConfig: { backendUrl: "https://example.test" },
+}));
 
 import CsmAdminLayout from "@features/csm-admin/pages/CsmAdminLayout";
 

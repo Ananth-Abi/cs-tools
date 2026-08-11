@@ -25,6 +25,17 @@ let mockRoles: string[] | undefined = ["admin"];
 vi.mock("@context/current-user/CurrentUserContext", () => ({
   useCurrentUser: () => ({ user: { roles: mockRoles }, isLoading: false, isError: false }),
 }));
+// `CsmAdminLayout` transitively imports the dashboard builder's own admin
+// routes (via the nav tree/`useRouteTabs`), some of which reach real API
+// hooks — mocked up front, before the component import below, per this
+// repo's own convention for anything that transitively imports
+// `CsmAdminLayout` (see e.g. `adminRoutes.redirects.test.tsx`).
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({ get: vi.fn(), post: vi.fn() }),
+}));
+vi.mock("@config/apiConfig", () => ({
+  apiConfig: { backendUrl: "https://example.test" },
+}));
 
 import CsmAdminLayout from "@features/csm-admin/pages/CsmAdminLayout";
 

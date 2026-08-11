@@ -111,9 +111,63 @@ describe("CsmDashboardBuilderListPage", () => {
   });
 
   it("flags a deployed dashboard that has a local draft with unsaved-to-deployment changes", async () => {
-    getMock.mockResolvedValue([
-      { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
-    ]);
+    // The list response (`GET /dashboards`) and the drift chip's own detail
+    // fetch (`GET /dashboards/agents_pilot`) share the same mocked `get` —
+    // differentiate by path so the drift chip sees a REAL, materially
+    // different live dashboard, not the list-shaped payload.
+    getMock.mockImplementation((path: string) => {
+      if (path === "/dashboards") {
+        return Promise.resolve([
+          { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
+        ]);
+      }
+      if (path === "/dashboards/agents_pilot") {
+        return Promise.resolve({
+          id: "agents_pilot",
+          displayName: "Engineer overview",
+          isDefault: true,
+          isTeamBased: false,
+          widgets: [],
+        });
+      }
+      return Promise.resolve(null);
+    });
+    saveDashboardDraft({
+      id: "agents_pilot",
+      sourceDashboardId: "agents_pilot",
+      displayName: "Engineer overview (renamed locally)",
+      isDefault: true,
+      isTeamBased: false,
+      widgets: [],
+      emptySections: [],
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Engineer overview")).toBeInTheDocument();
+    expect(await screen.findByText("Local draft")).toBeInTheDocument();
+  });
+
+  it("does NOT flag a deployed dashboard whose local draft is byte-identical to what's deployed", async () => {
+    getMock.mockImplementation((path: string) => {
+      if (path === "/dashboards") {
+        return Promise.resolve([
+          { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
+        ]);
+      }
+      if (path === "/dashboards/agents_pilot") {
+        return Promise.resolve({
+          id: "agents_pilot",
+          displayName: "Engineer overview",
+          isDefault: true,
+          isTeamBased: false,
+          widgets: [],
+        });
+      }
+      return Promise.resolve(null);
+    });
+    // Same content as the live dashboard above — merely having a local
+    // draft record must not, by itself, imply divergence.
     saveDashboardDraft({
       id: "agents_pilot",
       sourceDashboardId: "agents_pilot",
@@ -126,6 +180,8 @@ describe("CsmDashboardBuilderListPage", () => {
 
     renderPage();
 
-    expect(await screen.findByText("Local draft")).toBeInTheDocument();
+    expect(await screen.findByText("Engineer overview")).toBeInTheDocument();
+    await waitFor(() => expect(getMock).toHaveBeenCalledWith("/dashboards/agents_pilot"));
+    expect(screen.queryByText("Local draft")).not.toBeInTheDocument();
   });
 });

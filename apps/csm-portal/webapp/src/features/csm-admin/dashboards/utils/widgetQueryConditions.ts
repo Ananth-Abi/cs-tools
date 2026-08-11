@@ -27,8 +27,16 @@ import type { BeCaseFieldFilterOp, BeWidgetResourceType } from "@api/backend/typ
  *   nested under `query.filters` (see `BeCaseFieldFilter`).
  * - Every other resourceType (`incident`, `change_request`, `account`, …)
  *   has its own bespoke named-field filter shape, flat under `query`
- *   itself (e.g. `BeIncidentSearchPayload.filters.priorities`) — there is
- *   no single generic DSL for these anywhere in this app.
+ *   itself — there is no single generic DSL for these anywhere in this
+ *   app. A widget's `query` here corresponds to the INNER `filters` object
+ *   of that resourceType's own search payload (e.g. `query.priorities`
+ *   maps onto `BeIncidentSearchPayload.filters.priorities`, NOT
+ *   `BeIncidentSearchPayload.filters.filters.priorities`) — the outer
+ *   `{ filters: <query>, pagination, sortBy }` envelope is added by
+ *   `useWidgetData` at request time, not stored as part of the widget's own
+ *   `query`. Nesting `query` itself under one more `filters` key here would
+ *   double-wrap it and produce a request the real endpoint doesn't
+ *   recognize.
  *
  * This module gives the widget editor ONE condition-row UI (field,
  * operator, value(s)) that round-trips through whichever of those two
@@ -113,9 +121,16 @@ export function operatorsForResourceType(
 function coerceScalar(value: string): unknown {
   if (value === "true") return true;
   if (value === "false") return false;
-  if (value.trim().length > 0 && /^-?\d+(\.\d+)?$/.test(value.trim())) {
-    const n = Number(value);
-    if (Number.isFinite(n)) return n;
+  const trimmed = value.trim();
+  if (trimmed.length > 0 && /^-?\d+(\.\d+)?$/.test(trimmed)) {
+    const n = Number(trimmed);
+    // Only converted when the number round-trips back to the EXACT same
+    // text — this naturally rejects a leading-zero identifier (`"0090472"`,
+    // `Number("0090472")` -> `90472` -> `String(90472)` -> `"90472"` !==
+    // `"0090472"`) and a value that lost precision above
+    // `Number.MAX_SAFE_INTEGER`, both of which would otherwise be silently
+    // corrupted straight into the deployable widget JSON.
+    if (Number.isFinite(n) && String(n) === trimmed) return n;
   }
   return value;
 }
@@ -216,17 +231,20 @@ export function queryFromFilterConditions(
   const out: Record<string, unknown> = {};
   for (const c of valid) {
     // Non-case resourceTypes' own contracts only ever use a scalar or an
-    // array (see this module's own doc comment) — `in` writes the array,
-    // every other op collapses to a single scalar value (the first one
-    // entered), since none of those endpoints understand
-    // isEmpty/isNotEmpty/gte/lte as a bare top-level key. The editor itself
-    // (see `operatorsForResourceType`) never offers those five ops for a
-    // non-case resourceType, so this fallback only ever fires for
-    // already-existing data that predates that restriction — it degrades to
-    // the same best-effort scalar rather than crashing or dropping the row.
-    // Either way, each value is type-recovered (`coerceScalar`) rather than
-    // left as the raw editor string, so a boolean/numeric field round-trips
-    // as its real JSON type instead of always as a stringified one.
+    // array (see this module's own doc comment), with no per-field op of
+    // their own at all — `in` writes the array, `eq` writes a single
+    // type-recovered scalar. Any OTHER op (`notIn`/`gte`/`lte`/`isEmpty`/
+    // `isNotEmpty`) can only reach here from data the editor itself never
+    // produces (`operatorsForResourceType` never offers them for a
+    // non-case resourceType) — most likely a hand-edited deployed widget
+    // JSON. There is no flat-contract encoding of those ops' real meaning
+    // ("not X", a range, ...), so this row is dropped from the output
+    // rather than reinterpreted as `eq`: a dropped filter is a visible,
+    // recoverable gap (temporarily unenforced, admin can re-add it); a
+    // `notIn` silently rewritten to `eq` on the very next save would flip
+    // its real meaning ("not X" -> "is X") without the admin ever having
+    // touched that row.
+    if (c.op !== "eq" && c.op !== "in") continue;
     out[c.field] = c.op === "in" ? c.values.map(coerceScalar) : coerceScalar(c.values[0] ?? "");
   }
   return out;

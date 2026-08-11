@@ -149,9 +149,27 @@ describe("filterConditionsFromQuery / queryFromFilterConditions — non-case res
     });
   });
 
-  it("still degrades an unsupported op (legacy data) to a type-recovered scalar rather than crashing", () => {
-    const conditions = [{ field: "slaViolated", op: "notIn" as const, values: ["true", "false"] }];
-    expect(queryFromFilterConditions("incident", conditions)).toEqual({ slaViolated: true });
+  it("drops a row whose op the flat non-case contract can't express (legacy/hand-edited data), rather than silently reinterpreting it as eq", () => {
+    // The flat contract has no per-field op of its own — `notIn` here has
+    // no way to be written as "not X" and must NOT be silently rewritten
+    // to `eq` ("is X"), which would flip its real meaning the moment the
+    // admin saves without ever touching this row.
+    const conditions = [
+      { field: "slaViolated", op: "notIn" as const, values: ["true", "false"] },
+      { field: "number", op: "eq" as const, values: ["INC0001"] },
+    ];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({ number: "INC0001" });
+  });
+
+  it("preserves a leading-zero identifier as a string, rather than silently dropping the leading zeros", () => {
+    const conditions = [{ field: "number", op: "eq" as const, values: ["0090472"] }];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({ number: "0090472" });
+  });
+
+  it("preserves a value above Number.MAX_SAFE_INTEGER as a string, rather than silently losing precision", () => {
+    const huge = "99999999999999999999";
+    const conditions = [{ field: "number", op: "eq" as const, values: [huge] }];
+    expect(queryFromFilterConditions("incident", conditions)).toEqual({ number: huge });
   });
 });
 

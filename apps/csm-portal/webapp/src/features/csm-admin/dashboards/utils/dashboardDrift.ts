@@ -88,5 +88,13 @@ function deployableShapeFromLive(live: BeDashboard): DeployableDashboardShape {
  */
 export function isDraftDrifted(draft: DashboardDraft, live: BeDashboard | undefined): boolean {
   if (!live) return true;
+  // A draft not yet tied to ANY deployed dashboard is drifted by
+  // definition (see this function's own doc comment above) — checked
+  // before the shape comparison below, so a caller that happens to pass a
+  // live dashboard alongside a draft that was never actually opened FROM
+  // it (e.g. matched only by a shared id) can't fall through to a
+  // content-equality check that was never the right comparison to begin
+  // with.
+  if (!draft.sourceDashboardId) return true;
   return canonicalJson(deployableShapeFromDraft(draft)) !== canonicalJson(deployableShapeFromLive(live));
 }

@@ -219,6 +219,31 @@ describe("CsmDashboardBuilderEditorPage", () => {
     expect(getDashboardDraft("agents_pilot")?.updatedAt).toBe(initialUpdatedAt);
   });
 
+  it("flushes a still-pending autosave on unmount, rather than losing an edit made just before navigating away", async () => {
+    getMock.mockResolvedValue({
+      id: "agents_pilot",
+      displayName: "Engineer overview",
+      isDefault: true,
+      isTeamBased: false,
+      widgets: [],
+    });
+
+    const { unmount } = renderEditor("/admin/dashboards/agents_pilot");
+    await waitFor(() => expect(screen.getByLabelText("Dashboard display name")).toHaveValue("Engineer overview"));
+
+    fireEvent.change(screen.getByLabelText("Dashboard display name"), {
+      target: { value: "Engineer overview (renamed)" },
+    });
+
+    // Unmount immediately — well inside the 300ms debounce window, so the
+    // scheduled autosave `setTimeout` never gets a chance to fire on its
+    // own. Without a flush-on-unmount, this edit would be lost outright
+    // (there is no backend copy — see this page's own doc comment).
+    unmount();
+
+    expect(getDashboardDraft("agents_pilot")?.displayName).toBe("Engineer overview (renamed)");
+  });
+
   it("shows the drift warning once a deployed dashboard's draft is edited locally", async () => {
     getMock.mockResolvedValue({
       id: "agents_pilot",

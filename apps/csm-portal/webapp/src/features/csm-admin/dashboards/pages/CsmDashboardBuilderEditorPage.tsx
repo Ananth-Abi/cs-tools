@@ -163,18 +163,52 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
   }, [loadedDraftId]);
 
   const [savedAt, setSavedAt] = useState<string | undefined>(localDraft?.updatedAt);
+  // Both refs, not state — read only from the unmount-flush effect below,
+  // so keeping them current never itself triggers a render. Kept current
+  // via its own effect (never mutated during render — React's own
+  // `react-hooks/refs` lint rule rejects that) rather than folded into the
+  // debounce effect below, so it's always current even on the render where
+  // `skipNextAutosaveRef` causes that effect to bail out early.
+  const workingRef = useRef(working);
+  useEffect(() => {
+    workingRef.current = working;
+  }, [working]);
+  const pendingSaveRef = useRef(false);
   useEffect(() => {
     if (!working) return;
     if (skipNextAutosaveRef.current) {
       skipNextAutosaveRef.current = false;
       return;
     }
+    pendingSaveRef.current = true;
     const timer = setTimeout(() => {
+      pendingSaveRef.current = false;
       const saved = saveDashboardDraft(working);
       setSavedAt(saved.updatedAt);
     }, 300);
+    // Ordinary debounce cleanup: fires on every `working` change (each
+    // keystroke) to cancel the stale timer, NOT a flush — flushing here
+    // too would write to storage on every keystroke and defeat the
+    // debounce entirely. The real "did this edit ever get persisted?"
+    // flush is the mount-once effect below, which only runs its own
+    // cleanup on actual unmount.
     return () => clearTimeout(timer);
   }, [working]);
+
+  // Runs its cleanup exactly once, on unmount (empty deps) — catches the
+  // case a debounce window above never got to fire naturally because the
+  // admin navigated away (e.g. "Back to dashboards") within 300ms of their
+  // last keystroke. This feature has no backend of its own (see this
+  // page's own doc comment) — `working` is the only copy of that edit, so
+  // losing it here means losing it for good, not "it'll autosave again
+  // later".
+  useEffect(() => {
+    return () => {
+      if (pendingSaveRef.current && workingRef.current) {
+        saveDashboardDraft(workingRef.current);
+      }
+    };
+  }, []);
 
   const [editingWidget, setEditingWidget] = useState<
     { widget: BeDashboardWidget | undefined; defaultSection?: string } | undefined

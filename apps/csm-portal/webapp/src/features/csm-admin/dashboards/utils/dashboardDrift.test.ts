@@ -84,6 +84,16 @@ describe("isDraftDrifted", () => {
     expect(isDraftDrifted(draft({ sourceDashboardId: undefined }), undefined)).toBe(true);
   });
 
+  it("is drifted when there's no sourceDashboardId, even if a live dashboard is passed and matches by content", () => {
+    // A draft that was never actually opened FROM a deployed dashboard is
+    // "not yet tied to any deployed dashboard" (this function's own doc
+    // comment) — a caller passing a live dashboard alongside it anyway
+    // (e.g. matched only by a shared id) must not fall through to a
+    // content-equality check.
+    const neverDeployed = draft({ sourceDashboardId: undefined });
+    expect(isDraftDrifted(neverDeployed, live())).toBe(true);
+  });
+
   it("ignores builder-only bookkeeping fields (id, sourceDashboardId, emptySections, updatedAt)", () => {
     const withBookkeeping = draft({
       id: "some-other-id",

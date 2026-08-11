@@ -113,4 +113,29 @@ describe("dashboardDraftsStorage", () => {
     expect(listDashboardDrafts()).toEqual([]);
     expect(() => saveDashboardDraft({ id: "d1", ...BASE })).not.toThrow();
   });
+
+  it("silently ignores a syntactically-valid-JSON but incomplete stored draft, rather than crashing the sort", () => {
+    // A record missing `updatedAt` (e.g. hand-edited, or written by an
+    // older/newer shape of this feature) used to pass the old `isDraft`
+    // check, then crash `listDashboardDrafts`'s own
+    // `a.updatedAt.localeCompare(b.updatedAt)` sort by calling
+    // `.localeCompare` on `undefined`.
+    localStorage.setItem(
+      "csm.dashboardBuilder.drafts.v1",
+      JSON.stringify({
+        incomplete: {
+          id: "incomplete",
+          displayName: "Missing required fields",
+          widgets: [],
+          // isDefault, isTeamBased, emptySections, updatedAt all absent.
+        },
+        d1: { id: "d1", ...BASE, updatedAt: "2026-08-11T00:00:00.000Z" },
+      }),
+    );
+
+    expect(() => listDashboardDrafts()).not.toThrow();
+    const ids = listDashboardDrafts().map((d) => d.id);
+    expect(ids).toEqual(["d1"]);
+    expect(getDashboardDraft("incomplete")).toBeUndefined();
+  });
 });
