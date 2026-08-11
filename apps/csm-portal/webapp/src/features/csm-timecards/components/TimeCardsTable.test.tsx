@@ -15,10 +15,37 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import type { ReactElement } from "react";
 import TimeCardsTable from "@features/csm-timecards/components/TimeCardsTable";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
+
+// TimeCardsTable's "View details" action now renders
+// TimeCardCasePreviewDrawer, which pulls in useGetCsmCaseDetail /
+// useGetCsmCaseComments -- both read window.config at module load (via
+// @config/apiConfig) and call useBackendApi() unconditionally, even while
+// their own query stays disabled (which it does in every test here, since
+// none of them actually open the drawer). Mock both so importing this
+// component doesn't trip either, and wrap renders in a QueryClientProvider
+// since those hooks now need one in the tree.
+vi.mock("@config/apiConfig", () => ({ apiConfig: { backendUrl: "https://example.test" } }));
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({
+    get: vi.fn(),
+    post: vi.fn(),
+    patch: vi.fn(),
+    postEmpty: vi.fn(),
+    del: vi.fn(),
+    getBlob: vi.fn(),
+  }),
+}));
+
+function renderWithClient(ui: ReactElement): ReturnType<typeof render> {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
 
 const CARD: CsmTimeCard = {
   id: "tc-1",
@@ -47,7 +74,7 @@ const APPROVER_ROLE_CTX = { isOwner: false, isApprover: true, isAdmin: false };
 
 describe("TimeCardsTable column visibility", () => {
   it("shows the Case column but not the Engineer column on the personal view (My time sheets)", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -68,7 +95,7 @@ describe("TimeCardsTable column visibility", () => {
   });
 
   it("shows both the Case and Engineer columns when showEngineerColumn is set (All / Approvals)", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -90,7 +117,7 @@ describe("TimeCardsTable column visibility", () => {
 
 describe("TimeCardsTable bulk-select (Approvals tab)", () => {
   it("renders no checkboxes at all when selectable is omitted (default, every other tab)", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -105,7 +132,7 @@ describe("TimeCardsTable bulk-select (Approvals tab)", () => {
   });
 
   it("only shows a row checkbox for cards the viewer can actually approve, not e.g. an already-approved one", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD, APPROVED_CARD]}
         isLoading={false}
@@ -133,7 +160,7 @@ describe("TimeCardsTable bulk-select (Approvals tab)", () => {
 
   it("calls onToggleSelect with the card when its row checkbox is clicked", () => {
     const onToggleSelect = vi.fn();
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -153,7 +180,7 @@ describe("TimeCardsTable bulk-select (Approvals tab)", () => {
   });
 
   it("reflects selectedIds on the row checkbox and shows the header checkbox checked once every selectable row is selected", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -176,7 +203,7 @@ describe("TimeCardsTable bulk-select (Approvals tab)", () => {
 
   it("calls onToggleSelectAll with only the selectable cards on the page when the header checkbox is clicked", () => {
     const onToggleSelectAll = vi.fn();
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD, APPROVED_CARD]}
         isLoading={false}
@@ -196,7 +223,7 @@ describe("TimeCardsTable bulk-select (Approvals tab)", () => {
   });
 
   it("disables the header select-all checkbox when no row on the page is approvable", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[APPROVED_CARD]}
         isLoading={false}
@@ -215,10 +242,103 @@ describe("TimeCardsTable bulk-select (Approvals tab)", () => {
   });
 });
 
+describe("TimeCardsTable row action buttons (Approvals tab)", () => {
+  it("renders Approve/Reject as icon-only buttons, not visible text, while still exposing an accessible name", () => {
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        showActionsColumn
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Approve" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(screen.queryByText("Approve")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reject")).not.toBeInTheDocument();
+  });
+
+  it("calls onCardAction when an enabled row action button is clicked", () => {
+    const onCardAction = vi.fn();
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        showActionsColumn
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={onCardAction}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(onCardAction).toHaveBeenCalledWith(CARD, "approve");
+  });
+
+  // Even a single checked row disables the row-level buttons -- mixing
+  // "acting directly on this row" with "this row is part of a selection" at
+  // the same time reads as confusing regardless of count (explicit product
+  // follow-up on this feature: "must be implemented for single selection as
+  // well... otherwise user gets confused").
+  it("disables row action buttons once even a single row is selected", () => {
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        showActionsColumn
+        selectable
+        selectedIds={new Set([CARD.id])}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+  });
+
+  // Clicking one row's own Approve/Reject while several rows are checked is
+  // ambiguous (act on just this row, or the whole selection?) -- disabled
+  // for every row once any are selected, per review feedback on this feature.
+  it("disables every row's Approve/Reject once multiple rows are selected, across the whole page not just the selected rows", () => {
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD, { ...CARD, id: "tc-3", caseNumber: "CS0352586" }]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        showActionsColumn
+        selectable
+        selectedIds={new Set([CARD.id, "tc-3"])}
+        onToggleSelect={vi.fn()}
+        onToggleSelectAll={vi.fn()}
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    for (const button of screen.getAllByRole("button", { name: "Approve" })) {
+      expect(button).toBeDisabled();
+    }
+    for (const button of screen.getAllByRole("button", { name: "Reject" })) {
+      expect(button).toBeDisabled();
+    }
+  });
+});
+
 describe("TimeCardsTable edit action", () => {
   it("shows the edit icon for the card's own owner on a submitted card, and calls onCardAction with \"edit\"", () => {
     const onCardAction = vi.fn();
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -236,7 +356,7 @@ describe("TimeCardsTable edit action", () => {
   });
 
   it("shows the edit icon regardless of showActionsColumn (unlike approve/reject)", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -252,7 +372,7 @@ describe("TimeCardsTable edit action", () => {
   });
 
   it("hides the edit icon for a non-owner (e.g. an approver viewing someone else's card)", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[CARD]}
         isLoading={false}
@@ -269,7 +389,7 @@ describe("TimeCardsTable edit action", () => {
   });
 
   it("hides the edit icon once the card is no longer submitted, even for the owner", () => {
-    render(
+    renderWithClient(
       <TimeCardsTable
         cards={[{ ...CARD, state: "approved" }]}
         isLoading={false}
