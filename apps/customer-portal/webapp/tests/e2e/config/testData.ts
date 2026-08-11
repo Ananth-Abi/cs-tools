@@ -224,6 +224,32 @@ export const SERVICE_REQUEST_INPUT: ServiceRequestInput = {
   description: "This is a test Generic Request SR for MS subscription project",
 };
 
+/** Content submitted by the create-security-report flow.
+ *
+ * A security report is a case raised at `/support/security-report/create`. The
+ * form hides Issue Type and Severity and requires at least one attachment.
+ *
+ * There is no `title` here: for security reports CreateCasePage generates it
+ * from the selected deployment, the product name and today's date, overwriting
+ * anything typed (see the auto-fill effect in CreateCasePage.tsx). */
+export interface SecurityReportInput {
+  description: string;
+  /** Attachment path, relative to the tests/e2e directory. Kept in-repo rather
+   * than pointing at a developer's Downloads folder so the spec is portable to
+   * other machines and to CI. */
+  attachmentPath: string;
+}
+
+/**
+ * Security report content for the Managed Cloud Subscription project.
+ *
+ * ⚠️ Creates a permanent record on every run.
+ */
+export const SECURITY_REPORT_INPUT: SecurityReportInput = {
+  description: "This is a test Security Report SR for MS subscription project",
+  attachmentPath: "fixtures/files/sraattachment.csv",
+};
+
 /**
  * "Request Product Logs" service request, under the Information Request
  * catalog.
@@ -254,9 +280,9 @@ export const PRODUCT_LOGS_REQUEST_INPUT: ProductLogsRequestInput = {
   logType: "Carbon",
   startDaysAgo: 3,
   endDaysAgo: 1,
-  purpose: "This is a test Inofrmation Request SR for MS subscription project",
+  purpose: "This is a test Information Request SR for MS subscription project",
   description:
-    "This is a test Inofrmation Request Description SR for MS subscription project",
+    "This is a test Information Request Description SR for MS subscription project",
 };
 
 /**
