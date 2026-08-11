@@ -33,6 +33,8 @@ import { useMemo, useState, type JSX } from "react";
 import type {
   BeDashboardPieSlice,
   BeDashboardWidget,
+  BeDashboardWidgetColumn,
+  BeDashboardWidgetColumnFormat,
   BeWidgetPaletteColor,
   BeWidgetResourceType,
   BeWidgetShape,
@@ -57,11 +59,40 @@ const PALETTE_COLORS: BeWidgetPaletteColor[] = [
   "info",
   "warning",
 ];
+const COLUMN_FORMATS: BeDashboardWidgetColumnFormat[] = ["text", "date"];
 
 interface SliceDraft {
   label: string;
   color?: BeWidgetPaletteColor;
   conditions: FilterCondition[];
+}
+
+/** A `columns` row while it's being edited — same shape as
+ * `BeDashboardWidgetColumn` but `format` is normalized to `""` (rather than
+ * `undefined`) so it round-trips cleanly through the `TextField select`
+ * below, which needs a defined `value` to stay a controlled input. */
+interface ColumnDraft {
+  path: string;
+  label: string;
+  format: BeDashboardWidgetColumnFormat | "";
+}
+
+function columnsToDrafts(columns: BeDashboardWidgetColumn[] | undefined): ColumnDraft[] {
+  return (columns ?? []).map((c) => ({ path: c.path, label: c.label, format: c.format ?? "" }));
+}
+
+// Mirrors `columns?: []` being a no-op on the wire (see
+// `BeDashboardWidget.columns`'s own doc comment): a row missing either half
+// of its identity (`path`/`label`) can't resolve or label a cell, so it's
+// dropped rather than saved as a broken column.
+function draftsToColumns(drafts: ColumnDraft[]): BeDashboardWidgetColumn[] {
+  return drafts
+    .filter((d) => d.path.trim().length > 0 && d.label.trim().length > 0)
+    .map((d) => ({
+      path: d.path.trim(),
+      label: d.label.trim(),
+      format: d.format || undefined,
+    }));
 }
 
 function slicesToDrafts(resourceType: BeWidgetResourceType, slices: BeDashboardPieSlice[] | undefined): SliceDraft[] {
@@ -148,6 +179,9 @@ export default function WidgetEditorDialog({
   const [sliceDrafts, setSliceDrafts] = useState<SliceDraft[]>(() =>
     slicesToDrafts(widget?.resourceType ?? "case", widget?.slices),
   );
+  const [columnDrafts, setColumnDrafts] = useState<ColumnDraft[]>(() =>
+    columnsToDrafts(widget?.columns),
+  );
   // A resourceType switch invalidates the previous filter shape entirely
   // (see widgetQueryConditions.ts's own doc comment) — rather than silently
   // reinterpreting stale rows against a contract they were never written
@@ -162,19 +196,29 @@ export default function WidgetEditorDialog({
 
   const canSave = displayName.trim().length > 0 && gridWidth >= 1 && gridWidth <= 12;
 
-  const buildWidget = (): BeDashboardWidget => ({
-    widgetId,
-    displayName: displayName.trim(),
-    description: description.trim() || undefined,
-    resourceType,
-    shape,
-    gridWidth,
-    query: queryFromFilterConditions(resourceType, conditions),
-    section: section.trim() || undefined,
-    groupBy: groupBy.trim() || undefined,
-    listLimit: shape === "list" ? listLimit : undefined,
-    slices: shape === "pie" || shape === "bar" ? draftsToSlices(resourceType, sliceDrafts) : undefined,
-  });
+  const buildWidget = (): BeDashboardWidget => {
+    // Absent (not an empty array) when unconfigured — the same "no-op,
+    // existing hardcoded renderer applies" convention
+    // `BeDashboardWidget.columns`'s own doc comment documents, and the one
+    // `DashboardWidgetGrid`'s passthrough (`columns={widget.columns}`) and
+    // `DashboardWidgetTile`'s `hasColumns` check both rely on.
+    const builtColumns = shape === "list" ? draftsToColumns(columnDrafts) : [];
+    return {
+      widgetId,
+      displayName: displayName.trim(),
+      description: description.trim() || undefined,
+      resourceType,
+      shape,
+      gridWidth,
+      query: queryFromFilterConditions(resourceType, conditions),
+      section: section.trim() || undefined,
+      groupBy: groupBy.trim() || undefined,
+      listLimit: shape === "list" ? listLimit : undefined,
+      slices:
+        shape === "pie" || shape === "bar" ? draftsToSlices(resourceType, sliceDrafts) : undefined,
+      columns: builtColumns.length > 0 ? builtColumns : undefined,
+    };
+  };
 
   const handlePreview = (): void => setPreviewSnapshot(buildWidget());
 
@@ -189,7 +233,15 @@ export default function WidgetEditorDialog({
   const updateSlice = (index: number, patch: Partial<SliceDraft>): void =>
     setSliceDrafts((prev) => prev.map((d, i) => (i === index ? { ...d, ...patch } : d)));
 
+  const addColumn = (): void =>
+    setColumnDrafts((prev) => [...prev, { path: "", label: "", format: "" }]);
+  const removeColumn = (index: number): void =>
+    setColumnDrafts((prev) => prev.filter((_, i) => i !== index));
+  const updateColumn = (index: number, patch: Partial<ColumnDraft>): void =>
+    setColumnDrafts((prev) => prev.map((d, i) => (i === index ? { ...d, ...patch } : d)));
+
   const isChartShape = shape === "pie" || shape === "bar";
+  const isListShape = shape === "list";
   const previewKey = useMemo(
     () => (previewSnapshot ? JSON.stringify(previewSnapshot) : undefined),
     [previewSnapshot],
@@ -314,6 +366,71 @@ export default function WidgetEditorDialog({
             onChange={setConditions}
           />
 
+          {isListShape && (
+            <>
+              <Divider />
+              <Typography variant="subtitle2">
+                Columns — leave empty to use this resource type's default list rendering
+              </Typography>
+              {columnDrafts.map((column, index) => (
+                <Box key={index} sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+                  <TextField
+                    label="Path"
+                    value={column.path}
+                    onChange={(e) => updateColumn(index, { path: e.target.value })}
+                    placeholder="e.g. project.key"
+                    size="small"
+                    sx={{ flex: "1 1 200px" }}
+                    slotProps={{ htmlInput: { "aria-label": "Column path" } }}
+                  />
+                  <TextField
+                    label="Label"
+                    value={column.label}
+                    onChange={(e) => updateColumn(index, { label: e.target.value })}
+                    size="small"
+                    sx={{ flex: "1 1 160px" }}
+                    slotProps={{ htmlInput: { "aria-label": "Column label" } }}
+                  />
+                  <TextField
+                    select
+                    label="Format"
+                    value={column.format}
+                    onChange={(e) =>
+                      updateColumn(index, {
+                        format: e.target.value as BeDashboardWidgetColumnFormat | "",
+                      })
+                    }
+                    size="small"
+                    sx={{ minWidth: 140 }}
+                  >
+                    <MenuItem value="">Default (text)</MenuItem>
+                    {COLUMN_FORMATS.map((f) => (
+                      <MenuItem key={f} value={f}>
+                        {f}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <IconButton
+                    size="small"
+                    aria-label={`Remove column ${column.label || index + 1}`}
+                    onClick={() => removeColumn(index)}
+                  >
+                    <Trash2 size={16} />
+                  </IconButton>
+                </Box>
+              ))}
+              <Button
+                size="small"
+                variant="text"
+                startIcon={<Plus size={16} />}
+                onClick={addColumn}
+                sx={{ alignSelf: "flex-start" }}
+              >
+                Add column
+              </Button>
+            </>
+          )}
+
           {isChartShape && (
             <>
               <Divider />
@@ -382,7 +499,16 @@ export default function WidgetEditorDialog({
             </Button>
           </Box>
           {previewSnapshot ? (
-            <Box sx={{ maxWidth: 420 }}>
+            // A list-shape widget renders a real multi-column table (same as
+            // `DashboardWidgetGrid`'s own `widgetGridColumnSx`, which spans a
+            // list tile the full row regardless of its configured
+            // `gridWidth`) — it should preview at the dialog's actual
+            // content width, not a fixed cap. Count/pie/bar tiles are
+            // compact by design (a big number, a small chart); capping them
+            // keeps the preview from stretching those shapes edge-to-edge,
+            // which would look wrong next to how they actually render on a
+            // real dashboard grid cell.
+            <Box sx={previewSnapshot.shape === "list" ? { width: "100%" } : { maxWidth: 420 }}>
               <DashboardWidgetTile
                 key={previewKey}
                 widgetId={previewSnapshot.widgetId}
@@ -393,6 +519,7 @@ export default function WidgetEditorDialog({
                 filters={previewSnapshot.query}
                 listLimit={previewSnapshot.listLimit}
                 slices={previewSnapshot.slices}
+                columns={previewSnapshot.columns}
                 sortBy={previewSnapshot.sortBy}
                 selectedTeamGroupId={selectedTeamGroupId}
                 selectedTeamLabel={selectedTeamLabel}

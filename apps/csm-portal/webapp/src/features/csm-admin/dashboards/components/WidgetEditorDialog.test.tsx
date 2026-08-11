@@ -240,6 +240,130 @@ describe("WidgetEditorDialog", () => {
     expect(Number.isNaN(saved.listLimit)).toBe(false);
   });
 
+  it("hides the Columns section for count/pie shapes, and shows it for list", () => {
+    renderDialog();
+    // Default shape is "count".
+    expect(screen.queryByRole("button", { name: /add column/i })).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "pie" }));
+    expect(screen.queryByRole("button", { name: /add column/i })).not.toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+    expect(screen.getByRole("button", { name: /add column/i })).toBeInTheDocument();
+  });
+
+  it("adds and removes column rows", () => {
+    renderDialog();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    expect(screen.getAllByLabelText("Column path")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    expect(screen.getAllByLabelText("Column path")).toHaveLength(2);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /^Remove column/ })[0]);
+    expect(screen.getAllByLabelText("Column path")).toHaveLength(1);
+  });
+
+  it("wires configured columns into buildWidget, omitting the field entirely when none are set", () => {
+    const { onSave } = renderDialog();
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
+    const savedWithoutColumns = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(savedWithoutColumns.columns).toBeUndefined();
+  });
+
+  it("wires configured columns into buildWidget when rows are filled in", () => {
+    const { onSave } = renderDialog();
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByLabelText("Column path"), {
+      target: { value: "project.key" },
+    });
+    fireEvent.change(screen.getByLabelText("Column label"), {
+      target: { value: "Project" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Format" }));
+    fireEvent.click(screen.getByRole("option", { name: "date" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
+    const saved = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(saved.columns).toEqual([{ path: "project.key", label: "Project", format: "date" }]);
+  });
+
+  it("passes the configured columns to the Preview tile so it exercises the generic column renderer", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "c-1", project: { key: "PROJ-1" } }],
+      limit: 4,
+      offset: 0,
+      hasMore: false,
+    });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    fireEvent.change(screen.getByLabelText("Column path"), {
+      target: { value: "project.key" },
+    });
+    fireEvent.change(screen.getByLabelText("Column label"), {
+      target: { value: "Project" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    // "Project" is this configured column's own header, only rendered by
+    // `GenericColumnList`/`DashboardMiniTable` — the hardcoded per-
+    // resourceType `CasesList` renderer has no such header, so seeing it
+    // proves the `columns` prop actually reached the Preview tile.
+    await waitFor(() => expect(screen.getByText("Project")).toBeInTheDocument());
+    expect(screen.getByText("PROJ-1")).toBeInTheDocument();
+  });
+
+  it("renders the list-shape Preview at full width, without the old fixed 420px cap", async () => {
+    postMock.mockResolvedValue({ total: 0, cases: [], limit: 4, offset: 0, hasMore: false });
+    const { container } = render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter>
+          <WidgetEditorDialog widget={undefined} sectionSuggestions={[]} onClose={vi.fn()} onSave={vi.fn()} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    await waitFor(() =>
+      expect(screen.getAllByText("Case list").length).toBeGreaterThan(0),
+    );
+    // No element in the dialog carries the old fixed-width cap any more —
+    // a list-shape preview now sizes to the dialog's own content width
+    // instead.
+    expect(container.querySelector('[style*="max-width: 420px"]')).toBeNull();
+  });
+
   it("clearing Row limit entirely unsets it, rather than writing NaN through", () => {
     const existing: BeDashboardWidget = {
       widgetId: "w1",
