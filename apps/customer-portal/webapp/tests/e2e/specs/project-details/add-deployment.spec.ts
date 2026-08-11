@@ -58,10 +58,13 @@ test.describe("Deployment", () => {
 
     // Unique per run, so the 409-on-duplicate rule cannot fail the test. Uses a
     // sortable compact timestamp to keep the accumulated records readable.
+    // Milliseconds are kept: at whole-second resolution two runs starting in the
+    // same second — a retry, or a colleague running against the same staging
+    // project — would collide and hit the very 409 this is here to avoid.
     const deploymentName = `${DEPLOYMENT_INPUT.namePrefix} ${new Date()
       .toISOString()
-      .slice(0, 19)
-      .replace(/[:T]/g, "-")}`;
+      .slice(0, 23)
+      .replace(/[:T.]/g, "-")}`;
 
     await deployments.openDeploymentsTab(project.id);
     await deployments.openAddDeploymentModal();
@@ -101,9 +104,12 @@ test.describe("Deployment", () => {
     };
     expect(created.id, "backend returned no deployment id").toBeTruthy();
 
-    // The modal closes and the new deployment shows up in the list.
+    // The modal closes and the new deployment shows up in the list — exactly
+    // once, since the name is unique to this run.
     await expect(deployments.modal()).toBeHidden();
-    await expect(deployments.deploymentEntry(deploymentName)).toBeVisible();
+    const entry = deployments.deploymentEntry(deploymentName);
+    await expect(entry).toHaveCount(1);
+    await expect(entry).toBeVisible();
 
     console.log(
       `Created deployment (${ProjectType.MANAGED_CLOUD_SUBSCRIPTION}): ` +

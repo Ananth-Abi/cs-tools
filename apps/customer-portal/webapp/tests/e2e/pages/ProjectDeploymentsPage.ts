@@ -154,9 +154,19 @@ export class ProjectDeploymentsPage {
     await this.modalSubmitButton().click();
   }
 
-  /** Any element showing a deployment's name — for asserting it appears in the
-   * list after creation. */
+  /**
+   * The list entry for a deployment, matched on its exact name.
+   *
+   * Exact rather than substring: every deployment this suite creates shares the
+   * `namePrefix`, so a substring match would also hit the entries left by
+   * earlier runs. Deliberately not narrowed with `.first()` either — callers
+   * assert the count, so an ambiguous match fails loudly instead of silently
+   * asserting against whichever entry happens to come first.
+   *
+   * @param name - Full deployment name.
+   * @returns Locator for the matching entry (expected to be unique).
+   */
   deploymentEntry(name: string): Locator {
-    return this.main().getByText(name, { exact: false }).first();
+    return this.main().getByText(name, { exact: true });
   }
 }
