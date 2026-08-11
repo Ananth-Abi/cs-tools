@@ -74,7 +74,10 @@ test.describe("Security Report", () => {
     // entered. Asserting it here means the report is submitted with a title we
     // have actually verified rather than an unchecked one.
     await expect(form.titleInput()).toHaveValue(
-      SecurityReportCreatePage.expectedTitlePattern(project.deployment),
+      SecurityReportCreatePage.expectedTitlePattern(
+        project.deployment,
+        project.productName,
+      ),
     );
 
     await form.fillDescription(SECURITY_REPORT_INPUT.description);

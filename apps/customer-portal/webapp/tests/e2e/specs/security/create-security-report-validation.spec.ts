@@ -109,7 +109,10 @@ test.describe("Security Report — validation", () => {
 
     await form.selectProductVersion(project.productVersion);
     await expect(form.titleInput()).toHaveValue(
-      SecurityReportCreatePage.expectedTitlePattern(project.deployment),
+      SecurityReportCreatePage.expectedTitlePattern(
+        project.deployment,
+        project.productName,
+      ),
     );
   });
 

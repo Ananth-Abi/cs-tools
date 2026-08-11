@@ -29,6 +29,13 @@ import {
  * expect timeout. */
 const LOAD_TIMEOUT_MS = 60_000;
 
+/** Escapes regex metacharacters so a literal label can be embedded in a pattern.
+ * Product and deployment names contain dots (version numbers) and could contain
+ * brackets, which would otherwise change what the pattern matches. */
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Page object for the create-security-report form at
  * `/projects/:projectId/support/security-report/create`.
@@ -182,22 +189,27 @@ export class SecurityReportCreatePage {
 
   /**
    * Pattern the auto-generated title must match:
-   * `<deployment> - <product name> - YYYY-MM-DD`, where the product name is the
-   * product *without* its version. Built rather than hardcoded so the date is
-   * always today's, matching how CreateCasePage generates it.
+   * `<deployment> - <product name> - YYYY-MM-DD`.
+   *
+   * All three segments are matched exactly. Only the date is computed — built
+   * rather than hardcoded so it is always today's, matching how CreateCasePage
+   * generates it.
    *
    * @param deployment - Deployment label the report is filed against.
+   * @param productName - Product name *without* its version, as the generator
+   * uses (`ProjectFixture.productName`, not `productVersion`).
    * @returns A regex the Title field's value should satisfy.
    */
-  static expectedTitlePattern(deployment: string): RegExp {
+  static expectedTitlePattern(deployment: string, productName: string): RegExp {
     const today = new Date();
     const date = [
       today.getFullYear(),
       String(today.getMonth() + 1).padStart(2, "0"),
       String(today.getDate()).padStart(2, "0"),
     ].join("-");
-    const escaped = deployment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return new RegExp(`^${escaped} - .+ - ${date}$`);
+    return new RegExp(
+      `^${escapeForRegExp(deployment)} - ${escapeForRegExp(productName)} - ${date}$`,
+    );
   }
 
   /**

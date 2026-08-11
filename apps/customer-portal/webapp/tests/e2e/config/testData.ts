@@ -75,6 +75,14 @@ export interface ProjectFixture {
   /** Product option label, exactly as rendered. The field itself is labelled
    * "Product Version" on most types but "Product" on Cloud Support. */
   productVersion: string;
+  /** The same product's name *without* its version — i.e. `product.label` as
+   * the API returns it, not the dropdown text.
+   *
+   * Needed because the security-report form builds its title from this rather
+   * than from the option label (see the auto-fill effect in
+   * CreateCasePage.tsx). Cannot be derived from `productVersion` by trimming, so
+   * it is recorded explicitly. */
+  productName: string;
 }
 
 /**
@@ -93,6 +101,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     deploymentId: "8f8a33693bee8b503e1e088aa4e45ab4",
     autoSelectsDeployment: false,
     productVersion: "WSO2 API Manager 4.5.0",
+    productName: "WSO2 API Manager",
   },
   [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: {
     id: "a0873629eba28f90fcf5f5dabad0cda0",
@@ -102,6 +111,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     deploymentId: "f40cf7e53b2a4b9091404c6aa5e45a00",
     autoSelectsDeployment: false,
     productVersion: "WSO2 Identity Server 7.1.0",
+    productName: "WSO2 Identity Server",
   },
   [ProjectType.CLOUD_SUPPORT]: {
     id: "cd9776ed3ba28b503e1e088aa4e45a81",
@@ -112,6 +122,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     deploymentId: "",
     autoSelectsDeployment: true,
     productVersion: "WSO2 Developer Platform",
+    productName: "WSO2 Developer Platform",
   },
 };
 
