@@ -913,7 +913,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
             relatedCaseNumber: data.caseNumber,
             deploymentId: data.productContext.deploymentId,
             deployedProductId: data.productContext.deployedProductId,
-            severity: data.severity,
+            // The related case's severity only prefills the new-case form
+            // when it's a real S0-S4 value — an "unset" source severity
+            // leaves the (required) field blank so the engineer must pick
+            // one, same as any other case with no severity to carry over.
+            severity: data.severity === "unset" ? undefined : data.severity,
             issueType: data.issueType,
             subject: `Related Case : ${data.subject}`,
           };

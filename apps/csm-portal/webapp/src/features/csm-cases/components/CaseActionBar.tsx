@@ -48,7 +48,10 @@ import type {
   CaseLifecycleAction,
   CsmCaseDetail,
 } from "@features/csm-cases/types/csmCases";
-import type { CaseState, Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type {
+  CaseState,
+  SeverityOrUnset,
+} from "@features/csm-dashboard/types/abtDashboard";
 import { stateLabel } from "@features/csm-dashboard/utils/abtDashboard";
 import UserRefLink from "@components/UserRefLink";
 
@@ -424,8 +427,12 @@ interface CaseActionBarProps {
  * it mirrors which cases the out-of-band acknowledgement notifications are
  * raised for, so the button appears on exactly the cases an engineer could
  * already have acknowledged from a notification, and on no others.
+ * `caseDetail.severity` may be `"unset"` (case has no severity value) —
+ * typed `SeverityOrUnset` so `.has()` accepts it directly; it is never a
+ * member of this set, so an unset-severity case is correctly never
+ * acknowledgeable.
  */
-const ACKNOWLEDGEABLE_SEVERITIES = new Set<Severity>(["S0", "S1", "S2", "S3"]);
+const ACKNOWLEDGEABLE_SEVERITIES = new Set<SeverityOrUnset>(["S0", "S1", "S2", "S3"]);
 
 /**
  * Whether the acknowledge action applies to this case: nobody has claimed it

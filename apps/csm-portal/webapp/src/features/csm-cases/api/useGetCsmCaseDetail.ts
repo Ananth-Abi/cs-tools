@@ -19,7 +19,7 @@ import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import {
-  severityFromPriority,
+  severityFromBe,
   uiStateFromBe,
   userReferenceFromBe,
 } from "@api/backend/mappers";
@@ -79,7 +79,7 @@ function detailFromBeCase(
     projectId: c.project?.id ?? "",
     projectName: c.project?.name ?? "—",
     product,
-    severity: severityFromPriority(c.severity),
+    severity: severityFromBe(c.severity),
     state: uiStateFromBe(c.state),
     workState: c.workState ?? null,
     nextStates: (c.nextStates ?? []).map(uiStateFromBe),

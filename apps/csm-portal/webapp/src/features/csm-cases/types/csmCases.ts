@@ -18,6 +18,7 @@ import type {
   CaseState,
   CaseWorkState,
   Severity,
+  SeverityOrUnset,
   SlaClockType,
 } from "@features/csm-dashboard/types/abtDashboard";
 import type {
@@ -56,7 +57,12 @@ export interface CsmCaseRow {
   projectName: string;
   /** Affected WSO2 product (e.g. "WSO2 Identity Server"). Used for list filtering. */
   product: string;
-  severity: Severity;
+  /**
+   * `"unset"` when the source has no severity value at all (empty/missing) —
+   * a distinct fact from "the severity really is S3/Medium", never collapsed
+   * into a real severity. See `severityFromBe` in `api/backend/mappers.ts`.
+   */
+  severity: SeverityOrUnset;
   state: CaseState;
   /**
    * Case type (BE `typeKey` / search `caseType`). Optional: a legacy row may

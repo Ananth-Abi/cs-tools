@@ -51,7 +51,7 @@ import {
   type NormalizedUser,
 } from "@features/csm-users/types/csmUsers";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
-import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type { SeverityOrUnset } from "@features/csm-dashboard/types/abtDashboard";
 import {
   ACTIVITY_BUCKETS,
   DEFAULT_BILLABLE,
@@ -94,8 +94,10 @@ interface LogTimeCardDialogProps {
    * severity to hand in; the switch stays enabled there rather than being
    * force-disabled on a guess, and the backend's own business rule still
    * enforces the real non-billable-severities constraint server-side either
-   * way (see NON_BILLABLE_SEVERITIES's doc comment). */
-  caseSeverity?: Severity;
+   * way (see NON_BILLABLE_SEVERITIES's doc comment). Also `"unset"` when the
+   * case has no severity value at all — treated the same as "no severity to
+   * hand in" below (switch stays enabled, backend still enforces server-side). */
+  caseSeverity?: SeverityOrUnset;
   projectId: string;
   projectName: string;
   /** True while the create/edit mutation is in flight. */
@@ -202,7 +204,9 @@ export default function LogTimeCardDialog({
   const isEditMode = !!editingCard;
 
   const isAlwaysNonBillable =
-    !!caseSeverity && NON_BILLABLE_SEVERITIES.includes(caseSeverity);
+    !!caseSeverity &&
+    caseSeverity !== "unset" &&
+    NON_BILLABLE_SEVERITIES.includes(caseSeverity);
 
   const [date, setDate] = useState(editingCard?.workDate ?? localTodayIso());
   const [issueComplexity, setIssueComplexity] = useState<IssueComplexity>(
