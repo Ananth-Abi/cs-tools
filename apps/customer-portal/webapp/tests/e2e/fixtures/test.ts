@@ -169,6 +169,13 @@ export function withSession(t: typeof base, name: string = DEFAULT_SESSION): voi
   });
 }
 
+//
+// Everything under tests/e2e imports `test`, `expect` and the Playwright types
+// from this module rather than from "@playwright/test" directly. Today `test` is
+// just `base`, so the two are equivalent — but the moment withSession becomes a
+// proper `base.extend()` fixture, a direct import would silently bypass it and
+// run without the session replay. Re-exporting here keeps that refactor safe.
+//
 export const test = base;
 export { expect };
-export type { Page } from "@playwright/test";
+export type { Locator, Page, Response } from "@playwright/test";

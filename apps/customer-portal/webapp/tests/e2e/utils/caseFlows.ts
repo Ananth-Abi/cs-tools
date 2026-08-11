@@ -21,7 +21,7 @@
 // step.
 //
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "../fixtures/test";
 import { CaseCreatePage } from "../pages/CaseCreatePage";
 import type { CaseInput, ProjectFixture } from "../config/testData";
 import { CREATE_CASE } from "./selectors";

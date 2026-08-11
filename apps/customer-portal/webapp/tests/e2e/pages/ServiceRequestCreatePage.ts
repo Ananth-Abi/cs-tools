@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type Locator, type Page, expect } from "@playwright/test";
+import { type Locator, type Page, expect } from "../fixtures/test";
 import {
   CASE_DETAIL,
   CREATE_CASE,

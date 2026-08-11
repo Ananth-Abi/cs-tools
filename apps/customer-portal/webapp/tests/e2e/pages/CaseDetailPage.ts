@@ -14,7 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type Locator, type Page, expect } from "@playwright/test";
+import {
+  type Locator,
+  type Page,
+  type Response,
+  expect,
+} from "../fixtures/test";
 import { CASE_DETAIL } from "../utils/selectors";
 import { isSuccess } from "../utils/caseFlows";
 
@@ -73,7 +78,7 @@ export class CaseDetailPage {
    *
    * @returns The successful PATCH response for the caller to assert on.
    */
-  async closeCase(): Promise<import("@playwright/test").Response> {
+  async closeCase(): Promise<Response> {
     await expect(this.closeButton()).toBeEnabled();
     await this.closeButton().click();
 
