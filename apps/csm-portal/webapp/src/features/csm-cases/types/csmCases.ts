@@ -58,8 +58,9 @@ export interface CsmCaseRow {
   /** Affected WSO2 product (e.g. "WSO2 Identity Server"). Used for list filtering. */
   product: string;
   /**
-   * `"unset"` when the source has no severity value at all (empty/missing) —
-   * a distinct fact from "the severity really is S3/Medium", never collapsed
+   * `"unset"` when the source has no severity value at all (empty/missing),
+   * or the value doesn't match anything `severityFromBe` recognizes — a
+   * distinct fact from "the severity really is S3/Medium", never collapsed
    * into a real severity. See `severityFromBe` in `api/backend/mappers.ts`.
    */
   severity: SeverityOrUnset;
