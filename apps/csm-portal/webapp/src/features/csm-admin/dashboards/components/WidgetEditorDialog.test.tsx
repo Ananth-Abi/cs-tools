@@ -466,6 +466,58 @@ describe("WidgetEditorDialog", () => {
     expect(postMock).toHaveBeenCalledTimes(1);
   });
 
+  it("clears the stale Preview snapshot when resourceType changes, so a switched resource type never offers paths from the old one", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "c-1", project: { key: "PROJ-1" } }],
+      limit: 4,
+      offset: 0,
+      hasMore: false,
+    });
+    renderDialog();
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "Case list" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "list" }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    await waitFor(() =>
+      expect(screen.queryByText("Preview to see available fields")).not.toBeInTheDocument(),
+    );
+    const pathInput = screen.getByLabelText("Column path");
+    fireEvent.mouseDown(pathInput);
+    expect(await screen.findByRole("option", { name: "project.key" })).toBeInTheDocument();
+
+    postMock.mockClear();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Resource type" }));
+    fireEvent.click(screen.getByRole("option", { name: "incident" }));
+
+    // No re-fetch just from switching resourceType — the stale snapshot is
+    // cleared client-side, not replaced by a fresh Preview call.
+    expect(postMock).not.toHaveBeenCalled();
+    // The Preview tile itself reverts to its un-run state.
+    expect(
+      screen.getByText(/click "preview" to run this widget's current settings/i),
+    ).toBeInTheDocument();
+    // The resourceType switch also clears columnDrafts (a pre-existing,
+    // separately-tested reset) so the previous "Column path" row is gone —
+    // re-add one to confirm it starts with no stale discovered paths.
+    expect(screen.queryByLabelText("Column path")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /add column/i }));
+    expect(screen.getByText("Preview to see available fields")).toBeInTheDocument();
+    const newPathInput = screen.getByLabelText("Column path");
+    fireEvent.mouseDown(newPathInput);
+    expect(screen.queryByRole("option", { name: "project.key" })).not.toBeInTheDocument();
+
+    // Free text is still accepted while unpreviewed for the new resourceType.
+    fireEvent.change(newPathInput, { target: { value: "new.field" } });
+    expect(newPathInput).toHaveValue("new.field");
+  });
+
   it("clearing Row limit entirely unsets it, rather than writing NaN through", () => {
     const existing: BeDashboardWidget = {
       widgetId: "w1",

@@ -185,6 +185,8 @@ export default function WidgetEditorDialog({
   const [columnDrafts, setColumnDrafts] = useState<ColumnDraft[]>(() =>
     columnsToDrafts(widget?.columns),
   );
+  const [previewSnapshot, setPreviewSnapshot] = useState<BeDashboardWidget | undefined>();
+
   // A resourceType switch invalidates the previous filter shape entirely
   // (see widgetQueryConditions.ts's own doc comment) — rather than silently
   // reinterpreting stale rows against a contract they were never written
@@ -192,15 +194,18 @@ export default function WidgetEditorDialog({
   // Column `path`s are resource-specific too (e.g. `project.key` only
   // resolves for a case) — a stale path after switching resourceType would
   // render an empty cell under a now-misleading header, so those are
-  // cleared right alongside the filter/slice conditions.
+  // cleared right alongside the filter/slice conditions. The previous
+  // Preview snapshot is stale for the same reason (its `discoveredColumnPaths`
+  // are only valid for the resourceType they were fetched under), so it's
+  // cleared too — the admin must re-run Preview for the new resourceType
+  // before any column paths are offered again.
   const handleResourceTypeChange = (next: BeWidgetResourceType): void => {
     setResourceType(next);
     setConditions([]);
     setSliceDrafts((prev) => prev.map((d) => ({ ...d, conditions: [] })));
     setColumnDrafts([]);
+    setPreviewSnapshot(undefined);
   };
-
-  const [previewSnapshot, setPreviewSnapshot] = useState<BeDashboardWidget | undefined>();
 
   const { user } = useCurrentUser();
   // Only meaningful for a list-shape widget (columns are the only thing
