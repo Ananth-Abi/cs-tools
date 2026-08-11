@@ -245,8 +245,10 @@ export class SecurityReportCreatePage {
       this.page.getByText(CREATE_SECURITY_REPORT.uploadModal.title),
     ).toBeVisible();
 
-    const absolutePath = path.join(process.cwd(), "tests", "e2e", relativePath);
-    await modal.locator('input[type="file"]').setInputFiles(absolutePath);
+    // relativePath is resolved against tests/e2e; setInputFiles needs a full
+    // filesystem path, not one relative to the spec.
+    const attachmentPath = path.join(process.cwd(), "tests", "e2e", relativePath);
+    await modal.locator('input[type="file"]').setInputFiles(attachmentPath);
 
     const confirm = modal.getByRole("button", {
       name: CREATE_SECURITY_REPORT.uploadModal.confirmButton,
