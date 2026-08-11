@@ -14,12 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Typography, Button } from "@wso2/oxygen-ui";
+import { Box, Typography, Button, DatePickers, AdapterDateFns } from "@wso2/oxygen-ui";
 import { Calendar, X } from "@wso2/oxygen-ui-icons-react";
-import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
-import { AdapterDateFns } from "@mui/x-date-pickers/AdapterDateFns";
-import { DatePicker } from "@mui/x-date-pickers/DatePicker";
 import { format } from "date-fns";
+
+const { LocalizationProvider, DatePicker } = DatePickers;
 import type { JSX } from "react";
 import type { TimeCardsDateFilterProps } from "@features/project-details/types/projectDetailsComponents";
 
@@ -77,7 +76,7 @@ export default function TimeCardsDateFilter({
               id: "time-cards-start-date",
               size: "small",
               sx: { minWidth: 160 },
-              inputProps: { "aria-label": "Start date" },
+              slotProps: { htmlInput: { "aria-label": "Start date" } },
             },
             field: { clearable: true },
           }}
@@ -96,7 +95,7 @@ export default function TimeCardsDateFilter({
               id: "time-cards-end-date",
               size: "small",
               sx: { minWidth: 160 },
-              inputProps: { "aria-label": "End date" },
+              slotProps: { htmlInput: { "aria-label": "End date" } },
             },
             field: { clearable: true },
           }}
