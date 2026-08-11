@@ -15,9 +15,12 @@
 // under the License.
 
 // Package events defines the domain events csm-portal-backend and
-// customer-portal-backend publish to this service (via POST /events), and
-// that this service's consumer reads back off the event bus to decide what
-// notification to send.
+// customer-portal-backend publish directly to the event bus (this service
+// has no HTTP ingest endpoint — see internal/dispatch and cmd/server/main.go)
+// and that this service's consumer reads back to decide what notification to
+// send. Validate is the only structural check this service still performs on
+// them, since there's no HTTP handler upstream doing it before publish
+// anymore.
 //
 // v1 payloads are deliberately denormalized: they carry every display value
 // a template needs (names, titles, links), plus who to notify (Recipients),
@@ -46,28 +49,23 @@ const (
 // that enumerate valid values.
 var KnownTypes = []Type{TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeIncidentCreated}
 
-// Envelope is the wire shape for both POST /events and the record published
-// to the event bus: Payload's shape depends on Type (see the Type constants'
-// matching Payload struct below). EntityID is whatever this event is about —
-// a case ID for the case.* types, an incident ID for incident.created — and
-// is duplicated at the envelope level (also present inside most payloads)
-// because it's used as the Kafka record's partition key — see
-// eventbus.Producer.Publish — so it must be readable without unmarshaling
-// Payload first. Everything with the same EntityID lands on the same
-// partition and is processed in publish order.
+// Envelope is the wire shape of every record on the event bus: Payload's
+// shape depends on Type (see the Type constants' matching Payload struct
+// below). EntityID is whatever this event is about — a case ID for the
+// case.* types, an incident ID for incident.created — and is duplicated at
+// the envelope level (also present inside most payloads) because it's used
+// as the Kafka record's partition key — see eventbus.Producer.Publish — so
+// it must be readable without unmarshaling Payload first. Everything with
+// the same EntityID lands on the same partition and is processed in publish
+// order.
 //
-// EventID is optional and unused by this service — it's passed through
-// unchanged (this service publishes the original request body as received)
-// for whoever upstream needs it. Deduplicating a caller that retries a
-// POST /events call the broker actually acked, or two independent callers
-// racing to publish the same logical event (e.g. an outbox's
-// immediate-dispatch path and its polling fallback), is handled upstream —
+// Deduplicating a retried publish, or two independent callers racing to
+// publish the same logical event, is the publishing backend's own concern —
 // this service has no database and deliberately doesn't talk to one
-// directly; see entity-service for where that persistence lives.
+// directly.
 type Envelope struct {
 	Type     Type            `json:"type"`
 	EntityID string          `json:"entityId"`
-	EventID  string          `json:"eventId,omitempty"`
 	Payload  json.RawMessage `json:"payload"`
 }
 

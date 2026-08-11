@@ -63,9 +63,9 @@ func NewPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 // NewPoolFromConfig creates a Postgres connection pool from cfg's DSN, with a
 // 10s connect timeout. Always required, regardless of cfg.DataSource: when
 // DATA_SOURCE=servicenow, case/account/etc. entity reads/writes go through
-// the SN integration service instead of this pool, but event_outbox (see
-// domain.EventOutbox) has no ServiceNow equivalent and is always backed by
-// Postgres, so a pool is always needed.
+// the SN integration service instead of this pool, but event_publish_failures
+// (see domain.EventPublishFailure) has no ServiceNow equivalent and is
+// always backed by Postgres, so a pool is always needed.
 func NewPoolFromConfig(cfg *config.Config) (*pgxpool.Pool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

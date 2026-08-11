@@ -37,11 +37,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	userSvc := service.NewUserService(userRepo)
 	userHandler := handler.NewUserHandler(userSvc)
 
-	// event_outbox has no ServiceNow equivalent — always backed by Postgres
-	// regardless of cfg.DataSource, same as the pool itself (see
+	// event_publish_failures has no ServiceNow equivalent — always backed by
+	// Postgres regardless of cfg.DataSource, same as the pool itself (see
 	// db.NewPool's call site in cmd/api/main.go).
-	eventOutboxRepo := repository.NewEventOutboxRepository(db)
-	eventOutboxHandler := handler.NewEventOutboxHandler(service.NewEventOutboxService(eventOutboxRepo))
+	eventPublishFailureRepo := repository.NewEventPublishFailureRepository(db)
+	eventPublishFailureHandler := handler.NewEventPublishFailureHandler(service.NewEventPublishFailureService(eventPublishFailureRepo))
 
 	accountRepo := repository.NewAccountRepository(db)
 	accountHandler := handler.NewAccountHandler(service.NewAccountService(accountRepo))
@@ -253,11 +253,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 
 	mux.HandleFunc("GET /health", handler.HealthCheck)
 
-	// event_outbox is not data-source specific, same rationale as the role
-	// catalogue and team registry below — registered unconditionally.
-	mux.HandleFunc("POST /event-outbox", eventOutboxHandler.CreateEventOutbox)
-	mux.HandleFunc("POST /event-outbox/search", eventOutboxHandler.SearchEventOutbox)
-	mux.HandleFunc("PATCH /event-outbox/{id}", eventOutboxHandler.UpdateEventOutboxStatus)
+	// event_publish_failures is not data-source specific, same rationale as
+	// the role catalogue and team registry below — registered unconditionally.
+	mux.HandleFunc("POST /event-publish-failures", eventPublishFailureHandler.CreateEventPublishFailure)
+	mux.HandleFunc("POST /event-publish-failures/search", eventPublishFailureHandler.SearchEventPublishFailures)
+	mux.HandleFunc("POST /event-publish-failures/{id}/resolve", eventPublishFailureHandler.ResolveEventPublishFailure)
 
 	if snUserHandler != nil {
 		mux.HandleFunc("GET /users/{id}", snUserHandler.GetUser)

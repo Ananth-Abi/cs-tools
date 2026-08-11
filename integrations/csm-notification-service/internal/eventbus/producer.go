@@ -38,13 +38,15 @@ func NewProducer(cfg Config) *Producer {
 		writer: &kafka.Writer{
 			Addr:  kafka.TCP(cfg.Broker),
 			Topic: cfg.Topic,
-			// Every record for the same key (we key by entity ID) must land in
-			// the same partition and be written in the order Publish was
-			// called, so e.g. case.created is never processed after
-			// case.comment_added for the same case just because of network
-			// timing. Hash deterministically maps a key to a partition (falls
-			// back to round-robin only for a nil key, which never happens
-			// here — see handler.EventsHandler.PostEvent).
+			// Every record for the same key (entity ID) must land in the same
+			// partition and be written in the order Publish was called, so
+			// e.g. case.created is never processed after case.comment_added
+			// for the same case just because of network timing. Hash
+			// deterministically maps a key to a partition (falls back to
+			// round-robin only for a nil key, which never happens here — see
+			// cmd/server/main.go's dead-letter OnExhausted func, this
+			// service's only caller of Publish now that the producer side of
+			// case.* events lives in the backends).
 			Balancer: &kafka.Hash{},
 			// Wait for the full ISR to acknowledge before Publish returns,
 			// matching the previous Kafka client's synchronous-produce

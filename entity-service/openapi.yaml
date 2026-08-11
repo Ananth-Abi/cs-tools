@@ -19,23 +19,28 @@ paths:
         "200":
           description: Ok
 
-  /event-outbox:
+  /event-publish-failures:
     post:
-      summary: Create a new event_outbox row in "waiting" status.
-      operationId: createEventOutbox
+      summary: >-
+        Record that a backend's publish to the event bus was never
+        acknowledged by Event Hub. Replaces the old event_outbox — there is
+        no claim/dispatch lifecycle here, since csm-notification-service is a
+        pure Kafka consumer now and never talks to this table; this exists
+        purely for visibility and manual remediation.
+      operationId: createEventPublishFailure
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateEventOutboxRequest'
+              $ref: '#/components/schemas/CreateEventPublishFailureRequest'
       responses:
         "201":
           description: Row created successfully.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EventOutbox'
+                $ref: '#/components/schemas/EventPublishFailure'
         "400":
           description: Bad request.
           content:
@@ -49,23 +54,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /event-outbox/search:
+  /event-publish-failures/search:
     post:
-      summary: Search event_outbox rows by status. Defaults to status=waiting — the polling fallback's candidate list, oldest first.
-      operationId: searchEventOutbox
+      summary: Search event_publish_failures rows, newest first, optionally filtered by resolution state.
+      operationId: searchEventPublishFailures
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SearchEventOutboxRequest'
+              $ref: '#/components/schemas/SearchEventPublishFailuresRequest'
       responses:
         "200":
           description: Rows matching the filters.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SearchEventOutboxResponse'
+                $ref: '#/components/schemas/SearchEventPublishFailuresResponse'
         "400":
           description: Bad request.
           content:
@@ -79,17 +84,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /event-outbox/{id}:
-    patch:
+  /event-publish-failures/{id}/resolve:
+    post:
       summary: >-
-        Transition a row's status. The single endpoint behind all three legal
-        transitions: status=dispatching claims the row (must currently be
-        waiting — the operation that closes the outbox race, since only one
-        of two racing callers ever succeeds); status=dispatched marks a
-        claimed row successful (must currently be dispatching); status=waiting
-        releases a failed dispatch attempt for the polling fallback to retry
-        later (must currently be dispatching).
-      operationId: updateEventOutboxStatus
+        Mark a row resolved (e.g. after successfully republishing the event
+        by hand). Idempotent — resolving an already-resolved row is a no-op
+        success that preserves the original resolvedOn.
+      operationId: resolveEventPublishFailure
       parameters:
         - name: id
           in: path
@@ -97,27 +98,21 @@ paths:
           schema:
             type: string
             format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateEventOutboxStatusRequest'
       responses:
         "200":
-          description: Status updated successfully.
+          description: Row resolved successfully.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EventOutbox'
+                $ref: '#/components/schemas/EventPublishFailure'
         "400":
           description: Bad request.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-        "409":
-          description: Row is not in the required state for the requested transition.
+        "404":
+          description: Row not found.
           content:
             application/json:
               schema:
@@ -11405,14 +11400,13 @@ components:
         endDate:
           type: string
 
-    EventOutbox:
+    EventPublishFailure:
       description: >
-        A durable record of one event a caller wants dispatched to
-        csm-notification-service's POST /events. Has no ServiceNow
-        equivalent — always backed by Postgres. status is returned exactly
-        as stored (lowercase), not mapped to an UPPER_SNAKE_CASE label,
-        since this entity's only callers are csm-portal-backend and its own
-        polling fallback, not a rendered UI.
+        A durable record that a backend's publish to the event bus was never
+        acknowledged by Event Hub. Has no ServiceNow equivalent — always
+        backed by Postgres. Replaces the old event_outbox — there is no
+        claim/dispatch lifecycle here, since csm-notification-service is a
+        pure Kafka consumer now and never talks to this table.
       type: object
       properties:
         id:
@@ -11425,71 +11419,57 @@ components:
         payload:
           type: object
           additionalProperties: true
-        status:
+        error:
           type: string
-          enum: [waiting, dispatching, dispatched]
-        attempts:
-          type: integer
+          description: The caller-supplied reason Event Hub didn't ack the publish.
         createdOn:
           type: string
           format: date-time
-        claimedOn:
-          type: string
-          format: date-time
-          nullable: true
-        dispatchedOn:
+        resolvedOn:
           type: string
           format: date-time
           nullable: true
 
-    CreateEventOutboxRequest:
+    CreateEventPublishFailureRequest:
       type: object
-      required: [eventType, entityId, payload]
+      required: [eventType, entityId, payload, error]
       properties:
         eventType:
           type: string
-          description: e.g. "case.created", "incident.created" — the csm-notification-service event type this row will eventually publish as.
+          description: e.g. "case.created", "incident.created" — the event type that failed to publish.
         entityId:
           type: string
         payload:
           type: object
           additionalProperties: true
-          description: The exact payload body csm-notification-service's POST /events expects for eventType.
-
-    UpdateEventOutboxStatusRequest:
-      description: >
-        status is the requested target state. Only three transitions are
-        legal, each with its own guard on the row's current status — not a
-        free-form field update. See PATCH /event-outbox/{id}'s summary.
-      type: object
-      required: [status]
-      properties:
-        status:
+          description: The exact event payload that failed to publish.
+        error:
           type: string
-          enum: [dispatching, dispatched, waiting]
+          description: Why Event Hub didn't ack the publish.
 
-    SearchEventOutboxFilters:
+    SearchEventPublishFailuresFilters:
       type: object
       properties:
-        status:
-          type: string
-          enum: [waiting, dispatching, dispatched]
+        resolved:
+          type: boolean
+          nullable: true
+          description: Omit to match every row regardless of resolution state.
 
-    SearchEventOutboxRequest:
+    SearchEventPublishFailuresRequest:
       type: object
       properties:
         pagination:
           $ref: '#/components/schemas/Pagination'
         filters:
-          $ref: '#/components/schemas/SearchEventOutboxFilters'
+          $ref: '#/components/schemas/SearchEventPublishFailuresFilters'
 
-    SearchEventOutboxResponse:
+    SearchEventPublishFailuresResponse:
       type: object
       properties:
-        events:
+        failures:
           type: array
           items:
-            $ref: '#/components/schemas/EventOutbox'
+            $ref: '#/components/schemas/EventPublishFailure'
         total:
           type: integer
         limit:

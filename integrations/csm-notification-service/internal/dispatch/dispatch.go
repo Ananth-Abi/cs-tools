@@ -115,6 +115,16 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 	if err := json.Unmarshal(record.Value, &env); err != nil {
 		return fmt.Errorf("dispatch: decode envelope: %w", err)
 	}
+	if !env.Type.IsKnown() {
+		return fmt.Errorf("dispatch: unknown event type %q", env.Type)
+	}
+	// The only validation boundary left in this service: callers publish
+	// directly to the event bus now (see events.Validate's doc comment), so
+	// nothing has checked this record's required fields before it reaches
+	// here.
+	if err := events.Validate(env.EntityID, env.Type, env.Payload); err != nil {
+		return fmt.Errorf("dispatch: invalid payload: %w", err)
+	}
 
 	switch env.Type {
 	case events.TypeCaseCreated:

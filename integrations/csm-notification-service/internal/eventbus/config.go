@@ -25,6 +25,11 @@
 package eventbus
 
 import (
+	"context"
+	"crypto/tls"
+	"fmt"
+
+	kafka "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl"
 	"github.com/segmentio/kafka-go/sasl/plain"
 )
@@ -56,4 +61,28 @@ func (c Config) saslMechanism() sasl.Mechanism {
 		Username: "$ConnectionString",
 		Password: c.ConnectionString,
 	}
+}
+
+// PartitionCount returns cfg.Topic's current partition count — used at
+// startup to sanity-check a configured consumer count against reality (see
+// cmd/server/main.go): a Kafka consumer group only ever hands out as many
+// partitions as exist, so a consumer count higher than this leaves some
+// consumers permanently idle rather than doing anything wrong. Not used for
+// anything at runtime beyond that one startup check.
+func PartitionCount(ctx context.Context, cfg Config) (int, error) {
+	dialer := &kafka.Dialer{
+		TLS:           &tls.Config{MinVersion: tls.VersionTLS12},
+		SASLMechanism: cfg.saslMechanism(),
+	}
+	conn, err := dialer.DialContext(ctx, "tcp", cfg.Broker)
+	if err != nil {
+		return 0, fmt.Errorf("eventbus: dial %s: %w", cfg.Broker, err)
+	}
+	defer conn.Close()
+
+	partitions, err := conn.ReadPartitions(cfg.Topic)
+	if err != nil {
+		return 0, fmt.Errorf("eventbus: read partitions for topic %s: %w", cfg.Topic, err)
+	}
+	return len(partitions), nil
 }

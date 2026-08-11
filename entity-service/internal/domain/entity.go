@@ -4498,96 +4498,69 @@ type InstanceUsageStatsResponse struct {
 	EndDate   string                    `json:"endDate"`
 }
 
-// EventOutboxStatus is the lifecycle state of an event_outbox row. Unlike
-// other domain enums (see "Enum fields in responses" in CLAUDE.md), this is
-// returned to callers exactly as stored in the DB — lowercase — rather than
-// mapped to an UPPER_SNAKE_CASE label: event_outbox's only callers are
-// csm-portal-backend and its own polling fallback, not a rendered UI that
-// needs display labels.
-type EventOutboxStatus string
-
-const (
-	// EventOutboxStatusWaiting is the initial state: created, not yet claimed
-	// by any dispatch attempt.
-	EventOutboxStatusWaiting EventOutboxStatus = "waiting"
-	// EventOutboxStatusDispatching means some caller currently holds the
-	// claim (see EventOutboxRepository.Claim) and is in the middle of
-	// calling csm-notification-service's POST /events.
-	EventOutboxStatusDispatching EventOutboxStatus = "dispatching"
-	// EventOutboxStatusDispatched means POST /events was called
-	// successfully. Terminal — this row will not be reprocessed.
-	EventOutboxStatusDispatched EventOutboxStatus = "dispatched"
-)
-
-// EventOutbox is a durable record of one event a caller wants dispatched to
-// csm-notification-service's POST /events. It exists to close a specific
-// race: a caller's immediate-dispatch path and its own polling fallback
-// both trying to publish the same logical event. EventOutboxRepository.Claim
-// is the atomic operation that guarantees only one of them ever succeeds.
+// EventPublishFailure is a durable record that a backend's publish to the
+// event bus was never acknowledged by Event Hub — e.g. csm-portal-backend
+// tried to publish a case.comment_added event and Event Hub didn't ack it.
+// It replaces what used to be called event_outbox: that table existed to
+// close a race between a caller's immediate-dispatch HTTP call to
+// csm-notification-service and that service's own polling fallback, both of
+// which could try to publish the same logical event. Neither exists anymore
+// — csm-notification-service is a pure Kafka consumer now, with no HTTP
+// ingest endpoint and no database client — so there is no contention here
+// at all: exactly one writer (the publishing backend) ever creates or
+// resolves a given row. This exists purely for visibility and manual
+// remediation of a publish that never made it onto the bus, not as a queue
+// anything polls.
 //
-// Unlike every other entity in this file, event_outbox has no ServiceNow
-// equivalent — it is this service's own operational bookkeeping, not
-// platform data. It is always backed by Postgres regardless of DATA_SOURCE
-// (see internal/db/postgres.go).
-type EventOutbox struct {
-	ID           string            `json:"id"`
-	EventType    string            `json:"eventType"`
-	EntityID     string            `json:"entityId"`
-	Payload      json.RawMessage   `json:"payload"`
-	Status       EventOutboxStatus `json:"status"`
-	Attempts     int               `json:"attempts"`
-	CreatedOn    time.Time         `json:"createdOn"`
-	ClaimedOn    *time.Time        `json:"claimedOn,omitempty"`
-	DispatchedOn *time.Time        `json:"dispatchedOn,omitempty"`
-}
-
-// CreateEventOutboxRequest is the request body for POST /event-outbox.
-type CreateEventOutboxRequest struct {
+// Unlike every other entity in this file, this has no ServiceNow equivalent
+// — it is this service's own operational bookkeeping, not platform data. It
+// is always backed by Postgres regardless of DATA_SOURCE (see
+// internal/db/postgres.go).
+type EventPublishFailure struct {
+	ID        string          `json:"id"`
 	EventType string          `json:"eventType"`
 	EntityID  string          `json:"entityId"`
 	Payload   json.RawMessage `json:"payload"`
+	// Error is the caller-supplied reason Event Hub didn't ack the publish
+	// (e.g. a timeout or broker error message) — for a human triaging this
+	// table, not machine-parsed by anything.
+	Error      string     `json:"error"`
+	CreatedOn  time.Time  `json:"createdOn"`
+	ResolvedOn *time.Time `json:"resolvedOn,omitempty"`
 }
 
-// UpdateEventOutboxStatusRequest is the request body for
-// PATCH /event-outbox/{id}. Status is the requested target state — only
-// three transitions are legal, each with its own guard on the row's current
-// status (see EventOutboxRepository's doc comments), not a free-form field
-// update:
-//
-//   - "dispatching" — claim the row (must currently be "waiting"). This is
-//     the operation that closes the outbox race: only one of two racing
-//     callers ever succeeds.
-//   - "dispatched"  — mark a claimed row as successfully dispatched (must
-//     currently be "dispatching").
-//   - "waiting"     — release a failed dispatch attempt back for the
-//     polling fallback to retry later (must currently be "dispatching").
-type UpdateEventOutboxStatusRequest struct {
-	Status EventOutboxStatus `json:"status"`
+// CreateEventPublishFailureRequest is the request body for
+// POST /event-publish-failures.
+type CreateEventPublishFailureRequest struct {
+	EventType string          `json:"eventType"`
+	EntityID  string          `json:"entityId"`
+	Payload   json.RawMessage `json:"payload"`
+	Error     string          `json:"error"`
 }
 
-// SearchEventOutboxFilters holds the optional filter criteria for an
-// event_outbox search. Status is the field the polling fallback actually
-// uses in practice (status=waiting), but it's left as a generic filter
-// rather than a dedicated "list waiting" endpoint so operators can also
-// query other states (e.g. status=dispatched) for troubleshooting.
-type SearchEventOutboxFilters struct {
-	Status *EventOutboxStatus `json:"status"`
+// SearchEventPublishFailuresFilters holds the optional filter criteria for
+// an event_publish_failures search. Resolved lets a caller ask for only the
+// unresolved backlog (false) or only resolved history (true); omitted,
+// every row matches regardless of resolution state.
+type SearchEventPublishFailuresFilters struct {
+	Resolved *bool `json:"resolved"`
 }
 
-// SearchEventOutboxRequest is the input for POST /event-outbox/search.
-// Results are always ordered oldest-first (createdOn ascending), since the
-// polling fallback's only use for this endpoint is "give me the oldest
-// still-waiting rows to claim next".
-type SearchEventOutboxRequest struct {
-	Pagination Pagination               `json:"pagination"`
-	Filters    SearchEventOutboxFilters `json:"filters"`
+// SearchEventPublishFailuresRequest is the input for
+// POST /event-publish-failures/search. Results are ordered newest-first
+// (createdOn descending) — this is an operator-triage view, not a work
+// queue, so the most recent failures are what's usually relevant first.
+type SearchEventPublishFailuresRequest struct {
+	Pagination Pagination                        `json:"pagination"`
+	Filters    SearchEventPublishFailuresFilters `json:"filters"`
 }
 
-// SearchEventOutboxResponse is the paginated result of an event_outbox search.
-type SearchEventOutboxResponse struct {
-	Events  []EventOutbox `json:"events"`
-	Total   int           `json:"total"`
-	Limit   int           `json:"limit"`
-	Offset  int           `json:"offset"`
-	HasMore bool          `json:"hasMore"`
+// SearchEventPublishFailuresResponse is the paginated result of an
+// event_publish_failures search.
+type SearchEventPublishFailuresResponse struct {
+	Failures []EventPublishFailure `json:"failures"`
+	Total    int                   `json:"total"`
+	Limit    int                   `json:"limit"`
+	Offset   int                   `json:"offset"`
+	HasMore  bool                  `json:"hasMore"`
 }

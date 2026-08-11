@@ -61,27 +61,22 @@ type AccountService interface {
 	GetAccountByID(ctx context.Context, id string) (domain.Account, error)
 }
 
-// EventOutboxService defines the operations available on the event_outbox
-// entity — see domain.EventOutbox's doc comment for what it's for.
-type EventOutboxService interface {
-	// CreateEventOutbox inserts a new row in "waiting" status. A
-	// ValidationError is returned if eventType, entityId, or payload is
-	// missing.
-	CreateEventOutbox(ctx context.Context, req domain.CreateEventOutboxRequest) (domain.EventOutbox, error)
-	// UpdateEventOutboxStatus transitions id per req.Status — the single
-	// endpoint behind all three legal transitions (see
-	// domain.UpdateEventOutboxStatusRequest's doc comment):
-	// "dispatching" claims id (must be "waiting"), "dispatched" marks a
-	// claim successful (must be "dispatching"), "waiting" releases a failed
-	// claim for retry (must be "dispatching"). A ValidationError is
-	// returned for a malformed UUID or an unrecognised status; a
-	// ConflictError if id is not in the required current state for the
-	// requested transition.
-	UpdateEventOutboxStatus(ctx context.Context, id string, req domain.UpdateEventOutboxStatusRequest) (domain.EventOutbox, error)
-	// SearchEventOutbox returns a paginated list of rows matching the
-	// filters in req (defaults to status=waiting — the polling fallback's
-	// candidate list), oldest first.
-	SearchEventOutbox(ctx context.Context, req domain.SearchEventOutboxRequest) (domain.SearchEventOutboxResponse, error)
+// EventPublishFailureService defines the operations available on the
+// event_publish_failures entity — see domain.EventPublishFailure's doc
+// comment for what it's for.
+type EventPublishFailureService interface {
+	// CreateEventPublishFailure inserts a new unresolved failure row. A
+	// ValidationError is returned if eventType, entityId, payload, or error
+	// is missing.
+	CreateEventPublishFailure(ctx context.Context, req domain.CreateEventPublishFailureRequest) (domain.EventPublishFailure, error)
+	// ResolveEventPublishFailure marks id resolved and returns the updated
+	// row. Idempotent — resolving an already-resolved row is a no-op
+	// success. A ValidationError is returned for a malformed UUID; a
+	// NotFoundError if id does not exist.
+	ResolveEventPublishFailure(ctx context.Context, id string) (domain.EventPublishFailure, error)
+	// SearchEventPublishFailures returns a paginated list of rows matching
+	// the filters in req, newest first.
+	SearchEventPublishFailures(ctx context.Context, req domain.SearchEventPublishFailuresRequest) (domain.SearchEventPublishFailuresResponse, error)
 }
 
 // SNAccountService defines the account operations backed by the ServiceNow data source.
