@@ -14,11 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { ReactElement } from "react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import TimeCardsTable from "@features/csm-timecards/components/TimeCardsTable";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 
@@ -26,15 +27,17 @@ import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 // TimeCardCasePreviewDrawer, which pulls in useGetCsmCaseDetail /
 // useGetCsmCaseComments -- both read window.config at module load (via
 // @config/apiConfig) and call useBackendApi() unconditionally, even while
-// their own query stays disabled (which it does in every test here, since
-// none of them actually open the drawer). Mock both so importing this
-// component doesn't trip either, and wrap renders in a QueryClientProvider
-// since those hooks now need one in the tree.
+// their own query stays disabled outside the View-details test below. Mock
+// both so importing this component doesn't trip either; get/postMock are
+// shared, named instances (reset per test) so that test can configure real
+// resolved values instead of the default `undefined`.
+const getMock = vi.fn();
+const postMock = vi.fn();
 vi.mock("@config/apiConfig", () => ({ apiConfig: { backendUrl: "https://example.test" } }));
 vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({
-    get: vi.fn(),
-    post: vi.fn(),
+    get: getMock,
+    post: postMock,
     patch: vi.fn(),
     postEmpty: vi.fn(),
     del: vi.fn(),
@@ -42,9 +45,44 @@ vi.mock("@api/backend/client", () => ({
   }),
 }));
 
+beforeEach(() => {
+  getMock.mockReset();
+  postMock.mockReset();
+});
+
+// CasePreviewContent (rendered inside TimeCardCasePreviewDrawer once its case
+// query resolves) links out via react-router's Link, so every render needs
+// Router context in the tree even on tests that never open the drawer.
 function renderWithClient(ui: ReactElement): ReturnType<typeof render> {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function LocationProbe(): ReactElement {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
+
+/** Like renderWithClient, but with a real destination route mounted so a
+ * click that navigates (CasePreviewContent's "View full details" link) can
+ * be asserted against where it actually lands, not just that some handler
+ * fired -- see DashboardWidgetTile.test.tsx for the same pattern. */
+function renderWithRoutes(ui: ReactElement, destinationPath: string): ReturnType<typeof render> {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/"]}>
+        <Routes>
+          <Route path="/" element={ui} />
+          <Route path={destinationPath} element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 const CARD: CsmTimeCard = {
@@ -401,5 +439,34 @@ describe("TimeCardsTable edit action", () => {
     );
 
     expect(screen.queryByTestId(`timecard-edit-${CARD.id}`)).not.toBeInTheDocument();
+  });
+});
+
+describe("TimeCardsTable View details drawer", () => {
+  it("opens the preview drawer and navigates to the case detail page via 'View full details'", async () => {
+    getMock.mockResolvedValue({
+      id: "case-1",
+      number: "CS0352584",
+      subject: "Cluster fails to start",
+    });
+    postMock.mockResolvedValue({ comments: [] });
+
+    renderWithRoutes(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+      "/cases/case-1",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    await waitFor(() => expect(screen.getByText("Cluster fails to start")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("link", { name: "View full details" }));
+    await waitFor(() => expect(screen.getByTestId("location-probe")).toBeInTheDocument());
   });
 });
