@@ -118,6 +118,15 @@ const CsmTeamsPage = lazy(
 const TeamMembersPage = lazy(
   () => import("@features/csm-admin/pages/TeamMembersPage"),
 );
+const DashboardBuilderRouteGuard = lazy(
+  () => import("@features/csm-admin/dashboards/pages/DashboardBuilderRouteGuard"),
+);
+const CsmDashboardBuilderListPage = lazy(
+  () => import("@features/csm-admin/dashboards/pages/CsmDashboardBuilderListPage"),
+);
+const CsmDashboardBuilderEditorPage = lazy(
+  () => import("@features/csm-admin/dashboards/pages/CsmDashboardBuilderEditorPage"),
+);
 const CsmCustomersLayout = lazy(
   () => import("@features/csm-customers/pages/CsmCustomersLayout"),
 );
@@ -334,6 +343,15 @@ export default function App(): JSX.Element {
                     <Route path="roles" element={<CsmRolesPage />} />
                     <Route path="groups" element={<CsmGroupsPage />} />
                     <Route path="teams" element={<CsmTeamsPage />} />
+                    {/* Dashboard builder — admin-role-gated, unlike every
+                        sibling tab above (see DashboardBuilderRouteGuard's
+                        own doc comment for why). Persists to localStorage
+                        only; there is no backend behind this feature. */}
+                    <Route path="dashboards" element={<DashboardBuilderRouteGuard />}>
+                      <Route index element={<CsmDashboardBuilderListPage />} />
+                      <Route path="new" element={<CsmDashboardBuilderEditorPage />} />
+                      <Route path=":draftId" element={<CsmDashboardBuilderEditorPage />} />
+                    </Route>
                     <Route
                       path="permissions"
                       element={
