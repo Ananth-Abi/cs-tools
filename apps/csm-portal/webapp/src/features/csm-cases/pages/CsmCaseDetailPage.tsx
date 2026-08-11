@@ -2157,6 +2157,14 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 sx={{
                   typography: "body2",
                   color: "text.primary",
+                  // Same containment the comment bubble needs — see the long
+                  // note in `CsmCaseCommentBubble`. This description is backend
+                  // HTML too, so it can carry an explicit pixel width that would
+                  // otherwise drag the whole page off-screen.
+                  minWidth: 0,
+                  maxWidth: "100%",
+                  contain: "inline-size",
+                  overflowX: "auto",
                   "& p": { mb: 0.5 },
                   "& p:last-child": { mb: 0 },
                 }}
