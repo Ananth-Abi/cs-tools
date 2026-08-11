@@ -24,40 +24,55 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/closure"
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/recipients"
 )
 
-// Kind distinguishes the purpose of a Notice, since the same window can
-// produce different recipients and content depending on audience.
-type Kind string
-
-const (
-	// KindCustomer is the customer-facing closure notice for a given window.
-	KindCustomer Kind = "customer"
-	// KindInternal is the Account Manager notice sent for every firing window.
-	KindInternal Kind = "internal"
-	// KindAMNudge is a distinct "please configure a business contact" email,
-	// sent to the Account Manager instead of (not in addition to) a customer
-	// notice when recipients.Resolution.NeedsAMNudge is true.
-	KindAMNudge Kind = "am_nudge"
-)
+// Recipients is the structured set of people one Notice should reach.
+// AccountOwner (the Account Manager), RenewalManager, and TechnicalOwner are
+// always populated for a day-count reminder — an individual Contact's Email
+// may legitimately be "" per recipients.AccountManagerEmail's existing
+// convention (role assigned but no email on file, or no role assigned at
+// all), which is not an error state. Customer is nil except on a resolved
+// 15/7/0-window notice; it is also nil (not a zero-value Contact) on the
+// separate no-business-contact notice, which names only an Account Owner.
+type Recipients struct {
+	AccountOwner   recipients.Contact
+	RenewalManager recipients.Contact
+	TechnicalOwner recipients.Contact
+	Customer       *recipients.Contact
+}
 
 // Notice is everything a Notifier needs to send (or, today, log) one ACP
-// notification.
+// notification. There is no more Kind field distinguishing
+// internal/customer/am_nudge audiences — that distinction is now implied by
+// Subject's wording and which Recipients fields are populated, per Chamara's
+// request that the log stop saying "internal"/"external" explicitly.
 type Notice struct {
-	Kind      Kind
-	Window    closure.NoticeWindow
-	ProjectID string
-	Recipient string
+	ProjectID   string
+	ProjectName string
+	ProjectKey  string
+	StartDate   time.Time
+	EndDate     time.Time
+	Window      closure.NoticeWindow
+	// Subject is the notice's title line — either the day-count reminder
+	// ("{N} Days Reminder of Project for {ProjectName} of {AccountName}",
+	// [ACP]-prefixed only for the internal-only 90/60/30 windows) or the
+	// no-business-contact notice's fixed "[Urgent] [ACP] No Business
+	// Contacts Specified for Project {ProjectName}".
+	Subject string
+	// Body is only populated for the no-business-contact notice today — no
+	// body template exists yet for the day-count reminders, so it's left
+	// empty there rather than inventing one.
+	Body       string
+	Recipients Recipients
 	// ResolvedVia records which tier of the three-tier customer-contact
-	// fallback produced Recipient (see recipients.ResolveCustomerContact).
-	// Only meaningful for KindCustomer/KindAMNudge — left at its zero value
-	// ("") for KindInternal, which never goes through that fallback chain at
-	// all. Deliberately distinct from recipients.ResolvedViaNone ("none"),
-	// which means "every tier was tried and none resolved" — a different,
-	// more specific fact than "this notice doesn't use tiers."
+	// fallback produced Recipients.Customer (see
+	// recipients.ResolveCustomerContact). Left at its zero value ("") when
+	// not applicable — a 90/60/30 notice, or the no-business-contact notice
+	// itself, neither of which carry a resolved customer contact.
 	ResolvedVia recipients.ResolvedVia
 }
 
@@ -68,13 +83,27 @@ type LoggingNotifier struct {
 
 // Send logs the notice and always succeeds.
 func (n *LoggingNotifier) Send(ctx context.Context, notice Notice) error {
-	n.Logger.InfoContext(ctx, "notice",
-		"kind", notice.Kind,
+	attrs := []any{
+		"subject", notice.Subject,
 		"window", notice.Window,
 		"projectID", notice.ProjectID,
-		"recipient", notice.Recipient,
+		"projectName", notice.ProjectName,
+		"projectKey", notice.ProjectKey,
+		"startDate", notice.StartDate,
+		"endDate", notice.EndDate,
+		"accountOwner", notice.Recipients.AccountOwner.Email,
+		"renewalManager", notice.Recipients.RenewalManager.Email,
+		"technicalOwner", notice.Recipients.TechnicalOwner.Email,
 		"resolvedVia", notice.ResolvedVia,
-	)
+	}
+	if notice.Recipients.Customer != nil {
+		attrs = append(attrs, "customer", notice.Recipients.Customer.Email)
+	}
+	if notice.Body != "" {
+		attrs = append(attrs, "body", notice.Body)
+	}
+
+	n.Logger.InfoContext(ctx, "notice", attrs...)
 	return nil
 }
 

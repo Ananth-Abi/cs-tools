@@ -19,6 +19,7 @@ package sweep
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // TestProject_ParsesNestedAccountFromRealGetProjectResponse is a regression
@@ -71,5 +72,72 @@ func TestProject_AccountIDIsEmptyWhenAccountIsAbsent(t *testing.T) {
 
 	if got := proj.accountID(); got != "" {
 		t.Errorf("accountID() = %q, want \"\"", got)
+	}
+}
+
+// TestProject_ParsesNameProjectKeyStartDateAndAccountName covers the fields
+// added for the notice-content redesign: name, projectKey, and startDate are
+// documented on csm-integration-service's Project schema (openapi.yaml) but
+// were previously unread by this component; the same is true of the nested
+// account's own name, alongside its id.
+func TestProject_ParsesNameProjectKeyStartDateAndAccountName(t *testing.T) {
+	const realGetProjectResponse = `{
+		"id": "e3e87599-1bc7-6650-182c-0dc5604bcb68",
+		"name": "TICKETNETWORK - Subscription",
+		"projectKey": "TICKETNET",
+		"startDate": "2025-07-29T00:00:00Z",
+		"endDate": "2026-10-27T00:00:00Z",
+		"account": {
+			"id": "f213fdd1-1b4b-a650-a002-c9d3604bcbac",
+			"name": "TicketNetwork"
+		}
+	}`
+
+	var proj project
+	if err := json.Unmarshal([]byte(realGetProjectResponse), &proj); err != nil {
+		t.Fatalf("unmarshal real GetProject response: %v", err)
+	}
+
+	if proj.Name != "TICKETNETWORK - Subscription" {
+		t.Errorf("Name = %q, want %q", proj.Name, "TICKETNETWORK - Subscription")
+	}
+	if proj.ProjectKey != "TICKETNET" {
+		t.Errorf("ProjectKey = %q, want %q", proj.ProjectKey, "TICKETNET")
+	}
+	if proj.StartDate == nil || !proj.StartDate.Equal(time.Date(2025, 7, 29, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("StartDate = %v, want 2025-07-29T00:00:00Z", proj.StartDate)
+	}
+	if proj.Account == nil || proj.Account.Name != "TicketNetwork" {
+		t.Errorf("Account.Name = %v, want %q", proj.Account, "TicketNetwork")
+	}
+}
+
+// TestAccountDTO_ParsesTechnicalOwnerAndRenewalAccountManager covers the two
+// account fields that were previously fetched over the wire and silently
+// dropped (accountDTO had no field for them): confirmed present on the real
+// entity-service response for the dedicated test account, alongside
+// accountManager.
+func TestAccountDTO_ParsesTechnicalOwnerAndRenewalAccountManager(t *testing.T) {
+	const realGetAccountResponse = `{
+		"id": "f213fdd1-1b4b-a650-a002-c9d3604bcbac",
+		"name": "ACP Test Partner Account",
+		"technicalOwner": {"id": "tech-1", "name": "Alex Fernando", "email": "alex.fernando@wso2.example"},
+		"accountManager": {"id": "am-1", "name": "Jordan Perera", "email": "jordan.perera@wso2.example"},
+		"renewalAccountManager": {"id": "ram-1", "name": "Sam Jayasuriya", "email": "sam.jayasuriya@wso2.example"}
+	}`
+
+	var acc accountDTO
+	if err := json.Unmarshal([]byte(realGetAccountResponse), &acc); err != nil {
+		t.Fatalf("unmarshal real GetAccount response: %v", err)
+	}
+
+	if acc.TechnicalOwner == nil || acc.TechnicalOwner.Name != "Alex Fernando" {
+		t.Errorf("TechnicalOwner = %v, want Name %q", acc.TechnicalOwner, "Alex Fernando")
+	}
+	if acc.RenewalAccountManager == nil || acc.RenewalAccountManager.Name != "Sam Jayasuriya" {
+		t.Errorf("RenewalAccountManager = %v, want Name %q", acc.RenewalAccountManager, "Sam Jayasuriya")
+	}
+	if acc.AccountManager == nil || acc.AccountManager.Name != "Jordan Perera" {
+		t.Errorf("AccountManager = %v, want Name %q", acc.AccountManager, "Jordan Perera")
 	}
 }

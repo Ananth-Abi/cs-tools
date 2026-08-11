@@ -46,6 +46,8 @@ session, ever, so that code path would be permanently dead here.
   extracts an email from an already-fetched `PersonRef`, treating "no AM
   assigned" and "AM assigned but no email" both as legitimate absence
   (`""`), not errors — many real accounts have incomplete role assignments.
+  `Contact` (`{Name, Email}`) is the resolved-recipient shape shared with
+  `notify.Recipients`.
 - `internal/suspensionstate` — translates between
   `suspensionProcessState`'s real wire shape (see below) and
   `closure.NoticeWindow`. `WithSubscriptionEndDateState` only ever touches
@@ -63,10 +65,10 @@ session, ever, so that code path would be permanently dead here.
   and acts on a single project.
 
 Each pure package has an I/O counterpart living in `sweep` (e.g.
-`resolveAccountManagerEmail` does the `GetAccount` call and DTO parsing,
-then hands parsed data to `recipients.AccountManagerEmail`). Keep new
-decision logic in the pure packages and I/O in `sweep` — this split is what
-makes the decision logic cheaply testable without mocks.
+`resolveAccountContacts` does the `GetAccount` call and DTO parsing, then
+hands parsed data to `recipients.AccountManagerEmail`). Keep new decision
+logic in the pure packages and I/O in `sweep` — this split is what makes the
+decision logic cheaply testable without mocks.
 
 ## Dry-run is an injection choice, not a branch
 
@@ -92,22 +94,45 @@ loop's `offset := 0` line. This is what backs safe testing against a single
 dedicated project without risk of touching every open project in an
 environment.
 
-## Notice audience matrix and the AM-notice suppression
+## Notice audience matrix and content (redesigned per Chamara's direct request)
 
-Confirmed audience rule: 90/60/30-day windows are internal-only (Account
-Manager); 15/7/0-day windows are both internal and customer
-(`needsCustomerAudience` in `sweep.go`). The internal (Account Manager)
-notice is sent for **every** firing window unconditionally — except when the
-three-tier customer-contact fallback lands on `NeedsAMNudge` (no business
-contact, no primary contact) *and* the nudge email would reach the exact
-same recipient as the internal notice. In that case only the AM-nudge fires
-— the same Account Manager doesn't get two separate emails about the same
-window in the same run (`shouldSuppressInternalNotice`). Two empty
-recipients are deliberately **not** treated as a match — an unresolved AM
-email isn't a real duplicate-email risk, and suppressing would only hide
-debug visibility for no benefit. This was confirmed correct against real
-broad-sweep data (multiple real `am_nudge`/internal pairs collapsed to one
-notice; the empty-recipient exception correctly did not collapse).
+Confirmed audience rule, unchanged: 90/60/30-day windows are internal-only;
+15/7/0-day windows are both internal and customer (`needsCustomerAudience`
+in `sweep.go`). What changed is notice *shape*, not audience — this is a
+deliberate redesign (superseding the original `Kind`
+internal/customer/am_nudge model), decided directly with Chamara and
+recorded here so the reasoning isn't lost:
+
+- **One consolidated day-count reminder `Notice` per firing window**, not
+  separate `Kind`-tagged sends. `Recipients` (`AccountOwner`,
+  `RenewalManager`, `TechnicalOwner`, always populated; `Customer`, only for
+  a resolved 15/7/0 window) replaces the old single `Recipient` string
+  entirely. There is no more `Kind` field — audience is implied by which
+  `Recipients` fields are populated and by `Subject`'s wording, not stated
+  explicitly, per Chamara's request that the log stop saying
+  "internal"/"external".
+- **`Subject`** (`reminderSubject` in `sweep.go`) is `"{N} Days Reminder of
+  Project for {ProjectName} of {AccountName}"`, `[ACP] `-prefixed only for
+  the internal-only 90/60/30 windows. Confirmed against two real examples
+  from Chamara — do not change the template without re-confirming; in
+  particular, `ProjectName` itself often already contains the word
+  "Subscription" (e.g. `"TICKETNETWORK - Subscription"`), which is why a
+  literal subject can visually resemble "...Subscription of TicketNetwork"
+  without "Subscription of" being separate template wording.
+- **The no-business-contact case** (three-tier customer-contact fallback
+  lands on `NeedsAMNudge`: no business contact, no primary contact) sends a
+  **second, separate** `Notice` alongside the day-count reminder — not
+  instead of it, and with no suppression logic collapsing the two. This
+  notice has a fixed `Subject` (`"[Urgent] [ACP] No Business Contacts
+  Specified for Project {ProjectName}"`), a `Recipients.AccountOwner`-only
+  audience, and a fixed `Body` template (`noBusinessContactBody`) confirmed
+  verbatim from a real existing notice. Sending both is a deliberate
+  simplification the user confirmed rather than inventing a new suppression
+  rule for this shape — revisit if it proves too noisy in practice. (The
+  previous design's `shouldSuppressInternalNotice`, which collapsed a
+  same-recipient internal+nudge pair into one send, no longer applies: there
+  is no separate "internal" notice to suppress anymore, just the one
+  reminder plus this second notice.)
 
 ## suspensionProcessState's real shape
 

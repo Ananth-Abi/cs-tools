@@ -83,101 +83,173 @@ func needsCustomerAudience(window closure.NoticeWindow) bool {
 	}
 }
 
-// notifyForWindow sends the internal (Account Manager) notice — due for
-// every firing window — and, only when the audience matrix calls for it,
-// the customer-facing notice (or the distinct AM-nudge email when no
-// customer contact resolves). If the AM-nudge would reach the exact same
-// recipient as the internal notice, the internal notice is suppressed
-// entirely — the Account Manager gets only the nudge, not both, for the
-// same window in the same run (see shouldSuppressInternalNotice).
+// reminderSubject builds the day-count reminder's title line: "{N} Days
+// Reminder of Project for {ProjectName} of {AccountName}", [ACP]-prefixed
+// only for the internal-only 90/60/30 windows (confirmed against two real
+// examples from Chamara — do not change this wording without re-confirming).
+func reminderSubject(window closure.NoticeWindow, projectName, accountName string) string {
+	s := fmt.Sprintf("%d Days Reminder of Project for %s of %s", int(window), projectName, accountName)
+	if !needsCustomerAudience(window) {
+		s = "[ACP] " + s
+	}
+	return s
+}
+
+// noBusinessContactBodyTemplate is the fixed body for the urgent
+// no-business-contact notice, confirmed verbatim from a real existing
+// notice Chamara shared. Dates are formatted 2006-01-02; Account Owner is
+// the resolved Account Manager's *name*, not email.
+const noBusinessContactBodyTemplate = `Internal - Customer Project without Business Contacts
+
+Urgent reminder regarding the project %[1]s.
+
+Please note that no Business Contacts was found for the project %[1]s. Immediate action is required to address this issue, as without a business contact, the customers will not receive essential notifications regarding their project suspension status. Additionally, this will lead to failures in further automated actions related to project suspension.
+
+Please refer this document to Update Business Contact
+
+Project Name: %[1]s
+Project Key: %[2]s
+Account Owner: %[3]s
+Start Date: %[4]s
+End Date: %[5]s`
+
+func noBusinessContactBody(proj project, accountOwnerName string) string {
+	return fmt.Sprintf(noBusinessContactBodyTemplate,
+		proj.Name, proj.ProjectKey, accountOwnerName, formatDate(proj.StartDate), formatDate(proj.EndDate))
+}
+
+func formatDate(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02")
+}
+
+func timeValue(t *time.Time) time.Time {
+	if t == nil {
+		return time.Time{}
+	}
+	return *t
+}
+
+func accountName(proj project) string {
+	if proj.Account == nil {
+		return ""
+	}
+	return proj.Account.Name
+}
+
+// notifyForWindow sends the single day-count reminder notice due for every
+// firing window (Account Owner/Renewal Manager/Technical Owner always
+// populated in Recipients; Customer only for a resolved 15/7/0 window) and,
+// only when a 15/7/0 window's customer-contact resolution comes up empty,
+// an additional, separate no-business-contact urgent notice to the Account
+// Owner. Sending both in that case — rather than suppressing the reminder
+// or merging them — is a deliberate simplification, not an oversight;
+// revisit if it proves too noisy in practice.
 func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, proj project, window closure.NoticeWindow) error {
-	amEmail, err := resolveAccountManagerEmail(ctx, reader, proj.accountID())
+	contacts, err := resolveAccountContacts(ctx, reader, proj.accountID())
 	if err != nil {
-		return fmt.Errorf("resolve AM email: %w", err)
+		return fmt.Errorf("resolve account contacts: %w", err)
 	}
 
-	internalNotice := notify.Notice{
-		Kind:      notify.KindInternal,
-		Window:    window,
-		ProjectID: proj.ID,
-		Recipient: amEmail,
+	reminder := notify.Notice{
+		ProjectID:   proj.ID,
+		ProjectName: proj.Name,
+		ProjectKey:  proj.ProjectKey,
+		StartDate:   timeValue(proj.StartDate),
+		EndDate:     timeValue(proj.EndDate),
+		Window:      window,
+		Subject:     reminderSubject(window, proj.Name, accountName(proj)),
+		Recipients: notify.Recipients{
+			AccountOwner:   contacts.AccountOwner,
+			RenewalManager: contacts.RenewalManager,
+			TechnicalOwner: contacts.TechnicalOwner,
+		},
 	}
 
 	if !needsCustomerAudience(window) {
-		return ntf.Send(ctx, internalNotice)
+		return ntf.Send(ctx, reminder)
 	}
 
-	projectContacts, accountContacts, err := fetchContacts(ctx, reader, proj)
+	projectContacts, accountContactsList, err := fetchContacts(ctx, reader, proj)
 	if err != nil {
 		return err
 	}
-	resolution := recipients.ResolveCustomerContact(projectContacts, accountContacts)
+	resolution := recipients.ResolveCustomerContact(projectContacts, accountContactsList)
 
-	if resolution.NeedsAMNudge {
-		nudgeNotice := notify.Notice{
-			Kind:        notify.KindAMNudge,
-			Window:      window,
-			ProjectID:   proj.ID,
-			Recipient:   amEmail,
-			ResolvedVia: resolution.ResolvedVia,
-		}
-		if !shouldSuppressInternalNotice(internalNotice.Recipient, nudgeNotice.Recipient) {
-			if err := ntf.Send(ctx, internalNotice); err != nil {
-				return fmt.Errorf("send internal notice: %w", err)
-			}
-		}
-		return ntf.Send(ctx, nudgeNotice)
+	if !resolution.NeedsAMNudge {
+		reminder.Recipients.Customer = resolution.CustomerContact
+		reminder.ResolvedVia = resolution.ResolvedVia
+		return ntf.Send(ctx, reminder)
 	}
 
-	if err := ntf.Send(ctx, internalNotice); err != nil {
-		return fmt.Errorf("send internal notice: %w", err)
+	if err := ntf.Send(ctx, reminder); err != nil {
+		return fmt.Errorf("send day-count reminder: %w", err)
 	}
 
 	return ntf.Send(ctx, notify.Notice{
-		Kind:        notify.KindCustomer,
-		Window:      window,
 		ProjectID:   proj.ID,
-		Recipient:   resolution.CustomerContact.Email,
+		ProjectName: proj.Name,
+		ProjectKey:  proj.ProjectKey,
+		StartDate:   timeValue(proj.StartDate),
+		EndDate:     timeValue(proj.EndDate),
+		Window:      window,
+		Subject:     fmt.Sprintf("[Urgent] [ACP] No Business Contacts Specified for Project %s", proj.Name),
+		Body:        noBusinessContactBody(proj, contacts.AccountOwner.Name),
+		Recipients: notify.Recipients{
+			AccountOwner: contacts.AccountOwner,
+		},
 		ResolvedVia: resolution.ResolvedVia,
 	})
 }
 
-// shouldSuppressInternalNotice reports whether the internal (Account
-// Manager) notice should be skipped in favor of sending only the AM-nudge
-// notice — true exactly when both would reach the identical, non-empty
-// recipient. Two empty recipients are deliberately NOT treated as a match:
-// there is no real person being double-emailed in that case, only two log
-// lines about an unresolved account, and suppressing would just hide useful
-// debug visibility for no benefit.
-func shouldSuppressInternalNotice(internalRecipient, nudgeRecipient string) bool {
-	return internalRecipient != "" && internalRecipient == nudgeRecipient
+// accountContacts is the three account-level people a day-count reminder's
+// Recipients draws from.
+type accountContacts struct {
+	AccountOwner   recipients.Contact
+	RenewalManager recipients.Contact
+	TechnicalOwner recipients.Contact
 }
 
-// resolveAccountManagerEmail fetches the account and extracts its Account
-// Manager's email. Returns "" (not an error) if the project has no linked
-// account, the account has no Account Manager assigned, or the assigned
-// Account Manager has no recorded email — all legitimate, unremarkable
-// states. Only a genuine fetch/parse failure is returned as an error.
-func resolveAccountManagerEmail(ctx context.Context, reader entityReader, accountID string) (string, error) {
+// resolveAccountContacts fetches the account and extracts its Account
+// Manager (Account Owner), Renewal Account Manager, and Technical Owner as
+// Contacts. Each Contact's Email may legitimately be "" — no person
+// assigned to that role, or one assigned with no email on file — mirroring
+// recipients.AccountManagerEmail's existing treatment of that as a
+// non-error state, now applied to all three roles. Returns the zero
+// accountContacts (not an error) if the project has no linked account.
+func resolveAccountContacts(ctx context.Context, reader entityReader, accountID string) (accountContacts, error) {
 	if accountID == "" {
-		return "", nil
+		return accountContacts{}, nil
 	}
 
 	raw, err := reader.GetAccount(ctx, accountID)
 	if err != nil {
-		return "", fmt.Errorf("get account: %w", err)
+		return accountContacts{}, fmt.Errorf("get account: %w", err)
 	}
 
 	var acc accountDTO
 	if err := json.Unmarshal(raw, &acc); err != nil {
-		return "", fmt.Errorf("parse account: %w", err)
+		return accountContacts{}, fmt.Errorf("parse account: %w", err)
 	}
 
-	var am *recipients.PersonRef
-	if acc.AccountManager != nil {
-		am = &recipients.PersonRef{ID: acc.AccountManager.ID, Name: acc.AccountManager.Name, Email: acc.AccountManager.Email}
+	return accountContacts{
+		AccountOwner:   contactFromPersonRef(acc.AccountManager),
+		RenewalManager: contactFromPersonRef(acc.RenewalAccountManager),
+		TechnicalOwner: contactFromPersonRef(acc.TechnicalOwner),
+	}, nil
+}
+
+// contactFromPersonRef converts a possibly-nil personRefDTO into a
+// recipients.Contact, reusing recipients.AccountManagerEmail's nil/no-email
+// handling (role-agnostic despite the name) rather than duplicating it.
+func contactFromPersonRef(p *personRefDTO) recipients.Contact {
+	if p == nil {
+		return recipients.Contact{}
 	}
-	return recipients.AccountManagerEmail(am), nil
+	ref := recipients.PersonRef{ID: p.ID, Name: p.Name, Email: p.Email}
+	return recipients.Contact{Name: p.Name, Email: recipients.AccountManagerEmail(&ref)}
 }
 
 func fetchContacts(ctx context.Context, reader entityReader, proj project) ([]recipients.ProjectContact, []recipients.AccountContact, error) {
