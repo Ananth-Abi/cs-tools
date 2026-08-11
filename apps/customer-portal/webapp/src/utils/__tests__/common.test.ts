@@ -65,4 +65,13 @@ describe("common utils", () => {
     expect(cleaned).toContain("rgb(90, 90, 90)");
   });
 
+  it("stripLightModeInlineStyles removes a mid-gray background below WCAG AA contrast", () => {
+    // #808080 (luminance ~0.216) contrasts with white text at ~3.95:1, below
+    // the 4.5:1 AA minimum for normal text — a fixed luminance cutoff missed
+    // this; the contrast-derived threshold must catch it.
+    const html = '<div style="background-color: #808080">Hi</div>';
+    const cleaned = stripLightModeInlineStyles(html);
+    expect(cleaned).not.toContain("#808080");
+  });
+
 });

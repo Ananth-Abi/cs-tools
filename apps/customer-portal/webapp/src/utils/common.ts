@@ -88,11 +88,21 @@ export const DESCRIPTION_PURIFY_CONFIG = {
   FORBID_CONTENTS: ["table", "thead", "tbody", "tfoot", "tr", "th", "td", "colgroup", "col", "code", "pre"],
 };
 
-// Backgrounds at or above this relative luminance read poorly against the
-// app's light dark-mode text and get stripped. Pure/near-white sits at ~1.0;
-// a pastel like `#bce4e8` sits at ~0.72; genuinely dark/saturated backgrounds
-// (e.g. code-block dark grays) sit well below this and are left untouched.
-const LIGHT_BACKGROUND_LUMINANCE_THRESHOLD = 0.4;
+// WCAG AA minimum contrast ratio for normal-size text.
+const MIN_CONTRAST_RATIO = 4.5;
+// Dark-mode default text renders effectively white; used only to derive the
+// background threshold below, not to special-case any particular text color.
+const DARK_MODE_TEXT_LUMINANCE = 1;
+
+// A background is stripped once its own contrast against dark-mode text would
+// drop below MIN_CONTRAST_RATIO — i.e. WCAG contrast = (L_text + 0.05) /
+// (L_bg + 0.05) solved for the L_bg at which that ratio equals the minimum.
+// Deriving it this way (rather than an eyeballed constant) means a background
+// like #808080 (luminance ~0.22, ~3.95:1 against white — below AA) is caught;
+// a fixed 0.4 threshold missed it. Pure/near-white sits at ~1.0; a pastel like
+// `#bce4e8` sits at ~0.72 — both clear this derived threshold too.
+const LIGHT_BACKGROUND_LUMINANCE_THRESHOLD =
+  (DARK_MODE_TEXT_LUMINANCE + 0.05) / MIN_CONTRAST_RATIO - 0.05;
 
 /** WCAG-style relative luminance (0-1) for an sRGB triplet (0-255 channels). */
 function relativeLuminance(r: number, g: number, b: number): number {
