@@ -38,7 +38,7 @@ function card(overrides: Partial<CsmTimeCard> = {}): CsmTimeCard {
 }
 
 describe("BulkApproveDialog", () => {
-  it("summarizes the card count and total minutes, and lists each card", () => {
+  it("summarizes the card count and total minutes, without listing each card individually", () => {
     render(
       <BulkApproveDialog
         cards={[
@@ -53,10 +53,11 @@ describe("BulkApproveDialog", () => {
 
     expect(screen.getByText("Approve 2 time cards?")).toBeInTheDocument();
     expect(screen.getByText("2 cards · 75 min total")).toBeInTheDocument();
-    expect(screen.getByText("CS0000001")).toBeInTheDocument();
-    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
-    expect(screen.getByText("CS0000002")).toBeInTheDocument();
-    expect(screen.getByText("John Roe")).toBeInTheDocument();
+    // The count is the whole point of this summary — no per-card list.
+    expect(screen.queryByText("CS0000001")).not.toBeInTheDocument();
+    expect(screen.queryByText("Jane Doe")).not.toBeInTheDocument();
+    expect(screen.queryByText("CS0000002")).not.toBeInTheDocument();
+    expect(screen.queryByText("John Roe")).not.toBeInTheDocument();
   });
 
   it("uses singular wording for exactly one card", () => {
@@ -85,7 +86,7 @@ describe("BulkApproveDialog", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /approve 1/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
@@ -103,6 +104,6 @@ describe("BulkApproveDialog", () => {
     );
 
     expect(screen.getByRole("button", { name: /cancel/i })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /approve 1/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
   });
 });

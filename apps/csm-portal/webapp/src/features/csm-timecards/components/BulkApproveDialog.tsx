@@ -16,7 +16,6 @@
 
 import type { JSX } from "react";
 import {
-  Box,
   Button,
   Dialog,
   DialogActions,
@@ -24,7 +23,6 @@ import {
   DialogTitle,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Check } from "@wso2/oxygen-ui-icons-react";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 
 interface BulkApproveDialogProps {
@@ -62,58 +60,21 @@ export default function BulkApproveDialog({
         Approve {cards.length} time card{cards.length === 1 ? "" : "s"}?
       </DialogTitle>
       <DialogContent dividers>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        <Typography variant="body2" color="text.secondary">
           {cards.length} card{cards.length === 1 ? "" : "s"} · {totalMinutes} min total
         </Typography>
-        <Box
-          sx={{
-            maxHeight: 280,
-            overflowY: "auto",
-            border: 1,
-            borderColor: "divider",
-            borderRadius: 1,
-          }}
-        >
-          {cards.map((c, i) => (
-            <Box
-              key={c.id}
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 1,
-                px: 1.5,
-                py: 1,
-                borderBottom: i === cards.length - 1 ? 0 : 1,
-                borderColor: "divider",
-              }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" noWrap>
-                  {c.caseNumber}
-                </Typography>
-                <Typography variant="caption" color="text.secondary" noWrap display="block">
-                  {c.userName}
-                </Typography>
-              </Box>
-              <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0 }}>
-                {c.totalMinutes} min
-              </Typography>
-            </Box>
-          ))}
-        </Box>
       </DialogContent>
       <DialogActions>
         <Button color="inherit" onClick={onClose} disabled={isSubmitting}>
           Cancel
         </Button>
         <Button
-          color="success"
-          variant="contained"
-          startIcon={<Check size={16} />}
+          color="primary"
+          variant="outlined"
           onClick={onConfirm}
           disabled={isSubmitting || cards.length === 0}
         >
-          Approve {cards.length}
+          Approve
         </Button>
       </DialogActions>
     </Dialog>
