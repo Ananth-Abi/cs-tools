@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -494,6 +494,24 @@ describe("WidgetEditorDialog", () => {
     postMock.mockClear();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Resource type" }));
     fireEvent.click(screen.getByRole("option", { name: "incident" }));
+
+    // `fireEvent` only flushes the synchronous React commit — it doesn't wait
+    // for TanStack Query's own (microtask-scheduled) notify/fetch machinery,
+    // so a regression that re-enabled a query on this state change could
+    // still fire `post` a tick later, after a bare synchronous assertion here
+    // would already have passed. A bare `await waitFor(() =>
+    // expect(postMock).not.toHaveBeenCalled())` doesn't fix that either:
+    // `waitFor` only *retries while the assertion keeps failing*, so a
+    // negative assertion that's already true on the very first check resolves
+    // immediately and never actually gives a delayed call a chance to land.
+    // Instead, force a real macrotask turn first — which fully drains any
+    // pending microtask-queued query work ahead of it — then assert. Wrapped
+    // in `act` so any state update that flush triggers (e.g. TanStack Query
+    // actually firing a fetch) is applied and settled before we assert,
+    // rather than logging an "update not wrapped in act" warning.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
 
     // No re-fetch just from switching resourceType — the stale snapshot is
     // cleared client-side, not replaced by a fresh Preview call.
