@@ -245,6 +245,12 @@ export default function CsmCaseCommentBubble({
             sx={{
               flex: 1,
               minWidth: 0,
+              // A system entry is backend HTML too, so it needs the same width
+              // containment as a regular comment body — see the full note on the
+              // rich-text host below for why `min-width: 0` alone doesn't hold.
+              maxWidth: "100%",
+              contain: "inline-size",
+              overflowX: "auto",
               overflowWrap: "anywhere",
               wordBreak: "break-word",
               "& p": { m: 0 },
