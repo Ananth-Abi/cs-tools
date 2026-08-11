@@ -235,6 +235,52 @@ export const SERVICE_REQUEST_INPUT: ServiceRequestInput = {
   description: "This is a test Generic Request SR for MS subscription project",
 };
 
+/** Deployment types offered by the Add Deployment modal. Verified live against
+ * staging — note there is no plain "Production": the production-like option is
+ * "Primary Production". */
+export const DeploymentType = {
+  DEVELOPMENT: "Development",
+  QA: "QA",
+  STAGING: "Staging",
+  STRESS: "Stress",
+  UAT: "UAT",
+  PRIMARY_PRODUCTION: "Primary Production",
+} as const;
+
+export type DeploymentType =
+  (typeof DeploymentType)[keyof typeof DeploymentType];
+
+/** Content submitted by the add-deployment flow. */
+export interface DeploymentInput {
+  /** Name *prefix*. The spec appends a timestamp because the backend rejects a
+   * duplicate name with 409 and there is no delete endpoint, so a fixed name
+   * only ever works on the very first run. */
+  namePrefix: string;
+  /** Name of a deployment that already exists on the project, for exercising the
+   * duplicate-name rejection. Durable as a fixture because deployments have no
+   * delete endpoint, so once created this name cannot disappear. */
+  existingName: string;
+  type: DeploymentType;
+  /** Goes in the field labelled "Description *" — the modal does not call it
+   * "Deployment Description". */
+  description: string;
+}
+
+/**
+ * Deployment to create on the Managed Cloud Subscription project.
+ *
+ * ⚠️ Creates a permanent record on every run — `POST /projects/{id}/deployments`
+ * has no delete counterpart, so these accumulate and cannot be cleaned up. The
+ * timestamped name keeps them identifiable and ordered.
+ */
+export const DEPLOYMENT_INPUT: DeploymentInput = {
+  namePrefix: "Automation Test Deployment",
+  existingName: "Automation Test Deployment",
+  type: DeploymentType.PRIMARY_PRODUCTION,
+  description:
+    "This is a test deployment for Automation Test MS Customer Project",
+};
+
 /** Content submitted by the create-security-report flow.
  *
  * A security report is a case raised at `/support/security-report/create`. The

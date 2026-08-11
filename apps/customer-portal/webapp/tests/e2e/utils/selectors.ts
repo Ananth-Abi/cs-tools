@@ -64,6 +64,35 @@ export const CREATE_CASE = {
   },
 } as const;
 
+/** Project details page (`/projects/:projectId/project-details`), reached from
+ * the side nav. Its tabs are Overview, Deployments and Time Tracking. */
+export const PROJECT_DETAILS = {
+  navItem: "Project Details",
+  pathSegment: "project-details",
+  tabs: {
+    overview: "Overview",
+    deployments: "Deployments",
+    timeTracking: "Time Tracking",
+  },
+} as const;
+
+/** Add Deployment modal, opened from the Deployments tab.
+ *
+ * Unusually for this app the fields have real ids and associated labels, so no
+ * structural locators are needed here. */
+export const ADD_DEPLOYMENT = {
+  openButton: "Add Deployment",
+  dialogTitle: "Add New Deployment",
+  /** The modal's confirm control carries the same name as the button that opens
+   * it, so it must be scoped to the dialog. */
+  submitButton: "Add Deployment",
+  ids: {
+    name: "#deployment-name",
+    type: "#deployment-type",
+    description: "#deployment-description",
+  },
+} as const;
+
 /** Get Help dropdown menu items (the arrow half of the split button). */
 export const GET_HELP_MENU = {
   trigger: "More help options",
