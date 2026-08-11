@@ -17,7 +17,7 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
-import { severityFromPriority, uiStateFromBe } from "@api/backend/mappers";
+import { severityFromBe, uiStateFromBe } from "@api/backend/mappers";
 import type {
   BeCaseFieldFilter,
   BeCaseSearchFilters,
@@ -28,7 +28,7 @@ import type {
 import type {
   CaseState,
   CaseWorkState,
-  Severity,
+  SeverityOrUnset,
 } from "@features/csm-dashboard/types/abtDashboard";
 import { ALL_CASE_TYPES } from "@features/csm-cases/utils/caseType";
 
@@ -83,7 +83,7 @@ export interface QuickCaseHit {
   caseNumber?: string;
   wso2CaseId?: string;
   subject: string;
-  severity: Severity;
+  severity: SeverityOrUnset;
   state: CaseState;
   workState?: CaseWorkState | null;
   caseType?: BeCaseType;
@@ -147,7 +147,7 @@ export function useQuickCaseSearch(
         caseNumber: c.number,
         wso2CaseId: c.internalId,
         subject: c.subject ?? "(no subject)",
-        severity: severityFromPriority(c.severity),
+        severity: severityFromBe(c.severity),
         state: uiStateFromBe(c.state),
         workState: c.workState,
         caseType: c.type,

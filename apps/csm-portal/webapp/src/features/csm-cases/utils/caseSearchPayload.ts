@@ -18,7 +18,7 @@ import type { BackendApi } from "@api/backend/client";
 import {
   beStateFromUi,
   priorityFromSeverity,
-  severityFromPriority,
+  severityFromBe,
   uiStateFromBe,
 } from "@api/backend/mappers";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
@@ -254,7 +254,7 @@ export function mapCaseSearchViewToRow(
     projectId,
     projectName: c.project?.name ?? "-",
     product: c.deployedProduct?.name ?? c.product?.name ?? "-",
-    severity: severityFromPriority(c.severity),
+    severity: severityFromBe(c.severity),
     state: uiStateFromBe(c.state),
     caseType: c.type,
     workState: c.workState ?? null,

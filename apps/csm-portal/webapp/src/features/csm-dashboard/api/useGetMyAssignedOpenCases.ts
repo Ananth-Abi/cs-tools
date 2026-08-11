@@ -21,7 +21,7 @@ import {
 } from "@tanstack/react-query";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
-import { severityFromPriority, uiStateFromBe } from "@api/backend/mappers";
+import { severityFromBe, uiStateFromBe } from "@api/backend/mappers";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import type {
@@ -139,7 +139,7 @@ export function useGetMyAssignedOpenCases(
           projectId: c.project?.id ?? "",
           projectName: c.project?.name ?? "-",
           product: c.deployedProduct?.name ?? "-",
-          severity: severityFromPriority(c.severity),
+          severity: severityFromBe(c.severity),
           state: uiStateFromBe(c.state),
           caseType: c.type,
           workState: c.workState ?? null,

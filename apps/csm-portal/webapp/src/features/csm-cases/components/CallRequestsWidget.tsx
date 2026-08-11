@@ -31,7 +31,10 @@ import {
 import { Phone, Plus, RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useState, type JSX } from "react";
 import type { BeCallRequestView, BeCallRequestStateKey } from "@api/backend/types";
-import type { CaseState, Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type {
+  CaseState,
+  SeverityOrUnset,
+} from "@features/csm-dashboard/types/abtDashboard";
 import {
   useGetCsmCaseCallRequests,
   usePostCsmCaseCallRequest,
@@ -58,8 +61,8 @@ import RefreshButton from "@components/RefreshButton";
 
 interface CallRequestsWidgetProps {
   caseId: string;
-  /** Case severity (S0-S4) — passed to the create dialog to enforce the lead-time rule. */
-  severity?: Severity;
+  /** Case severity — passed to the create dialog to enforce the lead-time rule. */
+  severity?: SeverityOrUnset;
   /**
    * Case's current state — the data source only accepts a call request while
    * the case is in one of a fixed set of states. Gates both the "Create call
