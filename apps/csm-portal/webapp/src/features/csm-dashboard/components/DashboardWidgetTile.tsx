@@ -16,8 +16,9 @@
 
 import { Box, Button, Card, Chip, IconButton, Skeleton, Tooltip, Typography, alpha, useTheme } from "@wso2/oxygen-ui";
 import { ArrowRight, Info } from "@wso2/oxygen-ui-icons-react";
-import type { JSX, KeyboardEvent, ReactNode } from "react";
+import { useRef, type JSX, type KeyboardEvent, type ReactNode } from "react";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router";
+import { useElementVisibleOnce } from "@hooks/useElementVisibleOnce";
 import type {
   BeDashboardPieSlice,
   BeDashboardWidgetColumn,
@@ -128,6 +129,15 @@ export default function DashboardWidgetTile({
   const location = useLocation();
   const { user } = useCurrentUser();
   const currentUserId = user?.id;
+  // Gates this tile's own data fetch (below) behind having actually
+  // scrolled into (or near — see the hook's rootMargin) the viewport at
+  // least once, rather than every widget on the dashboard firing its
+  // search the instant the page mounts. Attached to whichever top-level
+  // `Card` this component ends up returning (every branch below sets
+  // `ref={tileRef}`) — a given tile's shape never changes across its own
+  // lifetime, so exactly one of them ever mounts for a given instance.
+  const tileRef = useRef<HTMLDivElement>(null);
+  const isVisible = useElementVisibleOnce(tileRef);
   // Resolves every client-side filter placeholder a widget's own (opaque)
   // filters may carry — `__current_team__` (see `teamFilterPlaceholder.ts`),
   // `__current_user__` (see `currentUserFilterPlaceholder.ts`) and the
@@ -179,7 +189,7 @@ export default function DashboardWidgetTile({
     shape,
     listLimit,
     0,
-    shape !== "pie" && shape !== "bar",
+    shape !== "pie" && shape !== "bar" && isVisible,
     selectedTeamGroupId,
     sortBy,
     currentUserId,
@@ -191,6 +201,7 @@ export default function DashboardWidgetTile({
     shape === "pie" || shape === "bar" ? (slices ?? []) : [],
     selectedTeamGroupId,
     currentUserId,
+    isVisible,
   );
   // True while this widget carries a `__current_user__` filter and the
   // signed-in user's profile hasn't loaded yet. `useWidgetData`/
@@ -200,7 +211,13 @@ export default function DashboardWidgetTile({
   // tile must present the wait as loading rather than paint the `0` a
   // deferred query's absent data would otherwise resolve to.
   const awaitingCurrentUser = currentUserId === undefined && hasCurrentUserPlaceholder(filters);
-  const isLoading = isWidgetDataLoading || awaitingCurrentUser;
+  // `!isVisible` (this tile hasn't scrolled into view yet, so its own fetch
+  // above never fired) reports as loading rather than as react-query's own
+  // `isLoading` for a disabled query — same rationale as useWidgetPieData's
+  // own `isLoading`. This is the count/list-shape tile's loading state;
+  // shape "pie"/"bar" reads `pieData.isLoading` instead, which already
+  // folds in the same `isVisible` gate via the `enabled` argument above.
+  const isLoading = isWidgetDataLoading || awaitingCurrentUser || !isVisible;
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   // Thousands separators for shape "count"'s big number -- used both in the
   // visible Typography and the tile's aria-label, so both stay in sync.
@@ -211,7 +228,7 @@ export default function DashboardWidgetTile({
     // compile-time-checked Go literal) — an unrecognized value must not
     // crash this tile's render (config.buildHref below would throw).
     return (
-      <Card variant="outlined" sx={{ p: 1.75 }}>
+      <Card ref={tileRef} variant="outlined" sx={{ p: 1.75 }}>
         <Typography variant="caption" color="text.secondary">
           {resolvedDisplayName}
         </Typography>
@@ -324,7 +341,7 @@ export default function DashboardWidgetTile({
     const ListRenderer = WIDGET_LIST_RENDERERS[resourceType];
     const total = data?.total ?? 0;
     return (
-      <Card variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
+      <Card ref={tileRef} variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
         {/* The rows below are capped at `listLimit` (see `useWidgetData`'s
             DEFAULT_LIST_LIMIT) — this badge next to the title is the only
             place the widget's own full count is visible, since "View more"
@@ -419,6 +436,7 @@ export default function DashboardWidgetTile({
     };
     return (
       <Card
+        ref={tileRef}
         variant="outlined"
         sx={{
           position: "relative",
@@ -537,6 +555,7 @@ export default function DashboardWidgetTile({
     // role="button" does. The anchor here is a background sibling instead;
     // see the pie/bar branch's comment for the pointer-events layering.
     <Card
+      ref={tileRef}
       variant="outlined"
       sx={{
         position: "relative",

@@ -105,18 +105,26 @@ describe("DashboardWidgetPreviewPage", () => {
 
     expect(screen.getByText("My Critical & High Cases")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { severities: ["critical"] },
-      pagination: { offset: 0, limit: 10 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { severities: ["critical"] },
+        pagination: { offset: 0, limit: 10 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
 
     // TablePagination's "next page" button.
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: { severities: ["critical"] },
-        pagination: { offset: 10, limit: 10 },
-      }),
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { severities: ["critical"] },
+          pagination: { offset: 10, limit: 10 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 
@@ -140,10 +148,14 @@ describe("DashboardWidgetPreviewPage", () => {
     );
 
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { assignedUserIds: [CURRENT_USER_ID] },
-      pagination: { offset: 0, limit: 10 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { assignedUserIds: [CURRENT_USER_ID] },
+        pagination: { offset: 0, limit: 10 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("merges a typed search term into the widget's own filters as searchQuery", async () => {
@@ -168,10 +180,14 @@ describe("DashboardWidgetPreviewPage", () => {
     fireEvent.change(screen.getByLabelText("Search"), { target: { value: "disk" } });
 
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: { severities: ["critical"], searchQuery: "disk" },
-        pagination: { offset: 0, limit: 10 },
-      }),
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { severities: ["critical"], searchQuery: "disk" },
+          pagination: { offset: 0, limit: 10 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 

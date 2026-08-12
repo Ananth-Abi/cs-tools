@@ -25,6 +25,10 @@ import {
   hasCurrentUserPlaceholder,
   resolveCurrentUserPlaceholder,
 } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import {
+  shouldRetryWidgetFetch,
+  withWidgetFetchSlot,
+} from "@features/csm-dashboard/utils/widgetFetchConcurrency";
 
 /** Default number of rows fetched for a `shape: "list"` widget when the
  * template doesn't set its own `listLimit`. */
@@ -120,25 +124,45 @@ export function useWidgetData(
         // rather than crash on the property accesses below.
         throw new Error(`Unsupported widget resourceType: ${resourceType}`);
       }
-      const res = await api.post<
-        {
-          filters: Record<string, unknown>;
-          pagination: { offset: number; limit: number };
-          sortBy?: Record<string, unknown>;
-        },
-        Record<string, unknown>
-      >(config.searchEndpoint, {
-        filters: resolvedFilters,
-        pagination: { offset: effectiveOffset, limit },
-        ...(effectiveSortBy ? { sortBy: effectiveSortBy } : {}),
+      // Gated behind a shared concurrency slot (see widgetFetchConcurrency.ts)
+      // so an N-widget dashboard doesn't fire N simultaneous searches at
+      // customer-entity-service — the search call itself, not this
+      // queryFn's synchronous config check above, is what actually hits
+      // the network. The provided `signal` is wired to `api.post`'s own
+      // `signal` option so widgetFetchConcurrency's own timeout can
+      // actually abort this specific in-flight request, not just start a
+      // timer nothing observes.
+      return withWidgetFetchSlot(async (signal) => {
+        const res = await api.post<
+          {
+            filters: Record<string, unknown>;
+            pagination: { offset: number; limit: number };
+            sortBy?: Record<string, unknown>;
+          },
+          Record<string, unknown>
+        >(
+          config.searchEndpoint,
+          {
+            filters: resolvedFilters,
+            pagination: { offset: effectiveOffset, limit },
+            ...(effectiveSortBy ? { sortBy: effectiveSortBy } : {}),
+          },
+          { signal },
+        );
+        const total = typeof res.total === "number" ? res.total : 0;
+        const rawItems = res[config.itemsKey];
+        const items = Array.isArray(rawItems)
+          ? (rawItems as Record<string, unknown>[])
+          : [];
+        return { total, items };
       });
-      const total = typeof res.total === "number" ? res.total : 0;
-      const rawItems = res[config.itemsKey];
-      const items = Array.isArray(rawItems)
-        ? (rawItems as Record<string, unknown>[])
-        : [];
-      return { total, items };
     },
+    // Explicit per-query retry (not inherited from AppWithConfig's global
+    // default) so a widget whose fetch timed out gets one retry — see
+    // shouldRetryWidgetFetch's own doc comment for why a timeout must not
+    // be a same-tick terminal failure, and why the retry needs no separate
+    // "back of the queue" bookkeeping of its own.
+    retry: shouldRetryWidgetFetch,
     staleTime: 60_000,
   });
 }

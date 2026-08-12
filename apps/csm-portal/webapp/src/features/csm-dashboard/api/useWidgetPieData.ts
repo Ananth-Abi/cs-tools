@@ -26,6 +26,10 @@ import {
   hasCurrentUserPlaceholder,
   resolveCurrentUserPlaceholder,
 } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import {
+  shouldRetryWidgetFetch,
+  withWidgetFetchSlot,
+} from "@features/csm-dashboard/utils/widgetFetchConcurrency";
 
 export interface PieSliceResult extends BeDashboardPieSlice {
   value: number;
@@ -65,6 +69,14 @@ export function useWidgetPieData(
    * same as `selectedTeamGroupId`, since a slice's own `query` may carry the
    * placeholder too, not just the widget's base `query`. */
   currentUserId?: string,
+  /** Set to `false` to hold every slice query without firing it — used by
+   * `DashboardWidgetTile` to defer a pie/bar widget's fetch until its tile
+   * has actually scrolled into (or near) the viewport (see
+   * `useElementVisibleOnce`). Defaults to `true` (fires immediately, same
+   * as before this parameter existed) so `DashboardWidgetPreviewPage`-style
+   * callers that always render one widget full-page — never lazily — don't
+   * need to pass anything. */
+  enabled = true,
 ): WidgetPieData {
   const api = useBackendApi();
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
@@ -103,22 +115,41 @@ export function useWidgetPieData(
           if (!config) {
             throw new Error(`Unsupported widget resourceType: ${resourceType}`);
           }
-          const res = await api.post<
-            { filters: Record<string, unknown>; pagination: { offset: number; limit: number } },
-            Record<string, unknown>
-          >(config.searchEndpoint, {
-            filters,
-            pagination: { offset: 0, limit: 1 },
+          // Same shared concurrency slot (and timeout) useWidgetData's
+          // search uses — a pie widget fires one call per slice on top of
+          // every other widget's own call, so it needs both at least as
+          // much.
+          return withWidgetFetchSlot(async (signal) => {
+            const res = await api.post<
+              { filters: Record<string, unknown>; pagination: { offset: number; limit: number } },
+              Record<string, unknown>
+            >(
+              config.searchEndpoint,
+              {
+                filters,
+                pagination: { offset: 0, limit: 1 },
+              },
+              { signal },
+            );
+            return typeof res.total === "number" ? res.total : 0;
           });
-          return typeof res.total === "number" ? res.total : 0;
         },
-        enabled: !awaitingCurrentUser,
+        enabled: enabled && !awaitingCurrentUser,
+        // Same per-query retry override as useWidgetData, same reasoning
+        // (see shouldRetryWidgetFetch) — a pie/bar slice fetch that timed
+        // out gets one retry too.
+        retry: shouldRetryWidgetFetch,
         staleTime: 60_000,
       };
     }),
   });
 
-  const isLoading = awaitingCurrentUser || queries.some((q) => q.isLoading);
+  // `!enabled` (still waiting to scroll into view) reports as loading
+  // rather than as react-query's own `isLoading` for a disabled query
+  // (which is `false` — a query that never started isn't "loading" to
+  // react-query) — this hook's own `isLoading` is a widget-level "don't
+  // paint real data yet" signal, not a passthrough of query-fetch state.
+  const isLoading = !enabled || awaitingCurrentUser || queries.some((q) => q.isLoading);
   const isError = queries.some((q) => q.isError);
   const results: PieSliceResult[] = slices.map((slice, i) => ({
     ...slice,

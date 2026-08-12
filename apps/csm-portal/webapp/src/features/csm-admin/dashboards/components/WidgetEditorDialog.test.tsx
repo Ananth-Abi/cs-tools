@@ -100,10 +100,14 @@ describe("WidgetEditorDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
 
     await waitFor(() => expect(screen.getByText("7")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {},
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {},
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("shows nothing fetched until Preview is explicitly clicked", () => {
@@ -172,10 +176,14 @@ describe("WidgetEditorDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
 
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-group-1"] }] },
-        pagination: { offset: 0, limit: 1 },
-      }),
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-group-1"] }] },
+          pagination: { offset: 0, limit: 1 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 

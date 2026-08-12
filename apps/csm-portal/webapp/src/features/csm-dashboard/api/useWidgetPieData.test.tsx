@@ -60,14 +60,22 @@ describe("useWidgetPieData", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(postMock).toHaveBeenCalledTimes(2);
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { states: ["open"], severities: "critical" },
-      pagination: { offset: 0, limit: 1 },
-    });
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { states: ["open"], severities: "high" },
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { states: ["open"], severities: "critical" },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { states: ["open"], severities: "high" },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
     expect(result.current.slices).toEqual([
       { label: "Critical", query: { severities: "critical" }, value: 1 },
       { label: "High", query: { severities: "high" }, value: 3 },
@@ -110,19 +118,23 @@ describe("useWidgetPieData", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          { field: "state", op: "in", values: ["open"] },
-          {
-            field: "integrationCsTeam",
-            op: "in",
-            values: ["22222222-2222-2222-2222-222222222222"],
-          },
-        ],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            {
+              field: "integrationCsTeam",
+              op: "in",
+              values: ["22222222-2222-2222-2222-222222222222"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("drops the integrationCsTeam entry rather than sending the literal placeholder when no team groupId is selected", async () => {
@@ -151,12 +163,16 @@ describe("useWidgetPieData", () => {
 
     await waitFor(() => expect(postMock).toHaveBeenCalled());
 
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [{ field: "state", op: "in", values: ["open"] }],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [{ field: "state", op: "in", values: ["open"] }],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("resolves __current_user__ (in either the base or a slice's own filters) after merging, using the signed-in user's own id", async () => {
@@ -186,19 +202,23 @@ describe("useWidgetPieData", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          { field: "state", op: "in", values: ["open"] },
-          {
-            field: "assignedUserId",
-            op: "in",
-            values: ["11111111-aaaa-bbbb-cccc-000000000001"],
-          },
-        ],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            {
+              field: "assignedUserId",
+              op: "in",
+              values: ["11111111-aaaa-bbbb-cccc-000000000001"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("issues no slice search at all while the signed-in user isn't known yet, rather than one without the assignedUserId entry", async () => {
