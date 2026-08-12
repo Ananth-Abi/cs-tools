@@ -102,7 +102,7 @@ type stubValidator struct {
 	called int
 }
 
-func (s *stubValidator) Validate(token string) (*middleware.UserInfo, error) {
+func (s *stubValidator) DecodeUnverified(token string) (*middleware.UserInfo, error) {
 	s.called++
 	if token != s.accept {
 		return nil, errors.New("invalid token")
@@ -148,7 +148,7 @@ func TestHandleWebSocket_RejectsUnauthenticated(t *testing.T) {
 				t.Errorf("status = %d, want %d", w.Code, tc.wantStatus)
 			}
 			if v.called != tc.wantCalls {
-				t.Errorf("Validate called %d times, want %d", v.called, tc.wantCalls)
+				t.Errorf("DecodeUnverified called %d times, want %d", v.called, tc.wantCalls)
 			}
 		})
 	}

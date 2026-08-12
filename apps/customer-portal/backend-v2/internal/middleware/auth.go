@@ -104,6 +104,32 @@ func (v *TokenValidator) Validate(tokenStr string) (*UserInfo, error) {
 	return extractUserInfo(tokenStr, v.cfg, v.keyFunc)
 }
 
+// DecodeUnverified extracts the identity from a JWT **without** verifying its
+// signature, issuer, or audience.
+//
+// It exists for exactly one caller: the WebSocket upgrade path, which receives
+// the browser's Asgardeo-issued **ID token**, not the Choreo-injected
+// x-jwt-assertion that Validate is configured for. Those are two different
+// tokens — different issuer (`https://api.asgardeo.io/t/<org>/oauth2/token`),
+// different audience (the SPA's client ID plus `choreo:deployment:<env>`), and
+// a different signing key — so Validate rejects the ID token every time,
+// which surfaced as a 401 on every WebSocket connection.
+//
+// The trust boundary for that route is Choreo's API Manager gateway, which has
+// already validated the caller's access token (the leading
+// `choreo-oauth2-token, <accessToken>` subprotocol pair) before forwarding the
+// handshake — the same model CLAUDE.md documents under "Why no Auth
+// middleware". The ID token is therefore used to *identify* an
+// already-authenticated caller, not to authenticate one. This mirrors the
+// Ballerina backend's authorization:getUserInfoFromTokens, which likewise only
+// calls jwt:decode.
+//
+// Do NOT use this for any route that is reachable without passing through the
+// gateway: it will accept a forged, unsigned, or expired token.
+func (v *TokenValidator) DecodeUnverified(tokenStr string) (*UserInfo, error) {
+	return extractUserInfo(tokenStr, Config{TokenValidatorEnabled: false}, nil)
+}
+
 // Auth returns an HTTP middleware that validates the x-jwt-assertion header on
 // every request and stores the resulting UserInfo in the request context.
 // When Config.TokenValidatorEnabled is false the token is only decoded without
