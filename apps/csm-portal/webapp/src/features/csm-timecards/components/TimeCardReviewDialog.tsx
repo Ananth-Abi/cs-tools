@@ -25,7 +25,7 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import RelativeTime from "@components/RelativeTime";
+import RelativeDate from "@components/RelativeDate";
 import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 import {
   billableLabel,
@@ -152,7 +152,7 @@ export default function TimeCardReviewDialog({
                 Logged
               </Typography>
               <Typography variant="body2">
-                <RelativeTime iso={card.workDate} />
+                <RelativeDate value={card.workDate} />
               </Typography>
             </Box>
           </Box>

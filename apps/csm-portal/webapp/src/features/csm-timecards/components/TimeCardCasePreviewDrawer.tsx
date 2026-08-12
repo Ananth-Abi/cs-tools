@@ -17,7 +17,7 @@
 import { Box, Button, Divider, Drawer, IconButton, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
 import { Check, X } from "@wso2/oxygen-ui-icons-react";
 import type { JSX, ReactNode } from "react";
-import RelativeTime from "@components/RelativeTime";
+import RelativeDate from "@components/RelativeDate";
 import CasePreviewContent from "@features/csm-cases/components/CasePreviewContent";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
@@ -131,7 +131,7 @@ export default function TimeCardCasePreviewDrawer({
                 label="Logged"
                 value={
                   <Typography variant="body2">
-                    <RelativeTime iso={card.workDate} />
+                    <RelativeDate value={card.workDate} />
                   </Typography>
                 }
               />
