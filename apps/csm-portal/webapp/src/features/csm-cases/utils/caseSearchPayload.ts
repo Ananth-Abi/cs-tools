@@ -22,6 +22,7 @@ import {
   uiStateFromBe,
 } from "@api/backend/mappers";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
+import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import type {
   BeCaseFieldFilter,
@@ -49,6 +50,7 @@ export function buildCaseSearchFilters(
   filters: CasesFilters,
   search: string,
   assignedUserIds: string[] | undefined,
+  options?: { forceFreeText?: boolean },
 ): BeCaseSearchFilters {
   const fieldFilters: BeCaseFieldFilter[] = [];
   if (filters.severities.length > 0) {
@@ -180,8 +182,29 @@ export function buildCaseSearchFilters(
     fieldFilters.push({ field: "closedOn", op: "lte", values: [filters.closedOnLte] });
   }
 
+  // A typed case number / WSO2 case id goes through as an exact-match field
+  // filter rather than the free-text `searchQuery` scan, mirroring the global
+  // quick-nav palette (see `classifyCaseQuery`, shared by both).
+  //
+  // `searchQuery` is a CONTAINS/OR scan across number, WSO2 id, short
+  // description AND description upstream — so searching an exact case number
+  // also matched every *other* case that merely mentions that number in its
+  // description, and those could outrank (or crowd out) the case actually
+  // being looked up. Reported as such: searching one case number surfaced a
+  // different case entirely. An indexed exact match also avoids that scan.
+  //
+  // `forceFreeText` opts back into the `searchQuery` scan even for a query
+  // that looks like an identifier — the cases list runs both legs in parallel
+  // and merges them (see `useGetCsmCases`), so that a case mentioning the
+  // number in its description is still findable, just below the exact hit.
+  const scope =
+    search.length > 0 && !options?.forceFreeText ? classifyCaseQuery(search) : "text";
+  if (scope !== "text") {
+    fieldFilters.push({ field: scope, op: "eq", values: [search] });
+  }
+
   return {
-    ...(search.length > 0 && { searchQuery: search }),
+    ...(scope === "text" && search.length > 0 && { searchQuery: search }),
     ...(fieldFilters.length > 0 && { filters: fieldFilters }),
   };
 }

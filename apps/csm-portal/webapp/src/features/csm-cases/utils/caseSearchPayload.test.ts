@@ -135,3 +135,84 @@ describe("buildCaseSearchFilters — new advanced-filter fields", () => {
     expect(result.filters).toBeUndefined();
   });
 });
+
+// A typed case number / WSO2 case id must go through as an exact-match field
+// filter, not the free-text `searchQuery` scan. `searchQuery` is a CONTAINS/OR
+// scan that also covers the description upstream, so an exact case number
+// matched other cases merely *mentioning* it -- searching one case number
+// surfaced a different case entirely.
+describe("buildCaseSearchFilters — exact case-number / WSO2-id search", () => {
+  it("routes a CS case number to an exact `number` filter, not searchQuery", () => {
+    const result = buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "CS0346083", undefined);
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toEqual([
+      { field: "number", op: "eq", values: ["CS0346083"] },
+    ]);
+  });
+
+  it("routes a WSO2 case id to an exact `internalId` filter, not searchQuery", () => {
+    const result = buildCaseSearchFilters(
+      DEFAULT_CASES_FILTERS,
+      "AXACOLPATRIASUB-484",
+      undefined,
+    );
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toEqual([
+      { field: "internalId", op: "eq", values: ["AXACOLPATRIASUB-484"] },
+    ]);
+  });
+
+  it("still uses free-text searchQuery for anything that isn't an identifier", () => {
+    const result = buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "printer jam", undefined);
+
+    expect(result.searchQuery).toBe("printer jam");
+    expect(result.filters).toBeUndefined();
+  });
+
+  it("treats a partial/malformed case number as free text, so typing stays usable", () => {
+    // Mid-typing (6 digits) and an over-long 8-digit string are both free text.
+    expect(
+      buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "CS034608", undefined).searchQuery,
+    ).toBe("CS034608");
+    expect(
+      buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "CS03460834", undefined).searchQuery,
+    ).toBe("CS03460834");
+  });
+
+  it("combines the exact identifier filter with the other active filters", () => {
+    const result = buildCaseSearchFilters(
+      { ...DEFAULT_CASES_FILTERS, caseTypes: ["case"] },
+      "CS0346083",
+      undefined,
+    );
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toEqual([
+      { field: "type", op: "in", values: ["case"] },
+      { field: "number", op: "eq", values: ["CS0346083"] },
+    ]);
+  });
+
+  it("forceFreeText opts an identifier query back into the searchQuery scan", () => {
+    // The cases list runs this leg alongside the exact one (see useGetCsmCases),
+    // so a case that only *mentions* the number stays findable.
+    const result = buildCaseSearchFilters(
+      DEFAULT_CASES_FILTERS,
+      "CS0346083",
+      undefined,
+      { forceFreeText: true },
+    );
+
+    expect(result.searchQuery).toBe("CS0346083");
+    expect(result.filters).toBeUndefined();
+  });
+
+  it("emits no search filter at all for an empty query", () => {
+    const result = buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "", undefined);
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toBeUndefined();
+  });
+});
