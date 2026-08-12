@@ -196,10 +196,14 @@ describe("DashboardWidgetTile", () => {
 
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
     expect(screen.getByText("My Patches")).toBeInTheDocument();
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {},
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {},
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("renders its own error state when its /cases/search call fails", async () => {
@@ -293,18 +297,22 @@ describe("DashboardWidgetTile", () => {
     await waitFor(() => expect(screen.getByText("1")).toBeInTheDocument());
     // "11111111-aaaa-bbbb-cccc-000000000001" is the mocked signed-in user's
     // own id (see the CurrentUserContext mock above).
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          {
-            field: "assignedUserId",
-            op: "in",
-            values: ["11111111-aaaa-bbbb-cccc-000000000001"],
-          },
-        ],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            {
+              field: "assignedUserId",
+              op: "in",
+              values: ["11111111-aaaa-bbbb-cccc-000000000001"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("renders the same table the Cases tab uses for shape: list, capped at listLimit", async () => {
@@ -339,10 +347,14 @@ describe("DashboardWidgetTile", () => {
     expect(screen.getByText("Disk full")).toBeInTheDocument();
     expect(screen.getByText("CS-2")).toBeInTheDocument();
     expect(screen.getByText("Auth failing")).toBeInTheDocument();
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {},
-      pagination: { offset: 0, limit: 5 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {},
+        pagination: { offset: 0, limit: 5 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("shape list: shows the widget's own total count, not just the capped row count shown below it", async () => {
@@ -658,11 +670,15 @@ describe("DashboardWidgetTile", () => {
     );
 
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: {},
-        pagination: { offset: 0, limit: 5 },
-        sortBy: { field: "updatedOn", order: "asc" },
-      }),
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: {},
+          pagination: { offset: 0, limit: 5 },
+          sortBy: { field: "updatedOn", order: "asc" },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 
@@ -681,10 +697,14 @@ describe("DashboardWidgetTile", () => {
     );
 
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {},
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {},
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("navigates to /cases with translated filters when a case-resource tile is clicked", async () => {
@@ -823,18 +843,22 @@ describe("DashboardWidgetTile", () => {
     );
 
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          {
-            field: "integrationCsTeam",
-            op: "in",
-            values: ["22222222-2222-2222-2222-222222222222"],
-          },
-        ],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            {
+              field: "integrationCsTeam",
+              op: "in",
+              values: ["22222222-2222-2222-2222-222222222222"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("re-fetches with the new team's own filters when selectedTeamGroupId changes (team switch must not reuse a stale cached query)", async () => {
@@ -867,10 +891,14 @@ describe("DashboardWidgetTile", () => {
     );
 
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
-    expect(postMock).toHaveBeenLastCalledWith("/cases/search", {
-      filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-a-group-id"] }] },
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenLastCalledWith(
+      "/cases/search",
+      {
+        filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-a-group-id"] }] },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
 
     postMock.mockResolvedValueOnce({ total: 9, cases: [], limit: 1, offset: 0, hasMore: false });
 
@@ -890,10 +918,14 @@ describe("DashboardWidgetTile", () => {
     );
 
     await waitFor(() => expect(screen.getByText("9")).toBeInTheDocument());
-    expect(postMock).toHaveBeenLastCalledWith("/cases/search", {
-      filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-b-group-id"] }] },
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenLastCalledWith(
+      "/cases/search",
+      {
+        filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-b-group-id"] }] },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("drops the integrationCsTeam filter (request and href) rather than sending the literal placeholder when no team groupId is selected", async () => {
@@ -915,10 +947,14 @@ describe("DashboardWidgetTile", () => {
     );
 
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
 
     const link = screen.getByRole("link");
     expect(link.getAttribute("href") ?? "").not.toContain(CURRENT_TEAM_PLACEHOLDER);
@@ -992,15 +1028,19 @@ describe("DashboardWidgetTile", () => {
 
     await waitFor(() => expect(screen.getByText("bar:S1 · Critical:1")).toBeInTheDocument());
     expect(screen.getByText("bar:S2 · High:3")).toBeInTheDocument();
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          { field: "state", op: "in", values: ["open"] },
-          { field: "severity", op: "in", values: ["critical"] },
-        ],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            { field: "severity", op: "in", values: ["critical"] },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
 
     fireEvent.click(screen.getByText("bar:S1 · Critical:1"));
     await waitFor(() => expect(screen.getByTestId("location-probe")).toBeInTheDocument());
@@ -1082,24 +1122,32 @@ describe("DashboardWidgetTile", () => {
     expect(screen.getByText("slice:S2 · High:3")).toBeInTheDocument();
     expect(screen.getByText("1 (25%)")).toBeInTheDocument();
     expect(screen.getByText("3 (75%)")).toBeInTheDocument();
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          { field: "state", op: "in", values: ["open"] },
-          { field: "severity", op: "in", values: ["critical"] },
-        ],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            { field: "severity", op: "in", values: ["critical"] },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          { field: "state", op: "in", values: ["open"] },
-          { field: "severity", op: "in", values: ["high"] },
-        ],
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            { field: "severity", op: "in", values: ["high"] },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("shape pie: clicking a slice navigates to /cases with the widget's base filters merged under that slice's own filters", async () => {

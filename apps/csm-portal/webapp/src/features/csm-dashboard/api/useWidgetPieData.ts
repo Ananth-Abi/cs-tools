@@ -26,7 +26,10 @@ import {
   hasCurrentUserPlaceholder,
   resolveCurrentUserPlaceholder,
 } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
-import { withWidgetFetchSlot } from "@features/csm-dashboard/utils/widgetFetchConcurrency";
+import {
+  shouldRetryWidgetFetch,
+  withWidgetFetchSlot,
+} from "@features/csm-dashboard/utils/widgetFetchConcurrency";
 
 export interface PieSliceResult extends BeDashboardPieSlice {
   value: number;
@@ -112,21 +115,30 @@ export function useWidgetPieData(
           if (!config) {
             throw new Error(`Unsupported widget resourceType: ${resourceType}`);
           }
-          // Same shared concurrency slot useWidgetData's search uses — a
-          // pie widget fires one call per slice on top of every other
-          // widget's own call, so it needs the cap at least as much.
-          return withWidgetFetchSlot(async () => {
+          // Same shared concurrency slot (and timeout) useWidgetData's
+          // search uses — a pie widget fires one call per slice on top of
+          // every other widget's own call, so it needs both at least as
+          // much.
+          return withWidgetFetchSlot(async (signal) => {
             const res = await api.post<
               { filters: Record<string, unknown>; pagination: { offset: number; limit: number } },
               Record<string, unknown>
-            >(config.searchEndpoint, {
-              filters,
-              pagination: { offset: 0, limit: 1 },
-            });
+            >(
+              config.searchEndpoint,
+              {
+                filters,
+                pagination: { offset: 0, limit: 1 },
+              },
+              { signal },
+            );
             return typeof res.total === "number" ? res.total : 0;
           });
         },
         enabled: enabled && !awaitingCurrentUser,
+        // Same per-query retry override as useWidgetData, same reasoning
+        // (see shouldRetryWidgetFetch) — a pie/bar slice fetch that timed
+        // out gets one retry too.
+        retry: shouldRetryWidgetFetch,
         staleTime: 60_000,
       };
     }),
