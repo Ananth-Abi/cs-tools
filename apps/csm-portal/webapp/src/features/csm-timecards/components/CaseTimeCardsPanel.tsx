@@ -24,7 +24,7 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { Clock, Pencil, Plus } from "@wso2/oxygen-ui-icons-react";
-import RelativeTime from "@components/RelativeTime";
+import RelativeDate from "@components/RelativeDate";
 import { useCaseTimeCards, useDecideTimeCard } from "@features/csm-timecards/api/useTimeCards";
 import { useCurrentEngineer } from "@features/csm-timecards/api/useTimeSheets";
 import { useIsTeamLead } from "@features/csm-timecards/hooks/useIsTeamLead";
@@ -216,7 +216,7 @@ export default function CaseTimeCardsPanel({
                 </Box>
               </Box>
               <Typography variant="caption" color="text.secondary">
-                {billableLabel(c.billable)} · <RelativeTime iso={c.workDate} />
+                {billableLabel(c.billable)} · <RelativeDate value={c.workDate} />
                 {decision && ` · ${decision}`}
               </Typography>
             </Box>

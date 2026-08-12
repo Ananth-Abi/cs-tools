@@ -17,7 +17,7 @@
 import { Fragment, useState, type JSX } from "react";
 import { Box, Checkbox, IconButton, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { Check, Eye, Pencil, X } from "@wso2/oxygen-ui-icons-react";
-import RelativeTime from "@components/RelativeTime";
+import RelativeDate from "@components/RelativeDate";
 import TimeCardCasePreviewDrawer from "@features/csm-timecards/components/TimeCardCasePreviewDrawer";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
 import { groupTimeCards, type TimeCardGroupBy } from "@features/csm-timecards/utils/timeCardGrouping";
@@ -291,7 +291,7 @@ export default function TimeCardsTable({
                   </Typography>
                 </Tooltip>
                 <Typography role="cell" variant="body2" noWrap>
-                  <RelativeTime iso={c.workDate} />
+                  <RelativeDate value={c.workDate} />
                 </Typography>
                 <Box role="cell" sx={{ minWidth: 0 }}>
                   <Typography variant="body2" noWrap>
