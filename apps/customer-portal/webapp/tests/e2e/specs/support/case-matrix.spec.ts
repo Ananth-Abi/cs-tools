@@ -28,8 +28,21 @@
 // - The subject IS the key. Renaming a prefix in CASE_MATRIX orphans the
 //   existing cases, and the next run recreates that whole row — permanently.
 // - A false negative on the existence check creates a duplicate that cannot be
-//   removed, so `hasCaseWithSubject` waits for the search to settle rather than
-//   sampling the list mid-flight.
+//   removed, so `hasCaseWithSubject` waits for the search response produced by
+//   its own query rather than sampling the list mid-flight.
+//
+// ⚠️ DO NOT RUN THIS SUITE CONCURRENTLY AGAINST ONE ENVIRONMENT. The lookup and
+// the create are separate steps, so two overlapping runs can both find nothing
+// and both create — leaving a duplicate that cannot be deleted. Within a single
+// run this cannot happen (playwright.config.ts pins `workers: 1` and
+// `fullyParallel: false`), but nothing stops a second run, on another machine or
+// in CI, from racing this one.
+//
+// This is deliberately a documented constraint rather than a coded guard:
+// `POST /cases` offers no idempotency key and no uniqueness on subject, so the
+// server cannot dedupe; and a lock file would only serialize runs on the same
+// machine, giving false assurance against exactly the cross-machine case that
+// matters. Fixing it properly needs a server-side unique-create.
 //
 // Severity availability is per project: it comes from `acceptedSeverityValues`,
 // so a project that does not offer a severity skips that combination rather than

@@ -195,6 +195,17 @@ export const CREATE_SECURITY_REPORT = {
   },
 } as const;
 
+/** Security Center (`/projects/:projectId/security-center`), whose default tab is
+ * the Security Report Analysis list. */
+export const SECURITY_CENTER = {
+  pathSegment: "security-center",
+  /** The list search covers case number, title AND description — which is what
+   * lets a report be found by its stable description rather than by its
+   * date-stamped generated title. */
+  searchPlaceholder: /Search reports/,
+  emptyMessage: "No reports found.",
+} as const;
+
 /** Cases list (`/projects/:projectId/support/cases`). */
 export const CASES_LIST = {
   pathSegment: "support/cases",

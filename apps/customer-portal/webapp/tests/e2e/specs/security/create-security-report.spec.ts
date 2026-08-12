@@ -37,13 +37,19 @@
 // takes, so the expectation is declared in config rather than discovered at
 // runtime.
 //
-// ⚠️ Writes to a REAL backend and leaves a permanent record per project type on
-// every run — there is no delete counterpart. The configured descriptions name
-// their project so the records stay identifiable.
+// ⚠️ IDEMPOTENT, because reports are cases and cases cannot be deleted. Each test
+// searches the project's report list for its configured description and raises a
+// report only when none is found — so retries and repeated runs add nothing. The
+// descriptions are the idempotency key: they are stable per project, whereas the
+// generated title carries the creation date and would only dedupe within a day.
+//
+// Changing a description in SECURITY_REPORT_INPUT therefore orphans the existing
+// report and causes the next run to create a replacement, permanently.
 //
 
 import { test, expect, withSession } from "../../fixtures/test";
 import { SecurityReportCreatePage } from "../../pages/SecurityReportCreatePage";
+import { SecurityCenterPage } from "../../pages/SecurityCenterPage";
 import {
   PROJECTS,
   ProjectType,
@@ -84,8 +90,22 @@ test.describe("Security Report", () => {
         return;
       }
 
-      test("creates a security report", async ({ page }) => {
+      test("has a security report", async ({ page }) => {
         skipWhenUnconfigured(project);
+
+        // Reports are cases, and cases have no delete endpoint — so raising one
+        // unconditionally would leave a permanent, customer-visible record on
+        // every run, retry and scheduled execution. Look first: the description
+        // is stable per project (unlike the generated title, which carries the
+        // creation date), and the list search covers descriptions.
+        const securityCenter = new SecurityCenterPage(page);
+        await securityCenter.open(project.id);
+        if (await securityCenter.hasReportMatching(input.description)) {
+          console.log(`${projectType}: security report already exists`);
+          return;
+        }
+
+        console.log(`${projectType}: no security report found, creating one`);
 
         const form = new SecurityReportCreatePage(page);
         await form.openViaGetHelpMenu(project.id);

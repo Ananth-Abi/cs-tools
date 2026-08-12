@@ -16,13 +16,11 @@
 
 import { type Locator, type Page, expect } from "../fixtures/test";
 import { CASES_LIST, CASE_DETAIL } from "../utils/selectors";
+import { isSuccess } from "../utils/caseFlows";
+import { caseSearchResponse } from "../utils/listSearch";
 
 /** How long to allow for the list and its search results to resolve. */
 const LOAD_TIMEOUT_MS = 60_000;
-
-/** The list debounces its search by 300ms before refetching (see AllCasesPage),
- * so results lag the keystrokes. */
-const SEARCH_DEBOUNCE_MS = 300;
 
 /**
  * Page object for a project's cases list
@@ -63,12 +61,19 @@ export class CasesListPage {
    * @returns True when a row with that subject is present.
    */
   async hasCaseWithSubject(subject: string): Promise<boolean> {
+    // Wait for the search request carrying THIS subject — see listSearch for why
+    // `networkidle` is not a safe signal here.
+    const searchResponse = caseSearchResponse(this.page, subject);
+
     await this.searchInput().fill(subject);
-    // Wait out the debounce, then let the request settle. `networkidle` is the
-    // signal here rather than a fixed sleep, so a slow backend does not produce
-    // a false negative — which would make the caller create a duplicate.
-    await this.page.waitForTimeout(SEARCH_DEBOUNCE_MS);
-    await this.page.waitForLoadState("networkidle");
+    const response = await searchResponse;
+
+    // A failed search returns no rows, which is indistinguishable from "no such
+    // case" — so assert it succeeded rather than silently treating it as absent.
+    expect(
+      isSuccess(response.status()),
+      `case search failed: ${response.status()} ${await response.text()}`,
+    ).toBe(true);
 
     const match = this.main().getByText(subject, { exact: true });
     return (await match.count()) > 0;
