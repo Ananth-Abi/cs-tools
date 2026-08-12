@@ -86,6 +86,11 @@ export interface ProjectFixture {
    * CreateCasePage.tsx). Cannot be derived from `productVersion` by trimming, so
    * it is recorded explicitly. */
   productName: string;
+  /** Whether the project offers the "Security Report" item in the Get Help
+   * dropdown. Gated on the project's SRA write access
+   * (`isSecurityReportVisible` in GetHelpDropdown.tsx) — Cloud Support does not
+   * have it, so specs assert its absence rather than trying to raise one. */
+  hasSecurityReport: boolean;
 }
 
 /**
@@ -106,6 +111,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     autoSelectsDeployment: false,
     productVersion: "WSO2 API Manager 4.5.0",
     productName: "WSO2 API Manager",
+    hasSecurityReport: true,
   },
   [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: {
     id: "a0873629eba28f90fcf5f5dabad0cda0",
@@ -117,6 +123,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     autoSelectsDeployment: false,
     productVersion: "WSO2 Identity Server 7.1.0",
     productName: "WSO2 Identity Server",
+    hasSecurityReport: true,
   },
   [ProjectType.CLOUD_SUPPORT]: {
     id: "cd9776ed3ba28b503e1e088aa4e45a81",
@@ -129,6 +136,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     autoSelectsDeployment: true,
     productVersion: "WSO2 Developer Platform",
     productName: "WSO2 Developer Platform",
+    hasSecurityReport: false,
   },
 };
 
@@ -241,6 +249,371 @@ export const SERVICE_REQUEST_INPUT: ServiceRequestInput = {
   description: "This is a test Generic Request SR for MS subscription project",
 };
 
+/** Short code for each severity, for building case subjects. The display label
+ * cannot be used directly: S4's is "S4(Query)", which would produce subjects like
+ * "subscription case S4(Query)". */
+export const SEVERITY_CODES: Record<Severity, string> = {
+  [Severity.S0]: "S0",
+  [Severity.S1]: "S1",
+  [Severity.S2]: "S2",
+  [Severity.S3]: "S3",
+  [Severity.S4]: "S4",
+};
+
+/** Severities the case matrix covers, per project. */
+export const CASE_MATRIX_SEVERITIES: Severity[] = [
+  Severity.S1,
+  Severity.S2,
+  Severity.S3,
+  Severity.S4,
+];
+
+/**
+ * Naming for the case matrix: one case per project type per severity.
+ *
+ * Subjects are deterministic — `<titlePrefix> <severity code>` — because that is
+ * what makes the spec idempotent: it searches for the subject and only creates a
+ * case when none is found. Changing a prefix orphans the existing cases and the
+ * next run recreates the whole row, so treat these as fixed.
+ */
+export const CASE_MATRIX: Record<
+  ProjectType,
+  { titlePrefix: string; descriptionPrefix: string }
+> = {
+  [ProjectType.SUBSCRIPTION]: {
+    titlePrefix: "subscription case",
+    descriptionPrefix:
+      "This is a test case for subscription project with severity",
+  },
+  [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: {
+    titlePrefix: "MS subscription case",
+    descriptionPrefix:
+      "This is a test case for MS subscription project with severity",
+  },
+  [ProjectType.CLOUD_SUPPORT]: {
+    titlePrefix: "Cloud support case",
+    descriptionPrefix:
+      "This is a test case for cloud support project with severity",
+  },
+};
+
+/** A case to open and inspect on its detail page. */
+export interface CaseView {
+  /** Severity the case was raised at, as the header renders it (S1, S2, …). */
+  severity: Severity;
+  /** Case sysid, as it appears in `/support/cases/<id>`. */
+  caseId: string;
+  /** Subject shown in the header. */
+  subject: string;
+  /** Comment on the Activity tab — the case's original description. */
+  comment: string;
+}
+
+/** One project's set of cases for the view-case spec. */
+export interface CaseViewSet {
+  projectType: ProjectType;
+  /** WSO2 Case ID format for this project. The prefix is project-specific and
+   * is NOT the same as `ProjectFixture.projectKey` — Cloud Support's cases read
+   * `AUTOMATIONTESTCUSCLSUB-<n>`, verified live. */
+  wso2CaseIdPattern: RegExp;
+  cases: CaseView[];
+}
+
+/**
+ * Existing cases to open and assert, one per severity per project. Read-only —
+ * these are opened and checked, never modified.
+ *
+ * Sysids, subjects and comments are environment data, all read off the live
+ * pages, so this has to be recaptured for any other tenant.
+ *
+ * Subjects and comments are pinned per case rather than derived from a pattern,
+ * because the naming is not uniform: the Subscription and Cloud Support S4 cases
+ * carry no severity suffix and no "…with severity" in their comment (they came
+ * from `CASE_INPUT`), while every other case — including MCS's S4 — follows the
+ * per-severity naming.
+ */
+export const CASE_VIEWS: CaseViewSet[] = [
+  {
+    projectType: ProjectType.SUBSCRIPTION,
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSSUB-\d+$/,
+    cases: [
+      {
+        severity: Severity.S1,
+        caseId: "ce1502cf3bee4b103e1e088aa4e45a6d",
+        subject: "subscription case S1",
+        comment:
+          "This is a test case for subscription project with severity S1",
+      },
+      {
+        severity: Severity.S2,
+        caseId: "d225c2473ba64b1091404c6aa5e45af0",
+        subject: "subscription case S2",
+        comment:
+          "This is a test case for subscription project with severity S2",
+      },
+      {
+        severity: Severity.S3,
+        caseId: "12350ecf3bee4b103e1e088aa4e45a9b",
+        subject: "subscription case S3",
+        comment:
+          "This is a test case for subscription project with severity S3",
+      },
+      {
+        severity: Severity.S4,
+        caseId: "62e442073ba64b1091404c6aa5e45a39",
+        subject: "subscription case",
+        comment: "This is a test case for subscription project",
+      },
+    ],
+  },
+  {
+    projectType: ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSMSSUB-\d+$/,
+    cases: [
+      {
+        severity: Severity.S1,
+        caseId: "07962293ebeec310fcf5f5dabad0cdcd",
+        subject: "MS subscription case S1",
+        comment:
+          "This is a test case for MS subscription project with severity S1",
+      },
+      {
+        severity: Severity.S2,
+        caseId: "67a6aedb3bea0f1091404c6aa5e45a8f",
+        subject: "MS subscription case S2",
+        comment:
+          "This is a test case for MS subscription project with severity S2",
+      },
+      {
+        severity: Severity.S3,
+        caseId: "33b6661f3bea0f1091404c6aa5e45a7e",
+        subject: "MS subscription case S3",
+        comment:
+          "This is a test case for MS subscription project with severity S3",
+      },
+      {
+        // Unlike the other two projects, this project's S4 case follows the same
+        // naming as its S1-S3 — it was raised through the case matrix rather than
+        // from CASE_INPUT.
+        severity: Severity.S4,
+        caseId: "c4d62e93ebeec310fcf5f5dabad0cdbb",
+        subject: "MS subscription case S4",
+        comment:
+          "This is a test case for MS subscription project with severity S4",
+      },
+    ],
+  },
+  {
+    projectType: ProjectType.CLOUD_SUPPORT,
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSCLSUB-\d+$/,
+    cases: [
+      {
+        severity: Severity.S1,
+        caseId: "d4e66e1f3bea0f1091404c6aa5e45ae0",
+        subject: "Cloud support case S1",
+        comment:
+          "This is a test case for cloud support project with severity S1",
+      },
+      {
+        severity: Severity.S2,
+        caseId: "d8f626d3ebeec310fcf5f5dabad0cd98",
+        subject: "Cloud support case S2",
+        comment:
+          "This is a test case for cloud support project with severity S2",
+      },
+      {
+        severity: Severity.S3,
+        caseId: "d407eed33baa4f103e1e088aa4e45a5c",
+        subject: "Cloud support case S3",
+        comment:
+          "This is a test case for cloud support project with severity S3",
+      },
+      {
+        severity: Severity.S4,
+        caseId: "4a054a8f3bee4b103e1e088aa4e45a11",
+        subject: "Cloud support case",
+        comment: "This is a test case for cloud support project",
+      },
+    ],
+  },
+];
+
+/** A security report analysis to open and inspect. */
+export interface SraView {
+  projectType: ProjectType;
+  /** SRA sysid, as it appears in
+   * `/security-center/security-report-analysis/<id>`. */
+  sraId: string;
+  /** Subject shown in the header.
+   *
+   * ⚠️ Pinned literally, and the date in it is the date the SRA was RAISED, not
+   * today's. Security report subjects are generated as
+   * `<deployment> - <product name> - YYYY-MM-DD` at creation time, so for an
+   * existing record that string is fixed. Do not "fix" this by computing today's
+   * date — that would break the test the next day.
+   */
+  subject: string;
+  /** WSO2 Case ID format for this project. */
+  wso2CaseIdPattern: RegExp;
+}
+
+/**
+ * Existing security report analyses to open and assert. Read-only.
+ *
+ * Sysids and subjects are environment data, read off the live pages.
+ */
+export const SRA_VIEWS: SraView[] = [
+  {
+    projectType: ProjectType.SUBSCRIPTION,
+    sraId: "5fc57257eba20710fcf5f5dabad0cd08",
+    subject: "Production - WSO2 API Manager - 2026-08-12",
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSSUB-\d+$/,
+  },
+  {
+    projectType: ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+    sraId: "92d57e1b3b6e4f103e1e088aa4e45a9b",
+    subject: "Production - WSO2 Identity Server - 2026-08-12",
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSMSSUB-\d+$/,
+  },
+];
+
+/** A service request to open and inspect. */
+export interface ServiceRequestView {
+  projectType: ProjectType;
+  /** Service request sysid, as it appears in
+   * `/operations/service-requests/<id>`. */
+  serviceRequestId: string;
+  /** Subject shown in the header. For a service request this is the Request
+   * Details value it was raised with, which is why it reuses
+   * SERVICE_REQUEST_INPUT rather than repeating the string. */
+  subject: string;
+  /** WSO2 Case ID format for this project. */
+  wso2CaseIdPattern: RegExp;
+}
+
+/**
+ * Existing service requests to open and assert. Read-only.
+ *
+ * Sysids are environment data, read off the live pages.
+ */
+export const SERVICE_REQUEST_VIEWS: ServiceRequestView[] = [
+  {
+    projectType: ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+    serviceRequestId: "7ef3c6d7eb2ac310fcf5f5dabad0cdcc",
+    subject: SERVICE_REQUEST_INPUT.requestDetails,
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSMSSUB-\d+$/,
+  },
+];
+
+/** Subject of the announcement published to all three automation projects. */
+export const SHARED_ANNOUNCEMENT_SUBJECT =
+  "[SECURITY Announcement] Lack of access control in the keymanager-operations " +
+  "DCR endpoint (WSO2-2025-4483/CVE-2025-9152)";
+
+/** An announcement to open and inspect. */
+export interface AnnouncementView {
+  projectType: ProjectType;
+  /** Announcement sysid, as it appears in `/announcements/<id>`. */
+  announcementId: string;
+  /** Subject shown in the header. */
+  subject: string;
+  /** WSO2 Case ID format for this project. */
+  wso2CaseIdPattern: RegExp;
+}
+
+/**
+ * Existing announcements to open and assert. Read-only.
+ *
+ * The same advisory is published to all three projects, so they share a subject
+ * but each carries its own case number and WSO2 id.
+ */
+export const ANNOUNCEMENT_VIEWS: AnnouncementView[] = [
+  {
+    projectType: ProjectType.SUBSCRIPTION,
+    announcementId: "25fd83573ba28f103e1e088aa4e45a98",
+    subject: SHARED_ANNOUNCEMENT_SUBJECT,
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSSUB-\d+$/,
+  },
+  {
+    projectType: ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+    announcementId: "0cfdcb173ba28f103e1e088aa4e45ae8",
+    subject: SHARED_ANNOUNCEMENT_SUBJECT,
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSMSSUB-\d+$/,
+  },
+  {
+    projectType: ProjectType.CLOUD_SUPPORT,
+    announcementId: "20fd0f173ba28f103e1e088aa4e45ae0",
+    subject: SHARED_ANNOUNCEMENT_SUBJECT,
+    wso2CaseIdPattern: /^AUTOMATIONTESTCUSCLSUB-\d+$/,
+  },
+];
+
+/** Expected side-menu visibility for a project: item label to whether it should
+ * render. */
+export type SideNavVisibility = Record<string, boolean>;
+
+/**
+ * Side-menu expectations per project type.
+ *
+ * Visibility is driven by the project's feature flags rather than its type label
+ * (see SideBar.tsx), so these are recorded per project and verified live rather
+ * than inferred. Only projects listed here are covered; add an entry to extend
+ * the suite.
+ *
+ * Note "Settings" also renders for these projects but is deliberately not
+ * asserted — it is outside the set under test.
+ */
+export const SIDE_NAV_VISIBILITY: Partial<
+  Record<ProjectType, SideNavVisibility>
+> = {
+  [ProjectType.SUBSCRIPTION]: {
+    Dashboard: true,
+    Support: true,
+    // Hidden: the Operations item needs service-request or change-request access,
+    // which this project does not have.
+    Operations: false,
+    Updates: true,
+    "Security Center": true,
+    Engagements: true,
+    "Usage & Metrics": true,
+    "Project Details": true,
+    Announcements: true,
+  },
+  [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: {
+    Dashboard: true,
+    Support: true,
+    // Visible here, unlike Subscription: this project has service-request access.
+    Operations: true,
+    Updates: true,
+    "Security Center": true,
+    Engagements: true,
+    "Usage & Metrics": true,
+    "Project Details": true,
+    Announcements: true,
+  },
+  [ProjectType.CLOUD_SUPPORT]: {
+    Dashboard: true,
+    Support: true,
+    // The four hidden items each trace to a feature flag this project lacks:
+    // Operations needs SR or CR access, Updates needs updates access, Security
+    // Center needs SRA or component analysis, and Usage & Metrics needs both the
+    // project flag and the portal-wide one.
+    Operations: false,
+    Updates: false,
+    "Security Center": false,
+    Engagements: true,
+    "Usage & Metrics": false,
+    "Project Details": true,
+    Announcements: true,
+  },
+};
+
+/** Formats shared across every project's cases. */
+export const CASE_VIEW_EXPECTATIONS = {
+  /** ServiceNow case number format, e.g. CS0441157. */
+  caseNumberPattern: /^CS\d+$/,
+} as const;
+
 /** Deployment types offered by the Add Deployment modal. Verified live against
  * staging — note there is no plain "Production": the production-like option is
  * "Primary Production". */
@@ -297,20 +670,29 @@ export const DEPLOYMENT_INPUT: DeploymentInput = {
  * anything typed (see the auto-fill effect in CreateCasePage.tsx). */
 export interface SecurityReportInput {
   description: string;
-  /** Attachment path, relative to the tests/e2e directory. Kept in-repo rather
-   * than pointing at a developer's Downloads folder so the spec is portable to
-   * other machines and to CI. */
-  attachmentPath: string;
 }
 
+/** Attachment used by every security report. Path is relative to the tests/e2e
+ * directory, and the file is kept in-repo rather than pointing at a developer's
+ * Downloads folder so the specs are portable to other machines and to CI. */
+export const SECURITY_REPORT_ATTACHMENT = "fixtures/files/sraattachment.csv";
+
 /**
- * Security report content for the Managed Cloud Subscription project.
+ * Security report content per project type.
  *
- * ⚠️ Creates a permanent record on every run.
+ * ⚠️ Creates a permanent record on every run, for every project type covered.
+ * Descriptions name their project so the records stay identifiable.
  */
-export const SECURITY_REPORT_INPUT: SecurityReportInput = {
-  description: "This is a test Security Report SR for MS subscription project",
-  attachmentPath: "fixtures/files/sraattachment.csv",
+export const SECURITY_REPORT_INPUT: Record<ProjectType, SecurityReportInput> = {
+  [ProjectType.SUBSCRIPTION]: {
+    description: "This is a test security report for subscription project",
+  },
+  [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: {
+    description: "This is a test security report for MS subscription project",
+  },
+  [ProjectType.CLOUD_SUPPORT]: {
+    description: "This is a test security report for cloud support project",
+  },
 };
 
 /**
