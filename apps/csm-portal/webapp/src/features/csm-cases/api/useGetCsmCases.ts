@@ -151,7 +151,7 @@ export function useGetCsmCases(
       // list has no Customer column, and the old scan paged the entire account
       // directory to resolve a name nothing renders.
       const runSearch = (
-        searchOptions?: { forceFreeText?: boolean },
+        searchOptions?: { forceFreeText?: boolean; alsoFreeText?: boolean },
         pagination = { offset, limit: pageSize },
       ): Promise<BeCaseSearchResponse> =>
         api.post<BeCaseSearchPayload, BeCaseSearchResponse>("/cases/search", {
@@ -200,7 +200,7 @@ export function useGetCsmCases(
       // reconciles the guess once both have landed.
       const ASSUMED_PIN_COUNT = 1;
       const textOffset = page === 0 ? 0 : Math.max(0, offset - ASSUMED_PIN_COUNT);
-      const [exactResponse, textResponse] = await Promise.all([
+      const [exactResponse, textResponse, overlapResponse] = await Promise.all([
         // Page-independent: fetched once from the top rather than re-queried
         // per page, since an identifier match is a tiny, fixed result.
         runSearch(undefined, { offset: 0, limit: EXACT_MATCH_LIMIT }),
@@ -208,6 +208,11 @@ export function useGetCsmCases(
           { forceFreeText: true },
           { offset: textOffset, limit: pageSize + EXACT_MATCH_LIMIT },
         ),
+        // How many of the exact hits the free-text scan already counts. Only
+        // its `total` is read, so this asks for a single row. Without it the
+        // merged total has to be guessed, and guessing low makes the last row
+        // unreachable: the paginator stops offering pages before it.
+        runSearch({ alsoFreeText: true }, { offset: 0, limit: 1 }),
       ]);
 
       const exactRows = (exactResponse.cases ?? []).map((c) =>
@@ -230,19 +235,22 @@ export function useGetCsmCases(
         page === 0 ? [...exactRows, ...textRows] : textRows.slice(pinShift)
       ).slice(0, pageSize);
 
-      // Page-independent by construction: derived from the free-text leg's own
-      // total, never from which rows happen to be in the page currently in
-      // hand. An earlier version compared the pinned rows against the fetched
-      // page, which made the reported total change as the user paged.
+      // Page-independent by construction: both terms are totals over the whole
+      // result set, never over the page currently in hand. An earlier version
+      // compared the pinned rows against the fetched page, which made the
+      // reported total change as the user paged.
       //
-      // Pinning reorders rather than adds, because the free-text scan already
-      // covers the number/WSO2-id columns — so an exact hit is virtually
-      // always inside `textTotal` too. The exception is the anomaly this
-      // feature exists for (an identifier the scan misses entirely); there the
-      // count reads up to `EXACT_MATCH_LIMIT` low, which is a label being
-      // conservative, never a dropped or duplicated row.
+      // Pinning usually reorders rather than adds, because the free-text scan
+      // also covers the number/WSO2-id columns — so an exact hit is normally
+      // already inside `textTotal`, and `overlapTotal` says exactly how many
+      // are. Only the remainder is genuinely new: an identifier the scan misses
+      // entirely, which is the anomaly this feature exists for. Undercounting
+      // there is not cosmetic — the paginator stops offering pages at `total`,
+      // so a row past that point can never be reached.
       const textTotal = textResponse.total ?? textRows.length;
-      const total = textTotal > 0 ? textTotal : exactRows.length;
+      const overlapTotal = overlapResponse.total ?? 0;
+      const pinnedNotCounted = Math.max(0, exactRows.length - overlapTotal);
+      const total = textTotal + pinnedNotCounted;
 
       return {
         cases,

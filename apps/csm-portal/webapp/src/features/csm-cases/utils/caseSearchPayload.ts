@@ -50,7 +50,7 @@ export function buildCaseSearchFilters(
   filters: CasesFilters,
   search: string,
   assignedUserIds: string[] | undefined,
-  options?: { forceFreeText?: boolean },
+  options?: { forceFreeText?: boolean; alsoFreeText?: boolean },
 ): BeCaseSearchFilters {
   const fieldFilters: BeCaseFieldFilter[] = [];
   if (filters.severities.length > 0) {
@@ -197,14 +197,22 @@ export function buildCaseSearchFilters(
   // that looks like an identifier — the cases list runs both legs in parallel
   // and merges them (see `useGetCsmCases`), so that a case mentioning the
   // number in its description is still findable, just below the exact hit.
+  //
+  // `alsoFreeText` keeps the exact filter *and* adds the scan. The backend ANDs
+  // `searchQuery` with the `filters` array (the quick-nav palette relies on the
+  // same thing to constrain a free-text search to a set of case types), so this
+  // resolves "how many exact hits the scan already covers" — which is what lets
+  // the merged total be computed exactly instead of guessed. See
+  // `useGetCsmCases`.
   const scope =
     search.length > 0 && !options?.forceFreeText ? classifyCaseQuery(search) : "text";
   if (scope !== "text") {
     fieldFilters.push({ field: scope, op: "eq", values: [search] });
   }
 
+  const withFreeText = scope === "text" || !!options?.alsoFreeText;
   return {
-    ...(scope === "text" && search.length > 0 && { searchQuery: search }),
+    ...(withFreeText && search.length > 0 && { searchQuery: search }),
     ...(fieldFilters.length > 0 && { filters: fieldFilters }),
   };
 }

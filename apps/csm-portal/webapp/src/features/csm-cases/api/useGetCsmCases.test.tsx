@@ -54,6 +54,20 @@ function filtersOfCall(n: number) {
   return postMock.mock.calls[n][1].filters;
 }
 
+/**
+ * Which of the three parallel legs a request body represents:
+ * - `exact`   — the indexed identifier lookup
+ * - `text`    — the free-text CONTAINS scan
+ * - `overlap` — both together, whose `total` says how many exact hits the scan
+ *               already counts (see `useGetCsmCases`)
+ */
+function legOf(body: { filters: { searchQuery?: string; filters?: { op: string }[] } }) {
+  const hasExact = (body.filters.filters ?? []).some((x) => x.op === "eq");
+  const hasText = !!body.filters.searchQuery;
+  if (hasExact && hasText) return "overlap";
+  return hasExact ? "exact" : "text";
+}
+
 describe("useGetCsmCases — identifier search runs both legs in parallel", () => {
   beforeEach(() => {
     postMock.mockReset();
@@ -64,12 +78,13 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
     // (free-text) resolves an unrelated case that merely mentions that number
     // in its description — the reported failure mode.
     postMock.mockImplementation((_url, body) => {
-      const f = body.filters;
-      const isExact = (f.filters ?? []).some(
-        (x: { field: string; op: string }) => x.field === "number" && x.op === "eq",
-      );
+      const leg = legOf(body);
+      if (leg === "overlap") {
+        // The scan does not cover the exact hit here.
+        return Promise.resolve({ cases: [], total: 0, limit: 1, offset: 0 });
+      }
       return Promise.resolve(
-        isExact
+        leg === "exact"
           ? { cases: [beCase("id-target", "CS0346083")], total: 1, limit: 5, offset: 0 }
           : { cases: [beCase("id-other", "CS0361878")], total: 1, limit: 20, offset: 0 },
       );
@@ -79,10 +94,12 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
     const { result } = renderHook(() => useGetCsmCases(filters, 0, 20), { wrapper });
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    expect(postMock).toHaveBeenCalledTimes(2);
+    expect(postMock).toHaveBeenCalledTimes(3);
 
-    // One leg exact, one leg free-text.
-    const legs = [filtersOfCall(0), filtersOfCall(1)];
+    // One leg exact, one leg free-text (the third resolves their overlap).
+    const legs = [filtersOfCall(0), filtersOfCall(1), filtersOfCall(2)].filter(
+      (f) => !(f.searchQuery && f.filters?.length),
+    );
     const exactLeg = legs.find((f) => f.filters?.length);
     const textLeg = legs.find((f) => f.searchQuery);
     expect(exactLeg.filters).toEqual([
@@ -96,12 +113,13 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
 
   it("does not drop or duplicate a case that both legs return", async () => {
     postMock.mockImplementation((_url, body) => {
-      const f = body.filters;
-      const isExact = (f.filters ?? []).some(
-        (x: { field: string; op: string }) => x.op === "eq",
-      );
+      const leg = legOf(body);
+      if (leg === "overlap") {
+        // The scan already counts the exact hit, so it adds nothing to total.
+        return Promise.resolve({ cases: [], total: 1, limit: 1, offset: 0 });
+      }
       return Promise.resolve(
-        isExact
+        leg === "exact"
           ? { cases: [beCase("id-target", "CS0346083")], total: 1, limit: 5, offset: 0 }
           : {
               // Free-text also matches the target (it contains its own number).
@@ -124,11 +142,12 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
 
   it("keeps pinned rows off later pages so they can't appear twice", async () => {
     postMock.mockImplementation((_url, body) => {
-      const isExact = (body.filters.filters ?? []).some(
-        (x: { op: string }) => x.op === "eq",
-      );
+      const leg = legOf(body);
+      if (leg === "overlap") {
+        return Promise.resolve({ cases: [], total: 1, limit: 1, offset: 0 });
+      }
       return Promise.resolve(
-        isExact
+        leg === "exact"
           ? { cases: [beCase("id-target", "CS0346083")], total: 1, limit: 5, offset: 0 }
           : {
               cases: [beCase("id-target", "CS0346083"), beCase("id-p2", "CS0400000")],
@@ -154,10 +173,12 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
     // contain it, and as already-counted on the page that did.
     const pageSizeUnderTest = 3;
     postMock.mockImplementation((_url, body) => {
-      const isExact = (body.filters.filters ?? []).some(
-        (x: { op: string }) => x.op === "eq",
-      );
-      if (isExact) {
+      const leg = legOf(body);
+      if (leg === "overlap") {
+        // The scan covers the exact hit (it is row 7 below), so it adds nothing.
+        return Promise.resolve({ cases: [], total: 1, limit: 1, offset: 0 });
+      }
+      if (leg === "exact") {
         return Promise.resolve({
           cases: [beCase("id-target", "CS0346083")],
           total: 1,
@@ -201,10 +222,11 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
     const pageSizeUnderTest = 3;
     const all = Array.from({ length: 6 }, (_, i) => beCase(`id-${i}`, `CS040000${i}`));
     postMock.mockImplementation((_url, body) => {
-      const isExact = (body.filters.filters ?? []).some(
-        (x: { op: string }) => x.op === "eq",
-      );
-      if (isExact) {
+      const leg = legOf(body);
+      if (leg === "overlap") {
+        return Promise.resolve({ cases: [], total: 0, limit: 1, offset: 0 });
+      }
+      if (leg === "exact") {
         return Promise.resolve({
           cases: [beCase("id-target", "CS0346083")],
           total: 1,
@@ -234,6 +256,61 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
 
     // Pinned first, then the free-text rows in order with none skipped.
     expect(seen).toEqual(["id-target", "id-0", "id-1", "id-2", "id-3", "id-4"]);
+  });
+
+  it("counts an exact-only hit in the total and keeps every row reachable", async () => {
+    // The scan misses the identifier entirely (the anomaly this feature exists
+    // for), so the merged sequence is 1 exact-only row + 9 scan rows. If the
+    // total under-reported those 9, the paginator would stop offering pages
+    // before the last row and it could never be reached.
+    const pageSizeUnderTest = 3;
+    const scanRows = Array.from({ length: 9 }, (_, i) =>
+      beCase(`id-${i}`, `CS040000${i}`),
+    );
+    postMock.mockImplementation((_url, body) => {
+      const leg = legOf(body);
+      if (leg === "overlap") {
+        return Promise.resolve({ cases: [], total: 0, limit: 1, offset: 0 });
+      }
+      if (leg === "exact") {
+        return Promise.resolve({
+          cases: [beCase("id-target", "CS0346083")],
+          total: 1,
+          limit: 5,
+          offset: 0,
+        });
+      }
+      const { offset, limit } = body.pagination;
+      return Promise.resolve({
+        cases: scanRows.slice(offset, offset + limit),
+        total: scanRows.length,
+        limit,
+        offset,
+      });
+    });
+
+    const filters = { ...DEFAULT_CASES_FILTERS, search: "CS0346083" };
+    const seen: string[] = [];
+    const totals: number[] = [];
+    // 10 rows over a page size of 3 => 4 pages, the last holding a single row.
+    for (const page of [0, 1, 2, 3]) {
+      const { result } = renderHook(
+        () => useGetCsmCases(filters, page, pageSizeUnderTest),
+        { wrapper },
+      );
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      totals.push(result.current.data!.total);
+      expect(result.current.data!.cases.length).toBeLessThanOrEqual(pageSizeUnderTest);
+      seen.push(...result.current.data!.cases.map((c) => c.id));
+    }
+
+    expect(new Set(totals)).toEqual(new Set([10]));
+    // All ten rows reachable, in merged order, none repeated.
+    expect(seen).toEqual([
+      "id-target",
+      ...scanRows.map((c) => c.id),
+    ]);
+    expect(new Set(seen).size).toBe(10);
   });
 
   it("issues only ONE search for a plain free-text query", async () => {
