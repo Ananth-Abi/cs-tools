@@ -112,6 +112,7 @@ vi.mock("@wso2/oxygen-ui-charts-react", () => ({
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
 import { CURRENT_TEAM_PLACEHOLDER } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
 import { CURRENT_USER_PLACEHOLDER } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import { __resetWidgetFetchConcurrencyForTests } from "@features/csm-dashboard/utils/widgetFetchConcurrency";
 
 function renderWithClient(ui: ReactNode) {
   const queryClient = new QueryClient({
@@ -156,6 +157,14 @@ describe("DashboardWidgetTile", () => {
   beforeEach(() => {
     postMock.mockReset();
     mockCurrentUserId = SIGNED_IN_USER_ID;
+    // The concurrency semaphore (widgetFetchConcurrency.ts) is a
+    // module-level singleton shared across this whole file — a test below
+    // deliberately leaves its own fetch pending forever
+    // (`new Promise(() => {})`) to assert a loading state, which would
+    // otherwise permanently hold its slot and starve every later test in
+    // this file (fatal at WIDGET_FETCH_CONCURRENCY_LIMIT === 1, since
+    // there is then nothing left to acquire).
+    __resetWidgetFetchConcurrencyForTests();
   });
 
   it("renders a skeleton while its own count is in flight", () => {

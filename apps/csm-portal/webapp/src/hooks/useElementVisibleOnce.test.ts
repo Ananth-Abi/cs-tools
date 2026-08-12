@@ -85,24 +85,35 @@ describe("useElementVisibleOnce", () => {
     expect(FakeIntersectionObserver.instances[0].observedNodes).toEqual([ref.current]);
   });
 
-  it("passes the given rootMargin through to the observer (default 200px)", () => {
+  it("passes the given rootMargin/threshold through to the observer (default 0px / 0.25)", () => {
     const ref = createRef<HTMLDivElement>();
     // @ts-expect-error -- see above.
     ref.current = { tagName: "DIV" };
 
     renderHook(() => useElementVisibleOnce(ref));
 
-    expect(FakeIntersectionObserver.instances[0].options).toEqual({ rootMargin: "200px" });
+    // No pre-fetch-ahead-of-scroll margin, and at least a quarter of the
+    // tile's own area must be on screen — see the constants' own doc
+    // comments for why (an edge sliver, or a widget still below the fold
+    // that a generous margin used to count as "visible", must not fire a
+    // fetch).
+    expect(FakeIntersectionObserver.instances[0].options).toEqual({
+      rootMargin: "0px",
+      threshold: 0.25,
+    });
   });
 
-  it("honors a caller-supplied rootMargin", () => {
+  it("honors a caller-supplied rootMargin and threshold", () => {
     const ref = createRef<HTMLDivElement>();
     // @ts-expect-error -- see above.
     ref.current = { tagName: "DIV" };
 
-    renderHook(() => useElementVisibleOnce(ref, "50px"));
+    renderHook(() => useElementVisibleOnce(ref, "50px", 0.5));
 
-    expect(FakeIntersectionObserver.instances[0].options).toEqual({ rootMargin: "50px" });
+    expect(FakeIntersectionObserver.instances[0].options).toEqual({
+      rootMargin: "50px",
+      threshold: 0.5,
+    });
   });
 
   it("flips to true and disconnects once the element intersects, and never re-observes after", () => {

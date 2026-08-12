@@ -28,15 +28,19 @@
  * the BFF surfaced as HTTP 503 ("upstream connect error or disconnect/reset
  * before headers, reset reason: connection termination") at ~15s elapsed.
  *
- * 6 is chosen to match Chrome's own default per-origin HTTP/1.1 connection
- * limit — the browser would not have parallelized past that anyway on
- * HTTP/1.1 — while still letting most real dashboards (which have fewer
- * than 6 widgets, or complete their first 6 quickly) render with no
- * perceptible delay. It roughly halves the worst observed burst size (13)
- * without serializing small dashboards. Tune here only; nothing else in the
- * widget-fetch path should hardcode a concurrency number.
+ * `1` — fully sequential, one widget fetch in flight at a time. This
+ * supersedes an earlier `6` (chosen to match Chrome's own default
+ * per-origin HTTP/1.1 connection limit, roughly halving the worst observed
+ * prod burst while letting most dashboards render with barely perceptible
+ * delay): the user explicitly asked for strictly one-by-one loading on the
+ * abt-lead dashboard after checking `6` live, prioritizing backend-load
+ * reduction over dashboard render speed. `1` costs the most render-latency
+ * of any value here — a 20-widget dashboard now takes 20 sequential round
+ * trips instead of ~4 batches of 6 — which is the explicit trade the user
+ * chose, not an oversight. Tune here only; nothing else in the widget-fetch
+ * path should hardcode a concurrency number.
  */
-export const WIDGET_FETCH_CONCURRENCY_LIMIT = 6;
+export const WIDGET_FETCH_CONCURRENCY_LIMIT = 1;
 
 let activeCount = 0;
 const waiters: Array<() => void> = [];
@@ -79,4 +83,21 @@ export async function withWidgetFetchSlot<T>(fn: () => Promise<T>): Promise<T> {
   } finally {
     releaseWidgetFetchSlot();
   }
+}
+
+/**
+ * Test-only escape hatch: clears every held/queued slot. `activeCount` and
+ * `waiters` are module-level (deliberately — the cap is app-wide, not
+ * per-dashboard), which means a test that mounts a widget whose fetch is
+ * left permanently pending (`postMock.mockReturnValue(new Promise(() => {}))`,
+ * a real pattern this codebase uses to assert a loading state) never
+ * releases the slot it acquired — harmless at a cap of 6 (five slots still
+ * free for the rest of that test file), but at a cap of 1 it permanently
+ * starves every OTHER test in the same file, since there is nothing left
+ * to acquire. Call this in a `beforeEach`/`afterEach` in any test file that
+ * exercises a widget whose fetch may be left unresolved.
+ */
+export function __resetWidgetFetchConcurrencyForTests(): void {
+  activeCount = 0;
+  waiters.length = 0;
 }
