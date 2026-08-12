@@ -186,9 +186,28 @@ choreo-oauth2-token, <accessToken>, cs-customer-portal, <userIdToken>
 remainder, so **the token this backend needs is always the last comma-separated value** — which
 holds whether or not the gateway is in the path, so a direct local connection works identically.
 `handler.userIDTokenFromRequest` implements exactly that, trying the `x-user-id-token` header first
-for non-browser callers, and `HandleWebSocket` validates the result through the shared
-`middleware.TokenValidator` before rebuilding the context (`middleware.WithUserInfo` +
+for non-browser callers.
+
+**The token that arrives is NOT the same token the `Auth` middleware validates, and this trips
+people up.** `middleware.Auth` validates the `x-jwt-assertion` that Choreo's gateway injects. What
+the WebSocket handshake carries is the browser's **Asgardeo-issued ID token** — different issuer
+(`https://api.asgardeo.io/t/<org>/oauth2/token`), different audience (the SPA's client ID plus
+`choreo:deployment:<env>`), different signing key. Passing it to `TokenValidator.Validate` therefore
+fails on issuer/audience/signature every single time, which is exactly how this surfaced: **every
+WebSocket connection returned 401**. `HandleWebSocket` calls
+`middleware.TokenValidator.DecodeUnverified` instead, which decodes the claims without verifying
+signature/issuer/audience, then rebuilds the context (`middleware.WithUserInfo` +
 `entity.WithUserIDToken`) that `Auth` would normally have populated.
+
+That is safe **only** because Choreo's API Manager gateway has already authenticated the caller's
+access token (the leading `choreo-oauth2-token, <accessToken>` subprotocol pair) before forwarding
+the handshake — the same trust boundary described under "Why no Auth middleware". The ID token
+*identifies* an already-authenticated caller; it does not authenticate one. The Ballerina backend
+does the same thing for the same reason (`authorization:getUserInfoFromTokens` calls plain
+`jwt:decode`). **Never use `DecodeUnverified` on a route reachable without the gateway** — it will
+accept a forged, unsigned, or expired token. If that assumption ever changes, the fix is to validate
+the ID token against Asgardeo's own JWKS/issuer/audience via separate config, not to point
+`Validate` at it.
 
 `Upgrader.Subprotocols` must keep listing `cs-customer-portal`: the client offers it, and a browser
 aborts the connection if the server selects a subprotocol it never offered. It is not cosmetic.

@@ -369,6 +369,12 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	// Established before the WebSocket listener binds, so that listener's setup
+	// is cancellable (see lc.Listen below) and a signal arriving mid-bind is
+	// caught rather than killing the process outright.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// GET /ws lives on its own listener and port, mirroring the Ballerina
 	// backend's split (REST on 9090, WebSocket on 9091 — see that service's
 	// .choreo/component.yaml). Two reasons it cannot share the REST server:
@@ -388,7 +394,12 @@ func main() {
 	wsMux.HandleFunc("GET /ws", webSocketHandler.HandleWebSocket)
 
 	wsAddr := ":" + mustPort("WS_PORT", "8081")
-	wsLn, err := net.Listen("tcp", wsAddr)
+	// ctx here covers only the listen operation itself (address resolution and
+	// socket setup) — it does NOT tie the listener's lifetime to the context,
+	// so cancelling ctx will not close wsLn. Shutdown still comes from
+	// wsSrv.Shutdown below.
+	var lc net.ListenConfig
+	wsLn, err := lc.Listen(ctx, "tcp", wsAddr)
 	if err != nil {
 		slog.Error("failed to bind websocket listener", "addr", wsAddr, "err", err)
 		os.Exit(1)
@@ -407,9 +418,6 @@ func main() {
 		// instead, per-frame.
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {

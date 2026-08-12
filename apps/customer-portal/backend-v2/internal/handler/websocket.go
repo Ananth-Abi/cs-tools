@@ -67,12 +67,17 @@ const wsSubprotocol = "cs-customer-portal"
 // userIDTokenHeader carries the caller's user-ID token on ordinary HTTP
 // requests. A browser cannot set it on a WebSocket handshake — see
 // userIDTokenFromRequest.
-const userIDTokenHeader = "x-user-id-token"
+const userIDTokenHeader = "x-user-id-token" // #nosec G101 -- HTTP header name, not a credential
 
 // wsTokenValidator abstracts middleware.TokenValidator so tests can inject a
 // fake identity without minting real JWTs.
+//
+// DecodeUnverified, not Validate: the token arriving here is the browser's
+// Asgardeo ID token, not the Choreo-injected x-jwt-assertion the validator is
+// configured for, so full validation always rejects it. See that method's doc
+// comment for the trust model that makes this safe.
 type wsTokenValidator interface {
-	Validate(token string) (*middleware.UserInfo, error)
+	DecodeUnverified(token string) (*middleware.UserInfo, error)
 }
 
 // WebSocketHandler proxies real-time chat messages between the browser and
@@ -187,11 +192,16 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
 		return
 	}
-	user, err := h.auth.Validate(token)
+	// Decode, not validate: this is the browser's Asgardeo ID token, signed by a
+	// different issuer for a different audience than the x-jwt-assertion the
+	// validator is configured for. Choreo's gateway has already authenticated
+	// the caller's access token by this point — see
+	// middleware.TokenValidator.DecodeUnverified.
+	user, err := h.auth.DecodeUnverified(token)
 	if err != nil {
 		// The error is deliberately not logged: some jwt/v5 error paths embed
 		// parts of the offending token.
-		slog.WarnContext(r.Context(), "websocket auth: token validation failed")
+		slog.WarnContext(r.Context(), "websocket auth: could not decode user ID token")
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
 		return
 	}
