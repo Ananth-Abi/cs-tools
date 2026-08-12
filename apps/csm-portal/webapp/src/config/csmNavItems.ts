@@ -21,10 +21,14 @@ import {
   Clock,
   Cog,
   Headset,
+  KeyRound,
   Megaphone,
   RefreshCw,
   Settings,
   Shield,
+  UserCog,
+  Users,
+  UsersRound,
 } from "@wso2/oxygen-ui-icons-react";
 import type { ComponentType } from "react";
 
@@ -213,21 +217,25 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
             id: "admin.user-management.users",
             label: "Users",
             href: "/admin/user-management/users",
+            icon: Users,
           },
           {
             id: "admin.user-management.roles",
             label: "Roles",
             href: "/admin/user-management/roles",
+            icon: UserCog,
           },
           {
             id: "admin.user-management.groups",
             label: "Groups",
             href: "/admin/user-management/groups",
+            icon: UsersRound,
           },
           {
             id: "admin.user-management.teams",
             label: "Teams",
             href: "/admin/user-management/teams",
+            icon: Building2,
           },
           // Routes to a placeholder that already names its backend blocker, so
           // it renders itself rather than the generic WIP page.
@@ -236,6 +244,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
             label: "Permissions",
             href: "/admin/user-management/permissions",
             rendersOwnWipPage: true,
+            icon: KeyRound,
           },
         ],
       },
