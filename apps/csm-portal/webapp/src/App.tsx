@@ -94,6 +94,9 @@ const CreateProblemPage = lazy(
 const CsmAdminLayout = lazy(
   () => import("@features/csm-admin/pages/CsmAdminLayout"),
 );
+const CsmUserManagementLandingPage = lazy(
+  () => import("@features/csm-admin/pages/CsmUserManagementLandingPage"),
+);
 const CsmUsersPage = lazy(
   () => import("@features/csm-users/pages/CsmUsersPage"),
 );
@@ -335,7 +338,8 @@ export default function App(): JSX.Element {
                   {/* Administration — "User management" groups the
                       Users/Roles/Groups/Teams/Permissions directory pages
                       (Users/Roles/Groups/Teams are real, Permissions is still
-                      WIP) under one nested tab; Dashboards is a sibling. */}
+                      WIP) behind a tile-grid landing page; Dashboards is a
+                      sibling tab. */}
                   <Route path="admin" element={<CsmAdminLayout />}>
                     <Route
                       index
@@ -343,9 +347,7 @@ export default function App(): JSX.Element {
                     />
                     <Route
                       path="user-management"
-                      element={
-                        <SectionIndexRedirect sectionId="admin.user-management" />
-                      }
+                      element={<CsmUserManagementLandingPage />}
                     />
                     <Route path="user-management/users" element={<CsmUsersPage />} />
                     <Route path="user-management/roles" element={<CsmRolesPage />} />
