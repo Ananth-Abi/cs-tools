@@ -23,6 +23,10 @@ import {
 import { CASE_DETAIL } from "../utils/selectors";
 import { isSuccess } from "../utils/caseFlows";
 
+/** How long to allow for a case's detail page to resolve — the header is
+ * skeletonised while the case loads, well beyond the 5s default. */
+const LOAD_TIMEOUT_MS = 60_000;
+
 /**
  * Page object for the case detail page
  * (`/projects/:projectId/support/cases/:caseId`).
@@ -48,6 +52,109 @@ export class CaseDetailPage {
       name: CASE_DETAIL.closeButton,
       exact: true,
     });
+  }
+
+  /**
+   * Opens a case's detail page directly.
+   *
+   * @param projectId - Project the case belongs to.
+   * @param caseId - Case sysid.
+   */
+  async open(projectId: string, caseId: string): Promise<void> {
+    await this.page.goto(
+      `/projects/${projectId}/${CASE_DETAIL.pathSegment}/${caseId}`,
+    );
+    // The header renders once the case resolves; the case number is the first
+    // field guaranteed to be present for every case.
+    await expect(this.caseNumber()).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  }
+
+  /**
+   * Opens a security report analysis. It reuses the same header as a case, so
+   * the field locators below apply unchanged.
+   *
+   * @param projectId - Project the SRA belongs to.
+   * @param sraId - SRA sysid.
+   */
+  async openSecurityReportAnalysis(
+    projectId: string,
+    sraId: string,
+  ): Promise<void> {
+    await this.page.goto(
+      `/projects/${projectId}/${CASE_DETAIL.sraPathSegment}/${sraId}`,
+    );
+    await expect(this.caseNumber()).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  }
+
+  /**
+   * Opens a service request. It reuses the same header as a case, so the field
+   * locators below apply unchanged — bar severity, which service requests do not
+   * carry.
+   *
+   * @param projectId - Project the request belongs to.
+   * @param serviceRequestId - Service request sysid.
+   */
+  async openServiceRequest(
+    projectId: string,
+    serviceRequestId: string,
+  ): Promise<void> {
+    await this.page.goto(
+      `/projects/${projectId}/${CASE_DETAIL.serviceRequestPathSegment}/${serviceRequestId}`,
+    );
+    await expect(this.caseNumber()).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  }
+
+  /**
+   * Opens an announcement. Like SRAs and service requests it reuses the case
+   * detail header, so the field locators below apply unchanged.
+   *
+   * @param projectId - Project the announcement belongs to.
+   * @param announcementId - Announcement sysid.
+   */
+  async openAnnouncement(
+    projectId: string,
+    announcementId: string,
+  ): Promise<void> {
+    await this.page.goto(
+      `/projects/${projectId}/${CASE_DETAIL.announcementPathSegment}/${announcementId}`,
+    );
+    await expect(this.caseNumber()).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  }
+
+  //
+  // Header fields. None carry ids, test ids or labels, so rather than guessing
+  // at positions in the header row these match on the *shape* of their content —
+  // which is both stable against markup changes and self-documenting.
+  //
+
+  /** The ServiceNow case number, e.g. CS0441157. */
+  caseNumber(): Locator {
+    return this.main().getByText(/^CS\d+$/);
+  }
+
+  /** The WSO2 case id, e.g. AUTOMATIONTESTCUSSUB-42. */
+  wso2CaseId(pattern: RegExp): Locator {
+    return this.main().getByText(pattern);
+  }
+
+  /** The severity chip, e.g. "S1" or "S4(Query)". */
+  severityChip(severity: string): Locator {
+    return this.main().getByText(severity, { exact: true });
+  }
+
+  /** The case state shown beside the number, e.g. "Open". */
+  stateLabel(state: string): Locator {
+    return this.main().getByText(state, { exact: true });
+  }
+
+  /** The case subject — the header's `variant="h6"` heading. */
+  subject(): Locator {
+    return this.main().getByRole("heading").first();
+  }
+
+  /** A comment on the Activity tab, matched as a substring. */
+  comment(text: string): Locator {
+    return this.main().getByText(text, { exact: false }).first();
   }
 
   confirmDialog(): Locator {

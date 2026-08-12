@@ -64,6 +64,23 @@ export const CREATE_CASE = {
   },
 } as const;
 
+/** Side navigation. Items are buttons inside the sidebar landmark; which ones
+ * render depends on the project's feature flags (see SideBar.tsx). */
+export const SIDE_NAV = {
+  items: {
+    dashboard: "Dashboard",
+    support: "Support",
+    operations: "Operations",
+    updates: "Updates",
+    securityCenter: "Security Center",
+    engagements: "Engagements",
+    usageMetrics: "Usage & Metrics",
+    projectDetails: "Project Details",
+    announcements: "Announcements",
+    settings: "Settings",
+  },
+} as const;
+
 /** Project details page (`/projects/:projectId/project-details`), reached from
  * the side nav. Its tabs are Overview, Deployments and Time Tracking. */
 export const PROJECT_DETAILS = {
@@ -178,6 +195,24 @@ export const CREATE_SECURITY_REPORT = {
   },
 } as const;
 
+/** Security Center (`/projects/:projectId/security-center`), whose default tab is
+ * the Security Report Analysis list. */
+export const SECURITY_CENTER = {
+  pathSegment: "security-center",
+  /** The list search covers case number, title AND description — which is what
+   * lets a report be found by its stable description rather than by its
+   * date-stamped generated title. */
+  searchPlaceholder: /Search reports/,
+  emptyMessage: "No reports found.",
+} as const;
+
+/** Cases list (`/projects/:projectId/support/cases`). */
+export const CASES_LIST = {
+  pathSegment: "support/cases",
+  /** Default placeholder of ListSearchPanel's input. */
+  searchPlaceholder: /Search cases/,
+} as const;
+
 /** Case detail page (`/projects/:projectId/support/cases/:caseId`).
  *
  * The state-change buttons come from `getAvailableCaseActions(status)`: an open
@@ -187,6 +222,12 @@ export const CREATE_SECURITY_REPORT = {
 export const CASE_DETAIL = {
   /** URL segment every case detail page carries. */
   pathSegment: "support/cases",
+  /** URL segment for a security report analysis, which reuses the same header. */
+  sraPathSegment: "security-center/security-report-analysis",
+  /** URL segment for a service request, which reuses the same header too. */
+  serviceRequestPathSegment: "operations/service-requests",
+  /** URL segment for an announcement — also the same header. */
+  announcementPathSegment: "announcements",
   /** The app's <main> region (AppShellLayout). Actions must be scoped to it:
    * the promo banner outside it renders its own dismiss control also named
    * "Close", which otherwise makes the locator ambiguous. */
@@ -194,6 +235,25 @@ export const CASE_DETAIL = {
   closeButton: "Close",
   /** Status shown in the header chip once the case is closed. */
   closedStatus: "Closed",
+  /** The header row renders, in order: WSO2 case id, case number, a status chip,
+   * a severity chip, then the subject. None carry ids or test ids, so they are
+   * addressed positionally within the header — see CaseDetailPage. */
+  header: {
+    /** Case states the header may show, for asserting the value is a real one
+     * rather than a placeholder. Mirrors CaseStatus in supportConstants.ts. */
+    states: [
+      "Open",
+      "Work In Progress",
+      "Awaiting Info",
+      "Waiting On WSO2",
+      "Solution Proposed",
+      "Reopened",
+      "Closed",
+    ],
+  },
+  /** Label on the Details tab. The header shows the same value, so the view spec
+   * asserts it there rather than switching tabs. */
+  wso2CaseIdLabel: "WSO2 Case ID",
   confirmDialog: {
     title: "Confirm State Change",
     confirmButton: "Confirm",
