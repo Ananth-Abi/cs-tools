@@ -14,10 +14,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
-import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  type NavigateOptions,
+  type To,
+} from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@testing-library/jest-dom/vitest";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
@@ -395,6 +403,75 @@ function renderPage(): ReturnType<typeof render> {
     </QueryClientProvider>,
   );
 }
+
+const DASHED_ID = "56f49f0a-eb1e-c310-fcf5-f5dabad0cdab";
+const DASHLESS_ID = "56f49f0aeb1ec310fcf5f5dabad0cdab";
+
+// `useNavTransition` is mocked module-wide (above) so the rest of this
+// file's tests can assert on navigate-call arguments without a real router
+// transition. For the dashless-id tests specifically we want to prove the
+// router's own location actually changes, not just that the mock was
+// invoked — so this bridges the mock to the real `useNavigate` from this
+// render tree, and `LocationProbe` (already used elsewhere in this file)
+// verifies the resulting location.
+function NavigateBridge(): null {
+  const navigate = useNavigate();
+  navigateMock.mockImplementation((to: To, options?: NavigateOptions) =>
+    navigate(to, options),
+  );
+  return null;
+}
+
+function renderPageAtCaseId(initialEntry: string): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <NavigateBridge />
+        <LocationProbe />
+        <Routes>
+          <Route path="/cases/:caseId" element={<CsmCaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("CsmCaseDetailPage — dashless id normalization", () => {
+  it("fetches the case detail with the dashed id and redirects the URL when the route carries a dashless id", async () => {
+    useGetCsmCaseDetailMock.mockClear();
+    navigateMock.mockClear();
+
+    renderPageAtCaseId(`/cases/${DASHLESS_ID}`);
+
+    // The underlying data-fetch hook must be called with the corrected,
+    // dashed id, not the raw dashless one straight off the URL.
+    expect(useGetCsmCaseDetailMock).toHaveBeenCalledWith(DASHED_ID);
+
+    // Exercise the real router replacement: the address bar must actually
+    // land on the dashed path, not just the mock being called with it.
+    await waitFor(() =>
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/cases/${DASHED_ID}`,
+      ),
+    );
+  });
+
+  it("does not redirect or alter an already-dashed id", () => {
+    useGetCsmCaseDetailMock.mockClear();
+    navigateMock.mockClear();
+
+    renderPageAtCaseId(`/cases/${DASHED_ID}`);
+
+    expect(useGetCsmCaseDetailMock).toHaveBeenCalledWith(DASHED_ID);
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      `/cases/${DASHED_ID}`,
+    );
+  });
+});
 
 describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () => {
   it("stops showing the previous case's edit dialog once the route moves to a new case", () => {

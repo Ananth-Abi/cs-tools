@@ -46,7 +46,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useLocation, useParams } from "react-router";
+import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 import { BackendApiError } from "@api/backend/client";
@@ -80,6 +80,7 @@ import {
 } from "@features/csm-cases/api/useCsmCaseAttachments";
 import type { BeEntityRef } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 
 const OPERATIONS_CR_PATH = "/operations?tab=change_requests";
 
@@ -182,7 +183,7 @@ const TAB_DEFS: Array<{
  * rollback / test / communication plans.
  */
 export default function CsmChangeRequestDetailPage(): JSX.Element {
-  const { id } = useParams<{ id: string }>();
+  const id = useNormalizedIdParam("id");
   const navigate = useNavTransition();
   // Prefer the list URL the row link captured (if any) so "back" returns to
   // the exact view the engineer came from, falling back to the bare tab path

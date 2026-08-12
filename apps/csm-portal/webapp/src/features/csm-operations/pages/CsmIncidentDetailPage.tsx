@@ -34,7 +34,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useLocation, useParams } from "react-router";
+import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
@@ -75,6 +75,7 @@ import type {
   BeUpdateIncidentPayload,
 } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 
 const OPERATIONS_INCIDENTS_PATH = "/operations?tab=incidents";
 
@@ -170,7 +171,7 @@ const TAB_DEFS: Array<{ id: IncidentTabId; label: string; icon: JSX.Element }> =
  * for the related, already-handled `additionalComments`/`workNotes` quirk).
  */
 export default function CsmIncidentDetailPage(): JSX.Element {
-  const { id } = useParams<{ id: string }>();
+  const id = useNormalizedIdParam("id");
   const navigate = useNavTransition();
   // Prefer the list URL the row link captured (if any) so "back" returns to
   // the exact view the engineer came from, falling back to the bare tab path
