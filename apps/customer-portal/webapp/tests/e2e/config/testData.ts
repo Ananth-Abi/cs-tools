@@ -57,6 +57,9 @@ export interface ProjectFixture {
   id: string;
   /** Project name exactly as displayed in the portal. */
   name: string;
+  /** Short project key, shown as a chip beside the name on the Overview tab.
+   * Empty when not yet captured for this environment. */
+  projectKey: string;
   /** The project's type label, for specs that assert type-driven behaviour. */
   type: ProjectType;
   /** Deployment option label, exactly as rendered in the Deployment dropdown.
@@ -96,6 +99,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
   [ProjectType.SUBSCRIPTION]: {
     id: "641058e63b5a87103e1e088aa4e45a13",
     name: "Automation Test Customer Project - Subscription",
+    projectKey: "",
     type: ProjectType.SUBSCRIPTION,
     deployment: "Production",
     deploymentId: "8f8a33693bee8b503e1e088aa4e45ab4",
@@ -106,6 +110,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
   [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: {
     id: "a0873629eba28f90fcf5f5dabad0cda0",
     name: "Automation Test MS Customer Project - Managed Cloud Subscription",
+    projectKey: "AUTOMATIONTESTCUSMSSUB",
     type: ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
     deployment: "Production",
     deploymentId: "f40cf7e53b2a4b9091404c6aa5e45a00",
@@ -116,6 +121,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
   [ProjectType.CLOUD_SUPPORT]: {
     id: "cd9776ed3ba28b503e1e088aa4e45a81",
     name: "Automation Test Cloud Customer Project - Cloud Support",
+    projectKey: "",
     type: ProjectType.CLOUD_SUPPORT,
     // Deployment is hidden and auto-locked to primary production for this type.
     deployment: "",
