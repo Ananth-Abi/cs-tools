@@ -26,6 +26,7 @@ import {
   resolveAssignedUserIds,
 } from "@features/csm-cases/utils/caseSearchPayload";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
+import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import type { BeCaseSearchPayload, BeCaseSearchResponse } from "@api/backend/types";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
@@ -37,6 +38,13 @@ import {
   DEFAULT_CASES_SORT,
   type CasesSortOrder,
 } from "@features/csm-cases/utils/casesSort";
+
+/**
+ * How many exact identifier hits to pin above the first page. A case number is
+ * unique, so this is realistically 1; the small headroom covers a WSO2 case id
+ * that repeats across projects without ever pinning an unbounded block.
+ */
+const EXACT_MATCH_LIMIT = 5;
 
 /**
  * Cross-project CSM cases list.
@@ -142,25 +150,81 @@ export function useGetCsmCases(
       // One cross-project case search. No account/project directory scan: the
       // list has no Customer column, and the old scan paged the entire account
       // directory to resolve a name nothing renders.
-      const casesResponse = await api.post<
-        BeCaseSearchPayload,
-        BeCaseSearchResponse
-      >("/cases/search", {
-          pagination: { offset, limit: pageSize },
+      const runSearch = (
+        searchOptions?: { forceFreeText?: boolean },
+        pagination = { offset, limit: pageSize },
+      ): Promise<BeCaseSearchResponse> =>
+        api.post<BeCaseSearchPayload, BeCaseSearchResponse>("/cases/search", {
+          pagination,
           sortBy: { field: "updatedOn", order: sortOrder },
-          filters: buildCaseSearchFilters(filters, search, assignedUserIds),
-      });
+          filters: buildCaseSearchFilters(
+            filters,
+            search,
+            assignedUserIds,
+            searchOptions,
+          ),
+        });
 
-      const cases: CsmCaseRow[] = (casesResponse.cases ?? []).map((c) =>
+      // A query shaped like a case number / WSO2 id runs BOTH legs at once: the
+      // exact indexed lookup and the free-text CONTAINS scan. Neither alone is
+      // right — exact-only loses cases that merely reference the number in their
+      // description, while free-text-only is what let an unrelated case outrank
+      // (or hide) the one actually being looked up. Running them in parallel
+      // costs no extra latency over the free-text leg it already ran.
+      const isIdentifierQuery =
+        search.length > 0 && classifyCaseQuery(search) !== "text";
+
+      if (!isIdentifierQuery) {
+        const casesResponse = await runSearch();
+        const cases: CsmCaseRow[] = (casesResponse.cases ?? []).map((c) =>
+          mapCaseSearchViewToRow(c, currentUserEmail),
+        );
+        return {
+          cases,
+          total: casesResponse.total ?? cases.length,
+          limit: casesResponse.limit ?? pageSize,
+          offset: casesResponse.offset ?? offset,
+          hasMore: casesResponse.hasMore ?? false,
+        };
+      }
+
+      // The exact leg is page-independent: a number/id match is a tiny, fixed
+      // result (unique per case), so it's fetched once from the top and pinned
+      // above the first page rather than re-queried per page.
+      const [exactResponse, textResponse] = await Promise.all([
+        runSearch(undefined, { offset: 0, limit: EXACT_MATCH_LIMIT }),
+        runSearch({ forceFreeText: true }),
+      ]);
+
+      const exactRows = (exactResponse.cases ?? []).map((c) =>
         mapCaseSearchViewToRow(c, currentUserEmail),
       );
+      const exactIds = new Set(exactRows.map((c) => c.id));
+      // Dropped from every page of the free-text leg, not just the first, so a
+      // pinned case can't also reappear further down its own result set.
+      const textRows = (textResponse.cases ?? [])
+        .map((c) => mapCaseSearchViewToRow(c, currentUserEmail))
+        .filter((c) => !exactIds.has(c.id));
+
+      const textTotal = textResponse.total ?? textRows.length;
+      // Pinned rows are additive only when the free-text leg didn't already
+      // count them. It can only be compared against the page in hand, so this
+      // is exact whenever the exact hit lands on the first page (the common
+      // case) and off by at most the pinned count otherwise — a count label,
+      // never a correctness issue: no row is dropped or duplicated either way.
+      const pinnedNotInText = exactRows.filter(
+        (c) => !(textResponse.cases ?? []).some((t) => t.id === c.id),
+      ).length;
 
       return {
-        cases,
-        total: casesResponse.total ?? cases.length,
-        limit: casesResponse.limit ?? pageSize,
-        offset: casesResponse.offset ?? offset,
-        hasMore: casesResponse.hasMore ?? false,
+        // Page 0 carries the pinned rows *in addition to* a full free-text page
+        // rather than displacing its last row — displacing would skip that row
+        // entirely, since page 1 resumes at `offset + pageSize` regardless.
+        cases: page === 0 ? [...exactRows, ...textRows] : textRows,
+        total: textTotal + pinnedNotInText,
+        limit: textResponse.limit ?? pageSize,
+        offset: textResponse.offset ?? offset,
+        hasMore: textResponse.hasMore ?? false,
       };
     },
     enabled,
