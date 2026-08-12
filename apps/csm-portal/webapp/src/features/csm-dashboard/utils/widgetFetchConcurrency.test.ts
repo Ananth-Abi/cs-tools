@@ -56,6 +56,10 @@ describe("withWidgetFetchSlot", () => {
     // actually bind at least once — otherwise this test would pass
     // vacuously even with no cap at all if totalRequests were small.
     expect(peakConcurrent).toBe(WIDGET_FETCH_CONCURRENCY_LIMIT);
+    // A LIFO or arbitrary-order queue would also pass every assertion above
+    // (peak concurrency is unaffected by ordering) — this is the one that
+    // actually proves the queue is FIFO, not just capped.
+    expect(started).toEqual(Array.from({ length: totalRequests }, (_, i) => i));
   });
 
   it("releases a slot as soon as fn rejects, so a failing widget doesn't starve the queue", async () => {
