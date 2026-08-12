@@ -33,9 +33,18 @@ info:
 
 servers:
   local:
-    url: localhost:8080
+    url: localhost:8081
     protocol: ws
-    description: Local server — WebSocket is served on the same port as the REST API (GET /ws), not a separate port.
+    description: >
+      Local server. The WebSocket runs on its own listener and port (WS_PORT,
+      default 8081), separate from the REST API's PORT (8080) — mirroring
+      apps/customer-portal/backend, which serves REST on 9090 and WebSocket on
+      9091. Authentication does NOT use the x-jwt-assertion header: a browser
+      cannot set custom headers on a WebSocket handshake, so the caller's
+      user-ID token is sent as the last Sec-WebSocket-Protocol value, after the
+      "cs-customer-portal" subprotocol name. Choreo's gateway consumes the
+      leading "choreo-oauth2-token, <accessToken>" pair and forwards the rest.
+      See CLAUDE.md's "The AI chat agent" section.
 
 channels:
   /ws:

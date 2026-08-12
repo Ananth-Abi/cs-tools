@@ -58,6 +58,23 @@ type entityCommentCreator interface {
 // auto-resolve a conversation when the AI agent reports the issue solved.
 const wsAutoResolveState = "RESOLVED"
 
+// wsSubprotocol is the WebSocket subprotocol this endpoint negotiates. The
+// frontend offers it (see WS_CUSTOMER_PORTAL in the webapp's apiConstants.ts)
+// and the upgrade echoes it back, matching the Ballerina backend's
+// `@websocket:ServiceConfig { subProtocols: ["cs-customer-portal"] }`.
+const wsSubprotocol = "cs-customer-portal"
+
+// userIDTokenHeader carries the caller's user-ID token on ordinary HTTP
+// requests. A browser cannot set it on a WebSocket handshake — see
+// userIDTokenFromRequest.
+const userIDTokenHeader = "x-user-id-token"
+
+// wsTokenValidator abstracts middleware.TokenValidator so tests can inject a
+// fake identity without minting real JWTs.
+type wsTokenValidator interface {
+	Validate(token string) (*middleware.UserInfo, error)
+}
+
 // WebSocketHandler proxies real-time chat messages between the browser and
 // the upstream AI chat agent for an existing conversation.
 //
@@ -73,15 +90,18 @@ const wsAutoResolveState = "RESOLVED"
 type WebSocketHandler struct {
 	ai      wsStreamer
 	entity  entityCommentCreator
+	auth    wsTokenValidator
 	upgrade websocket.Upgrader
 }
 
 // NewWebSocketHandler creates a WebSocketHandler backed by the given AI chat
-// agent WebSocket client and entity client. allowedOrigins restricts which
-// browser Origins may open this connection (defense in depth against
-// cross-site WebSocket hijacking) — pass nil/empty to allow any origin,
-// e.g. for local development.
-func NewWebSocketHandler(ai wsStreamer, entityClient entityCommentCreator, allowedOrigins []string) *WebSocketHandler {
+// agent WebSocket client and entity client. auth validates the caller's token
+// (see userIDTokenFromRequest for why this route authenticates itself instead
+// of going through middleware.Auth). allowedOrigins restricts which browser
+// Origins may open this connection (defense in depth against cross-site
+// WebSocket hijacking) — pass nil/empty to allow any origin, e.g. for local
+// development.
+func NewWebSocketHandler(ai wsStreamer, entityClient entityCommentCreator, auth wsTokenValidator, allowedOrigins []string) *WebSocketHandler {
 	allowed := make(map[string]bool, len(allowedOrigins))
 	for _, o := range allowedOrigins {
 		allowed[o] = true
@@ -89,18 +109,57 @@ func NewWebSocketHandler(ai wsStreamer, entityClient entityCommentCreator, allow
 	return &WebSocketHandler{
 		ai:     ai,
 		entity: entityClient,
+		auth:   auth,
 		upgrade: websocket.Upgrader{
-			// Primary authorization is still the same JWT middleware chain as
-			// every other route (see cmd/server/main.go); this Origin check is
-			// defense in depth against cross-site WebSocket hijacking. A
-			// non-browser caller (e.g. a server-to-server client) sends no
-			// Origin header at all and is allowed through either way.
+			// Negotiating the subprotocol the frontend offers is required, not
+			// cosmetic: the handshake carries the caller's token as a
+			// subprotocol value (see userIDTokenFromRequest), and a browser
+			// aborts the connection if the server selects a protocol it never
+			// offered. Selecting this one echoes back a value the client sent.
+			Subprotocols: []string{wsSubprotocol},
+			// Authorization is the token check in HandleWebSocket; this Origin
+			// check is defense in depth against cross-site WebSocket
+			// hijacking. A non-browser caller (e.g. a server-to-server client)
+			// sends no Origin header at all and is allowed through either way.
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
 				return origin == "" || len(allowed) == 0 || allowed[origin]
 			},
 		},
 	}
+}
+
+// userIDTokenFromRequest recovers the caller's user-ID token from a WebSocket
+// upgrade request.
+//
+// A browser cannot set custom headers on a WebSocket handshake, so the
+// frontend smuggles its tokens through Sec-WebSocket-Protocol as
+//
+//	"choreo-oauth2-token, <accessToken>, cs-customer-portal, <userIdToken>"
+//
+// (see the webapp's useChatWebSocket.ts). Choreo's gateway consumes the
+// leading "choreo-oauth2-token, <accessToken>" pair for its own authorization
+// and forwards only the remainder, so the token this backend needs is always
+// the last comma-separated value — which holds whether or not the gateway is
+// in the path, so a direct local connection works the same way.
+//
+// The x-user-id-token header is tried first, for non-browser callers and for
+// any deployment where the gateway injects it. This mirrors the Ballerina
+// backend's ws upgrade resource in apps/customer-portal/backend/service.bal.
+func userIDTokenFromRequest(r *http.Request) string {
+	if h := strings.TrimSpace(r.Header.Get(userIDTokenHeader)); h != "" {
+		return h
+	}
+	// Values (not Get) because a client may split the offer across repeated
+	// headers; both forms are equivalent on the wire.
+	raw := strings.Join(r.Header.Values("Sec-WebSocket-Protocol"), ",")
+	parts := strings.Split(raw, ",")
+	last := strings.TrimSpace(parts[len(parts)-1])
+	// A handshake offering only the subprotocol name carries no token.
+	if last == wsSubprotocol {
+		return ""
+	}
+	return last
 }
 
 // wsEvent is the JSON envelope used for events this handler sends directly
@@ -118,8 +177,21 @@ type wsEvent struct {
 // project ID — the AI agent's own per-conversation session key is derived
 // below as "{projectId}:{conversationId}".
 func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
-	user := middleware.UserInfoFromContext(r.Context())
-	if user == nil {
+	// This route runs on its own listener, without middleware.Auth — the
+	// x-jwt-assertion header that middleware depends on cannot be set by a
+	// browser opening a WebSocket, so the token arrives as a subprotocol value
+	// instead. See userIDTokenFromRequest.
+	token := userIDTokenFromRequest(r)
+	if token == "" {
+		slog.WarnContext(r.Context(), "websocket auth: no token on upgrade request")
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+	user, err := h.auth.Validate(token)
+	if err != nil {
+		// The error is deliberately not logged: some jwt/v5 error paths embed
+		// parts of the offending token.
+		slog.WarnContext(r.Context(), "websocket auth: token validation failed")
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
 		return
 	}
@@ -129,6 +201,12 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
+
+	// Rebuild the context the Auth middleware would normally have populated,
+	// so downstream entity-service calls authenticate as this caller.
+	ctx := middleware.WithUserInfo(r.Context(), user)
+	ctx = entity.WithUserIDToken(ctx, token)
+	r = r.WithContext(ctx)
 
 	conn, err := h.upgrade.Upgrade(w, r, nil)
 	if err != nil {

@@ -153,6 +153,17 @@ func main() {
 	// grants admin privileges for registry-token and contact management.
 	adminRole := mustEnv("AUTH_ADMIN_ROLE")
 
+	authCfg := middleware.Config{
+		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
+		Issuer:                mustEnv("AUTH_ISSUER"),
+		Audiences:             splitComma(mustEnv("AUTH_AUDIENCE")),
+		ClockSkew:             5 * time.Second,
+		TokenValidatorEnabled: os.Getenv("AUTH_TOKEN_VALIDATOR_ENABLED") != "false",
+	}
+	// One validator, shared by the REST middleware chain and the WebSocket
+	// listener, so the JWKS is fetched and refreshed once per process.
+	tokenValidator := middleware.NewTokenValidator(authCfg)
+
 	userHandler := handler.NewUserHandler(entityClient, scimClient)
 	projectHandler := handler.NewProjectHandler(entityClient)
 	projectStatsHandler := handler.NewProjectStatsHandler(entityClient)
@@ -170,20 +181,12 @@ func main() {
 	catalogHandler := handler.NewCatalogHandler(entityClient)
 	timeCardHandler := handler.NewTimeCardHandler(entityClient)
 	aiChatHandler := handler.NewAIChatHandler(aiChatAgentClient, entityClient)
-	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient, nil)
+	webSocketHandler := handler.NewWebSocketHandler(aiChatAgentWsClient, entityClient, tokenValidator, nil)
 	productConsumptionHandler := handler.NewProductConsumptionHandler(productConsumptionClient, entityClient)
 	globalHandler := handler.NewGlobalHandler(entityClient)
 	instanceHandler := handler.NewInstanceHandler(entityClient)
 	registryHandler := handler.NewRegistryHandler(entityClient, registryClient, adminRole)
 	contactHandler := handler.NewContactHandler(entityClient, userManagementClient)
-
-	authCfg := middleware.Config{
-		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
-		Issuer:                mustEnv("AUTH_ISSUER"),
-		Audiences:             splitComma(mustEnv("AUTH_AUDIENCE")),
-		ClockSkew:             5 * time.Second,
-		TokenValidatorEnabled: os.Getenv("AUTH_TOKEN_VALIDATOR_ENABLED") != "false",
-	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +332,6 @@ func main() {
 	mux.HandleFunc("GET /conversations/{id}/messages", aiChatHandler.GetConversationMessages)
 	mux.HandleFunc("POST /projects/{projectId}/conversations/{conversationId}/messages", aiChatHandler.SendConversationMessage)
 	mux.HandleFunc("GET /projects/{id}/conversations/{conversationId}/summary", aiChatHandler.GetConversationSummary)
-	mux.HandleFunc("GET /ws", webSocketHandler.HandleWebSocket)
 
 	// The product-consumption service is a separate service (not
 	// entity-service) — see internal/productconsumption's package doc comment.
@@ -355,7 +357,7 @@ func main() {
 		Handler: middleware.CORS(nil)(
 			middleware.SecurityHeaders(
 				middleware.CorrelationID(
-					middleware.Auth(authCfg)(
+					middleware.AuthWithValidator(tokenValidator)(
 						middleware.Logger(mux),
 					),
 				),
@@ -365,6 +367,45 @@ func main() {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+
+	// GET /ws lives on its own listener and port, mirroring the Ballerina
+	// backend's split (REST on 9090, WebSocket on 9091 — see that service's
+	// .choreo/component.yaml). Two reasons it cannot share the REST server:
+	//
+	//  1. middleware.Auth demands an x-jwt-assertion header, which a browser
+	//     cannot set on a WebSocket handshake. This chain therefore omits Auth;
+	//     WebSocketHandler authenticates the token itself (see
+	//     handler.userIDTokenFromRequest).
+	//  2. The REST server's Read/WriteTimeout would cap the lifetime of an
+	//     upgraded connection. The handler clears those deadlines after the
+	//     upgrade, but only a listener without them is safe by construction.
+	//
+	// Each Choreo endpoint maps to one port, so this also gives the
+	// customer-portal-websocket endpoint a port of its own — see
+	// .choreo/component.yaml.
+	wsMux := http.NewServeMux()
+	wsMux.HandleFunc("GET /ws", webSocketHandler.HandleWebSocket)
+
+	wsAddr := ":" + mustPort("WS_PORT", "8081")
+	wsLn, err := net.Listen("tcp", wsAddr)
+	if err != nil {
+		slog.Error("failed to bind websocket listener", "addr", wsAddr, "err", err)
+		os.Exit(1)
+	}
+	slog.Info("Customer Portal Backend (v2) websocket listener started", "addr", wsAddr)
+
+	wsSrv := &http.Server{
+		Handler: middleware.SecurityHeaders(
+			middleware.CorrelationID(
+				middleware.Logger(wsMux),
+			),
+		),
+		// ReadHeaderTimeout bounds the handshake itself. Read/Write/Idle
+		// timeouts are deliberately unset: they would terminate a healthy but
+		// idle chat session. handler.wsIdleTimeout bounds the connection
+		// instead, per-frame.
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -377,11 +418,25 @@ func main() {
 		}
 	}()
 
+	go func() {
+		if err := wsSrv.Serve(wsLn); err != nil && err != http.ErrServerClosed {
+			slog.Error("websocket server exited", "err", err)
+			os.Exit(1)
+		}
+	}()
+
 	<-ctx.Done()
 	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	// Shut the WebSocket listener down first so it stops accepting new
+	// upgrades while the REST server drains. Shutdown does not close
+	// already-hijacked connections; those end when their peer disconnects or
+	// handler.wsIdleTimeout expires.
+	if err := wsSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("websocket graceful shutdown failed", "err", err)
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
