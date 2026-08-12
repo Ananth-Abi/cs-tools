@@ -147,6 +147,95 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
     expect(result.current.data?.cases.map((c) => c.id)).toEqual(["id-p2"]);
   });
 
+  it("reports the same total on every page, and never exceeds pageSize", async () => {
+    // The exact hit sits outside the first free-text page (it only shows up
+    // deep in the scan), which is what used to make the total change as the
+    // user paged: the pinned row counted as "extra" on pages that didn't
+    // contain it, and as already-counted on the page that did.
+    const pageSizeUnderTest = 3;
+    postMock.mockImplementation((_url, body) => {
+      const isExact = (body.filters.filters ?? []).some(
+        (x: { op: string }) => x.op === "eq",
+      );
+      if (isExact) {
+        return Promise.resolve({
+          cases: [beCase("id-target", "CS0346083")],
+          total: 1,
+          limit: 5,
+          offset: 0,
+        });
+      }
+      // A free-text set of 9, with the exact hit buried at index 7.
+      const all = Array.from({ length: 9 }, (_, i) =>
+        i === 7 ? beCase("id-target", "CS0346083") : beCase(`id-${i}`, `CS040000${i}`),
+      );
+      const { offset, limit } = body.pagination;
+      return Promise.resolve({
+        cases: all.slice(offset, offset + limit),
+        total: all.length,
+        limit,
+        offset,
+      });
+    });
+
+    const filters = { ...DEFAULT_CASES_FILTERS, search: "CS0346083" };
+    const totals: number[] = [];
+    for (const page of [0, 1, 2]) {
+      const { result } = renderHook(
+        () => useGetCsmCases(filters, page, pageSizeUnderTest),
+        { wrapper },
+      );
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      totals.push(result.current.data!.total);
+      expect(result.current.data!.cases.length).toBeLessThanOrEqual(pageSizeUnderTest);
+    }
+
+    // Stable across pages -- the actual regression being guarded.
+    expect(new Set(totals).size).toBe(1);
+    expect(totals[0]).toBe(9);
+  });
+
+  it("does not skip the row displaced off page 0 by a pinned hit", async () => {
+    // Pinning consumes a slot at the front, so page 1 must start one row early
+    // -- otherwise the row pushed off the end of page 0 is never shown at all.
+    const pageSizeUnderTest = 3;
+    const all = Array.from({ length: 6 }, (_, i) => beCase(`id-${i}`, `CS040000${i}`));
+    postMock.mockImplementation((_url, body) => {
+      const isExact = (body.filters.filters ?? []).some(
+        (x: { op: string }) => x.op === "eq",
+      );
+      if (isExact) {
+        return Promise.resolve({
+          cases: [beCase("id-target", "CS0346083")],
+          total: 1,
+          limit: 5,
+          offset: 0,
+        });
+      }
+      const { offset, limit } = body.pagination;
+      return Promise.resolve({
+        cases: all.slice(offset, offset + limit),
+        total: all.length,
+        limit,
+        offset,
+      });
+    });
+
+    const filters = { ...DEFAULT_CASES_FILTERS, search: "CS0346083" };
+    const seen: string[] = [];
+    for (const page of [0, 1]) {
+      const { result } = renderHook(
+        () => useGetCsmCases(filters, page, pageSizeUnderTest),
+        { wrapper },
+      );
+      await waitFor(() => expect(result.current.isSuccess).toBe(true));
+      seen.push(...result.current.data!.cases.map((c) => c.id));
+    }
+
+    // Pinned first, then the free-text rows in order with none skipped.
+    expect(seen).toEqual(["id-target", "id-0", "id-1", "id-2", "id-3", "id-4"]);
+  });
+
   it("issues only ONE search for a plain free-text query", async () => {
     postMock.mockResolvedValue({ cases: [], total: 0, limit: 20, offset: 0 });
 

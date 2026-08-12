@@ -188,12 +188,26 @@ export function useGetCsmCases(
         };
       }
 
-      // The exact leg is page-independent: a number/id match is a tiny, fixed
-      // result (unique per case), so it's fetched once from the top and pinned
-      // above the first page rather than re-queried per page.
+      // The merged sequence is [pinned exact hits] followed by the free-text
+      // hits with those same rows removed. Pinning consumes slots at the front,
+      // so from page 1 on, the free-text window starts one row early and is
+      // over-fetched — otherwise the row displaced off page 0 would be skipped
+      // entirely (page 1 would resume at `offset`, past it).
+      //
+      // The real hit count isn't known until the exact leg resolves, and both
+      // legs are issued together, so the window is shaped for the realistic
+      // case of a single hit (an identifier is unique) and `pinShift` below
+      // reconciles the guess once both have landed.
+      const ASSUMED_PIN_COUNT = 1;
+      const textOffset = page === 0 ? 0 : Math.max(0, offset - ASSUMED_PIN_COUNT);
       const [exactResponse, textResponse] = await Promise.all([
+        // Page-independent: fetched once from the top rather than re-queried
+        // per page, since an identifier match is a tiny, fixed result.
         runSearch(undefined, { offset: 0, limit: EXACT_MATCH_LIMIT }),
-        runSearch({ forceFreeText: true }),
+        runSearch(
+          { forceFreeText: true },
+          { offset: textOffset, limit: pageSize + EXACT_MATCH_LIMIT },
+        ),
       ]);
 
       const exactRows = (exactResponse.cases ?? []).map((c) =>
@@ -206,25 +220,36 @@ export function useGetCsmCases(
         .map((c) => mapCaseSearchViewToRow(c, currentUserEmail))
         .filter((c) => !exactIds.has(c.id));
 
+      // Nothing was pinned after all (no exact hit), so the extra leading row
+      // this page fetched belongs to the previous page — drop it.
+      const pinShift =
+        page === 0
+          ? 0
+          : ASSUMED_PIN_COUNT - Math.min(exactRows.length, ASSUMED_PIN_COUNT);
+      const cases = (
+        page === 0 ? [...exactRows, ...textRows] : textRows.slice(pinShift)
+      ).slice(0, pageSize);
+
+      // Page-independent by construction: derived from the free-text leg's own
+      // total, never from which rows happen to be in the page currently in
+      // hand. An earlier version compared the pinned rows against the fetched
+      // page, which made the reported total change as the user paged.
+      //
+      // Pinning reorders rather than adds, because the free-text scan already
+      // covers the number/WSO2-id columns — so an exact hit is virtually
+      // always inside `textTotal` too. The exception is the anomaly this
+      // feature exists for (an identifier the scan misses entirely); there the
+      // count reads up to `EXACT_MATCH_LIMIT` low, which is a label being
+      // conservative, never a dropped or duplicated row.
       const textTotal = textResponse.total ?? textRows.length;
-      // Pinned rows are additive only when the free-text leg didn't already
-      // count them. It can only be compared against the page in hand, so this
-      // is exact whenever the exact hit lands on the first page (the common
-      // case) and off by at most the pinned count otherwise — a count label,
-      // never a correctness issue: no row is dropped or duplicated either way.
-      const pinnedNotInText = exactRows.filter(
-        (c) => !(textResponse.cases ?? []).some((t) => t.id === c.id),
-      ).length;
+      const total = textTotal > 0 ? textTotal : exactRows.length;
 
       return {
-        // Page 0 carries the pinned rows *in addition to* a full free-text page
-        // rather than displacing its last row — displacing would skip that row
-        // entirely, since page 1 resumes at `offset + pageSize` regardless.
-        cases: page === 0 ? [...exactRows, ...textRows] : textRows,
-        total: textTotal + pinnedNotInText,
-        limit: textResponse.limit ?? pageSize,
-        offset: textResponse.offset ?? offset,
-        hasMore: textResponse.hasMore ?? false,
+        cases,
+        total,
+        limit: pageSize,
+        offset,
+        hasMore: offset + cases.length < total,
       };
     },
     enabled,
