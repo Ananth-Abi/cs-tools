@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -94,6 +95,90 @@ func TestUserIDTokenFromRequest_RepeatedHeaders(t *testing.T) {
 	if got := userIDTokenFromRequest(r); got != "user-id-token" {
 		t.Errorf("userIDTokenFromRequest() = %q, want %q", got, "user-id-token")
 	}
+}
+
+// TestBuildUpstreamPayload guards the fields the AI agent reads straight off
+// the message. accountId in particular is required by the agent — it uses it
+// for the session, the per-account token budget, and analytics — and an
+// earlier field whitelist dropped it, which made every chat message fail with
+// "accountId is required".
+func TestBuildUpstreamPayload(t *testing.T) {
+	const serverConvID = "11111111-1111-1111-1111-111111111111"
+
+	t.Run("preserves accountId, type and envProducts", func(t *testing.T) {
+		parsed := map[string]any{
+			"type":        "user_message",
+			"accountId":   "9460f8a9-1bfa-a694-a002-c9d3604bcbbb",
+			"message":     "hi",
+			"envProducts": map[string]any{"dep-1": []any{"apim"}},
+		}
+
+		raw, err := buildUpstreamPayload(parsed, serverConvID)
+		if err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v", err)
+		}
+		if got["accountId"] != "9460f8a9-1bfa-a694-a002-c9d3604bcbbb" {
+			t.Errorf("accountId = %v, want it forwarded unchanged", got["accountId"])
+		}
+		if got["type"] != "user_message" {
+			t.Errorf("type = %v, want user_message", got["type"])
+		}
+		if got["message"] != "hi" {
+			t.Errorf("message = %v, want hi", got["message"])
+		}
+		if _, ok := got["envProducts"]; !ok {
+			t.Error("envProducts was dropped")
+		}
+	})
+
+	t.Run("server conversationId overrides the client's", func(t *testing.T) {
+		raw, err := buildUpstreamPayload(map[string]any{
+			"conversationId": "whatever-the-client-said",
+			"message":        "hi",
+		}, serverConvID)
+		if err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v", err)
+		}
+		if got["conversationId"] != serverConvID {
+			t.Errorf("conversationId = %v, want the server-resolved %v", got["conversationId"], serverConvID)
+		}
+	})
+
+	t.Run("does not mutate the caller's map", func(t *testing.T) {
+		parsed := map[string]any{"conversationId": "client-value", "message": "hi"}
+
+		if _, err := buildUpstreamPayload(parsed, serverConvID); err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+		if parsed["conversationId"] != "client-value" {
+			t.Errorf("input map was mutated: conversationId = %v", parsed["conversationId"])
+		}
+	})
+
+	t.Run("nil input does not panic", func(t *testing.T) {
+		raw, err := buildUpstreamPayload(nil, serverConvID)
+		if err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v", err)
+		}
+		if got["conversationId"] != serverConvID {
+			t.Errorf("conversationId = %v, want %v", got["conversationId"], serverConvID)
+		}
+	})
 }
 
 // stubValidator is a wsTokenValidator that accepts exactly one token.

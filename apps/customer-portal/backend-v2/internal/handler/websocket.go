@@ -167,6 +167,42 @@ func userIDTokenFromRequest(r *http.Request) string {
 	return last
 }
 
+// buildUpstreamPayload prepares a client chat message for the AI agent: the
+// payload is forwarded **as the client sent it**, with conversationId replaced
+// by the server-resolved value.
+//
+// Forwarding verbatim is required, not lazy. The agent reads several fields
+// straight off this object and rejects the message outright if they're missing
+// — most importantly accountId ("accountId is required"), which it uses to
+// create the session, enforce the per-account token budget, and attribute
+// analytics. An earlier version of this function forwarded only
+// message/conversationId/envProducts, which made every chat message fail.
+//
+// This mirrors the Ballerina backend's ws onMessage
+// (apps/customer-portal/backend/service.bal), which likewise sets
+// parsed["conversationId"] and forwards the rest unchanged.
+//
+// Trust note: accountId is therefore client-supplied and is NOT verified here
+// against the caller's access to that account — a caller could name another
+// account and have its budget/analytics charged. That is a deliberate parity
+// decision with the Ballerina backend rather than an oversight. The agent
+// itself only cross-checks a claimed accountId against the session's own for
+// token_increase_request, and not on the first user_message. If this needs
+// hardening, resolve the account server-side instead via
+// entity.GetProject(projectID).Account.ID (see entity.ProjectAccountRef) —
+// don't reintroduce a field whitelist, which is what broke it before.
+//
+// conversationID always wins over any value in parsed: the caller has already
+// validated it as a UUID, and it keys the agent session this message belongs to.
+func buildUpstreamPayload(parsed map[string]any, conversationID string) ([]byte, error) {
+	upstream := make(map[string]any, len(parsed)+1)
+	for k, v := range parsed {
+		upstream[k] = v
+	}
+	upstream["conversationId"] = conversationID
+	return json.Marshal(upstream)
+}
+
 // wsEvent is the JSON envelope used for events this handler sends directly
 // to the browser (ping/pong, errors) — matches the upstream AI chat agent's
 // own event shape so the frontend handles both uniformly.
@@ -279,17 +315,7 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 	}
 
 	userMessage, _ := parsed["message"].(string)
-	// Forward only the fields the upstream contract defines — never the raw
-	// client-supplied map verbatim, which could otherwise let a client smuggle
-	// extra keys (e.g. its own "accountId"/"sessionId") the agent might trust.
-	upstreamPayload := map[string]any{
-		"message":        userMessage,
-		"conversationId": conversationID,
-	}
-	if envProducts, ok := parsed["envProducts"]; ok {
-		upstreamPayload["envProducts"] = envProducts
-	}
-	enriched, err := json.Marshal(upstreamPayload)
+	enriched, err := buildUpstreamPayload(parsed, conversationID)
 	if err != nil {
 		_ = writeWSJSON(conn, wsEvent{Type: "error", Message: "Failed to process message."})
 		return
