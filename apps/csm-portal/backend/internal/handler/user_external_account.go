@@ -20,7 +20,19 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
 )
+
+// wso2EmailDomain is WSO2's own corporate domain. The SCIM "external" org can
+// never contain such an account -- it's reserved for WSO2 staff -- so a
+// wso2.com email skips the lookup even when ServiceNow tags the row with a
+// non-"internal" userType/role (e.g. a wso2.com contact recorded under a
+// customer-facing role like snc_external for testing).
+const wso2EmailDomain = "@wso2.com"
+
+func isWso2Email(email string) bool {
+	return strings.HasSuffix(strings.ToLower(email), wso2EmailDomain)
+}
 
 // externalAccountStatus is the SCIM "external" org lock/existence status
 // appended to GET /users/{id} for external contacts, mirroring the
@@ -59,7 +71,7 @@ func (h *UsersHandler) withExternalAccountStatus(ctx context.Context, raw []byte
 		_ = json.Unmarshal(rawType, &identity.UserType)
 	}
 
-	if identity.Email == "" || identity.UserType == "internal" {
+	if identity.Email == "" || identity.UserType == "internal" || isWso2Email(identity.Email) {
 		return raw
 	}
 

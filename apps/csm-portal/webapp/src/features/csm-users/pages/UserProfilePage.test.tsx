@@ -306,6 +306,23 @@ describe("UserProfilePage", () => {
     expect(screen.queryByText("External account")).not.toBeInTheDocument();
   });
 
+  // A wso2.com contact can be tagged with a customer-facing userType/role in
+  // ServiceNow (e.g. for testing) despite never being able to exist in the
+  // SCIM "external" org, which is reserved for WSO2 staff. The field/alert
+  // must stay hidden even when externalAccount data is present.
+  it("does not render the External account field or locked alert for a wso2.com email, even if externalAccount data is present", () => {
+    mockQueryResult({
+      data: {
+        ...BLOCKED_EXTERNAL_USER,
+        email: "tester@wso2.com",
+        externalAccount: { exists: true, locked: true },
+      },
+    });
+    renderPage();
+    expect(screen.queryByText("External account")).not.toBeInTheDocument();
+    expect(screen.queryByText(/external account is locked/i)).not.toBeInTheDocument();
+  });
+
   it("falls back to browser history when no origin was captured (e.g. a bookmarked/direct link)", () => {
     mockQueryResult({ data: INTERNAL_USER });
     // Two history entries (unlike renderPage's single-entry default) so
