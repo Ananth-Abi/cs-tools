@@ -337,8 +337,26 @@ export function formatAbsoluteForUser(
 export function parseDateOnly(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isNaN(date.getTime()) ? null : date;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  // The Date constructor silently normalizes an out-of-range day/month instead
+  // of failing -- new Date(2026, 1, 31) (Feb 31) rolls forward to Mar 3, 2026
+  // rather than returning an invalid date. `workDate` (the main caller through
+  // formatRelativeDateOnly/formatDateOnlyForDisplay) is documented as
+  // "occasionally unparseable on real records", so this isn't hypothetical:
+  // silently accepting the rolled-over date would show the wrong calendar day
+  // instead of the "—"/null fallback every caller already handles.
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
 }
 
 /**
