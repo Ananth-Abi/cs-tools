@@ -38,9 +38,14 @@ import (
 type project struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// ProjectKey is the short project identifier (e.g. "TICKETNET") used in
-	// the no-business-contact notice body, alongside Name.
-	ProjectKey string             `json:"projectKey"`
+	// ProjectKey is the short project identifier (e.g. "APPSUB") used in
+	// notice bodies, alongside Name. Tagged "key", not "projectKey" —
+	// csm-integration-service's own openapi.yaml documents this field as
+	// "projectKey", but the live response actually names it "key"
+	// (confirmed directly via Postman against the dedicated test project;
+	// "projectKey" silently produced an always-empty ProjectKey until this
+	// was caught). Trust the wire over the spec if they disagree again.
+	ProjectKey string             `json:"key"`
 	Account    *projectAccountRef `json:"account"`
 	// StartDate is nil only when genuinely absent on the wire — mirrors
 	// EndDate's existing nullable-pointer convention.

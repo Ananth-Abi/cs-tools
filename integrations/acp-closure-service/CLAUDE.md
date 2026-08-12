@@ -221,6 +221,19 @@ wrong answer:
   `internal/sweep/types.go`'s `project.Account` has always expected the
   nested `{id, name}` shape; only the doc comment needed correcting once the
   broader `SearchProjects` gap closed.
+- **Project key field name.** `csm-integration-service`'s own `openapi.yaml`
+  documents this field as `projectKey` on the `Project` schema. The real,
+  live `GetProject` response actually names it `key` (confirmed directly by
+  the user via Postman against the dedicated test project — the response
+  had `"key": "APPSUB"`, no `projectKey` field at all). `internal/sweep/
+  types.go`'s `project.ProjectKey` was tagged `json:"projectKey"` for a
+  while as a result — silently, always empty on every real response, since
+  the tag never matched anything on the wire. Caught only because the
+  notice-content redesign started actually reading and logging the value;
+  before that, nothing exercised it. Now tagged `json:"key"`, confirmed
+  against the real response. If this ever gets "corrected" back to
+  `projectKey` by an openapi.yaml update, verify live behavior again before
+  copying it — don't just trust the spec.
 
 ## Open dependencies
 

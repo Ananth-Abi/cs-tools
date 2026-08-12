@@ -76,20 +76,43 @@ func TestProject_AccountIDIsEmptyWhenAccountIsAbsent(t *testing.T) {
 }
 
 // TestProject_ParsesNameProjectKeyStartDateAndAccountName covers the fields
-// added for the notice-content redesign: name, projectKey, and startDate are
+// added for the notice-content redesign: name, key, and startDate are
 // documented on csm-integration-service's Project schema (openapi.yaml) but
 // were previously unread by this component; the same is true of the nested
-// account's own name, alongside its id.
+// account's own name, alongside its id. Uses the literal real GetProject
+// response for the dedicated test project (Postman, confirmed directly by
+// the user) rather than a synthetic fixture — this is what caught a real
+// discrepancy: openapi.yaml documents this field as "projectKey", but the
+// live response actually names it "key". Trust the wire, not the spec.
 func TestProject_ParsesNameProjectKeyStartDateAndAccountName(t *testing.T) {
 	const realGetProjectResponse = `{
 		"id": "e3e87599-1bc7-6650-182c-0dc5604bcb68",
-		"name": "TICKETNETWORK - Subscription",
-		"projectKey": "TICKETNET",
-		"startDate": "2025-07-29T00:00:00Z",
-		"endDate": "2026-10-27T00:00:00Z",
 		"account": {
 			"id": "f213fdd1-1b4b-a650-a002-c9d3604bcbac",
-			"name": "TicketNetwork"
+			"name": "ACP Test Partner Account",
+			"activationDate": null,
+			"tier": "",
+			"region": null,
+			"agentEnabled": false,
+			"kbReferencesEnabled": false
+		},
+		"sfId": "a0dE200000CZ9ZNIA1",
+		"name": "ACP Partner Project - Subscription",
+		"key": "APPSUB",
+		"subscriptionType": "subscription",
+		"startDate": "2025-07-01T00:00:00Z",
+		"endDate": "2026-07-29T00:00:00Z",
+		"createdOn": "2025-07-29T05:59:07Z",
+		"updatedOn": "2025-07-29T05:59:07Z",
+		"closureState": "Suspended",
+		"endDateClosureState": "Suspended",
+		"invoiceDueDateClosureState": "Open",
+		"complianceViolationClosureState": "Open",
+		"complianceViolationDate": null,
+		"suspensionProcessState": {
+			"based_on_compliance": {"event_type": "open"},
+			"based_on_due_invoices": {"event_type": "7_days_notice", "actionSendEmailNotification": "SUCCESSFUL", "actionServicePortalAnnouncement": "SUCCESSFUL"},
+			"based_on_subscription_end_date": {"actionSendEmailNotification": "IGNORED", "event_type": "suspend"}
 		}
 	}`
 
@@ -98,17 +121,17 @@ func TestProject_ParsesNameProjectKeyStartDateAndAccountName(t *testing.T) {
 		t.Fatalf("unmarshal real GetProject response: %v", err)
 	}
 
-	if proj.Name != "TICKETNETWORK - Subscription" {
-		t.Errorf("Name = %q, want %q", proj.Name, "TICKETNETWORK - Subscription")
+	if proj.Name != "ACP Partner Project - Subscription" {
+		t.Errorf("Name = %q, want %q", proj.Name, "ACP Partner Project - Subscription")
 	}
-	if proj.ProjectKey != "TICKETNET" {
-		t.Errorf("ProjectKey = %q, want %q", proj.ProjectKey, "TICKETNET")
+	if proj.ProjectKey != "APPSUB" {
+		t.Errorf("ProjectKey = %q, want %q", proj.ProjectKey, "APPSUB")
 	}
-	if proj.StartDate == nil || !proj.StartDate.Equal(time.Date(2025, 7, 29, 0, 0, 0, 0, time.UTC)) {
-		t.Errorf("StartDate = %v, want 2025-07-29T00:00:00Z", proj.StartDate)
+	if proj.StartDate == nil || !proj.StartDate.Equal(time.Date(2025, 7, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("StartDate = %v, want 2025-07-01T00:00:00Z", proj.StartDate)
 	}
-	if proj.Account == nil || proj.Account.Name != "TicketNetwork" {
-		t.Errorf("Account.Name = %v, want %q", proj.Account, "TicketNetwork")
+	if proj.Account == nil || proj.Account.Name != "ACP Test Partner Account" {
+		t.Errorf("Account.Name = %v, want %q", proj.Account, "ACP Test Partner Account")
 	}
 }
 
