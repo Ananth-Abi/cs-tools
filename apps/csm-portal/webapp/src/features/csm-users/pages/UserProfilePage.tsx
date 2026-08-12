@@ -106,6 +106,22 @@ function isInternalUser(user: NormalizedUserDetail): boolean {
   );
 }
 
+const WSO2_EMAIL_DOMAIN = "@wso2.com";
+
+/**
+ * True for a wso2.com email, regardless of `userType`/`roles`. The SCIM
+ * "external" org can never contain such an account (reserved for WSO2
+ * staff), so the External account field/alert are skipped for one even when
+ * ServiceNow tags the row with a non-internal role -- e.g. a wso2.com
+ * contact recorded under a customer-facing role for testing. Narrower than
+ * {@link isInternalUser}: it only gates the SCIM-sourced UI below, not the
+ * page's broader internal/external framing (team vs. project access, etc.),
+ * which ServiceNow's own `userType`/roles still own.
+ */
+function isWso2Email(email: string): boolean {
+  return email.toLowerCase().endsWith(WSO2_EMAIL_DOMAIN);
+}
+
 type ChipColor = "success" | "warning" | "error" | "default";
 
 interface ProjectAccessStatus {
@@ -322,7 +338,7 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
         </Alert>
       )}
 
-      {user.externalAccount?.locked === true && (
+      {user.externalAccount?.locked === true && !isWso2Email(user.email) && (
         <Alert severity="error" variant="outlined">
           This user's external account is locked — they can't sign in until it's unlocked.
         </Alert>
@@ -556,7 +572,9 @@ export default function UserProfilePage(): JSX.Element {
               <Typography variant="body2">{user.phone ?? "Not set"}</Typography>
             </MetaCell>
           )}
-          {!internal && <ExternalAccountMetaCell status={user.externalAccount} />}
+          {!internal && !isWso2Email(user.email) && (
+            <ExternalAccountMetaCell status={user.externalAccount} />
+          )}
           <MetaCell label="Created on">
             <Typography variant="body2">{formatDateTime(user.createdOn)}</Typography>
           </MetaCell>
