@@ -178,7 +178,8 @@ A separate service (not entity-service, not SCIM) — see
 
 | Variable | Description |
 |---|---|
-| `PORT` | Server listen port — a plain number, not an address (default `8080`) |
+| `PORT` | REST server listen port — a plain number, not an address (default `8080`) |
+| `WS_PORT` | WebSocket (`GET /ws`) listen port — a separate listener from `PORT`, must match the `customer-portal-websocket` endpoint in `.choreo/component.yaml` (default `8081`) |
 
 ## Project Structure
 
@@ -373,7 +374,7 @@ backend-v2/
 - `GET /conversations/{id}/messages` — get a conversation's messages (backed by generic comment search)
 - `POST /projects/{projectId}/conversations/{conversationId}/messages` — send a follow-up message on an existing conversation
 - `GET /projects/{id}/conversations/{conversationId}/summary` — get a conversation's summary via the AI chat agent
-- `GET /ws?sessionId={projectId}` — WebSocket: real-time AI chat proxy for an existing conversation (starting a brand-new conversation over this connection isn't supported — use `POST /projects/{id}/conversations` first, see CLAUDE.md)
+- `GET /ws?sessionId={projectId}` — WebSocket: real-time AI chat proxy for an existing conversation (starting a brand-new conversation over this connection isn't supported — use `POST /projects/{id}/conversations` first, see CLAUDE.md). **Served on `WS_PORT` (8081), not `PORT`, and authenticated via the `Sec-WebSocket-Protocol` header rather than `x-jwt-assertion` — see CLAUDE.md for why.**
 - `POST /projects/{projectId}/deployments/{deploymentId}/license` — provision (or resume provisioning) and return a deployment's license via the product-consumption service
 - `POST /deployment-usages` — import a deployment-usage zip file (raw binary body, `Content-Type: application/zip`) via the product-consumption service
 - `GET /updates/product-update-levels` — list product update levels
@@ -597,8 +598,12 @@ curl -X POST http://localhost:8080/projects/<project-id>/conversations/<conversa
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/conversations/<conversation-id>/summary
 
 # WebSocket (real-time chat proxy) — resumes an existing conversation only, see CLAUDE.md.
-# Using websocat (https://github.com/vi/websocat) as an example client:
-websocat "ws://localhost:8080/ws?sessionId=<project-id>" -H "x-jwt-assertion: $JWT"
+# NOTE: this runs on WS_PORT (8081), not 8080, and does NOT use x-jwt-assertion —
+# a browser can't set headers on a WebSocket handshake, so the token travels as the
+# last Sec-WebSocket-Protocol value. websocat sends that via --protocol:
+websocat "ws://localhost:8081/ws?sessionId=<project-id>" --protocol "cs-customer-portal,$JWT"
+# A non-browser client may instead send the header directly:
+websocat "ws://localhost:8081/ws?sessionId=<project-id>" -H "x-user-id-token: $JWT"
 # then send: {"message":"still seeing the error","conversationId":"<conversation-id>"}
 
 curl -X POST http://localhost:8080/projects/<project-id>/deployments/<deployment-id>/license \

@@ -167,7 +167,37 @@ busy-flag/mutex; the client
 can still send another frame at any time, this handler simply won't look at it until the current
 one finishes.
 
-Primary authorization on `GET /ws` is the same JWT middleware chain as every other route.
+**`GET /ws` is the one route that does NOT go through `middleware.Auth`, and it runs on its own
+listener and port (`WS_PORT`, default 8081) rather than 8080.** This mirrors
+`apps/customer-portal/backend`, which serves REST on 9090 and its WebSocket on 9091 — read that
+backend's `ws` upgrade resource in `service.bal` before changing anything here.
+
+The reason is a browser limitation, not a preference: **a browser cannot set custom headers on a
+WebSocket handshake**, so the `x-jwt-assertion` header `middleware.Auth` requires can never arrive.
+The frontend instead smuggles its tokens through the `Sec-WebSocket-Protocol` header as
+
+```
+choreo-oauth2-token, <accessToken>, cs-customer-portal, <userIdToken>
+```
+
+(see `WS_CHOREO_OAUTH2_TOKEN`/`WS_CUSTOMER_PORTAL` in the webapp's `constants/apiConstants.ts` and
+`features/support/api/useChatWebSocket.ts`). Choreo's gateway consumes the leading
+`choreo-oauth2-token, <accessToken>` pair for its own authorization and forwards only the
+remainder, so **the token this backend needs is always the last comma-separated value** — which
+holds whether or not the gateway is in the path, so a direct local connection works identically.
+`handler.userIDTokenFromRequest` implements exactly that, trying the `x-user-id-token` header first
+for non-browser callers, and `HandleWebSocket` validates the result through the shared
+`middleware.TokenValidator` before rebuilding the context (`middleware.WithUserInfo` +
+`entity.WithUserIDToken`) that `Auth` would normally have populated.
+
+`Upgrader.Subprotocols` must keep listing `cs-customer-portal`: the client offers it, and a browser
+aborts the connection if the server selects a subprotocol it never offered. It is not cosmetic.
+
+The second reason the listener is separate: the REST server's `ReadTimeout`/`WriteTimeout` would
+cap the lifetime of an upgraded connection. The handler clears those deadlines after upgrading, but
+a listener without them is safe by construction. `handler.wsIdleTimeout` bounds the connection
+instead, per frame.
+
 `WebSocketHandler`'s `gorilla/websocket.Upgrader.CheckOrigin` is a defense-in-depth hook against
 cross-site WebSocket hijacking that could restrict which browser `Origin`s may open the connection,
 but `main.go` currently passes it `nil` (allow any origin) — there is no env var for this.
@@ -335,6 +365,12 @@ responses are fanned out into eight differently-shaped, purpose-built views rath
 
 Apart from `CORS`, identical to `apps/csm-portal/backend`'s chain — see that backend's CLAUDE.md for
 the rationale of each layer. `middleware.ConfigureLogger()` must be called at startup.
+
+**This chain covers the REST listener (`PORT`, 8080) only.** The WebSocket listener (`WS_PORT`,
+8081) runs a shorter chain — `SecurityHeaders → CorrelationID → Logger → Mux` — with **no `Auth`
+and no `CORS`**: `Auth` is impossible there (a browser cannot send `x-jwt-assertion` on a WebSocket
+handshake, so `WebSocketHandler` authenticates the token itself), and `CORS` is irrelevant since a
+WebSocket handshake is not subject to preflight. See "The AI chat agent" above.
 
 **`CORS` must be outermost, wrapping everything including `Auth`.** A CORS preflight is a bare
 `OPTIONS` request with no JWT at all; if `Auth` ran before `CORS`, it would reject every preflight
@@ -666,5 +702,8 @@ struct actually carries it), and a stray extra check on `PATCH` would just be de
   staged.
 - **No sensitive data in logs** — do not log request bodies, JWT payloads, or PII such as email/name. The opaque `userID` claim (`UserInfo.UserID`) is not PII and may be logged for correlation/support purposes, as every handler does today.
 - **JWT is the only inbound auth mechanism** — every non-health endpoint must go through
-  `middleware.Auth`.
+  `middleware.Auth`, with exactly one exception: `GET /ws`, which cannot receive the
+  `x-jwt-assertion` header at all and so validates its own token through the same
+  `middleware.TokenValidator` instead (see "The AI chat agent"). It is still JWT-authenticated —
+  do not add a second exception without the same browser-level justification.
 - **Run gosec on every change** — `gosec -fmt=text ./...` must report 0 issues before opening a PR.

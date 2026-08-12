@@ -72,11 +72,21 @@ type jwtClaims struct {
 	jwt.RegisteredClaims
 }
 
-// Auth returns an HTTP middleware that validates the x-jwt-assertion header on
-// every request and stores the resulting UserInfo in the request context.
-// When Config.TokenValidatorEnabled is false the token is only decoded without
+// TokenValidator validates the customer portal's JWTs and extracts the identity
+// they carry. It owns the JWKS client, so build one at startup and share it
+// rather than constructing several: both the Auth middleware (which reads the
+// x-jwt-assertion header) and the WebSocket listener (which cannot use a
+// header at all — see handler.WebSocketHandler) validate through the same
+// instance, so the JWKS is fetched and refreshed once per process.
+type TokenValidator struct {
+	cfg     Config
+	keyFunc jwt.Keyfunc
+}
+
+// NewTokenValidator builds a TokenValidator from cfg. When
+// Config.TokenValidatorEnabled is false the token is only decoded without
 // signature verification — safe for local development only.
-func Auth(cfg Config) func(http.Handler) http.Handler {
+func NewTokenValidator(cfg Config) *TokenValidator {
 	var keyFunc jwt.Keyfunc
 	if cfg.TokenValidatorEnabled {
 		jwks, err := keyfunc.NewDefault([]string{cfg.JWKSEndpoint})
@@ -86,7 +96,26 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 		}
 		keyFunc = jwks.Keyfunc
 	}
+	return &TokenValidator{cfg: cfg, keyFunc: keyFunc}
+}
 
+// Validate parses and validates a raw JWT, returning the identity it carries.
+func (v *TokenValidator) Validate(tokenStr string) (*UserInfo, error) {
+	return extractUserInfo(tokenStr, v.cfg, v.keyFunc)
+}
+
+// Auth returns an HTTP middleware that validates the x-jwt-assertion header on
+// every request and stores the resulting UserInfo in the request context.
+// When Config.TokenValidatorEnabled is false the token is only decoded without
+// signature verification — safe for local development only.
+func Auth(cfg Config) func(http.Handler) http.Handler {
+	return AuthWithValidator(NewTokenValidator(cfg))
+}
+
+// AuthWithValidator is Auth over an already-built TokenValidator, so a process
+// that also authenticates elsewhere (the WebSocket listener) shares one JWKS
+// client instead of opening a second.
+func AuthWithValidator(v *TokenValidator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			addSecurityHeaders(w)
@@ -103,7 +132,7 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			info, err := extractUserInfo(tokenStr, cfg, keyFunc)
+			info, err := v.Validate(tokenStr)
 			if err != nil {
 				slog.ErrorContext(r.Context(), "auth: token validation failed", "err", summarizeAuthErr(err))
 				writeAuthError(w, "You are not authorized to perform this action. Please try again.")
