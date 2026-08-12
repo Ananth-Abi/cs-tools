@@ -91,15 +91,26 @@ func NewConsumer(cfg Config, groupID string) *Consumer {
 // committed anyway — revisit this (retries, a dead-letter topic) once a
 // handle exists whose failure modes are actually worth retrying.
 func (c *Consumer) Run(ctx context.Context, handle Handle) {
+	// lastFetchErr de-duplicates consecutive identical fetch errors: kafka-go's
+	// Reader already retries internally with its own bounded backoff before
+	// FetchMessage returns an error here, but a sustained outage would still
+	// produce one log line per retry without this — logging the same error
+	// over and over adds nothing once the first line has told the story.
+	// Reset on success so a *new* failure (after a recovery) still logs.
+	var lastFetchErr string
 	for {
 		msg, err := c.reader.FetchMessage(ctx)
 		if err != nil {
 			if ctx.Err() != nil || errors.Is(err, io.EOF) {
 				return
 			}
-			slog.ErrorContext(ctx, "eventbus: fetch error", "err", err)
+			if errMsg := err.Error(); errMsg != lastFetchErr {
+				slog.ErrorContext(ctx, "eventbus: fetch error", "err", err)
+				lastFetchErr = errMsg
+			}
 			continue
 		}
+		lastFetchErr = ""
 
 		record := Record{
 			Topic:     msg.Topic,

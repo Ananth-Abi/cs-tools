@@ -130,7 +130,7 @@ Backs `entity.EngineeringEntityClient.CreateGitIssue` (a separate internal engin
 
 ### Event Hub
 
-Two independent things share these variables, both optional (left unset, neither runs — startup is unaffected either way):
+Two independent things share these variables, both optional (left unset, neither runs — startup is unaffected either way). **All-or-nothing**: `EVENT_HUB_BROKER` is the feature gate `cmd/server/main.go` checks first, then `EVENT_HUB_CONNECTION_STRING` and `EVENT_HUB_TOPIC` are required once it's set (startup fails if either is missing) — leave all three unset, or set all three together, never just one or two.
 
 - `internal/caseevents`' consumer — **wired into `cmd/server/main.go`**, started whenever `EVENT_HUB_BROKER` is set. Its own consumer group (`EVENT_HUB_CONSUMER_GROUP`) gets a full independent copy of every event on the topic; logs `type`/`entityId` today, the scaffold for real-time frontend push.
 - `internal/eventpublisher.Publisher` — publishes domain events for `csm-notification-service` to consume (that service is now a pure Kafka consumer — see its own docs). **Not yet wired into `cmd/server/main.go`** — no handler calls it yet.
