@@ -65,12 +65,12 @@ function resolveDownloadUrl(storeUrl: string | undefined): string | undefined {
  *
  * Built directly on `Alert` (not the higher-level `NotificationBanner`):
  * `NotificationBanner`/MUI `Alert` only auto-renders its own close icon when
- * no custom `action` node is supplied, so the close button is passed via
- * `action` explicitly (see `ErrorBanner.tsx` for the same pattern already
- * established in this app) while the "Download" button sits in the body,
- * below the message, rather than in `action` -- `action` is vertically
- * centered against the whole alert, which reads as disconnected from a
- * multi-line message.
+ * no custom `action` node is supplied, so this component supplies its own
+ * close button via `action` explicitly (see `ErrorBanner.tsx` for the same
+ * pattern already established in this app). The download button is not
+ * passed via `action`; it sits in the body, below the message, rather than
+ * in `action` -- `action` is vertically centered against the whole alert,
+ * which reads as disconnected from a multi-line message.
  *
  * @returns {JSX.Element | null} The MobileAppBanner component.
  */
