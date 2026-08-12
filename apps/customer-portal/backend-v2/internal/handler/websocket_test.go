@@ -17,11 +17,15 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/middleware"
 )
 
@@ -96,6 +100,113 @@ func TestUserIDTokenFromRequest_RepeatedHeaders(t *testing.T) {
 	}
 }
 
+// TestBuildUpstreamPayload guards the fields the AI agent reads straight off
+// the message. accountId in particular is required by the agent — it uses it
+// for the session, the per-account token budget, and analytics — and an
+// earlier field whitelist dropped it, which made every chat message fail with
+// "accountId is required".
+func TestBuildUpstreamPayload(t *testing.T) {
+	const serverConvID = "11111111-1111-1111-1111-111111111111"
+	const serverAccountID = "22222222-2222-2222-2222-222222222222"
+
+	t.Run("forwards type, message and envProducts untouched", func(t *testing.T) {
+		parsed := map[string]any{
+			"type":        "user_message",
+			"message":     "hi",
+			"envProducts": map[string]any{"dep-1": []any{"apim"}},
+		}
+
+		raw, err := buildUpstreamPayload(parsed, serverConvID, serverAccountID)
+		if err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v", err)
+		}
+		if got["type"] != "user_message" {
+			t.Errorf("type = %v, want user_message", got["type"])
+		}
+		if got["message"] != "hi" {
+			t.Errorf("message = %v, want hi", got["message"])
+		}
+		if _, ok := got["envProducts"]; !ok {
+			t.Error("envProducts was dropped")
+		}
+		// accountId must be present even though the client sent none — the
+		// agent rejects the message outright without it.
+		if got["accountId"] != serverAccountID {
+			t.Errorf("accountId = %v, want the server-resolved %v", got["accountId"], serverAccountID)
+		}
+	})
+
+	// The security-relevant case: a caller naming someone else's account must
+	// not have that account's token budget or analytics charged.
+	t.Run("server accountId overrides a client-supplied one", func(t *testing.T) {
+		raw, err := buildUpstreamPayload(map[string]any{
+			"accountId": "someone-elses-account",
+			"message":   "hi",
+		}, serverConvID, serverAccountID)
+		if err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v", err)
+		}
+		if got["accountId"] != serverAccountID {
+			t.Errorf("accountId = %v, want the server-resolved %v — a client value must never win",
+				got["accountId"], serverAccountID)
+		}
+	})
+
+	t.Run("server conversationId overrides the client's", func(t *testing.T) {
+		raw, err := buildUpstreamPayload(map[string]any{
+			"conversationId": "whatever-the-client-said",
+			"message":        "hi",
+		}, serverConvID, serverAccountID)
+		if err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v", err)
+		}
+		if got["conversationId"] != serverConvID {
+			t.Errorf("conversationId = %v, want the server-resolved %v", got["conversationId"], serverConvID)
+		}
+	})
+
+	t.Run("does not mutate the caller's map", func(t *testing.T) {
+		parsed := map[string]any{"conversationId": "client-value", "message": "hi"}
+
+		if _, err := buildUpstreamPayload(parsed, serverConvID, serverAccountID); err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+		if parsed["conversationId"] != "client-value" {
+			t.Errorf("input map was mutated: conversationId = %v", parsed["conversationId"])
+		}
+	})
+
+	t.Run("nil input does not panic", func(t *testing.T) {
+		raw, err := buildUpstreamPayload(nil, serverConvID, serverAccountID)
+		if err != nil {
+			t.Fatalf("buildUpstreamPayload returned error: %v", err)
+		}
+
+		var got map[string]any
+		if err := json.Unmarshal(raw, &got); err != nil {
+			t.Fatalf("result is not valid JSON: %v", err)
+		}
+		if got["conversationId"] != serverConvID {
+			t.Errorf("conversationId = %v, want %v", got["conversationId"], serverConvID)
+		}
+	})
+}
+
 // stubValidator is a wsTokenValidator that accepts exactly one token.
 type stubValidator struct {
 	accept string
@@ -151,6 +262,52 @@ func TestHandleWebSocket_RejectsUnauthenticated(t *testing.T) {
 				t.Errorf("DecodeUnverified called %d times, want %d", v.called, tc.wantCalls)
 			}
 		})
+	}
+}
+
+// stubEntity is an entityCommentCreator whose GetProject result is scripted.
+type stubEntity struct {
+	project entity.ProjectDetailsView
+	err     error
+	calls   int
+}
+
+func (s *stubEntity) GetProject(_ context.Context, _ string) (entity.ProjectDetailsView, error) {
+	s.calls++
+	return s.project, s.err
+}
+
+func (s *stubEntity) CreateComment(_ context.Context, _ entity.CreateCommentRequest) (entity.CreateCommentResponse, error) {
+	return entity.CreateCommentResponse{}, nil
+}
+
+func (s *stubEntity) UpdateConversation(_ context.Context, _ string, _ entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error) {
+	return entity.UpdateConversationResponse{}, nil
+}
+
+// TestHandleWebSocket_ProjectAccessGatesTheUpgrade asserts the account lookup
+// doubles as an authorization gate: a project the caller can't see must be
+// rejected with an HTTP status *before* any upgrade happens, not closed after.
+func TestHandleWebSocket_ProjectAccessGatesTheUpgrade(t *testing.T) {
+	v := &stubValidator{accept: "good-token"}
+	e := &stubEntity{err: apierror.NewUpstreamError(http.StatusForbidden, nil)}
+	h := NewWebSocketHandler(nil, e, v, nil)
+
+	r := httptest.NewRequest(http.MethodGet, "/ws?sessionId=11111111-1111-1111-1111-111111111111", nil)
+	r.Header.Set("Sec-WebSocket-Protocol", "cs-customer-portal, good-token")
+	w := httptest.NewRecorder()
+
+	h.HandleWebSocket(w, r)
+
+	if e.calls != 1 {
+		t.Errorf("GetProject called %d times, want 1", e.calls)
+	}
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	// A completed upgrade would have written 101 and hijacked the connection.
+	if w.Code == http.StatusSwitchingProtocols {
+		t.Error("connection was upgraded despite the project being inaccessible")
 	}
 }
 

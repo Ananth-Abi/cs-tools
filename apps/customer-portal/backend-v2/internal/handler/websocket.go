@@ -49,9 +49,12 @@ const wsIdleTimeout = 5 * time.Minute
 
 // entityCommentCreator is the subset of the entity client needed to persist
 // conversation messages as comments and auto-resolve a conversation.
+// GetProject resolves the project's owning account (and doubles as the
+// caller's access-control gate for that project) — see HandleWebSocket.
 type entityCommentCreator interface {
 	CreateComment(ctx context.Context, req entity.CreateCommentRequest) (entity.CreateCommentResponse, error)
 	UpdateConversation(ctx context.Context, id string, req entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error)
+	GetProject(ctx context.Context, id string) (entity.ProjectDetailsView, error)
 }
 
 // wsAutoResolveState is entity-service's ConversationState value used to
@@ -167,6 +170,46 @@ func userIDTokenFromRequest(r *http.Request) string {
 	return last
 }
 
+// buildUpstreamPayload prepares a client chat message for the AI agent: the
+// payload is forwarded **as the client sent it**, with conversationId replaced
+// by the server-resolved value.
+//
+// Forwarding verbatim is required, not lazy. The agent reads several fields
+// straight off this object and rejects the message outright if they're missing
+// — most importantly accountId ("accountId is required"), which it uses to
+// create the session, enforce the per-account token budget, and attribute
+// analytics. An earlier version of this function forwarded only
+// message/conversationId/envProducts, which made every chat message fail.
+//
+// This mirrors the Ballerina backend's ws onMessage
+// (apps/customer-portal/backend/service.bal), which likewise sets
+// parsed["conversationId"] and forwards the rest unchanged.
+//
+// Two fields are NOT taken from the client, and both are overwritten here even
+// when the client supplied its own value:
+//
+//   - conversationID — already validated as a UUID by the caller, and it keys
+//     the agent session this message belongs to.
+//   - accountID — resolved server-side from the project the connection is
+//     scoped to (see HandleWebSocket). The agent charges its per-account token
+//     budget and attributes analytics to this value, so trusting the client
+//     would let a caller bill another account. The Ballerina backend does
+//     forward the client's accountId, but that is a weakness to not reproduce,
+//     not a contract to match.
+//
+// Everything else — message, type, envProducts, and any field the frontend adds
+// later — passes through untouched. Do not reintroduce a field whitelist here:
+// that is what dropped accountId and broke every message before.
+func buildUpstreamPayload(parsed map[string]any, conversationID, accountID string) ([]byte, error) {
+	upstream := make(map[string]any, len(parsed)+2)
+	for k, v := range parsed {
+		upstream[k] = v
+	}
+	upstream["conversationId"] = conversationID
+	upstream["accountId"] = accountID
+	return json.Marshal(upstream)
+}
+
 // wsEvent is the JSON envelope used for events this handler sends directly
 // to the browser (ping/pong, errors) — matches the upstream AI chat agent's
 // own event shape so the frontend handles both uniformly.
@@ -218,6 +261,34 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 	ctx = entity.WithUserIDToken(ctx, token)
 	r = r.WithContext(ctx)
 
+	// Resolve the account this connection may act on, server-side, before the
+	// upgrade. Two jobs in one call:
+	//
+	//  1. Access control — entity-service rejects a project this caller can't
+	//     see, so an unauthorized sessionId never reaches an upgraded socket.
+	//     Same gate ProductConsumptionHandler uses for its own project scoping.
+	//  2. Supplies accountId for every message on this connection, so the agent
+	//     bills the per-account token budget to an account the caller actually
+	//     belongs to rather than to whichever one it claimed.
+	//
+	// Resolved once here, not per message: projectID is fixed for the lifetime
+	// of the connection. Failing before the upgrade also means the caller gets a
+	// real HTTP status instead of an immediate WebSocket close.
+	project, err := h.entity.GetProject(ctx, projectID)
+	if err != nil {
+		slog.ErrorContext(ctx, "websocket: failed to resolve project account",
+			"userID", user.UserID, "projectID", projectID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to open the chat connection.")
+		return
+	}
+	// Fall back to the project ID when entity-service reports no account, which
+	// is what the frontend does too (`projectDetails?.account?.id || projectId`).
+	// The agent rejects an empty accountId outright.
+	accountID := project.Account.ID
+	if accountID == "" {
+		accountID = projectID
+	}
+
 	conn, err := h.upgrade.Upgrade(w, r, nil)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "websocket upgrade failed", "userID", user.UserID, "err", summarizeErr(err))
@@ -247,11 +318,11 @@ func (h *WebSocketHandler) HandleWebSocket(w http.ResponseWriter, r *http.Reques
 			}
 			return
 		}
-		h.handleMessage(r.Context(), conn, user, projectID, data)
+		h.handleMessage(r.Context(), conn, user, projectID, accountID, data)
 	}
 }
 
-func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Conn, user *middleware.UserInfo, projectID string, data []byte) {
+func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Conn, user *middleware.UserInfo, projectID, accountID string, data []byte) {
 	trimmed := strings.TrimSpace(strings.ToLower(string(data)))
 	var parsed map[string]any
 	_ = json.Unmarshal(data, &parsed)
@@ -279,17 +350,7 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 	}
 
 	userMessage, _ := parsed["message"].(string)
-	// Forward only the fields the upstream contract defines — never the raw
-	// client-supplied map verbatim, which could otherwise let a client smuggle
-	// extra keys (e.g. its own "accountId"/"sessionId") the agent might trust.
-	upstreamPayload := map[string]any{
-		"message":        userMessage,
-		"conversationId": conversationID,
-	}
-	if envProducts, ok := parsed["envProducts"]; ok {
-		upstreamPayload["envProducts"] = envProducts
-	}
-	enriched, err := json.Marshal(upstreamPayload)
+	enriched, err := buildUpstreamPayload(parsed, conversationID, accountID)
 	if err != nil {
 		_ = writeWSJSON(conn, wsEvent{Type: "error", Message: "Failed to process message."})
 		return
