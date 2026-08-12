@@ -116,7 +116,7 @@ isn't lost or re-litigated:
   (`internalNoticeSubject`/`customerNoticeSubject` in `sweep.go`), confirmed
   against multiple real examples from Chamara:
   - Internal, day-count (90/60/30/15/7): `"[ACP] {N} Days Reminder of
-    Project for {ProjectName} of {AccountName}"`. The `[ACP] ` prefix marks
+    Project for {ProjectName} of {AccountName}"`. The `[ACP]` prefix marks
     "this is the internal-audience copy" and applies to **every** window,
     including 15/7 — not just 90/60/30. (An earlier version of this logic
     had that backwards; confirmed wrong directly against real examples

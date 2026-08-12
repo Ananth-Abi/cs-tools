@@ -57,11 +57,16 @@ type Notice struct {
 	StartDate   time.Time
 	EndDate     time.Time
 	Window      closure.NoticeWindow
-	// Subject is the notice's title line — either the day-count reminder
-	// ("{N} Days Reminder of Project for {ProjectName} of {AccountName}",
-	// [ACP]-prefixed only for the internal-only 90/60/30 windows) or the
-	// no-business-contact notice's fixed "[Urgent] [ACP] No Business
-	// Contacts Specified for Project {ProjectName}".
+	// Subject is the notice's title line — one of five templates depending
+	// on notice type and window (see sweep.go's internalNoticeSubject/
+	// customerNoticeSubject for the exact wording): the internal day-count
+	// reminder (90/60/30/15/7, [ACP]-prefixed — every internal window, not
+	// just 90/60/30), the internal day-0 suspension notice (also
+	// [ACP]-prefixed, distinct wording since there's no "days remaining"
+	// left to report), the customer day-count/day-0 notices (never
+	// [ACP]-prefixed), or the no-business-contact notice's fixed
+	// "[Urgent] [ACP] No Business Contacts Specified for Project
+	// {ProjectName}".
 	Subject string
 	// Body is the notice's full email body — populated for every notice
 	// type today (day-count reminder, day-0 suspension, customer notice,
