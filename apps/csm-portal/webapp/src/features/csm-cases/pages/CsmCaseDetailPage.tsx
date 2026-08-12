@@ -47,7 +47,7 @@ import {
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
-import { useLocation, useParams } from "react-router";
+import { useLocation } from "react-router";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
 import {
   usePatchCsmCase,
@@ -167,6 +167,7 @@ import type {
 } from "@features/csm-cases/types/csmCases";
 import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 
 function MetaCell({
   label,
@@ -309,7 +310,7 @@ const TAB_DEFS: Array<{
 ];
 
 export default function CsmCaseDetailPage(): JSX.Element {
-  const { caseId } = useParams<{ caseId: string }>();
+  const caseId = useNormalizedIdParam("caseId");
   const navigate = useNavTransition();
   const location = useLocation();
   const isEngagementRoute = location.pathname.startsWith("/engagements/");

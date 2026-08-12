@@ -396,6 +396,53 @@ function renderPage(): ReturnType<typeof render> {
   );
 }
 
+const DASHED_ID = "56f49f0a-eb1e-c310-fcf5-f5dabad0cdab";
+const DASHLESS_ID = "56f49f0aeb1ec310fcf5f5dabad0cdab";
+
+function renderPageAtCaseId(initialEntry: string): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <LocationProbe />
+        <Routes>
+          <Route path="/cases/:caseId" element={<CsmCaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("CsmCaseDetailPage — dashless id normalization", () => {
+  it("fetches the case detail with the dashed id and redirects the URL when the route carries a dashless id", () => {
+    useGetCsmCaseDetailMock.mockClear();
+    navigateMock.mockClear();
+
+    renderPageAtCaseId(`/cases/${DASHLESS_ID}`);
+
+    // The underlying data-fetch hook must be called with the corrected,
+    // dashed id, not the raw dashless one straight off the URL.
+    expect(useGetCsmCaseDetailMock).toHaveBeenCalledWith(DASHED_ID);
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      { pathname: `/cases/${DASHED_ID}`, search: "", hash: "" },
+      { replace: true },
+    );
+  });
+
+  it("does not redirect or alter an already-dashed id", () => {
+    useGetCsmCaseDetailMock.mockClear();
+    navigateMock.mockClear();
+
+    renderPageAtCaseId(`/cases/${DASHED_ID}`);
+
+    expect(useGetCsmCaseDetailMock).toHaveBeenCalledWith(DASHED_ID);
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () => {
   it("stops showing the previous case's edit dialog once the route moves to a new case", () => {
     renderPage();
