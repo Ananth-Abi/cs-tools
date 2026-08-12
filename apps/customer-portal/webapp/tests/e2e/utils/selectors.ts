@@ -76,6 +76,34 @@ export const PROJECT_DETAILS = {
   },
 } as const;
 
+/** Overview tab of the project details page.
+ *
+ * Every entry below is a rendered label rather than a value: the values are
+ * environment data (dates, tiers, hours) that change, so specs assert the
+ * fields are present and populated rather than pinning them. */
+export const PROJECT_OVERVIEW = {
+  sections: {
+    projectInformation: "Project Information",
+    contactInformation: "Contact Information",
+    serviceHoursAllocations: "Service Hours Allocations",
+  },
+  labels: {
+    projectName: "Project Name",
+    createdDate: "Created Date",
+    supportTier: "Support Tier",
+    goLiveDate: "Go Live Date",
+    subscriptionPeriod: "Subscription Period",
+    start: "Start",
+    end: "End",
+    remaining: "Remaining",
+    accountManager: "Account Manager",
+    queryHours: "Query Hours",
+  },
+  /** Rendered in place of a value the API did not return — see the `"--"`
+   * fallbacks in ProjectInformationCard. */
+  emptyValue: "--",
+} as const;
+
 /** Add Deployment modal, opened from the Deployments tab.
  *
  * Unusually for this app the fields have real ids and associated labels, so no
