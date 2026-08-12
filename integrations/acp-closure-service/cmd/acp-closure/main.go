@@ -62,7 +62,7 @@ func main() {
 
 	var updater projectUpdater = entityClient
 	if dryRun {
-		updater = &sweep.DryRunProjectUpdater{Logger: slog.Default()}
+		updater = &sweep.DryRunProjectUpdater{}
 	}
 
 	notifier := &notify.LoggingNotifier{Logger: slog.Default()}

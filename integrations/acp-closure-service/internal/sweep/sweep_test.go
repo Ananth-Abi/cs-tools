@@ -140,8 +140,10 @@ func TestProcessProject_RecordsIgnoredWhenNotifierDoesNotDeliver(t *testing.T) {
 
 // TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact covers a
 // 7-day window: both internal and customer per the confirmed audience
-// matrix. A project contact with the business-contact role should populate
-// Recipients.Customer on the single day-count reminder notice.
+// matrix. A project contact with the business-contact role should produce
+// TWO separate notices — internal (Customer nil) and customer-facing
+// (Customer populated) — since their subject/body genuinely differ, not one
+// notice bundling both.
 func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing.T) {
 	reader := &mockEntityReader{
 		searchProjectContactsFn: func(ctx context.Context, projectID string, body []byte) ([]byte, error) {
@@ -153,25 +155,42 @@ func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing
 
 	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
 	endDate := now.AddDate(0, 0, 6) // fires the 7-day window
-	proj := project{ID: "p1", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
+	proj := project{ID: "p1", Name: "Acme - Subscription", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
 
 	err := processProject(context.Background(), reader, updater, ntf, now, proj)
 	if err != nil {
 		t.Fatalf("processProject() error = %v, want nil", err)
 	}
 
-	if len(ntf.sent) != 1 {
-		t.Fatalf("ntf.sent = %d, want 1 (one consolidated reminder)", len(ntf.sent))
+	if len(ntf.sent) != 2 {
+		t.Fatalf("ntf.sent = %d, want 2 (internal + customer)", len(ntf.sent))
 	}
-	notice := ntf.sent[0]
-	if notice.Recipients.Customer == nil {
-		t.Fatal("Recipients.Customer = nil, want populated")
+
+	internal, customer := ntf.sent[0], ntf.sent[1]
+
+	if internal.Recipients.Customer != nil {
+		t.Errorf("internal notice Recipients.Customer = %v, want nil", internal.Recipients.Customer)
 	}
-	if notice.Recipients.Customer.Email != "bob@customer.example" {
-		t.Errorf("Recipients.Customer.Email = %q, want %q", notice.Recipients.Customer.Email, "bob@customer.example")
+	const wantInternalSubject = "[ACP] 7 Days Reminder of Project for Acme - Subscription of "
+	if internal.Subject != wantInternalSubject {
+		t.Errorf("internal Subject = %q, want %q", internal.Subject, wantInternalSubject)
 	}
-	if notice.ResolvedVia != recipients.ResolvedViaBusinessContact {
-		t.Errorf("ResolvedVia = %q, want %q", notice.ResolvedVia, recipients.ResolvedViaBusinessContact)
+
+	if customer.Recipients.Customer == nil {
+		t.Fatal("customer notice Recipients.Customer = nil, want populated")
+	}
+	if customer.Recipients.Customer.Email != "bob@customer.example" {
+		t.Errorf("customer Recipients.Customer.Email = %q, want %q", customer.Recipients.Customer.Email, "bob@customer.example")
+	}
+	const wantCustomerSubject = "Upcoming Project Suspension Notice - Acme - Subscription"
+	if customer.Subject != wantCustomerSubject {
+		t.Errorf("customer Subject = %q, want %q", customer.Subject, wantCustomerSubject)
+	}
+	if customer.ResolvedVia != recipients.ResolvedViaBusinessContact {
+		t.Errorf("ResolvedVia = %q, want %q", customer.ResolvedVia, recipients.ResolvedViaBusinessContact)
+	}
+	if strings.Contains(customer.Body, "Dear ") {
+		t.Errorf("customer notice Body has a greeting, want none:\n%s", customer.Body)
 	}
 
 	if len(updater.calls) != 1 {
@@ -181,13 +200,18 @@ func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing
 
 // TestProcessProject_CustomerAudienceWindowSendsNoBusinessContactNoticeWhenNoContactFound
 // covers the three-tier fallback's last resort: no business contact, no
-// primary contact. Both the day-count reminder (Customer nil — nothing
-// resolved) and a separate no-business-contact urgent notice (to the
-// Account Owner only) must be sent.
+// primary contact. Both the internal notice (Customer nil — nothing
+// resolved) and a separate no-business-contact urgent notice — sent to all
+// three internal recipients (Account Owner, Renewal Manager, Technical
+// Owner), not the Account Owner alone — must be sent.
 func TestProcessProject_CustomerAudienceWindowSendsNoBusinessContactNoticeWhenNoContactFound(t *testing.T) {
 	reader := &mockEntityReader{
 		getAccountFn: func(ctx context.Context, id string) ([]byte, error) {
-			return []byte(`{"accountManager": {"id": "am-1", "name": "Jordan Perera", "email": "jordan.perera@wso2.example"}}`), nil
+			return []byte(`{
+				"accountManager": {"id": "am-1", "name": "Jordan Perera", "email": "jordan.perera@wso2.example"},
+				"renewalAccountManager": {"id": "ram-1", "name": "Sam Jayasuriya", "email": "sam.jayasuriya@wso2.example"},
+				"technicalOwner": {"id": "tech-1", "name": "Alex Fernando", "email": "alex.fernando@wso2.example"}
+			}`), nil
 		},
 	}
 	updater := &mockProjectUpdater{}
@@ -211,16 +235,16 @@ func TestProcessProject_CustomerAudienceWindowSendsNoBusinessContactNoticeWhenNo
 	}
 
 	if len(ntf.sent) != 2 {
-		t.Fatalf("ntf.sent = %d, want 2 (reminder + no-business-contact)", len(ntf.sent))
+		t.Fatalf("ntf.sent = %d, want 2 (internal + no-business-contact)", len(ntf.sent))
 	}
 
-	reminder, nudge := ntf.sent[0], ntf.sent[1]
+	internal, nudge := ntf.sent[0], ntf.sent[1]
 
-	if reminder.Recipients.Customer != nil {
-		t.Errorf("reminder Recipients.Customer = %v, want nil", reminder.Recipients.Customer)
+	if internal.Recipients.Customer != nil {
+		t.Errorf("internal Recipients.Customer = %v, want nil", internal.Recipients.Customer)
 	}
-	if reminder.Recipients.AccountOwner.Email != "jordan.perera@wso2.example" {
-		t.Errorf("reminder Recipients.AccountOwner.Email = %q, want %q", reminder.Recipients.AccountOwner.Email, "jordan.perera@wso2.example")
+	if internal.Recipients.AccountOwner.Email != "jordan.perera@wso2.example" {
+		t.Errorf("internal Recipients.AccountOwner.Email = %q, want %q", internal.Recipients.AccountOwner.Email, "jordan.perera@wso2.example")
 	}
 
 	const wantSubject = "[Urgent] [ACP] No Business Contacts Specified for Project HFC Subscription - Subscription"
@@ -229,6 +253,12 @@ func TestProcessProject_CustomerAudienceWindowSendsNoBusinessContactNoticeWhenNo
 	}
 	if nudge.Recipients.AccountOwner.Email != "jordan.perera@wso2.example" {
 		t.Errorf("nudge Recipients.AccountOwner.Email = %q, want %q", nudge.Recipients.AccountOwner.Email, "jordan.perera@wso2.example")
+	}
+	if nudge.Recipients.RenewalManager.Email != "sam.jayasuriya@wso2.example" {
+		t.Errorf("nudge Recipients.RenewalManager.Email = %q, want %q", nudge.Recipients.RenewalManager.Email, "sam.jayasuriya@wso2.example")
+	}
+	if nudge.Recipients.TechnicalOwner.Email != "alex.fernando@wso2.example" {
+		t.Errorf("nudge Recipients.TechnicalOwner.Email = %q, want %q", nudge.Recipients.TechnicalOwner.Email, "alex.fernando@wso2.example")
 	}
 	if nudge.Recipients.Customer != nil {
 		t.Errorf("nudge Recipients.Customer = %v, want nil", nudge.Recipients.Customer)
@@ -330,8 +360,11 @@ func TestProcessProject_Day0SuccessfulNotifyThenSuspend(t *testing.T) {
 		t.Fatalf("processProject() error = %v, want nil", err)
 	}
 
-	if len(ntf.sent) != 1 {
-		t.Fatalf("ntf.sent = %d, want 1 (one consolidated reminder, with Customer resolved)", len(ntf.sent))
+	if len(ntf.sent) != 2 {
+		t.Fatalf("ntf.sent = %d, want 2 (internal + customer, Customer resolved)", len(ntf.sent))
+	}
+	if !strings.Contains(ntf.sent[0].Subject, "Project Suspension Notice") {
+		t.Errorf("internal Subject = %q, want day-0 suspension wording", ntf.sent[0].Subject)
 	}
 
 	if len(updater.calls) != 2 {
@@ -623,11 +656,13 @@ func TestProcessProject_ReminderHasEmptyAccountOwnerEmailWhenNoAccountManager(t 
 	}
 }
 
-// TestReminderSubject covers the subject-line template directly, confirmed
-// against two real examples from Chamara: the [ACP] prefix applies only to
-// the internal-only 90/60/30 windows, and ProjectName/AccountName sit in a
-// fixed "for {ProjectName} of {AccountName}" shape.
-func TestReminderSubject(t *testing.T) {
+// TestInternalNoticeSubject covers the always-[ACP]-prefixed internal
+// subject template directly, confirmed against real examples from Chamara:
+// every window (90 through 0) gets the prefix — it marks "internal
+// audience," not "90/60/30 window" specifically (an earlier version of this
+// logic had that backwards). Day-0 uses distinct "Project Suspension
+// Notice" wording; every other window uses "N Days Reminder".
+func TestInternalNoticeSubject(t *testing.T) {
 	tests := []struct {
 		name        string
 		window      closure.NoticeWindow
@@ -636,54 +671,177 @@ func TestReminderSubject(t *testing.T) {
 		want        string
 	}{
 		{
-			name:        "90-day window is [ACP]-prefixed",
+			name:        "90-day window",
 			window:      90,
 			projectName: "TICKETNETWORK - Subscription",
 			accountName: "TicketNetwork",
 			want:        "[ACP] 90 Days Reminder of Project for TICKETNETWORK - Subscription of TicketNetwork",
 		},
 		{
-			name:        "60-day window is [ACP]-prefixed",
+			name:        "60-day window",
 			window:      60,
 			projectName: "P",
 			accountName: "A",
 			want:        "[ACP] 60 Days Reminder of Project for P of A",
 		},
 		{
-			name:        "30-day window is [ACP]-prefixed",
+			name:        "30-day window",
 			window:      30,
 			projectName: "P",
 			accountName: "A",
 			want:        "[ACP] 30 Days Reminder of Project for P of A",
 		},
 		{
-			name:        "15-day window has no prefix",
+			name:        "15-day window is still [ACP]-prefixed",
 			window:      15,
-			projectName: "P",
-			accountName: "A",
-			want:        "15 Days Reminder of Project for P of A",
+			projectName: "SSC ICT - Subscription",
+			accountName: "SSC-ICT",
+			want:        "[ACP] 15 Days Reminder of Project for SSC ICT - Subscription of SSC-ICT",
 		},
 		{
-			name:        "7-day window has no prefix",
+			name:        "7-day window is still [ACP]-prefixed",
 			window:      7,
-			projectName: "P",
-			accountName: "A",
-			want:        "7 Days Reminder of Project for P of A",
+			projectName: "APIM & Integration - Subscription",
+			accountName: "Department of Science & Technology (DOST)",
+			want:        "[ACP] 7 Days Reminder of Project for APIM & Integration - Subscription of Department of Science & Technology (DOST)",
 		},
 		{
-			name:        "0-day window has no prefix",
+			name:        "day-0 uses suspension wording, not days-remaining",
 			window:      0,
-			projectName: "P",
-			accountName: "A",
-			want:        "0 Days Reminder of Project for P of A",
+			projectName: "Kotak Insurance - Subscription",
+			accountName: "Kotak Life Insurance company Ltd",
+			want:        "[ACP] Project Suspension Notice of Kotak Insurance - Subscription of Kotak Life Insurance company Ltd",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := reminderSubject(tt.window, tt.projectName, tt.accountName); got != tt.want {
-				t.Errorf("reminderSubject(%v, %q, %q) = %q, want %q", tt.window, tt.projectName, tt.accountName, got, tt.want)
+			if got := internalNoticeSubject(tt.window, tt.projectName, tt.accountName); got != tt.want {
+				t.Errorf("internalNoticeSubject(%v, %q, %q) = %q, want %q", tt.window, tt.projectName, tt.accountName, got, tt.want)
 			}
 		})
 	}
+}
+
+// TestCustomerNoticeSubject covers the customer-facing subject template,
+// confirmed against real examples: never [ACP]-prefixed, never names the
+// account, future ("Upcoming") tense before day-0 and past tense at day-0.
+func TestCustomerNoticeSubject(t *testing.T) {
+	tests := []struct {
+		name        string
+		window      closure.NoticeWindow
+		projectName string
+		want        string
+	}{
+		{
+			name:        "15-day window",
+			window:      15,
+			projectName: "SSC ICT - Subscription",
+			want:        "Upcoming Project Suspension Notice - SSC ICT - Subscription",
+		},
+		{
+			name:        "7-day window",
+			window:      7,
+			projectName: "SSC ICT - Subscription",
+			want:        "Upcoming Project Suspension Notice - SSC ICT - Subscription",
+		},
+		{
+			name:        "day-0 uses past tense, no \"Upcoming\"",
+			window:      0,
+			projectName: "Kotak Insurance - Subscription",
+			want:        "Project Suspension Notice - Kotak Insurance - Subscription",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := customerNoticeSubject(tt.window, tt.projectName); got != tt.want {
+				t.Errorf("customerNoticeSubject(%v, %q) = %q, want %q", tt.window, tt.projectName, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestInternalNoticeBody covers the internal body templates directly,
+// confirmed verbatim against real examples: the greeting always names the
+// Account Manager (not whichever recipient happens to read their own copy),
+// and day-0 uses distinct "already suspended" wording asking for
+// reinstatement rather than renewal.
+func TestInternalNoticeBody(t *testing.T) {
+	startDate := time.Date(2024, 11, 10, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+	proj := project{
+		Name:       "TICKETNETWORK - Subscription",
+		ProjectKey: "TICKETNETWORKPROD",
+		StartDate:  &startDate,
+		EndDate:    &endDate,
+	}
+
+	t.Run("day-count window", func(t *testing.T) {
+		got := internalNoticeBody(90, proj, "Lochana De Alwis")
+		wantContains := []string{
+			"Dear Lochana De Alwis",
+			"non renewed contract",
+			"Project Name: TICKETNETWORK - Subscription",
+			"Project Key: TICKETNETWORKPROD",
+			"Account Owner: Lochana De Alwis",
+			"Start Date: 2024-11-10",
+			"End Date: 2026-11-09",
+			"Best Regards,\nWSO2 Team",
+		}
+		for _, want := range wantContains {
+			if !strings.Contains(got, want) {
+				t.Errorf("body missing %q, got:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("day-0 window uses suspension wording", func(t *testing.T) {
+		got := internalNoticeBody(0, proj, "Rajat Mehta")
+		wantContains := []string{
+			"Dear Rajat Mehta",
+			"has been suspended",
+			"reinitiate the suspended support account",
+			"Account Owner: Rajat Mehta",
+		}
+		for _, want := range wantContains {
+			if !strings.Contains(got, want) {
+				t.Errorf("body missing %q, got:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "non renewed contract. Please find") {
+			t.Errorf("day-0 body contains day-count wording, got:\n%s", got)
+		}
+	})
+}
+
+// TestCustomerNoticeBody covers the customer body templates directly:
+// future tense with US-formatted (01/02/2006) dates before day-0, past
+// tense at day-0, and no greeting in either case.
+func TestCustomerNoticeBody(t *testing.T) {
+	endDate := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	proj := project{Name: "SSC ICT - Subscription", EndDate: &endDate}
+
+	t.Run("day-count window uses future tense and US date format", func(t *testing.T) {
+		got := customerNoticeBody(15, proj)
+		if strings.Contains(got, "Dear ") {
+			t.Errorf("body has a greeting, want none:\n%s", got)
+		}
+		wantContains := []string{
+			"will be suspended on 08/24/2026",
+			"on or before 08/24/2026",
+		}
+		for _, want := range wantContains {
+			if !strings.Contains(got, want) {
+				t.Errorf("body missing %q, got:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("day-0 window uses past tense", func(t *testing.T) {
+		got := customerNoticeBody(0, proj)
+		if !strings.Contains(got, "was suspended 08/24/2026") {
+			t.Errorf("body missing past-tense suspension wording, got:\n%s", got)
+		}
+	})
 }

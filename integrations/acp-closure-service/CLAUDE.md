@@ -76,8 +76,9 @@ decision logic cheaply testable without mocks.
 have exactly two side-effecting dependencies — `projectUpdater` (writes) and
 `notifier` (sends) — expressed as small interfaces. `main.go` decides which
 concrete implementation to inject based on `DRY_RUN`:
-`sweep.DryRunProjectUpdater` (logs, never calls `UpdateProject`) vs. the real
-`*entity.Client`. Reads (`SearchProjects`, `GetAccount`,
+`sweep.DryRunProjectUpdater` (silently no-ops, never calls `UpdateProject`
+— see the notice-content-redesign section below for why it deliberately
+doesn't log) vs. the real `*entity.Client`. Reads (`SearchProjects`, `GetAccount`,
 `SearchProjectContacts`, `SearchAccountContacts`) are never dry-run-gated —
 fetching and deciding has no write effect to protect against.
 
@@ -98,41 +99,76 @@ environment.
 
 Confirmed audience rule, unchanged: 90/60/30-day windows are internal-only;
 15/7/0-day windows are both internal and customer (`needsCustomerAudience`
-in `sweep.go`). What changed is notice *shape*, not audience — this is a
-deliberate redesign (superseding the original `Kind`
-internal/customer/am_nudge model), decided directly with Chamara and
-recorded here so the reasoning isn't lost:
+in `sweep.go`). Notice *shape* went through two redesigns superseding the
+original `Kind` internal/customer/am_nudge model — the second one, current
+as of this writing, is a materially different design from the first (a
+single consolidated `Notice` per window), because it turned out the
+internal and customer copies have genuinely different subject/body content,
+not just different recipients. Recorded here in detail so the reasoning
+isn't lost or re-litigated:
 
-- **One consolidated day-count reminder `Notice` per firing window**, not
-  separate `Kind`-tagged sends. `Recipients` (`AccountOwner`,
-  `RenewalManager`, `TechnicalOwner`, always populated; `Customer`, only for
-  a resolved 15/7/0 window) replaces the old single `Recipient` string
-  entirely. There is no more `Kind` field — audience is implied by which
-  `Recipients` fields are populated and by `Subject`'s wording, not stated
-  explicitly, per Chamara's request that the log stop saying
-  "internal"/"external".
-- **`Subject`** (`reminderSubject` in `sweep.go`) is `"{N} Days Reminder of
-  Project for {ProjectName} of {AccountName}"`, `[ACP] `-prefixed only for
-  the internal-only 90/60/30 windows. Confirmed against two real examples
-  from Chamara — do not change the template without re-confirming; in
-  particular, `ProjectName` itself often already contains the word
-  "Subscription" (e.g. `"TICKETNETWORK - Subscription"`), which is why a
-  literal subject can visually resemble "...Subscription of TicketNetwork"
-  without "Subscription of" being separate template wording.
+- **Internal and customer notices are always two separate `Send` calls**
+  for a customer-audience window (15/7/0) — never one `Notice` bundling
+  both. The internal notice fires unconditionally for every window
+  (90/60/30/15/7/0); a second notice (customer, or the no-business-contact
+  nudge) fires only for 15/7/0.
+- **`Subject`** has no single template — four distinct ones
+  (`internalNoticeSubject`/`customerNoticeSubject` in `sweep.go`), confirmed
+  against multiple real examples from Chamara:
+  - Internal, day-count (90/60/30/15/7): `"[ACP] {N} Days Reminder of
+    Project for {ProjectName} of {AccountName}"`. The `[ACP] ` prefix marks
+    "this is the internal-audience copy" and applies to **every** window,
+    including 15/7 — not just 90/60/30. (An earlier version of this logic
+    had that backwards; confirmed wrong directly against real examples
+    where a 15-day internal subject still carried `[ACP]`.)
+  - Internal, day-0: `"[ACP] Project Suspension Notice of {ProjectName} of
+    {AccountName}"` — no "days remaining" left to report once suspended.
+  - Customer, 15/7: `"Upcoming Project Suspension Notice - {ProjectName}"`
+    — never `[ACP]`-prefixed, never names the account.
+  - Customer, day-0: `"Project Suspension Notice - {ProjectName}"` — past
+    tense, no "Upcoming".
+  - No-business-contact (see below): `"[Urgent] [ACP] No Business Contacts
+    Specified for Project {ProjectName}"`.
+  `ProjectName` itself often already contains the word "Subscription"
+  (e.g. `"TICKETNETWORK - Subscription"`), which is why a literal internal
+  subject can visually resemble "...Subscription of TicketNetwork" without
+  "Subscription of" being separate template wording.
+- **Every notice has a real `Body` now** — not just the no-business-contact
+  one. Internal bodies (`internalNoticeBody`) open with a greeting that
+  **always names the Account Manager** (`"Dear {AccountManagerName}"`),
+  regardless of which of the three internal recipients is actually reading
+  their own copy — confirmed explicitly, not personalized per recipient —
+  and list `Project Name`/`Project Key`/`Account Owner`/`Start Date`/`End
+  Date` in `2006-01-02` date format. Customer bodies (`customerNoticeBody`)
+  have **no greeting at all** and use `01/02/2006` (US-style) dates embedded
+  in prose instead. Day-0 bodies (both internal and customer) use distinct
+  past-tense/"already suspended" wording instead of the day-count
+  reminder's future-tense "needs renewal" wording — see the four body
+  template constants in `sweep.go` for the exact confirmed text.
 - **The no-business-contact case** (three-tier customer-contact fallback
   lands on `NeedsAMNudge`: no business contact, no primary contact) sends a
-  **second, separate** `Notice` alongside the day-count reminder — not
-  instead of it, and with no suppression logic collapsing the two. This
-  notice has a fixed `Subject` (`"[Urgent] [ACP] No Business Contacts
-  Specified for Project {ProjectName}"`), a `Recipients.AccountOwner`-only
-  audience, and a fixed `Body` template (`noBusinessContactBody`) confirmed
-  verbatim from a real existing notice. Sending both is a deliberate
-  simplification the user confirmed rather than inventing a new suppression
-  rule for this shape — revisit if it proves too noisy in practice. (The
-  previous design's `shouldSuppressInternalNotice`, which collapsed a
-  same-recipient internal+nudge pair into one send, no longer applies: there
-  is no separate "internal" notice to suppress anymore, just the one
-  reminder plus this second notice.)
+  **second, separate** `Notice` alongside the internal notice — not instead
+  of it, and with no suppression logic collapsing the two. Recipients are
+  **all three** internal recipients (Account Owner, Renewal Manager,
+  Technical Owner) — confirmed explicitly; an earlier version sent this to
+  the Account Owner alone. Sending both notices (internal + nudge) is a
+  deliberate simplification the user confirmed rather than inventing a
+  suppression rule for this shape — revisit if it proves too noisy in
+  practice. (The original design's `shouldSuppressInternalNotice`, which
+  collapsed a same-recipient internal+nudge pair into one send, no longer
+  applies — there's no shared-recipient collision to worry about now that
+  internal and nudge always target the same three internal recipients by
+  design.)
+- **`DryRunProjectUpdater` intentionally logs nothing** (`dryrun.go`) — per
+  explicit user direction, the only log line that should exist for a dry
+  run is `notify.LoggingNotifier`'s `"notice"` line (the actual email
+  content: subject, body, recipients). A separate `"dry-run: would update
+  project"` line describing the raw PATCH body used to exist here and was
+  removed deliberately — it's noise once every window produces a real
+  notice log, and stays noise once real email sending (Sajith's team, still
+  pending) replaces `LoggingNotifier` as the thing this component
+  ultimately integrates with. Don't re-add logging to this type without
+  confirming that direction has changed.
 
 ## suspensionProcessState's real shape
 
@@ -214,7 +250,7 @@ wrong answer:
   `closure.Decide`, `recipients.ResolveCustomerContact` /
   `AccountManagerEmail`, `suspensionstate.LastNoticeWindow` /
   `WithSubscriptionEndDateState`, `sweep.processProject`, `sweep.Run`.
-  `main.go` and the two logging-only implementations
+  `main.go` and the two logging/no-op implementations
   (`notify.LoggingNotifier`, `sweep.DryRunProjectUpdater`) are deliberately
   untested, matching this repo's convention that wiring-only code and
   behaviorless placeholders don't need dedicated tests.

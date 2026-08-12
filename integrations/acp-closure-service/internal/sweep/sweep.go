@@ -83,16 +83,113 @@ func needsCustomerAudience(window closure.NoticeWindow) bool {
 	}
 }
 
-// reminderSubject builds the day-count reminder's title line: "{N} Days
-// Reminder of Project for {ProjectName} of {AccountName}", [ACP]-prefixed
-// only for the internal-only 90/60/30 windows (confirmed against two real
-// examples from Chamara — do not change this wording without re-confirming).
-func reminderSubject(window closure.NoticeWindow, projectName, accountName string) string {
-	s := fmt.Sprintf("%d Days Reminder of Project for %s of %s", int(window), projectName, accountName)
-	if !needsCustomerAudience(window) {
-		s = "[ACP] " + s
+// internalNoticeSubject builds the always-sent internal (Account Owner/
+// Renewal Manager/Technical Owner) notice's title line. Every internal copy
+// is [ACP]-prefixed regardless of window — that prefix marks "this is the
+// internal-audience copy," not "this is a 90/60/30 window" (confirmed
+// against real examples from Chamara spanning 90 through 0; an earlier
+// version of this function had the rule backwards). Day-0 gets distinct
+// "suspension notice" wording instead of "N Days Reminder" — there's no
+// "days remaining" left to report once a project is actually suspended.
+func internalNoticeSubject(window closure.NoticeWindow, projectName, accountName string) string {
+	if window == closure.NoticeWindow0 {
+		return fmt.Sprintf("[ACP] Project Suspension Notice of %s of %s", projectName, accountName)
 	}
-	return s
+	return fmt.Sprintf("[ACP] %d Days Reminder of Project for %s of %s", int(window), projectName, accountName)
+}
+
+// customerNoticeSubject builds the customer-facing notice's title line
+// (15/7/0 only) — never [ACP]-prefixed, never names the account, and uses
+// future tense ("Upcoming") before day-0 versus past tense once actually
+// suspended.
+func customerNoticeSubject(window closure.NoticeWindow, projectName string) string {
+	if window == closure.NoticeWindow0 {
+		return fmt.Sprintf("Project Suspension Notice - %s", projectName)
+	}
+	return fmt.Sprintf("Upcoming Project Suspension Notice - %s", projectName)
+}
+
+// internalReminderBodyTemplate is the day-count (90/60/30/15/7) internal
+// notice body, confirmed verbatim from real examples Chamara shared. The
+// greeting always names the Account Manager (%[1]s), regardless of which of
+// the three internal recipients is actually reading their copy — not
+// personalized per recipient. Dates are formatted 2006-01-02.
+const internalReminderBodyTemplate = `Dear %[1]s
+
+The following project has a non renewed contract. Please find the details below.
+
+Project Name: %[2]s
+
+Project Key: %[3]s
+
+Account Owner: %[1]s
+
+Start Date: %[4]s
+
+End Date: %[5]s
+
+Since projects needs contract renewal, kindly take the remedial actions to avoid any disruptions of subscription support. We appreciate your understanding and your prompt attention to this matter.
+
+Best Regards,
+WSO2 Team`
+
+// internalSuspensionBodyTemplate is the day-0 internal notice body — past
+// tense ("has been suspended"), asking for reinstatement rather than
+// renewal.
+const internalSuspensionBodyTemplate = `Dear %[1]s
+
+The following project has been suspended due to non renewed contract. Kindly request that you take the appropriate action to reinitiate the suspended support account.
+
+Project Name: %[2]s
+
+Project Key: %[3]s
+
+Account Owner: %[1]s
+
+Start Date: %[4]s
+
+End Date: %[5]s
+
+Since the project is suspended, kindly take the remedial actions to reinstate the subscription support. We appreciate your prompt attention to this matter.
+
+Best Regards,
+WSO2 Team`
+
+func internalNoticeBody(window closure.NoticeWindow, proj project, accountOwnerName string) string {
+	template := internalReminderBodyTemplate
+	if window == closure.NoticeWindow0 {
+		template = internalSuspensionBodyTemplate
+	}
+	return fmt.Sprintf(template, accountOwnerName, proj.Name, proj.ProjectKey, formatDate(proj.StartDate), formatDate(proj.EndDate))
+}
+
+// customerUpcomingSuspensionBodyTemplate is the 15/7-day customer-facing
+// body — future tense, no greeting (customer-facing notices never open with
+// "Dear X", confirmed explicitly). Dates are formatted 01/02/2006 (US
+// style), distinct from the internal bodies' 2006-01-02 — matches Chamara's
+// real examples exactly.
+const customerUpcomingSuspensionBodyTemplate = `We regret to inform you that the project %[1]s will be suspended on %[2]s due to non-renewal of the contracts upon the end of the previous subscription period.
+
+Please ensure to take necessary actions on or before %[2]s to avoid service disruption. If you have any questions or need assistance, please contact your Account Manager or the WSO2 Customer Success Team.
+
+Best Regards,
+WSO2 Team`
+
+// customerAlreadySuspendedBodyTemplate is the day-0 customer-facing body —
+// past tense, once the project has actually been suspended.
+const customerAlreadySuspendedBodyTemplate = `We trust this message finds you well. This project %[1]s was suspended %[2]s due to non-renewal of the contracts upon the end of the previous subscription period.
+
+To avoid future suspensions, please ensure that all necessary actions are completed in a timely manner. If you have any questions or need assistance, please contact your Account Manager or the WSO2 Customer Success Team.
+
+Best Regards,
+WSO2 Team`
+
+func customerNoticeBody(window closure.NoticeWindow, proj project) string {
+	template := customerUpcomingSuspensionBodyTemplate
+	if window == closure.NoticeWindow0 {
+		template = customerAlreadySuspendedBodyTemplate
+	}
+	return fmt.Sprintf(template, proj.Name, formatDateUS(proj.EndDate))
 }
 
 // noBusinessContactBodyTemplate is the fixed body for the urgent
@@ -125,6 +222,16 @@ func formatDate(t *time.Time) string {
 	return t.Format("2006-01-02")
 }
 
+// formatDateUS formats a date 01/02/2006 (US style), for the customer-facing
+// prose bodies specifically — distinct from formatDate's 2006-01-02, used
+// everywhere else (internal bodies' "Start Date:"/"End Date:" fields).
+func formatDateUS(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("01/02/2006")
+}
+
 func timeValue(t *time.Time) time.Time {
 	if t == nil {
 		return time.Time{}
@@ -139,37 +246,46 @@ func accountName(proj project) string {
 	return proj.Account.Name
 }
 
-// notifyForWindow sends the single day-count reminder notice due for every
-// firing window (Account Owner/Renewal Manager/Technical Owner always
-// populated in Recipients; Customer only for a resolved 15/7/0 window) and,
-// only when a 15/7/0 window's customer-contact resolution comes up empty,
-// an additional, separate no-business-contact urgent notice to the Account
-// Owner. Sending both in that case — rather than suppressing the reminder
-// or merging them — is a deliberate simplification, not an oversight;
-// revisit if it proves too noisy in practice.
+// notifyForWindow sends the always-fired internal notice (Account Owner/
+// Renewal Manager/Technical Owner) for every firing window, and, only for
+// the customer-audience windows (15/7/0), a second, separate notice with
+// entirely different subject/body: either the customer notice (Customer
+// populated, Account Owner/Renewal Manager/Technical Owner copied alongside
+// as context) when the three-tier contact fallback resolves, or the
+// no-business-contact urgent notice (to all three internal recipients) when
+// it doesn't. Internal and customer notices are always two separate Send
+// calls, never merged into one — their content genuinely differs, not just
+// their recipient list.
 func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, proj project, window closure.NoticeWindow) error {
 	contacts, err := resolveAccountContacts(ctx, reader, proj.accountID())
 	if err != nil {
 		return fmt.Errorf("resolve account contacts: %w", err)
 	}
 
-	reminder := notify.Notice{
+	internalRecipients := notify.Recipients{
+		AccountOwner:   contacts.AccountOwner,
+		RenewalManager: contacts.RenewalManager,
+		TechnicalOwner: contacts.TechnicalOwner,
+	}
+
+	internalNotice := notify.Notice{
 		ProjectID:   proj.ID,
 		ProjectName: proj.Name,
 		ProjectKey:  proj.ProjectKey,
 		StartDate:   timeValue(proj.StartDate),
 		EndDate:     timeValue(proj.EndDate),
 		Window:      window,
-		Subject:     reminderSubject(window, proj.Name, accountName(proj)),
-		Recipients: notify.Recipients{
-			AccountOwner:   contacts.AccountOwner,
-			RenewalManager: contacts.RenewalManager,
-			TechnicalOwner: contacts.TechnicalOwner,
-		},
+		Subject:     internalNoticeSubject(window, proj.Name, accountName(proj)),
+		Body:        internalNoticeBody(window, proj, contacts.AccountOwner.Name),
+		Recipients:  internalRecipients,
 	}
 
 	if !needsCustomerAudience(window) {
-		return ntf.Send(ctx, reminder)
+		return ntf.Send(ctx, internalNotice)
+	}
+
+	if err := ntf.Send(ctx, internalNotice); err != nil {
+		return fmt.Errorf("send internal notice: %w", err)
 	}
 
 	projectContacts, accountContactsList, err := fetchContacts(ctx, reader, proj)
@@ -179,13 +295,23 @@ func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, pro
 	resolution := recipients.ResolveCustomerContact(projectContacts, accountContactsList)
 
 	if !resolution.NeedsAMNudge {
-		reminder.Recipients.Customer = resolution.CustomerContact
-		reminder.ResolvedVia = resolution.ResolvedVia
-		return ntf.Send(ctx, reminder)
-	}
-
-	if err := ntf.Send(ctx, reminder); err != nil {
-		return fmt.Errorf("send day-count reminder: %w", err)
+		return ntf.Send(ctx, notify.Notice{
+			ProjectID:   proj.ID,
+			ProjectName: proj.Name,
+			ProjectKey:  proj.ProjectKey,
+			StartDate:   timeValue(proj.StartDate),
+			EndDate:     timeValue(proj.EndDate),
+			Window:      window,
+			Subject:     customerNoticeSubject(window, proj.Name),
+			Body:        customerNoticeBody(window, proj),
+			Recipients: notify.Recipients{
+				AccountOwner:   contacts.AccountOwner,
+				RenewalManager: contacts.RenewalManager,
+				TechnicalOwner: contacts.TechnicalOwner,
+				Customer:       resolution.CustomerContact,
+			},
+			ResolvedVia: resolution.ResolvedVia,
+		})
 	}
 
 	return ntf.Send(ctx, notify.Notice{
@@ -197,9 +323,7 @@ func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, pro
 		Window:      window,
 		Subject:     fmt.Sprintf("[Urgent] [ACP] No Business Contacts Specified for Project %s", proj.Name),
 		Body:        noBusinessContactBody(proj, contacts.AccountOwner.Name),
-		Recipients: notify.Recipients{
-			AccountOwner: contacts.AccountOwner,
-		},
+		Recipients:  internalRecipients,
 		ResolvedVia: resolution.ResolvedVia,
 	})
 }

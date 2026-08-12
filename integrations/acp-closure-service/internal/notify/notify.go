@@ -63,9 +63,9 @@ type Notice struct {
 	// no-business-contact notice's fixed "[Urgent] [ACP] No Business
 	// Contacts Specified for Project {ProjectName}".
 	Subject string
-	// Body is only populated for the no-business-contact notice today — no
-	// body template exists yet for the day-count reminders, so it's left
-	// empty there rather than inventing one.
+	// Body is the notice's full email body — populated for every notice
+	// type today (day-count reminder, day-0 suspension, customer notice,
+	// no-business-contact urgent notice all have their own template).
 	Body       string
 	Recipients Recipients
 	// ResolvedVia records which tier of the three-tier customer-contact
