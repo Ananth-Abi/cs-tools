@@ -26,6 +26,7 @@ import {
   hasCurrentUserPlaceholder,
   resolveCurrentUserPlaceholder,
 } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import { withWidgetFetchSlot } from "@features/csm-dashboard/utils/widgetFetchConcurrency";
 
 export interface PieSliceResult extends BeDashboardPieSlice {
   value: number;
@@ -103,14 +104,19 @@ export function useWidgetPieData(
           if (!config) {
             throw new Error(`Unsupported widget resourceType: ${resourceType}`);
           }
-          const res = await api.post<
-            { filters: Record<string, unknown>; pagination: { offset: number; limit: number } },
-            Record<string, unknown>
-          >(config.searchEndpoint, {
-            filters,
-            pagination: { offset: 0, limit: 1 },
+          // Same shared concurrency slot useWidgetData's search uses — a
+          // pie widget fires one call per slice on top of every other
+          // widget's own call, so it needs the cap at least as much.
+          return withWidgetFetchSlot(async () => {
+            const res = await api.post<
+              { filters: Record<string, unknown>; pagination: { offset: number; limit: number } },
+              Record<string, unknown>
+            >(config.searchEndpoint, {
+              filters,
+              pagination: { offset: 0, limit: 1 },
+            });
+            return typeof res.total === "number" ? res.total : 0;
           });
-          return typeof res.total === "number" ? res.total : 0;
         },
         enabled: !awaitingCurrentUser,
         staleTime: 60_000,

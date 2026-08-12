@@ -25,6 +25,7 @@ import {
   hasCurrentUserPlaceholder,
   resolveCurrentUserPlaceholder,
 } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import { withWidgetFetchSlot } from "@features/csm-dashboard/utils/widgetFetchConcurrency";
 
 /** Default number of rows fetched for a `shape: "list"` widget when the
  * template doesn't set its own `listLimit`. */
@@ -120,24 +121,31 @@ export function useWidgetData(
         // rather than crash on the property accesses below.
         throw new Error(`Unsupported widget resourceType: ${resourceType}`);
       }
-      const res = await api.post<
-        {
-          filters: Record<string, unknown>;
-          pagination: { offset: number; limit: number };
-          sortBy?: Record<string, unknown>;
-        },
-        Record<string, unknown>
-      >(config.searchEndpoint, {
-        filters: resolvedFilters,
-        pagination: { offset: effectiveOffset, limit },
-        ...(effectiveSortBy ? { sortBy: effectiveSortBy } : {}),
+      // Gated behind a shared concurrency slot (see widgetFetchConcurrency.ts)
+      // so an N-widget dashboard doesn't fire N simultaneous searches at
+      // customer-entity-service — the search call itself, not this
+      // queryFn's synchronous config check above, is what actually hits
+      // the network.
+      return withWidgetFetchSlot(async () => {
+        const res = await api.post<
+          {
+            filters: Record<string, unknown>;
+            pagination: { offset: number; limit: number };
+            sortBy?: Record<string, unknown>;
+          },
+          Record<string, unknown>
+        >(config.searchEndpoint, {
+          filters: resolvedFilters,
+          pagination: { offset: effectiveOffset, limit },
+          ...(effectiveSortBy ? { sortBy: effectiveSortBy } : {}),
+        });
+        const total = typeof res.total === "number" ? res.total : 0;
+        const rawItems = res[config.itemsKey];
+        const items = Array.isArray(rawItems)
+          ? (rawItems as Record<string, unknown>[])
+          : [];
+        return { total, items };
       });
-      const total = typeof res.total === "number" ? res.total : 0;
-      const rawItems = res[config.itemsKey];
-      const items = Array.isArray(rawItems)
-        ? (rawItems as Record<string, unknown>[])
-        : [];
-      return { total, items };
     },
     staleTime: 60_000,
   });
