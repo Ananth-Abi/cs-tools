@@ -60,9 +60,17 @@ export function useNormalizedIdParam(paramName: string): string | undefined {
     const newPathname = location.pathname.replace(rawValue, dashed);
     navigate(
       { pathname: newPathname, search: location.search, hash: location.hash },
-      { replace: true },
+      { replace: true, state: location.state },
     );
-  }, [isDashless, rawValue, location.pathname, location.search, location.hash, navigate]);
+  }, [
+    isDashless,
+    rawValue,
+    location.pathname,
+    location.search,
+    location.hash,
+    location.state,
+    navigate,
+  ]);
 
   return normalizedValue;
 }

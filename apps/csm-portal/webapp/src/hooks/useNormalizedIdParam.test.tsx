@@ -14,80 +14,114 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
-import { MemoryRouter, Route, Routes } from "react-router";
-
-const navigateMock = vi.fn();
-vi.mock("@hooks/useNavTransition", () => ({
-  useNavTransition: () => navigateMock,
-}));
-
-// Imported after the mock above so the module picks it up.
+import { render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+import type { JSX } from "react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import "@testing-library/jest-dom/vitest";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 
 const DASHED_ID = "56f49f0a-eb1e-c310-fcf5-f5dabad0cdab";
 const DASHLESS_ID = "56f49f0aeb1ec310fcf5f5dabad0cdab";
 
-function wrapperAt(initialEntry: string) {
-  return function Wrapper({ children }: { children: ReactNode }) {
-    return (
-      <MemoryRouter initialEntries={[initialEntry]}>
-        <Routes>
-          <Route path="/cases/:caseId" element={children} />
-        </Routes>
-      </MemoryRouter>
-    );
-  };
+// Renders the real react-router stack (no mock on the navigation hook) so
+// these tests prove an actual `replace` navigation happened, not just that
+// some navigate function was called with the expected arguments.
+function LocationProbe(): JSX.Element {
+  const location = useLocation();
+  return (
+    <div data-testid="location-probe">
+      {location.pathname}
+      {location.search}
+      {location.hash}
+    </div>
+  );
+}
+
+function Probe({ paramName }: { paramName: string }): JSX.Element {
+  const id = useNormalizedIdParam(paramName);
+  return <div data-testid="hook-result">{id}</div>;
+}
+
+function renderAt(
+  initialEntry: { pathname: string; search?: string; hash?: string; state?: unknown },
+): ReturnType<typeof render> {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <LocationProbe />
+      <Routes>
+        <Route path="/cases/:caseId" element={<Probe paramName="caseId" />} />
+      </Routes>
+    </MemoryRouter>,
+  );
 }
 
 describe("useNormalizedIdParam", () => {
-  beforeEach(() => {
-    navigateMock.mockClear();
-  });
-
   it("returns the dashed id and redirects when the route param is a dashless 32-hex id", async () => {
-    const { result } = renderHook(() => useNormalizedIdParam("caseId"), {
-      wrapper: wrapperAt(`/cases/${DASHLESS_ID}`),
-    });
+    renderAt({ pathname: `/cases/${DASHLESS_ID}` });
 
-    expect(result.current).toBe(DASHED_ID);
+    expect(screen.getByTestId("hook-result")).toHaveTextContent(DASHED_ID);
 
     await waitFor(() =>
-      expect(navigateMock).toHaveBeenCalledWith(
-        { pathname: `/cases/${DASHED_ID}`, search: "", hash: "" },
-        { replace: true },
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/cases/${DASHED_ID}`,
       ),
     );
   });
 
   it("preserves the query string and hash on the redirect", async () => {
-    const { result } = renderHook(() => useNormalizedIdParam("caseId"), {
-      wrapper: wrapperAt(`/cases/${DASHLESS_ID}?tab=comments#section-2`),
+    renderAt({
+      pathname: `/cases/${DASHLESS_ID}`,
+      search: "?tab=comments",
+      hash: "#section-2",
     });
 
-    expect(result.current).toBe(DASHED_ID);
+    expect(screen.getByTestId("hook-result")).toHaveTextContent(DASHED_ID);
 
     await waitFor(() =>
-      expect(navigateMock).toHaveBeenCalledWith(
-        {
-          pathname: `/cases/${DASHED_ID}`,
-          search: "?tab=comments",
-          hash: "#section-2",
-        },
-        { replace: true },
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/cases/${DASHED_ID}?tab=comments#section-2`,
+      ),
+    );
+  });
+
+  it("preserves router state on the redirect", async () => {
+    const state = { from: "/cases", parentState: { from: "/dashboard" } };
+
+    render(
+      <MemoryRouter
+        initialEntries={[{ pathname: `/cases/${DASHLESS_ID}`, state }]}
+      >
+        <Routes>
+          <Route
+            path="/cases/:caseId"
+            element={
+              <>
+                <Probe paramName="caseId" />
+                <StateProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId("hook-result")).toHaveTextContent(DASHED_ID);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("state-probe")).toHaveTextContent(
+        JSON.stringify(state),
       ),
     );
   });
 
   it("returns an already-dashed id unchanged and does not navigate", () => {
-    const { result } = renderHook(() => useNormalizedIdParam("caseId"), {
-      wrapper: wrapperAt(`/cases/${DASHED_ID}`),
-    });
+    renderAt({ pathname: `/cases/${DASHED_ID}` });
 
-    expect(result.current).toBe(DASHED_ID);
-    expect(navigateMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId("hook-result")).toHaveTextContent(DASHED_ID);
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      `/cases/${DASHED_ID}`,
+    );
   });
 
   it.each([
@@ -97,12 +131,19 @@ describe("useNormalizedIdParam", () => {
   ])(
     "returns a malformed id unchanged and does not navigate or crash — %s",
     (_desc, malformedId) => {
-      const { result } = renderHook(() => useNormalizedIdParam("caseId"), {
-        wrapper: wrapperAt(`/cases/${malformedId}`),
-      });
+      renderAt({ pathname: `/cases/${malformedId}` });
 
-      expect(result.current).toBe(malformedId);
-      expect(navigateMock).not.toHaveBeenCalled();
+      expect(screen.getByTestId("hook-result")).toHaveTextContent(malformedId);
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/cases/${malformedId}`,
+      );
     },
   );
 });
+
+function StateProbe(): JSX.Element {
+  const location = useLocation();
+  return (
+    <div data-testid="state-probe">{JSON.stringify(location.state)}</div>
+  );
+}
