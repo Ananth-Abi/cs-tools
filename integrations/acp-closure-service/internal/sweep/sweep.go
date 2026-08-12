@@ -268,17 +268,10 @@ func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, pro
 		TechnicalOwner: contacts.TechnicalOwner,
 	}
 
-	internalNotice := notify.Notice{
-		ProjectID:   proj.ID,
-		ProjectName: proj.Name,
-		ProjectKey:  proj.ProjectKey,
-		StartDate:   timeValue(proj.StartDate),
-		EndDate:     timeValue(proj.EndDate),
-		Window:      window,
-		Subject:     internalNoticeSubject(window, proj.Name, accountName(proj)),
-		Body:        internalNoticeBody(window, proj, contacts.AccountOwner.Name),
-		Recipients:  internalRecipients,
-	}
+	internalNotice := baseNotice(proj, window)
+	internalNotice.Subject = internalNoticeSubject(window, proj.Name, accountName(proj))
+	internalNotice.Body = internalNoticeBody(window, proj, contacts.AccountOwner.Name)
+	internalNotice.Recipients = internalRecipients
 
 	if !needsCustomerAudience(window) {
 		return ntf.Send(ctx, internalNotice)
@@ -295,37 +288,35 @@ func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, pro
 	resolution := recipients.ResolveCustomerContact(projectContacts, accountContactsList)
 
 	if !resolution.NeedsAMNudge {
-		return ntf.Send(ctx, notify.Notice{
-			ProjectID:   proj.ID,
-			ProjectName: proj.Name,
-			ProjectKey:  proj.ProjectKey,
-			StartDate:   timeValue(proj.StartDate),
-			EndDate:     timeValue(proj.EndDate),
-			Window:      window,
-			Subject:     customerNoticeSubject(window, proj.Name),
-			Body:        customerNoticeBody(window, proj),
-			Recipients: notify.Recipients{
-				AccountOwner:   contacts.AccountOwner,
-				RenewalManager: contacts.RenewalManager,
-				TechnicalOwner: contacts.TechnicalOwner,
-				Customer:       resolution.CustomerContact,
-			},
-			ResolvedVia: resolution.ResolvedVia,
-		})
+		customerNotice := baseNotice(proj, window)
+		customerNotice.Subject = customerNoticeSubject(window, proj.Name)
+		customerNotice.Body = customerNoticeBody(window, proj)
+		customerNotice.Recipients = internalRecipients
+		customerNotice.Recipients.Customer = resolution.CustomerContact
+		customerNotice.ResolvedVia = resolution.ResolvedVia
+		return ntf.Send(ctx, customerNotice)
 	}
 
-	return ntf.Send(ctx, notify.Notice{
+	nudgeNotice := baseNotice(proj, window)
+	nudgeNotice.Subject = fmt.Sprintf("[Urgent] [ACP] No Business Contacts Specified for Project %s", proj.Name)
+	nudgeNotice.Body = noBusinessContactBody(proj, contacts.AccountOwner.Name)
+	nudgeNotice.Recipients = internalRecipients
+	nudgeNotice.ResolvedVia = resolution.ResolvedVia
+	return ntf.Send(ctx, nudgeNotice)
+}
+
+// baseNotice builds the project-identity fields shared by every Notice sent
+// for a project/window — Subject, Body, Recipients, and ResolvedVia are left
+// at their zero value for the caller to fill in per notice type.
+func baseNotice(proj project, window closure.NoticeWindow) notify.Notice {
+	return notify.Notice{
 		ProjectID:   proj.ID,
 		ProjectName: proj.Name,
 		ProjectKey:  proj.ProjectKey,
 		StartDate:   timeValue(proj.StartDate),
 		EndDate:     timeValue(proj.EndDate),
 		Window:      window,
-		Subject:     fmt.Sprintf("[Urgent] [ACP] No Business Contacts Specified for Project %s", proj.Name),
-		Body:        noBusinessContactBody(proj, contacts.AccountOwner.Name),
-		Recipients:  internalRecipients,
-		ResolvedVia: resolution.ResolvedVia,
-	})
+	}
 }
 
 // accountContacts is the three account-level people a day-count reminder's

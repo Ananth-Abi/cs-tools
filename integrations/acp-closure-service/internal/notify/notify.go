@@ -69,10 +69,13 @@ type Notice struct {
 	Body       string
 	Recipients Recipients
 	// ResolvedVia records which tier of the three-tier customer-contact
-	// fallback produced Recipients.Customer (see
-	// recipients.ResolveCustomerContact). Left at its zero value ("") when
-	// not applicable — a 90/60/30 notice, or the no-business-contact notice
-	// itself, neither of which carry a resolved customer contact.
+	// fallback was attempted (see recipients.ResolveCustomerContact). Left
+	// at its zero value ("") only when the fallback was never attempted at
+	// all — an internal-only 90/60/30 notice. It IS set on the
+	// no-business-contact notice too, to recipients.ResolvedViaNone — the
+	// fallback was attempted there, it just found nothing; that's a
+	// different, more specific fact than "never attempted," worth keeping
+	// distinct in the log.
 	ResolvedVia recipients.ResolvedVia
 }
 
@@ -92,12 +95,15 @@ func (n *LoggingNotifier) Send(ctx context.Context, notice Notice) error {
 		"startDate", notice.StartDate,
 		"endDate", notice.EndDate,
 		"accountOwner", notice.Recipients.AccountOwner.Email,
+		"accountOwnerName", notice.Recipients.AccountOwner.Name,
 		"renewalManager", notice.Recipients.RenewalManager.Email,
+		"renewalManagerName", notice.Recipients.RenewalManager.Name,
 		"technicalOwner", notice.Recipients.TechnicalOwner.Email,
+		"technicalOwnerName", notice.Recipients.TechnicalOwner.Name,
 		"resolvedVia", notice.ResolvedVia,
 	}
 	if notice.Recipients.Customer != nil {
-		attrs = append(attrs, "customer", notice.Recipients.Customer.Email)
+		attrs = append(attrs, "customer", notice.Recipients.Customer.Email, "customerName", notice.Recipients.Customer.Name)
 	}
 	if notice.Body != "" {
 		attrs = append(attrs, "body", notice.Body)

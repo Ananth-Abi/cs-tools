@@ -105,8 +105,10 @@ func TestLoggingNotifier_Send_LogsProjectAndSubjectFields(t *testing.T) {
 
 // TestLoggingNotifier_Send_LogsRecipientsIncludingCustomerWhenPresent covers
 // the structured Recipients attribute: Account Owner/Renewal Manager/
-// Technical Owner are always logged, and Customer is logged too when
-// present (a resolved 15/7/0-window customer contact).
+// Technical Owner's names AND emails are always logged (names matter here —
+// Renewal Manager and Technical Owner never appear by name anywhere else in
+// the log, unlike Account Owner which also shows up in Body), and Customer
+// is logged too when present (a resolved 15/7/0-window customer contact).
 func TestLoggingNotifier_Send_LogsRecipientsIncludingCustomerWhenPresent(t *testing.T) {
 	h := &capturingHandler{}
 	n := &LoggingNotifier{Logger: slog.New(h)}
@@ -130,11 +132,15 @@ func TestLoggingNotifier_Send_LogsRecipientsIncludingCustomerWhenPresent(t *test
 	}
 
 	wantAttrs := map[string]string{
-		"accountOwner":   "jordan.perera@wso2.example",
-		"renewalManager": "sam.jayasuriya@wso2.example",
-		"technicalOwner": "alex.fernando@wso2.example",
-		"customer":       "bob@customer.example",
-		"resolvedVia":    string(recipients.ResolvedViaBusinessContact),
+		"accountOwner":       "jordan.perera@wso2.example",
+		"accountOwnerName":   "Jordan Perera",
+		"renewalManager":     "sam.jayasuriya@wso2.example",
+		"renewalManagerName": "Sam Jayasuriya",
+		"technicalOwner":     "alex.fernando@wso2.example",
+		"technicalOwnerName": "Alex Fernando",
+		"customer":           "bob@customer.example",
+		"customerName":       "Bob",
+		"resolvedVia":        string(recipients.ResolvedViaBusinessContact),
 	}
 	for key, want := range wantAttrs {
 		got, found := attrValue(t, h.records[0], key)
@@ -172,6 +178,9 @@ func TestLoggingNotifier_Send_OmitsCustomerAttributeWhenNil(t *testing.T) {
 
 	if _, found := attrValue(t, h.records[0], "customer"); found {
 		t.Error("customer attribute present in log record, want absent when Recipients.Customer is nil")
+	}
+	if _, found := attrValue(t, h.records[0], "customerName"); found {
+		t.Error("customerName attribute present in log record, want absent when Recipients.Customer is nil")
 	}
 }
 

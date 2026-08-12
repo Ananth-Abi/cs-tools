@@ -262,7 +262,10 @@ wrong answer:
 - TDD throughout: red before green, one seam at a time. Seams under test:
   `closure.Decide`, `recipients.ResolveCustomerContact` /
   `AccountManagerEmail`, `suspensionstate.LastNoticeWindow` /
-  `WithSubscriptionEndDateState`, `sweep.processProject`, `sweep.Run`.
+  `WithSubscriptionEndDateState`, `sweep.processProject`, `sweep.Run`, and
+  the pure subject/body builders (`internalNoticeSubject`,
+  `customerNoticeSubject`, `internalNoticeBody`, `customerNoticeBody` in
+  `sweep.go`) tested directly rather than only through `processProject`.
   `main.go` and the two logging/no-op implementations
   (`notify.LoggingNotifier`, `sweep.DryRunProjectUpdater`) are deliberately
   untested, matching this repo's convention that wiring-only code and
