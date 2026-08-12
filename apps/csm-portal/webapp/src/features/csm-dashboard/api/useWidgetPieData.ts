@@ -66,6 +66,14 @@ export function useWidgetPieData(
    * same as `selectedTeamGroupId`, since a slice's own `query` may carry the
    * placeholder too, not just the widget's base `query`. */
   currentUserId?: string,
+  /** Set to `false` to hold every slice query without firing it — used by
+   * `DashboardWidgetTile` to defer a pie/bar widget's fetch until its tile
+   * has actually scrolled into (or near) the viewport (see
+   * `useElementVisibleOnce`). Defaults to `true` (fires immediately, same
+   * as before this parameter existed) so `DashboardWidgetPreviewPage`-style
+   * callers that always render one widget full-page — never lazily — don't
+   * need to pass anything. */
+  enabled = true,
 ): WidgetPieData {
   const api = useBackendApi();
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
@@ -118,13 +126,18 @@ export function useWidgetPieData(
             return typeof res.total === "number" ? res.total : 0;
           });
         },
-        enabled: !awaitingCurrentUser,
+        enabled: enabled && !awaitingCurrentUser,
         staleTime: 60_000,
       };
     }),
   });
 
-  const isLoading = awaitingCurrentUser || queries.some((q) => q.isLoading);
+  // `!enabled` (still waiting to scroll into view) reports as loading
+  // rather than as react-query's own `isLoading` for a disabled query
+  // (which is `false` — a query that never started isn't "loading" to
+  // react-query) — this hook's own `isLoading` is a widget-level "don't
+  // paint real data yet" signal, not a passthrough of query-fetch state.
+  const isLoading = !enabled || awaitingCurrentUser || queries.some((q) => q.isLoading);
   const isError = queries.some((q) => q.isError);
   const results: PieSliceResult[] = slices.map((slice, i) => ({
     ...slice,
