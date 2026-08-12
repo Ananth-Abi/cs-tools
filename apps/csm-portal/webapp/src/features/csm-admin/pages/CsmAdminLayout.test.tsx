@@ -18,7 +18,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
 
 let mockRoles: string[] | undefined = ["admin"];
 
@@ -44,7 +49,15 @@ function renderLayout(initialEntry: string) {
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/admin" element={<CsmAdminLayout />}>
-          <Route path="user-management" element={<div>User management tiles</div>} />
+          <Route
+            path="user-management"
+            element={
+              <>
+                <div>User management tiles</div>
+                <LocationProbe />
+              </>
+            }
+          />
           <Route path="user-management/users" element={<div>Users content</div>} />
           <Route path="user-management/roles" element={<div>Roles content</div>} />
           <Route path="user-management/groups" element={<div>Groups content</div>} />
@@ -94,6 +107,7 @@ describe("CsmAdminLayout — back link to the User management tile grid", () => 
 
     fireEvent.click(back);
 
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/admin/user-management");
     expect(screen.getByText("User management tiles")).toBeInTheDocument();
     expect(screen.queryByText("Roles content")).not.toBeInTheDocument();
   });
