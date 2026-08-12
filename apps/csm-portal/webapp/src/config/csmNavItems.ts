@@ -204,17 +204,55 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     href: "/admin",
     icon: Settings,
     children: [
-      { id: "admin.users", label: "Users", href: "/admin/users" },
-      { id: "admin.roles", label: "Roles", href: "/admin/roles" },
-      { id: "admin.groups", label: "Groups", href: "/admin/groups" },
-      { id: "admin.teams", label: "Teams", href: "/admin/teams" },
-      // Routes to a placeholder that already names its backend blocker, so it
-      // renders itself rather than the generic WIP page.
       {
-        id: "admin.permissions",
-        label: "Permissions",
-        href: "/admin/permissions",
-        rendersOwnWipPage: true,
+        id: "admin.user-management",
+        label: "User management",
+        href: "/admin/user-management",
+        children: [
+          {
+            id: "admin.user-management.users",
+            label: "Users",
+            href: "/admin/user-management/users",
+          },
+          {
+            id: "admin.user-management.roles",
+            label: "Roles",
+            href: "/admin/user-management/roles",
+          },
+          {
+            id: "admin.user-management.groups",
+            label: "Groups",
+            href: "/admin/user-management/groups",
+          },
+          {
+            id: "admin.user-management.teams",
+            label: "Teams",
+            href: "/admin/user-management/teams",
+          },
+          // Routes to a placeholder that already names its backend blocker, so
+          // it renders itself rather than the generic WIP page.
+          {
+            id: "admin.user-management.permissions",
+            label: "Permissions",
+            href: "/admin/user-management/permissions",
+            rendersOwnWipPage: true,
+          },
+        ],
+      },
+      // Admin-role-gated (see `isDashboardBuilderVisibleForRoles` in
+      // `csmAdminAccess.ts`) — unlike every sibling tab above, this one is
+      // hidden from a non-admin signed-in user rather than merely relying
+      // on the backend to reject the action. Deliberate exception to this
+      // section's usual "show the action, let the backend reject it" rule
+      // (see App.tsx's own comment on the roles/groups/teams member
+      // routes): the dashboard builder exposes no privileged backend
+      // action at all (everything it does is local to the browser), so
+      // there is nothing for a backend gate to enforce here — the ONLY
+      // gate is this frontend one.
+      {
+        id: "admin.dashboards",
+        label: "Dashboards",
+        href: "/admin/dashboards",
       },
     ],
   },

@@ -223,9 +223,32 @@ export interface NavigableNavNode {
 }
 
 /**
- * Every enabled destination, sections and their tabs alike, flattened for the
- * Quick-nav palette. Tabs inherit their section's icon and carry its label as a
- * sublabel so "Users" reads as "Users / Settings" rather than as a bare word.
+ * Every enabled descendant of `node`, flattened, each carrying its immediate
+ * parent's label as its sublabel (so a grandchild reads as "Users / User
+ * management" rather than "Users / Settings") and inheriting an icon down the
+ * chain until a node declares its own.
+ */
+function navigableDescendants(
+  node: CsmNavNode,
+  icon: ComponentType<{ size?: number | string }>,
+): NavigableNavNode[] {
+  return enabledNavChildren(node).flatMap((child) => {
+    const self: NavigableNavNode = {
+      id: child.id,
+      label: child.label,
+      sublabel: node.label,
+      href: child.href,
+      icon: child.icon ?? icon,
+    };
+    return [self, ...navigableDescendants(child, self.icon)];
+  });
+}
+
+/**
+ * Every enabled destination — sections and every level of their tabs —
+ * flattened for the Quick-nav palette. Tabs inherit their parent's icon and
+ * carry its label as a sublabel so "Users" reads as "Users / User management"
+ * rather than as a bare word.
  */
 export function navigableNavNodes(): NavigableNavNode[] {
   return CSM_NAV_ITEMS.flatMap((section) => {
@@ -236,14 +259,7 @@ export function navigableNavNodes(): NavigableNavNode[] {
       href: section.href,
       icon: section.icon,
     };
-    const tabs: NavigableNavNode[] = enabledNavChildren(section).map((child) => ({
-      id: child.id,
-      label: child.label,
-      sublabel: section.label,
-      href: child.href,
-      icon: child.icon ?? section.icon,
-    }));
-    return [self, ...tabs];
+    return [self, ...navigableDescendants(section, section.icon)];
   });
 }
 

@@ -1,0 +1,231 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import { Box, Divider, Typography } from "@wso2/oxygen-ui";
+import { useQueryClient } from "@tanstack/react-query";
+import { Fragment, useState, type JSX, type ReactNode } from "react";
+import { ApiQueryKeys } from "@constants/apiConstants";
+import type { BeDashboardWidget } from "@api/backend/types";
+import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
+import RefreshButton from "@components/RefreshButton";
+import { resolveWidgetText } from "@features/csm-dashboard/utils/widgetTextPlaceholder";
+import {
+  WIDGET_GRID_SX,
+  groupWidgetsBySection,
+} from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
+
+function widgetGridColumnSx(widget: BeDashboardWidget) {
+  // A list-shape widget renders a real table (4 rows, several columns) —
+  // its configured `gridWidth` was sized for the old compact text list, so
+  // it always spans the full row here regardless of that value.
+  return widget.shape === "list"
+    ? { gridColumn: "1 / -1" }
+    : {
+        gridColumn: {
+          xs: `span ${Math.min(widget.gridWidth, 4)}`,
+          sm: `span ${widget.gridWidth}`,
+        },
+      };
+}
+
+export interface DashboardWidgetGridProps {
+  widgets: BeDashboardWidget[];
+  /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
+   * an array of every team's `groupId` in the current dashboard's family
+   * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL` in
+   * `teamFilterPlaceholder.ts`) — only meaningful for an `isTeamBased`
+   * dashboard, threaded straight through to every tile so each can resolve
+   * its own `__current_team__` filter placeholder. `undefined` for a
+   * non-team-based dashboard, or while the team isn't resolved yet. */
+  selectedTeamGroupId?: string | string[];
+  /** Human-readable label for the selected team (its own display `name`,
+   * or the literal `"All ABTs"`) — threaded down for each tile's own
+   * `{{currentTeam}}` widget text placeholder (see
+   * `widgetTextPlaceholder.ts`). `undefined` in the same cases
+   * `selectedTeamGroupId` is. */
+  selectedTeamLabel?: string;
+  /** Per-widget action rendered as a small overlay on that widget's own
+   * tile (e.g. the dashboard builder's "Edit widget" gear) — absent
+   * renders every tile exactly as the live dashboard does, with no overlay
+   * at all. Positioned by the caller; this component only decides where in
+   * the DOM it renders (a positioned wrapper around the tile). */
+  renderWidgetAction?: (widget: BeDashboardWidget) => ReactNode;
+  /** Per-section actions rendered in that section's own header row,
+   * alongside its refresh button (e.g. the builder's "Add widget to this
+   * section" / "Remove section"). Receives the section's own RAW,
+   * unresolved `widget.section` value (`undefined` for the untitled default
+   * group) — the same identity `groupWidgetsBySection` groups by and the
+   * draft's own `widget.section`/`emptySections` are keyed on — followed by
+   * the display-resolved title (post `{{currentTeam}}` substitution, for
+   * rendering only) and every widget id currently in the section. A caller
+   * that uses the resolved title as an identity key instead of the raw one
+   * splits a placeholder-named section in two the moment it's edited — see
+   * `groupWidgetsBySection` in `dashboardWidgetGridLayout.ts`. */
+  renderSectionActions?: (
+    rawSection: string | undefined,
+    resolvedSectionTitle: string | undefined,
+    sectionWidgetIds: Set<string>,
+  ) => ReactNode;
+  /** Rendered once, after every existing section — e.g. the builder's own
+   * "Add section" entry point, or an empty section shell that has no
+   * widgets in it yet. */
+  trailingContent?: ReactNode;
+}
+
+/**
+ * The dashboard widget grid: groups `widgets` by `section` and renders one
+ * `DashboardWidgetTile` per widget, each resolving its own data
+ * independently. Extracted out of `AgentsLandingPagePilot` (the live
+ * dashboard's own renderer) so the dashboard builder can render an
+ * in-progress draft's widgets through the exact same component instead of a
+ * forked copy — the only two things that differ between "live" and
+ * "editing" are the optional `renderWidgetAction`/`renderSectionActions`/
+ * `trailingContent` overlays, which are no-ops when omitted.
+ */
+export default function DashboardWidgetGrid({
+  widgets,
+  selectedTeamGroupId,
+  selectedTeamLabel,
+  renderWidgetAction,
+  renderSectionActions,
+  trailingContent,
+}: DashboardWidgetGridProps): JSX.Element {
+  const queryClient = useQueryClient();
+  // Per-section refresh tracks its own in-flight state, keyed by section.
+  const [refreshingSections, setRefreshingSections] = useState<Set<string>>(new Set());
+
+  /**
+   * Invalidates only the widget-data queries belonging to `widgetIds` —
+   * both shapes' query keys carry a widget id, just at a different
+   * position: `[KEY, widgetId, ...]` for count/list (see `useWidgetData`),
+   * `[KEY, "pie-slice", widgetId, ...]` for pie/bar (see
+   * `useWidgetPieData`).
+   */
+  const invalidateWidgets = (widgetIds: Set<string>): Promise<void> =>
+    queryClient.invalidateQueries({
+      predicate: (query) => {
+        const key = query.queryKey;
+        if (key[0] !== ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA) return false;
+        const widgetId = key[1] === "pie-slice" ? key[2] : key[1];
+        return typeof widgetId === "string" && widgetIds.has(widgetId);
+      },
+    });
+
+  const handleSectionRefresh = async (sectionKey: string, widgetIds: Set<string>): Promise<void> => {
+    setRefreshingSections((prev) => new Set(prev).add(sectionKey));
+    try {
+      await invalidateWidgets(widgetIds);
+    } finally {
+      setRefreshingSections((prev) => {
+        const next = new Set(prev);
+        next.delete(sectionKey);
+        return next;
+      });
+    }
+  };
+
+  const renderTile = (widget: BeDashboardWidget) => {
+    const action = renderWidgetAction?.(widget);
+    return (
+      <Box key={widget.widgetId} sx={{ position: "relative", ...widgetGridColumnSx(widget) }}>
+        <DashboardWidgetTile
+          widgetId={widget.widgetId}
+          displayName={widget.displayName}
+          description={widget.description}
+          resourceType={widget.resourceType}
+          shape={widget.shape}
+          filters={widget.query}
+          listLimit={widget.listLimit}
+          slices={widget.slices}
+          columns={widget.columns}
+          sortBy={widget.sortBy}
+          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamLabel={selectedTeamLabel}
+        />
+        {action && (
+          <Box sx={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}>{action}</Box>
+        )}
+      </Box>
+    );
+  };
+
+  const groups = groupWidgetsBySection(widgets);
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+      {groups.map((group, i) => {
+        // Chart-shaped widgets (pie/bar) are visually grouped into their
+        // own row below this group's count/list tiles, rather than sharing
+        // one undifferentiated grid with them.
+        const mainWidgets = group.widgets.filter((w) => w.shape !== "pie" && w.shape !== "bar");
+        const chartWidgets = group.widgets.filter((w) => w.shape === "pie" || w.shape === "bar");
+        if (mainWidgets.length === 0 && chartWidgets.length === 0) return null;
+
+        const sectionKey = group.section ?? `__default_${i}`;
+        const sectionWidgetIds = new Set(group.widgets.map((w) => w.widgetId));
+        // Section titles support the same {{currentTeam}} text token as an
+        // individual widget's own displayName/description (see
+        // widgetTextPlaceholder.ts) — resolve it once here so both the
+        // visible heading and the refresh button's label stay in sync.
+        const resolvedSectionTitle = resolveWidgetText(group.section, selectedTeamLabel);
+
+        return (
+          <Fragment key={sectionKey}>
+            {i > 0 && <Divider />}
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+              <Box
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: resolvedSectionTitle ? "space-between" : "flex-end",
+                  gap: 1,
+                }}
+              >
+                {resolvedSectionTitle && (
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                    {resolvedSectionTitle}
+                  </Typography>
+                )}
+                <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  {renderSectionActions?.(group.section, resolvedSectionTitle, sectionWidgetIds)}
+                  <RefreshButton
+                    onRefresh={() => void handleSectionRefresh(sectionKey, sectionWidgetIds)}
+                    isFetching={refreshingSections.has(sectionKey)}
+                    label={
+                      resolvedSectionTitle
+                        ? `Refresh ${resolvedSectionTitle}`
+                        : "Refresh section"
+                    }
+                  />
+                </Box>
+              </Box>
+              {mainWidgets.length > 0 && (
+                <Box sx={WIDGET_GRID_SX}>{mainWidgets.map(renderTile)}</Box>
+              )}
+              {chartWidgets.length > 0 && (
+                <>
+                  {mainWidgets.length > 0 && <Divider sx={{ my: 0.5 }} />}
+                  <Box sx={WIDGET_GRID_SX}>{chartWidgets.map(renderTile)}</Box>
+                </>
+              )}
+            </Box>
+          </Fragment>
+        );
+      })}
+      {trailingContent}
+    </Box>
+  );
+}

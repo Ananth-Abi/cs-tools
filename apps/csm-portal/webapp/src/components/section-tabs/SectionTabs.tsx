@@ -24,10 +24,22 @@ interface SectionTabsProps extends SectionTabsState {
   /** Accessible name for the strip, e.g. "Operations tabs". */
   ariaLabel: string;
   scrollable?: boolean;
+  /**
+   * Visual weight. `"primary"` (default) is a section's own tab strip.
+   * `"secondary"` renders smaller and indented, for a strip that belongs to
+   * one of those tabs rather than to the section itself — e.g. Settings'
+   * "User management" tab has its own row of sub-tabs underneath the primary
+   * strip.
+   */
+  variant?: "primary" | "secondary";
 }
 
 /**
- * A section's second-level tab strip, rendered from the navigation tree.
+ * A section's tab strip, rendered from the navigation tree. Also doubles as a
+ * nested tab's own strip via `variant="secondary"` — the underlying data
+ * (`useRouteTabs`/`useQueryTabs`) is already resolved per nav-node id, so a
+ * second level is just a second `<SectionTabs>` fed by a second hook call,
+ * not a different component.
  *
  * A tab the deployment marked WIP stays in the strip but is disabled and
  * chipped, so the section still advertises what is coming without offering a
@@ -41,17 +53,38 @@ export default function SectionTabs({
   select,
   ariaLabel,
   scrollable = false,
+  variant = "primary",
 }: SectionTabsProps): JSX.Element | null {
   if (tabs.length === 0) return null;
+  const isSecondary = variant === "secondary";
 
   return (
-    <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+    <Box
+      sx={{
+        borderBottom: 1,
+        borderColor: "divider",
+        ...(isSecondary && { pl: 2 }),
+      }}
+    >
       <Tabs
         aria-label={ariaLabel}
         value={activeKey}
         onChange={(_, key: string) => select(key)}
         variant={scrollable ? "scrollable" : "standard"}
         scrollButtons={scrollable ? "auto" : false}
+        sx={
+          isSecondary
+            ? {
+                minHeight: 36,
+                "& .MuiTab-root": {
+                  minHeight: 36,
+                  paddingTop: 0.5,
+                  paddingBottom: 0.5,
+                  fontSize: "0.8125rem",
+                },
+              }
+            : undefined
+        }
       >
         {tabs.map((tab) =>
           tab.state === "wip" ? (
