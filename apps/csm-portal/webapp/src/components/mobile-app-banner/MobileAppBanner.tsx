@@ -136,7 +136,7 @@ export default function MobileAppBanner(): JSX.Element | null {
       >
         <AlertTitle sx={{ mb: 0 }}>Get the WSO2 Super App</AlertTitle>
         <Box component="span">
-          {`This portal isn't optimized for ${osLabel} browsers. CSM Portal is also available as a micro-app inside the WSO2 Super App for a better mobile experience.`}
+          {`This portal isn't optimized for mobile. For a better experience on ${osLabel}, use the CSM Portal micro-app inside the WSO2 Super App.`}
         </Box>
       </Alert>
     </Collapse>
