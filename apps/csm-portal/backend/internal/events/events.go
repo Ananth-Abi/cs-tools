@@ -46,3 +46,17 @@ type Envelope struct {
 	EntityID string          `json:"entityId"`
 	Payload  json.RawMessage `json:"payload"`
 }
+
+// CommentAddedPayload is the Payload shape for TypeCommentAdded.
+// Deliberately minimal: no comment body, no author — Envelope already
+// carries EntityID (the case), so this is only what search/replay by
+// timestamp needs.
+type CommentAddedPayload struct {
+	Timestamp string `json:"timestamp"`
+}
+
+// StatusChangedPayload is the Payload shape for TypeStatusChanged.
+type StatusChangedPayload struct {
+	Timestamp string `json:"timestamp"`
+	NewStatus string `json:"newStatus"`
+}
