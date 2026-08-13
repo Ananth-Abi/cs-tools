@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 )
@@ -120,27 +121,34 @@ func (r *Resolver) ResolveLinks(ctx context.Context, emails []string, projectID,
 		return nil, fmt.Errorf("recipientlinks: search users: %w", err)
 	}
 
+	// Keyed lowercase: entity-service and the caller's own recipient list
+	// don't necessarily agree on email casing, and an email address is the
+	// same address regardless of case.
 	byEmail := make(map[string]entity.UserRoleInfo, len(users))
 	for _, u := range users {
-		byEmail[u.Email] = u
+		byEmail[strings.ToLower(u.Email)] = u
 	}
 
 	links := make([]RecipientLink, 0, len(emails))
 	for _, email := range emails {
-		user, found := byEmail[email]
+		user, found := byEmail[strings.ToLower(email)]
 		links = append(links, RecipientLink{
 			Email:    email,
-			CaseLink: r.linkFor(ctx, email, user, found, projectID, caseID),
+			CaseLink: r.linkFor(ctx, user, found, projectID, caseID),
 		})
 	}
 	return links, nil
 }
 
-func (r *Resolver) linkFor(ctx context.Context, email string, user entity.UserRoleInfo, found bool, projectID, caseID string) string {
+// linkFor does not take the recipient's email — logging it would put PII
+// (an email address) in the logs, which this repo's own convention
+// disallows (see CLAUDE.md's Security section). caseID identifies which
+// notification a warning belongs to without identifying who it's about.
+func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found bool, projectID, caseID string) string {
 	isCustomer := false
 	switch {
 	case !found:
-		slog.WarnContext(ctx, "recipientlinks: recipient not found on entity-service; defaulting to CSM portal link", "email", email)
+		slog.WarnContext(ctx, "recipientlinks: recipient not found on entity-service; defaulting to CSM portal link", "caseID", caseID)
 	case r.matchesAny(user.Roles, r.customerRoles):
 		isCustomer = true
 	case r.matchesAny(user.Roles, r.csmRoles):
@@ -148,10 +156,10 @@ func (r *Resolver) linkFor(ctx context.Context, email string, user entity.UserRo
 	case user.UserType == "customer" || user.UserType == "external":
 		isCustomer = true
 		slog.WarnContext(ctx, "recipientlinks: recipient's roles matched neither CUSTOMER_ROLES nor CSM_ROLES; used userType as a fallback",
-			"email", email, "roles", user.Roles, "userType", user.UserType)
+			"caseID", caseID, "roles", user.Roles, "userType", user.UserType)
 	default:
 		slog.WarnContext(ctx, "recipientlinks: recipient's roles matched neither CUSTOMER_ROLES nor CSM_ROLES; defaulting to CSM portal link",
-			"email", email, "roles", user.Roles, "userType", user.UserType)
+			"caseID", caseID, "roles", user.Roles, "userType", user.UserType)
 	}
 
 	if isCustomer {

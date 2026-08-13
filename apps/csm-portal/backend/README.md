@@ -148,10 +148,12 @@ Backs `internal/recipientlinks.Resolver`, which resolves each `case.*` event rec
 
 | Variable | Description |
 |---|---|
-| `CSM_PORTAL_WEB_BASE_URL` | CSM portal webapp base URL — `<CSM_PORTAL_WEB_BASE_URL>/cases/{caseId}` for recipients whose role isn't in `CUSTOMER_ROLES` (optional) |
-| `CUSTOMER_PORTAL_WEB_BASE_URL` | Customer portal webapp base URL — `<CUSTOMER_PORTAL_WEB_BASE_URL>/projects/{projectId}/support/cases/{caseId}` for recipients whose role is in `CUSTOMER_ROLES` (optional) |
-| `CUSTOMER_ROLES` | Comma-separated role names that get the customer portal link (optional) |
-| `CSM_ROLES` | Comma-separated role names that get the CSM portal link (optional) — neither role list needs to be exhaustive; see `Resolver.ResolveLinks`' doc comment for the userType/default fallback when a recipient's roles match neither |
+| `CSM_PORTAL_WEB_BASE_URL` | CSM portal webapp base URL — `<CSM_PORTAL_WEB_BASE_URL>/cases/{caseId}` for recipients classified CSM (optional) |
+| `CUSTOMER_PORTAL_WEB_BASE_URL` | Customer portal webapp base URL — `<CUSTOMER_PORTAL_WEB_BASE_URL>/projects/{projectId}/support/cases/{caseId}` for recipients classified customer (optional) |
+| `CUSTOMER_ROLES` | Comma-separated role names classified customer (optional) |
+| `CSM_ROLES` | Comma-separated role names classified CSM (optional) |
+
+Classification isn't just "role in `CUSTOMER_ROLES`" — it's a fallback chain, since neither role list needs to be exhaustive: a role in `CUSTOMER_ROLES` → customer; else a role in `CSM_ROLES` → CSM; else the recipient's entity-service `userType` (`customer`/`external` → customer, anything else → CSM); else — including when entity-service has no record for the recipient at all — CSM, as the last-resort default. See `Resolver.ResolveLinks`'s doc comment for the full reasoning.
 
 ### Updates service
 

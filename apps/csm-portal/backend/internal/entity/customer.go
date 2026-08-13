@@ -104,7 +104,7 @@ func (c *CustomerEntityClient) SearchUsers(ctx context.Context, body []byte) ([]
 // UserRoleInfo is the subset of an entity-service user record
 // SearchUsersByEmail needs: enough to resolve which portal a notification
 // recipient belongs to (their roles, matched against configured
-// customer/CSM role lists — see internal/eventpublisher), plus userType as
+// customer/CSM role lists — see internal/recipientlinks), plus userType as
 // a fallback signal. An email not found on the entity service is simply
 // absent from SearchUsersByEmail's result.
 type UserRoleInfo struct {
@@ -122,20 +122,37 @@ type searchUsersByEmailRequest struct {
 	} `json:"filters"`
 }
 
-// searchUsersByEmailLimit caps how many users a single SearchUsersByEmail
-// call can return — set to the entity service's own enforced maximum
-// (internal/service's maxUserLimit there) so a case with an unusually large
-// recipient list still gets every match in one call, not a silently
-// truncated first page.
+// searchUsersByEmailLimit caps how many emails a single POST /users/search
+// call filters on — set to the entity service's own enforced maximum
+// (internal/service's maxUserLimit there). SearchUsersByEmail batches into
+// calls of at most this many emails each, so a case with an unusually large
+// recipient list still gets every match, not a silently truncated first
+// page (entity-service's own response is capped at maxUserLimit rows
+// regardless of how many emails a single request filters on).
 const searchUsersByEmailLimit = 50
 
-// SearchUsersByEmail calls POST /users/search filtered to emails and
-// returns each matched user's roles/userType. Unlike SearchUsers (raw
-// passthrough for this backend's own POST /users/search endpoint), this
-// unmarshals into typed results for internal callers that need structured
-// data, not a byte-for-byte forward. Callers with more than
-// searchUsersByEmailLimit emails to resolve must batch their own calls.
+// SearchUsersByEmail calls POST /users/search filtered to emails (batching
+// into calls of at most searchUsersByEmailLimit emails each — see that
+// constant's doc comment) and returns each matched user's roles/userType.
+// Unlike SearchUsers (raw passthrough for this backend's own
+// POST /users/search endpoint), this unmarshals into typed results for
+// internal callers that need structured data, not a byte-for-byte forward.
 func (c *CustomerEntityClient) SearchUsersByEmail(ctx context.Context, emails []string) ([]UserRoleInfo, error) {
+	var users []UserRoleInfo
+	for start := 0; start < len(emails); start += searchUsersByEmailLimit {
+		end := min(start+searchUsersByEmailLimit, len(emails))
+		batch, err := c.searchUsersByEmailBatch(ctx, emails[start:end])
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, batch...)
+	}
+	return users, nil
+}
+
+// searchUsersByEmailBatch is SearchUsersByEmail's single-request worker —
+// emails must already be at most searchUsersByEmailLimit long.
+func (c *CustomerEntityClient) searchUsersByEmailBatch(ctx context.Context, emails []string) ([]UserRoleInfo, error) {
 	req := searchUsersByEmailRequest{}
 	req.Pagination.Limit = searchUsersByEmailLimit
 	req.Filters.Emails = emails
