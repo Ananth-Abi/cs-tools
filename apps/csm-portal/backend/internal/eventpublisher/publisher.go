@@ -120,3 +120,11 @@ func (p *Publisher) Publish(ctx context.Context, eventType events.Type, entityID
 
 	return fmt.Errorf("eventpublisher: publish %s for entity %s: %w", eventType, entityID, pubErr)
 }
+
+// Close releases the underlying Kafka connection. Safe to call once during
+// shutdown.
+func (p *Publisher) Close() {
+	if closer, ok := p.kafka.(interface{ Close() }); ok {
+		closer.Close()
+	}
+}
