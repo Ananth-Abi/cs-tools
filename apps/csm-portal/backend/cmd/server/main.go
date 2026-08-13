@@ -19,7 +19,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -34,9 +36,11 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventbus"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventpublisher"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/scim"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/stream"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
 
@@ -67,7 +71,41 @@ func main() {
 	}
 
 	customerEntityClient := entity.NewCustomerEntityClient(customerEntityCfg)
-	caseHandler := handler.NewCaseHandler(customerEntityClient)
+
+	// Event Hub — shared by the producer (this backend's own writes, via
+	// eventPublisher below), the case-events consumer (internal/caseevents),
+	// and the case-activity SSE broadcast hub those events feed
+	// (internal/stream.BroadcastHub, consumed by the dedicated :9092
+	// listener started further down). Optional: left unset, this backend
+	// neither publishes, consumes, nor serves live case-activity updates —
+	// callers fall back to their existing manual-refresh/staleTime polling.
+	var caseEventsConsumer *eventbus.Consumer
+	var eventPublisher *eventpublisher.Publisher
+	var activityHub *stream.BroadcastHub
+	if broker := os.Getenv("EVENT_HUB_BROKER"); broker != "" {
+		eventBusCfg := eventbus.Config{
+			Broker:           broker,
+			ConnectionString: mustEnv("EVENT_HUB_CONNECTION_STRING"),
+			Topic:            mustEnv("EVENT_HUB_TOPIC"),
+		}
+		// Every replica gets its own consumer group (a random suffix on top
+		// of the configured/default base name) rather than sharing one, so
+		// each replica sees 100% of events instead of Kafka load-balancing
+		// them across replicas — a shared group would mean an SSE client
+		// connected to replica B never learns about an event a shared
+		// group happened to hand to replica A. See internal/stream.
+		// BroadcastHub: it only knows about subscribers on its own
+		// process, so every replica must independently observe every event
+		// to be able to broadcast it to whichever subscribers it happens to
+		// be holding the connection for.
+		consumerGroupBase := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-portal-backend")
+		consumerGroup := fmt.Sprintf("%s-replica-%s", consumerGroupBase, newReplicaID())
+		caseEventsConsumer = eventbus.NewConsumer(eventBusCfg, consumerGroup)
+		eventPublisher = eventpublisher.New(eventbus.NewProducer(eventBusCfg), customerEntityClient)
+		activityHub = stream.NewBroadcastHub()
+	}
+
+	caseHandler := handler.NewCaseHandler(customerEntityClient, eventPublisher, activityHub)
 	dashboardHandler := handler.NewDashboardHandler(customerEntityClient)
 	accountHandler := handler.NewAccountHandler(customerEntityClient)
 	projectHandler := handler.NewProjectHandler(customerEntityClient)
@@ -107,24 +145,6 @@ func main() {
 	}
 	scimClient := scim.NewClient(scimCfg)
 	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient)
-
-	// case-events consumer — an independent consumer group (see
-	// internal/eventbus.Consumer's doc comment) reacting to domain events
-	// for whatever needs to see every case update; internal/caseevents.
-	// Handler only logs today, but this is the scaffold real-time FE push
-	// will grow out of. Optional: left unset, this backend doesn't consume
-	// anything, same "not required yet" status as internal/eventpublisher
-	// (the producer side) has.
-	var caseEventsConsumer *eventbus.Consumer
-	if broker := os.Getenv("EVENT_HUB_BROKER"); broker != "" {
-		eventBusCfg := eventbus.Config{
-			Broker:           broker,
-			ConnectionString: mustEnv("EVENT_HUB_CONNECTION_STRING"),
-			Topic:            mustEnv("EVENT_HUB_TOPIC"),
-		}
-		consumerGroup := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-portal-backend")
-		caseEventsConsumer = eventbus.NewConsumer(eventBusCfg, consumerGroup)
-	}
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -220,6 +240,13 @@ func main() {
 	mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
 	mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
 
+	// Built once and reused on both listeners below: Auth() does a real JWKS
+	// fetch (when TokenValidatorEnabled), so calling it a second time would
+	// duplicate that startup network round-trip and double the chance of a
+	// transient JWKS hiccup aborting startup, for no benefit — both
+	// listeners validate the exact same tokens the exact same way.
+	authMiddleware := middleware.Auth(authCfg)
+
 	addr := ":" + mustPort("PORT", "8080")
 
 	ln, err := net.Listen("tcp", addr)
@@ -227,12 +254,11 @@ func main() {
 		slog.Error("failed to bind", "addr", addr, "err", err)
 		os.Exit(1)
 	}
-	slog.Info("CSM Portal Backend started", "addr", addr)
 
 	srv := &http.Server{
 		Handler: middleware.SecurityHeaders(
 			middleware.CorrelationID(
-				middleware.Auth(authCfg)(
+				authMiddleware(
 					middleware.Logger(mux),
 				),
 			),
@@ -241,6 +267,51 @@ func main() {
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       60 * time.Second,
+	}
+
+	// The case-activity SSE stream (GET /cases/{id}/activities/stream) needs
+	// a connection that can stay open indefinitely, which the timeouts above
+	// would kill — WriteTimeout/IdleTimeout apply for the life of the
+	// connection, not per-request. It gets its own listener/http.Server on a
+	// separate port with those timeouts disabled, mirroring how this
+	// backend's WebSocket work solved the identical problem. Only started
+	// when Event Hub is configured (activityHub != nil) — without it there
+	// is nothing for the stream to ever broadcast, so standing up a second
+	// server would just be a permanently-503 endpoint.
+	var streamSrv *http.Server
+	var streamLn net.Listener
+	if activityHub != nil {
+		streamMux := http.NewServeMux()
+		streamMux.HandleFunc("GET /cases/{id}/activities/stream", caseHandler.StreamCaseActivities)
+
+		streamAddr := ":" + mustPort("STREAM_PORT", "9092")
+		streamLn, err = net.Listen("tcp", streamAddr)
+		if err != nil {
+			slog.Error("failed to bind", "addr", streamAddr, "err", err)
+			os.Exit(1)
+		}
+
+		streamSrv = &http.Server{
+			// CORS wraps everything, including Auth — see middleware.CORS's
+			// doc comment for why: a browser preflight carries no
+			// x-jwt-assertion header, so Auth must never see it first.
+			// STREAM_CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
+			// unset allows any origin (local-dev-friendly default — see
+			// middleware.CORS on why that's safe here).
+			Handler: middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
+				middleware.SecurityHeaders(
+					middleware.CorrelationID(
+						authMiddleware(
+							middleware.Logger(streamMux),
+						),
+					),
+				),
+			),
+			ReadHeaderTimeout: 10 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      0,
+			IdleTimeout:       0,
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -252,9 +323,20 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+	slog.Info("CSM Portal Backend started", "addr", addr)
+
+	if streamSrv != nil {
+		go func() {
+			if err := streamSrv.Serve(streamLn); err != nil && err != http.ErrServerClosed {
+				slog.Error("stream server exited", "err", err)
+				os.Exit(1)
+			}
+		}()
+		slog.Info("case-activity stream server started", "addr", streamLn.Addr().String())
+	}
 
 	if caseEventsConsumer != nil {
-		go caseEventsConsumer.Run(ctx, caseevents.NewHandler().Handle)
+		go caseEventsConsumer.Run(ctx, caseevents.NewHandler(activityHub).Handle)
 		slog.Info("case-events consumer started")
 	}
 
@@ -264,9 +346,17 @@ func main() {
 	if caseEventsConsumer != nil {
 		caseEventsConsumer.Close()
 	}
+	if eventPublisher != nil {
+		eventPublisher.Close()
+	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	if streamSrv != nil {
+		if err := streamSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("stream server graceful shutdown failed", "err", err)
+		}
+	}
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "err", err)
 		os.Exit(1)
@@ -288,6 +378,24 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// newReplicaID returns a random UUID v4 string, used to give each running
+// instance of this backend its own unique Kafka consumer group suffix (see
+// the EVENT_HUB_BROKER block above). Deliberately duplicates
+// middleware.newCorrelationID's same crypto/rand-based approach rather than
+// exporting/sharing it — the two ids serve unrelated purposes (a per-process
+// identity that lives for the process's whole lifetime vs. a per-request
+// trace id) and don't need to be coupled by a shared helper.
+func newReplicaID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		slog.Error("failed to generate replica id", "err", err)
+		os.Exit(1)
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // mustPort returns the value of the given environment variable (or def if
