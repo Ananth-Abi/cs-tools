@@ -75,6 +75,7 @@ import {
 } from "@features/csm-cases/api/useCsmCaseComments";
 import { useGetCsmConversationMessages } from "@features/csm-cases/api/useCsmConversationMessages";
 import { useGetCsmCaseActivities } from "@features/csm-cases/api/useCsmCaseActivities";
+import { useCaseActivityStream } from "@features/csm-cases/api/useCaseActivityStream";
 import {
   useGetCsmCaseAttachments,
   usePostCsmCaseAttachment,
@@ -389,6 +390,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     isLoading: isActivityLoading,
     isError: isActivityError,
   } = useGetCsmCaseActivities(caseId);
+  // Live updates: invalidates the two queries above whenever another viewer
+  // adds a comment or the case's status changes, so this tab doesn't rely
+  // solely on their own staleTime/a manual refresh to catch up.
+  useCaseActivityStream(caseId);
   // The chat transcript the case was spawned from, when linked. Loaded lazily
   // off the case's conversation id and merged into the comment stream below so
   // it renders as the earliest activity entries — mirrors the customer portal.
