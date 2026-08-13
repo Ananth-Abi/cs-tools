@@ -171,7 +171,10 @@ func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing
 	if internal.Recipients.Customer != nil {
 		t.Errorf("internal notice Recipients.Customer = %v, want nil", internal.Recipients.Customer)
 	}
-	const wantInternalSubject = "[ACP] 7 Days Reminder of Project for Acme - Subscription of "
+	// The fixture project has an account with no Name set, so the subject
+	// correctly omits the " of {AccountName}" clause entirely (regression
+	// coverage for the dangling "of " bug lives in TestInternalNoticeSubject).
+	const wantInternalSubject = "[ACP] 7 Days Reminder of Project for Acme - Subscription"
 	if internal.Subject != wantInternalSubject {
 		t.Errorf("internal Subject = %q, want %q", internal.Subject, wantInternalSubject)
 	}
@@ -309,6 +312,39 @@ func TestProcessProject_CustomerAudienceWindowSkipsAccountContactLookupWhenNoAcc
 	}
 	if ntf.sent[0].Recipients.Customer != nil {
 		t.Errorf("reminder Recipients.Customer = %v, want nil (no account linked)", ntf.sent[0].Recipients.Customer)
+	}
+}
+
+// TestProcessProject_CustomerAudienceWindowFetchContactsFailureSendsNothing
+// is a regression test for PR #1440 (Sajith Ekanayake): a transient
+// fetchContacts failure must not leave the internal notice already sent
+// with no corresponding suspensionProcessState record — that combination
+// causes a duplicate internal-notice resend on the next sweep, since the
+// window still looks "not yet notified". Contact resolution must happen
+// before any notice sends for a customer-audience window, exactly as it
+// did before this diff, so a fetch failure here sends zero notices.
+func TestProcessProject_CustomerAudienceWindowFetchContactsFailureSendsNothing(t *testing.T) {
+	reader := &mockEntityReader{
+		searchProjectContactsFn: func(ctx context.Context, projectID string, body []byte) ([]byte, error) {
+			return nil, errors.New("transient network error")
+		},
+	}
+	updater := &mockProjectUpdater{}
+	ntf := &mockNotifier{}
+
+	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	endDate := now.AddDate(0, 0, 6) // fires the 7-day window (customer-audience)
+	proj := project{ID: "p1", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
+
+	err := processProject(context.Background(), reader, updater, ntf, now, proj)
+	if err == nil {
+		t.Fatal("processProject() error = nil, want non-nil")
+	}
+	if len(ntf.sent) != 0 {
+		t.Errorf("ntf.sent = %d, want 0 (internal notice must not send before contacts are resolved)", len(ntf.sent))
+	}
+	if len(updater.calls) != 0 {
+		t.Errorf("updater.calls = %d, want 0", len(updater.calls))
 	}
 }
 
@@ -711,6 +747,24 @@ func TestInternalNoticeSubject(t *testing.T) {
 			projectName: "Kotak Insurance - Subscription",
 			accountName: "Kotak Life Insurance company Ltd",
 			want:        "[ACP] Project Suspension Notice of Kotak Insurance - Subscription of Kotak Life Insurance company Ltd",
+		},
+		{
+			// Regression test, PR #1440 review (Sajith Ekanayake): a
+			// project with no linked account previously produced a
+			// dangling "...of " with a trailing space and nothing after
+			// it, in a real outbound email subject.
+			name:        "no linked account: omits the dangling \" of \" clause entirely",
+			window:      90,
+			projectName: "Solo Project - Subscription",
+			accountName: "",
+			want:        "[ACP] 90 Days Reminder of Project for Solo Project - Subscription",
+		},
+		{
+			name:        "no linked account, day-0: omits the dangling \" of \" clause entirely",
+			window:      0,
+			projectName: "Solo Project - Subscription",
+			accountName: "",
+			want:        "[ACP] Project Suspension Notice of Solo Project - Subscription",
 		},
 	}
 

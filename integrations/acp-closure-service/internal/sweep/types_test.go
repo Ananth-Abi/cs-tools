@@ -135,6 +135,65 @@ func TestProject_ParsesNameProjectKeyStartDateAndAccountName(t *testing.T) {
 	}
 }
 
+// TestProject_ParsesNameKeyAndStartDateFromRealSearchProjectsResponse is a
+// regression test addressing a real review concern (PR #1440, Sajith
+// Ekanayake): Name/ProjectKey/StartDate were only regression-tested against
+// a GetProject-shaped fixture, but the unattended production sweep
+// (TEST_PROJECT_ID unset) reads projects from /projects/search instead — a
+// different, historically leaner response shape (CLAUDE.md documents
+// account itself being absent from this endpoint for a period). Confirmed
+// via a real /projects/search response (Postman) that name/key/startDate
+// ARE present on this shape too, not just GetProject's — this is the
+// literal response used as the fixture below.
+func TestProject_ParsesNameKeyAndStartDateFromRealSearchProjectsResponse(t *testing.T) {
+	const realSearchProjectsResponse = `{
+		"projects": [
+			{
+				"id": "266f6292-1b46-f510-264c-997a234bcba9",
+				"name": "DemoCloud - Cloud Support",
+				"key": "DEMOCLOUDCLOUDSUB",
+				"subscriptionType": "cloud_support",
+				"startDate": "2025-02-18T00:00:00Z",
+				"endDate": null,
+				"createdOn": "2023-10-25T06:54:50Z",
+				"account": {
+					"id": "cf3fee52-1b46-f510-264c-997a234bcbe5",
+					"name": "DemoCloud"
+				},
+				"closureState": "Open",
+				"endDateClosureState": "Open",
+				"invoiceDueDateClosureState": "Open",
+				"complianceViolationClosureState": null,
+				"complianceViolationDate": null,
+				"suspensionProcessState": {
+					"based_on_subscription_end_date": {"event_type": "open"},
+					"based_on_due_invoices": {"event_type": "open"},
+					"based_on_compliance": {"event_type": "open"}
+				}
+			}
+		]
+	}`
+
+	var resp searchProjectsResponse
+	if err := json.Unmarshal([]byte(realSearchProjectsResponse), &resp); err != nil {
+		t.Fatalf("unmarshal real SearchProjects response: %v", err)
+	}
+	if len(resp.Projects) != 1 {
+		t.Fatalf("Projects = %d, want 1", len(resp.Projects))
+	}
+
+	proj := resp.Projects[0]
+	if proj.Name != "DemoCloud - Cloud Support" {
+		t.Errorf("Name = %q, want %q", proj.Name, "DemoCloud - Cloud Support")
+	}
+	if proj.ProjectKey != "DEMOCLOUDCLOUDSUB" {
+		t.Errorf("ProjectKey = %q, want %q", proj.ProjectKey, "DEMOCLOUDCLOUDSUB")
+	}
+	if proj.StartDate == nil || !proj.StartDate.Equal(time.Date(2025, 2, 18, 0, 0, 0, 0, time.UTC)) {
+		t.Errorf("StartDate = %v, want 2025-02-18T00:00:00Z", proj.StartDate)
+	}
+}
+
 // TestAccountDTO_ParsesTechnicalOwnerAndRenewalAccountManager covers the two
 // account fields that were previously fetched over the wire and silently
 // dropped (accountDTO had no field for them): confirmed present on the real

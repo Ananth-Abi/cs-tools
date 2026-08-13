@@ -25,6 +25,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/closure"
@@ -83,6 +84,19 @@ func needsCustomerAudience(window closure.NoticeWindow) bool {
 	}
 }
 
+// projectOfAccount builds the "{ProjectName} of {AccountName}" clause
+// shared by both internal subject variants, omitting the " of {AccountName}"
+// half entirely when there's no linked account — a project with
+// proj.Account == nil previously produced a dangling "...of " with a
+// trailing space and nothing after it in a real outbound email subject (PR
+// #1440 review, Sajith Ekanayake).
+func projectOfAccount(projectName, accountName string) string {
+	if accountName == "" {
+		return projectName
+	}
+	return fmt.Sprintf("%s of %s", projectName, accountName)
+}
+
 // internalNoticeSubject builds the always-sent internal (Account Owner/
 // Renewal Manager/Technical Owner) notice's title line. Every internal copy
 // is [ACP]-prefixed regardless of window — that prefix marks "this is the
@@ -92,10 +106,11 @@ func needsCustomerAudience(window closure.NoticeWindow) bool {
 // "suspension notice" wording instead of "N Days Reminder" — there's no
 // "days remaining" left to report once a project is actually suspended.
 func internalNoticeSubject(window closure.NoticeWindow, projectName, accountName string) string {
-	if window == closure.NoticeWindow0 {
-		return fmt.Sprintf("[ACP] Project Suspension Notice of %s of %s", projectName, accountName)
+	target := projectOfAccount(projectName, accountName)
+	if window.IsTerminal() {
+		return fmt.Sprintf("[ACP] Project Suspension Notice of %s", target)
 	}
-	return fmt.Sprintf("[ACP] %d Days Reminder of Project for %s of %s", int(window), projectName, accountName)
+	return fmt.Sprintf("[ACP] %d Days Reminder of Project for %s", int(window), target)
 }
 
 // customerNoticeSubject builds the customer-facing notice's title line
@@ -103,7 +118,7 @@ func internalNoticeSubject(window closure.NoticeWindow, projectName, accountName
 // future tense ("Upcoming") before day-0 versus past tense once actually
 // suspended.
 func customerNoticeSubject(window closure.NoticeWindow, projectName string) string {
-	if window == closure.NoticeWindow0 {
+	if window.IsTerminal() {
 		return fmt.Sprintf("Project Suspension Notice - %s", projectName)
 	}
 	return fmt.Sprintf("Upcoming Project Suspension Notice - %s", projectName)
@@ -157,7 +172,7 @@ WSO2 Team`
 
 func internalNoticeBody(window closure.NoticeWindow, proj project, accountOwnerName string) string {
 	template := internalReminderBodyTemplate
-	if window == closure.NoticeWindow0 {
+	if window.IsTerminal() {
 		template = internalSuspensionBodyTemplate
 	}
 	return fmt.Sprintf(template, accountOwnerName, proj.Name, proj.ProjectKey, formatDate(proj.StartDate), formatDate(proj.EndDate))
@@ -186,7 +201,7 @@ WSO2 Team`
 
 func customerNoticeBody(window closure.NoticeWindow, proj project) string {
 	template := customerUpcomingSuspensionBodyTemplate
-	if window == closure.NoticeWindow0 {
+	if window.IsTerminal() {
 		template = customerAlreadySuspendedBodyTemplate
 	}
 	return fmt.Sprintf(template, proj.Name, formatDateUS(proj.EndDate))
@@ -256,6 +271,19 @@ func accountName(proj project) string {
 // it doesn't. Internal and customer notices are always two separate Send
 // calls, never merged into one — their content genuinely differs, not just
 // their recipient list.
+//
+// For a customer-audience window, contact resolution (fetchContacts +
+// ResolveCustomerContact) happens BEFORE the internal notice sends, not
+// after — deliberately. A transient fetchContacts failure must leave zero
+// notices sent, not an internal notice sent with no corresponding
+// suspensionProcessState record: the caller (processProject) skips
+// recordNoticeSent on any error here, so a partial send in that order would
+// make the window look "not yet notified" on the next sweep and resend the
+// same internal notice for real (PR #1440 review, Sajith Ekanayake). This
+// does mean ntf.Send(internalNotice) has two call sites below rather than
+// one — that's the tradeoff for keeping "skip contact-fetch entirely for
+// internal-only windows" (needsCustomerAudience) and "never send before
+// contacts resolve" both true at once; both sites wrap the error identically.
 func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, proj project, window closure.NoticeWindow) error {
 	contacts, err := resolveAccountContacts(ctx, reader, proj.accountID())
 	if err != nil {
@@ -274,11 +302,10 @@ func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, pro
 	internalNotice.Recipients = internalRecipients
 
 	if !needsCustomerAudience(window) {
-		return ntf.Send(ctx, internalNotice)
-	}
-
-	if err := ntf.Send(ctx, internalNotice); err != nil {
-		return fmt.Errorf("send internal notice: %w", err)
+		if err := ntf.Send(ctx, internalNotice); err != nil {
+			return fmt.Errorf("send internal notice: %w", err)
+		}
+		return nil
 	}
 
 	projectContacts, accountContactsList, err := fetchContacts(ctx, reader, proj)
@@ -286,6 +313,10 @@ func notifyForWindow(ctx context.Context, reader entityReader, ntf notifier, pro
 		return err
 	}
 	resolution := recipients.ResolveCustomerContact(projectContacts, accountContactsList)
+
+	if err := ntf.Send(ctx, internalNotice); err != nil {
+		return fmt.Errorf("send internal notice: %w", err)
+	}
 
 	if !resolution.NeedsAMNudge {
 		customerNotice := baseNotice(proj, window)
@@ -438,10 +469,22 @@ func recordNoticeSent(ctx context.Context, updater projectUpdater, proj project,
 // suspended project, Postman, project
 // acac149b-eba1-4714-fcf5-f5dabad0cdb1) — an equality check against
 // "Suspended" alone would miss that real case and re-suspend indefinitely.
+//
+// Logs unconditionally (real or dry-run — matching Run's own always-on
+// slog.ErrorContext/WarnContext calls, never gated on DRY_RUN) right before
+// attempting the write. This is the only signal a dry run gives for the
+// retry scenario where a prior run already recorded the notice
+// (ShouldNotify=false) but suspend itself failed or was interrupted: that
+// path never calls notifyForWindow at all, and DryRunProjectUpdater no
+// longer logs anything (PR #1440 review, Sajith Ekanayake) — without this,
+// such a project would produce zero dry-run output despite being about to
+// suspend for real.
 func suspend(ctx context.Context, updater projectUpdater, proj project) error {
 	if proj.EndDateClosureState != nil && *proj.EndDateClosureState != "Open" {
 		return nil
 	}
+
+	slog.InfoContext(ctx, "suspending project", "projectID", proj.ID)
 
 	body, err := json.Marshal(map[string]string{"endDateClosureState": "Suspended"})
 	if err != nil {
