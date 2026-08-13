@@ -206,6 +206,47 @@ export const SECURITY_CENTER = {
   emptyMessage: "No reports found.",
 } as const;
 
+/** The comment box on a case's Activity tab (ActivityCommentInput). */
+export const CASE_COMMENT_INPUT = {
+  /** Placeholder of the rich-text editor. */
+  placeholder: "Write a comment...",
+  /** The send control's accessible name — it carries an aria-label as well as a
+   * matching tooltip. */
+  sendButton: "Send comment",
+} as const;
+
+/** The case detail page's Details tab (CaseDetailsDetailsPanel).
+ *
+ * Every label below is copied verbatim from the component — including
+ * "Production Version", which really is spelt that way. The overview ID label is
+ * dynamic ("Case ID" for a case, "Service Request Overview" / "Security Report
+ * Analysis ID" / "Engagement ID" for the other kinds), so only the case value
+ * appears here. */
+export const CASE_DETAILS_PANEL = {
+  tab: "Details",
+  sections: {
+    caseOverview: "Case Overview",
+    escalationLevels: "Escalation Levels",
+    productEnvironment: "Product & Environment",
+    customerInformation: "Customer Information",
+    watchList: "Watch List",
+  },
+  fields: {
+    caseOverview: [
+      "Case ID",
+      "WSO2 Case ID",
+      "Status",
+      "Severity",
+      "Category",
+      "Created by",
+      "Created Date",
+      "Last Updated",
+    ],
+    productEnvironment: ["Product Name", "Production Version"],
+    customerInformation: ["Organization", "Project"],
+  },
+} as const;
+
 /** Cases list (`/projects/:projectId/support/cases`). */
 export const CASES_LIST = {
   pathSegment: "support/cases",
@@ -233,6 +274,10 @@ export const CASE_DETAIL = {
    * "Close", which otherwise makes the locator ambiguous. */
   mainTestId: "app-main",
   closeButton: "Close",
+  /** The comment editor's test id. The shared Editor hardcodes this id, so the
+   * Activity tab's comment box carries the same one as the case form's
+   * description field. */
+  commentEditorTestId: "case-description-editor",
   /** Status shown in the header chip once the case is closed. */
   closedStatus: "Closed",
   /** The header row renders, in order: WSO2 case id, case number, a status chip,

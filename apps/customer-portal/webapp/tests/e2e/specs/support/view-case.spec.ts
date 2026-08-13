@@ -37,9 +37,16 @@
 //   the Subscription and Cloud Support S4 cases carry no severity suffix and no
 //   "…with severity" in their comment, while MCS's S4 does.
 //
-// The header carries the WSO2 case id as well as the Details tab, so these
-// assertions all run against the header without switching tabs. Comments live on
-// the Activity tab, which is the default.
+// The header carries the WSO2 case id as well as the Details tab, so those
+// assertions run against the header. Comments live on the Activity tab, which is
+// the default.
+//
+// The test then switches to the **Details** tab and checks its five sections and
+// their field labels are displayed. Labels are asserted as "present at least
+// once" rather than exactly once: several repeat legitimately — the header
+// already shows a status and a severity — so requiring uniqueness would fail for
+// the wrong reason. The checks are soft, so one run reports every missing field
+// rather than stopping at the first.
 //
 
 import { test, expect, withSession } from "../../fixtures/test";
@@ -49,7 +56,7 @@ import {
   CASE_VIEW_EXPECTATIONS,
   PROJECTS,
 } from "../../config/testData";
-import { CASE_DETAIL } from "../../utils/selectors";
+import { CASE_DETAIL, CASE_DETAILS_PANEL } from "../../utils/selectors";
 
 withSession(test);
 
@@ -103,6 +110,48 @@ test.describe("View Case", () => {
           // The comment, on the Activity tab (the default). Pinned per case: the S4
           // case's wording differs from the other three (see the fixture note).
           await expect(caseDetail.comment(comment)).toBeVisible();
+
+          // ── Details tab ──────────────────────────────────────────────────
+          await caseDetail.openDetailsTab();
+
+          const { sections, fields } = CASE_DETAILS_PANEL;
+
+          // Sections are asserted present; Escalation Levels and Watch List
+          // carry no fields of their own here, so their headings are the check.
+          for (const section of Object.values(sections)) {
+            await expect
+              .soft(
+                caseDetail.detailsText(section),
+                `"${section}" section should be shown`,
+              )
+              .not.toHaveCount(0);
+          }
+
+          // Field labels, asserted as "displayed at least once" rather than
+          // exactly once: several repeat legitimately — the header already shows
+          // a status and a severity — so requiring uniqueness would fail for the
+          // wrong reason.
+          // "Production Version" is omitted when the project's product has no
+          // version — Cloud Support's does not — so it is only expected where
+          // the fixture says the field exists.
+          const productFields = project.hasProductVersionField
+            ? fields.productEnvironment
+            : fields.productEnvironment.filter(
+                (label) => label !== "Production Version",
+              );
+
+          for (const label of [
+            ...fields.caseOverview,
+            ...productFields,
+            ...fields.customerInformation,
+          ]) {
+            await expect
+              .soft(
+                caseDetail.detailsText(label),
+                `"${label}" field should be shown`,
+              )
+              .not.toHaveCount(0);
+          }
         });
       }
     });
