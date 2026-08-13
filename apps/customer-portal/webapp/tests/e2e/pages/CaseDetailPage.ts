@@ -20,7 +20,11 @@ import {
   type Response,
   expect,
 } from "../fixtures/test";
-import { CASE_DETAIL } from "../utils/selectors";
+import {
+  CASE_COMMENT_INPUT,
+  CASE_DETAIL,
+  CASE_DETAILS_PANEL,
+} from "../utils/selectors";
 import { isSuccess } from "../utils/caseFlows";
 
 /** How long to allow for a case's detail page to resolve — the header is
@@ -155,6 +159,79 @@ export class CaseDetailPage {
   /** A comment on the Activity tab, matched as a substring. */
   comment(text: string): Locator {
     return this.main().getByText(text, { exact: false }).first();
+  }
+
+  //
+  // Details tab.
+  //
+
+  /** Switches to the Details tab and waits for its first section. */
+  async openDetailsTab(): Promise<void> {
+    await this.page
+      .getByRole("tab", { name: CASE_DETAILS_PANEL.tab, exact: true })
+      .click();
+    await expect(
+      this.detailsText(CASE_DETAILS_PANEL.sections.caseOverview),
+    ).toHaveCount(1, { timeout: LOAD_TIMEOUT_MS });
+  }
+
+  /**
+   * Text within the page, for asserting a Details-tab label or section is shown.
+   *
+   * Returns the full match set rather than narrowing with `.first()`: several
+   * labels legitimately repeat — the header already shows a status and a
+   * severity, for instance — so callers assert on the count being non-zero,
+   * which states "this is displayed" without pretending the page has only one.
+   *
+   * @param text - Exact label or heading text.
+   * @returns Locator for every match.
+   */
+  detailsText(text: string): Locator {
+    return this.main().getByText(text, { exact: true });
+  }
+
+  //
+  // Activity tab — the comment box.
+  //
+
+  /** The comment editor. A Lexical contenteditable, so it is typed into rather
+   * than filled. */
+  commentEditor(): Locator {
+    return this.main().getByTestId(CASE_DETAIL.commentEditorTestId);
+  }
+
+  sendCommentButton(): Locator {
+    return this.main().getByRole("button", {
+      name: CASE_COMMENT_INPUT.sendButton,
+      exact: true,
+    });
+  }
+
+  /**
+   * Types a comment and sends it, waiting for the POST to land.
+   *
+   * @param text - Comment body.
+   * @returns The create response, for the caller to assert on.
+   */
+  async addComment(text: string): Promise<Response> {
+    const editor = this.commentEditor();
+    await expect(editor).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    await editor.click();
+    await editor.pressSequentially(text);
+
+    // The send control stays disabled until the editor holds submittable
+    // content, so this also confirms the text registered with Lexical.
+    await expect(this.sendCommentButton()).toBeEnabled();
+
+    const [response] = await Promise.all([
+      this.page.waitForResponse(
+        (r) =>
+          /\/cases\/[^/]+\/comments$/.test(new URL(r.url()).pathname) &&
+          r.request().method() === "POST",
+      ),
+      this.sendCommentButton().click(),
+    ]);
+    return response;
   }
 
   confirmDialog(): Locator {

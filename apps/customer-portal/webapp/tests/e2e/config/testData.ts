@@ -86,6 +86,12 @@ export interface ProjectFixture {
    * CreateCasePage.tsx). Cannot be derived from `productVersion` by trimming, so
    * it is recorded explicitly. */
   productName: string;
+  /** Whether the case Details tab renders a "Production Version" field.
+   *
+   * It is omitted when the project's product carries no version — Cloud
+   * Support's WSO2 Developer Platform, verified live — so the details assertions
+   * must not demand it there. */
+  hasProductVersionField: boolean;
   /** Whether the project offers the "Security Report" item in the Get Help
    * dropdown. Gated on the project's SRA write access
    * (`isSecurityReportVisible` in GetHelpDropdown.tsx) — Cloud Support does not
@@ -111,6 +117,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     autoSelectsDeployment: false,
     productVersion: "WSO2 API Manager 4.5.0",
     productName: "WSO2 API Manager",
+    hasProductVersionField: true,
     hasSecurityReport: true,
   },
   [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: {
@@ -123,6 +130,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     autoSelectsDeployment: false,
     productVersion: "WSO2 Identity Server 7.1.0",
     productName: "WSO2 Identity Server",
+    hasProductVersionField: true,
     hasSecurityReport: true,
   },
   [ProjectType.CLOUD_SUPPORT]: {
@@ -136,6 +144,7 @@ export const PROJECTS: Record<ProjectType, ProjectFixture> = {
     autoSelectsDeployment: true,
     productVersion: "WSO2 Developer Platform",
     productName: "WSO2 Developer Platform",
+    hasProductVersionField: false,
     hasSecurityReport: false,
   },
 };
@@ -607,6 +616,45 @@ export const SIDE_NAV_VISIBILITY: Partial<
     Announcements: true,
   },
 };
+
+/** A comment to post on a case, and the case it goes on. */
+export interface CaseCommentTarget {
+  projectType: ProjectType;
+  /** Case to comment on — each project's S1 case, also used by the view-case
+   * suite. */
+  caseId: string;
+  text: string;
+}
+
+/**
+ * Comments posted by the case-comment spec, one per project type.
+ *
+ * ⚠️ Comments cannot be deleted — there is no delete endpoint — so the spec posts
+ * only when this exact text is not already on the case. The text is therefore the
+ * idempotency key: changing it makes the next run post a new comment on every
+ * project, permanently.
+ *
+ * The same text is used across projects deliberately: each comment lives on a
+ * different case, so there is no ambiguity, and one string keeps the intent
+ * obvious.
+ */
+export const CASE_COMMENTS: CaseCommentTarget[] = [
+  {
+    projectType: ProjectType.SUBSCRIPTION,
+    caseId: "ce1502cf3bee4b103e1e088aa4e45a6d",
+    text: "This is a test comment from Automation Test",
+  },
+  {
+    projectType: ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+    caseId: "07962293ebeec310fcf5f5dabad0cdcd",
+    text: "This is a test comment from Automation Test",
+  },
+  {
+    projectType: ProjectType.CLOUD_SUPPORT,
+    caseId: "d4e66e1f3bea0f1091404c6aa5e45ae0",
+    text: "This is a test comment from Automation Test",
+  },
+];
 
 /** Formats shared across every project's cases. */
 export const CASE_VIEW_EXPECTATIONS = {
