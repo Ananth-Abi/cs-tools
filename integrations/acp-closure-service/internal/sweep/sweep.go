@@ -25,7 +25,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/closure"
@@ -470,21 +469,19 @@ func recordNoticeSent(ctx context.Context, updater projectUpdater, proj project,
 // acac149b-eba1-4714-fcf5-f5dabad0cdb1) — an equality check against
 // "Suspended" alone would miss that real case and re-suspend indefinitely.
 //
-// Logs unconditionally (real or dry-run — matching Run's own always-on
-// slog.ErrorContext/WarnContext calls, never gated on DRY_RUN) right before
-// attempting the write. This is the only signal a dry run gives for the
-// retry scenario where a prior run already recorded the notice
-// (ShouldNotify=false) but suspend itself failed or was interrupted: that
-// path never calls notifyForWindow at all, and DryRunProjectUpdater no
-// longer logs anything (PR #1440 review, Sajith Ekanayake) — without this,
-// such a project would produce zero dry-run output despite being about to
-// suspend for real.
+// Deliberately logs nothing, matching DryRunProjectUpdater's own silence —
+// per explicit user direction, the log should show notice/email content
+// only, nothing else, full stop. Known, accepted tradeoff (raised in PR
+// #1440 review, Sajith Ekanayake): the retry scenario where a prior run
+// already recorded the notice (ShouldNotify=false) but suspend itself
+// failed or was interrupted produces zero dry-run output for that project,
+// since notifyForWindow is never called on that path either. Confirmed
+// acceptable — do not add logging back here without re-confirming that
+// decision has changed.
 func suspend(ctx context.Context, updater projectUpdater, proj project) error {
 	if proj.EndDateClosureState != nil && *proj.EndDateClosureState != "Open" {
 		return nil
 	}
-
-	slog.InfoContext(ctx, "suspending project", "projectID", proj.ID)
 
 	body, err := json.Marshal(map[string]string{"endDateClosureState": "Suspended"})
 	if err != nil {
