@@ -45,12 +45,13 @@ const caseActivityStreamHeartbeat = 15 * time.Second
 //
 // The broadcast payload is a minimal {caseId, type, timestamp} — never
 // comment text or field values (see events.CommentAddedPayload/
-// StatusChangedPayload) — so a caller subscribed to a case it would not
-// otherwise be authorized to read learns only that *something* changed, not
-// what. The browser's subsequent refetch through the existing REST endpoints
-// is what's actually authorized per-user. This mirrors an existing tradeoff,
-// not a new one: internal/caseevents.Handler already receives every case
-// event system-wide with no per-user filtering.
+// StatusChangedPayload) — but even that is per-case, so a caller must be
+// authorized to read the requested case before subscribing, not merely hold
+// a valid token: see the GetCase call below, which registers the
+// subscription only once the same upstream ACL check every other
+// case-reading endpoint relies on has passed. This is unrelated to
+// internal/caseevents.Handler, which is a server-internal component with no
+// external caller and legitimately sees every event system-wide.
 func (h *CaseHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -61,6 +62,17 @@ func (h *CaseHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Reques
 	caseID := r.PathValue("id")
 	if caseID == "" || !uuidRe.MatchString(caseID) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	// A caller with a valid token but no read access to this specific case
+	// must not learn even that it changed. Reuse the same upstream call
+	// GetCase itself uses — the caller's forwarded x-user-id-token is what
+	// ServiceNow enforces the ACL against — before registering the
+	// subscription, so an unauthorized caseID never reaches h.hub.Register.
+	if _, err := h.entity.GetCase(r.Context(), caseID); err != nil {
+		slog.ErrorContext(r.Context(), "entity GetCase failed during stream authorization", "userID", user.UserID, "caseID", caseID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to open the case activity stream.")
 		return
 	}
 

@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/stream"
 )
@@ -74,6 +75,29 @@ func TestStreamCaseActivities_HubNotConfigured(t *testing.T) {
 	h.StreamCaseActivities(w, req)
 
 	assertStatus(t, w, http.StatusServiceUnavailable)
+}
+
+// A caller with a valid token but no read access to the requested case must
+// not be able to subscribe to it — see the GetCase authorization check added
+// ahead of hub.Register.
+func TestStreamCaseActivities_UnauthorizedCase(t *testing.T) {
+	client := &mockEntityCaseClient{
+		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
+			return nil, &apierror.Error{StatusCode: http.StatusForbidden}
+		},
+	}
+	hub := stream.NewBroadcastHub()
+	h := NewCaseHandler(client, nil, hub)
+	req := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+streamTestCaseID+"/activities/stream", nil))
+	req.SetPathValue("id", streamTestCaseID)
+	w := httptest.NewRecorder()
+
+	h.StreamCaseActivities(w, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+	if ct := w.Header().Get("Content-Type"); ct == "text/event-stream" {
+		t.Error("stream headers were written for a case the caller cannot read")
+	}
 }
 
 // syncRecorder is a minimal, mutex-protected http.ResponseWriter/http.Flusher
