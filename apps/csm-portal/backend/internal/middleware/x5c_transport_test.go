@@ -48,6 +48,7 @@ func TestX5CStrippingTransport_RemovesX5CFromEveryKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RoundTrip returned error: %v", err)
 	}
+	defer resp.Body.Close()
 
 	sanitized, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -68,7 +69,10 @@ func TestX5CStrippingTransport_RemovesX5CFromEveryKey(t *testing.T) {
 		if _, present := key["x5c"]; present {
 			t.Errorf("expected x5c to be stripped from key %v, but it is still present", key["kid"])
 		}
-		if key["n"] == "" || key["kid"] == "" {
+		n, nOK := key["n"].(string)
+		e, eOK := key["e"].(string)
+		kid, kidOK := key["kid"].(string)
+		if !nOK || n == "" || !eOK || e == "" || !kidOK || kid == "" {
 			t.Errorf("expected other JWK fields to survive stripping, got %v", key)
 		}
 	}
