@@ -56,7 +56,7 @@ import {
   SECURITY_REPORT_ATTACHMENT,
   SECURITY_REPORT_INPUT,
 } from "../../config/testData";
-import { isSuccess, skipWhenUnconfigured } from "../../utils/caseFlows";
+import { expectSuccess, skipWhenUnconfigured } from "../../utils/caseFlows";
 
 withSession(test);
 
@@ -154,10 +154,7 @@ test.describe("Security Report", () => {
 
         // Status asserted here rather than in the predicate, so a rejected
         // create reports the server's message instead of timing out.
-        expect(
-          isSuccess(createResponse.status()),
-          `create security report failed: ${createResponse.status()} ${await createResponse.text()}`,
-        ).toBe(true);
+        await expectSuccess(createResponse, "create security report");
 
         const created = (await createResponse.json()) as {
           id?: string;

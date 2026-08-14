@@ -341,6 +341,22 @@ export interface CaseViewSet {
  * from `CASE_INPUT`), while every other case — including MCS's S4 — follows the
  * per-severity naming.
  */
+/**
+ * Project types whose cases lists are covered by the list-cases suite.
+ *
+ * Every project type reaches the lists the same way — Support Center →
+ * Outstanding Cases → the footer buttons — so unlike the case-view sets below
+ * this needs no per-project data beyond the project itself.
+ *
+ * The My Cases half asserts a non-empty list, so a project only belongs here
+ * once the session's own account has created a case in it.
+ */
+export const CASE_LIST_PROJECTS: ProjectType[] = [
+  ProjectType.SUBSCRIPTION,
+  ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+  ProjectType.CLOUD_SUPPORT,
+];
+
 export const CASE_VIEWS: CaseViewSet[] = [
   {
     projectType: ProjectType.SUBSCRIPTION,
@@ -655,6 +671,62 @@ export const CASE_COMMENTS: CaseCommentTarget[] = [
     text: "This is a test comment from Automation Test",
   },
 ];
+
+/** The two files the attachment specs use, shared by every project. */
+export const ATTACHMENT_FILES = {
+  /** Uploaded once and left in place, so the list, expand, collapse and download
+   * tests always have something to work with. */
+  kept: {
+    /** Relative to the tests/e2e directory. Kept in-repo rather than pointing at
+     * a developer's Documents folder, so the specs run anywhere. */
+    path: "fixtures/files/screenshot.png",
+    name: "screenshot.png",
+    /** Size as the list formats it (807102 bytes → "788.2 KB"). Pinned so
+     * replacing the fixture fails loudly rather than asserting nothing. */
+    size: "788.2 KB",
+  },
+  /** Uploaded and then removed by the delete test, so it never accumulates. */
+  transient: {
+    path: "fixtures/files/deleteAttachment.png",
+    name: "deleteAttachment.png",
+    size: "788.2 KB",
+  },
+} as const;
+
+/** Cases the attachment specs act on, per project. */
+export interface AttachmentTarget {
+  projectType: ProjectType;
+  /** Case that keeps an uploaded file — used by list, expand, collapse and
+   * download. */
+  caseId: string;
+  /** A different case for the upload-then-delete round trip. Kept separate so
+   * the delete never removes the fixture the other tests depend on. */
+  deleteCaseId: string;
+}
+
+export const ATTACHMENT_TARGETS: AttachmentTarget[] = [
+  {
+    projectType: ProjectType.SUBSCRIPTION,
+    caseId: "07f53bef3b6e43503e1e088aa4e45a38",
+    deleteCaseId: "d225c2473ba64b1091404c6aa5e45af0",
+  },
+  {
+    projectType: ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+    caseId: "07962293ebeec310fcf5f5dabad0cdcd",
+    deleteCaseId: "c4d62e93ebeec310fcf5f5dabad0cdbb",
+  },
+  {
+    projectType: ProjectType.CLOUD_SUPPORT,
+    caseId: "d4e66e1f3bea0f1091404c6aa5e45ae0",
+    deleteCaseId: "d417eed3ebeec310fcf5f5dabad0cde8",
+  },
+];
+
+/** How the list renders an upload date, e.g. "Aug 13, 2026, 9:41 PM". Used on
+ * runs that did not upload, where the row keeps its original date and today's
+ * cannot be asserted. */
+export const ATTACHMENT_DATE_PATTERN =
+  /[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M/;
 
 /** Formats shared across every project's cases. */
 export const CASE_VIEW_EXPECTATIONS = {

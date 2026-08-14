@@ -38,7 +38,7 @@ import {
   PROJECTS,
   ProjectType,
 } from "../../config/testData";
-import { isSuccess, skipWhenUnconfigured } from "../../utils/caseFlows";
+import { expectSuccess, skipWhenUnconfigured } from "../../utils/caseFlows";
 
 withSession(test);
 
@@ -93,10 +93,7 @@ test.describe("Deployment", () => {
       deployments.submit(),
     ]);
 
-    expect(
-      isSuccess(createResponse.status()),
-      `create deployment failed: ${createResponse.status()} ${await createResponse.text()}`,
-    ).toBe(true);
+    await expectSuccess(createResponse, "create deployment");
 
     const created = (await createResponse.json()) as {
       id?: string;

@@ -178,4 +178,4 @@ export function withSession(t: typeof base, name: string = DEFAULT_SESSION): voi
 //
 export const test = base;
 export { expect };
-export type { Locator, Page, Response } from "@playwright/test";
+export type { Download, Locator, Page, Response } from "@playwright/test";

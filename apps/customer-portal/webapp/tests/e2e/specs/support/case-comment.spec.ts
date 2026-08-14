@@ -37,7 +37,7 @@
 import { test, expect, withSession } from "../../fixtures/test";
 import { CaseDetailPage } from "../../pages/CaseDetailPage";
 import { CASE_COMMENTS, PROJECTS } from "../../config/testData";
-import { isSuccess } from "../../utils/caseFlows";
+import { expectSuccess } from "../../utils/caseFlows";
 
 withSession(test);
 
@@ -75,10 +75,7 @@ test.describe("Case Comment", () => {
 
         // Status asserted here rather than in the response predicate, so a
         // rejected post reports the server's message instead of timing out.
-        expect(
-          isSuccess(response.status()),
-          `post comment failed: ${response.status()} ${await response.text()}`,
-        ).toBe(true);
+        await expectSuccess(response, "post comment");
 
         // The list refetches after a successful post, so the comment should
         // appear in the activity feed without a reload.

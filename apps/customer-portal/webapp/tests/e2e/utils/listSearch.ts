@@ -47,6 +47,83 @@ function searchQueryOf(postData: string | null): string | undefined {
   }
 }
 
+/** Whether a `/cases/search` response came from a POST to that endpoint. */
+function isCaseSearch(response: Response): boolean {
+  return (
+    response.request().method() === "POST" &&
+    new URL(response.url()).pathname.endsWith("/cases/search")
+  );
+}
+
+/** Parses a request body, or returns undefined when it is absent/unparseable. */
+function searchFilters(
+  postData: string | null,
+): { createdByMe?: boolean; statusIds?: number[] } | undefined {
+  if (!postData) return undefined;
+  try {
+    const body = JSON.parse(postData) as {
+      filters?: { createdByMe?: boolean; statusIds?: number[] };
+    };
+    return body.filters ?? {};
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Starts waiting for the search response of the unfiltered "all cases" list.
+ *
+ * Call this **before** the navigation that opens the list, then await it after.
+ *
+ * Identified by what the body does *not* carry, since an unfiltered list sends
+ * only `caseTypes` (verified live). Both exclusions are load-bearing:
+ *
+ * - no `createdByMe`, which is what separates it from My Cases;
+ * - no `statusIds`, which is what separates it from the Outstanding Cases card
+ *   on the Support Center page — that card searches the same endpoint with the
+ *   open-case states, and its request would otherwise satisfy this predicate and
+ *   resolve the wait before the list had even been opened.
+ *
+ * @param page - Test page.
+ * @returns Promise for the matching search response.
+ */
+export function allCasesSearchResponse(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) => {
+      if (!isCaseSearch(response)) return false;
+      const filters = searchFilters(response.request().postData());
+      if (!filters) return false;
+      return (
+        filters.createdByMe === undefined && filters.statusIds === undefined
+      );
+    },
+    { timeout: SEARCH_TIMEOUT_MS },
+  );
+}
+
+/**
+ * Starts waiting for the search response of the "my cases" list.
+ *
+ * Call this **before** the navigation that opens the list, then await it after.
+ *
+ * `createdByMe` is what actually narrows the list — the heading merely reports
+ * it — so matching the flag in the request body is both the wait and the
+ * contract check. It travels inside `filters`, and the builder emits it on every
+ * branch (buildDashboardCaseSearchFilters).
+ *
+ * @param page - Test page.
+ * @returns Promise for the matching search response.
+ */
+export function myCasesSearchResponse(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) => {
+      if (!isCaseSearch(response)) return false;
+      return searchFilters(response.request().postData())?.createdByMe === true;
+    },
+    { timeout: SEARCH_TIMEOUT_MS },
+  );
+}
+
 /**
  * Starts waiting for the search response produced by a specific term.
  *
