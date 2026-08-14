@@ -3647,8 +3647,11 @@ type CreateProblemRequest struct {
 type ConversationState string
 
 const (
-	ConversationStateActive   ConversationState = "ACTIVE"
-	ConversationStateResolved ConversationState = "RESOLVED"
+	ConversationStateActive    ConversationState = "ACTIVE"
+	ConversationStateResolved  ConversationState = "RESOLVED"
+	ConversationStateConverted ConversationState = "CONVERTED"
+	ConversationStateAbandoned ConversationState = "ABANDONED"
+	ConversationStateClosed    ConversationState = "CLOSED"
 )
 
 // ConversationSortField enumerates the columns available for sorting conversation search results.
@@ -3678,7 +3681,16 @@ type SearchConversationsFilters struct {
 	ProjectIDs  []string            `json:"projectIds"`
 	States      []ConversationState `json:"states"`
 	SearchQuery string              `json:"searchQuery"`
-	CreatedByMe bool                `json:"createdByMe"`
+	// Number filters to the conversation whose human-readable number (e.g.
+	// "CHAT0000012345") exactly matches (optional). Exact match against the
+	// backing data source's number field, routed as a first-class filter
+	// rather than through the free-text SearchQuery scan.
+	Number      *string `json:"number,omitempty"`
+	CreatedByMe bool    `json:"createdByMe"`
+	// CreatedBy filters to conversations initiated by any of these email
+	// addresses (optional). Independent of CreatedByMe, which always scopes
+	// to the caller.
+	CreatedBy []string `json:"createdBy,omitempty"`
 }
 
 // SearchConversationsRequest is the input for POST /conversations/search.
@@ -3690,15 +3702,15 @@ type SearchConversationsRequest struct {
 
 // SearchConversationView is the conversation representation returned in search results.
 type SearchConversationView struct {
-	ID             *string    `json:"id"`
-	Number         *string    `json:"number"`
-	InitialMessage *string    `json:"initialMessage"`
-	MessageCount   int        `json:"messageCount"`
-	Project        *EntityRef `json:"project"`
-	Case           *EntityRef `json:"case"`
-	State          *string    `json:"state"`
-	CreatedOn      string     `json:"createdOn"`
-	CreatedBy      string     `json:"createdBy"`
+	ID             *string        `json:"id"`
+	Number         *string        `json:"number"`
+	InitialMessage *string        `json:"initialMessage"`
+	MessageCount   int            `json:"messageCount"`
+	Project        *EntityRef     `json:"project"`
+	Case           *EntityRef     `json:"case"`
+	State          *string        `json:"state"`
+	CreatedOn      string         `json:"createdOn"`
+	CreatedBy      *UserReference `json:"createdBy"`
 }
 
 // SearchConversationsResponse is the paginated result of a conversation search.
