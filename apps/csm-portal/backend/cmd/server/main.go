@@ -256,10 +256,20 @@ func main() {
 	}
 
 	srv := &http.Server{
-		Handler: middleware.SecurityHeaders(
-			middleware.CorrelationID(
-				authMiddleware(
-					middleware.Logger(mux),
+		// CORS wraps everything, including Auth — see middleware.CORS's doc
+		// comment. In a real deployment Choreo's gateway supplies these
+		// headers itself, so this is a no-op there; it matters when the
+		// gateway isn't in the path (local development, where the browser
+		// calls this listener directly and its preflight OPTIONS carries no
+		// x-jwt-assertion for Auth to accept).
+		// CORS_ALLOWED_ORIGINS is a comma-separated allow-list; unset allows
+		// any origin (see middleware.CORS on why that's safe here).
+		Handler: middleware.CORS(splitComma(os.Getenv("CORS_ALLOWED_ORIGINS")))(
+			middleware.SecurityHeaders(
+				middleware.CorrelationID(
+					authMiddleware(
+						middleware.Logger(mux),
+					),
 				),
 			),
 		),
