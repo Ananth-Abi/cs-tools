@@ -60,6 +60,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           lockedFilters={{ projects: [projectId], caseTypes: ["case"] }}
           hideProjectFilter
           hideTypeFilter
+          hideBackButton
         />
       )}
 
@@ -70,6 +71,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           hideProjectFilter
           hideTypeFilter
           detailBasePath="/operations/service-requests"
+          hideBackButton
         />
       )}
 
@@ -81,6 +83,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           hideTypeFilter
           hideSeverityColumn
           detailBasePath="/security-center/security-reports"
+          hideBackButton
         />
       )}
 
@@ -93,6 +96,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           showEngagementTypeFilter
           hideSeverityColumn
           detailBasePath="/engagements"
+          hideBackButton
         />
       )}
 

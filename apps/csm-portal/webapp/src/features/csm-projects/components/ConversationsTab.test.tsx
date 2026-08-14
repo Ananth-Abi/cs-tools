@@ -83,6 +83,27 @@ describe("ConversationsTab", () => {
     expect(screen.queryByText("No chat sessions found for this project.")).not.toBeInTheDocument();
   });
 
+  // Regression test: the skeleton used to hardcode 3 rows regardless of the
+  // selected page size, unlike every other paginated table in the app (see
+  // ProductVulnerabilitiesTab), where the skeleton row count always matches
+  // rowsPerPage. 4 columns (Started/Started by/Messages/State) per row.
+  it("renders one skeleton row per row of the default page size, not a fixed count", () => {
+    mockUseSearchConversations.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+    });
+
+    const { container } = render(<ConversationsTab projectId="proj-1" />);
+
+    const DEFAULT_ROWS_PER_PAGE = 20;
+    const COLUMN_COUNT = 4;
+    expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(
+      DEFAULT_ROWS_PER_PAGE * COLUMN_COUNT,
+    );
+  });
+
   it("shows an error state when the search fails", () => {
     mockUseSearchConversations.mockReturnValue({
       data: undefined,

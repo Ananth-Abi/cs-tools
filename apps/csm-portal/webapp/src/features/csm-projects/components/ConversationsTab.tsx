@@ -15,7 +15,7 @@
 // under the License.
 
 import {
-  Paper,
+  Box,
   Skeleton,
   Table,
   TableBody,
@@ -79,11 +79,11 @@ export default function ConversationsTab({ projectId }: ConversationsTabProps): 
 
   return (
     <>
-      <Paper variant="outlined">
+      <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
         <TableContainer>
-          <Table size="small">
+          <Table size="small" sx={{ "& .MuiTableCell-root": { borderColor: "divider" } }}>
             <TableHead>
-              <TableRow>
+              <TableRow sx={{ bgcolor: "action.hover" }}>
                 <TableCell>Started</TableCell>
                 <TableCell>Started by</TableCell>
                 <TableCell>Messages</TableCell>
@@ -92,7 +92,7 @@ export default function ConversationsTab({ projectId }: ConversationsTabProps): 
             </TableHead>
             <TableBody>
               {isLoading ? (
-                Array.from({ length: 3 }).map((_, i) => (
+                Array.from({ length: rowsPerPage }).map((_, i) => (
                   <TableRow key={i}>
                     {Array.from({ length: COLUMN_COUNT }).map((__, c) => (
                       <TableCell key={c}>
@@ -148,7 +148,11 @@ export default function ConversationsTab({ projectId }: ConversationsTabProps): 
                       <TableCell>{c.messageCount}</TableCell>
                       <TableCell>
                         {c.state ? (
-                          <SemanticChip role={STATE_META[c.state].role} label={STATE_META[c.state].label} />
+                          <SemanticChip
+                            role={STATE_META[c.state].role}
+                            label={STATE_META[c.state].label}
+                            variant="outlined"
+                          />
                         ) : (
                           "—"
                         )}
@@ -173,8 +177,10 @@ export default function ConversationsTab({ projectId }: ConversationsTabProps): 
           }}
           rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
           labelRowsPerPage="Conversations per page"
+          showFirstButton
+          showLastButton
         />
-      </Paper>
+      </Box>
 
       {selected && (
         <ConversationTranscriptDialog conversation={selected} onClose={() => setSelected(null)} />

@@ -179,6 +179,11 @@ export default function CsmProjectDetailPage(): JSX.Element {
   }
 
   const p = data;
+  // Handed to each "Create X" menu item below as router state, so that
+  // create page's own Back/Cancel -- and the entity it creates -- return
+  // here instead of their hardcoded top-level list (see CsmCaseCreatePage.tsx
+  // and its 3 siblings).
+  const projectPath = `/customers/projects/${p.id}`;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
@@ -221,7 +226,9 @@ export default function CsmProjectDetailPage(): JSX.Element {
           <MenuItem
             onClick={() => {
               setCreateMenuAnchor(null);
-              navigate(`/cases/new?projectId=${encodeURIComponent(p.id)}`);
+              navigate(`/cases/new?projectId=${encodeURIComponent(p.id)}`, {
+                state: { from: projectPath },
+              });
             }}
           >
             Create case
@@ -232,6 +239,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
                 setCreateMenuAnchor(null);
                 navigate(
                   `/operations/service-requests/new?projectId=${encodeURIComponent(p.id)}`,
+                  { state: { from: projectPath } },
                 );
               }}
             >
@@ -241,7 +249,9 @@ export default function CsmProjectDetailPage(): JSX.Element {
           <MenuItem
             onClick={() => {
               setCreateMenuAnchor(null);
-              navigate(`/engagements/new?projectId=${encodeURIComponent(p.id)}`);
+              navigate(`/engagements/new?projectId=${encodeURIComponent(p.id)}`, {
+                state: { from: projectPath },
+              });
             }}
           >
             Create engagement
@@ -251,6 +261,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
               setCreateMenuAnchor(null);
               navigate(
                 `/security-center/reports/new?projectId=${encodeURIComponent(p.id)}`,
+                { state: { from: projectPath } },
               );
             }}
           >
