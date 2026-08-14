@@ -36,6 +36,7 @@ import {
   scrollElement,
   INSERT_IMAGE_COMMAND,
 } from "@components/rich-text-editor/richTextEditor";
+import { ALLOWED_IMAGE_MIME_TYPES } from "@components/rich-text-editor/richTextConstants";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { type ReactNode, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import Toolbar, {
@@ -209,7 +210,11 @@ const ResetPlugin = ({ resetTrigger }: { resetTrigger?: number }) => {
  * Handles paste events containing image data (e.g. Ctrl+C from screen, then Ctrl+V).
  * Reads the image as a data URL and inserts it via INSERT_IMAGE_COMMAND.
  */
-const ClipboardImagePlugin = ({ onPasteError }: { onPasteError?: () => void }): null => {
+const ClipboardImagePlugin = ({
+  onPasteError,
+}: {
+  onPasteError?: (reason: "size" | "type") => void;
+}): null => {
   const [editor] = useLexicalComposerContext();
 
   // Keep the latest callback in a ref so the paste listener (registered once
@@ -232,8 +237,17 @@ const ClipboardImagePlugin = ({ onPasteError }: { onPasteError?: () => void }): 
 
           event.preventDefault();
 
+          if (
+            !ALLOWED_IMAGE_MIME_TYPES.includes(
+              file.type as (typeof ALLOWED_IMAGE_MIME_TYPES)[number],
+            )
+          ) {
+            onPasteErrorRef.current?.("type");
+            break;
+          }
+
           if (file.size > MAX_PASTE_IMAGE_SIZE) {
-            onPasteErrorRef.current?.();
+            onPasteErrorRef.current?.("size");
             break;
           }
 
@@ -350,7 +364,8 @@ const Editor = ({
   onBlur?: () => void;
   /** Optional element rendered as an absolute overlay at the bottom-right inside the editor. */
   overlayElement?: ReactNode;
-  onPasteError?: () => void;
+  /** Called when a pasted image is rejected — `"type"` for an unsupported format (e.g. SVG), `"size"` for exceeding the max paste size. */
+  onPasteError?: (reason: "size" | "type") => void;
 }): JSX.Element => {
   const oxygenTheme = useTheme();
   const logger = useLogger();
