@@ -271,6 +271,39 @@ describe("CsmDashboardPage", () => {
     expect(currentPath()).toBe("/dashboard/operations");
   });
 
+  it("canonicalizes a bare /dashboard onto the resolved default dashboard's own path", () => {
+    mockListResult({ data: DASHBOARD_LIST, isLoading: false });
+
+    renderAt("/dashboard");
+
+    expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+      "agents_pilot",
+    );
+    expect(currentPath()).toBe("/dashboard/agents_pilot");
+  });
+
+  it("canonicalizes onto the BE default's own path when the URL names a dashboard id that isn't in the list", () => {
+    mockListResult({ data: DASHBOARD_LIST, isLoading: false });
+
+    renderAt("/dashboard/does-not-exist");
+
+    expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+      "agents_pilot",
+    );
+    expect(currentPath()).toBe("/dashboard/agents_pilot");
+  });
+
+  it("canonicalizes away a stale team suffix already in the URL for a non-team-based dashboard, on cold load (not just on switcher use)", () => {
+    mockListResult({ data: DASHBOARD_LIST, isLoading: false });
+
+    renderAt("/dashboard/iam/some-stale-team");
+
+    expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+      "iam",
+    );
+    expect(currentPath()).toBe("/dashboard/iam");
+  });
+
   it("clears a stale team suffix from the fragment when switching to a non-team-based dashboard", () => {
     mockListResult({
       data: [
@@ -326,12 +359,14 @@ describe("CsmDashboardPage", () => {
       expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
         "team_performance",
       );
-      // The team selector renders (this dashboard is isTeamBased) — both
-      // the dashboard AND team default are derived UI state, never
-      // auto-written to the URL, so the fragment is untouched until the
-      // user (or a shared URL) actually names something explicitly.
+      // The team selector renders (this dashboard is isTeamBased) — the
+      // resolved dashboard id IS canonicalized onto the URL (a bare
+      // `/dashboard` cold load is one of the three cases the canonical
+      // redirect covers), but the user's own derived team default is not:
+      // it stays derived UI state until the user (or a shared URL) actually
+      // names a team explicitly.
       expect(screen.getAllByRole("combobox")).toHaveLength(2);
-      expect(currentPath()).toBe("/dashboard");
+      expect(currentPath()).toBe("/dashboard/team_performance");
     });
 
     it("keeps the isDefault+!isTeamBased entry when the user has no resolved team, even though an isDefault+isTeamBased dashboard exists", () => {

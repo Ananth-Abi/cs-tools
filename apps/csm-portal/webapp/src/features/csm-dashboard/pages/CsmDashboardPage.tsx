@@ -15,7 +15,7 @@
 // under the License.
 
 import { Box, Skeleton, Typography } from "@wso2/oxygen-ui";
-import { useCallback, useMemo, type JSX } from "react";
+import { useCallback, useEffect, useMemo, type JSX } from "react";
 import { useNavigate, useParams } from "react-router";
 import AbtDashboardHeader from "@features/csm-dashboard/components/AbtDashboardHeader";
 import AgentsLandingPagePilot from "@features/csm-dashboard/components/AgentsLandingPagePilot";
@@ -179,6 +179,27 @@ export default function CsmDashboardPage(): JSX.Element {
     },
     [navigate],
   );
+
+  // Canonicalizes the URL to the resolved selection whenever it doesn't
+  // already match, so a refresh or a share always lands on an explicit
+  // dashboard id rather than staying on a non-canonical URL — three cases
+  // land here: a bare `/dashboard` that resolved to a default, an
+  // invalid/unknown dashboard id in the URL that fell back to a valid one,
+  // and a non-team dashboard's URL carrying a stale leftover team-id suffix
+  // (see `urlTeamId` above, which drops it). Deliberately compares against
+  // `urlTeamId`, not `selectedTeamId`: a user's own derived default team
+  // (`defaultTeamId`) is never written here — only a team id already
+  // present in the URL is preserved (or stripped, if it's stale) — so the
+  // team selector stays "derived, until the user or a shared URL actually
+  // names one" per the class doc comment above.
+  useEffect(() => {
+    if (!dashboardKey) return;
+    const dashboardIdStale = urlDashboardId !== dashboardKey;
+    const teamIdStale = urlTeamIdRaw !== urlTeamId;
+    if (dashboardIdStale || teamIdStale) {
+      writePath(dashboardKey, urlTeamId);
+    }
+  }, [dashboardKey, urlDashboardId, urlTeamId, urlTeamIdRaw, writePath]);
 
   const handleDashboardChange = useCallback(
     (key: DashboardKey) => {
