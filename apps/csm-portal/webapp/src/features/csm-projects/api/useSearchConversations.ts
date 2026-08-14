@@ -43,9 +43,9 @@ export interface ConversationSearchFilters {
   searchQuery?: string;
   createdByMe?: boolean;
   /** Explicit exact-match chat number, from the Filters panel's Number field
-   * — sent alongside (not instead of) any `number` the search box itself
-   * resolved via {@link classifyConversationQuery}; see the request-building
-   * comment below for how the two combine. */
+   * — takes precedence over any `number` the search box itself resolved via
+   * {@link classifyConversationQuery}; see the `effectiveNumber` comment
+   * below. */
   number?: string;
   /** Explicit initiator-email multi-select, from the Filters panel. */
   createdBy?: string[];

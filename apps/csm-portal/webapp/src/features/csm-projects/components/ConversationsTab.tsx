@@ -34,6 +34,7 @@ import ConversationPreviewDrawer from "@features/csm-projects/components/Convers
 import ConversationsFilterBar from "@features/csm-projects/components/ConversationsFilterBar";
 import { useSearchConversations } from "@features/csm-projects/api/useSearchConversations";
 import { DEFAULT_CONVERSATION_FILTERS, type ConversationsFilters } from "@features/csm-projects/utils/conversationState";
+import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useNavTransition } from "@hooks/useNavTransition";
 import type { BeConversationView } from "@api/backend/types";
 
@@ -81,14 +82,23 @@ export default function ConversationsTab({ projectId }: ConversationsTabProps): 
     setPreviewRow(null);
   }
 
+  // `ConversationsFilterBar` calls `onChange` on every keystroke for the
+  // free-text search and number fields, and both flow straight into the
+  // query key below — debounce just the values fed to the query so typing
+  // doesn't fire a `POST /conversations/search` per keystroke, while
+  // `filters` itself (and therefore the input fields) stays immediately
+  // responsive.
+  const debouncedSearch = useDebouncedValue(filters.search, 300);
+  const debouncedNumber = useDebouncedValue(filters.number, 300);
+
   const { data, isLoading, isError, error } = useSearchConversations(
     projectId,
     { page, rowsPerPage },
     {
       states: filters.states,
-      searchQuery: filters.search,
+      searchQuery: debouncedSearch,
       createdByMe: filters.createdByMe,
-      number: filters.number,
+      number: debouncedNumber,
       createdBy: filters.createdBy,
     },
   );
@@ -201,7 +211,17 @@ export default function ConversationsTab({ projectId }: ConversationsTabProps): 
             return (
               <Box
                 key={rowKey}
-                onClick={() => {
+                onClick={(e) => {
+                  // Both the number cell and the `UserRefLink` (initiator)
+                  // below are real RouterLinks: a plain click on either
+                  // already navigates via its own handler (which calls
+                  // preventDefault) and still bubbles up here — do nothing in
+                  // that case, or this would push a second, unwanted history
+                  // entry (or navigate to the wrong destination for
+                  // UserRefLink). Skip on a modified click (cmd/ctrl/shift/
+                  // alt) too — that's the browser's own "open in new tab"
+                  // gesture and shouldn't also navigate the current tab.
+                  if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                   if (!detailPath) return;
                   navigate(detailPath, {
                     state: { conversation: c, from: `${location.pathname}${location.search}` },
