@@ -10,7 +10,7 @@ info:
     connections vs. the REST listener's WriteTimeout/IdleTimeout).
   version: 1.0.0
 security:
-  - bearerAuth: []
+  - jwtAssertion: []
 servers:
   - url: "{server}:{port}/"
     variables:
@@ -39,6 +39,15 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: x-user-id-token
+          in: header
+          description: >
+            Forwarded to upstream entity-service calls as the caller's
+            identity for per-case ACL checks. Optional — falls back to the
+            x-jwt-assertion value itself when absent (see middleware.Auth).
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           description: Ok
@@ -72,10 +81,19 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
+    jwtAssertion:
+      type: apiKey
+      in: header
+      name: x-jwt-assertion
+      description: >
+        Unlike the main :8080 REST API — where the browser sends
+        Authorization: Bearer and Choreo's gateway translates it to
+        x-jwt-assertion before this backend sees it — this listener's own
+        Choreo endpoint is not guaranteed to apply the same translation, so
+        the EventSource polyfill connecting to it sets x-jwt-assertion
+        directly (native EventSource cannot set custom headers at all,
+        which is why this stream uses a polyfill in the first place). See
+        middleware.Auth, which reads this header directly.
   schemas:
     ErrorPayload:
       type: object
