@@ -548,12 +548,6 @@ export default function App(): JSX.Element {
                     path="announcements/:caseId"
                     element={<CsmCaseDetailPage />}
                   />
-                  <Route path="time-cards" element={<CsmTimeCardsPage />} />
-                  <Route path="announcements" element={<CsmAnnouncementsPage />} />
-                  <Route
-                    path="announcements/:caseId"
-                    element={<CsmCaseDetailPage />}
-                  />
                 </Route>
               </Route>
 
