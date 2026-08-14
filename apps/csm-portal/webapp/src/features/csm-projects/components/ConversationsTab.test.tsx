@@ -100,7 +100,8 @@ describe("ConversationsTab", () => {
   // Regression test: the skeleton used to hardcode 3 rows regardless of the
   // selected page size, unlike every other paginated table in the app (see
   // ProductVulnerabilitiesTab), where the skeleton row count always matches
-  // rowsPerPage. 4 columns (Started/Started by/Messages/State) per row.
+  // rowsPerPage. The redesigned grid layout renders one skeleton per row
+  // (not one per column), so the count is just rowsPerPage.
   it("renders one skeleton row per row of the default page size, not a fixed count", () => {
     mockUseSearchConversations.mockReturnValue({
       data: undefined,
@@ -109,12 +110,11 @@ describe("ConversationsTab", () => {
       error: null,
     });
 
-    const { container } = render(<ConversationsTab projectId="proj-1" />);
+    const { container } = renderTab();
 
     const DEFAULT_ROWS_PER_PAGE = 20;
-    const COLUMN_COUNT = 4;
     expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(
-      DEFAULT_ROWS_PER_PAGE * COLUMN_COUNT,
+      DEFAULT_ROWS_PER_PAGE,
     );
   });
 
@@ -130,13 +130,12 @@ describe("ConversationsTab", () => {
       error: null,
     });
 
-    const { container } = render(<ConversationsTab projectId="proj-1" />);
+    const { container } = renderTab();
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /conversations per page/i }));
     fireEvent.click(screen.getByRole("option", { name: "50" }));
 
-    const COLUMN_COUNT = 4;
-    expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(50 * COLUMN_COUNT);
+    expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(50);
   });
 
   it("shows an error state when the search fails", () => {
