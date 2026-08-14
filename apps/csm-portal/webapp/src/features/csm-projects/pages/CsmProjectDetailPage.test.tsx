@@ -18,6 +18,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProjectDetails } from "@features/csm-projects/types/csmProjects";
 
 const mockUseGetProject = vi.fn();
@@ -71,13 +72,26 @@ function LocationProbe() {
 }
 
 function renderPage(initialEntry = "/customers/projects/proj-1") {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <Routes>
-        <Route path="/customers/projects/:id" element={<CsmProjectDetailPage />} />
-        <Route path="/cases/new" element={<LocationProbe />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route
+            path="/customers/projects/:id"
+            element={
+              <>
+                <CsmProjectDetailPage />
+                <LocationProbe />
+              </>
+            }
+          />
+          <Route path="/cases/new" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
@@ -109,6 +123,20 @@ describe("CsmProjectDetailPage — tab state", () => {
     renderPage();
     fireEvent.click(screen.getByRole("tab", { name: "Work items" }));
     expect(screen.getByText("Work items for proj-1")).toBeInTheDocument();
+  });
+
+  // Regression test: a sub-tab selected under Work items (`?subTab=`) only
+  // means something under that tab — switching to a different top-level tab
+  // must drop it, or revisiting Work items later would silently land back on
+  // the stale sub-tab instead of its own default.
+  it("drops a stale ?subTab= when switching to a different top-level tab", () => {
+    renderPage("/customers/projects/proj-1?tab=workItems&subTab=engagements");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Deployments" }));
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/customers/projects/proj-1?tab=deployments",
+    );
   });
 
   it("passes the current pathname+search as the create page's return state", () => {

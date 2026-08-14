@@ -141,7 +141,11 @@ export function buildWidgetPreviewHref(params: {
     }
   }
   if (usesCaseFieldFilterShape) q.set(CASE_FILTER_MARKER, "1");
-  return `/dashboard/${params.previewSlug}?${q.toString()}`;
+  // Under "/dashboard/preview/", not directly under "/dashboard/" — that
+  // shape collides with the dashboard-selection route
+  // (`/dashboard/:dashboardId`, see App.tsx), so this needs its own static
+  // prefix rather than sharing the single-dynamic-segment shape.
+  return `/dashboard/preview/${params.previewSlug}?${q.toString()}`;
 }
 
 /** One human-readable "what's actually being queried" entry — a single

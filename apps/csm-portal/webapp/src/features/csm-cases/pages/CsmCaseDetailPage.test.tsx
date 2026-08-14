@@ -374,6 +374,19 @@ function LocationProbe(): JSX.Element {
   return <div data-testid="location-probe">{location.pathname}</div>;
 }
 
+/** Same idea as `LocationProbe`, surfacing the search string + hash too — for
+ * the `?tab=` URL-sync and canonical-redirect tests below. */
+function LocationSearchProbe(): JSX.Element {
+  const location = useLocation();
+  return (
+    <div data-testid="location-search-probe">
+      {location.pathname}
+      {location.search}
+      {location.hash}
+    </div>
+  );
+}
+
 // Fires a real `navigate("/cases/case-2")` from inside the router, the same
 // way an in-app link (e.g. the sidebar's recent-cases list) would move the
 // user from one case to another without unmounting this page — the route
@@ -438,6 +451,225 @@ function renderPageAtCaseId(initialEntry: string): ReturnType<typeof render> {
     </QueryClientProvider>,
   );
 }
+
+// The five real route mount points this page renders under (App.tsx) — all
+// must sync `?tab=` the same way, not just the plain /cases/:caseId one. Each
+// carries the `caseType` that makes IT the record's own canonical route (see
+// `canonicalDetailPath`/`isMisrouted`), so the page renders straight through
+// rather than bouncing through the canonical-redirect skeleton first.
+const CASE_ROUTE_MOUNTS: Array<{
+  name: string;
+  path: string;
+  caseId: string;
+  caseType?: string;
+}> = [
+  { name: "cases", path: "/cases/:caseId", caseId: "case-1" },
+  {
+    name: "operations/service-requests",
+    path: "/operations/service-requests/:caseId",
+    caseId: "case-1",
+    caseType: "service_request",
+  },
+  {
+    name: "engagements",
+    path: "/engagements/:caseId",
+    caseId: "case-1",
+    caseType: "engagement",
+  },
+  {
+    name: "security-center/security-reports",
+    path: "/security-center/security-reports/:caseId",
+    caseId: "case-1",
+    caseType: "security_report_analysis",
+  },
+  {
+    name: "announcements",
+    path: "/announcements/:caseId",
+    caseId: "case-1",
+    caseType: "announcement",
+  },
+];
+
+function renderPageAt(
+  initialEntry: string,
+  routePath = "/cases/:caseId",
+): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <LocationSearchProbe />
+        <Routes>
+          <Route path={routePath} element={<CsmCaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("CsmCaseDetailPage — tab lives in the URL", () => {
+  it("defaults to the Activities tab when ?tab= is absent", () => {
+    renderPageAt("/cases/case-1");
+
+    expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("restores the tab named in the URL on a direct/cold load", () => {
+    renderPageAt("/cases/case-1?tab=attachments");
+
+    expect(screen.getByRole("tab", { name: /attachments/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("falls back to Activities for an unrecognised ?tab= value, without crashing or looping", () => {
+    renderPageAt("/cases/case-1?tab=not-a-real-tab");
+
+    expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("location-search-probe")).toHaveTextContent(
+      "tab=not-a-real-tab",
+    );
+  });
+
+  it("writes the selected tab to ?tab= when switching tabs, replacing rather than pushing a new history entry", () => {
+    renderPageAt("/cases/case-1");
+
+    fireEvent.click(screen.getByRole("tab", { name: /watchers/i }));
+
+    expect(screen.getByTestId("location-search-probe")).toHaveTextContent(
+      "tab=watchers",
+    );
+  });
+
+  it("falls back to Activities for ?tab=tasks, the hidden tab with no rendered <Tab>", () => {
+    renderPageAt("/cases/case-1?tab=tasks");
+
+    expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // "tasks" isn't a rendered <Tab> at all (it's hidden from the strip).
+    expect(
+      screen.queryByRole("tab", { name: /^tasks$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(CASE_ROUTE_MOUNTS)(
+    // "Attachments" (not e.g. "SLAs") since it's the one tab every case type
+    // in this list renders, including an announcement — which hides
+    // related/watchers/sla/time/call-requests entirely (see the TAB_DEFS
+    // filter and the isAnnouncement force-to-Activities effect).
+    "syncs ?tab= the same way under the $name mount point",
+    ({ path, caseId, caseType }) => {
+      useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+        data: id ? { ...buildCase(id), caseType } : undefined,
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+        isFetching: false,
+        dataUpdatedAt: 0,
+      }));
+
+      renderPageAt(`${path.replace(":caseId", caseId)}?tab=attachments`, path);
+
+      expect(
+        screen.getByRole("tab", { name: /^attachments$/i }),
+      ).toHaveAttribute("aria-selected", "true");
+
+      // Restore the default mock so later tests aren't affected.
+      useGetCsmCaseDetailMock.mockImplementation((defaultId: string | undefined) => ({
+        data: defaultId ? buildCase(defaultId) : undefined,
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+        isFetching: false,
+        dataUpdatedAt: 0,
+      }));
+    },
+  );
+});
+
+describe("CsmCaseDetailPage — canonical-route redirect carries ?tab= and #hash forward", () => {
+  it("carries the current ?tab= and hash onto the canonical route when a case is opened on a non-canonical one", async () => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? { ...buildCase(id), caseType: "service_request" } : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={["/cases/case-1?tab=attachments#entry-9"]}
+        >
+          <NavigateBridge />
+          <LocationSearchProbe />
+          <Routes>
+            <Route path="/cases/:caseId" element={<CsmCaseDetailPage />} />
+            <Route
+              path="/operations/service-requests/:caseId"
+              element={<CsmCaseDetailPage />}
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // `#entry-9` is a permalink fragment, so once the fixed
+    // `permalinkForceRef` logic (see CsmCaseDetailPage.tsx) sees it on this
+    // cold load it forces the tab to Activities regardless of the `?tab=`
+    // the URL was opened with — same as any other cold load with a fragment,
+    // canonical route or not. `setActiveTab`'s own `setSearchParams` call
+    // doesn't preserve the hash, which is why it's gone from the settled
+    // URL too; that's pre-existing behaviour of every tab switch, not new
+    // here.
+    await waitFor(() =>
+      expect(screen.getByTestId("location-search-probe")).toHaveTextContent(
+        "/operations/service-requests/case-1?tab=activities",
+      ),
+    );
+
+    // Restore the default mock for every test after this one.
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? buildCase(id) : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+  });
+});
+
+describe("CsmCaseDetailPage — permalink fragment forces the Activities tab", () => {
+  it("forces Activities on a cold load that already has a permalink fragment, even when ?tab= names a different tab", () => {
+    renderPageAt("/cases/case-1?tab=attachments#entry-9");
+
+    expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+});
 
 describe("CsmCaseDetailPage — dashless id normalization", () => {
   it("fetches the case detail with the dashed id and redirects the URL when the route carries a dashless id", async () => {

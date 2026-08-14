@@ -15,7 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter, useLocation } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { JSX } from "react";
@@ -23,25 +23,55 @@ import CsmDashboardPage from "@features/csm-dashboard/pages/CsmDashboardPage";
 import { useDashboardList } from "@features/csm-dashboard/api/useDashboardList";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 
-/** Surfaces the router's current `location.hash` for assertions — the
+/** Surfaces the router's current pathname for assertions — the
  * `MemoryRouter`'s history is in-memory, not reflected on `window.location`,
  * so this reads it via `useLocation` instead. */
 function LocationDisplay(): JSX.Element {
   const location = useLocation();
-  return <div data-testid="location-hash">{location.hash}</div>;
+  return <div data-testid="location-path">{location.pathname}</div>;
 }
 
+// Real `<Routes>` (not a bare `<CsmDashboardPage />`) so `useParams` actually
+// resolves `:dashboardId`/`:teamId` — matching the three sibling `dashboard`
+// routes in App.tsx that all render this same page.
 function renderAt(initialEntry: string): ReturnType<typeof render> {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
-      <CsmDashboardPage />
-      <LocationDisplay />
+      <Routes>
+        <Route
+          path="/dashboard"
+          element={
+            <>
+              <CsmDashboardPage />
+              <LocationDisplay />
+            </>
+          }
+        />
+        <Route
+          path="/dashboard/:dashboardId"
+          element={
+            <>
+              <CsmDashboardPage />
+              <LocationDisplay />
+            </>
+          }
+        />
+        <Route
+          path="/dashboard/:dashboardId/:teamId"
+          element={
+            <>
+              <CsmDashboardPage />
+              <LocationDisplay />
+            </>
+          }
+        />
+      </Routes>
     </MemoryRouter>,
   );
 }
 
-function currentHash(): string {
-  return screen.getByTestId("location-hash").textContent ?? "";
+function currentPath(): string {
+  return screen.getByTestId("location-path").textContent ?? "";
 }
 
 vi.mock("@features/csm-dashboard/api/useDashboardList", () => ({
@@ -135,7 +165,7 @@ describe("CsmDashboardPage", () => {
   it("shows a loading skeleton before the dashboard list resolves", () => {
     mockListResult({ data: undefined, isLoading: true });
 
-    const { container } = renderAt("/");
+    const { container } = renderAt("/dashboard");
 
     expect(container.querySelectorAll(".MuiSkeleton-root").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("agents-landing-pilot")).not.toBeInTheDocument();
@@ -144,7 +174,7 @@ describe("CsmDashboardPage", () => {
   it("selects the isDefault dashboard once the list loads and renders the enabled, populated switcher", () => {
     mockListResult({ data: DASHBOARD_LIST, isLoading: false });
 
-    renderAt("/");
+    renderAt("/dashboard");
 
     // The isDefault entry ("agents_pilot") is selected on load.
     expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
@@ -175,7 +205,7 @@ describe("CsmDashboardPage", () => {
       isLoading: false,
     });
 
-    renderAt("/");
+    renderAt("/dashboard");
 
     expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
       "operations",
@@ -185,7 +215,7 @@ describe("CsmDashboardPage", () => {
   it("switches to another dashboard when picked from the switcher", () => {
     mockListResult({ data: DASHBOARD_LIST, isLoading: false });
 
-    renderAt("/");
+    renderAt("/dashboard");
 
     expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
       "agents_pilot",
@@ -203,7 +233,7 @@ describe("CsmDashboardPage", () => {
   it("shows an error state rather than an infinite skeleton when the list fails to load", () => {
     mockListResult({ data: undefined, isLoading: false, isError: true });
 
-    renderAt("/");
+    renderAt("/dashboard");
 
     expect(
       screen.getByText("Could not load the dashboard list."),
@@ -214,7 +244,7 @@ describe("CsmDashboardPage", () => {
   it("selects the dashboard named by the URL's fragment, not the BE default", () => {
     mockListResult({ data: DASHBOARD_LIST, isLoading: false });
 
-    renderAt("/dashboard#iam");
+    renderAt("/dashboard/iam");
 
     expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent("iam");
   });
@@ -222,7 +252,7 @@ describe("CsmDashboardPage", () => {
   it("falls back to the BE default when the fragment names a dashboard id that isn't in the list", () => {
     mockListResult({ data: DASHBOARD_LIST, isLoading: false });
 
-    renderAt("/dashboard#does-not-exist");
+    renderAt("/dashboard/does-not-exist");
 
     expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
       "agents_pilot",
@@ -238,7 +268,40 @@ describe("CsmDashboardPage", () => {
     fireEvent.mouseDown(select);
     fireEvent.click(within(screen.getByRole("listbox")).getByText("Operations"));
 
-    expect(currentHash()).toBe("#operations");
+    expect(currentPath()).toBe("/dashboard/operations");
+  });
+
+  it("canonicalizes a bare /dashboard onto the resolved default dashboard's own path", () => {
+    mockListResult({ data: DASHBOARD_LIST, isLoading: false });
+
+    renderAt("/dashboard");
+
+    expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+      "agents_pilot",
+    );
+    expect(currentPath()).toBe("/dashboard/agents_pilot");
+  });
+
+  it("canonicalizes onto the BE default's own path when the URL names a dashboard id that isn't in the list", () => {
+    mockListResult({ data: DASHBOARD_LIST, isLoading: false });
+
+    renderAt("/dashboard/does-not-exist");
+
+    expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+      "agents_pilot",
+    );
+    expect(currentPath()).toBe("/dashboard/agents_pilot");
+  });
+
+  it("canonicalizes away a stale team suffix already in the URL for a non-team-based dashboard, on cold load (not just on switcher use)", () => {
+    mockListResult({ data: DASHBOARD_LIST, isLoading: false });
+
+    renderAt("/dashboard/iam/some-stale-team");
+
+    expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+      "iam",
+    );
+    expect(currentPath()).toBe("/dashboard/iam");
   });
 
   it("clears a stale team suffix from the fragment when switching to a non-team-based dashboard", () => {
@@ -250,7 +313,7 @@ describe("CsmDashboardPage", () => {
       isLoading: false,
     });
 
-    renderAt("/dashboard#team_performance.cs_team_leads");
+    renderAt("/dashboard/team_performance/cs_team_leads");
 
     // Two comboboxes render for a team-based dashboard (dashboard + team);
     // the dashboard switcher is always the first — see AbtDashboardHeader's
@@ -260,13 +323,13 @@ describe("CsmDashboardPage", () => {
     fireEvent.mouseDown(select);
     fireEvent.click(within(screen.getByRole("listbox")).getByText("Operations"));
 
-    expect(currentHash()).toBe("#operations");
+    expect(currentPath()).toBe("/dashboard/operations");
   });
 
   it("ignores a stray team suffix on a fragment naming a non-team-based dashboard, rather than crashing", () => {
     mockListResult({ data: DASHBOARD_LIST, isLoading: false });
 
-    renderAt("/dashboard#iam.some-stale-team");
+    renderAt("/dashboard/iam/some-stale-team");
 
     expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent("iam");
     // Only the dashboard switcher renders — no team selector for a
@@ -296,12 +359,14 @@ describe("CsmDashboardPage", () => {
       expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
         "team_performance",
       );
-      // The team selector renders (this dashboard is isTeamBased) — both
-      // the dashboard AND team default are derived UI state, never
-      // auto-written to the URL, so the fragment is untouched until the
-      // user (or a shared URL) actually names something explicitly.
+      // The team selector renders (this dashboard is isTeamBased) — the
+      // resolved dashboard id IS canonicalized onto the URL (a bare
+      // `/dashboard` cold load is one of the three cases the canonical
+      // redirect covers), but the user's own derived team default is not:
+      // it stays derived UI state until the user (or a shared URL) actually
+      // names a team explicitly.
       expect(screen.getAllByRole("combobox")).toHaveLength(2);
-      expect(currentHash()).toBe("");
+      expect(currentPath()).toBe("/dashboard/team_performance");
     });
 
     it("keeps the isDefault+!isTeamBased entry when the user has no resolved team, even though an isDefault+isTeamBased dashboard exists", () => {
@@ -381,7 +446,7 @@ describe("CsmDashboardPage", () => {
       mockListResult({ data: LIST_WITH_TEAM_DASHBOARD, isLoading: false });
       mockCurrentUser({ user: { team: undefined }, isLoading: false });
 
-      renderAt("/dashboard#team_performance");
+      renderAt("/dashboard/team_performance");
 
       expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
         "team_performance",
@@ -401,9 +466,9 @@ describe("CsmDashboardPage", () => {
       mockListResult({ data: LIST_WITH_TEAM_DASHBOARD, isLoading: false });
       mockCurrentUser({ user: { team: undefined }, isLoading: false });
 
-      renderAt("/dashboard#team_performance.cs_team_leads");
+      renderAt("/dashboard/team_performance/cs_team_leads");
 
-      expect(currentHash()).toBe("#team_performance.cs_team_leads");
+      expect(currentPath()).toBe("/dashboard/team_performance/cs_team_leads");
       // teams.data is undefined in this mock, so the real team's name can't
       // resolve to a label either — the point of this test is that it's
       // NOT "All ABTs" (the URL-named real team id always wins over the
@@ -421,7 +486,7 @@ describe("CsmDashboardPage", () => {
         isLoading: false,
       });
 
-      renderAt("/dashboard#agents_pilot");
+      renderAt("/dashboard/agents_pilot");
 
       expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
         "agents_pilot",
