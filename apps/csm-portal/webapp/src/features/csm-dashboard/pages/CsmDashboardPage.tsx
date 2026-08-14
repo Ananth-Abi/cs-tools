@@ -16,17 +16,13 @@
 
 import { Box, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { useCallback, useMemo, type JSX } from "react";
-import { useLocation, useNavigate } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import AbtDashboardHeader from "@features/csm-dashboard/components/AbtDashboardHeader";
 import AgentsLandingPagePilot from "@features/csm-dashboard/components/AgentsLandingPagePilot";
 import { useDashboardList } from "@features/csm-dashboard/api/useDashboardList";
 import { abtFamilyForDashboardType, useTeams } from "@features/csm-dashboard/api/useTeams";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import type { DashboardKey } from "@features/csm-dashboard/types/abtDashboard";
-import {
-  buildDashboardHash,
-  parseDashboardHash,
-} from "@features/csm-dashboard/utils/dashboardUrlHash";
 import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
 
 /**
@@ -40,7 +36,20 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * matches that preferred predicate, this falls back to the BE's own (any)
  * `isDefault` entry, then to the first dashboard in the list — never to an
  * empty selection. The URL always wins over all of that when it names a
- * (valid) dashboard — see `parseDashboardHash`.
+ * (valid) dashboard.
+ *
+ * The selection is a real path segment — `/dashboard/:dashboardId`, and for a
+ * team-based dashboard `/dashboard/:dashboardId/:teamId` — rather than a
+ * query param or fragment, matched by three sibling routes in App.tsx all
+ * rendering this same page (bare `/dashboard`, `/dashboard/:dashboardId`,
+ * `/dashboard/:dashboardId/:teamId`). Selecting a dashboard/team is a
+ * genuinely different content set each time, not a same-page panel switch, so
+ * it earns a path segment under this app's URL-shape rule rather than
+ * `?tab=`. `writePath` below replaces the URL with the canonical one- or
+ * two-segment path once the selection is known — on the bare `/dashboard`
+ * entry that means the very first render after the defaults resolve, so a
+ * refresh or share always lands on an explicit dashboard id, never the bare
+ * index.
  *
  * Dashboards are selected purely by dropdown — there is no other
  * per-dashboard scoping control. Every dashboard in the registry has at
@@ -48,19 +57,17 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * widget grid.
  */
 export default function CsmDashboardPage(): JSX.Element {
-  const location = useLocation();
   const navigate = useNavigate();
+  const { dashboardId: urlDashboardId, teamId: urlTeamIdRaw } = useParams<{
+    dashboardId?: string;
+    teamId?: string;
+  }>();
 
   const dashboardList = useDashboardList();
   const list = dashboardList.data;
   const currentUser = useCurrentUser();
 
-  const { dashboardId: hashDashboardId, teamId: hashTeamIdRaw } = useMemo(
-    () => parseDashboardHash(location.hash),
-    [location.hash],
-  );
-
-  const urlEntry = list?.find((d) => d.id === hashDashboardId);
+  const urlEntry = list?.find((d) => d.id === urlDashboardId);
 
   const userHasTeam = Boolean(currentUser.user?.team);
   // The preferred predicate per the user's own team membership: BOTH
@@ -107,10 +114,10 @@ export default function CsmDashboardPage(): JSX.Element {
   const dashboardKey = currentEntry?.id as DashboardKey | undefined;
   const isTeamBased = currentEntry?.isTeamBased ?? false;
 
-  // Only apply a hash team id when the CURRENT dashboard is team-based — a
+  // Only apply a URL team id when the CURRENT dashboard is team-based — a
   // stale suffix left over from a previously selected team-based dashboard
   // (or a hand-edited URL) must not leak into a non-team-based one.
-  const hashTeamId = isTeamBased ? hashTeamIdRaw : undefined;
+  const urlTeamId = isTeamBased ? urlTeamIdRaw : undefined;
   // Default to the signed-in user's own team once their profile has
   // resolved, but only ever as a default: the moment the URL itself names a
   // team (including one written by the user's own pick — see
@@ -119,12 +126,12 @@ export default function CsmDashboardPage(): JSX.Element {
   // whose profile hasn't resolved one yet) defaults to `ALL_TEAMS_SENTINEL`
   // ("All ABTs") rather than an empty selection — see `AbtDashboardHeader`.
   const defaultTeamId =
-    isTeamBased && !hashTeamId
+    isTeamBased && !urlTeamId
       ? userHasTeam
         ? currentUser.user?.team?.teamKey
         : ALL_TEAMS_SENTINEL
       : undefined;
-  const selectedTeamId = hashTeamId ?? defaultTeamId;
+  const selectedTeamId = urlTeamId ?? defaultTeamId;
 
   // Every team, unfiltered, for resolving the selected team's `groupId` (the
   // `__current_team__` filter placeholder's real value). Deliberately NOT
@@ -163,14 +170,14 @@ export default function CsmDashboardPage(): JSX.Element {
   const selectedTeamLabel: string | undefined =
     selectedTeamId === ALL_TEAMS_SENTINEL ? "All ABTs" : selectedTeam?.name;
 
-  const writeHash = useCallback(
+  const writePath = useCallback(
     (nextDashboardId: string, nextTeamId: string | undefined) => {
       navigate(
-        { pathname: location.pathname, search: location.search, hash: buildDashboardHash(nextDashboardId, nextTeamId) },
+        nextTeamId ? `/dashboard/${nextDashboardId}/${nextTeamId}` : `/dashboard/${nextDashboardId}`,
         { replace: true },
       );
     },
-    [navigate, location.pathname, location.search],
+    [navigate],
   );
 
   const handleDashboardChange = useCallback(
@@ -181,17 +188,17 @@ export default function CsmDashboardPage(): JSX.Element {
       // Switching between two team-based dashboards keeps the current
       // selection instead of resetting it.
       const nextTeamId = nextEntry?.isTeamBased ? selectedTeamId : undefined;
-      writeHash(key, nextTeamId);
+      writePath(key, nextTeamId);
     },
-    [list, selectedTeamId, writeHash],
+    [list, selectedTeamId, writePath],
   );
 
   const handleTeamChange = useCallback(
     (teamId: string | undefined) => {
       if (!dashboardKey) return;
-      writeHash(dashboardKey, teamId);
+      writePath(dashboardKey, teamId);
     },
-    [dashboardKey, writeHash],
+    [dashboardKey, writePath],
   );
 
   const dashboardListData = useMemo(() => dashboardList.data ?? [], [dashboardList.data]);
