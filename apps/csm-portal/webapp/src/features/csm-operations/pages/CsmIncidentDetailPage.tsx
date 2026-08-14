@@ -76,8 +76,9 @@ import type {
 } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
-const OPERATIONS_INCIDENTS_PATH = "/operations?tab=incidents";
+const OPERATIONS_INCIDENTS_PATH = "/operations/incidents";
 
 /**
  * `watchList` 404s ("The requested resource was not found!") on
@@ -158,6 +159,7 @@ const TAB_DEFS: Array<{ id: IncidentTabId; label: string; icon: JSX.Element }> =
   { id: "watchers", label: "Watchers", icon: <Eye size={16} /> },
   { id: "attachments", label: "Attachments", icon: <Paperclip size={16} /> },
 ];
+const INCIDENT_TAB_IDS: readonly IncidentTabId[] = TAB_DEFS.map((t) => t.id);
 
 /**
  * Detail for a single incident (`GET /incidents/{id}`), tabbed to match
@@ -182,7 +184,12 @@ export default function CsmIncidentDetailPage(): JSX.Element {
   const { showError } = useErrorBanner();
   const patchIncident = usePatchIncident();
   const [editOpen, setEditOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<IncidentTabId>("activities");
+  // Kept in the URL (`?tab=`), not local state, so a shared/bookmarked link
+  // to a specific tab (e.g. Watchers) survives a refresh.
+  const { activeTab, setActiveTab } = useQueryParamTabs<IncidentTabId>(
+    INCIDENT_TAB_IDS,
+    "activities",
+  );
   const [resolutionTarget, setResolutionTarget] = useState<
     Extract<BeIncidentState, "RESOLVED" | "CLOSED"> | null
   >(null);

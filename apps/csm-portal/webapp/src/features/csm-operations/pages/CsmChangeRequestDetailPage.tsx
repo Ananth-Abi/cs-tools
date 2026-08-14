@@ -81,8 +81,9 @@ import {
 import type { BeEntityRef } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
-const OPERATIONS_CR_PATH = "/operations?tab=change_requests";
+const OPERATIONS_CR_PATH = "/operations/change-requests";
 
 /**
  * The backend surfaces real rejection reasons on 4xx (e.g. a state
@@ -176,6 +177,7 @@ const TAB_DEFS: Array<{
   { id: "comments", label: "Comments", icon: <MessageSquare size={16} /> },
   { id: "attachments", label: "Attachments", icon: <Paperclip size={16} /> },
 ];
+const CHANGE_REQUEST_TAB_IDS: readonly ChangeRequestTabId[] = TAB_DEFS.map((t) => t.id);
 
 /**
  * Read-only detail for a single change request (`GET /change-requests/{id}`):
@@ -194,7 +196,12 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   const { showError } = useErrorBanner();
   const patchCr = usePatchChangeRequest();
   const [editOpen, setEditOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<ChangeRequestTabId>("approval");
+  // Kept in the URL (`?tab=`), not local state, so a shared/bookmarked link
+  // to a specific tab survives a refresh.
+  const { activeTab, setActiveTab } = useQueryParamTabs<ChangeRequestTabId>(
+    CHANGE_REQUEST_TAB_IDS,
+    "approval",
+  );
   const engineerName = useEngineerDisplayName();
 
   const { data: comments } = useGetCsmChangeRequestComments(id);
