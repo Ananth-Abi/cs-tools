@@ -8444,8 +8444,10 @@ components:
               type: boolean
             createdBy:
               type: array
+              maxItems: 20
               items:
                 type: string
+                maxLength: 254
               description: Filter to conversations initiated by any of these email addresses.
         sortBy:
           type: object

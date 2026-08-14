@@ -188,7 +188,7 @@ func (s *snConversationService) SearchConversations(ctx context.Context, req dom
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchConversationsResponse{}, err
 	}
-	if err := validateExactNumber("number", &req.Filters.Number); err != nil {
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
 		return domain.SearchConversationsResponse{}, err
 	}
 	if err := validateConversationCreatedBy(req.Filters.CreatedBy); err != nil {
@@ -230,7 +230,7 @@ func (s *snConversationService) SearchConversations(ctx context.Context, req dom
 			ProjectIDs:  uuidsToSysids(req.Filters.ProjectIDs),
 			StateKeys:   stateKeys,
 			SearchQuery: req.Filters.SearchQuery,
-			Number:      req.Filters.Number,
+			Number:      stringPtrValue(req.Filters.Number),
 			CreatedByMe: req.Filters.CreatedByMe,
 			CreatedBy:   req.Filters.CreatedBy,
 		},
