@@ -46,10 +46,28 @@ const pageSize = 50
 // fatal, the same as a page-fetch failure in the broad-sweep mode — there is
 // nothing else to fall back to when the one requested project can't be
 // fetched.
-func Run(ctx context.Context, reader sweepReader, updater projectUpdater, ntf notifier, now time.Time, projectID string) (Result, error) {
+//
+// excludedProjectIDs backs EXCLUDED_PROJECT_IDS: any project whose ID is a
+// key in this set (with value true) is skipped entirely — not fetched in
+// detail, not evaluated, not counted toward failures, just logged and
+// counted in Result.ProjectsExcluded. This applies uniformly to both the
+// broad sweep and the TEST_PROJECT_ID-scoped path: if projectID itself is
+// excluded, GetProject is never called at all. Per explicit design
+// direction (PR #1440 discussion, Sajith Ekanayake): this exists for
+// deliberate business-driven exclusions, not as a workaround for data
+// bugs — a project excluded here produces zero log signal about whatever
+// might be wrong with it, which is the opposite of what you want for an
+// actual bug. nil is equivalent to an empty set (nothing excluded).
+func Run(ctx context.Context, reader sweepReader, updater projectUpdater, ntf notifier, now time.Time, projectID string, excludedProjectIDs map[string]bool) (Result, error) {
 	var result Result
 
 	if projectID != "" {
+		if excludedProjectIDs[projectID] {
+			slog.InfoContext(ctx, "project excluded from evaluation", "projectID", projectID)
+			result.ProjectsExcluded++
+			return result, nil
+		}
+
 		raw, err := reader.GetProject(ctx, projectID)
 		if err != nil {
 			return result, fmt.Errorf("sweep: get project %s: %w", projectID, err)
@@ -92,6 +110,12 @@ func Run(ctx context.Context, reader sweepReader, updater projectUpdater, ntf no
 		}
 
 		for _, proj := range page.Projects {
+			if excludedProjectIDs[proj.ID] {
+				slog.InfoContext(ctx, "project excluded from evaluation", "projectID", proj.ID)
+				result.ProjectsExcluded++
+				continue
+			}
+
 			result.ProjectsEvaluated++
 			if err := processProject(ctx, reader, updater, ntf, now, proj); err != nil {
 				slog.ErrorContext(ctx, "processProject failed", "projectID", proj.ID, "err", err)
@@ -107,9 +131,9 @@ func Run(ctx context.Context, reader sweepReader, updater projectUpdater, ntf no
 			break
 		}
 
-		if page.Total > 0 && result.ProjectsEvaluated >= page.Total {
+		if page.Total > 0 && result.ProjectsEvaluated+result.ProjectsExcluded >= page.Total {
 			slog.WarnContext(ctx, "sweep: pagination hit the Total bound while hasMore was still true",
-				"total", page.Total, "projectsEvaluated", result.ProjectsEvaluated)
+				"total", page.Total, "projectsEvaluated", result.ProjectsEvaluated, "projectsExcluded", result.ProjectsExcluded)
 			break
 		}
 

@@ -95,6 +95,49 @@ loop's `offset := 0` line. This is what backs safe testing against a single
 dedicated project without risk of touching every open project in an
 environment.
 
+## EXCLUDED_PROJECT_IDS — deliberate exclusion, not a bug workaround
+
+`Run`'s `excludedProjectIDs` parameter (backed by the `EXCLUDED_PROJECT_IDS`
+env var, comma-separated, parsed by `main.go`'s `parseExcludedProjectIDs`) is
+a set of project IDs the sweep skips entirely — not fetched in detail, not
+evaluated, not counted as a failure, just logged and counted in
+`Result.ProjectsExcluded`. This applies uniformly to both the broad sweep and
+the `TEST_PROJECT_ID`-scoped path: if the scoped `projectID` is itself
+excluded, `GetProject` is never called at all.
+
+This came out of a real production incident (a project returning `500` on
+both `GET` and `PATCH` — a genuine data problem on the entity-service side,
+confirmed by the fact that even a bare read failed, not just the write) and
+a design discussion with Sajith Ekanayake about how to handle it. The
+resulting agreement, worth preserving verbatim since it's easy to
+misapply this mechanism otherwise:
+
+- **This is for deliberate, verified business exclusions only** — a project
+  someone has actually decided should never go through ACP, for a real
+  business reason. It is explicitly **not** a workaround for data bugs like
+  the incident that prompted it. A project excluded here produces zero log
+  signal about whatever might actually be wrong with it — the opposite of
+  what you want when something is broken and needs fixing.
+- **Expected to be empty almost all the time in production.** It's fine —
+  expected, even — for this to hold real entries in dev/staging (e.g.
+  keeping a known-broken test project out of the way while iterating).
+- The real incident that prompted this discussion was **not** resolved by
+  adding the project to this list — it needed (and still needs, as of this
+  writing) an actual data-level fix from whoever owns `entity-service`. See
+  the "known discrepancies" pattern elsewhere in this file for the general
+  practice of escalating rather than silently working around upstream
+  problems.
+- **Visibility was the sticking point in the design discussion**: the
+  concern was "if we skip a project entirely, how do we know something's
+  still wrong with it, or that it's since been fixed?" The answer landed on:
+  every excluded project ID is logged (`"project excluded from evaluation"`)
+  each time the sweep would otherwise have touched it, and the full
+  configured list is logged once at startup (`"excludedProjectIDs"` on the
+  `"acp-closure-service starting"` line) — so the exclusion itself stays
+  visible in the logs even though the project's own data never gets
+  evaluated. This does *not* answer "is the underlying issue still there" —
+  that still requires someone to actually go check, same as before.
+
 ## Notice audience matrix and content (redesigned per Chamara's direct request)
 
 Confirmed audience rule, unchanged: 90/60/30-day windows are internal-only;
