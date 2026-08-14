@@ -193,17 +193,6 @@ func (h *AIChatHandler) GetConversationMessages(w http.ResponseWriter, r *http.R
 	writeJSONValue(w, http.StatusOK, dto.MapSearchComments(result))
 }
 
-// agentReplyCreatedBy documents a known limitation of this endpoint:
-// entity-service's CreateCommentRequest has no createdBy override (comments
-// are always attributed to the caller's own identity via their auth token),
-// so there is no way to tag the AI's own reply with a distinct "agent"
-// identity. Both the user's message and the AI's reply are therefore saved
-// here under the calling user's identity — there is no way to distinguish
-// them by author alone.
-// TODO(entity-service): revisit once/if CreateCommentRequest gains a
-// createdBy override.
-const agentReplyCreatedByCaveat = "AI reply comment attributed to caller (see agentReplyCreatedBy doc comment) — entity-service has no createdBy override"
-
 // createEntityStateResolved is entity-service's ConversationState value used
 // to auto-resolve a conversation when the AI agent reports the issue solved.
 const createEntityStateResolved = "RESOLVED"
@@ -289,13 +278,14 @@ func (h *AIChatHandler) CreateConversation(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// See agentReplyCreatedBy doc comment: attributed to the caller, not a
-	// distinct "agent" identity — entity-service has no createdBy override.
+	// Attributed to the assistant, not the customer whose token relayed it —
+	// see entity.CreatedByAgent.
 	if _, err := h.entity.CreateComment(r.Context(), entity.CreateCommentRequest{
 		ReferenceID:   conversationID,
 		ReferenceType: entity.ReferenceTypeConversation,
 		Type:          entity.CommentTypeComment,
 		Content:       chatResp.Message,
+		CreatedBy:     entity.CreatedByAgent,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateComment failed for chat response", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to save chat response as comment.")
@@ -370,13 +360,14 @@ func (h *AIChatHandler) SendConversationMessage(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// See agentReplyCreatedBy doc comment: attributed to the caller, not a
-	// distinct "agent" identity — entity-service has no createdBy override.
+	// Attributed to the assistant, not the customer whose token relayed it —
+	// see entity.CreatedByAgent.
 	if _, err := h.entity.CreateComment(r.Context(), entity.CreateCommentRequest{
 		ReferenceID:   conversationID,
 		ReferenceType: entity.ReferenceTypeConversation,
 		Type:          entity.CommentTypeComment,
 		Content:       chatResp.Message,
+		CreatedBy:     entity.CreatedByAgent,
 	}); err != nil {
 		slog.ErrorContext(r.Context(), "entity CreateComment failed for chat response", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to save chat response as comment.")

@@ -915,6 +915,11 @@ type snCreateCommentPayload struct {
 	ReferenceType string `json:"referenceType"`
 	Type          string `json:"type"`
 	Content       string `json:"content"`
+	// CreatedBy is omitted unless a caller explicitly overrides the author —
+	// ServiceNow then falls back to resolving it from the caller's token, which
+	// is what the case-comment path here relies on. See
+	// domain.CreateCommentRequest.CreatedBy.
+	CreatedBy string `json:"createdBy,omitempty"`
 }
 
 type snCreateCommentResponse struct {

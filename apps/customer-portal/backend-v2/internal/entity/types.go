@@ -1072,7 +1072,23 @@ type CreateCommentRequest struct {
 	ReferenceType ReferenceType `json:"referenceType"`
 	Type          CommentType   `json:"type"`
 	Content       string        `json:"content"`
+	// CreatedBy overrides the comment's author, which entity-service otherwise
+	// derives from the caller's own token. Only ever set by this backend itself
+	// (to CreatedByAgent, for an AI reply) — never populated from a client
+	// request body, or a customer could post as the assistant.
+	CreatedBy string `json:"createdBy,omitempty"`
 }
+
+// CreatedByAgent is the CreateCommentRequest.CreatedBy value that attributes a
+// comment to the Novera AI assistant instead of the customer whose token
+// relayed it. Mirrors the Ballerina backend's entity:CHAT_SENT_AGENT.
+//
+// Note the asymmetry between what is written and what is read back: the write
+// value is "agent", but ServiceNow resolves it to the Novera user, so reads
+// return createdBy "novera" — which is what the webapp matches on to render
+// the assistant's bubble (see ConversationDetailsPage's isBot check). Don't
+// "fix" this constant to "novera"; that is the read form, not the write form.
+const CreatedByAgent = "agent"
 
 // CommentUserRef holds user details embedded in a comment response.
 type CommentUserRef struct {

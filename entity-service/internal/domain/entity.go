@@ -2008,6 +2008,15 @@ type CreateCommentRequest struct {
 	ReferenceType ReferenceType `json:"referenceType"`
 	Type          CommentType   `json:"type"`
 	Content       string        `json:"content"`
+	// CreatedBy optionally overrides the comment's author, which ServiceNow
+	// otherwise derives from the caller's own x-user-id-token. Its only current
+	// use is letting an AI-assistant reply be attributed to the assistant
+	// rather than to the customer whose token relayed it — pass "agent" for
+	// that, matching the digiops-cs entity-service contract
+	// (CommentCreatePayload.createdBy) the Ballerina customer-portal backend
+	// already uses. Omitted from the upstream payload when empty, so ordinary
+	// callers keep the caller-attributed default.
+	CreatedBy string `json:"createdBy,omitempty"`
 }
 
 // CreateCommentResponse is the response for POST /comments.
