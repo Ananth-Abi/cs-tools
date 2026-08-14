@@ -43,13 +43,16 @@ const corsAllowedMethods = "GET, POST, PATCH, DELETE, OPTIONS"
 // separately-declared stream endpoint, which isn't guaranteed to inherit the
 // gateway's CORS handling the same way the long-established :8080 one does.
 //
-// MUST be the outermost middleware in the chain (wrapping Auth, not wrapped
-// by it): a CORS preflight is an OPTIONS request with no x-jwt-assertion
-// header at all, so if Auth ran first it would reject every preflight with
-// 401 before the browser ever saw a CORS header — which the browser reports
-// as "blocked by CORS policy", masking the real cause. Worse, Auth sits
-// *before* Logger in this backend's chain, so such a rejection isn't even
-// logged, making it invisible server-side. See
+// MUST wrap Auth, not be wrapped by it: a CORS preflight is an OPTIONS
+// request with no x-jwt-assertion header at all, so if Auth ran first it
+// would reject every preflight with 401 before the browser ever saw a CORS
+// header — which the browser reports as "blocked by CORS policy", masking
+// the real cause. Worse, Auth sits *before* Logger in this backend's chain,
+// so such a rejection isn't even logged, making it invisible server-side.
+// SecurityHeaders, however, wraps *this* — see cmd/server/main.go's two
+// Handler chains — so its headers are present on every response, including
+// a preflight, which Auth-then-CORS ordering would otherwise skip since a
+// preflight never reaches the handlers CORS itself wraps. See
 // apps/customer-portal/backend-v2's identically-named middleware, whose doc
 // comment this mirrors.
 //
