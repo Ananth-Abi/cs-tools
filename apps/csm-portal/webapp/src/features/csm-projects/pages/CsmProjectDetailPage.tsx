@@ -28,7 +28,12 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft, ChevronDown, Plus } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX, type MouseEvent, type ReactNode } from "react";
-import { Link as RouterLink, useLocation, useParams } from "react-router";
+import {
+  Link as RouterLink,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router";
 import { useGetProject } from "@features/csm-projects/api/useGetProject";
 import ClosureStateChip from "@features/csm-projects/components/ClosureStateChip";
 import DeploymentsTab from "@features/csm-projects/components/DeploymentsTab";
@@ -41,6 +46,15 @@ import {
 import { useNavTransition } from "@hooks/useNavTransition";
 
 type ProjectTabId = "overview" | "deployments" | "contacts" | "workItems";
+const PROJECT_TAB_IDS: readonly ProjectTabId[] = [
+  "overview",
+  "deployments",
+  "contacts",
+  "workItems",
+];
+function isProjectTabId(value: string | null): value is ProjectTabId {
+  return !!value && (PROJECT_TAB_IDS as readonly string[]).includes(value);
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -141,7 +155,23 @@ export default function CsmProjectDetailPage(): JSX.Element {
   const fromListState = location.state as { from?: string } | undefined;
   const resolvedBackPath = fromListState?.from ?? "/customers/projects";
   const { data, isLoading, isError } = useGetProject(id);
-  const [activeTab, setActiveTab] = useState<ProjectTabId>("overview");
+  // Kept in the URL (`?tab=`), not local state, so returning here after a
+  // create-flow round trip (see `projectPath` below) restores the tab the
+  // engineer was actually on, instead of always resetting to Overview.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const activeTab: ProjectTabId = isProjectTabId(rawTab) ? rawTab : "overview";
+  const setActiveTab = (next: ProjectTabId): void => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set("tab", next);
+      // A sub-tab selection (e.g. Work items' own tab strip) only means
+      // something under the tab that owns it -- drop it so switching away
+      // doesn't carry a stale sub-tab back in if this tab is revisited.
+      params.delete("subTab");
+      return params;
+    });
+  };
   const [createMenuAnchor, setCreateMenuAnchor] = useState<HTMLElement | null>(
     null,
   );
@@ -182,8 +212,11 @@ export default function CsmProjectDetailPage(): JSX.Element {
   // Handed to each "Create X" menu item below as router state, so that
   // create page's own Back/Cancel -- and the entity it creates -- return
   // here instead of their hardcoded top-level list (see CsmCaseCreatePage.tsx
-  // and its 3 siblings).
-  const projectPath = `/customers/projects/${p.id}`;
+  // and its 3 siblings). Includes the current `?tab=`/`&subTab=` query string
+  // (not just the bare `/customers/projects/:id` path), so the round trip
+  // restores the exact tab -- Work items' own sub-tab included -- rather than
+  // resetting to Overview.
+  const projectPath = `${location.pathname}${location.search}`;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>

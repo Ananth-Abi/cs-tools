@@ -202,7 +202,7 @@ export default function CreateSecurityReportPage(): JSX.Element {
         onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to Security Center
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: 2 }}>
         New security report

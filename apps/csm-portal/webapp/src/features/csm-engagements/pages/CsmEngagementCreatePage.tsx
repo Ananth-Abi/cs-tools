@@ -144,7 +144,7 @@ export default function CsmEngagementCreatePage(): JSX.Element {
         onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to engagements
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: 2 }}>
         New engagement

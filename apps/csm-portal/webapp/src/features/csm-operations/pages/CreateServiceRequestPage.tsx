@@ -263,7 +263,7 @@ export default function CreateServiceRequestPage(): JSX.Element {
         onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to operations
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: relatedCaseId ? 0.5 : 2 }}>
         New service request

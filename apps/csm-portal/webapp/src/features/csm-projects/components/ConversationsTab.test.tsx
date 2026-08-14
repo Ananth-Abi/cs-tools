@@ -104,6 +104,27 @@ describe("ConversationsTab", () => {
     );
   });
 
+  // Same regression, but for a non-default page size: picking 50 rows per
+  // page must also show 50 skeleton rows, not just the initial default of
+  // 20 — a hardcoded skeleton count would pass the test above while still
+  // being wrong for every other page size.
+  it("renders 50 skeleton rows after switching the page size to 50", () => {
+    mockUseSearchConversations.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      error: null,
+    });
+
+    const { container } = render(<ConversationsTab projectId="proj-1" />);
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /conversations per page/i }));
+    fireEvent.click(screen.getByRole("option", { name: "50" }));
+
+    const COLUMN_COUNT = 4;
+    expect(container.querySelectorAll(".MuiSkeleton-root").length).toBe(50 * COLUMN_COUNT);
+  });
+
   it("shows an error state when the search fails", () => {
     mockUseSearchConversations.mockReturnValue({
       data: undefined,

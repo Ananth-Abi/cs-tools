@@ -285,7 +285,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
         onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to cases
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: relatedCaseId ? 0.5 : 2 }}>
         New case
