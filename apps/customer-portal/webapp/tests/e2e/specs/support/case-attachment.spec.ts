@@ -78,17 +78,27 @@ test.describe("Case Attachment", () => {
         return attachments;
       }
 
-      test("uploads an attachment to the case", async ({ page }) => {
-        test.skip(
-          !project.id || !target.caseId,
-          `${target.projectType} needs a project id and a case id. ` +
-            `Fill them in tests/e2e/config/testData.ts.`,
-        );
-
-        const attachments = await openKeptCase(page);
-
-        // Upload only when absent: the file is left in place for the other tests,
-        // so an unguarded upload would add a copy on every run.
+      /**
+       * Makes sure the kept case has its attachment, uploading only when it is
+       * missing.
+       *
+       * Idempotent, and called by every test that needs the file rather than
+       * only by the upload test: the list, expand, collapse and download tests
+       * all depend on it being there, and leaning on the upload test to have run
+       * first makes them silently order-dependent. That holds in a whole-file
+       * run (`workers: 1`, `fullyParallel: false`) but not when a single test is
+       * run on its own, which is exactly when the file might not yet exist.
+       *
+       * The guard is what keeps this safe to call repeatedly — an unguarded
+       * upload would stack another identical copy every time, with nothing
+       * removing them.
+       *
+       * @param attachments - The kept case's open Attachments tab.
+       * @returns Whether the file was already attached.
+       */
+      async function ensureKeptAttachment(
+        attachments: CaseAttachmentsPage,
+      ): Promise<boolean> {
         const alreadyAttached =
           (await attachments.attachment(kept.name).count()) > 0;
 
@@ -99,6 +109,18 @@ test.describe("Case Attachment", () => {
           const response = await attachments.upload(kept.path);
           await expectSuccess(response, "upload");
         }
+        return alreadyAttached;
+      }
+
+      test("uploads an attachment to the case", async ({ page }) => {
+        test.skip(
+          !project.id || !target.caseId,
+          `${target.projectType} needs a project id and a case id. ` +
+            `Fill them in tests/e2e/config/testData.ts.`,
+        );
+
+        const attachments = await openKeptCase(page);
+        const alreadyAttached = await ensureKeptAttachment(attachments);
 
         // Listed under its own name. Asserted as "at least one row" rather than by
         // visibility: the list renders each row twice for responsive layout, and a
@@ -123,6 +145,7 @@ test.describe("Case Attachment", () => {
         );
 
         const attachments = await openKeptCase(page);
+        await ensureKeptAttachment(attachments);
 
         await expect(attachments.emptyMessage()).toHaveCount(0);
         await expect(attachments.rows()).not.toHaveCount(0);
@@ -155,6 +178,7 @@ test.describe("Case Attachment", () => {
         );
 
         const attachments = await openKeptCase(page);
+        await ensureKeptAttachment(attachments);
 
         // The preview toggle only renders for image attachments, so this depends
         // on the kept upload being the PNG.
@@ -173,6 +197,7 @@ test.describe("Case Attachment", () => {
         );
 
         const attachments = await openKeptCase(page);
+        await ensureKeptAttachment(attachments);
 
         // Expand first: collapsing is only meaningful from an open preview, and
         // starting from a known state keeps this independent of the sibling test.
@@ -187,6 +212,8 @@ test.describe("Case Attachment", () => {
         );
 
         const attachments = await openKeptCase(page);
+        await ensureKeptAttachment(attachments);
+
         const download = await attachments.download(kept.name);
 
         // What a user would end up with on disk, from the anchor's `download`
@@ -222,17 +249,29 @@ test.describe("Case Attachment", () => {
         // starts from a known-empty state rather than adding a second copy.
         await attachments.deleteAll(transient.name);
 
-        const response = await attachments.upload(transient.path);
-        await expectSuccess(response, "upload");
+        // The removal runs from `finally` so a failed assertion above still
+        // leaves the case as it was found. The pre-clean above would sweep it up
+        // on the next run either way, but attachments are the only record in
+        // this suite that can be deleted, so there is no reason to leave one
+        // sitting on the tenant in the meantime.
+        try {
+          const response = await attachments.upload(transient.path);
+          await expectSuccess(response, "upload");
 
-        const row = attachments.attachmentRow(transient.name);
-        await expect(row).toContainText(transient.name);
-        await expect(row).toContainText(transient.size);
-        await expect(row).toContainText(todayLabel());
-
-        // The row's control opens a "Confirm Action" dialog, which deleteAll
-        // asserts on before confirming.
-        await attachments.deleteAll(transient.name);
+          const row = attachments.attachmentRow(transient.name);
+          await expect(row).toContainText(transient.name);
+          await expect(row).toContainText(transient.size);
+          await expect(row).toContainText(todayLabel());
+        } finally {
+          // Errors are swallowed so cleanup cannot replace the failure that got
+          // us here — a cleanup error would otherwise become the reported one
+          // and hide the real cause. On the happy path a delete that silently
+          // failed is still caught, by the absence assertions below.
+          //
+          // The row's control opens a "Confirm Action" dialog, which deleteAll
+          // asserts on before confirming.
+          await attachments.deleteAll(transient.name).catch(() => undefined);
+        }
 
         // Gone from the list, so the case ends as it started.
         await expect(attachments.attachment(transient.name)).toHaveCount(0);

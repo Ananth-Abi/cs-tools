@@ -100,7 +100,7 @@ test.describe("Support Center", () => {
           // And back, which only offers this label because the card passed a
           // `returnTo` — so the round trip is part of what the card has to get
           // right.
-          await support.returnFromList();
+          await support.returnFromList(project.id);
           await expect(support.statCard(card.label)).toBeVisible();
         });
       }

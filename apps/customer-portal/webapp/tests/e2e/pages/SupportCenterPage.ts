@@ -113,11 +113,17 @@ export class SupportCenterPage {
    * The back control only carries this label when the list was reached from
    * here — it depends on the `returnTo` the card set — so clicking it is also
    * what proves the round trip is wired up.
+   *
+   * Asserts the whole project-scoped path, not just the trailing segment: the
+   * `returnTo` the card set carries a project id, so landing on another
+   * project's Support Center is exactly the kind of mistake this should catch.
+   *
+   * @param projectId - Project whose Support Center the list was opened from.
    */
-  async returnFromList(): Promise<void> {
+  async returnFromList(projectId: string): Promise<void> {
     await this.backButton().click();
     await expect(this.page).toHaveURL(
-      new RegExp(`/${SUPPORT_CENTER.pathSegment}$`),
+      new RegExp(`/projects/${projectId}/${SUPPORT_CENTER.pathSegment}$`),
       { timeout: LOAD_TIMEOUT_MS },
     );
   }
