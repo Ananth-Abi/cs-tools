@@ -247,25 +247,30 @@ func main() {
 	// listeners validate the exact same tokens the exact same way.
 	authMiddleware := middleware.Auth(authCfg)
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	addr := ":" + mustPort("PORT", "8080")
 
-	ln, err := net.Listen("tcp", addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		slog.Error("failed to bind", "addr", addr, "err", err)
 		os.Exit(1)
 	}
 
 	srv := &http.Server{
-		// CORS wraps everything, including Auth — see middleware.CORS's doc
-		// comment. In a real deployment Choreo's gateway supplies these
-		// headers itself, so this is a no-op there; it matters when the
-		// gateway isn't in the path (local development, where the browser
-		// calls this listener directly and its preflight OPTIONS carries no
-		// x-jwt-assertion for Auth to accept).
-		// CORS_ALLOWED_ORIGINS is a comma-separated allow-list; unset allows
-		// any origin (see middleware.CORS on why that's safe here).
-		Handler: middleware.CORS(splitComma(os.Getenv("CORS_ALLOWED_ORIGINS")))(
-			middleware.SecurityHeaders(
+		// SecurityHeaders must stay outermost so its headers are present on
+		// every response, including a CORS preflight — CORS runs next,
+		// still ahead of Auth (see middleware.CORS's doc comment): a
+		// preflight OPTIONS carries no x-jwt-assertion for Auth to accept.
+		// In a real deployment Choreo's gateway supplies CORS itself, so
+		// this is a no-op there; it matters when the gateway isn't in the
+		// path (local development, where the browser calls this listener
+		// directly). CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
+		// unset allows any origin (see middleware.CORS on why that's safe
+		// here).
+		Handler: middleware.SecurityHeaders(
+			middleware.CORS(splitComma(os.Getenv("CORS_ALLOWED_ORIGINS")))(
 				middleware.CorrelationID(
 					authMiddleware(
 						middleware.Logger(mux),
@@ -295,21 +300,23 @@ func main() {
 		streamMux.HandleFunc("GET /cases/{id}/activities/stream", caseHandler.StreamCaseActivities)
 
 		streamAddr := ":" + mustPort("STREAM_PORT", "9092")
-		streamLn, err = net.Listen("tcp", streamAddr)
+		streamLn, err = (&net.ListenConfig{}).Listen(ctx, "tcp", streamAddr)
 		if err != nil {
 			slog.Error("failed to bind", "addr", streamAddr, "err", err)
 			os.Exit(1)
 		}
 
 		streamSrv = &http.Server{
-			// CORS wraps everything, including Auth — see middleware.CORS's
-			// doc comment for why: a browser preflight carries no
-			// x-jwt-assertion header, so Auth must never see it first.
+			// SecurityHeaders must stay outermost so its headers are present
+			// on every response, including a CORS preflight — CORS runs
+			// next, still ahead of Auth: a browser preflight carries no
+			// x-jwt-assertion header, so Auth must never see it first. See
+			// middleware.CORS's doc comment.
 			// STREAM_CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
 			// unset allows any origin (local-dev-friendly default — see
 			// middleware.CORS on why that's safe here).
-			Handler: middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
-				middleware.SecurityHeaders(
+			Handler: middleware.SecurityHeaders(
+				middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
 					middleware.CorrelationID(
 						authMiddleware(
 							middleware.Logger(streamMux),
@@ -323,9 +330,6 @@ func main() {
 			IdleTimeout:       0,
 		}
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -390,14 +394,28 @@ func envOrDefault(key, def string) string {
 	return def
 }
 
-// newReplicaID returns a random UUID v4 string, used to give each running
-// instance of this backend its own unique Kafka consumer group suffix (see
-// the EVENT_HUB_BROKER block above). Deliberately duplicates
+// newReplicaID returns a stable identifier for this process's Kafka
+// consumer group suffix (see the EVENT_HUB_BROKER block above), preferring
+// the container/pod hostname — in Kubernetes/Choreo this is the pod name by
+// default, requiring no extra deployment config — over a fresh random ID.
+// A random ID on every plain process restart would make Event Hub treat it
+// as a brand new, never-before-seen consumer group every time: NewConsumer
+// starts new groups at kafka.FirstOffset, so the restart would replay every
+// retained event and re-broadcast stale case_updated notifications to
+// whichever SSE clients happen to be connected. The hostname is only stable
+// within the same pod's lifetime, so an actual redeploy (new pod, new
+// hostname) still causes a one-time replay — an accepted, much rarer
+// tradeoff than replaying on every restart.
+//
+// Falls back to a random UUID v4 (deliberately duplicating
 // middleware.newCorrelationID's same crypto/rand-based approach rather than
-// exporting/sharing it — the two ids serve unrelated purposes (a per-process
-// identity that lives for the process's whole lifetime vs. a per-request
-// trace id) and don't need to be coupled by a shared helper.
+// exporting/sharing it — the two ids serve unrelated purposes and don't
+// need to be coupled by a shared helper) only if the hostname is
+// unavailable, which is rare outside unusual sandboxed environments.
 func newReplicaID() string {
+	if host, err := os.Hostname(); err == nil && host != "" {
+		return host
+	}
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		slog.Error("failed to generate replica id", "err", err)
