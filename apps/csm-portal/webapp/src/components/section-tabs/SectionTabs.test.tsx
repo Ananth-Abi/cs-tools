@@ -99,4 +99,14 @@ describe("LegacyQueryTabRedirect", () => {
     expect(probe).not.toContain("tab=incidents");
     expect(probe).toContain("#top");
   });
+
+  it("falls back to the dashboard but keeps other search params and the hash when every tab is restricted", () => {
+    setOverrides({ operations: "hidden" });
+    renderAt("/operations?tab=incidents&severity=s1#top");
+    const probe = screen.getByTestId("location-probe").textContent ?? "";
+    expect(probe).toContain("/dashboard");
+    expect(probe).toContain("severity=s1");
+    expect(probe).not.toContain("tab=incidents");
+    expect(probe).toContain("#top");
+  });
 });

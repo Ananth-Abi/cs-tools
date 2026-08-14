@@ -177,10 +177,18 @@ export function LegacyQueryTabRedirect({
       ? requestedKey
       : (firstEnabledPathTab(sectionId) ?? undefined);
 
-  if (!targetKey) return <Navigate to="/dashboard" replace />;
-
   params.delete("tab");
   const rest = params.toString();
+
+  if (!targetKey) {
+    return (
+      <Navigate
+        to={`/dashboard${rest ? `?${rest}` : ""}${location.hash}`}
+        replace
+      />
+    );
+  }
+
   return (
     <Navigate
       to={`${basePath}/${targetKey}${rest ? `?${rest}` : ""}${location.hash}`}
