@@ -35,8 +35,9 @@ const USER_MANAGEMENT_INDEX_PATH = "/admin/user-management";
  * (`CsmUserManagementLandingPage`, rendered at the `user-management` index
  * route). Since a directory page reached via a tile has no tab strip to
  * click back through, this shell adds an explicit "Back to User management"
- * link above the `<Outlet>` whenever the current route is one level or more
- * below that index route.
+ * link at the top of the page -- before the "Settings" title, matching every
+ * other page's Back button position -- whenever the current route is one
+ * level or more below that index route.
  *
  * The "Dashboards" tab is additionally filtered by the signed-in user's own
  * admin role (frontend-only — see `dashboardBuilderAccess.ts` for why this
@@ -66,10 +67,9 @@ export default function CsmAdminLayout(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <Typography variant="h5">Settings</Typography>
-
-      <SectionTabs {...tabs} ariaLabel="Settings tabs" scrollable />
-
+      {/* Top of the page, before the title -- same position every other
+          page's Back button uses (see `UserProfilePage.tsx`/
+          `CsmProjectDetailPage.tsx`), not tucked below the tab strip. */}
       {showBackToUserManagement && (
         <Button
           variant="text"
@@ -81,6 +81,10 @@ export default function CsmAdminLayout(): JSX.Element {
           Back to User management
         </Button>
       )}
+
+      <Typography variant="h5">Settings</Typography>
+
+      <SectionTabs {...tabs} ariaLabel="Settings tabs" scrollable />
 
       <Suspense fallback={<RouteSuspenseFallback />}>
         <Outlet />

@@ -17,7 +17,41 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import WorkItemsTab from "@features/csm-projects/components/WorkItemsTab";
+
+function renderWorkItemsTab(projectId = "proj-1") {
+  return render(
+    <MemoryRouter initialEntries={["/customers/projects/proj-1?tab=workItems"]}>
+      <WorkItemsTab projectId={projectId} />
+    </MemoryRouter>,
+  );
+}
+
+/** Destination probe: exposes the current URL search string so a test can
+ * assert on it after a sub-tab switch. */
+function LocationSearchProbe() {
+  const location = useLocation();
+  return <div data-testid="search-probe">{location.search}</div>;
+}
+
+function renderWorkItemsTabWithLocationProbe(initialEntry: string) {
+  return render(
+    <MemoryRouter initialEntries={[initialEntry]}>
+      <Routes>
+        <Route
+          path="/customers/projects/:id"
+          element={
+            <>
+              <WorkItemsTab projectId="proj-1" />
+              <LocationSearchProbe />
+            </>
+          }
+        />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
 
 const mockCsmIssuesView = vi.fn();
 
@@ -34,7 +68,7 @@ vi.mock("@features/csm-projects/components/ConversationsTab", () => ({
 
 describe("WorkItemsTab", () => {
   it("defaults to the Cases sub-tab, locked to this project's case-type cases", () => {
-    render(<WorkItemsTab projectId="proj-1" />);
+    renderWorkItemsTab();
 
     expect(screen.getByText("IssuesView: cases")).toBeInTheDocument();
     expect(mockCsmIssuesView).toHaveBeenCalledWith(
@@ -48,7 +82,7 @@ describe("WorkItemsTab", () => {
   });
 
   it("switches to the Service requests sub-tab, routed to the operations detail page", () => {
-    render(<WorkItemsTab projectId="proj-1" />);
+    renderWorkItemsTab();
 
     fireEvent.click(screen.getByText("Service requests"));
 
@@ -62,7 +96,7 @@ describe("WorkItemsTab", () => {
   });
 
   it("switches to the Security reports sub-tab with severity hidden", () => {
-    render(<WorkItemsTab projectId="proj-1" />);
+    renderWorkItemsTab();
 
     fireEvent.click(screen.getByText("Security reports"));
 
@@ -77,7 +111,7 @@ describe("WorkItemsTab", () => {
   });
 
   it("switches to the Engagements sub-tab with the engagement-type filter shown", () => {
-    render(<WorkItemsTab projectId="proj-1" />);
+    renderWorkItemsTab();
 
     fireEvent.click(screen.getByText("Engagements"));
 
@@ -93,10 +127,30 @@ describe("WorkItemsTab", () => {
   });
 
   it("switches to the Conversations sub-tab", () => {
-    render(<WorkItemsTab projectId="proj-1" />);
+    renderWorkItemsTab();
 
     fireEvent.click(screen.getByText("Conversations"));
 
     expect(screen.getByText("Conversations for proj-1")).toBeInTheDocument();
+  });
+
+  // Regression tests: the sub-tab used to be plain component state, so a
+  // create-flow round trip back to the project always reset it to Cases.
+  // It's now kept in the URL (`?subTab=`) instead.
+  it("writes the selected sub-tab to the URL's ?subTab= param", () => {
+    renderWorkItemsTabWithLocationProbe("/customers/projects/proj-1?tab=workItems");
+
+    fireEvent.click(screen.getByText("Engagements"));
+
+    expect(screen.getByTestId("search-probe")).toHaveTextContent("subTab=engagements");
+  });
+
+  it("restores the sub-tab named in the URL on mount, instead of always defaulting to Cases", () => {
+    renderWorkItemsTabWithLocationProbe(
+      "/customers/projects/proj-1?tab=workItems&subTab=conversations",
+    );
+
+    expect(screen.getByText("Conversations for proj-1")).toBeInTheDocument();
+    expect(screen.queryByText(/IssuesView/)).not.toBeInTheDocument();
   });
 });

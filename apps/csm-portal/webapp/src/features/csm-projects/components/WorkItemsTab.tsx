@@ -15,7 +15,8 @@
 // under the License.
 
 import { Box, Tab, Tabs } from "@wso2/oxygen-ui";
-import { useState, type JSX } from "react";
+import { type JSX } from "react";
+import { useSearchParams } from "react-router";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ConversationsTab from "@features/csm-projects/components/ConversationsTab";
 
@@ -25,6 +26,17 @@ type WorkItemSubTab =
   | "securityReports"
   | "engagements"
   | "conversations";
+
+const WORK_ITEM_SUB_TABS: readonly WorkItemSubTab[] = [
+  "cases",
+  "serviceRequests",
+  "securityReports",
+  "engagements",
+  "conversations",
+];
+function isWorkItemSubTab(value: string | null): value is WorkItemSubTab {
+  return !!value && (WORK_ITEM_SUB_TABS as readonly string[]).includes(value);
+}
 
 interface WorkItemsTabProps {
   projectId: string;
@@ -42,7 +54,20 @@ interface WorkItemsTabProps {
  * than as a separate top-level project tab.
  */
 export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Element {
-  const [subTab, setSubTab] = useState<WorkItemSubTab>("cases");
+  // Kept in the URL (`?subTab=`), not local state, alongside the parent
+  // page's own `?tab=` -- see CsmProjectDetailPage.tsx's `projectPath` -- so
+  // a create-flow round trip back to this project restores the exact sub-tab
+  // the engineer was on, not just the Work items tab in general.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawSubTab = searchParams.get("subTab");
+  const subTab: WorkItemSubTab = isWorkItemSubTab(rawSubTab) ? rawSubTab : "cases";
+  const setSubTab = (next: WorkItemSubTab): void => {
+    setSearchParams((prev) => {
+      const params = new URLSearchParams(prev);
+      params.set("subTab", next);
+      return params;
+    });
+  };
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -60,6 +85,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           lockedFilters={{ projects: [projectId], caseTypes: ["case"] }}
           hideProjectFilter
           hideTypeFilter
+          hideBackButton
         />
       )}
 
@@ -70,6 +96,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           hideProjectFilter
           hideTypeFilter
           detailBasePath="/operations/service-requests"
+          hideBackButton
         />
       )}
 
@@ -81,6 +108,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           hideTypeFilter
           hideSeverityColumn
           detailBasePath="/security-center/security-reports"
+          hideBackButton
         />
       )}
 
@@ -93,6 +121,7 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
           showEngagementTypeFilter
           hideSeverityColumn
           detailBasePath="/engagements"
+          hideBackButton
         />
       )}
 

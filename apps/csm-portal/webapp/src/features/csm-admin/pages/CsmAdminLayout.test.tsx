@@ -120,4 +120,19 @@ describe("CsmAdminLayout — back link to the User management tile grid", () => 
       screen.queryByRole("button", { name: /back to user management/i }),
     ).not.toBeInTheDocument();
   });
+
+  // Regression test: the back link used to render below the tab strip,
+  // inconsistent with every other page's Back button (always the first
+  // thing on the page, above the title). It must precede both the "Settings"
+  // heading and the tab strip in document order.
+  it("renders the back link above the Settings title and tab strip, not below them", () => {
+    mockRoles = ["admin"];
+    renderLayout("/admin/user-management/roles");
+    const back = screen.getByRole("button", { name: /back to user management/i });
+    const heading = screen.getByRole("heading", { name: "Settings" });
+    const tabStrip = screen.getByRole("tab", { name: "User management" });
+
+    expect(back.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(back.compareDocumentPosition(tabStrip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
