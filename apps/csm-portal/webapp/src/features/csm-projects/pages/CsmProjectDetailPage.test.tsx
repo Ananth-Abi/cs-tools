@@ -18,6 +18,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ProjectDetails } from "@features/csm-projects/types/csmProjects";
 
 const mockUseGetProject = vi.fn();
@@ -71,21 +72,26 @@ function LocationProbe() {
 }
 
 function renderPage(initialEntry = "/customers/projects/proj-1") {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={[initialEntry]}>
-      <Routes>
-        <Route
-          path="/customers/projects/:id"
-          element={
-            <>
-              <CsmProjectDetailPage />
-              <LocationProbe />
-            </>
-          }
-        />
-        <Route path="/cases/new" element={<LocationProbe />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route
+            path="/customers/projects/:id"
+            element={
+              <>
+                <CsmProjectDetailPage />
+                <LocationProbe />
+              </>
+            }
+          />
+          <Route path="/cases/new" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 
