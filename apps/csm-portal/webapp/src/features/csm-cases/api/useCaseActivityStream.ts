@@ -36,10 +36,14 @@ const RECONNECT_DELAY_MS = 3_000;
  *
  * Uses `@sanity/eventsource` rather than the browser's native `EventSource`
  * because native EventSource cannot set custom headers — it only supports
- * cookies/query params for auth — and this stream is behind the same
- * `x-jwt-assertion`/`x-user-id-token` header auth as every other backend
- * call (see useAuthApiClient.ts). There is no separate ticket/token-exchange
- * step: the polyfill attaches those headers directly on the connection.
+ * cookies/query params for auth. Unlike useAuthApiClient.ts, which sets
+ * `Authorization` and relies on Choreo's gateway to translate it into
+ * `x-jwt-assertion` before the main :8080 API ever sees it, this connects to
+ * this stream's own, separately-declared Choreo endpoint (see
+ * openapi-stream.yaml) — not guaranteed to apply the same translation — so
+ * this hook sets `x-jwt-assertion`/`x-user-id-token` directly, matching
+ * exactly what backend's `middleware.Auth` reads. There is no separate
+ * ticket/token-exchange step.
  *
  * Headers are fixed at construction time, so they can't be refreshed on the
  * library's own built-in reconnect — a token that expires mid-connection
@@ -70,7 +74,10 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       try {
         [token, idToken] = await Promise.all([getAccessToken(), getIdToken()]);
       } catch (error) {
-        logger.debug("[case-activity-stream] failed to get tokens", error);
+        logger.debug(
+          "[case-activity-stream] failed to get tokens",
+          error instanceof Error ? error.message : "Unknown token error",
+        );
       }
       if (cancelled) return;
       if (!token || !idToken) {
@@ -81,7 +88,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       const url = `${apiConfig.streamUrl}/cases/${encodeURIComponent(caseId)}/activities/stream`;
       source = new EventSourcePolyfill(url, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          "x-jwt-assertion": token,
           "x-user-id-token": idToken,
         },
       });
@@ -96,7 +103,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       });
 
       source.addEventListener("error", () => {
-        logger.debug("[case-activity-stream] connection error, reconnecting", { caseId });
+        logger.debug("[case-activity-stream] connection error, reconnecting");
         source?.close();
         if (!cancelled) {
           reconnectTimer = setTimeout(() => void connect(), RECONNECT_DELAY_MS);
