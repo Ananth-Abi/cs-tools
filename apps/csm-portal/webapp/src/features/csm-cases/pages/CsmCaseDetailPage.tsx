@@ -309,11 +309,15 @@ const TAB_DEFS: Array<{
   // it's just unreachable via tab navigation while hidden.
   { id: "tasks", label: "Tasks", icon: <CheckSquare size={16} />, hidden: true },
 ];
-// Every tab id, including the currently-hidden "tasks" — a caller-supplied
-// list for `useQueryParamTabs`, not the nav tree, so hidden still counts as
-// "recognised" here (its content still renders if `activeTab` is ever
-// "tasks"; see the TAB_DEFS entry above).
-const CASE_TAB_IDS: readonly CaseTabId[] = TAB_DEFS.map((t) => t.id);
+// Only the ids with a rendered `<Tab>` — a caller-supplied list for
+// `useQueryParamTabs`, not the nav tree. A hidden tab like "tasks" is
+// deliberately excluded: `useQueryParamTabs` would otherwise treat
+// `?tab=tasks` as "recognised" and select it as `activeTab`, but with no
+// matching `<Tab>` in the strip that leaves the underlying MUI `Tabs` value
+// out of range and nothing visually selected.
+const CASE_TAB_IDS: readonly CaseTabId[] = TAB_DEFS.filter(
+  (t) => !t.hidden,
+).map((t) => t.id);
 
 export default function CsmCaseDetailPage(): JSX.Element {
   const caseId = useNormalizedIdParam("caseId");
@@ -688,10 +692,19 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // (e.g. #description → #description) is covered by comparing `caseId` here
   // too, not just `permalinkFragment` — the fragment alone wouldn't change in
   // that case, so the old case's tab would otherwise carry over unforced.
-  const permalinkForceRef = useRef({ caseId, fragment: permalinkFragment });
+  // Starts unset rather than pre-seeded with the current `caseId`/fragment:
+  // on a cold load that already has a permalink fragment in the URL (e.g.
+  // `?tab=attachments#entry-9`), a pre-seeded ref would make the "did it
+  // change" check below false on the very first render, so the tab would
+  // never get forced to Activities and the page would stay wherever `?tab=`
+  // pointed instead of jumping to the linked entry.
+  const permalinkForceRef = useRef<
+    { caseId: string | undefined; fragment: string } | undefined
+  >(undefined);
   useEffect(() => {
     const prev = permalinkForceRef.current;
-    const changed = prev.caseId !== caseId || prev.fragment !== permalinkFragment;
+    const changed =
+      !prev || prev.caseId !== caseId || prev.fragment !== permalinkFragment;
     permalinkForceRef.current = { caseId, fragment: permalinkFragment };
     if (changed && permalinkFragment) {
       setActiveTab("activities");

@@ -550,6 +550,19 @@ describe("CsmCaseDetailPage — tab lives in the URL", () => {
     );
   });
 
+  it("falls back to Activities for ?tab=tasks, the hidden tab with no rendered <Tab>", () => {
+    renderPageAt("/cases/case-1?tab=tasks");
+
+    expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    // "tasks" isn't a rendered <Tab> at all (it's hidden from the strip).
+    expect(
+      screen.queryByRole("tab", { name: /^tasks$/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it.each(CASE_ROUTE_MOUNTS)(
     // "Attachments" (not e.g. "SLAs") since it's the one tab every case type
     // in this list renders, including an announcement — which hides
@@ -620,9 +633,17 @@ describe("CsmCaseDetailPage — canonical-route redirect carries ?tab= and #hash
       </QueryClientProvider>,
     );
 
+    // `#entry-9` is a permalink fragment, so once the fixed
+    // `permalinkForceRef` logic (see CsmCaseDetailPage.tsx) sees it on this
+    // cold load it forces the tab to Activities regardless of the `?tab=`
+    // the URL was opened with — same as any other cold load with a fragment,
+    // canonical route or not. `setActiveTab`'s own `setSearchParams` call
+    // doesn't preserve the hash, which is why it's gone from the settled
+    // URL too; that's pre-existing behaviour of every tab switch, not new
+    // here.
     await waitFor(() =>
       expect(screen.getByTestId("location-search-probe")).toHaveTextContent(
-        "/operations/service-requests/case-1?tab=attachments#entry-9",
+        "/operations/service-requests/case-1?tab=activities",
       ),
     );
 
@@ -636,6 +657,17 @@ describe("CsmCaseDetailPage — canonical-route redirect carries ?tab= and #hash
       isFetching: false,
       dataUpdatedAt: 0,
     }));
+  });
+});
+
+describe("CsmCaseDetailPage — permalink fragment forces the Activities tab", () => {
+  it("forces Activities on a cold load that already has a permalink fragment, even when ?tab= names a different tab", () => {
+    renderPageAt("/cases/case-1?tab=attachments#entry-9");
+
+    expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });
 
