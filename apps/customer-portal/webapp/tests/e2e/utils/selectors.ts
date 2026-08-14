@@ -247,11 +247,140 @@ export const CASE_DETAILS_PANEL = {
   },
 } as const;
 
-/** Cases list (`/projects/:projectId/support/cases`). */
+/** The Attachments tab of a case (CaseDetailsAttachmentsPanel).
+ *
+ * Unlike cases, comments and deployments, attachments CAN be deleted — there is a
+ * delete affordance per row plus a confirmation dialog — so the attachment spec
+ * cleans up after itself instead of accumulating records. */
+export const CASE_ATTACHMENTS = {
+  /** The tab label carries a live count, e.g. "Attachments (0)". */
+  tab: /^Attachments/,
+  uploadButton: "Upload Attachment",
+  emptyMessage: "No attachments found.",
+  uploadModal: {
+    title: "Upload Attachment",
+    /** Opens the OS file picker via the dropzone's hidden input. */
+    chooseFileButton: "Choose file",
+    /** Reads "Upload" here — the "Add" variant only appears where the caller
+     * passes `onSelect` to hold the file locally, which this panel does not. */
+    confirmButton: "Upload",
+    nameField: "Attachment name",
+  },
+  /** Each row reads "<name> | <size> | • | Uploaded by <email> | • | <date>". */
+  row: {
+    /** formatFileSize output, e.g. "788.2 KB", "30 B", "1.2 MB". */
+    sizePattern: /\d+(\.\d+)? (B|KB|MB)/,
+    uploadedByPrefix: /Uploaded by \S+/,
+    /** formatDateTime output, e.g. "Aug 13, 2026, 9:41 PM". */
+    datePattern: /[A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2} [AP]M/,
+  },
+  /** Image rows carry a preview toggle; the label flips once expanded. */
+  expandImageButton: "Expand image",
+  collapseImageButton: "Collapse image",
+  /** The tab label carries the count, e.g. "Attachments (1)". */
+  tabCountPattern: /^Attachments \((\d+)\)/,
+  deleteModal: {
+    title: "Confirm Action",
+    confirmButton: "Confirm",
+    cancelButton: "Go Back",
+  },
+} as const;
+
+/** Support Center landing page (`/projects/:projectId/support`), reached from
+ * the side nav. Its Outstanding Cases card is the only entry point to the
+ * filtered "my cases" list — the URL is otherwise undiscoverable in the UI. */
+export const SUPPORT_CENTER = {
+  navItem: "Support",
+  pathSegment: "support",
+  outstandingCases: {
+    title: "Outstanding Cases",
+    /** Footer buttons of the card, in render order. */
+    myCasesButton: "View my cases",
+    allCasesButton: "View all cases",
+  },
+  /** Every list reached from Support Center offers this, because the card sets
+   * `returnTo` on navigation. The cases list falls back to a plain "Back" when
+   * it is opened any other way, so this label doubles as a check that the
+   * card wired `returnTo` up. */
+  backButton: "Back to Support Center",
+  /**
+   * The four stat cards across the top (SUPPORT_STAT_CONFIGS), in render order,
+   * each with the list it opens (SupportPage's `handleStatClick`).
+   *
+   * `label` is the card; `title` is the heading of the page it opens. They are
+   * not always the same string — the "Resolved via Chat" card is parenthesised
+   * and its destination heading is not.
+   *
+   * A card navigates whatever its count, including zero, so specs assert the
+   * destination page rather than its rows.
+   */
+  statCards: [
+    {
+      label: "Outstanding Cases",
+      pathSegment: "support/cases",
+      query: "statusFilter=active",
+      title: "Outstanding Cases",
+      description: "Cases that are currently in progress",
+    },
+    {
+      label: "Active Chats",
+      pathSegment: "support/conversations",
+      query: "statusFilter=active",
+      title: "Active Chats",
+      description: "Conversations currently in progress",
+    },
+    {
+      label: "Resolved Cases (Last 30d)",
+      pathSegment: "support/cases",
+      query: "statusFilter=resolved",
+      title: "Resolved Cases (Last 30d)",
+      description: "Cases that have been resolved during the last 30 days",
+    },
+    {
+      label: "Resolved via Chat (Last 30d)",
+      pathSegment: "support/conversations",
+      query: "statusFilter=resolvedViaChat",
+      title: "Resolved via Chat Last 30d",
+      description:
+        "Conversations that were resolved via chat during the last 30 days",
+    },
+  ],
+} as const;
+
+/** Cases list (`/projects/:projectId/support/cases`).
+ *
+ * One page serves several lists: `?createdByMe=true` makes it My Cases, and its
+ * heading, description and Created By filter all change with it (AllCasesPage). */
 export const CASES_LIST = {
   pathSegment: "support/cases",
   /** Default placeholder of ListSearchPanel's input. */
   searchPlaceholder: /Search cases/,
+  /** Query string "View my cases" navigates to. */
+  myCasesQuery: "createdByMe=true",
+  /** ListPageHeader copy, selected by the query string. */
+  myCases: {
+    title: "My Cases",
+    description: "Manage and track your support cases",
+  },
+  allCases: {
+    title: "All Cases",
+    description: "Manage and track all your support cases",
+  },
+  /** ListResultsBar renders "Showing X of Y cases". */
+  resultsCountPattern: /Showing (\d+) of (\d+) cases/,
+  /** Prefix ListCard puts before the creator on every row that has one. */
+  createdByPrefix: "Created by ",
+  /** Opens the filter panel (ListSearchBar). The panel is collapsed by default,
+   * so no filter label is in the DOM until this is clicked. Its label becomes
+   * "Clear Filters (n)" once any filter is applied — these specs apply none. */
+  filtersButton: "Filters",
+  /** Label of the Created By filter (deriveFilterLabels("createdBy")), which is
+   * withheld on My Cases since the list is already narrowed to one creator. */
+  createdByFilterLabel: "Created By",
+  /** A filter offered on every cases list, whatever the query string. Used to
+   * prove the panel is open, so "Created By is absent" cannot pass merely
+   * because nothing is rendered. */
+  severityFilterLabel: "Severity",
 } as const;
 
 /** Case detail page (`/projects/:projectId/support/cases/:caseId`).

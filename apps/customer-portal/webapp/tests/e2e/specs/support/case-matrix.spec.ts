@@ -60,7 +60,7 @@ import {
   ProjectType,
   SEVERITY_CODES,
 } from "../../config/testData";
-import { skipWhenUnconfigured } from "../../utils/caseFlows";
+import { expectSuccess, skipWhenUnconfigured } from "../../utils/caseFlows";
 import { CREATE_CASE } from "../../utils/selectors";
 
 withSession(test);
@@ -137,10 +137,7 @@ test.describe("Case Matrix", () => {
 
           // Status asserted here rather than in the predicate, so a rejected
           // create reports the server's message instead of timing out.
-          expect(
-            response.status() >= 200 && response.status() < 300,
-            `create case failed: ${response.status()} ${await response.text()}`,
-          ).toBe(true);
+          await expectSuccess(response, "create case");
 
           const created = (await response.json()) as {
             id?: string;

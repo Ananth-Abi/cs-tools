@@ -16,7 +16,7 @@
 
 import { type Locator, type Page, expect } from "../fixtures/test";
 import { CASE_DETAIL, SECURITY_CENTER } from "../utils/selectors";
-import { isSuccess } from "../utils/caseFlows";
+import { expectSuccess } from "../utils/caseFlows";
 import { caseSearchResponse } from "../utils/listSearch";
 
 /** How long to allow for the list and its search results to resolve. */
@@ -75,10 +75,7 @@ export class SecurityCenterPage {
     await this.searchInput().fill(searchText);
     const response = await searchResponse;
 
-    expect(
-      isSuccess(response.status()),
-      `report search failed: ${response.status()} ${await response.text()}`,
-    ).toBe(true);
+    await expectSuccess(response, "report search");
 
     // A result row always carries a case number. Checking for one is a positive
     // signal, rather than inferring a hit from the empty message being absent —

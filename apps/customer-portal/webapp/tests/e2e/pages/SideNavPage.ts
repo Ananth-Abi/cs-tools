@@ -77,4 +77,25 @@ export class SideNavPage {
   item(name: string): Locator {
     return this.sidebar().getByRole("button", { name, exact: true });
   }
+
+  /**
+   * Clicks a navigation item and waits for it to take effect.
+   *
+   * Retries the click-and-navigate as a unit rather than clicking once. The
+   * sidebar is rebuilt as the project's features arrive, so an item can be
+   * detached from the DOM part-way through a click; Playwright then restarts its
+   * actionability checks on the replacement, and on a slow load that can repeat
+   * until the test times out — observed live as a 3-minute hang on "element was
+   * detached from the DOM, retrying" with the click never landing. A fresh click
+   * against the rebuilt item succeeds immediately.
+   *
+   * @param name - Exact item label.
+   * @param expectedUrl - URL the item must navigate to.
+   */
+  async clickItem(name: string, expectedUrl: RegExp): Promise<void> {
+    await expect(async () => {
+      await this.item(name).click({ timeout: 15_000 });
+      await expect(this.page).toHaveURL(expectedUrl, { timeout: 15_000 });
+    }).toPass({ timeout: LOAD_TIMEOUT_MS });
+  }
 }
