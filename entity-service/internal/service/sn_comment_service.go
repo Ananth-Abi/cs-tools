@@ -153,6 +153,7 @@ func (s *snCommentSearchService) CreateComment(ctx context.Context, req domain.C
 		ReferenceType: string(req.ReferenceType),
 		Type:          snType,
 		Content:       req.Content,
+		CreatedBy:     req.CreatedBy,
 	}
 
 	raw, err := s.client.Post(ctx, "/comments", token, payload)

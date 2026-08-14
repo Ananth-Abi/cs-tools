@@ -92,9 +92,9 @@ type wsTokenValidator interface {
 // must first create one via
 // POST /projects/{id}/conversations (see handler.AIChatHandler.CreateConversation).
 // The AI agent's own reply IS persisted as a comment here (see
-// handleMessage), but — like AIChatHandler.SendConversationMessage — it is
-// attributed to the caller's own identity, not a distinct "agent" identity,
-// since entity-service's CreateCommentRequest has no createdBy override.
+// handleMessage), attributed to the assistant rather than to the customer
+// whose token relayed it, via entity.CreatedByAgent — the same as
+// AIChatHandler.SendConversationMessage.
 type WebSocketHandler struct {
 	ai      wsStreamer
 	entity  entityCommentCreator
@@ -381,13 +381,14 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 		_ = json.Unmarshal(raw, &agentMessageText)
 	}
 	if agentMessageText != "" {
-		// See WebSocketHandler's doc comment: attributed to the caller, not a
-		// distinct "agent" identity — entity-service has no createdBy override.
+		// Attributed to the assistant, not the customer whose token relayed it
+		// — see entity.CreatedByAgent.
 		if _, err := h.entity.CreateComment(ctx, entity.CreateCommentRequest{
 			ReferenceID:   conversationID,
 			ReferenceType: entity.ReferenceTypeConversation,
 			Type:          entity.CommentTypeComment,
 			Content:       agentMessageText,
+			CreatedBy:     entity.CreatedByAgent,
 		}); err != nil {
 			slog.ErrorContext(ctx, "entity CreateComment failed for chat response", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
 		}
