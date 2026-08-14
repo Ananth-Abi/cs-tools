@@ -362,7 +362,7 @@ backend/
 ### Conversations
 
 - `GET /conversations/{id}/messages` — Get paginated messages for a conversation; optional query params `limit` (1–100, default 20) and `offset` (default 0) (ServiceNow data source only)
-- `POST /conversations/search` — Search conversations; optional `filters` (`projectIds`, `states` (`ACTIVE`/`RESOLVED`/`CONVERTED`/`ABANDONED`/`CLOSED`), `searchQuery`, `createdByMe`) and `sortBy` (`field`: `createdOn`/`updatedOn`, `order`) (ServiceNow data source only)
+- `POST /conversations/search` — Search conversations; optional `filters` (`projectIds`, `states` (`ACTIVE`/`RESOLVED`/`CONVERTED`/`ABANDONED`/`CLOSED`), `searchQuery`, `number` (exact match), `createdByMe`, `createdBy` (list of creator emails)) and `sortBy` (`field`: `createdOn`/`updatedOn`, `order`) (ServiceNow data source only)
 
 ### Updates
 
