@@ -100,4 +100,14 @@ describe("resolveTeamPlaceholder", () => {
 
     expect(resolveTeamPlaceholder(filters, "team-group-id")).toBe(filters);
   });
+
+  // Regression test: DASHBOARDS_CONFIG is a raw JSON env var, not
+  // schema-validated beyond basic decoding — a widget/slice entry missing
+  // `filters` entirely used to crash here with "Cannot read properties of
+  // undefined (reading 'filters')" despite the wire type declaring it
+  // required.
+  it("treats an undefined filters argument as empty rather than throwing", () => {
+    expect(resolveTeamPlaceholder(undefined, "team-group-id")).toEqual({});
+    expect(resolveTeamPlaceholder(undefined, undefined)).toEqual({});
+  });
 });
