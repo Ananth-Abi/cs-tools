@@ -28,12 +28,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft, ChevronDown, Plus } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX, type MouseEvent, type ReactNode } from "react";
-import {
-  Link as RouterLink,
-  useLocation,
-  useParams,
-  useSearchParams,
-} from "react-router";
+import { Link as RouterLink, useLocation, useParams } from "react-router";
 import { useGetProject } from "@features/csm-projects/api/useGetProject";
 import ClosureStateChip from "@features/csm-projects/components/ClosureStateChip";
 import DeploymentsTab from "@features/csm-projects/components/DeploymentsTab";
@@ -44,6 +39,7 @@ import {
   startDateLabel,
 } from "@features/csm-projects/utils/projectLifecycle";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
 type ProjectTabId = "overview" | "deployments" | "contacts" | "workItems";
 const PROJECT_TAB_IDS: readonly ProjectTabId[] = [
@@ -52,9 +48,10 @@ const PROJECT_TAB_IDS: readonly ProjectTabId[] = [
   "contacts",
   "workItems",
 ];
-function isProjectTabId(value: string | null): value is ProjectTabId {
-  return !!value && (PROJECT_TAB_IDS as readonly string[]).includes(value);
-}
+// A sub-tab selection only means something under the project tab that owns
+// it (currently just Work items' own `?subTab=`) — see the `useQueryParamTabs`
+// call below.
+const PROJECT_TAB_CHANGE_CLEARS: readonly string[] = ["subTab"];
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -157,21 +154,16 @@ export default function CsmProjectDetailPage(): JSX.Element {
   const { data, isLoading, isError } = useGetProject(id);
   // Kept in the URL (`?tab=`), not local state, so returning here after a
   // create-flow round trip (see `projectPath` below) restores the tab the
-  // engineer was actually on, instead of always resetting to Overview.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const rawTab = searchParams.get("tab");
-  const activeTab: ProjectTabId = isProjectTabId(rawTab) ? rawTab : "overview";
-  const setActiveTab = (next: ProjectTabId): void => {
-    setSearchParams((prev) => {
-      const params = new URLSearchParams(prev);
-      params.set("tab", next);
-      // A sub-tab selection (e.g. Work items' own tab strip) only means
-      // something under the tab that owns it -- drop it so switching away
-      // doesn't carry a stale sub-tab back in if this tab is revisited.
-      params.delete("subTab");
-      return params;
-    });
-  };
+  // engineer was actually on, instead of always resetting to Overview. A
+  // sub-tab selection (e.g. Work items' own tab strip, `?subTab=`) only means
+  // something under the tab that owns it -- `clearParamsOnChange` drops it so
+  // switching away doesn't carry a stale sub-tab back in if this tab is
+  // revisited.
+  const { activeTab, setActiveTab } = useQueryParamTabs<ProjectTabId>(
+    PROJECT_TAB_IDS,
+    "overview",
+    { clearParamsOnChange: PROJECT_TAB_CHANGE_CLEARS },
+  );
   const [createMenuAnchor, setCreateMenuAnchor] = useState<HTMLElement | null>(
     null,
   );

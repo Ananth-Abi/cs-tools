@@ -16,9 +16,9 @@
 
 import { Box, Tab, Tabs } from "@wso2/oxygen-ui";
 import { type JSX } from "react";
-import { useSearchParams } from "react-router";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ConversationsTab from "@features/csm-projects/components/ConversationsTab";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
 type WorkItemSubTab =
   | "cases"
@@ -34,9 +34,6 @@ const WORK_ITEM_SUB_TABS: readonly WorkItemSubTab[] = [
   "engagements",
   "conversations",
 ];
-function isWorkItemSubTab(value: string | null): value is WorkItemSubTab {
-  return !!value && (WORK_ITEM_SUB_TABS as readonly string[]).includes(value);
-}
 
 interface WorkItemsTabProps {
   projectId: string;
@@ -58,16 +55,11 @@ export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Elem
   // page's own `?tab=` -- see CsmProjectDetailPage.tsx's `projectPath` -- so
   // a create-flow round trip back to this project restores the exact sub-tab
   // the engineer was on, not just the Work items tab in general.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const rawSubTab = searchParams.get("subTab");
-  const subTab: WorkItemSubTab = isWorkItemSubTab(rawSubTab) ? rawSubTab : "cases";
-  const setSubTab = (next: WorkItemSubTab): void => {
-    setSearchParams((prev) => {
-      const params = new URLSearchParams(prev);
-      params.set("subTab", next);
-      return params;
-    });
-  };
+  const { activeTab: subTab, setActiveTab: setSubTab } = useQueryParamTabs<WorkItemSubTab>(
+    WORK_ITEM_SUB_TABS,
+    "cases",
+    { paramName: "subTab" },
+  );
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
