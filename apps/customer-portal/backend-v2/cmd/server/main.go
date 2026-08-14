@@ -208,6 +208,7 @@ func main() {
 	mux.HandleFunc("GET /projects/{id}/stats/support", projectStatsHandler.GetProjectSupportStats)
 	mux.HandleFunc("GET /projects/{id}/stats/time-cards", projectStatsHandler.GetProjectTimeCardStats)
 	mux.HandleFunc("GET /projects/{id}/stats/change-requests", projectStatsHandler.GetProjectChangeRequestStats)
+	mux.HandleFunc("GET /projects/{id}/stats/usage", projectStatsHandler.GetProjectUsageStats)
 	mux.HandleFunc("POST /projects/{id}/cases/time-cards/search", projectStatsHandler.SearchProjectCaseTimeCards)
 	mux.HandleFunc("POST /projects/{id}/instances/search", instanceHandler.SearchProjectInstances)
 	mux.HandleFunc("POST /projects/{id}/instances/metrics/search", instanceHandler.SearchProjectInstanceMetrics)

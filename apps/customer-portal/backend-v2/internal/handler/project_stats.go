@@ -320,3 +320,30 @@ func (h *ProjectStatsHandler) SearchProjectCaseTimeCards(w http.ResponseWriter, 
 
 	writeJSONValue(w, http.StatusOK, dto.MapCaseTimeCardSearchResponse(result))
 }
+
+// GetProjectUsageStats handles GET /projects/{id}/stats/usage — the counter
+// trio on the Usage Metrics page. Backed by the same entity-service call as
+// GET /projects/{id}/stats, trimmed to the fields that page reads (see
+// dto.UsageStats).
+func (h *ProjectStatsHandler) GetProjectUsageStats(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.GetProjectStats(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetProjectStats failed", "userID", user.UserID, "projectID", id, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to retrieve usage statistics.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapUsageStats(result))
+}

@@ -411,3 +411,28 @@ func MapProjectChangeRequestStats(r entity.ProjectChangeRequestStatsResponse) Pr
 		ResolvedCount:       mapResolvedCountBreakdown(r.ResolvedCount),
 	}
 }
+
+// UsageStats is the counter trio the Usage Metrics page reads from
+// GET /projects/{id}/stats/usage.
+//
+// entity-service's ProjectStatsResponse carries more than this (hours, SLA
+// status, outstanding counts), but the frontend's own contract for this
+// endpoint is exactly these three fields — see UsageStatsResponse in
+// webapp/src/features/project-details/types/usage.ts — and the Ballerina
+// backend's mapUsageStats returns the same three. Match the frontend's
+// contract, not entity-service's superset; the richer numbers are already
+// exposed through GET /projects/{id}/stats.
+type UsageStats struct {
+	DeploymentCount      int `json:"deploymentCount"`
+	DeployedProductCount int `json:"deployedProductCount"`
+	InstanceCount        int `json:"instanceCount"`
+}
+
+// MapUsageStats trims entity-service's project stats to the Usage Metrics view.
+func MapUsageStats(r entity.ProjectStatsResponse) UsageStats {
+	return UsageStats{
+		DeploymentCount:      r.DeploymentCount,
+		DeployedProductCount: r.DeployedProductCount,
+		InstanceCount:        r.InstanceCount,
+	}
+}
