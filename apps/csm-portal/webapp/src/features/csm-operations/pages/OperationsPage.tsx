@@ -24,7 +24,7 @@ import ChangeRequestsTab from "@features/csm-operations/components/ChangeRequest
 import IncidentsTab from "@features/csm-operations/components/IncidentsTab";
 import ProblemsTab from "@features/csm-operations/components/ProblemsTab";
 import { useNavTransition } from "@hooks/useNavTransition";
-import { useQueryTabs } from "@hooks/useSectionTabs";
+import { usePathSectionTabs } from "@hooks/useSectionTabs";
 
 /**
  * Operations landing — the home for the managed-cloud operational entities,
@@ -36,9 +36,12 @@ import { useQueryTabs } from "@hooks/useSectionTabs";
  * one through `CSM_PORTAL_FEATURE_OVERRIDES` without touching this page.
  */
 export default function OperationsPage(): JSX.Element {
-  // Active tab lives in the URL (`?tab=`) so the change-request detail page can
-  // link back to the right tab, and the tab survives a refresh / share.
-  const tabs = useQueryTabs("operations");
+  // Active tab is a real path segment (`/operations/:tab`), not `?tab=` —
+  // switching to a genuinely different content set is its own bookmarkable
+  // route, per this app's URL-shape rule. See `usePathSectionTabs` and the
+  // `operations` routes in App.tsx (including the legacy `?tab=` redirect for
+  // links shared/bookmarked before this section had its own path segment).
+  const tabs = usePathSectionTabs("operations", "/operations");
   const activeTab = tabs.activeKey;
   const navigate = useNavTransition();
   // Set by a dashboard widget's click-through (see DashboardWidgetTile /
@@ -50,7 +53,7 @@ export default function OperationsPage(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      {backState?.from && activeTab !== "service_requests" && (
+      {backState?.from && activeTab !== "service-requests" && (
         <Button
           variant="text"
           size="small"
@@ -71,7 +74,7 @@ export default function OperationsPage(): JSX.Element {
 
       <SectionTabs {...tabs} ariaLabel="Operations tabs" />
 
-      {activeTab === "service_requests" && (
+      {activeTab === "service-requests" && (
         <CsmIssuesView
           entityNoun="service requests"
           lockedFilters={{ caseTypes: ["service_request"] }}
@@ -91,7 +94,7 @@ export default function OperationsPage(): JSX.Element {
         />
       )}
 
-      {activeTab === "change_requests" && <ChangeRequestsTab />}
+      {activeTab === "change-requests" && <ChangeRequestsTab />}
 
       {activeTab === "incidents" && <IncidentsTab />}
 

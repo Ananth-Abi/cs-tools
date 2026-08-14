@@ -25,7 +25,10 @@ import {
   useSearchParams,
 } from "react-router";
 import AuthGuard from "@layouts/AuthGuard";
-import { SectionIndexRedirect } from "@components/section-tabs/SectionTabs";
+import {
+  LegacyQueryTabRedirect,
+  SectionIndexRedirect,
+} from "@components/section-tabs/SectionTabs";
 import { navNodeForPath } from "@config/csmNavItems";
 import {
   featureStateForPath,
@@ -428,14 +431,38 @@ export default function App(): JSX.Element {
                     element={<UserProfilePage />}
                   />
 
+                  {/* Dashboard selection is a real path segment
+                      (`/dashboard/:dashboardId`), and — for a team-based
+                      dashboard (a dashboard config's own `isTeamBased` flag) —
+                      the selected team is a SECOND path segment
+                      (`/dashboard/:dashboardId/:teamId`), since both are a
+                      genuinely different content set from one another, not a
+                      panel switch on the same view. The bare `/dashboard`
+                      index still renders CsmDashboardPage itself: which
+                      dashboard/team to default to depends on data that isn't
+                      loaded yet at route-match time (the dashboard list, the
+                      signed-in user's own team) — see the page's own doc
+                      comment — so it resolves that itself and then replaces
+                      the URL with the canonical one-or-two-segment path once
+                      it can, rather than a synchronous route redirect here. */}
                   <Route path="dashboard" element={<CsmDashboardPage />} />
+                  <Route path="dashboard/:dashboardId" element={<CsmDashboardPage />} />
+                  <Route
+                    path="dashboard/:dashboardId/:teamId"
+                    element={<CsmDashboardPage />}
+                  />
                   {/* Dashboard widget "View more" preview — :previewSlug is
                       one of WIDGET_RESOURCE_CONFIG's own previewSlug values
                       (e.g. "cases"), resolved back to a resourceType by
                       resourceTypeForPreviewSlug. Distinct from the resource's
-                      own real list route (e.g. /cases). */}
+                      own real list route (e.g. /cases). Under its own
+                      "preview" prefix, not directly under /dashboard/:x —
+                      that shape collides with /dashboard/:dashboardId above
+                      (both a single dynamic segment at the same depth; only
+                      one of two same-shape sibling routes can ever match a
+                      given value, so they can't share it). */}
                   <Route
-                    path="dashboard/:previewSlug"
+                    path="dashboard/preview/:previewSlug"
                     element={<DashboardWidgetPreviewPage />}
                   />
                   <Route path="cases" element={<CsmCasesPage />} />
@@ -450,55 +477,75 @@ export default function App(): JSX.Element {
                       requests, engagements, ...) routes below. */}
                   <Route path="conversations/:id" element={<ConversationDetailPage />} />
 
-                  <Route path="operations" element={<OperationsPage />} />
-                  <Route
-                    path="operations/service-requests/new"
-                    element={<CreateServiceRequestPage />}
-                  />
-                  <Route
-                    path="operations/service-requests/:caseId"
-                    element={<CsmCaseDetailPage />}
-                  />
-                  <Route
-                    path="operations/change-requests/new"
-                    element={<CreateChangeRequestPage />}
-                  />
-                  <Route
-                    path="operations/change-requests/:id"
-                    element={<CsmChangeRequestDetailPage />}
-                  />
-                  <Route
-                    path="operations/incidents/new"
-                    element={<CreateIncidentPage />}
-                  />
-                  <Route
-                    path="operations/incidents/:id"
-                    element={<CsmIncidentDetailPage />}
-                  />
-                  <Route
-                    path="operations/problems/new"
-                    element={<CreateProblemPage />}
-                  />
-                  <Route
-                    path="operations/problems/:id"
-                    element={<ProblemDetailPage />}
-                  />
+                  {/* Operations' own Service requests / Change requests /
+                      Incidents / Problems switch is a real path segment
+                      (`/operations/:tab`) rather than `?tab=` — see
+                      `usePathSectionTabs` — since it's a genuinely different
+                      content set each time, not a panel switch on the same
+                      record. The bare `/operations` index also still handles
+                      an OLD `?tab=` link (this section's shape before this
+                      change): `LegacyQueryTabRedirect` translates it to the
+                      new path form, or lands on the first usable tab if
+                      there's no `?tab=` at all. */}
+                  <Route path="operations">
+                    <Route
+                      index
+                      element={
+                        <LegacyQueryTabRedirect sectionId="operations" basePath="/operations" />
+                      }
+                    />
+                    <Route path=":tab" element={<OperationsPage />} />
+                    <Route path="service-requests/new" element={<CreateServiceRequestPage />} />
+                    <Route
+                      path="service-requests/:caseId"
+                      element={<CsmCaseDetailPage />}
+                    />
+                    <Route
+                      path="change-requests/new"
+                      element={<CreateChangeRequestPage />}
+                    />
+                    <Route
+                      path="change-requests/:id"
+                      element={<CsmChangeRequestDetailPage />}
+                    />
+                    <Route path="incidents/new" element={<CreateIncidentPage />} />
+                    <Route path="incidents/:id" element={<CsmIncidentDetailPage />} />
+                    <Route path="problems/new" element={<CreateProblemPage />} />
+                    <Route path="problems/:id" element={<ProblemDetailPage />} />
+                  </Route>
 
                   <Route path="engagements" element={<CsmEngagementsPage />} />
                   <Route path="engagements/new" element={<CsmEngagementCreatePage />} />
                   <Route path="engagements/:caseId" element={<CsmCaseDetailPage />} />
                   <Route path="updates" element={<CsmUpdatesPage />} />
-                  <Route path="security-center" element={<CsmSecurityCenterPage />} />
+                  {/* Security Center's own Security reports / Vulnerabilities
+                      switch — same path-segment + legacy-`?tab=`-redirect
+                      treatment as Operations above. */}
+                  <Route path="security-center">
+                    <Route
+                      index
+                      element={
+                        <LegacyQueryTabRedirect
+                          sectionId="security-center"
+                          basePath="/security-center"
+                        />
+                      }
+                    />
+                    <Route path=":tab" element={<CsmSecurityCenterPage />} />
+                    <Route path="reports/new" element={<CreateSecurityReportPage />} />
+                    <Route
+                      path="vulnerabilities/:id"
+                      element={<ProductVulnerabilityDetailPage />}
+                    />
+                    <Route
+                      path="security-reports/:caseId"
+                      element={<CsmCaseDetailPage />}
+                    />
+                  </Route>
+                  <Route path="time-cards" element={<CsmTimeCardsPage />} />
+                  <Route path="announcements" element={<CsmAnnouncementsPage />} />
                   <Route
-                    path="security-center/reports/new"
-                    element={<CreateSecurityReportPage />}
-                  />
-                  <Route
-                    path="security-center/vulnerabilities/:id"
-                    element={<ProductVulnerabilityDetailPage />}
-                  />
-                  <Route
-                    path="security-center/security-reports/:caseId"
+                    path="announcements/:caseId"
                     element={<CsmCaseDetailPage />}
                   />
                   <Route path="time-cards" element={<CsmTimeCardsPage />} />
