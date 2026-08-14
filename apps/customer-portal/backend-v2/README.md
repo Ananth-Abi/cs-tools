@@ -315,6 +315,7 @@ backend-v2/
 - `GET /projects/{id}/stats/support` — get a project's combined support statistics (case + conversation; partial failures are tolerated)
 - `GET /projects/{id}/stats/time-cards` — get a project's time-card statistics, optionally filtered by `startDate`/`endDate`
 - `GET /projects/{id}/stats/change-requests` — get a project's change-request statistics
+- `GET /projects/{id}/stats/usage` — get a project's usage statistics (deployment, deployed-product and instance counts) for the Usage Metrics page
 - `POST /projects/{id}/cases/search` — search a project's cases
 - `GET /cases/{id}` — get case by ID
 - `POST /cases` — create a case
@@ -450,6 +451,8 @@ curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stat
 curl -H "x-jwt-assertion: $JWT" "http://localhost:8080/projects/<project-id>/stats/time-cards?startDate=2026-07-01&endDate=2026-07-31"
 
 curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stats/change-requests
+
+curl -H "x-jwt-assertion: $JWT" http://localhost:8080/projects/<project-id>/stats/usage
 
 curl -X POST http://localhost:8080/projects/<project-id>/cases/search \
   -H "x-jwt-assertion: $JWT" -H "Content-Type: application/json" \
