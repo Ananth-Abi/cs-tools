@@ -97,11 +97,26 @@ func main() {
 	if os.Getenv("CUSTOMER_ENTITY_BASE_URL") == "" {
 		slog.Warn("CUSTOMER_ENTITY_BASE_URL is not set; case.* emails will fail until it is configured")
 	}
+	customerPortalBaseURL := os.Getenv("CUSTOMER_PORTAL_WEB_BASE_URL")
+	csmPortalBaseURL := os.Getenv("CSM_PORTAL_WEB_BASE_URL")
+	// An empty base URL here doesn't fail link resolution — Resolver still
+	// returns a string, just a relative one ("/cases/CASE-1" instead of
+	// "https://.../cases/CASE-1") — which silently produces an email a
+	// recipient can't actually click through on. Warn at startup for the
+	// same reason as CUSTOMER_ENTITY_BASE_URL above: a misconfigured
+	// deployment should find out now, not from a support ticket about a
+	// broken link.
+	if customerPortalBaseURL == "" {
+		slog.Warn("CUSTOMER_PORTAL_WEB_BASE_URL is not set; recipients classified customer will get a relative (non-clickable) case link")
+	}
+	if csmPortalBaseURL == "" {
+		slog.Warn("CSM_PORTAL_WEB_BASE_URL is not set; recipients classified CSM will get a relative (non-clickable) case link")
+	}
 	linkResolver := recipientlinks.New(customerEntityClient, recipientlinks.Config{
 		CustomerRoles:   splitComma(os.Getenv("CUSTOMER_ROLES")),
 		CSMRoles:        splitComma(os.Getenv("CSM_ROLES")),
-		CustomerBaseURL: os.Getenv("CUSTOMER_PORTAL_WEB_BASE_URL"),
-		CSMBaseURL:      os.Getenv("CSM_PORTAL_WEB_BASE_URL"),
+		CustomerBaseURL: customerPortalBaseURL,
+		CSMBaseURL:      csmPortalBaseURL,
 	})
 
 	// The event bus (Azure Event Hub's Kafka-compatible endpoint) is this

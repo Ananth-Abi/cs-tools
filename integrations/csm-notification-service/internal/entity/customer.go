@@ -46,11 +46,14 @@ import (
 var tokenFetchTimeout = 10 * time.Second
 
 // CustomerEntityConfig holds the configuration for the customer entity
-// service client. Unlike csm-portal-backend's entity client, which shares
-// one OAuth2 app across every upstream service it calls, this service gives
-// every channel/upstream client its own independent credentials (matching
-// EmailConfig/TwilioConfig's own shape) — so ClientID/ClientSecret/TokenURL
-// are real fields here, not omitted in favor of a shared app.
+// service client. Unlike EmailConfig/TwilioConfig (each with its own
+// independent credentials), cmd/server/main.go populates TokenURL/ClientID/
+// ClientSecret here from this service's shared OAUTH2_* app — the same
+// entity-service, authenticated the same way, as apps/csm-portal/backend's
+// own entity client. Only BaseURL/Scopes come from this client's own
+// CUSTOMER_ENTITY_* env vars. The fields themselves stay generic (not
+// hardcoded to the shared app) so a future caller could still construct
+// this with independent credentials if that ever changes.
 type CustomerEntityConfig struct {
 	BaseURL      string
 	TokenURL     string
@@ -123,12 +126,16 @@ func (c *CustomerEntityClient) do(ctx context.Context, method, path string, body
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		// Unlike this repo's other do() implementations (email, googlechat,
+		// twilio), the response body is never included here: this client's
+		// only request is /users/search, filtered by the recipient emails
+		// themselves — an upstream error that echoes the offending input
+		// back (e.g. "invalid email: x@y.com") would otherwise leak that
+		// PII the moment this error gets logged upstream (eventbus.Consumer
+		// logs the full error chain, including apierror.Error's Body, via
+		// "err") — see this repo's "No recipient emails in logs" security
+		// convention.
+		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: "response omitted (may contain recipient email addresses)"}
 	}
 
 	return respBody, nil
