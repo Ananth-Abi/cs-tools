@@ -18,7 +18,6 @@ package entity
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -99,81 +98,6 @@ func (c *CustomerEntityClient) PatchUserMe(ctx context.Context, body []byte) ([]
 // Response is returned as raw JSON; field filtering to the portal shape is deferred.
 func (c *CustomerEntityClient) SearchUsers(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/users/search", body)
-}
-
-// UserRoleInfo is the subset of an entity-service user record
-// SearchUsersByEmail needs: enough to resolve which portal a notification
-// recipient belongs to (their roles, matched against configured
-// customer/CSM role lists — see internal/recipientlinks), plus userType as
-// a fallback signal. An email not found on the entity service is simply
-// absent from SearchUsersByEmail's result.
-type UserRoleInfo struct {
-	Email    string   `json:"email"`
-	Roles    []string `json:"roles"`
-	UserType string   `json:"userType"`
-}
-
-type searchUsersByEmailRequest struct {
-	Pagination struct {
-		Limit int `json:"limit"`
-	} `json:"pagination"`
-	Filters struct {
-		Emails []string `json:"emails"`
-	} `json:"filters"`
-}
-
-// searchUsersByEmailLimit caps how many emails a single POST /users/search
-// call filters on — set to the entity service's own enforced maximum
-// (internal/service's maxUserLimit there). SearchUsersByEmail batches into
-// calls of at most this many emails each, so a case with an unusually large
-// recipient list still gets every match, not a silently truncated first
-// page (entity-service's own response is capped at maxUserLimit rows
-// regardless of how many emails a single request filters on).
-const searchUsersByEmailLimit = 50
-
-// SearchUsersByEmail calls POST /users/search filtered to emails (batching
-// into calls of at most searchUsersByEmailLimit emails each — see that
-// constant's doc comment) and returns each matched user's roles/userType.
-// Unlike SearchUsers (raw passthrough for this backend's own
-// POST /users/search endpoint), this unmarshals into typed results for
-// internal callers that need structured data, not a byte-for-byte forward.
-func (c *CustomerEntityClient) SearchUsersByEmail(ctx context.Context, emails []string) ([]UserRoleInfo, error) {
-	var users []UserRoleInfo
-	for start := 0; start < len(emails); start += searchUsersByEmailLimit {
-		end := min(start+searchUsersByEmailLimit, len(emails))
-		batch, err := c.searchUsersByEmailBatch(ctx, emails[start:end])
-		if err != nil {
-			return nil, err
-		}
-		users = append(users, batch...)
-	}
-	return users, nil
-}
-
-// searchUsersByEmailBatch is SearchUsersByEmail's single-request worker —
-// emails must already be at most searchUsersByEmailLimit long.
-func (c *CustomerEntityClient) searchUsersByEmailBatch(ctx context.Context, emails []string) ([]UserRoleInfo, error) {
-	req := searchUsersByEmailRequest{}
-	req.Pagination.Limit = searchUsersByEmailLimit
-	req.Filters.Emails = emails
-
-	reqBody, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("entity: encode SearchUsersByEmail request: %w", err)
-	}
-
-	respBody, err := c.do(ctx, http.MethodPost, "/users/search", reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	var parsed struct {
-		Users []UserRoleInfo `json:"users"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return nil, fmt.Errorf("entity: decode SearchUsersByEmail response: %w", err)
-	}
-	return parsed.Users, nil
 }
 
 // GetProjectContact calls GET /projects/{id}/contacts/{contactId} on the entity service.

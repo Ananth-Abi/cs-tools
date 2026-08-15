@@ -50,10 +50,8 @@ func newCustomerTokenServer(t *testing.T) *httptest.Server {
 
 // TestSearchUsersByEmail_BatchesRequestsOverLimit verifies that a call with
 // more emails than searchUsersByEmailLimit results in multiple upstream
-// POST /users/search requests, each capped at searchUsersByEmailLimit emails,
-// with the responses concatenated into a single result — the fix for
-// CodeRabbit's finding that a single unbatched call silently truncated
-// results beyond the entity service's own page-size cap.
+// POST /users/search requests, each capped at searchUsersByEmailLimit
+// emails, with the responses concatenated into a single result.
 func TestSearchUsersByEmail_BatchesRequestsOverLimit(t *testing.T) {
 	emailCount := searchUsersByEmailLimit + 1
 	emails := make([]string, emailCount)

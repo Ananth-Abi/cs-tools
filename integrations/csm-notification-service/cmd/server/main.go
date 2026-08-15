@@ -32,9 +32,11 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/dispatch"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/recipientlinks"
 )
 
 func main() {
@@ -72,6 +74,36 @@ func main() {
 		APIBaseURL:          os.Getenv("TWILIO_API_BASE_URL"),
 	})
 
+	// The customer entity service backs per-recipient portal-link resolution
+	// (internal/recipientlinks) — optional per deployment like the channel
+	// clients above (os.Getenv, not mustEnv), but unlike them, an unset
+	// config doesn't just make one channel unavailable: every case.* event's
+	// SendEmail is behind ResolveLinks, so a missing config makes every
+	// case.* email fail instead. Warn loudly at startup so a misconfigured
+	// deployment doesn't discover this silently on its first real event.
+	//
+	// Unlike the channel clients above, this one shares its OAuth2 client
+	// credentials app (OAUTH2_CLIENT_ID/OAUTH2_CLIENT_SECRET/OAUTH2_TOKEN_URL)
+	// rather than getting its own — mirroring apps/csm-portal/backend's own
+	// entity client, which authenticates against the same entity-service
+	// this way. Only BaseURL/Scopes are specific to this client.
+	customerEntityClient := entity.NewCustomerEntityClient(entity.CustomerEntityConfig{
+		BaseURL:      os.Getenv("CUSTOMER_ENTITY_BASE_URL"),
+		TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
+		ClientID:     os.Getenv("OAUTH2_CLIENT_ID"),
+		ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
+		Scopes:       splitComma(os.Getenv("CUSTOMER_ENTITY_SCOPES")),
+	})
+	if os.Getenv("CUSTOMER_ENTITY_BASE_URL") == "" {
+		slog.Warn("CUSTOMER_ENTITY_BASE_URL is not set; case.* emails will fail until it is configured")
+	}
+	linkResolver := recipientlinks.New(customerEntityClient, recipientlinks.Config{
+		CustomerRoles:   splitComma(os.Getenv("CUSTOMER_ROLES")),
+		CSMRoles:        splitComma(os.Getenv("CSM_ROLES")),
+		CustomerBaseURL: os.Getenv("CUSTOMER_PORTAL_WEB_BASE_URL"),
+		CSMBaseURL:      os.Getenv("CSM_PORTAL_WEB_BASE_URL"),
+	})
+
 	// The event bus (Azure Event Hub's Kafka-compatible endpoint) is this
 	// service's core purpose, unlike the notification channels above, so its
 	// config is required (mustEnv) — a misconfigured deployment should fail
@@ -103,7 +135,7 @@ func main() {
 	mainConsumerCount := envInt("MAIN_CONSUMER_COUNT", 1)
 	dlqConsumerCount := envInt("DLQ_CONSUMER_COUNT", 1)
 
-	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient)
+	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver)
 
 	// The main consumer's OnExhausted: publish the exhausted record to the
 	// dead-letter topic instead of just logging and dropping it. The DLQ's

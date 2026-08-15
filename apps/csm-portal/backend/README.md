@@ -142,19 +142,6 @@ Two independent things share these variables, both optional (left unset, neither
 | `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (optional) |
 | `EVENT_HUB_CONSUMER_GROUP` | Consumer group ID `internal/caseevents`' consumer joins. Optional — defaults to `csm-portal-backend`. Must differ from any other service's group consuming the same topic |
 
-### Recipient portal links (not yet wired in)
-
-Backs `internal/recipientlinks.Resolver`, which resolves each `case.*` event recipient's own case-portal link based on their role (a single event's recipients can be a mix of customer and CSM-role people). Not constructed in `cmd/server/main.go` either, no handler calls it yet.
-
-| Variable | Description |
-|---|---|
-| `CSM_PORTAL_WEB_BASE_URL` | CSM portal webapp base URL — `<CSM_PORTAL_WEB_BASE_URL>/cases/{caseId}` for recipients classified CSM (optional) |
-| `CUSTOMER_PORTAL_WEB_BASE_URL` | Customer portal webapp base URL — `<CUSTOMER_PORTAL_WEB_BASE_URL>/projects/{projectId}/support/cases/{caseId}` for recipients classified customer (optional) |
-| `CUSTOMER_ROLES` | Comma-separated role names classified customer (optional) |
-| `CSM_ROLES` | Comma-separated role names classified CSM (optional) |
-
-Classification isn't just "role in `CUSTOMER_ROLES`" — it's a fallback chain, since neither role list needs to be exhaustive: a role in `CUSTOMER_ROLES` → customer; else a role in `CSM_ROLES` → CSM; else the recipient's entity-service `userType` (`customer`/`external` → customer, anything else → CSM); else — including when entity-service has no record for the recipient at all — CSM, as the last-resort default. See `Resolver.ResolveLinks`'s doc comment for the full reasoning.
-
 ### Updates service
 
 | Variable | Description |
@@ -205,8 +192,6 @@ backend/
 │   │   └── logger.go           # Bridges kafka-go's Logger/ErrorLogger to slog
 │   ├── eventpublisher/
 │   │   └── publisher.go         # Publisher.Publish — builds the envelope csm-notification-service expects, publishes it, records a failure to entity-service if Event Hub doesn't ack (not yet wired into main.go — no caller)
-│   ├── recipientlinks/
-│   │   └── resolver.go          # Resolver.ResolveLinks — per-recipient case-portal link by role, for mixed customer/CSM recipient lists (not yet wired into main.go — no caller)
 │   ├── caseevents/
 │   │   └── handler.go           # Handler.Handle — the case-events consumer side, wired into main.go; logs type/entityId today, scaffold for real-time FE push
 │   ├── scim/
