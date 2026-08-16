@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 import {
   ASGARDEO_UNAUTHENTICATED_CODE,
@@ -95,6 +95,20 @@ export function useAuthTokens() {
   const { getAccessToken, getIdToken, signIn, signInSilently } = useAsgardeo();
   const logger = useLogger();
 
+  // getAccessToken/getIdToken are stable across AsgardeoProvider re-renders,
+  // but signIn/signInSilently are not — the provider recreates them every
+  // render. Reading them through a ref (updated on every render, but never
+  // itself a dependency) keeps redirectToSignIn/trySilentSignIn — and
+  // everything downstream that depends on this hook's returned callback,
+  // e.g. useAuthApiClient's authFetch — stable too, instead of getting a new
+  // identity on every provider re-render.
+  const signInRef = useRef(signIn);
+  const signInSilentlyRef = useRef(signInSilently);
+  useEffect(() => {
+    signInRef.current = signIn;
+    signInSilentlyRef.current = signInSilently;
+  }, [signIn, signInSilently]);
+
   // Redirect to a full sign-in, single-flighted so concurrent auth failures
   // don't fire multiple redirects. Returns a never-resolving promise so
   // callers don't fall through to treating this as a real failure while the
@@ -102,12 +116,12 @@ export function useAuthTokens() {
   const redirectToSignIn = useCallback((): Promise<AuthTokens> => {
     if (!signInInFlight) {
       signInInFlight = true;
-      void Promise.resolve(signIn()).finally(() => {
+      void Promise.resolve(signInRef.current()).finally(() => {
         signInInFlight = false;
       });
     }
     return new Promise<AuthTokens>(() => {});
-  }, [signIn]);
+  }, []);
 
   // Before giving up and bouncing the whole tab to a full sign-in redirect
   // (which discards any in-progress work — an open comment draft, an unsaved
@@ -117,10 +131,13 @@ export function useAuthTokens() {
   // `redirectToSignIn`. Single-flighted for the same reason as sign-in above.
   const trySilentSignIn = useCallback((): Promise<boolean> => {
     if (!silentSignInInFlight) {
-      silentSignInInFlight = Promise.resolve(signInSilently())
+      silentSignInInFlight = Promise.resolve(signInSilentlyRef.current())
         .then((result) => Boolean(result))
         .catch((error) => {
-          logger.debug("[auth] silent sign-in failed", error);
+          logger.debug(
+            "[auth] silent sign-in failed",
+            error instanceof Error ? error.message : "Unknown error",
+          );
           return false;
         })
         .finally(() => {
@@ -128,7 +145,7 @@ export function useAuthTokens() {
         });
     }
     return silentSignInInFlight;
-  }, [signInSilently, logger]);
+  }, [logger]);
 
   const attemptGetTokens = useCallback(async (): Promise<AuthTokens> => {
     let token: string | undefined;
