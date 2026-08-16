@@ -16,7 +16,7 @@ A dead-letter queue exists (see [Event-driven notifications](#event-driven-notif
 
 This service deliberately has no database connection and never talks to one directly. Deduplicating a publish, or recovering one Event Hub never acknowledged, is now entirely the publishing backend's job — `entity-service`'s `event_publish_failures` table exists for that, written to only when Event Hub doesn't ack a publish, and this service never reads or writes it.
 
-Recipient resolution for `case.*` events is **not** a TODO in the same sense: the caller (e.g. `csm-portal-backend`) supplies a `recipients` array in the event payload itself, since this service has no `entity-service` client to resolve watchers/assignee/reporter on its own. That's still short of "real" resolution in the sense that the caller has to already know the audience, but it's not a fixed/hardcoded stand-in either — every event picks its own recipients.
+Recipient resolution for `case.*` events is **not** a TODO in the same sense: the caller (e.g. `csm-portal-backend`) supplies a `recipients` array in the event payload itself, since this service has no way to resolve watchers/assignee/reporter on its own. That's still short of "real" resolution in the sense that the caller has to already know the audience, but it's not a fixed/hardcoded stand-in either — every event picks its own recipients. This service *does* now resolve which portal link each of those recipients gets (`internal/recipientlinks`, backed by `internal/entity`'s customer-entity-service client) — a distinct, smaller kind of resolution from audience resolution; see [Event-driven notifications](#event-driven-notifications).
 
 ## Middleware chain
 
@@ -51,9 +51,11 @@ customer-portal-backend ┘                           │                  (rend
 
 Both backends publish directly to the main topic — there is no HTTP hop through this service. Two packages implement the bus→consumer side; `internal/notifications` (templates + channel clients) is the last-mile sender they call.
 
-- **`internal/events`** — the event schema and its only remaining validation boundary. `Envelope{Type, EntityID, Payload}` plus one payload struct per `Type` (`case.created`, `case.comment_added`, `case.status_changed`, `case.assigned`, `incident.created`), each carrying every value its matching reaction needs. `EntityID` is a case ID for the `case.*` types or an incident ID for `incident.created` — whatever this event is about; for the `case.*` types, it must match the payload's own `caseId`. `Validate(entityID, type, payload)` decodes strictly and checks required fields — moved here from a since-removed HTTP handler, since there's no request boundary to validate at anymore; `dispatch.Dispatcher.Handle` calls it before rendering/sending anything. Payloads are deliberately denormalized (names/titles/links, not just IDs) since there's no `entity-service` client here yet to look up display data. `incident.created` is the one type with two independent reactions (a Google Chat alert *and* a voice call) rather than an email.
+- **`internal/events`** — the event schema and its only remaining validation boundary. `Envelope{Type, EntityID, Payload}` plus one payload struct per `Type` (`case.created`, `case.comment_added`, `case.status_changed`, `case.assigned`, `incident.created`), each carrying every value its matching reaction needs. `EntityID` is a case ID for the `case.*` types or an incident ID for `incident.created` — whatever this event is about; for the `case.*` types, it must match the payload's own `caseId`. `Validate(entityID, type, payload)` decodes strictly and checks required fields — moved here from a since-removed HTTP handler, since there's no request boundary to validate at anymore; `dispatch.Dispatcher.Handle` calls it before rendering/sending anything. Payloads still carry denormalized display values (names/titles) this service has no other way to obtain, but no longer carry pre-built case/comment links — the four `case.*` payloads carry `projectId`/`caseId` (and `commentId`, for `case.comment_added`) instead, and `internal/dispatch` resolves each recipient's own portal-appropriate link itself via `internal/recipientlinks`. `incident.created` is the one type with two independent reactions (a Google Chat alert *and* a voice call) rather than an email, and doesn't go through link resolution at all — its Chat/call destinations are already in the payload.
+- **`internal/entity`** — a minimal, read-only customer-entity-service client, implementing only `POST /users/search` (unlike `apps/csm-portal/backend`'s own entity client, a ~60-method passthrough surface). Backs `internal/recipientlinks`'s per-recipient role lookup. Not a notification channel — doesn't follow the `<Name>Config`/`<Name>Client`-in-`internal/notifications` pattern below, since it's an upstream data client, not something that sends a notification itself.
+- **`internal/recipientlinks`** — `Resolver.ResolveLinks(ctx, emails, projectID, caseID)` looks up each email's role via `internal/entity` and returns the case link appropriate to their portal (customer vs CSM), with a role → role → userType → CSM-default fallback chain. A per-*recipient* decision, not per-event: the same `case.comment_added` notification can go to both a customer watcher and an internal CSM watcher at once, each needing a different link.
 - **`internal/eventbus`** — a thin wrapper around [`github.com/segmentio/kafka-go`](https://github.com/segmentio/kafka-go) (a pure-Go Kafka client, no cgo — keeps this service on Choreo's buildpack deploy, MIT licensed) for Azure Event Hub's Kafka-compatible endpoint. `Producer.Publish` does a synchronous produce — this service's own use of it today is only for publishing to the dead-letter topic, since the main topic's producer side now lives in the backends. `Consumer.Run(ctx, handle, onExhausted)` polls a consumer group, retries a failing record `handleAttempts` (3) times with a fixed delay, then calls `onExhausted` (or logs at ERROR and drops, if `onExhausted` is nil) before committing either way. `PartitionCount(ctx, cfg)` reports a topic's real partition count, used at startup to sanity-check a configured consumer count. See CLAUDE.md for the franz-go → kafka-go swap rationale and its two known trade-offs.
-- **`internal/dispatch`** — `Dispatcher.Handle` implements `eventbus.Handle`: decode the record as an `events.Envelope`, validate it (`events.Validate`), render the matching template, email the `recipients` list carried in that event's own payload (or, for `incident.created`, send a Google Chat alert and place a voice call).
+- **`internal/dispatch`** — `Dispatcher.Handle` implements `eventbus.Handle`: decode the record as an `events.Envelope`, validate it (`events.Validate`), then for the four `case.*` types, resolve each recipient's own case link (`groupByLink`, via `internal/recipientlinks`), bucket recipients by the link they resolved to, and render+send one email per distinct link (`sendPerGroup`) — recipients sharing a link still batch into one `SendEmail` call. `incident.created` skips all of this and sends a Google Chat alert plus places a voice call directly from the payload's own fields.
 - **Dead-letter queue** — when the main consumer's `Handle` call fails on all `handleAttempts` attempts, the record is published to `EVENT_HUB_DLQ_TOPIC` instead of being dropped. A second, independent consumer group runs against that topic, using the same `Dispatcher.Handle` — so a dead-lettered record gets its own fresh retry pass — but with nowhere further to escalate to: exhausting retries there just logs and drops. Provision `EVENT_HUB_DLQ_TOPIC` as its own Event Hub in Azure before deploying; this service doesn't create topics itself.
 - **Configurable consumer counts** — `MAIN_CONSUMER_COUNT`/`DLQ_CONSUMER_COUNT` each start that many independent `eventbus.Consumer` instances, all joining the same consumer group; Kafka's own rebalancing splits a topic's partitions across however many are actually running. Keep each count at or below its topic's real partition count — a startup check logs a warning (not a hard failure) if it isn't, since excess consumers just sit idle rather than causing an error.
 
@@ -89,6 +91,29 @@ Copy `.env.example` to `.env` and fill in the values:
 | `TWILIO_VOICE` | Call channel only: TTS voice for `<Say>` (e.g. `Polly.Raveena`). Optional — empty uses Twilio's account default voice |
 | `TWILIO_LANGUAGE` | Call channel only: TTS language/locale for `<Say>` (e.g. `en-IN`), affects pronunciation. Optional — empty uses Twilio's default for the selected voice |
 | `TWILIO_API_BASE_URL` | Overrides Twilio's REST API base (default `https://api.twilio.com/2010-04-01`). Optional — only for a regional Twilio edge/API endpoint |
+
+### Customer entity service
+
+Backs `internal/recipientlinks`'s per-recipient role lookup (`POST /users/search` only). Optional per deployment like the channels above, but an unset `CUSTOMER_ENTITY_BASE_URL` makes every `case.*` email fail rather than just disabling one channel — a startup warning is logged when this happens. Unlike the channels above, this client authenticates with the **shared** `OAUTH2_CLIENT_ID`/`OAUTH2_CLIENT_SECRET`/`OAUTH2_TOKEN_URL` credentials (see below), the same OAuth2 app `apps/csm-portal/backend`'s own entity client uses — only `BaseURL`/`Scopes` are specific to this client.
+
+| Variable | Description |
+|---|---|
+| `OAUTH2_CLIENT_ID` | Shared OAuth2 client ID, used only by the customer entity service client (optional) |
+| `OAUTH2_CLIENT_SECRET` | Shared OAuth2 client secret (optional) |
+| `OAUTH2_TOKEN_URL` | Shared OAuth2 token endpoint (optional) |
+| `CUSTOMER_ENTITY_BASE_URL` | Base URL of this repo's entity-service (optional, see above) |
+| `CUSTOMER_ENTITY_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+
+### Recipient portal links
+
+| Variable | Description |
+|---|---|
+| `CSM_PORTAL_WEB_BASE_URL` | CSM portal webapp base URL — `<CSM_PORTAL_WEB_BASE_URL>/cases/{caseId}` for recipients classified CSM. Technically optional (empty just yields a relative, non-clickable link), but should be set for any deployment that actually sends `case.*` emails — a startup warning is logged if it's unset |
+| `CUSTOMER_PORTAL_WEB_BASE_URL` | Customer portal webapp base URL — `<CUSTOMER_PORTAL_WEB_BASE_URL>/projects/{projectId}/support/cases/{caseId}` for recipients classified customer. Same caveat as above — logged as a startup warning if unset |
+| `CUSTOMER_ROLES` | Comma-separated role names classified customer (optional) |
+| `CSM_ROLES` | Comma-separated role names classified CSM (optional) |
+
+Classification isn't just "role in `CUSTOMER_ROLES`" — it's a fallback chain, since neither role list needs to be exhaustive: a role in `CUSTOMER_ROLES` → customer; else a role in `CSM_ROLES` → CSM; else the recipient's entity-service `userType` (`customer`/`external` → customer, anything else → CSM); else — including when entity-service has no record for the recipient at all — CSM, as the last-resort default. See `Resolver.ResolveLinks`'s doc comment for the full reasoning.
 
 ### Event bus (Azure Event Hub)
 
@@ -140,12 +165,16 @@ csm-notification-service/
 │   ├── events/
 │   │   ├── events.go           # Envelope + per-Type payload structs (the event schema)
 │   │   └── validate.go         # Validate — the only remaining validation boundary
+│   ├── entity/
+│   │   └── customer.go         # Minimal read-only entity-service client (POST /users/search only)
+│   ├── recipientlinks/
+│   │   └── resolver.go         # Resolver.ResolveLinks — per-recipient customer/CSM portal link
 │   ├── eventbus/
 │   │   ├── config.go            # Config + SASL/PLAIN setup + PartitionCount, shared by producer/consumer
 │   │   ├── producer.go          # Producer — publish a record, wait for ack
 │   │   └── consumer.go          # Consumer — consumer-group poll loop, retry, OnExhausted, commit
 │   └── dispatch/
-│       └── dispatch.go          # Dispatcher.Handle — envelope → validate → template → EmailClient
+│       └── dispatch.go          # Dispatcher.Handle — envelope → validate → resolve links → group → template → EmailClient
 ├── .env                         # Local config (git-ignored)
 └── go.mod
 ```
@@ -223,4 +252,5 @@ tool. Two upstream errors we've hit doing exactly this:
 - **No sensitive data in logs** — log only IDs and error summaries
 - **No app-level inbound auth** — this is intentional (see above), not an oversight
 - **Input validation** — `events.Validate`, called from `dispatch.Dispatcher.Handle`, is the only validation boundary this service has left; keep rejecting unexpected input there rather than letting it reach a notification client
+- **No recipient emails in logs** — `internal/recipientlinks`'s role-lookup warnings log `caseID`/`roles`/`userType`, never the recipient's email address (PII); keep it that way if this code changes
 - **Security fixes in PRs** — describe security-related changes in neutral functional terms only, not called out as security fixes in the title/description

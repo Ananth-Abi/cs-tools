@@ -22,13 +22,16 @@
 // them, since there's no HTTP handler upstream doing it before publish
 // anymore.
 //
-// v1 payloads are deliberately denormalized: they carry every display value
-// a template needs (names, titles, links), plus who to notify (Recipients),
-// rather than just IDs, so the consumer can render and send without looking
-// anything up first. That's a stopgap for not having an entity-service
-// client wired in yet — once one exists, payloads can shrink to IDs and the
-// consumer can resolve the rest, including Recipients, itself instead of
-// requiring every caller to already know the destination addresses.
+// v1 payloads are still denormalized for display values (names, titles) that
+// this service has no other way to obtain — but case links are no longer one
+// of them: the four case.* payloads below carry ProjectID/CaseID (and
+// CommentID, for case.comment_added) instead of pre-built CaseLink/
+// CommentLink strings, and internal/dispatch resolves each recipient's own
+// portal-appropriate link itself via internal/recipientlinks. Recipients is
+// still caller-supplied, unchanged — this service resolves which *link* a
+// recipient gets, not *who* to notify; audience resolution would need its
+// own entity-service lookups (watchers/assignee/reporter) that don't exist
+// here.
 package events
 
 import "encoding/json"
@@ -84,10 +87,14 @@ func (t Type) IsKnown() bool {
 // exactly one reaction (the case-created email). Recipients is who to email
 // — the caller (e.g. csm-portal-backend) already knows the audience (case
 // watchers, assignee, reporter) at publish time, so it's supplied here
-// rather than resolved by this service, which has no entity-service client.
+// rather than resolved by this service. ProjectID is required to build the
+// customer-portal link (see internal/recipientlinks) — ProjectName is a
+// separate, purely-display value shown in the email body, not used for link
+// construction.
 type CaseCreatedPayload struct {
 	ReporterName              string   `json:"reporterName"`
 	ProjectName               string   `json:"projectName"`
+	ProjectID                 string   `json:"projectId"`
 	CaseID                    string   `json:"caseId"`
 	CaseTitle                 string   `json:"caseTitle"`
 	CaseType                  string   `json:"caseType"`
@@ -96,44 +103,45 @@ type CaseCreatedPayload struct {
 	CreatedAt                 string   `json:"createdAt"`
 	Description               string   `json:"description"`
 	IncidentImpactDescription string   `json:"incidentImpactDescription,omitempty"`
-	CaseLink                  string   `json:"caseLink"`
-	CommentLink               string   `json:"commentLink"`
 	Recipients                []string `json:"recipients"`
 }
 
 // CommentAddedPayload is TypeCommentAdded's payload. See CaseCreatedPayload's
 // doc comment for why Recipients is here. CaseID must match the envelope's
 // EntityID — see Validate's doc comment — same requirement as the other
-// three case.* payloads below.
+// three case.* payloads below. CommentID is the new comment's id — appended
+// by internal/dispatch as a URL fragment (#<commentId>) to the resolved case
+// link, matching the CSM portal frontend's own comment-permalink format
+// (CsmCaseCommentBubble sets id={comment.id} and reads location.hash
+// directly) — the customer portal has no such fragment handling today, so
+// the same suffix is simply inert there, not an error.
 type CommentAddedPayload struct {
 	Name        string   `json:"name"`
 	ProjectID   string   `json:"projectId"`
 	CaseID      string   `json:"caseId"`
 	CaseTitle   string   `json:"caseTitle"`
 	CaseComment string   `json:"caseComment"`
-	CommentLink string   `json:"commentLink"`
-	CaseLink    string   `json:"caseLink"`
+	CommentID   string   `json:"commentId"`
 	Recipients  []string `json:"recipients"`
 }
 
 // StatusChangedPayload is TypeStatusChanged's payload. See
-// CaseCreatedPayload's doc comment for why Recipients is here.
+// CaseCreatedPayload's doc comment for why Recipients is here, and for why
+// ProjectID is required.
 type StatusChangedPayload struct {
-	CaseID      string   `json:"caseId"`
-	NewStatus   string   `json:"newStatus"`
-	CaseLink    string   `json:"caseLink"`
-	CommentLink string   `json:"commentLink"`
-	Recipients  []string `json:"recipients"`
+	ProjectID  string   `json:"projectId"`
+	CaseID     string   `json:"caseId"`
+	NewStatus  string   `json:"newStatus"`
+	Recipients []string `json:"recipients"`
 }
 
 // CaseAssignedPayload is TypeCaseAssigned's payload. See CaseCreatedPayload's
-// doc comment for why Recipients is here.
+// doc comment for why Recipients is here, and for why ProjectID is required.
 type CaseAssignedPayload struct {
 	AssignerName  string   `json:"assignerName"`
 	AssignerEmail string   `json:"assignerEmail"`
+	ProjectID     string   `json:"projectId"`
 	CaseID        string   `json:"caseId"`
-	CaseLink      string   `json:"caseLink"`
-	CommentLink   string   `json:"commentLink"`
 	Recipients    []string `json:"recipients"`
 }
 

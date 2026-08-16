@@ -75,9 +75,9 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.ReporterName == "" || p.ProjectName == "" || p.CaseID == "" || p.CaseTitle == "" ||
+		if p.ReporterName == "" || p.ProjectName == "" || p.ProjectID == "" || p.CaseID == "" || p.CaseTitle == "" ||
 			p.CaseType == "" || p.Priority == "" || p.CreatedAt == "" || p.Description == "" ||
-			p.CaseLink == "" || p.CommentLink == "" || !validRecipients(p.Recipients) {
+			!validRecipients(p.Recipients) {
 			return fmt.Errorf("events: missing required field for %s", t)
 		}
 		if p.CaseID != entityID {
@@ -89,7 +89,7 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 			return err
 		}
 		if p.Name == "" || p.ProjectID == "" || p.CaseID == "" || p.CaseTitle == "" || p.CaseComment == "" ||
-			p.CommentLink == "" || p.CaseLink == "" || !validRecipients(p.Recipients) {
+			p.CommentID == "" || !validRecipients(p.Recipients) {
 			return fmt.Errorf("events: missing required field for %s", t)
 		}
 		if p.CaseID != entityID {
@@ -100,7 +100,7 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.CaseID == "" || p.NewStatus == "" || p.CaseLink == "" || p.CommentLink == "" || !validRecipients(p.Recipients) {
+		if p.ProjectID == "" || p.CaseID == "" || p.NewStatus == "" || !validRecipients(p.Recipients) {
 			return fmt.Errorf("events: missing required field for %s", t)
 		}
 		if p.CaseID != entityID {
@@ -111,8 +111,8 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.AssignerName == "" || p.AssignerEmail == "" || p.CaseID == "" ||
-			p.CaseLink == "" || p.CommentLink == "" || !validRecipients(p.Recipients) {
+		if p.AssignerName == "" || p.AssignerEmail == "" || p.ProjectID == "" || p.CaseID == "" ||
+			!validRecipients(p.Recipients) {
 			return fmt.Errorf("events: missing required field for %s", t)
 		}
 		if p.CaseID != entityID {

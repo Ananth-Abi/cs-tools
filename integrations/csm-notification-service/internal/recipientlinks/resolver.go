@@ -20,10 +20,17 @@
 // vice versa isn't the point, but keeping the audiences separate is). This
 // is a per-recipient decision, not a per-event one — the same
 // case.comment_added notification can go to both a customer watcher and an
-// internal CSM watcher at once, each needing a different link — so it
-// exists as its own step between assembling a case's recipient list and
-// calling eventpublisher.Publisher.Publish, rather than being folded into
-// either.
+// internal CSM watcher at once, each needing a different link — so
+// internal/dispatch calls this to resolve links, then groups recipients by
+// the link they resolved to, before rendering/sending anything (see
+// Dispatcher.groupByLink). This does not resolve *who* to notify — every
+// case.* payload still carries its own caller-supplied Recipients list, see
+// internal/events' package doc — only which link a given recipient gets.
+//
+// Note the customer portal has no comment-permalink fragment handling today
+// (only the CSM portal's frontend reads location.hash to scroll to a
+// comment) — a comment-specific fragment on a customer-portal link is
+// simply inert there, not an error.
 package recipientlinks
 
 import (
@@ -33,7 +40,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/entity"
 )
 
 // entityClient abstracts entity.CustomerEntityClient's user-role lookup for
@@ -108,9 +115,9 @@ type RecipientLink struct {
 // account on at all.
 //
 // The returned links are the bare case link only — appending a
-// comment-specific anchor/fragment (or anything else notification-type
-// specific) is the caller's job, since that varies by event type and this
-// package only knows about portal audiences.
+// comment-specific anchor/fragment is internal/dispatch's job (see
+// commentLinkFor there), since that varies by event type and this package
+// only knows about portal audiences.
 func (r *Resolver) ResolveLinks(ctx context.Context, emails []string, projectID, caseID string) ([]RecipientLink, error) {
 	if len(emails) == 0 {
 		return nil, nil
@@ -142,8 +149,8 @@ func (r *Resolver) ResolveLinks(ctx context.Context, emails []string, projectID,
 
 // linkFor does not take the recipient's email — logging it would put PII
 // (an email address) in the logs, which this repo's own convention
-// disallows (see CLAUDE.md's Security section). caseID identifies which
-// notification a warning belongs to without identifying who it's about.
+// disallows. caseID identifies which notification a warning belongs to
+// without identifying who it's about.
 func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found bool, projectID, caseID string) string {
 	isCustomer := false
 	switch {
