@@ -21,8 +21,22 @@ import { STREAM_URL } from "@config/endpoints";
 import { getAccessToken, getIdToken, refreshToken } from "@src/services/auth";
 import { Logger } from "@utils/logger";
 
-/** Delay before reconnecting after the stream errors out or drops. */
-const RECONNECT_DELAY_MS = 3_000;
+/** Base delay before the first reconnect attempt after the stream errors out or drops. */
+const RECONNECT_BASE_DELAY_MS = 3_000;
+/** Reconnect delay never grows past this, no matter how many consecutive failures. */
+const RECONNECT_MAX_DELAY_MS = 30_000;
+
+/**
+ * Exponential backoff with full jitter (attempt 0 is a random delay in
+ * [0, base), attempt 1 in [0, base*2), ... capped at max) — a sustained
+ * backend outage or misconfiguration would otherwise have every open
+ * case-detail tab retry in lockstep every RECONNECT_BASE_DELAY_MS forever,
+ * hammering the endpoint indefinitely instead of backing off.
+ */
+function reconnectDelay(attempt: number): number {
+  const capped = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** attempt);
+  return Math.random() * capped;
+}
 
 /**
  * Opens a live Server-Sent Events connection to csm-portal-backend's
@@ -48,8 +62,12 @@ const RECONNECT_DELAY_MS = 3_000;
  * library's own built-in reconnect — a token that expires mid-connection
  * would otherwise have the polyfill retry forever with the same stale
  * header. Instead, `error` closes the current connection and this hook
- * opens a fresh one with a forcibly-refreshed token after
- * RECONNECT_DELAY_MS, rather than relying on that built-in retry.
+ * opens a fresh one after an exponentially backed-off delay (see
+ * reconnectDelay), rather than relying on that built-in retry.
+ * refreshToken(false) on that reconnect — not forced — so an ordinary
+ * transient failure (network blip, backend restart) doesn't force a
+ * redundant IdP round-trip on every single retry; refreshToken still
+ * refreshes on its own whenever the cached token is actually expiring.
  *
  * A no-op when `caseId` is unset or STREAM_URL isn't configured (Event Hub —
  * and therefore this endpoint — is optional on the backend); callers fall
@@ -64,6 +82,13 @@ export function useCaseActivityStream(caseId: string | undefined): void {
     let cancelled = false;
     let source: EventSourcePolyfill | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+
+    const scheduleReconnect = (): void => {
+      const delay = reconnectDelay(attempt);
+      attempt += 1;
+      reconnectTimer = setTimeout(() => void connect(false), delay);
+    };
 
     const connect = async (forceRefresh: boolean): Promise<void> => {
       try {
@@ -79,7 +104,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       const token = getAccessToken();
       const idToken = getIdToken();
       if (!token || !idToken) {
-        reconnectTimer = setTimeout(() => void connect(true), RECONNECT_DELAY_MS);
+        scheduleReconnect();
         return;
       }
 
@@ -91,6 +116,13 @@ export function useCaseActivityStream(caseId: string | undefined): void {
         },
       });
 
+      // A successful connection resets the backoff — only *consecutive*
+      // failures should back off, not the cumulative count over the
+      // component's whole lifetime.
+      source.addEventListener("open", () => {
+        attempt = 0;
+      });
+
       source.addEventListener("case_updated", () => {
         void queryClient.invalidateQueries({ queryKey: ["case", caseId, "comments"] });
         void queryClient.invalidateQueries({ queryKey: ["case", caseId, "activities"] });
@@ -100,7 +132,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
         Logger.warn("Case activity stream error, reconnecting");
         source?.close();
         if (!cancelled) {
-          reconnectTimer = setTimeout(() => void connect(true), RECONNECT_DELAY_MS);
+          scheduleReconnect();
         }
       });
     };
