@@ -15,7 +15,14 @@
 // under the License.
 
 import { renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Matches useAuthApiClient.ts's SILENT_RECOVERY_POLL_INTERVAL_MS / _BUDGET_MS
+// (not exported — the chain polls on a short interval after kicking off
+// silent sign-in instead of trusting only its own return value; see that
+// file's comment for why). Tests use fake timers and advance past these.
+const POLL_INTERVAL_MS = 700;
+const POLL_BUDGET_MS = 8_000;
 
 const ASGARDEO_UNAUTHENTICATED_CODE = "SPA-AUTH_CLIENT-VM-IV02";
 
@@ -63,6 +70,7 @@ describe("useAuthApiClient", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
     getAccessTokenMock.mockReset().mockResolvedValue("access-token");
@@ -72,6 +80,10 @@ describe("useAuthApiClient", () => {
     debugMock.mockReset();
     errorMock.mockReset();
     sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("returns the response untouched on a plain success", async () => {
@@ -139,7 +151,7 @@ describe("useAuthApiClient", () => {
     expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it("on a thrown token-expiry error that survives the bare retry, tries silent sign-in then retries again", async () => {
+  it("on a thrown token-expiry error that survives the bare retry, tries silent sign-in then recovers via the first poll", async () => {
     getAccessTokenMock
       .mockRejectedValueOnce(TOKEN_EXPIRED_ERROR)
       .mockRejectedValueOnce(TOKEN_EXPIRED_ERROR)
@@ -147,21 +159,28 @@ describe("useAuthApiClient", () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
 
     const { result } = renderHook(() => useAuthApiClient());
-    const response = await result.current("https://example.test/api/thing");
+    const responsePromise = result.current("https://example.test/api/thing");
+    // Silent sign-in's own return value isn't trusted as the sole recovery
+    // signal (see useAuthApiClient.ts) — the chain polls the original
+    // request on an interval instead; advance past the first one.
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    const response = await responsePromise;
 
     expect(response.status).toBe(200);
     expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
     expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it("on a resolved 401 that survives the bare retry, tries silent sign-in then retries again", async () => {
+  it("on a resolved 401 that survives the bare retry, tries silent sign-in then recovers via the first poll", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse(401))
       .mockResolvedValueOnce(jsonResponse(401))
       .mockResolvedValue(jsonResponse(200, { ok: true }));
 
     const { result } = renderHook(() => useAuthApiClient());
-    const response = await result.current("https://example.test/api/thing");
+    const responsePromise = result.current("https://example.test/api/thing");
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    const response = await responsePromise;
 
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -169,7 +188,7 @@ describe("useAuthApiClient", () => {
     expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it("forces a full sign-in redirect when a resolved 401 survives retry, silent sign-in, and the retry after it", async () => {
+  it("forces a full sign-in redirect once the poll budget is exhausted, when a resolved 401 survives every poll despite silent sign-in reporting success", async () => {
     fetchMock.mockResolvedValue(jsonResponse(401));
 
     const { result } = renderHook(() => useAuthApiClient());
@@ -177,20 +196,24 @@ describe("useAuthApiClient", () => {
     // triggered, so only assert on the calls it makes rather than awaiting it.
     void result.current("https://example.test/api/thing");
 
+    await vi.advanceTimersByTimeAsync(POLL_BUDGET_MS + POLL_INTERVAL_MS);
     await vi.waitFor(() => {
       expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
       expect(signInMock).toHaveBeenCalledTimes(1);
     });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(sessionStorage.getItem("csm.auth.lastForcedSignInAt")).not.toBeNull();
   });
 
-  it("forces a full sign-in redirect when a thrown token-expiry error survives every recovery attempt", async () => {
+  it("forces a full sign-in redirect when silent sign-in itself reports failure, without waiting out the full poll budget", async () => {
     getAccessTokenMock.mockRejectedValue(TOKEN_EXPIRED_ERROR);
+    signInSilentlyMock.mockResolvedValue(false);
 
     const { result } = renderHook(() => useAuthApiClient());
     void result.current("https://example.test/api/thing");
 
+    // Silent sign-in reporting failure ends polling after the next interval,
+    // not the full budget.
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     await vi.waitFor(() => {
       expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
       expect(signInMock).toHaveBeenCalledTimes(1);
@@ -200,9 +223,12 @@ describe("useAuthApiClient", () => {
   it("loop guard: does not redirect again, and instead lets the 401 propagate as a normal failure, when a forced sign-in happened moments ago", async () => {
     sessionStorage.setItem("csm.auth.lastForcedSignInAt", String(Date.now()));
     fetchMock.mockResolvedValue(jsonResponse(401));
+    signInSilentlyMock.mockResolvedValue(false);
 
     const { result } = renderHook(() => useAuthApiClient());
-    const response = await result.current("https://example.test/api/thing");
+    const responsePromise = result.current("https://example.test/api/thing");
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    const response = await responsePromise;
 
     expect(response.status).toBe(401);
     expect(signInMock).not.toHaveBeenCalled();
@@ -243,10 +269,12 @@ describe("useAuthApiClient", () => {
       String(Date.now() - 60_000),
     );
     fetchMock.mockResolvedValue(jsonResponse(401));
+    signInSilentlyMock.mockResolvedValue(false);
 
     const { result } = renderHook(() => useAuthApiClient());
     void result.current("https://example.test/api/thing");
 
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     await vi.waitFor(() => {
       expect(signInMock).toHaveBeenCalledTimes(1);
     });
