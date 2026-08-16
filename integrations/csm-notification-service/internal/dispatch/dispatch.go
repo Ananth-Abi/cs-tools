@@ -25,12 +25,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/recipientlinks"
 )
 
 // emailSender abstracts notifications.EmailClient for testability.
@@ -48,19 +52,27 @@ type callSender interface {
 	MakeCall(ctx context.Context, to, message string) error
 }
 
+// linkResolver abstracts recipientlinks.Resolver for testability.
+type linkResolver interface {
+	ResolveLinks(ctx context.Context, emails []string, projectID, caseID string) ([]recipientlinks.RecipientLink, error)
+}
+
 // Dispatcher turns a published events.Envelope into an actual notification
 // send.
 //
-// Every case.* payload carries its own Recipients list (who to email) —
-// this service has no entity-service client to resolve watchers/assignee/
-// reporter itself, so the caller (e.g. csm-portal-backend) supplies the
-// audience directly at publish time. incident.created carries no recipients
-// field; its Google Chat/call reactions already have their own real
-// destination, a space and a phone number, in the event payload itself.
+// Every case.* payload carries its own Recipients list (who to email) — this
+// service resolves which portal link each recipient gets (via links, see
+// groupByLink), not who to notify: there's no entity-service lookup here for
+// watchers/assignee/reporter, so the caller (e.g. csm-portal-backend)
+// supplies the audience directly at publish time. incident.created carries
+// no recipients field; its Google Chat/call reactions already have their
+// own real destination, a space and a phone number, in the event payload
+// itself, and don't go through links at all.
 type Dispatcher struct {
 	email      emailSender
 	googleChat googleChatSender
 	call       callSender
+	links      linkResolver
 
 	// doneMu/done track which (record, channel) pairs have already
 	// succeeded — see handleIncidentCreated's doc comment for why this
@@ -76,11 +88,12 @@ type Dispatcher struct {
 }
 
 // NewDispatcher constructs a Dispatcher.
-func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender) *Dispatcher {
+func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver) *Dispatcher {
 	return &Dispatcher{
 		email:      email,
 		googleChat: googleChat,
 		call:       call,
+		links:      links,
 		done:       make(map[string]bool),
 	}
 }
@@ -147,21 +160,27 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, raw json.RawMessage)
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.created payload: %w", err)
 	}
-	htmlBody := notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
-		ReporterName:              p.ReporterName,
-		ProjectName:               p.ProjectName,
-		CaseID:                    p.CaseID,
-		CaseTitle:                 p.CaseTitle,
-		CaseType:                  p.CaseType,
-		Priority:                  p.Priority,
-		Product:                   p.Product,
-		CreatedAt:                 p.CreatedAt,
-		Description:               p.Description,
-		IncidentImpactDescription: p.IncidentImpactDescription,
-		CaseLink:                  p.CaseLink,
-		CommentLink:               p.CommentLink,
+	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	if err != nil {
+		return err
+	}
+	subject := fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle)
+	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+		return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
+			ReporterName:              p.ReporterName,
+			ProjectName:               p.ProjectName,
+			CaseID:                    p.CaseID,
+			CaseTitle:                 p.CaseTitle,
+			CaseType:                  p.CaseType,
+			Priority:                  p.Priority,
+			Product:                   p.Product,
+			CreatedAt:                 p.CreatedAt,
+			Description:               p.Description,
+			IncidentImpactDescription: p.IncidentImpactDescription,
+			CaseLink:                  caseLink,
+			CommentLink:               commentLinkFor(caseLink, ""),
+		})
 	})
-	return d.send(ctx, p.Recipients, fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle), htmlBody)
 }
 
 func (d *Dispatcher) handleCommentAdded(ctx context.Context, raw json.RawMessage) error {
@@ -169,8 +188,14 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, raw json.RawMessage
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.comment_added payload: %w", err)
 	}
-	htmlBody := notifications.RenderCommentAddedEmail(p.Name, p.ProjectID, p.CaseTitle, p.CaseComment, p.CommentLink, p.CaseLink)
-	return d.send(ctx, p.Recipients, "Re: "+p.CaseTitle, htmlBody)
+	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	if err != nil {
+		return err
+	}
+	subject := "Re: " + p.CaseTitle
+	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+		return notifications.RenderCommentAddedEmail(p.Name, p.ProjectID, p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
+	})
 }
 
 func (d *Dispatcher) handleStatusChanged(ctx context.Context, raw json.RawMessage) error {
@@ -178,8 +203,14 @@ func (d *Dispatcher) handleStatusChanged(ctx context.Context, raw json.RawMessag
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.status_changed payload: %w", err)
 	}
-	htmlBody := notifications.RenderStatusChangedEmail(p.CaseID, p.NewStatus, p.CaseLink, p.CommentLink)
-	return d.send(ctx, p.Recipients, fmt.Sprintf("[%s] Status changed to %s", p.CaseID, p.NewStatus), htmlBody)
+	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	if err != nil {
+		return err
+	}
+	subject := fmt.Sprintf("[%s] Status changed to %s", p.CaseID, p.NewStatus)
+	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+		return notifications.RenderStatusChangedEmail(p.CaseID, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
+	})
 }
 
 func (d *Dispatcher) handleCaseAssigned(ctx context.Context, raw json.RawMessage) error {
@@ -187,20 +218,75 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, raw json.RawMessage
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.assigned payload: %w", err)
 	}
-	htmlBody := notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, p.CaseID, p.CaseLink, p.CommentLink)
-	return d.send(ctx, p.Recipients, fmt.Sprintf("[%s] Case assigned", p.CaseID), htmlBody)
+	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	if err != nil {
+		return err
+	}
+	subject := fmt.Sprintf("[%s] Case assigned", p.CaseID)
+	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, p.CaseID, caseLink, commentLinkFor(caseLink, ""))
+	})
 }
 
-// send emails recipients — sourced from the triggering event's own payload
-// (see the Dispatcher doc comment), not any fixed/configured list. A caller
-// that publishes an event with an empty Recipients slice should have been
-// rejected already by handler.validateEventPayload; this check is a
+// groupByLink resolves each recipient's own case link (see
+// recipientlinks.Resolver.ResolveLinks) and buckets recipients by the link
+// they resolved to — at most two buckets today, customer portal vs CSM
+// portal, so recipients sharing a link still go out in one SendEmail call
+// rather than one per person. Recipients is sourced from the triggering
+// event's own payload (see the Dispatcher doc comment), not any
+// fixed/configured list. An empty Recipients slice should have been
+// rejected already by events.Validate; the explicit check here is a
 // defensive backstop, not the primary guard.
-func (d *Dispatcher) send(ctx context.Context, recipients []string, subject, htmlBody string) error {
+func (d *Dispatcher) groupByLink(ctx context.Context, recipients []string, projectID, caseID string) (map[string][]string, error) {
 	if len(recipients) == 0 {
-		return fmt.Errorf("dispatch: event payload has no recipients")
+		return nil, fmt.Errorf("dispatch: event payload has no recipients")
 	}
-	return d.email.SendEmail(ctx, recipients, nil, nil, nil, subject, htmlBody, nil)
+	links, err := d.links.ResolveLinks(ctx, recipients, projectID, caseID)
+	if err != nil {
+		return nil, fmt.Errorf("dispatch: resolve recipient links: %w", err)
+	}
+	groups := make(map[string][]string, 2)
+	for _, l := range links {
+		groups[l.CaseLink] = append(groups[l.CaseLink], l.Email)
+	}
+	return groups, nil
+}
+
+// commentLinkFor appends the comment permalink fragment to a resolved case
+// link. Fragments are client-side only, so the same suffix works regardless
+// of which portal's URL shape caseLink has — see recipientlinks' package doc
+// for why the customer portal simply ignores it today rather than erroring.
+// An empty commentID (every case.* type except case.comment_added, which
+// has no comment to link to) yields the bare case link.
+func commentLinkFor(caseLink, commentID string) string {
+	if commentID == "" {
+		return caseLink
+	}
+	return caseLink + "#" + url.PathEscape(commentID)
+}
+
+// sendPerGroup renders and sends one email per distinct resolved link, in
+// sorted link order (deterministic, rather than Go's randomized map
+// iteration). render is called once per group with that group's own case
+// link, so each group's body carries the portal link its recipients can
+// actually open.
+//
+// Partial failure here is at-least-once, not tracked with idempotency
+// state: if one group's SendEmail fails after another group already
+// succeeded, Handle's non-nil return causes eventbus.Consumer to retry the
+// whole record, re-sending the group(s) that already succeeded too. That's
+// the same trade-off handleIncidentCreated's done map exists to avoid for
+// its two channels — email duplication is cheap enough, and today's
+// recipient/group counts small enough, that this case accepts the
+// duplication rather than adding the same tracking here.
+func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]string, subject string, render func(caseLink string) string) error {
+	var errs []error
+	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
+		if err := d.email.SendEmail(ctx, groups[caseLink], nil, nil, nil, subject, render(caseLink), nil); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // handleIncidentCreated has two independent reactions, unlike every other

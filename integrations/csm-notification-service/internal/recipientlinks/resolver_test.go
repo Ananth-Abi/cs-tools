@@ -20,7 +20,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/entity"
 )
 
 type fakeEntityClient struct {
