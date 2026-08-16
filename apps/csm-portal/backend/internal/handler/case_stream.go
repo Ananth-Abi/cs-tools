@@ -52,6 +52,16 @@ const caseActivityStreamHeartbeat = 15 * time.Second
 // case-reading endpoint relies on has passed. This is unrelated to
 // internal/caseevents.Handler, which is a server-internal component with no
 // external caller and legitimately sees every event system-wide.
+//
+// Known limitation, not yet addressed: there is no per-user or per-replica
+// cap on how many of these a single caller can hold open concurrently, and
+// the dedicated :9092 listener runs with WriteTimeout/IdleTimeout disabled
+// (see cmd/server/main.go) to keep long-lived connections alive — nothing
+// here stops a buggy or malicious client from opening unbounded connections
+// and exhausting server resources (goroutines, file descriptors). Add
+// bounded admission control (e.g. a per-user semaphore rejecting beyond some
+// limit) or confirm and document an enforced platform-level limit before
+// relying on this in a hostile-client environment.
 func (h *CaseHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
