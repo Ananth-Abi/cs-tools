@@ -29,6 +29,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -88,19 +89,30 @@ func main() {
 			ConnectionString: mustEnv("EVENT_HUB_CONNECTION_STRING"),
 			Topic:            mustEnv("EVENT_HUB_TOPIC"),
 		}
-		// Every replica gets its own consumer group (a random suffix on top
-		// of the configured/default base name) rather than sharing one, so
-		// each replica sees 100% of events instead of Kafka load-balancing
-		// them across replicas — a shared group would mean an SSE client
+		// Every replica gets its own consumer group (a suffix on top of the
+		// configured/default base name) rather than sharing one, so each
+		// replica sees 100% of events instead of Kafka load-balancing them
+		// across replicas — a shared group would mean an SSE client
 		// connected to replica B never learns about an event a shared
 		// group happened to hand to replica A. See internal/stream.
 		// BroadcastHub: it only knows about subscribers on its own
 		// process, so every replica must independently observe every event
 		// to be able to broadcast it to whichever subscribers it happens to
-		// be holding the connection for.
+		// be holding the connection for. Every ordinary rolling deploy (not
+		// just a crash-restart) still means a brand new consumer group —
+		// even newReplicaID's hostname-based suffix changes with every new
+		// pod — so LatestOffset (not the package default) is required
+		// here: EarliestOffset would replay the entire retained topic
+		// history into a burst of stale case_updated notifications on
+		// every deploy. This does mean an unbounded number of dead,
+		// never-explicitly-deleted consumer groups accumulate on the
+		// broker over the service's lifetime — an accepted tradeoff, since
+		// per-replica uniqueness is required for the fan-out property
+		// above and Event Hub's Kafka surface has no API this backend can
+		// call to delete a consumer group it's done with.
 		consumerGroupBase := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-portal-backend")
 		consumerGroup := fmt.Sprintf("%s-replica-%s", consumerGroupBase, newReplicaID())
-		caseEventsConsumer = eventbus.NewConsumer(eventBusCfg, consumerGroup)
+		caseEventsConsumer = eventbus.NewConsumer(eventBusCfg, consumerGroup, eventbus.LatestOffset)
 		eventPublisher = eventpublisher.New(eventbus.NewProducer(eventBusCfg), customerEntityClient)
 		activityHub = stream.NewBroadcastHub()
 	}
@@ -357,6 +369,42 @@ func main() {
 	<-ctx.Done()
 	stop()
 
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Both listeners get the shutdown goroutine's own use of shutdownCtx,
+	// running concurrently rather than one after the other — Shutdown
+	// doesn't cancel an already-running handler's own request context, it
+	// only waits (up to shutdownCtx) for handlers to return on their own,
+	// so a long-lived SSE connection on the stream listener can otherwise
+	// consume the *entire* shared budget before the main API's own
+	// Shutdown even starts, turning what should be a graceful drain into
+	// an abrupt os.Exit(1) below.
+	var wg sync.WaitGroup
+	if streamSrv != nil {
+		wg.Go(func() {
+			if err := streamSrv.Shutdown(shutdownCtx); err != nil {
+				slog.Error("stream server graceful shutdown failed", "err", err)
+			}
+		})
+	}
+	var srvErr error
+	wg.Go(func() {
+		srvErr = srv.Shutdown(shutdownCtx)
+	})
+	wg.Wait()
+	if srvErr != nil {
+		slog.Error("graceful shutdown failed", "err", srvErr)
+		os.Exit(1)
+	}
+
+	// Both listeners have now drained, so no new publishAsync goroutine can
+	// start — safe to wait for the ones already in flight before closing
+	// the producer/consumer they depend on. A state-changing request can
+	// return 200 with its publishAsync goroutine still running; closing the
+	// producer out from under it would otherwise silently drop the event.
+	caseHandler.WaitPendingPublishes(shutdownCtx)
+
 	if caseEventsConsumer != nil {
 		caseEventsConsumer.Close()
 	}
@@ -364,17 +412,6 @@ func main() {
 		eventPublisher.Close()
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if streamSrv != nil {
-		if err := streamSrv.Shutdown(shutdownCtx); err != nil {
-			slog.Error("stream server graceful shutdown failed", "err", err)
-		}
-	}
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("graceful shutdown failed", "err", err)
-		os.Exit(1)
-	}
 	slog.Info("CSM Portal Backend stopped")
 }
 
