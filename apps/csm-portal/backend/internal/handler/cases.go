@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventpublisher"
@@ -100,6 +101,11 @@ type CaseHandler struct {
 	entity    entityCaseClient
 	publisher *eventpublisher.Publisher
 	hub       *stream.BroadcastHub
+	// pending tracks in-flight publishAsync goroutines so shutdown can wait
+	// for them before closing publisher — see WaitPendingPublishes. Zero
+	// value is a ready-to-use sync.WaitGroup, so this needs no constructor
+	// wiring.
+	pending sync.WaitGroup
 }
 
 // NewCaseHandler creates a CaseHandler backed by the given entity client.
@@ -133,13 +139,33 @@ func (h *CaseHandler) publishAsync(ctx context.Context, eventType events.Type, e
 		slog.ErrorContext(ctx, "publishAsync: encode payload", "eventType", eventType, "entityId", entityID, "err", err)
 		return
 	}
-	go func() {
+	h.pending.Go(func() {
 		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishAsyncTimeout)
 		defer cancel()
 		if err := h.publisher.Publish(publishCtx, eventType, entityID, body); err != nil {
 			slog.ErrorContext(publishCtx, "publishAsync: publish failed", "eventType", eventType, "entityId", entityID, "err", err)
 		}
+	})
+}
+
+// WaitPendingPublishes blocks until every in-flight publishAsync goroutine
+// has finished, or ctx is done, whichever comes first. Call during shutdown
+// after the HTTP servers have finished draining (so no new publishAsync
+// call can start) and before closing the underlying publisher/producer —
+// otherwise an in-flight publish can be silently dropped mid-write: the
+// HTTP response for a state-changing request can already be 200 while its
+// publishAsync goroutine is still running, unawaited, when shutdown closes
+// the producer out from under it.
+func (h *CaseHandler) WaitPendingPublishes(ctx context.Context) {
+	done := make(chan struct{})
+	go func() {
+		h.pending.Wait()
+		close(done)
 	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }
 
 // maxRequestBodyBytes caps incoming request bodies at 1 MiB to prevent memory DoS.
