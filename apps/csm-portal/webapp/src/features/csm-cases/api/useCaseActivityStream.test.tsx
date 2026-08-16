@@ -40,13 +40,9 @@ const { MockEventSource, mockInstances } = vi.hoisted(() => {
 
 vi.mock("@sanity/eventsource", () => ({ default: MockEventSource }));
 
-const getAccessTokenMock = vi.fn();
-const getIdTokenMock = vi.fn();
-vi.mock("@asgardeo/react", () => ({
-  useAsgardeo: () => ({
-    getAccessToken: getAccessTokenMock,
-    getIdToken: getIdTokenMock,
-  }),
+const getTokensMock = vi.fn();
+vi.mock("@hooks/useAuthTokens", () => ({
+  useAuthTokens: () => getTokensMock,
 }));
 
 const { apiConfigMock } = vi.hoisted(() => ({
@@ -88,8 +84,7 @@ describe("useCaseActivityStream", () => {
     mockInstances.length = 0;
     invalidateQueriesMock.mockReset();
     debugMock.mockReset();
-    getAccessTokenMock.mockReset().mockResolvedValue("access-token");
-    getIdTokenMock.mockReset().mockResolvedValue("id-token");
+    getTokensMock.mockReset().mockResolvedValue({ token: "access-token", idToken: "id-token" });
     apiConfigMock.streamUrl = "https://stream.example.test";
   });
 
@@ -145,7 +140,7 @@ describe("useCaseActivityStream", () => {
     await waitFor(() => expect(mockInstances).toHaveLength(1));
     const first = mockInstances[0];
 
-    getAccessTokenMock.mockResolvedValue("fresh-access-token");
+    getTokensMock.mockResolvedValue({ token: "fresh-access-token", idToken: "id-token" });
     act(() => {
       first.dispatchEvent(new Event("error"));
     });
@@ -157,6 +152,55 @@ describe("useCaseActivityStream", () => {
 
     await waitFor(() => expect(mockInstances).toHaveLength(2));
     expect(mockInstances[1].headers?.["x-jwt-assertion"]).toBe("fresh-access-token");
+  });
+
+  it("backs off exponentially on consecutive errors, and resets after a successful connection", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    // Math.random() fixed at 1 makes reconnectDelay's jitter deterministic:
+    // delay = cap * 1 = cap, so the assertions below can pin exact timings.
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(1);
+
+    renderHook(() => useCaseActivityStream("case-1"), { wrapper });
+    await waitFor(() => expect(mockInstances).toHaveLength(1));
+
+    // 1st error: base delay (3000ms).
+    act(() => mockInstances[0].dispatchEvent(new Event("error")));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_999);
+    });
+    expect(mockInstances).toHaveLength(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2);
+    });
+    await waitFor(() => expect(mockInstances).toHaveLength(2));
+
+    // 2nd *consecutive* error (no successful open in between): delay doubles
+    // to 6000ms rather than staying fixed at 3000ms.
+    act(() => mockInstances[1].dispatchEvent(new Event("error")));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_999);
+    });
+    expect(mockInstances).toHaveLength(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2);
+    });
+    await waitFor(() => expect(mockInstances).toHaveLength(3));
+
+    // A successful connection resets the backoff back to the base delay.
+    act(() => {
+      mockInstances[2].dispatchEvent(new Event("open"));
+      mockInstances[2].dispatchEvent(new Event("error"));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_999);
+    });
+    expect(mockInstances).toHaveLength(3);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2);
+    });
+    await waitFor(() => expect(mockInstances).toHaveLength(4));
+
+    randomSpy.mockRestore();
   });
 
   it("closes the connection on unmount", async () => {

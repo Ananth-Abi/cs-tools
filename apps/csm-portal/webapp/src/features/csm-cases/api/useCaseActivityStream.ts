@@ -15,15 +15,29 @@
 // under the License.
 
 import { useEffect } from "react";
-import { useAsgardeo } from "@asgardeo/react";
 import EventSourcePolyfill from "@sanity/eventsource";
 import { useQueryClient } from "@tanstack/react-query";
 import { apiConfig } from "@config/apiConfig";
 import { ApiQueryKeys } from "@constants/apiConstants";
+import { useAuthTokens } from "@hooks/useAuthTokens";
 import { useLogger } from "@hooks/useLogger";
 
-/** Delay before reconnecting after the stream errors out or drops. */
-const RECONNECT_DELAY_MS = 3_000;
+/** Base delay before the first reconnect attempt after the stream errors out or drops. */
+const RECONNECT_BASE_DELAY_MS = 3_000;
+/** Reconnect delay never grows past this, no matter how many consecutive failures. */
+const RECONNECT_MAX_DELAY_MS = 30_000;
+
+/**
+ * Exponential backoff with full jitter (attempt 0 is a random delay in
+ * [0, base), attempt 1 in [0, base*2), ... capped at max) — a sustained
+ * backend outage or misconfiguration would otherwise have every open
+ * case-detail tab retry in lockstep every RECONNECT_BASE_DELAY_MS forever,
+ * hammering the endpoint indefinitely instead of backing off.
+ */
+function reconnectDelay(attempt: number): number {
+  const capped = Math.min(RECONNECT_MAX_DELAY_MS, RECONNECT_BASE_DELAY_MS * 2 ** attempt);
+  return Math.random() * capped;
+}
 
 /**
  * Opens a live Server-Sent Events connection to csm-portal-backend's
@@ -49,8 +63,16 @@ const RECONNECT_DELAY_MS = 3_000;
  * library's own built-in reconnect — a token that expires mid-connection
  * would otherwise have the polyfill retry forever with the same stale
  * header. Instead, `error` closes the current connection and this hook
- * opens a fresh one with newly-fetched tokens after RECONNECT_DELAY_MS,
- * rather than relying on that built-in retry.
+ * opens a fresh one with newly-fetched tokens after an exponentially
+ * backed-off delay (see reconnectDelay), rather than relying on that
+ * built-in retry.
+ *
+ * Token acquisition goes through useAuthTokens — the same recovery path
+ * useAuthApiClient uses for every other backend call — rather than calling
+ * useAsgardeo() directly: a genuinely dead refresh token then gets the same
+ * silent-reauth-then-sign-in-redirect treatment as the rest of the app,
+ * instead of this hook just retrying forever with no way to ever recover
+ * and no visible signal that anything's wrong.
  *
  * A no-op when `caseId` is unset or `apiConfig.streamUrl` isn't configured
  * (Event Hub — and therefore this endpoint — is optional on the backend);
@@ -58,7 +80,7 @@ const RECONNECT_DELAY_MS = 3_000;
  */
 export function useCaseActivityStream(caseId: string | undefined): void {
   const queryClient = useQueryClient();
-  const { getAccessToken, getIdToken } = useAsgardeo();
+  const getTokens = useAuthTokens();
   const logger = useLogger();
 
   useEffect(() => {
@@ -67,12 +89,19 @@ export function useCaseActivityStream(caseId: string | undefined): void {
     let cancelled = false;
     let source: EventSourcePolyfill | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let attempt = 0;
+
+    const scheduleReconnect = (): void => {
+      const delay = reconnectDelay(attempt);
+      attempt += 1;
+      reconnectTimer = setTimeout(() => void connect(), delay);
+    };
 
     const connect = async (): Promise<void> => {
       let token: string | undefined;
       let idToken: string | undefined;
       try {
-        [token, idToken] = await Promise.all([getAccessToken(), getIdToken()]);
+        ({ token, idToken } = await getTokens());
       } catch (error) {
         logger.debug(
           "[case-activity-stream] failed to get tokens",
@@ -81,7 +110,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       }
       if (cancelled) return;
       if (!token || !idToken) {
-        reconnectTimer = setTimeout(() => void connect(), RECONNECT_DELAY_MS);
+        scheduleReconnect();
         return;
       }
 
@@ -91,6 +120,13 @@ export function useCaseActivityStream(caseId: string | undefined): void {
           "x-jwt-assertion": token,
           "x-user-id-token": idToken,
         },
+      });
+
+      // A successful connection resets the backoff — only *consecutive*
+      // failures should back off, not the cumulative count over the
+      // component's whole lifetime.
+      source.addEventListener("open", () => {
+        attempt = 0;
       });
 
       source.addEventListener("case_updated", () => {
@@ -106,7 +142,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
         logger.debug("[case-activity-stream] connection error, reconnecting");
         source?.close();
         if (!cancelled) {
-          reconnectTimer = setTimeout(() => void connect(), RECONNECT_DELAY_MS);
+          scheduleReconnect();
         }
       });
     };
@@ -118,5 +154,5 @@ export function useCaseActivityStream(caseId: string | undefined): void {
       clearTimeout(reconnectTimer);
       source?.close();
     };
-  }, [caseId, queryClient, getAccessToken, getIdToken, logger]);
+  }, [caseId, queryClient, getTokens, logger]);
 }
