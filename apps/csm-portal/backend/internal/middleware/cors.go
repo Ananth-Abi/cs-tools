@@ -56,16 +56,27 @@ const corsAllowedMethods = "GET, POST, PATCH, DELETE, OPTIONS"
 // apps/customer-portal/backend-v2's identically-named middleware, whose doc
 // comment this mirrors.
 //
-// allowedOrigins is an allow-list of browser Origins; an empty list allows
-// any origin, matching this backend's local-development-friendly default —
-// the same tradeoff apps/customer-portal/backend-v2's CORS makes, safe for
-// the same reason: this backend authenticates via a caller-supplied
+// allowedOrigins is an allow-list of browser Origins; fail-closed by
+// default — an empty list allows *no* cross-origin browser request through
+// (Access-Control-Allow-Origin is never set, so the browser blocks it),
+// rather than reflecting any Origin back. Deliberately stricter than
+// apps/customer-portal/backend-v2's identically-named middleware, which
+// does default open, safe there only for the same reason it'd be safe
+// here too: this backend authenticates via a caller-supplied
 // x-jwt-assertion header, never cookies, so there is no session credential
 // for a browser to attach automatically, and Access-Control-Allow-Credentials
-// is deliberately never set below. If this backend ever adds cookie-based
-// auth, allowedOrigins MUST become a real non-empty allow-list first — an
-// unrestricted origin plus credentials lets any site read authenticated
-// responses on the victim's behalf.
+// is deliberately never set below — an open default wouldn't let a
+// malicious page forge a request with a victim's identity today. It's
+// still fail-closed rather than matching backend-v2, because that
+// precondition is easy to silently invalidate later (e.g. a future change
+// that exposes the token to page-readable JS) and CORS should not be the
+// only thing standing between that mistake and real impact. Local
+// development sets this explicitly (see .env.example) rather than relying
+// on an implicit any-origin fallback.
+//
+// If this backend ever adds cookie-based auth, allowedOrigins MUST remain
+// a real non-empty allow-list — an unrestricted origin plus credentials
+// lets any site read authenticated responses on the victim's behalf.
 func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(allowedOrigins))
 	for _, o := range allowedOrigins {
@@ -75,7 +86,7 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if origin != "" && (len(allowed) == 0 || allowed[origin]) {
+			if origin != "" && allowed[origin] {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Add("Vary", "Origin")
 			}

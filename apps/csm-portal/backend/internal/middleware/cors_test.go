@@ -92,14 +92,17 @@ func TestCORSNeverSetsAllowCredentials(t *testing.T) {
 }
 
 func TestCORSActualRequestPassesThrough(t *testing.T) {
+	// CORS only ever governs the Access-Control-Allow-Origin response
+	// header — it never blocks the request from reaching the wrapped
+	// handler itself (the browser is what enforces the header client-side).
 	called := false
-	handler := CORS(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := CORS([]string{"https://frontend.example.com"})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/cases/x/activities/stream", nil)
-	req.Header.Set("Origin", "https://anything.example.com")
+	req.Header.Set("Origin", "https://frontend.example.com")
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -107,7 +110,27 @@ func TestCORSActualRequestPassesThrough(t *testing.T) {
 	if !called {
 		t.Fatal("actual request should reach the wrapped handler")
 	}
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://anything.example.com" {
-		t.Fatalf("expected Allow-Origin echoed when allow-list empty, got %q", got)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "https://frontend.example.com" {
+		t.Fatalf("expected Allow-Origin echoed for an allow-listed origin, got %q", got)
+	}
+}
+
+// TestCORSEmptyAllowListDeniesEveryOrigin guards the fail-closed default:
+// an empty/unset allowedOrigins must never fall back to reflecting any
+// Origin — see CORS's doc comment for why open-by-default was rejected
+// even though it isn't an active hole today.
+func TestCORSEmptyAllowListDeniesEveryOrigin(t *testing.T) {
+	handler := CORS(nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	req.Header.Set("Origin", "https://anything.example.com")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("expected no Allow-Origin with an empty allow-list, got %q", got)
 	}
 }
