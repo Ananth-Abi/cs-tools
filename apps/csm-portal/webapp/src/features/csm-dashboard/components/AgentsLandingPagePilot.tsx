@@ -163,7 +163,13 @@ export default function AgentsLandingPagePilot({
                   description={widget.description}
                   resourceType={widget.resourceType}
                   shape={widget.shape}
-                  filters={widget.filters}
+                  // Backend-driven config (DASHBOARDS_CONFIG) isn't schema-validated
+                  // beyond basic JSON decoding — a widget entry missing this field
+                  // decodes to undefined at runtime despite the type declaring it
+                  // required, and every downstream consumer (resolveTeamPlaceholder,
+                  // useWidgetData) assumes a real object. Default it here rather than
+                  // widen those signatures for a config-data-quality issue.
+                  filters={widget.filters ?? {}}
                   listLimit={widget.listLimit}
                   slices={widget.slices}
                   selectedTeamGroupId={selectedTeamGroupId}

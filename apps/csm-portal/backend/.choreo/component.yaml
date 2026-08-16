@@ -10,3 +10,22 @@ endpoints:
     networkVisibilities:
       - Public
     schemaFilePath: openapi.yaml
+
+  # The case-activity SSE stream runs on its own listener and port, not on
+  # 8080 alongside the REST API — the REST listener's WriteTimeout/
+  # IdleTimeout would kill a long-lived connection. Mirrors
+  # apps/customer-portal/backend-v2's websocket endpoint (WS_PORT, its own
+  # Choreo entry) for the same reason, though this one is still a REST-style
+  # HTTP GET (Server-Sent Events), not a protocol upgrade — see that
+  # backend's cmd/server/main.go for the streamSrv block and
+  # openapi-stream.yaml for what this port actually serves (one path, not
+  # the full REST surface openapi.yaml above describes).
+  - name: csm-portal-activity-stream
+    displayName: CSM Portal Case Activity Stream
+    service:
+      basePath: /
+      port: 9092
+    type: REST
+    networkVisibilities:
+      - Public
+    schemaFilePath: openapi-stream.yaml

@@ -17,10 +17,11 @@
 // Package caseevents is a consumer of the case-events Kafka topic, in its
 // own consumer group (see cmd/server/main.go) so it gets its own full copy
 // of every event independent of csm-notification-service's consumers.
-// Deliberately minimal for now: Handler just logs what it receives. The
-// intended real use — pushing case updates (comment added, etc.) to the
-// frontend in real time — is a follow-up; this package is the scaffold
-// that'll grow into that.
+// Logs type/entityId for every event, and — for the two event types the
+// case-activity SSE stream cares about — fans a minimal broadcast payload
+// out to internal/stream.BroadcastHub, which is what actually pushes the
+// `case_updated` event to any browser subscribed to that case on this
+// replica (see internal/handler.CaseHandler.StreamCaseActivities).
 package caseevents
 
 import (
@@ -32,13 +33,33 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/events"
 )
 
-// Handler reacts to events on the case-events topic. Currently: logs
-// type/entityId and nothing else.
-type Handler struct{}
+// broadcastHub abstracts stream.BroadcastHub for testability.
+type broadcastHub interface {
+	Publish(caseID, payload string)
+}
 
-// NewHandler constructs a Handler.
-func NewHandler() *Handler {
-	return &Handler{}
+// Handler reacts to events on the case-events topic. hub may be nil — every
+// broadcast call site below must check for that — since Event Hub config
+// (and therefore the whole case-events consumer) is optional in this
+// backend (see cmd/server/main.go).
+type Handler struct {
+	hub broadcastHub
+}
+
+// NewHandler constructs a Handler that fans case.comment_added and
+// case.status_changed events out to hub. Pass nil to disable broadcasting
+// (Handle will still log every event as before).
+func NewHandler(hub broadcastHub) *Handler {
+	return &Handler{hub: hub}
+}
+
+// broadcastPayload is the minimal shape written to the SSE stream — never
+// comment text or field values, see StreamCaseActivities' doc comment for
+// why.
+type broadcastPayload struct {
+	CaseID    string `json:"caseId"`
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
 // Handle implements eventbus.Handle. Never returns an error today — a
@@ -58,5 +79,31 @@ func (h *Handler) Handle(ctx context.Context, record eventbus.Record) error {
 		return nil
 	}
 	slog.InfoContext(ctx, "caseevents: received case event", "type", env.Type, "entityId", env.EntityID)
+
+	if h.hub == nil || env.EntityID == "" {
+		return nil
+	}
+	switch env.Type {
+	case events.TypeCommentAdded, events.TypeStatusChanged:
+		h.broadcast(ctx, env)
+	}
 	return nil
+}
+
+func (h *Handler) broadcast(ctx context.Context, env events.Envelope) {
+	var ts struct {
+		Timestamp string `json:"timestamp"`
+	}
+	_ = json.Unmarshal(env.Payload, &ts) // best-effort; empty Timestamp is fine
+
+	body, err := json.Marshal(broadcastPayload{
+		CaseID:    env.EntityID,
+		Type:      string(env.Type),
+		Timestamp: ts.Timestamp,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "caseevents: failed to encode broadcast payload", "err", err)
+		return
+	}
+	h.hub.Publish(env.EntityID, string(body))
 }

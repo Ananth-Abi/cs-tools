@@ -23,12 +23,24 @@ if (!BACKEND_BASE_URL) {
   );
 }
 
+// Base URL for the case-activity SSE stream (a separate Choreo REST
+// endpoint backed by csm-portal-backend's dedicated :9092 listener — see
+// that backend's cmd/server/main.go). Deliberately optional, unlike
+// backendUrl: this backend only stands the stream listener up when Event
+// Hub is configured, so an environment without it simply has no value here.
+// useCaseActivityStream checks for that and no-ops rather than throwing, so
+// the rest of the app functions normally (falling back to the existing
+// manual-refresh/staleTime polling) when it's unset.
+export const STREAM_BASE_URL = window.config?.CSM_PORTAL_STREAM_BASE_URL;
+
 // Interface for the API configuration.
 interface ApiConfig {
   backendUrl: string;
+  streamUrl?: string;
 }
 
 // Configuration for the API service.
 export const apiConfig: ApiConfig = {
   backendUrl: BACKEND_BASE_URL,
+  streamUrl: STREAM_BASE_URL,
 };

@@ -55,12 +55,44 @@ type Consumer struct {
 	reader *kafka.Reader
 }
 
+// StartOffset controls where a brand new (never-before-committed) consumer
+// group begins reading a partition. Has no effect on a group with existing
+// committed offsets — those always resume from where they left off,
+// regardless of this setting. A named type rather than passing
+// github.com/segmentio/kafka-go's own constant directly, matching Record's
+// own doc comment: callers of this package never need to import kafka-go
+// themselves.
+type StartOffset int
+
+const (
+	// EarliestOffset replays every retained record for a new consumer
+	// group — appropriate for at-least-once delivery guarantees, matching
+	// csm-notification-service's own Consumer.
+	EarliestOffset StartOffset = iota
+	// LatestOffset skips retained history entirely for a new consumer
+	// group, only seeing records published from now on — appropriate for
+	// a best-effort, live-only consumer where replaying old records would
+	// be actively wrong, e.g. internal/caseevents.Handler re-broadcasting
+	// stale case_updated notifications to connected SSE clients after
+	// every restart or routine redeploy (a new consumer group every time,
+	// since its groupID is suffixed per-process — see newReplicaID in
+	// cmd/server/main.go).
+	LatestOffset
+)
+
+func (s StartOffset) kafkaOffset() int64 {
+	if s == LatestOffset {
+		return kafka.LastOffset
+	}
+	return kafka.FirstOffset
+}
+
 // NewConsumer constructs a Consumer that joins groupID and consumes
 // cfg.Topic. Auto-commit is not used: offsets are committed explicitly by
 // Run, only after a record has been handled — never before — so a crash
 // mid-processing redelivers the record on restart instead of silently
 // skipping it.
-func NewConsumer(cfg Config, groupID string) *Consumer {
+func NewConsumer(cfg Config, groupID string, startOffset StartOffset) *Consumer {
 	return &Consumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
 			Brokers: []string{cfg.Broker},
@@ -71,9 +103,8 @@ func NewConsumer(cfg Config, groupID string) *Consumer {
 				SASLMechanism: cfg.saslMechanism(),
 			},
 			// Only applies to a partition with no committed offset yet (this
-			// consumer group's first run) — read from the beginning, not the
-			// tail, matching csm-notification-service's own Consumer.
-			StartOffset: kafka.FirstOffset,
+			// consumer group's first run) — see StartOffset.
+			StartOffset: startOffset.kafkaOffset(),
 			Logger:      kafka.LoggerFunc(logDebug),
 			ErrorLogger: kafka.LoggerFunc(logError),
 		}),

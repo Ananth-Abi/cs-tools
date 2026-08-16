@@ -59,9 +59,14 @@ const TEAM_FILTER_FIELD = "integrationCsTeam";
  * through unchanged.
  */
 export function resolveTeamPlaceholder(
-  filters: Record<string, unknown>,
+  filters: Record<string, unknown> | undefined,
   selectedTeamGroupId: string | undefined,
 ): Record<string, unknown> {
+  // Callers pass widget/slice `filters` straight from backend-driven config
+  // (DASHBOARDS_CONFIG, a raw JSON env var not schema-validated beyond basic
+  // decoding) — genuinely absent at runtime is possible despite the wire
+  // type declaring it required.
+  filters ??= {};
   const fieldFilters = filters.filters;
   if (!isCaseFieldFilterArray(fieldFilters)) return filters;
 

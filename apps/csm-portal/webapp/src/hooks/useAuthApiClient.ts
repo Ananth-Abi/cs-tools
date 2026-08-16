@@ -15,61 +15,10 @@
 // under the License.
 
 import { useCallback } from "react";
-import { useAsgardeo } from "@asgardeo/react";
 import { apiConfig } from "@config/apiConfig";
-import {
-  ASGARDEO_UNAUTHENTICATED_CODE,
-  AUTH_NOT_READY_ERROR_MESSAGE,
-} from "@constants/apiConstants";
+import { useAuthTokens } from "@hooks/useAuthTokens";
 import { useLogger } from "@hooks/useLogger";
 import { CORRELATION_ID_HEADER, newCorrelationId } from "@utils/correlationId";
-
-// Shared across every caller's hook instance. Each useAuthApiClient() call
-// creates its own authFetch closure, so this lives at module scope to ensure
-// only ONE full sign-in redirect is triggered even when many concurrent calls
-// fail authentication at once.
-let signInInFlight = false;
-
-// Shared across every caller's hook instance for the same reason as
-// `signInInFlight`: many concurrent requests can discover a dead refresh
-// token at once, and they should all await the SAME hidden-iframe silent
-// sign-in attempt rather than each opening their own.
-let silentSignInInFlight: Promise<boolean> | null = null;
-
-// Only the Asgardeo "unauthenticated" code means the token was expired/missing
-// when the call ran (e.g. the refresh token itself has expired, so the SDK's
-// periodic background refresh can no longer mint a new access token). Anything
-// else (network failures, real backend 5xx) must propagate untouched so
-// existing error handling and error pages still work. Without this
-// classification, a dead refresh token sends the SDK's periodic background
-// refresh into an infinite loop of failing refresh-grant requests instead of
-// bouncing the user to sign-in.
-function isTokenExpiredError(error: unknown): boolean {
-  return (
-    error != null &&
-    typeof error === "object" &&
-    "code" in error &&
-    (error as { code: string }).code === ASGARDEO_UNAUTHENTICATED_CODE
-  );
-}
-
-/**
- * True when `getAccessToken()` failed because the Asgardeo SDK had not finished
- * initializing yet (code `SPA-AUTH_CLIENT-VM-NF01`, "The SDK must be
- * initialized first"). This is a transient race on first paint — the silent
- * refresh added in @asgardeo/react 0.25.5 can ask for a token a tick before the
- * SDK is ready — so callers should treat it as "auth not ready, retry", not a
- * hard error.
- */
-function isSdkNotInitializedError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  if ((error as { code?: string }).code === "SPA-AUTH_CLIENT-VM-NF01") {
-    return true;
-  }
-  return /SDK (?:must be initialized|is not initialized)/i.test(
-    `${error.name} ${error.message}`,
-  );
-}
 
 // Origin we are willing to attach the bearer token to. Computed once at module
 // load so we don't accidentally send credentials anywhere else.
@@ -154,45 +103,10 @@ function buildRequestHeaders(
 // backend; calls to any other origin are refused so credentials can't be
 // leaked to third-party hosts.
 export function useAuthApiClient() {
-  const { getAccessToken, getIdToken, signIn, signInSilently } = useAsgardeo();
+  const getTokens = useAuthTokens();
   const logger = useLogger();
 
-  // Redirect to a full sign-in, single-flighted so concurrent auth failures
-  // don't fire multiple redirects. Returns a never-resolving promise so
-  // callers don't fall through to an error page while the browser navigates
-  // away.
-  const redirectToSignIn = useCallback((): Promise<Response> => {
-    if (!signInInFlight) {
-      signInInFlight = true;
-      void Promise.resolve(signIn()).finally(() => {
-        signInInFlight = false;
-      });
-    }
-    return new Promise<Response>(() => {});
-  }, [signIn]);
-
-  // Before giving up and bouncing the whole tab to a full sign-in redirect
-  // (which discards any in-progress work — an open comment draft, an unsaved
-  // dialog), try a silent, hidden-iframe re-authentication. If the user's IdP
-  // session (SSO cookie) is still alive, this mints a fresh token without any
-  // visible navigation; only a genuinely dead IdP session falls through to
-  // `redirectToSignIn`. Single-flighted for the same reason as sign-in above.
-  const trySilentSignIn = useCallback((): Promise<boolean> => {
-    if (!silentSignInInFlight) {
-      silentSignInInFlight = Promise.resolve(signInSilently())
-        .then((result) => Boolean(result))
-        .catch((error) => {
-          logger.debug("[auth] silent sign-in failed", error);
-          return false;
-        })
-        .finally(() => {
-          silentSignInInFlight = null;
-        });
-    }
-    return silentSignInInFlight;
-  }, [signInSilently, logger]);
-
-  const attemptFetch = useCallback(
+  return useCallback(
     async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
       const url = resolveRequestUrl(input);
       if (!trustedBackendOrigin || url.origin !== trustedBackendOrigin) {
@@ -201,28 +115,11 @@ export function useAuthApiClient() {
         );
       }
 
-      let token: string | undefined;
-      let idToken: string | undefined;
-      try {
-        [token, idToken] = await Promise.all([
-          getAccessToken(),
-          getIdToken(),
-        ]);
-      } catch (error) {
-        // Normalise the SDK-not-initialized race into the shared "auth not
-        // ready" signal so callers warn-and-retry instead of surfacing a raw
-        // AsgardeoAuthException as a hard error.
-        if (isSdkNotInitializedError(error)) {
-          throw new Error(AUTH_NOT_READY_ERROR_MESSAGE);
-        }
-        throw error;
-      }
-      if (!token) {
-        throw new Error("Unable to retrieve access token");
-      }
-      if (!idToken) {
-        throw new Error("Unable to retrieve ID token");
-      }
+      // Recovers from a dead refresh token internally — retry, then a
+      // silent hidden-iframe re-auth, then a full sign-in redirect as the
+      // last resort — see useAuthTokens. Anything that still escapes here
+      // is not a token problem (auth-not-ready, or an unexpected error).
+      const { token, idToken } = await getTokens();
 
       // One correlation ID per physical request (React Query retries each get a
       // distinct one, matching the backend's per-request unit). A caller that
@@ -260,59 +157,6 @@ export function useAuthApiClient() {
         throw error;
       }
     },
-    [getAccessToken, getIdToken, logger],
-  );
-
-  return useCallback(
-    async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
-      try {
-        return await attemptFetch(input, options);
-      } catch (error) {
-        // Only an expired/missing token is recoverable here; anything else
-        // (network, real backend 5xx, auth-not-ready) must surface to
-        // existing error handling.
-        if (!isTokenExpiredError(error)) {
-          throw error;
-        }
-
-        // A concurrent caller, or the provider's periodic background refresh,
-        // may have re-minted the token in the meantime, so retry once to pick
-        // it up. If nothing refreshed it the retry fails again and we fall
-        // through to the sign-in redirect below.
-        try {
-          return await attemptFetch(input, options);
-        } catch (retryError) {
-          // Retry failed for a non-auth reason (e.g. a transient network blip
-          // on the second attempt): surface it instead of bouncing the user
-          // to sign-in.
-          if (!isTokenExpiredError(retryError)) {
-            throw retryError;
-          }
-
-          // Still unauthenticated after the retry — the refresh token is
-          // dead. Try a silent re-auth first: if the IdP session is still
-          // alive this mints a fresh token with no visible navigation, so
-          // in-progress work survives.
-          if (await trySilentSignIn()) {
-            try {
-              return await attemptFetch(input, options);
-            } catch (afterSilentSignInError) {
-              if (!isTokenExpiredError(afterSilentSignInError)) {
-                throw afterSilentSignInError;
-              }
-              // Silent sign-in reported success but the token still won't
-              // authenticate (e.g. a race with a session that expired a
-              // moment later) — fall through to the hard redirect below.
-            }
-          }
-
-          // Silent re-auth was unavailable or the IdP session itself is
-          // gone. Redirect for a full sign-in instead of letting the SDK's
-          // periodic refresh keep retrying forever.
-          return redirectToSignIn();
-        }
-      }
-    },
-    [attemptFetch, redirectToSignIn, trySilentSignIn],
+    [getTokens, logger],
   );
 }

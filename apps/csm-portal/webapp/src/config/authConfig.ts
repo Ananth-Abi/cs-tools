@@ -23,6 +23,12 @@ declare global {
       CSM_PORTAL_AUTH_SIGN_IN_REDIRECT_URL: string;
       CSM_PORTAL_AUTH_SIGN_OUT_REDIRECT_URL: string;
       CSM_PORTAL_BACKEND_BASE_URL: string;
+      /**
+       * Base URL for the case-activity SSE stream (csm-portal-backend's
+       * dedicated :9092 listener, exposed as its own Choreo REST endpoint).
+       * Optional — see apiConfig.ts's STREAM_BASE_URL.
+       */
+      CSM_PORTAL_STREAM_BASE_URL?: string;
       CSM_PORTAL_THEME: string;
       CSM_PORTAL_LOG_LEVEL: string;
       /**
