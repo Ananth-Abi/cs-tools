@@ -66,6 +66,12 @@ func TestCORSRejectsDisallowedOrigin(t *testing.T) {
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("expected no Allow-Origin for disallowed origin, got %q", got)
 	}
+	// A denied-origin response varies by Origin exactly as much as an
+	// allowed one does — omitting Vary here would let a cache reuse this
+	// denied response for a later, legitimately allowed origin's request.
+	if got := rec.Header().Get("Vary"); got != "Origin" {
+		t.Fatalf("expected Vary: Origin even for a disallowed origin, got %q", got)
+	}
 }
 
 // TestCORSNeverSetsAllowCredentials guards against reintroducing

@@ -86,9 +86,17 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			if origin != "" && allowed[origin] {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
+			if origin != "" {
+				// Set regardless of whether origin is actually allowed: a
+				// denied-origin response varies by Origin exactly as much as
+				// an allowed one does (they produce different
+				// Access-Control-Allow-Origin values), so a cache that
+				// doesn't see Vary here could reuse a denied response for a
+				// later, legitimately allowed origin's request.
 				w.Header().Add("Vary", "Origin")
+				if allowed[origin] {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+				}
 			}
 
 			if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
