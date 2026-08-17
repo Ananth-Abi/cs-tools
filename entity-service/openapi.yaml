@@ -3926,6 +3926,7 @@ components:
           description: Case-insensitive match against product name.
         class:
           type: string
+          enum: [software, service, product_model, software_model, service_model]
           description: >
             Optional filter restricting results to a single product class.
             Accepted values and default behavior depend on the active data
