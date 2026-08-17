@@ -286,6 +286,324 @@ export const CASE_ATTACHMENTS = {
   },
 } as const;
 
+/** Project dashboard (`/projects/:projectId/dashboard`), the side nav's first
+ * item and the landing page for a project. */
+export const DASHBOARD = {
+  navItem: "Dashboard",
+  pathSegment: "dashboard",
+  /**
+   * The four stat cards across the top (DASHBOARD_STATS), in render order.
+   *
+   * `clickable` records which ones open a list: Avg. Response Time is named in
+   * the grid's `nonClickableKeys`, so it is a plain card while the other three
+   * are buttons. Unlike the Support Center cards, none of these carry their
+   * value in the accessible name, so they cannot be counted as "buttons
+   * starting with a digit".
+   */
+  statCards: [
+    { label: "Action Required", clickable: true },
+    { label: "Outstanding", clickable: true },
+    { label: "Closed (Last 30d)", clickable: true },
+    { label: "Avg. Response Time (Last 30d)", clickable: false },
+  ],
+  /**
+   * Where each clickable stat card leads (DashboardPage's `onStatClick`).
+   *
+   * The item pages are nested *under* the dashboard route, so their paths carry
+   * the `dashboard/` segment — `navigate("action-required")` from the dashboard
+   * resolves against the route tree, not the bare project path.
+   *
+   * Card label and destination title differ on every one of these: the card
+   * reads "Closed (Last 30d)" while the page it opens is titled "Closed items
+   * (last 30d)", so both are recorded.
+   *
+   * Avg. Response Time is absent on purpose — it is in the grid's
+   * `nonClickableKeys` and opens nothing.
+   */
+  statCardTargets: [
+    {
+      label: "Action Required",
+      pathSegment: "dashboard/action-required",
+      title: "Action Required Items",
+      description: "Items awaiting your response",
+      emptyMessage: "No action required items.",
+    },
+    {
+      label: "Outstanding",
+      pathSegment: "dashboard/outstanding-interactions",
+      title: "Outstanding Items",
+      description: "View all currently active and unresolved items",
+      emptyMessage: "No outstanding items.",
+    },
+    {
+      label: "Closed (Last 30d)",
+      pathSegment: "dashboard/closed-last-30d",
+      title: "Closed items (last 30d)",
+      description:
+        "Successfully closed and resolved items during the last 30 days",
+      emptyMessage: "No closed items in the last 30 days.",
+    },
+  ],
+  /** The one card that opens nothing. */
+  nonClickableStatCard: "Avg. Response Time (Last 30d)",
+  /** Sections below the stat cards. */
+  sections: {
+    /** Used twice on the page — the severity donut and the cases table beneath
+     * it carry the same title (CASES_TABLE_HEADER_TITLE) — so specs assert it is
+     * present rather than matching a single element.
+     *
+     * The table is also withheld on mid-size touch viewports, where the layout
+     * is too cramped for it; a desktop browser gets both. */
+    outstandingCases: "Outstanding Support Cases",
+    /** Gated on `permissions.hasEngagements`, the same flag as the Engagements
+     * nav item — which SIDE_NAV_VISIBILITY records as on for all three fixture
+     * projects. */
+    outstandingEngagements: "Outstanding Engagements",
+    /** Gated on `showOutstandingOpsChart` (`hasSR || hasCR`) — the same access
+     * that governs the Operations nav item, so it is present for some projects
+     * and withheld for others. Expected visibility per project lives in
+     * DASHBOARD_OPERATIONS_VISIBILITY. */
+    outstandingOperations: "Outstanding Operations",
+  },
+  /**
+   * The Outstanding Support Cases table at the foot of the dashboard.
+   *
+   * Shares its title with the severity donut above it, so the subtitle is what
+   * identifies this card specifically.
+   *
+   * Each row is a `role="row"` carrying the case's number as "ID: CS…" — not as
+   * a bare "CS…", which is how the case detail page renders it. Clicking a row
+   * opens that case.
+   */
+  casesTable: {
+    subtitle: "Track and manage all active support tickets",
+    /**
+     * The table's own My Cases / All Cases switch (DASHBOARD_CASES_VIEW_TABS).
+     *
+     * These are tabs, not links: choosing one re-queries the table in place with
+     * `createdByMe` set, leaving the dashboard URL untouched — unlike Support
+     * Center's "View my cases", which navigates to a filtered list page. So the
+     * request body and the rows are the only evidence the switch took.
+     *
+     * TabBar renders each as `role="tab"` with `aria-selected`.
+     */
+    viewTabs: {
+      myCases: "My Cases",
+      allCases: "All Cases",
+    },
+    /** Prefix the Created by column puts before each row's creator. */
+    createdByPrefix: "Created by",
+    /** Opens the filter panel. Becomes "Clear Filters (n)" once a filter is
+     * applied, so this label only matches while none is. */
+    filtersButton: "Filters",
+    /** The same button once a filter is applied — it clears rather than toggles
+     * (`formatCasesTableClearFiltersLabel`). The count makes the label change
+     * with the number of active filters. */
+    clearFiltersButton: (activeCount: number) =>
+      `Clear Filters (${activeCount})`,
+    /**
+     * Filters in the panel. Each Select takes its element id from the field's
+     * `filterKey` and its label from `deriveFilterLabels`, so the severity
+     * control is `#severityIds` labelled "Severity".
+     */
+    filters: {
+      severity: {
+        label: "Severity",
+        selectId: "severityIds",
+        /** The severity option to choose, and the id it sends. Option labels are
+         * display names (`mapCasesTableFilterOptionLabel`), not the API's own
+         * labels — "Low (P4)" is shown as "S4(Query)" — while the request
+         * carries the numeric id. */
+        option: { label: "S4(Query)", id: 13 },
+      },
+    },
+    /** MUI TablePagination at the foot of the card. The table starts at 5 rows
+     * (`useState(5)` in CasesTable) and offers 5, 10, 25 and 50. */
+    pagination: {
+      rowsPerPageLabel: "Rows per page:",
+      defaultRowsPerPage: 5,
+      options: [5, 10, 25, 50],
+      /** MUI's default `getItemAriaLabel` strings. */
+      nextPageButton: "Go to next page",
+      previousPageButton: "Go to previous page",
+      /** MUI's `labelDisplayedRows`: "1–5 of 36". The separator is an en dash,
+       * but a hyphen is accepted too so a locale or MUI change does not break
+       * the match. */
+      displayedRowsPattern: /(\d+)[–-](\d+) of (\d+)/,
+    },
+    /** Marks a data row; the header row has no case id. */
+    rowIdPattern: /ID: CS\d+/,
+    /** Captures the case number out of a row's text. */
+    rowCaseNumberPattern: /ID: (CS\d+)/,
+  },
+  /**
+   * The legend of the Outstanding Operations donut. Each entry opens the
+   * matching operations list, narrowed to outstanding.
+   *
+   * Only rendered where the Operations chart is — see
+   * DASHBOARD_OPERATIONS_VISIBILITY.
+   *
+   * `outstandingOnly` travels in router state rather than the URL, so the path
+   * alone cannot tell this apart from the unfiltered list. The "Outstanding …"
+   * title is what proves the state was handed over, which is why it is asserted
+   * as well as the path.
+   */
+  operationsLegend: [
+    {
+      label: "Service Requests (SR)",
+      pathSegment: "operations/service-requests",
+      title: "Outstanding Service Requests",
+      description: "Manage and track outstanding service requests",
+    },
+    {
+      label: "Change Requests (CR)",
+      pathSegment: "operations/change-requests",
+      title: "Outstanding Change Requests",
+      description: "Manage and track outstanding change requests",
+    },
+  ],
+  /**
+   * The donut itself, whose slices are clickable in the same order as the
+   * legend below it.
+   *
+   * Recharts renders each slice as an SVG `path.recharts-sector` with no
+   * accessible name, so they can only be addressed structurally and by
+   * position. There is one per legend entry — including severities with a count
+   * of zero, which still render because the chart sets `minAngle`.
+   */
+  severityChartSlice: "path.recharts-sector",
+  /**
+   * The severity legend of the Outstanding Support Cases donut. Each entry
+   * opens the cases list filtered to that severity.
+   *
+   * `severityId` is the numeric id the URL carries
+   * (SEVERITY_LEGEND_KEY_TO_ID); `title` and `description` are what the
+   * destination renders, both derived from that id rather than from the data,
+   * so they hold even for a severity with no outstanding cases.
+   *
+   * Entries are plain text, not buttons — the whole legend row is the click
+   * target.
+   *
+   * S0 - Catastrophic is deliberately absent: it renders only where
+   * `acceptedSeverityValues` includes P0, which is a per-project policy rather
+   * than something every project shows.
+   */
+  severityLegend: [
+    {
+      label: "S1 - Critical",
+      severityId: "10",
+      title: "Outstanding S1 Cases",
+      description: "Manage and track S1 outstanding support cases",
+    },
+    {
+      label: "S2 - High",
+      severityId: "11",
+      title: "Outstanding S2 Cases",
+      description: "Manage and track S2 outstanding support cases",
+    },
+    {
+      label: "S3 - Medium",
+      severityId: "12",
+      title: "Outstanding S3 Cases",
+      description: "Manage and track S3 outstanding support cases",
+    },
+    {
+      label: "S4 (Query) - Low",
+      severityId: "13",
+      title: "Outstanding S4 Cases",
+      description: "Manage and track S4 outstanding support cases",
+    },
+  ],
+} as const;
+
+/** Calls tab of a case detail page, and its Request Call modal. */
+export const CASE_CALLS = {
+  /** Tab label carries a live count ("Calls (0)"), so it is matched on the
+   * prefix — same as the Attachments tab. */
+  tab: /^Calls/,
+  /** A tab every case carries whatever its status — the marker that the tab
+   * strip has rendered, so an absent Calls tab means withheld rather than not
+   * yet drawn. */
+  alwaysPresentTab: "Activity",
+  /** Statuses that allow call scheduling (CALL_SCHEDULABLE_CASE_STATUSES). A
+   * case outside these — a new one, or a closed one — has no Calls tab at all. */
+  schedulableStatuses: [
+    "Work In Progress",
+    "Awaiting Info",
+    "Waiting on WSO2",
+    "Solution Proposed",
+    "Reopened",
+  ],
+  requestButton: "Request Call",
+  modal: {
+    title: "Request Call",
+    description: "Schedule a call with our support team.",
+    /** `<input type="datetime-local">`, so it takes a "YYYY-MM-DDTHH:mm" value.
+     * Addressed by id: the label carries a required marker and MUI does not tie
+     * it to the input with `for`. */
+    preferredTimeInputId: "preferred-time-0",
+    durationLabel: "Meeting Duration *",
+    reasonLabel: "Reason *",
+    /** Same wording as the button that opened the modal, so any locator for it
+     * must be scoped to the dialog. */
+    submitButton: "Request Call",
+    cancelButton: "Cancel",
+    /** Adds another preferred time. Disabled at the maximum. */
+    addTimeButton: "Add preferred time",
+    /** Removes one, by 1-based position. The first row's is always disabled —
+     * a request must keep at least one preferred time. */
+    removeTimeButton: (position: number) => `Remove preferred time ${position}`,
+    /** MAX_PREFERRED_TIMES in RequestCallModal. */
+    maxPreferredTimes: 3,
+    /** Every duration on offer, in the order the select lists them. */
+    durationOptions: ["15 minutes", "30 minutes", "45 minutes", "1 hour"],
+  },
+  /** A call request as CallRequestCard renders it. */
+  card: {
+    title: "Call Request",
+    preferredTimesLabel: "Preferred Times",
+    durationLabel: "Duration",
+    /** The card always renders raw minutes, whatever the modal called the
+     * option ("1 hour" is shown as "60 minutes"). */
+    durationPattern: /\d+ minutes/,
+    reasonLabel: "Reason / Notes",
+    /** Rendered in place of a value the request does not carry. */
+    emptyValue: "--",
+    /** State a newly created request opens in. */
+    pendingState: "Pending on WSO2",
+    /** Opens the same modal in edit mode. Disabled once the request reaches a
+     * terminal state, so a request an engineer has closed cannot be edited. */
+    rescheduleButton: "Reschedule",
+    /** Opens the cancellation dialog. Disabled on a terminal request, which is
+     * what makes cancelling a one-way move. */
+    cancelButton: "Cancel",
+  },
+  /** Confirmation dialog behind a card's Cancel button. Its own Reason is
+   * required and is separate from the reason the call was requested for. */
+  cancelModal: {
+    title: "Confirm Action",
+    reasonInputId: "cancel-call-reason",
+    confirmButton: "Confirm",
+    goBackButton: "Go Back",
+  },
+  /** The same modal in edit mode, reached from a card's Reschedule button.
+   *
+   * It offers only the preferred times and the duration — the Reason field is
+   * not rendered when editing (`{!isEdit && …}` in RequestCallModal), so a
+   * reschedule cannot change why the call was asked for. */
+  editModal: {
+    title: "Edit Call Request",
+    description:
+      "Update preferred times and meeting duration for this call request.",
+    submitButton: "Update Call Request",
+  },
+  /** Shown *instead of* the request modal when the profile has no time zone
+   * (CallsPanel.handleOpenModal returns early). A prerequisite of the account,
+   * not something a spec can set up, so specs name it in their failure message
+   * rather than trying to work around it. */
+  timeZoneDialogTitle: "Time Zone Not Set",
+} as const;
+
 /** Support Center landing page (`/projects/:projectId/support`), reached from
  * the side nav. Its Outstanding Cases card is the only entry point to the
  * filtered "my cases" list — the URL is otherwise undiscoverable in the UI. */

@@ -342,6 +342,87 @@ export interface CaseViewSet {
  * per-severity naming.
  */
 /**
+ * The case a call is requested against, and what to request.
+ *
+ * The reason is fixed rather than stamped per run, which is what lets the spec
+ * recognise its own earlier request and not file another: a call request cannot
+ * be removed — the delete action cancels it and leaves the record — so an
+ * unguarded create would add one on every run.
+ *
+ * `durationLabel` is the default duration as the card renders it; the spec
+ * leaves the duration select untouched.
+ */
+export const CALL_REQUEST_INPUT = {
+  projectType: ProjectType.SUBSCRIPTION,
+  caseId: "3f18677f3ba6c35091404c6aa5e45ae0",
+  reason: "This is a test call request from Automation Test",
+  durationLabel: "30 minutes",
+  /** Time of day to request, on tomorrow's date. Late enough in the morning to
+   * clear the earliest-allowed time the modal computes from the case severity,
+   * which is a floor measured from now. */
+  preferredTimeOfDay: "10:00",
+  /** What a reschedule moves the request to: the day after tomorrow, at the
+   * same time of day, for an hour.
+   *
+   * The two duration strings differ because the modal and the card disagree on
+   * how to say it — the Meeting Duration option reads "1 hour", while the card
+   * always renders the raw minutes. */
+  rescheduledDurationOption: "1 hour",
+  rescheduledDurationLabel: "60 minutes",
+  /**
+   * The cancellation test's own request, kept separate from the one above.
+   *
+   * Cancelling is terminal — it disables both Reschedule and Cancel — so a test
+   * that cancelled the shared request would leave the reschedule test with a
+   * dead button. Two records, two purposes, same split as the attachment suite's
+   * kept and transient cases.
+   *
+   * The reason deliberately shares no wording with the request above: cards are
+   * matched by reason as a substring, so one reason containing the other would
+   * make each test find the wrong card.
+   *
+   * Reusing the same reason every run is safe here even though a cancelled
+   * request cannot be cancelled twice — the tab searches only the non-cancelled
+   * states, so a spent record drops off the list instead of lingering.
+   */
+  /**
+   * Cases whose status sits outside CALL_SCHEDULABLE_CASE_STATUSES, where the
+   * Calls tab is withheld altogether rather than merely empty.
+   *
+   * Read-only fixtures — the suite never changes their status, since doing so
+   * would be what makes them stop testing the rule.
+   */
+  callsUnavailableCaseIds: [
+    "b686e2933baa4f103e1e088aa4e45a9b",
+    "12350ecf3bee4b103e1e088aa4e45a9b",
+  ],
+  cancel: {
+    reason: "Automation Test call request awaiting cancellation",
+    cancellationReason: "Cancelled by the automated test run",
+  },
+} as const;
+
+/**
+ * Whether each project's dashboard carries the Outstanding Operations donut.
+ *
+ * The chart is gated on `showOutstandingOpsChart` (`hasSR || hasCR`) — service
+ * request or change request access — not on the project type label. It happens
+ * to line up with Managed Cloud Subscription on this tenant, but it is the
+ * access that decides, so this is recorded per project rather than inferred
+ * from the type.
+ *
+ * Mirrors the Operations row of SIDE_NAV_VISIBILITY, which the same access
+ * governs. The two are kept separate because a chart and a nav item could
+ * legitimately diverge; if they ever do, that is a finding rather than a bug in
+ * the test.
+ */
+export const DASHBOARD_OPERATIONS_VISIBILITY: Record<ProjectType, boolean> = {
+  [ProjectType.SUBSCRIPTION]: false,
+  [ProjectType.MANAGED_CLOUD_SUBSCRIPTION]: true,
+  [ProjectType.CLOUD_SUPPORT]: false,
+};
+
+/**
  * Project types whose cases lists are covered by the list-cases suite.
  *
  * Every project type reaches the lists the same way — Support Center →

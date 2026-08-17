@@ -58,16 +58,65 @@ function isCaseSearch(response: Response): boolean {
 /** Parses a request body, or returns undefined when it is absent/unparseable. */
 function searchFilters(
   postData: string | null,
-): { createdByMe?: boolean; statusIds?: number[] } | undefined {
+):
+  | { createdByMe?: boolean; statusIds?: number[]; severityIds?: number[] }
+  | undefined {
   if (!postData) return undefined;
   try {
     const body = JSON.parse(postData) as {
-      filters?: { createdByMe?: boolean; statusIds?: number[] };
+      filters?: {
+        createdByMe?: boolean;
+        statusIds?: number[];
+        severityIds?: number[];
+      };
     };
     return body.filters ?? {};
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Starts waiting for a case search asking for a specific page of results.
+ *
+ * Call this **before** operating the pagination control, then await it after.
+ *
+ * Page size and position travel as `pagination.limit` and `pagination.offset`,
+ * so matching on them ties the wait to the change under test rather than to any
+ * other refetch the table happens to make. Only the fields given are matched.
+ *
+ * @param page - Test page.
+ * @param match - The `limit` and/or `offset` the request must carry.
+ * @returns Promise for the matching search response.
+ */
+export function caseSearchWithPagination(
+  page: Page,
+  match: { limit?: number; offset?: number },
+): Promise<Response> {
+  return page.waitForResponse(
+    (response) => {
+      if (!isCaseSearch(response)) return false;
+      const postData = response.request().postData();
+      if (!postData) return false;
+      try {
+        const body = JSON.parse(postData) as {
+          pagination?: { limit?: number; offset?: number };
+        };
+        const pagination = body.pagination;
+        if (!pagination) return false;
+        if (match.limit !== undefined && pagination.limit !== match.limit) {
+          return false;
+        }
+        if (match.offset !== undefined && pagination.offset !== match.offset) {
+          return false;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { timeout: SEARCH_TIMEOUT_MS },
+  );
 }
 
 /**
@@ -151,6 +200,57 @@ export function caseSearchResponse(
         return false;
       }
       return searchQueryOf(request.postData()) === searchText;
+    },
+    { timeout: SEARCH_TIMEOUT_MS },
+  );
+}
+
+/**
+ * Starts waiting for a case search filtered to a specific severity.
+ *
+ * Call this **before** choosing the severity, then await it after.
+ *
+ * The chosen severity travels as a numeric id inside `filters.severityIds`, so
+ * matching it is what proves the filter reached the backend rather than only
+ * highlighting an option in the menu.
+ *
+ * @param page - Test page.
+ * @param severityId - Severity id the request must carry.
+ * @returns Promise for the matching search response.
+ */
+export function caseSearchWithSeverity(
+  page: Page,
+  severityId: number,
+): Promise<Response> {
+  return page.waitForResponse(
+    (response) => {
+      if (!isCaseSearch(response)) return false;
+      const severityIds = searchFilters(
+        response.request().postData(),
+      )?.severityIds;
+      return !!severityIds && severityIds.includes(severityId);
+    },
+    { timeout: SEARCH_TIMEOUT_MS },
+  );
+}
+
+/**
+ * Starts waiting for a case search carrying no severity filter.
+ *
+ * Call this **before** clearing the filter, then await it after — the initial
+ * unfiltered load matches this predicate too, so arming it beforehand is what
+ * ties the wait to the clearing rather than to the page load.
+ *
+ * @param page - Test page.
+ * @returns Promise for the matching search response.
+ */
+export function caseSearchWithoutSeverity(page: Page): Promise<Response> {
+  return page.waitForResponse(
+    (response) => {
+      if (!isCaseSearch(response)) return false;
+      const filters = searchFilters(response.request().postData());
+      if (!filters) return false;
+      return filters.severityIds === undefined;
     },
     { timeout: SEARCH_TIMEOUT_MS },
   );
