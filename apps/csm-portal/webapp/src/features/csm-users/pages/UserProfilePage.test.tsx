@@ -259,6 +259,41 @@ describe("UserProfilePage", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders a 'Locked out' chip when the account is locked out", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, lockedOut: true } });
+    renderPage();
+    expect(screen.getByText("Locked out", { selector: ".MuiChip-label" })).toBeInTheDocument();
+  });
+
+  it("does not render a 'Locked out' chip when the account isn't locked out", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, lockedOut: false } });
+    renderPage();
+    expect(screen.queryByText("Locked out", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
+  });
+
+  it("shows only the 'Locked out' chip in the header — not 'Active' — for an active-but-locked-out user", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, active: true, lockedOut: true } });
+    renderPage();
+    // Exactly one "Locked out" chip (header) and exactly one "Active" chip
+    // (the Overview card's own, unconditional "Account status" field) — the
+    // header itself must not also render a second "Active" chip.
+    expect(screen.getAllByText("Locked out", { selector: ".MuiChip-label" })).toHaveLength(1);
+    expect(screen.getAllByText("Active", { selector: ".MuiChip-label" })).toHaveLength(1);
+  });
+
+  it("still shows both Account status and Locked out as separate fields in the Overview card", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, active: true, lockedOut: true } });
+    renderPage();
+    expect(screen.getByText("Account status")).toBeInTheDocument();
+    // "Locked out" appears twice: the header chip's label and the Overview
+    // field's caption — both are expected here, not a duplicate bug.
+    expect(screen.getAllByText("Locked out").length).toBeGreaterThanOrEqual(2);
+    // The header collapses to one "Locked out" chip; the Overview card still
+    // shows "Active" for account status and "Yes" for locked-out separately.
+    expect(screen.getByText("Active", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.getByText("Yes", { selector: ".MuiChip-label" })).toBeInTheDocument();
+  });
+
   it("calls out an inactive account as blocking access to every project", () => {
     mockQueryResult({ data: { ...BLOCKED_EXTERNAL_USER, active: false } });
     renderPage();

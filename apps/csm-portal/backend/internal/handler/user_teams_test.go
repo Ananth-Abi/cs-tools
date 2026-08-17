@@ -185,7 +185,7 @@ func TestGetUser_DerivesTeamsFromGroups(t *testing.T) {
 	const id = "11111111-1111-1111-1111-111111111111"
 	h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
-			return []byte(`{"id":"` + id + `","email":"staff@example.com","groups":[` +
+			return []byte(`{"id":"` + id + `","email":"staff@example.com","lockedOut":true,"groups":[` +
 				`{"id":"g-1","name":"ABT One"},{"id":"g-2","name":"Some Other Group"}]}`), nil
 		},
 	}, testDirectory(t))
@@ -197,8 +197,9 @@ func TestGetUser_DerivesTeamsFromGroups(t *testing.T) {
 
 	assertStatus(t, w, http.StatusOK)
 	got := decodeJSON[struct {
-		Email  string `json:"email"`
-		Groups []struct {
+		Email     string `json:"email"`
+		LockedOut bool   `json:"lockedOut"`
+		Groups    []struct {
 			Name string `json:"name"`
 		} `json:"groups"`
 		Teams []struct {
@@ -219,6 +220,12 @@ func TestGetUser_DerivesTeamsFromGroups(t *testing.T) {
 	}
 	if got.Email != "staff@example.com" {
 		t.Errorf("email = %q, want the rest of the profile preserved", got.Email)
+	}
+	// The entity service's lockedOut field is not something this layer knows
+	// about; the envelope-based re-encoding in withUserTeams must still carry
+	// it through untouched.
+	if !got.LockedOut {
+		t.Errorf("lockedOut = %v, want true (passed through from the entity service)", got.LockedOut)
 	}
 }
 

@@ -96,6 +96,7 @@ type snUser struct {
 	MobilePhone *string  `json:"mobilePhone"`
 	UserType    string   `json:"userType"`
 	Active      bool     `json:"active"`
+	LockedOut   bool     `json:"lockedOut"`
 	CreatedOn   string   `json:"createdOn"`
 	UpdatedOn   string   `json:"updatedOn"`
 	Roles       []string `json:"roles"`
@@ -313,6 +314,7 @@ func (s *snUserService) SearchUsers(ctx context.Context, req domain.SearchUsersR
 			MobilePhone: u.MobilePhone,
 			UserType:    domain.UserType(u.UserType),
 			Active:      u.Active,
+			LockedOut:   u.LockedOut,
 			CreatedOn:   u.CreatedOn,
 			UpdatedOn:   u.UpdatedOn,
 			Roles:       roles,
@@ -466,6 +468,7 @@ func (s *snUserService) GetUser(ctx context.Context, id string) (domain.SNUserDe
 			MobilePhone: u.MobilePhone,
 			UserType:    domain.UserType(u.UserType),
 			Active:      u.Active,
+			LockedOut:   u.LockedOut,
 			CreatedOn:   u.CreatedOn,
 			UpdatedOn:   u.UpdatedOn,
 			Roles:       roles,
