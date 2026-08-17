@@ -164,8 +164,14 @@ export default function CsmCaseCommentInput({
 
   const onDragEnter = useCallback(
     (e: DragEvent) => {
-      if (disabled || submitting || !isFileDrag(e)) return;
+      // preventDefault unconditionally for a real file drag, before the
+      // disabled/submitting check below — otherwise a file dropped while
+      // the composer is unavailable falls through to the browser's own
+      // default handling (navigating the tab to open the file), discarding
+      // whatever was on the page.
+      if (!isFileDrag(e)) return;
       e.preventDefault();
+      if (disabled || submitting) return;
       dragCounter.current += 1;
       setDragOver(true);
     },
@@ -175,10 +181,10 @@ export default function CsmCaseCommentInput({
     (e: DragEvent) => {
       // Required on dragover too (not just dragenter) — without this the
       // browser refuses to fire a drop event at all.
-      if (disabled || submitting || !isFileDrag(e)) return;
+      if (!isFileDrag(e)) return;
       e.preventDefault();
     },
-    [disabled, submitting, isFileDrag],
+    [isFileDrag],
   );
   const onDragLeave = useCallback((e: DragEvent) => {
     if (!isFileDrag(e)) return;
@@ -219,10 +225,14 @@ export default function CsmCaseCommentInput({
 
   const onDrop = useCallback(
     (e: DragEvent) => {
-      if (disabled || submitting || !isFileDrag(e)) return;
+      // Same ordering as onDragEnter: prevent the browser's default file
+      // handling before checking whether the composer can actually accept
+      // the drop, and always reset the drag-visual state either way.
+      if (!isFileDrag(e)) return;
       e.preventDefault();
       dragCounter.current = 0;
       setDragOver(false);
+      if (disabled || submitting) return;
       addDroppedFiles(e.dataTransfer.files);
     },
     [disabled, submitting, isFileDrag, addDroppedFiles],

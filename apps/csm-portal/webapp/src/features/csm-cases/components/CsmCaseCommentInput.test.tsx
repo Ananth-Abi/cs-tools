@@ -200,6 +200,20 @@ describe("CsmCaseCommentInput — drag-and-drop attachments", () => {
     expect(screen.getByText(/huge\.zip.*too large/i)).toBeInTheDocument();
   });
 
+  it("still prevents the browser's default file handling when the composer is disabled, without attaching anything", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} disabled />);
+    const composer = screen.getByTestId("csm-comment-composer");
+
+    // fireEvent returns false when preventDefault() was called on a
+    // cancelable event — a real file drag must still be prevented even
+    // though the composer won't act on it, or the browser falls through to
+    // navigating the tab to open the dropped file.
+    const notPrevented = fireEvent.drop(composer, fileDrop([makeFile("a.txt", 100)]));
+
+    expect(notPrevented).toBe(false);
+    expect(screen.getByTestId("attachment-count")).toHaveTextContent("0");
+  });
+
   it("dedupes a file that's already attached", () => {
     render(<CsmCaseCommentInput onSubmit={vi.fn()} />);
     const composer = screen.getByTestId("csm-comment-composer");
