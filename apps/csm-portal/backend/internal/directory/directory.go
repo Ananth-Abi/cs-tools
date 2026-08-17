@@ -30,7 +30,8 @@ import (
 //
 //   - teams sorted for stable paging, with each team's backing group id already
 //     converted to this platform's UUID form (Team.GroupID -> Result.GroupID),
-//   - key -> team and group-name -> team lookups as maps,
+//   - key -> team, group-name -> team, and resolved-group-UUID -> team lookups
+//     as maps,
 //   - the group-name list a membership query needs,
 //   - the role catalogue with its display names, and the role membership set.
 //
@@ -44,6 +45,7 @@ type Directory struct {
 	teamResults []TeamResult
 	byKey       map[string]Team
 	byGroupName map[string]Team
+	byGroupID   map[string]Team
 	groupNames  []string
 
 	roleResults []RoleResult
@@ -54,7 +56,10 @@ type Directory struct {
 //
 // A duplicate team key or duplicate display name is an error: both would be
 // silently swallowed by the lookup maps, and a shadowed row is always a typo.
-// Callers are expected to treat any error here as fatal at startup -- a
+// A duplicate resolved group-id UUID is the same class of mistake -- two rows
+// configured with the same backing GroupID would shadow each other in
+// byGroupID exactly as a duplicate key would in byKey -- so it fails startup
+// too. Callers are expected to treat any error here as fatal at startup -- a
 // half-resolved directory would mis-route dashboards rather than fail visibly.
 func New(teams []Team, roles []string) (*Directory, error) {
 	d := &Directory{
@@ -62,6 +67,7 @@ func New(teams []Team, roles []string) (*Directory, error) {
 		teamResults: make([]TeamResult, 0, len(teams)),
 		byKey:       make(map[string]Team, len(teams)),
 		byGroupName: make(map[string]Team, len(teams)),
+		byGroupID:   make(map[string]Team, len(teams)),
 		groupNames:  make([]string, 0, len(teams)),
 		roleResults: make([]RoleResult, 0, len(roles)),
 		roleSet:     make(map[string]bool, len(roles)),
@@ -81,6 +87,10 @@ func New(teams []Team, roles []string) (*Directory, error) {
 		result := TeamResult{ID: t.Key, Name: t.Name, Family: string(t.Family)}
 		if t.GroupID != "" {
 			result.GroupID = sourceIDToUUID(t.GroupID)
+			if _, dup := d.byGroupID[result.GroupID]; dup {
+				return nil, fmt.Errorf("team registry: groupId %q (team %q) is configured more than once", t.GroupID, t.Key)
+			}
+			d.byGroupID[result.GroupID] = t
 		}
 		d.teamResults = append(d.teamResults, result)
 	}
@@ -118,6 +128,20 @@ func (d *Directory) TeamByKey(key string) (Team, bool) {
 // exactly matches name. ok is false if no configured team matches.
 func (d *Directory) TeamByGroupName(name string) (Team, bool) {
 	t, ok := d.byGroupName[name]
+	return t, ok
+}
+
+// TeamByUUID looks a team up by this platform's canonical UUID form of its
+// backing group id -- the same form Team.GroupID is converted to for
+// TeamResult.GroupID and for accounts.creTeam.id/sreTeam.id elsewhere. ok is
+// false if uuid does not match any configured team's resolved group id,
+// including for a team that has no GroupID configured at all: such a team
+// has no UUID to be looked up by.
+//
+// uuid is lowercased before lookup, matching sourceIDToUUID's canonical
+// lowercase form, so a caller-supplied uppercase UUID still resolves.
+func (d *Directory) TeamByUUID(uuid string) (Team, bool) {
+	t, ok := d.byGroupID[strings.ToLower(uuid)]
 	return t, ok
 }
 
