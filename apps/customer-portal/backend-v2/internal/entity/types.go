@@ -758,10 +758,15 @@ type DeploymentView struct {
 	Name        string     `json:"name"`
 	Type        string     `json:"type"`
 	Description *string    `json:"description"`
+	URL         *string    `json:"url"`
 	CreatedBy   *EntityRef `json:"createdBy"`
 	Project     EntityRef  `json:"project"`
 	CreatedOn   time.Time  `json:"createdOn"`
 	UpdatedOn   time.Time  `json:"updatedOn"`
+	// DeployedProductCount comes straight from entity-service, which decodes it
+	// from the upstream deployment payload. Exposed to the frontend as
+	// productCount — see dto.DeploymentSummary.
+	DeployedProductCount int `json:"deployedProductCount"`
 }
 
 // SearchDeploymentsResponse is entity-service's response for POST /deployments/search.
