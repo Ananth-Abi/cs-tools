@@ -1515,6 +1515,16 @@ type CaseView struct {
 	// Choreo GET /cases/{id} contract returns them. This field is always nil until
 	// a Ballerina endpoint surfaces the case's tags.
 	Tags []Tag `json:"tags"`
+	// Fields the upstream case response supplies that consumers read directly.
+	// Nullable throughout: nil means the source gave no value, not zero.
+	// Names mirror the Ballerina entity-service CaseResponse record.
+	SLAResponseTime       *string    `json:"slaResponseTime"`
+	ClosedBy              *EntityRef `json:"closedBy"`
+	HasAutoClosed         *bool      `json:"hasAutoClosed"`
+	EngagementStartDate   *string    `json:"engagementStartDate"`
+	EngagementEndDate     *string    `json:"engagementEndDate"`
+	AcknowledgedBy        *EntityRef `json:"acknowledgedBy"`
+	EngagementPaymentType *string    `json:"engagementPaymentType"`
 }
 
 // Tag is a free-text label attached to a case via ServiceNow's generic

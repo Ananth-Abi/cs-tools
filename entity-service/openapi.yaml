@@ -6737,6 +6737,25 @@ components:
           description: >-
             Internal-only worst-case fix-commitment date (date-only, YYYY-MM-DD), visible to
             CSM engineers only. Populated for ServiceNow cases; null otherwise.
+        slaResponseTime:
+          type: string
+          nullable: true
+        closedBy:
+          $ref: '#/components/schemas/EntityRef'
+        hasAutoClosed:
+          type: boolean
+          nullable: true
+        engagementStartDate:
+          type: string
+          nullable: true
+        engagementEndDate:
+          type: string
+          nullable: true
+        acknowledgedBy:
+          $ref: '#/components/schemas/EntityRef'
+        engagementPaymentType:
+          type: string
+          nullable: true
 
     CaseSearchView:
       type: object
