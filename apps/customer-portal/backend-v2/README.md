@@ -331,6 +331,8 @@ backend-v2/
 - `POST /projects/{id}/deployments/search` — search a project's deployments
 - `POST /projects/{id}/deployments` — create a deployment (ServiceNow data source only)
 - `PATCH /projects/{projectId}/deployments/{id}` — update a deployment's name/type/description, or deactivate it
+- `GET /deployments/{deploymentId}/attachments` — list a deployment's attachments (paged via `limit`/`offset`)
+- `POST /deployments/{deploymentId}/attachments` — upload an attachment to a deployment
 - `PATCH /deployments/{deploymentId}/attachments/{attachmentId}` — update a deployment attachment's name/description
 - `POST /deployments/{deploymentId}/products/search` — search a deployment's deployed products
 - `POST /deployments/{deploymentId}/products` — create a deployed product (ServiceNow data source only)

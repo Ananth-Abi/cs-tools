@@ -245,6 +245,8 @@ func main() {
 	// ServiceNow data source — see internal/entity/deployments.go.
 	mux.HandleFunc("POST /projects/{id}/deployments", deploymentHandler.CreateDeployment)
 	mux.HandleFunc("PATCH /projects/{projectId}/deployments/{id}", deploymentHandler.PatchDeployment)
+	mux.HandleFunc("GET /deployments/{deploymentId}/attachments", deploymentHandler.SearchDeploymentAttachments)
+	mux.HandleFunc("POST /deployments/{deploymentId}/attachments", deploymentHandler.CreateDeploymentAttachment)
 	mux.HandleFunc("PATCH /deployments/{deploymentId}/attachments/{attachmentId}", deploymentHandler.PatchDeploymentAttachment)
 	mux.HandleFunc("POST /deployments/{id}/instances/search", instanceHandler.SearchDeploymentInstances)
 	mux.HandleFunc("POST /deployments/{id}/instances/metrics/search", instanceHandler.SearchDeploymentInstanceMetrics)

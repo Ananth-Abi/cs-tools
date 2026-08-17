@@ -34,6 +34,8 @@ type entityDeploymentClient interface {
 	CreateDeployment(ctx context.Context, req entity.CreateDeploymentRequest) (entity.CreateDeploymentResponse, error)
 	UpdateDeployment(ctx context.Context, id string, req entity.UpdateDeploymentRequest) (entity.UpdateDeploymentResponse, error)
 	UpdateAttachment(ctx context.Context, id string, req entity.UpdateAttachmentRequest) (entity.UpdateAttachmentResponse, error)
+	SearchAttachments(ctx context.Context, req entity.SearchAttachmentsRequest) (entity.SearchAttachmentsResponse, error)
+	CreateAttachment(ctx context.Context, req entity.CreateAttachmentRequest) (entity.CreateAttachmentResponse, error)
 }
 
 // DeploymentHandler handles HTTP requests for deployment operations.
@@ -215,4 +217,77 @@ func (h *DeploymentHandler) PatchDeploymentAttachment(w http.ResponseWriter, r *
 	}
 
 	writeJSONValue(w, http.StatusOK, dto.MapUpdatedAttachment(result))
+}
+
+// SearchDeploymentAttachments handles GET /deployments/{deploymentId}/attachments.
+//
+// Deployment attachments are stored through entity-service's generic attachment
+// API, keyed by reference — this is the deployment-scoped read of it, the exact
+// counterpart of CaseHandler.SearchCaseAttachments. The reference type is forced
+// to deployment and the reference ID comes from the path, never the query.
+func (h *DeploymentHandler) SearchDeploymentAttachments(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	deploymentID := r.PathValue("deploymentId")
+	if deploymentID == "" || !uuidRe.MatchString(deploymentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	limit, offset, ok := parseLimitOffset(w, r)
+	if !ok {
+		return
+	}
+
+	result, err := h.entity.SearchAttachments(r.Context(), entity.SearchAttachmentsRequest{
+		ReferenceID:   deploymentID,
+		ReferenceType: entity.ReferenceTypeDeployment,
+		Pagination:    entity.Pagination{Limit: limit, Offset: offset},
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchAttachments failed", "userID", user.UserID, "deploymentID", deploymentID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to retrieve deployment attachments.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusOK, dto.MapDeploymentAttachments(result))
+}
+
+// CreateDeploymentAttachment handles POST /deployments/{deploymentId}/attachments.
+func (h *DeploymentHandler) CreateDeploymentAttachment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	deploymentID := r.PathValue("deploymentId")
+	if deploymentID == "" || !uuidRe.MatchString(deploymentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	body, ok := readJSONBody(w, r)
+	if !ok {
+		return
+	}
+
+	var req dto.CreateDeploymentAttachmentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.CreateAttachment(r.Context(), dto.BuildEntityCreateDeploymentAttachmentRequest(deploymentID, req))
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateAttachment failed", "userID", user.UserID, "deploymentID", deploymentID, "err", summarizeErr(err))
+		mapUpstreamError(w, err, "Failed to create deployment attachment.")
+		return
+	}
+
+	writeJSONValue(w, http.StatusCreated, dto.MapAttachmentCreate(result))
 }

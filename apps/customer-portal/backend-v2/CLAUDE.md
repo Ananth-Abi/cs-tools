@@ -6,7 +6,7 @@ responses for the frontend. This is a rewrite of the existing backend at
 `apps/customer-portal/backend`, modeled on `apps/csm-portal/backend`'s conventions — read that
 backend's own CLAUDE.md too if something here is underspecified.
 
-**Status: in progress.** 105 routes are wired up so far, across seven upstream services:
+**Status: in progress.** 107 routes are wired up so far, across seven upstream services:
 entity-service, the WSO2 Updates service, SCIM, the AI chat agent, the product-consumption
 service, the registry (robot-account) service, and the project-contact onboarding service (see
 "The AI chat agent", "The product-consumption service", "The registry service", and "The
@@ -45,6 +45,7 @@ all). Route list: `GET /health`, `GET`/`PATCH /users/me`, `POST /accounts/search
 `GET /metadata`, `POST /search`, `GET /products/vulnerabilities/meta`,
 `GET /cases/{id}/feedback`, `POST /cases/{id}/feedback`, `GET /cases/{id}/attachments`,
 `GET /attachments/{id}`,
+`GET`/`POST /deployments/{deploymentId}/attachments`,
 `PATCH /deployments/{deploymentId}/attachments/{attachmentId}`,
 `PATCH /cases/{caseId}/attachments/{attachmentId}`,
 `POST /deployments/{deploymentId}/products/{productId}/metrics/search`,
