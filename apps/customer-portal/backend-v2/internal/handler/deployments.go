@@ -101,11 +101,15 @@ const deployedProductCountsPageLimit = 100
 // DeployedProductView carries its own Deployment ref — so this is not an N+1
 // over deployments.
 //
+// Every requested deployment is present in the returned map, at zero if it has
+// no products — a successful tally covers all of them, so "no products" is a
+// real answer rather than a gap.
+//
 // Best-effort by design: a failure here logs and returns nil, leaving the
-// counts absent rather than failing the whole deployment search. The frontend
-// treats an absent count as 0, so the worst case is the pre-existing behaviour,
-// not a broken page. Same graceful-degradation stance as
-// dto.BuildProjectDashboardStats.
+// counts absent rather than failing the whole deployment search. nil is
+// therefore the only "not counted" signal. The frontend treats an absent count
+// as 0, so the worst case is the pre-existing behaviour, not a broken page.
+// Same graceful-degradation stance as dto.BuildProjectDashboardStats.
 func (h *DeploymentHandler) deployedProductCounts(ctx context.Context, userID string, deployments []entity.DeploymentView) map[string]int {
 	if len(deployments) == 0 {
 		return nil
@@ -115,7 +119,14 @@ func (h *DeploymentHandler) deployedProductCounts(ctx context.Context, userID st
 		ids = append(ids, d.ID)
 	}
 
+	// Seed every deployment at zero. The tally either succeeds for all ids or
+	// fails for all of them (nil, below), so once we get here a deployment with
+	// no products has genuinely been counted and its answer is 0 — reporting it
+	// as absent would be indistinguishable from "never counted".
 	counts := make(map[string]int, len(ids))
+	for _, id := range ids {
+		counts[id] = 0
+	}
 	for offset := 0; ; {
 		page, err := h.entity.SearchDeployedProducts(ctx, entity.SearchDeployedProductsRequest{
 			DeploymentIDs: ids,
