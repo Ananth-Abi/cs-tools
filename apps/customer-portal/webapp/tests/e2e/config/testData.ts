@@ -370,6 +370,17 @@ export const CALL_REQUEST_INPUT = {
   rescheduledDurationOption: "1 hour",
   rescheduledDurationLabel: "60 minutes",
   /**
+   * Cases whose status sits outside CALL_SCHEDULABLE_CASE_STATUSES, where the
+   * Calls tab is withheld altogether rather than merely empty.
+   *
+   * Read-only fixtures — the suite never changes their status, since doing so
+   * would be what makes them stop testing the rule.
+   */
+  callsUnavailableCaseIds: [
+    "b686e2933baa4f103e1e088aa4e45a9b",
+    "12350ecf3bee4b103e1e088aa4e45a9b",
+  ],
+  /**
    * The cancellation test's own request, kept separate from the one above.
    *
    * Cancelling is terminal — it disables both Reschedule and Cancel — so a test
@@ -381,21 +392,11 @@ export const CALL_REQUEST_INPUT = {
    * matched by reason as a substring, so one reason containing the other would
    * make each test find the wrong card.
    *
-   * Reusing the same reason every run is safe here even though a cancelled
-   * request cannot be cancelled twice — the tab searches only the non-cancelled
-   * states, so a spent record drops off the list instead of lingering.
+   * `reason` is a *prefix*: the spec stamps it per run. A cancelled request
+   * drops off the tab — it is filtered out of its own list — but one left
+   * pending by a run that failed mid-flow does not, and two cards sharing a
+   * reason would have the spec acting on whichever it happened to resolve to.
    */
-  /**
-   * Cases whose status sits outside CALL_SCHEDULABLE_CASE_STATUSES, where the
-   * Calls tab is withheld altogether rather than merely empty.
-   *
-   * Read-only fixtures — the suite never changes their status, since doing so
-   * would be what makes them stop testing the rule.
-   */
-  callsUnavailableCaseIds: [
-    "b686e2933baa4f103e1e088aa4e45a9b",
-    "12350ecf3bee4b103e1e088aa4e45a9b",
-  ],
   cancel: {
     reason: "Automation Test call request awaiting cancellation",
     cancellationReason: "Cancelled by the automated test run",

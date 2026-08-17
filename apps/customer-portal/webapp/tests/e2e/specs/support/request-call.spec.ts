@@ -260,23 +260,35 @@ test.describe("Request Call", () => {
       // terminal, and taking the shared request out would leave the reschedule
       // test with a disabled button. Unguarded on purpose — a cancelled request
       // cannot be cancelled twice, so each run needs a live one of its own.
+      //
+      // The reason is stamped per run because cards are matched on it as a
+      // substring. A run that dies between creating and cancelling leaves a
+      // pending request behind; with a fixed reason the next run would have two
+      // cards matching, act on whichever `.last()` resolved to, and then fail its
+      // closing absence check on the other one — permanently, until someone
+      // cleaned up by hand. Milliseconds are kept so two runs starting in the
+      // same second cannot collide either.
+      const cancelReason =
+        `${CALL_REQUEST_INPUT.cancel.reason} ` +
+        `${new Date().toISOString().slice(0, 23).replace(/[:T.]/g, "-")}`;
+
       const preferredTime = daysFromNowAt(
         1,
         CALL_REQUEST_INPUT.preferredTimeOfDay,
       );
       await calls.openRequestModal();
-      await calls.fillRequest(preferredTime, CALL_REQUEST_INPUT.cancel.reason);
+      await calls.fillRequest(preferredTime, cancelReason);
       await expect(calls.preferredTimeInput()).toHaveValue(preferredTime);
 
       const created = await calls.submit();
       await expectSuccess(created, "create call request to cancel");
       await expect(calls.modal()).toBeHidden();
 
-      const live = calls.card(CALL_REQUEST_INPUT.cancel.reason);
+      const live = calls.card(cancelReason);
       await expect(live).toBeVisible();
       await expect(live).toContainText(CASE_CALLS.card.pendingState);
 
-      await calls.openCancelModal(CALL_REQUEST_INPUT.cancel.reason);
+      await calls.openCancelModal(cancelReason);
       const cancelled = await calls.confirmCancel(
         CALL_REQUEST_INPUT.cancel.cancellationReason,
       );
@@ -301,11 +313,11 @@ test.describe("Request Call", () => {
       // request is filtered out of its own tab. Its disappearance is therefore
       // what proves the cancellation took, and it is also why these records do
       // not pile up on the tab run after run.
-      await expect(calls.card(CALL_REQUEST_INPUT.cancel.reason)).toHaveCount(0);
+      await expect(calls.card(cancelReason)).toHaveCount(0);
 
       console.log(
         `Call request (${CALL_REQUEST_INPUT.projectType}): created for ` +
-          `${preferredTime} and cancelled`,
+          `${preferredTime} and cancelled (${cancelReason})`,
       );
     });
   });

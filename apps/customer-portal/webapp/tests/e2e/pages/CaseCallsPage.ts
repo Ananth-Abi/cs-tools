@@ -164,11 +164,21 @@ export class CaseCallsPage {
    * Closes it again with Escape, so the caller is left with the form as it was
    * rather than an open listbox covering the buttons it wants to assert on.
    *
+   * Waits for the first option before reading them. `allInnerTexts` resolves
+   * immediately against whatever matches at that moment — it does not retry like
+   * an assertion — so reading straight after the click can return an empty list
+   * while the portal is still mounting, and the caller would compare that empty
+   * list against the expected options.
+   *
    * @returns The option labels, in order.
    */
   async durationOptionLabels(): Promise<string[]> {
     await this.durationSelect().click();
-    const labels = await this.page.getByRole("option").allInnerTexts();
+
+    const options = this.page.getByRole("option");
+    await expect(options.first()).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+    const labels = await options.allInnerTexts();
+
     await this.page.keyboard.press("Escape");
     return labels.map((label) => label.trim());
   }

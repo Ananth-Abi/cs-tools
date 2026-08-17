@@ -467,9 +467,14 @@ export const DASHBOARD = {
    * legend below it.
    *
    * Recharts renders each slice as an SVG `path.recharts-sector` with no
-   * accessible name, so they can only be addressed structurally and by
-   * position. There is one per legend entry — including severities with a count
-   * of zero, which still render because the chart sets `minAngle`.
+   * accessible name, so they can only be addressed structurally and by position.
+   *
+   * How many are drawn depends on the data, and whether a series with a count of
+   * zero gets a sector is not something these specs establish — so a slice's
+   * index must not be taken to mean the legend entry at the same index. Specs
+   * read the severity back from the list a slice opens instead. Every fixture
+   * project currently has cases at all four severities, so the question has not
+   * arisen in practice.
    */
   severityChartSlice: "path.recharts-sector",
   /**

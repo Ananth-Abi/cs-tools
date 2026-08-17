@@ -255,16 +255,24 @@ test.describe("Dashboard", () => {
         // creator" rather than against a hardcoded address, so it holds for
         // whichever account the captured session belongs to.
         await expect(dashboard.casesTableRows().first()).toBeVisible();
+
+        // Counted, not named: the creators are real email addresses, and a test
+        // report is no place to put them. The distinct count is what carries the
+        // assertion — more than one means the filter let another user's cases
+        // through.
         const creators = await dashboard.casesTableCreators();
+        const distinctCreators = new Set(creators).size;
+
         expect(creators.length, "no row named a creator").toBeGreaterThan(0);
         expect(
-          new Set(creators).size,
-          `creators listed: ${creators.join(", ")}`,
+          distinctCreators,
+          "every row should name the same creator — more than one means the " +
+            "createdByMe filter did not hold",
         ).toBe(1);
 
         console.log(
           `Dashboard (${projectType}): my cases table shows ${creators.length} ` +
-            `rows, all by ${creators[0]}`,
+            `rows from ${distinctCreators} creator`,
         );
       });
 
@@ -553,15 +561,30 @@ test.describe("Dashboard", () => {
         // as the heading appears reads zero.
         await expect(dashboard.severityChartSlices().first()).toBeVisible();
 
-        // One slice per legend entry, including any severity with a count of
-        // zero — the chart's `minAngle` keeps those on screen and clickable.
+        // How many slices the donut draws depends on the data — a severity with
+        // no outstanding cases may or may not get a sector — so the count is
+        // bounded rather than pinned, and no slice is assumed to be a particular
+        // severity by its position.
         const sliceCount = await dashboard.severityChartSlices().count();
+        expect(sliceCount, "the donut should have slices").toBeGreaterThan(0);
         expect(
           sliceCount,
-          "the donut should have one slice per severity in the legend",
-        ).toBe(DASHBOARD.severityLegend.length);
+          "the donut should not draw more slices than the legend has entries",
+        ).toBeLessThanOrEqual(DASHBOARD.severityLegend.length);
 
-        for (const [index, entry] of DASHBOARD.severityLegend.entries()) {
+        // Which severity each slice belongs to is read back from where it lands,
+        // not assumed from its index: if the chart ever skips a zero-count
+        // severity, index n stops meaning legend entry n, and a test that
+        // assumed otherwise would assert the wrong list against the wrong slice.
+        const bySeverityId = new Map<
+          string,
+          { severityId: string; title: string; description: string }
+        >(
+          DASHBOARD.severityLegend.map((entry) => [entry.severityId, entry]),
+        );
+        const visited: string[] = [];
+
+        for (let index = 0; index < sliceCount; index += 1) {
           // Back to the dashboard between slices: each drill-down navigates
           // away, and returning through the nav re-renders the chart.
           if (index > 0) {
@@ -571,22 +594,40 @@ test.describe("Dashboard", () => {
 
           await dashboard.clickSeverityChartSlice(index);
 
-          // Slices are drawn in legend order, so slice n must open the same list
-          // as legend entry n — which is what ties the chart to its key.
+          // Every slice must open a severity-filtered cases list.
           await expect(page).toHaveURL(
             new RegExp(
-              `/projects/${project.id}/support/cases\\?severityId=${entry.severityId}$`,
+              `/projects/${project.id}/support/cases\\?severityId=\\d+$`,
             ),
           );
 
+          const severityId = new URL(page.url()).searchParams.get("severityId");
+          const entry = severityId
+            ? bySeverityId.get(severityId)
+            : undefined;
+          expect(
+            entry,
+            `slice ${index + 1} opened severityId ${severityId}, which is not ` +
+              `one of the severities in the legend`,
+          ).toBeDefined();
+          visited.push(severityId as string);
+
           const main = page.getByTestId("app-main");
+          const expected = entry as { title: string; description: string };
           await expect(
-            main.getByRole("heading", { name: entry.title, exact: true }),
+            main.getByRole("heading", { name: expected.title, exact: true }),
           ).toBeVisible();
           await expect(
-            main.getByText(entry.description, { exact: true }),
+            main.getByText(expected.description, { exact: true }),
           ).toBeVisible();
         }
+
+        // Each slice is its own severity — two slices landing on the same list
+        // would mean the chart is mis-wired even though every click "worked".
+        expect(
+          new Set(visited).size,
+          `slices opened ${new Set(visited).size} distinct severities out of ${sliceCount}`,
+        ).toBe(sliceCount);
 
         console.log(
           `Dashboard (${projectType}): all ${sliceCount} donut slices drilled ` +
@@ -652,10 +693,12 @@ test.describe("Dashboard", () => {
           // well after the stat cards, so counting slices any earlier reads zero.
           await expect(dashboard.chartSlices(heading).first()).toBeVisible();
 
-          // One slice per legend row here, because both series carry work on this
-          // project. A series with a count of zero would have no slice at all —
-          // Recharts' minAngle only applies to non-zero values — so this asserts
-          // the data as much as the chart.
+          // Both series carry work on this project, so there is a slice for each
+          // legend row and index n means legend entry n. Pinned rather than
+          // bounded — unlike the severity donut, which has to allow for a
+          // severity with no cases — because if either series ever emptied, this
+          // count failing is the signal to revisit the mapping below rather than
+          // something to absorb silently.
           const sliceCount = await dashboard.chartSlices(heading).count();
           expect(
             sliceCount,
