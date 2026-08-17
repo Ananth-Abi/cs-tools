@@ -3924,6 +3924,18 @@ components:
         searchQuery:
           type: string
           description: Case-insensitive match against product name.
+        class:
+          type: string
+          description: >
+            Optional filter restricting results to a single product class.
+            Accepted values and default behavior depend on the active data
+            source. On the data source where products are stored one row per
+            distinct product, an empty value returns every class unfiltered.
+            On the data source where the same catalog also exposes one row
+            per product version, an empty value defaults to "product_model"
+            (one row per distinct product); "software_model" or
+            "service_model" can be requested explicitly to get version-level
+            rows instead.
 
     Product:
       type: object
