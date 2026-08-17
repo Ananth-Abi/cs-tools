@@ -67,14 +67,18 @@ export default function UserPreviewDrawer({ user, onClose }: UserPreviewDrawerPr
                 <X size={18} />
               </IconButton>
             </Box>
-            {user.active !== undefined && (
+            {(user.lockedOut === true || user.active !== undefined) && (
               <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  color={user.active ? "success" : "default"}
-                  label={user.active ? "Active" : "Inactive"}
-                />
+                {user.lockedOut === true ? (
+                  <Chip size="small" variant="outlined" color="error" label="Locked out" />
+                ) : (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color={user.active ? "success" : "default"}
+                    label={user.active ? "Active" : "Inactive"}
+                  />
+                )}
               </Box>
             )}
           </Box>

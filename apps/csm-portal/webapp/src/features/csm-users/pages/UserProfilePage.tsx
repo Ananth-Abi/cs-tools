@@ -528,13 +528,25 @@ export default function UserProfilePage(): JSX.Element {
             color={internal ? "primary" : "default"}
             variant="outlined"
           />
-          {user.active !== undefined && (
-            <Chip
-              size="small"
-              label={user.active ? "Active" : "Inactive"}
-              color={user.active ? "success" : "default"}
-              variant="outlined"
-            />
+          {/* Locked out takes priority over Active in this single top-line status
+              chip — a locked-out account isn't usable regardless of its Active
+              flag, so showing "Active" here would be misleading. Both attributes
+              are still shown separately (and unconditionally) in the Overview
+              card below; this chip is just the headline. Named to be unambiguous
+              next to the unrelated SCIM "external" account lock chip in the
+              Overview grid (see `ExternalAccountMetaCell`), a different lock
+              concept. */}
+          {user.lockedOut === true ? (
+            <Chip size="small" label="Locked out" color="error" variant="outlined" />
+          ) : (
+            user.active !== undefined && (
+              <Chip
+                size="small"
+                label={user.active ? "Active" : "Inactive"}
+                color={user.active ? "success" : "default"}
+                variant="outlined"
+              />
+            )
           )}
         </Box>
         <Typography variant="body2" color="text.secondary">
@@ -563,10 +575,34 @@ export default function UserProfilePage(): JSX.Element {
               {user.email}
             </Typography>
           </MetaCell>
-          {internal && <TeamMetaCell user={user} />}
           <MetaCell label="Timezone">
             <Typography variant="body2">{user.timezone ?? "Not set"}</Typography>
           </MetaCell>
+          {/* Account status and Locked out are two independent attributes — a
+              locked-out user can also be Active — so both are always shown
+              here, separately, even though the header chip above collapses them
+              into one headline status. */}
+          {user.lockedOut !== undefined && (
+            <MetaCell label="Locked out">
+              <Chip
+                size="small"
+                label={user.lockedOut ? "Yes" : "No"}
+                color={user.lockedOut ? "error" : "default"}
+                variant="outlined"
+              />
+            </MetaCell>
+          )}
+          {internal && <TeamMetaCell user={user} />}
+          {user.active !== undefined && (
+            <MetaCell label="Account status">
+              <Chip
+                size="small"
+                label={user.active ? "Active" : "Inactive"}
+                color={user.active ? "success" : "default"}
+                variant="outlined"
+              />
+            </MetaCell>
+          )}
           {internal && (
             <MetaCell label="Phone">
               <Typography variant="body2">{user.phone ?? "Not set"}</Typography>

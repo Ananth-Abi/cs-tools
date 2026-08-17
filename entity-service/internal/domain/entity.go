@@ -145,8 +145,12 @@ type SNUser struct {
 	MobilePhone *string `json:"mobilePhone,omitempty"`
 	// UserType distinguishes staff from customer/partner contacts. Derived by the
 	// backing data source from role membership, not stored as a column.
-	UserType  UserType `json:"userType,omitempty"`
-	Active    bool     `json:"active"`
+	UserType UserType `json:"userType,omitempty"`
+	Active   bool     `json:"active"`
+	// LockedOut reports whether the backing data source has locked the account out,
+	// independent of Active: a user can be active but locked out after too many failed
+	// login attempts.
+	LockedOut bool     `json:"lockedOut"`
 	CreatedOn string   `json:"createdOn"`
 	UpdatedOn string   `json:"updatedOn"`
 	Roles     []string `json:"roles"`
