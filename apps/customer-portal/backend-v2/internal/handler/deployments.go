@@ -31,7 +31,6 @@ import (
 // used by DeploymentHandler.
 type entityDeploymentClient interface {
 	SearchDeployments(ctx context.Context, req entity.SearchDeploymentsRequest) (entity.SearchDeploymentsResponse, error)
-	SearchDeployedProducts(ctx context.Context, req entity.SearchDeployedProductsRequest) (entity.SearchDeployedProductsResponse, error)
 	CreateDeployment(ctx context.Context, req entity.CreateDeploymentRequest) (entity.CreateDeploymentResponse, error)
 	UpdateDeployment(ctx context.Context, id string, req entity.UpdateDeploymentRequest) (entity.UpdateDeploymentResponse, error)
 	UpdateAttachment(ctx context.Context, id string, req entity.UpdateAttachmentRequest) (entity.UpdateAttachmentResponse, error)
@@ -84,68 +83,7 @@ func (h *DeploymentHandler) SearchDeployments(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	resp := dto.MapSearchDeployments(result)
-	productCounts := h.deployedProductCounts(r.Context(), user.UserID, result.Deployments)
-	writeJSONValue(w, http.StatusOK, dto.WithDeploymentCounts(resp, productCounts, nil))
-}
-
-// deployedProductCountsPageLimit is the page size used when tallying deployed
-// products. entity-service caps limit at 100, so this is the effective maximum.
-const deployedProductCountsPageLimit = 100
-
-// deployedProductCounts tallies deployed products per deployment for the
-// deployments just returned by a search.
-//
-// One upstream call (paged) covers every deployment, because
-// SearchDeployedProductsRequest accepts DeploymentIDs as a list and each
-// DeployedProductView carries its own Deployment ref — so this is not an N+1
-// over deployments.
-//
-// Every requested deployment is present in the returned map, at zero if it has
-// no products — a successful tally covers all of them, so "no products" is a
-// real answer rather than a gap.
-//
-// Best-effort by design: a failure here logs and returns nil, leaving the
-// counts absent rather than failing the whole deployment search. nil is
-// therefore the only "not counted" signal. The frontend treats an absent count
-// as 0, so the worst case is the pre-existing behaviour, not a broken page.
-// Same graceful-degradation stance as dto.BuildProjectDashboardStats.
-func (h *DeploymentHandler) deployedProductCounts(ctx context.Context, userID string, deployments []entity.DeploymentView) map[string]int {
-	if len(deployments) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(deployments))
-	for _, d := range deployments {
-		ids = append(ids, d.ID)
-	}
-
-	// Seed every deployment at zero. The tally either succeeds for all ids or
-	// fails for all of them (nil, below), so once we get here a deployment with
-	// no products has genuinely been counted and its answer is 0 — reporting it
-	// as absent would be indistinguishable from "never counted".
-	counts := make(map[string]int, len(ids))
-	for _, id := range ids {
-		counts[id] = 0
-	}
-	for offset := 0; ; {
-		page, err := h.entity.SearchDeployedProducts(ctx, entity.SearchDeployedProductsRequest{
-			DeploymentIDs: ids,
-			Pagination:    entity.Pagination{Limit: deployedProductCountsPageLimit, Offset: offset},
-		})
-		if err != nil {
-			slog.WarnContext(ctx, "entity SearchDeployedProducts failed while tallying deployment product counts",
-				"userID", userID, "err", summarizeErr(err))
-			return nil
-		}
-		for _, p := range page.DeployedProducts {
-			counts[p.Deployment.ID]++
-		}
-		offset += len(page.DeployedProducts)
-		if len(page.DeployedProducts) == 0 || offset >= page.Total {
-			break
-		}
-	}
-	return counts
+	writeJSONValue(w, http.StatusOK, dto.MapSearchDeployments(result))
 }
 
 // CreateDeployment handles POST /projects/{id}/deployments.

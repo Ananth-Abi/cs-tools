@@ -949,10 +949,17 @@ type DeploymentView struct {
 	Name        string         `json:"name"`
 	Type        DeploymentType `json:"type"`
 	Description *string        `json:"description"`
+	URL         *string        `json:"url"`
 	CreatedBy   *EntityRef     `json:"createdBy"`
 	Project     EntityRef      `json:"project"`
 	CreatedOn   time.Time      `json:"createdOn"`
 	UpdatedOn   time.Time      `json:"updatedOn"`
+	// DeployedProductCount is the number of deployed products in this
+	// deployment, as reported by the upstream data source. Consumers rely on it
+	// to tell whether a deployment has any products at all without a second
+	// query — the customer portal's Usage & Metrics view filters on exactly
+	// this. Matches the Ballerina entity-service's Deployment.deployedProductCount.
+	DeployedProductCount int `json:"deployedProductCount"`
 }
 
 // SearchDeploymentsRequest is the input for a deployment search operation.

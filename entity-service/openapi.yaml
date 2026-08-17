@@ -5533,6 +5533,12 @@ components:
         updatedOn:
           type: string
           format: date-time
+        url:
+          type: string
+          nullable: true
+        deployedProductCount:
+          type: integer
+          description: Number of deployed products in this deployment.
 
     CreateDeploymentRequest:
       type: object

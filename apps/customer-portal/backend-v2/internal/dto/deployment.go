@@ -37,14 +37,14 @@ type DeploymentSummary struct {
 	Project     *IDLabelRef `json:"project,omitempty"`
 	CreatedOn   time.Time   `json:"createdOn"`
 	UpdatedOn   time.Time   `json:"updatedOn"`
+	URL         *string     `json:"url,omitempty"`
 	// ProductCount is named productCount, NOT deployedProductCount: the
 	// frontend's ProjectDeploymentItem reads productCount, and the Usage
 	// Metrics page filters deployments on `(dep.productCount ?? 0) > 0`. An
 	// absent value silently filters every deployment out, leaving that page
 	// blank with no error and no network calls. The Ballerina backend does the
 	// same rename (utils.bal: `productCount: deployment.deployedProductCount`).
-	ProductCount  *int `json:"productCount,omitempty"`
-	InstanceCount *int `json:"instanceCount,omitempty"`
+	ProductCount int `json:"productCount"`
 }
 
 // SearchDeploymentsResponse is the portal's response for
@@ -72,6 +72,9 @@ func MapSearchDeployments(r entity.SearchDeploymentsResponse) SearchDeploymentsR
 			Project:     entityRefToIDLabel(&d.Project),
 			CreatedOn:   d.CreatedOn,
 			UpdatedOn:   d.UpdatedOn,
+
+			URL:          d.URL,
+			ProductCount: d.DeployedProductCount,
 		})
 	}
 	return SearchDeploymentsResponse{
@@ -81,27 +84,6 @@ func MapSearchDeployments(r entity.SearchDeploymentsResponse) SearchDeploymentsR
 		Offset:       r.Offset,
 		HasMore:      r.HasMore,
 	}
-}
-
-// WithDeploymentCounts fills ProductCount/InstanceCount on each deployment from
-// per-deployment tallies keyed by deployment ID.
-//
-// entity-service's DeploymentView carries no counts (neither does the
-// ServiceNow payload behind it), so the handler derives them and passes them
-// here — see DeploymentHandler.SearchDeployments. A deployment missing from a
-// map is left nil rather than set to 0, so "not counted" stays distinguishable
-// from "counted zero"; the frontend treats both as 0 via `?? 0`.
-func WithDeploymentCounts(resp SearchDeploymentsResponse, productCounts, instanceCounts map[string]int) SearchDeploymentsResponse {
-	for i := range resp.Deployments {
-		id := resp.Deployments[i].ID
-		if n, ok := productCounts[id]; ok {
-			resp.Deployments[i].ProductCount = &n
-		}
-		if n, ok := instanceCounts[id]; ok {
-			resp.Deployments[i].InstanceCount = &n
-		}
-	}
-	return resp
 }
 
 // DeploymentCreateRequest is the portal's request body for

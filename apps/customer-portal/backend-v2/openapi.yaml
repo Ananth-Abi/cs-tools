@@ -6753,14 +6753,13 @@ components:
         productCount:
           type: integer
           description: >-
-            Number of deployed products in this deployment. Named productCount
-            (not deployedProductCount) to match the frontend contract — the
-            Usage Metrics page filters deployments on this field. Omitted when
-            the tally could not be retrieved.
-        instanceCount:
-          type: integer
-          description: >-
-            Number of instances in this deployment. Omitted when not counted.
+            Number of deployed products in this deployment, from
+            entity-service's deployedProductCount. Named productCount to match
+            the frontend contract — the Usage & Metrics page filters
+            deployments on this field.
+        url:
+          type: string
+          nullable: true
 
     SearchDeploymentsResponse:
       description: >
