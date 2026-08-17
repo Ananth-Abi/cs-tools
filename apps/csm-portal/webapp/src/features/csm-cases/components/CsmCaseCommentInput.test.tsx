@@ -31,19 +31,26 @@ import CsmCaseCommentInput from "@features/csm-cases/components/CsmCaseCommentIn
 
 // This component isn't under test here; stub it to a plain textarea (same
 // technique EditCaseDetailsDialog.test.tsx uses for the same dependency).
+// Also surfaces `attachments.length` as text so drag-and-drop tests below
+// can assert on it without needing the real editor's own attachment-chip UI.
 vi.mock("@components/rich-text-editor/Editor", () => ({
   default: ({
     value,
     onChange,
+    attachments,
   }: {
     value: string;
     onChange: (v: string) => void;
+    attachments: File[];
   }) => (
-    <textarea
-      aria-label="comment-editor"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    />
+    <div data-testid="editor-stub">
+      <textarea
+        aria-label="comment-editor"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span data-testid="attachment-count">{attachments.length}</span>
+    </div>
   ),
 }));
 
@@ -133,5 +140,96 @@ describe("CsmCaseCommentInput — resume-work quick-fix", () => {
     );
 
     expect(screen.getByRole("button", { name: "Resuming…" })).toBeDisabled();
+  });
+});
+
+/** A File-like drop payload — jsdom's DataTransfer doesn't populate `files`
+ * from a plain object literal the way a real browser drag event would. */
+function fileDrop(files: File[]): { dataTransfer: { types: string[]; files: File[] } } {
+  return { dataTransfer: { types: ["Files"], files } };
+}
+
+function makeFile(name: string, sizeBytes: number, type = "text/plain"): File {
+  return new File([new Uint8Array(sizeBytes)], name, { type });
+}
+
+describe("CsmCaseCommentInput — drag-and-drop attachments", () => {
+  it("shows the drop overlay only while a file is being dragged over the composer", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} />);
+    const composer = screen.getByTestId("csm-comment-composer");
+
+    expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
+
+    fireEvent.dragEnter(composer, fileDrop([]));
+    expect(screen.getByText("Drop files to attach")).toBeInTheDocument();
+
+    fireEvent.dragLeave(composer, fileDrop([]));
+    expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
+  });
+
+  it("attaches a dropped file without opening the naming modal", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} />);
+    const composer = screen.getByTestId("csm-comment-composer");
+
+    fireEvent.drop(composer, fileDrop([makeFile("screenshot.png", 1024, "image/png")]));
+
+    expect(screen.getByTestId("attachment-count")).toHaveTextContent("1");
+    expect(screen.queryByText("Attach a file")).not.toBeInTheDocument();
+  });
+
+  it("attaches every file from a multi-file drop", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} />);
+    const composer = screen.getByTestId("csm-comment-composer");
+
+    fireEvent.drop(
+      composer,
+      fileDrop([makeFile("a.txt", 100), makeFile("b.txt", 200), makeFile("c.txt", 300)]),
+    );
+
+    expect(screen.getByTestId("attachment-count")).toHaveTextContent("3");
+  });
+
+  it("rejects a dropped file over the size limit but keeps the ones that fit", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} />);
+    const composer = screen.getByTestId("csm-comment-composer");
+
+    const tooBig = makeFile("huge.zip", 11 * 1024 * 1024);
+    fireEvent.drop(composer, fileDrop([makeFile("ok.txt", 100), tooBig]));
+
+    expect(screen.getByTestId("attachment-count")).toHaveTextContent("1");
+    expect(screen.getByText(/huge\.zip.*too large/i)).toBeInTheDocument();
+  });
+
+  it("still prevents the browser's default file handling when the composer is disabled, without attaching anything", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} disabled />);
+    const composer = screen.getByTestId("csm-comment-composer");
+
+    // fireEvent returns false when preventDefault() was called on a
+    // cancelable event — a real file drag must still be prevented even
+    // though the composer won't act on it, or the browser falls through to
+    // navigating the tab to open the dropped file.
+    const notPrevented = fireEvent.drop(composer, fileDrop([makeFile("a.txt", 100)]));
+
+    expect(notPrevented).toBe(false);
+    expect(screen.getByTestId("attachment-count")).toHaveTextContent("0");
+  });
+
+  it("dedupes a file that's already attached", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} />);
+    const composer = screen.getByTestId("csm-comment-composer");
+    const file = makeFile("dup.txt", 100);
+
+    fireEvent.drop(composer, fileDrop([file]));
+    fireEvent.drop(composer, fileDrop([file]));
+
+    expect(screen.getByTestId("attachment-count")).toHaveTextContent("1");
+  });
+
+  it("ignores a drag that isn't carrying files (e.g. dragging selected text)", () => {
+    render(<CsmCaseCommentInput onSubmit={vi.fn()} />);
+    const composer = screen.getByTestId("csm-comment-composer");
+
+    fireEvent.dragEnter(composer, { dataTransfer: { types: ["text/plain"], files: [] } });
+    expect(screen.queryByText("Drop files to attach")).not.toBeInTheDocument();
   });
 });
