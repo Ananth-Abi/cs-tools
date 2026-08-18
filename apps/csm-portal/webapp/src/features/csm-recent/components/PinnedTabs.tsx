@@ -41,6 +41,7 @@ import {
 } from "@features/csm-recent/hooks/useRecentViews";
 import { kindIcon } from "@features/csm-recent/kindMeta";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { stripHtmlTags } from "@utils/sanitizeHtml";
 
 /** Compact chip label: the case id / entity name (the part before " · "). */
 function shortLabel(entry: RecentView): string {
@@ -92,7 +93,15 @@ export default function PinnedTabs(): JSX.Element {
     setMenuAnchor(null);
   };
 
+  // Same normalization `renameRecentView` itself applies (strip HTML tags,
+  // then trim) -- a plain `.trim()` here would let whitespace-only or
+  // tag-only input ("<b></b>") past validation, close the dialog, and still
+  // silently no-op the rename, since `renameRecentView` bails on an empty
+  // normalized title regardless of what the raw field value looked like.
+  const normalizedRenameValue = stripHtmlTags(renameValue).trim();
+
   const handleRenameSave = (): void => {
+    if (!normalizedRenameValue) return;
     if (menuTarget) renameRecentView(menuTarget.kind, menuTarget.id, renameValue);
     setRenameDialogOpen(false);
     setMenuTarget(null);
@@ -196,7 +205,7 @@ export default function PinnedTabs(): JSX.Element {
           <Button
             variant="contained"
             onClick={handleRenameSave}
-            disabled={!renameValue.trim()}
+            disabled={!normalizedRenameValue}
           >
             Save
           </Button>

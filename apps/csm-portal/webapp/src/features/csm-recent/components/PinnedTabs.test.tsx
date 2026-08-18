@@ -125,4 +125,26 @@ describe("PinnedTabs", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     expect(renameRecentViewMock).not.toHaveBeenCalled();
   });
+
+  // Regression test: `renameRecentView` normalizes via `stripHtmlTags(...).trim()`
+  // and no-ops on an empty result, but the dialog's own validation used to
+  // check the raw field value with a plain `.trim()` -- so tag-only input
+  // ("<b></b>", non-blank as raw text) passed that check, closed the dialog
+  // via Enter, and still silently renamed nothing.
+  it("does not close the dialog or call renameRecentView for tag-only input via Enter", () => {
+    pinnedEntries = [pinnedEntry({ id: "1", title: "My work items view" })];
+    renderPinnedTabs();
+
+    fireEvent.contextMenu(screen.getByText("My work items view"));
+    fireEvent.click(screen.getByText("Rename"));
+
+    const input = screen.getByLabelText("Tab name") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "<b></b>" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(renameRecentViewMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Tab name")).toBeInTheDocument();
+  });
 });
