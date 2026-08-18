@@ -6264,7 +6264,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AccountSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -7204,7 +7204,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AttachmentSummary'
-        total:
+        totalRecords:
           type: integer
         limit:
           type: integer
@@ -9697,7 +9697,7 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Escalation'
-        total:
+        totalRecords:
           type: integer
         offset:
           type: integer

@@ -631,18 +631,27 @@ specific value needs to be checked in Go code (e.g. `ChangeRequestApprovalDecisi
 validation in the handler compares against literal `"approved"`/`"rejected"` strings, not enum
 constants).
 
-**Most pagination responses use `totalRecords`; a handful of not-yet-audited endpoints still use
-`total` — check the frontend's existing type before picking one.** The frontend's shared
+**All pagination responses use `totalRecords`. Do not introduce `total` on a paginated envelope.** The frontend's shared
 `PaginationResponse` type (`apps/customer-portal/webapp/src/types/common.ts`) is
 `{offset, limit, totalRecords}`, and the large majority of this backend's paginated responses were
 renamed to match it during a full request/response type-alignment pass against the old Ballerina
 backend and the live frontend (see git history for `fix/customer-portal-v2-align-response-types`).
-A few endpoints not yet touched by that pass (`internal/dto/account.go`, `attachment.go`,
-`escalation.go`, `project_stats.go`) still send `total` — this is leftover drift, not a deliberate
-split, and each should be renamed to `totalRecords` the next time one of them is revisited. New
-endpoints should default to `totalRecords`; verify against the specific frontend hook's decoded
+The last three stragglers (`internal/dto/account.go`, `attachment.go`, `escalation.go`) were
+renamed from `total` to `totalRecords` after the legacy key silently broke the case-detail
+Attachments tab: `useGetCaseAttachments` destructures `totalRecords` with **no** array-length
+fallback (unlike the calls and escalations panels, which fall back to `data.length` and so masked
+the same drift), so `attachmentCount` stayed `undefined` and the tab rendered "Attachments (0)"
+against a perfectly good 200 response.
+
+`internal/dto/project_stats.go`'s `ResolvedCountBreakdown.total` is **not** part of this drift and
+must keep its name — it is a stats breakdown (`{total, currentMonth, pastThirtyDays}`), not a
+pagination envelope, and the frontend reads `total` there (`features/dashboard/types/charts.ts`).
+Renaming it would break the dashboard charts.
+
+New endpoints should default to `totalRecords`; verify against the specific frontend hook's decoded
 field name before assuming (check `apps/customer-portal/webapp/src/api/` and
-`src/features/*/api/`).
+`src/features/*/api/`), and prefer a key-name assertion test (`internal/dto/case_display_labels_test.go`)
+over trusting the struct tag by eye.
 
 **Some routes nest a resource's own ID in the path purely for RESTful shape, not because the
 handler needs it.** `PATCH /cases/{caseId}/call-requests/{id}` is the example: entity-service's
