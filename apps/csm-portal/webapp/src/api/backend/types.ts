@@ -2858,6 +2858,10 @@ export interface BeTimeCardMutationResponse {
   timeCard: BeTimeCardView;
 }
 
+export interface BeDeleteTimeCardResponse {
+  message?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------

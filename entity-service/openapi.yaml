@@ -2326,6 +2326,53 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: Delete a time card (ServiceNow data source only).
+      description: >
+        Only validates that id is a well-formed UUID; ServiceNow enforces
+        that the caller is the card's own submitter and that it's still in
+        the submitted state, the same trust model the PATCH operation above
+        uses.
+      operationId: deleteTimeCard
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Time card UUID.
+      responses:
+        "200":
+          description: Time card deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteTimeCardResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Time card not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /slas/{id}:
     get:
@@ -6707,6 +6754,12 @@ components:
           type: string
         timeCard:
           $ref: '#/components/schemas/TimeCardView'
+
+    DeleteTimeCardResponse:
+      type: object
+      properties:
+        message:
+          type: string
 
     VulnerabilityPriority:
       type: string

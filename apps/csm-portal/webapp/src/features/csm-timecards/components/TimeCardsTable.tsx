@@ -16,7 +16,7 @@
 
 import { Fragment, useState, type JSX } from "react";
 import { Box, Checkbox, IconButton, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
-import { Check, Eye, Pencil, X } from "@wso2/oxygen-ui-icons-react";
+import { Check, Eye, Pencil, Trash2, X } from "@wso2/oxygen-ui-icons-react";
 import RelativeDate from "@components/RelativeDate";
 import TimeCardCasePreviewDrawer from "@features/csm-timecards/components/TimeCardCasePreviewDrawer";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
@@ -73,11 +73,12 @@ interface TimeCardsTableProps {
   onToggleSelectAll?: (selectableCards: CsmTimeCard[]) => void;
 }
 
-// "edit" isn't in here — unlike approve/reject, it renders as its own icon
-// button (matching the Eye view icon) shown unconditionally when a card is
-// editable, not as an icon button gated by showActionsColumn (see below).
+// "edit"/"delete" aren't in here — unlike approve/reject, they each render as
+// their own icon button (matching the Eye view icon) shown unconditionally
+// when a card is eligible, not as an icon button gated by showActionsColumn
+// (see below).
 const ACTION_BUTTONS: Record<
-  Exclude<TimecardAction, "edit">,
+  Exclude<TimecardAction, "edit" | "delete">,
   { label: string; color: "primary" | "error"; icon: JSX.Element }
 > = {
   approve: { label: "Approve", color: "primary", icon: <Check size={16} /> },
@@ -318,10 +319,10 @@ export default function TimeCardsTable({
                   >
                     <Eye size={16} />
                   </IconButton>
-                  {/* Own actionable button regardless of showActionsColumn —
-                      unlike approve/reject, editing is offered to the card's
-                      own owner on every tab it can appear on (My time
-                      sheets, All), not just the Approvals queue. */}
+                  {/* Own actionable buttons regardless of showActionsColumn —
+                      unlike approve/reject, editing and deleting are offered
+                      to the card's own owner on every tab it can appear on
+                      (My time sheets, All), not just the Approvals queue. */}
                   {actions.includes("edit") && (
                     <IconButton
                       size="small"
@@ -332,9 +333,23 @@ export default function TimeCardsTable({
                       <Pencil size={16} />
                     </IconButton>
                   )}
+                  {actions.includes("delete") && (
+                    <IconButton
+                      size="small"
+                      color="error"
+                      aria-label="Delete time card"
+                      data-testid={`timecard-delete-${c.id}`}
+                      onClick={() => onCardAction(c, "delete")}
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  )}
                   {showActionsColumn &&
                     actions
-                      .filter((a): a is Exclude<TimecardAction, "edit"> => a !== "edit")
+                      .filter(
+                        (a): a is Exclude<TimecardAction, "edit" | "delete"> =>
+                          a !== "edit" && a !== "delete",
+                      )
                       .map((a) => {
                         const b = ACTION_BUTTONS[a];
                         return (

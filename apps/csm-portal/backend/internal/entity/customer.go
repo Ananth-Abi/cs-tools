@@ -292,6 +292,11 @@ func (c *CustomerEntityClient) UpdateTimeCard(ctx context.Context, id string, bo
 	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/time-cards/%s", url.PathEscape(id)), body)
 }
 
+// DeleteTimeCard calls DELETE /time-cards/{id} on the entity service.
+func (c *CustomerEntityClient) DeleteTimeCard(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/time-cards/%s", url.PathEscape(id)), nil)
+}
+
 // CreateCaseAttachment calls POST /attachments on the entity service.
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) CreateCaseAttachment(ctx context.Context, body []byte) ([]byte, error) {

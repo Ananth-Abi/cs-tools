@@ -309,6 +309,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 		mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 		mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+		mux.HandleFunc("DELETE /time-cards/{id}", timeCardHandler.DeleteTimeCard)
 	}
 
 	if catalogHandler != nil {

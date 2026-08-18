@@ -306,6 +306,13 @@ type TimeCardService interface {
 	// UpdateTimeCard edits an editable (submitted) time card, or transitions its
 	// state (approve/reject) when req.State is set. SN enforces authorization.
 	UpdateTimeCard(ctx context.Context, req domain.UpdateTimeCardRequest) (domain.TimeCardMutationResponse, error)
+	// DeleteTimeCard permanently deletes a time card. Matches UpdateTimeCard's
+	// trust model exactly: this only validates the ID's shape and forwards the
+	// caller's token to SN, which enforces that only the submitter may delete
+	// their own card, and only while it's still in the submitted state — see
+	// UpdateTimeCard's own doc comment for why that authorization isn't (and,
+	// consistent with every other write here, shouldn't be) duplicated in Go.
+	DeleteTimeCard(ctx context.Context, req domain.DeleteTimeCardRequest) (domain.DeleteTimeCardResponse, error)
 }
 
 // ConfigurationItemService defines the operations available on the configuration items entity.

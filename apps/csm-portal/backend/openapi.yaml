@@ -4176,6 +4176,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+    delete:
+      summary: >
+        Delete a time card (ServiceNow data source only). Only validates that
+        id is a well-formed UUID; the entity service (and, underneath it,
+        ServiceNow) enforces that the caller is the card's own submitter and
+        that it's still in the submitted state, the same trust model the
+        PATCH operation above uses.
+      operationId: deleteTimeCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the time card.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Time card deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteTimeCardResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Time card not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
 
   /incidents/search:
     post:
@@ -4905,6 +4960,12 @@ components:
           type: string
         timeCard:
           $ref: '#/components/schemas/TimeCardView'
+
+    DeleteTimeCardResponse:
+      type: object
+      properties:
+        message:
+          type: string
 
     UpdateCaseRequest:
       type: object
