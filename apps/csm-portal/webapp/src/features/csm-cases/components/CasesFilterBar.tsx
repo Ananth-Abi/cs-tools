@@ -171,6 +171,15 @@ interface CasesFilterBarProps {
   showSeverityFilter?: boolean;
   /** Hide the case-type control when the surrounding view locks the type. */
   hideTypeFilter?: boolean;
+  /**
+   * Label for the case-type control. Defaults to "Case type"; a view that
+   * mixes every record type under a broader umbrella term (e.g. a project's
+   * Work items tab, which spans cases/service requests/security reports/
+   * engagements/announcements) can override it to "Work item type" so the
+   * label matches what the surrounding page calls these records, without
+   * changing the control's behavior or its `caseTypes` value shape.
+   */
+  typeFilterLabel?: string;
   /** Hide the project control when the surrounding view is project-scoped. */
   hideProjectFilter?: boolean;
   /** Show the engagement-type multi-select (only relevant when type is locked to engagement). */
@@ -397,6 +406,7 @@ export default function CasesFilterBar({
   availableProjects,
   showSeverityFilter = true,
   hideTypeFilter = false,
+  typeFilterLabel = "Case type",
   hideProjectFilter = false,
   showEngagementTypeFilter = false,
 }: CasesFilterBarProps): JSX.Element {
@@ -759,7 +769,7 @@ export default function CasesFilterBar({
               <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
                 <MultiSelectField
                   id="cases-filter-type"
-                  label="Case type"
+                  label={typeFilterLabel}
                   values={filters.caseTypes}
                   options={caseTypeOptions}
                   onChange={(next) => onChange({ ...filters, caseTypes: next })}
