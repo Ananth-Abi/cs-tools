@@ -2604,6 +2604,16 @@ type TimeCardMutationResponse struct {
 	TimeCard *TimeCardView `json:"timeCard,omitempty"`
 }
 
+// DeleteTimeCardRequest is the input for DELETE /time-cards/{id}.
+type DeleteTimeCardRequest struct {
+	ID string `json:"-"`
+}
+
+// DeleteTimeCardResponse is the output for DELETE /time-cards/{id}.
+type DeleteTimeCardResponse struct {
+	Message string `json:"message"`
+}
+
 // ChangeRequest is the full change request detail returned by GET /change-requests/{id}.
 // It extends SearchChangeRequestView with additional fields.
 type ChangeRequest struct {
