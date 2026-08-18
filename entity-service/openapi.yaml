@@ -5063,9 +5063,13 @@ components:
         - **product** (in): product family names (e.g. "API Manager",
           "Identity Server", "Asgardeo"). Matches every version of each named
           product. Only applied by the ServiceNow data source.
-        - **projectOnboardingStatus** (in): free-text SN choice labels for the
-          parent project's onboarding status (e.g. "Completed",
-          "Not-Applicable" -- not a closed enum at this layer).
+        - **projectOnboardingStatus** (in / notIn): free-text SN choice labels
+          for the parent project's onboarding status (e.g. "Completed",
+          "In-Progress", "Not-Applicable" -- not a closed enum at this
+          layer). notIn matches cases whose value is NOT one of the given
+          labels -- e.g. `{"field": "projectOnboardingStatus", "op": "notIn",
+          "values": ["In-Progress"]}` means "onboarding status is not in
+          progress".
         - **projectType** (in): the parent project's type, matched by the
           project type's name (e.g. "Subscription").
         - **creTeam** (in): the parent account's CRE (Customer Renewal &

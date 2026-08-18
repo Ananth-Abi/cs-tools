@@ -1393,6 +1393,11 @@ type ParsedCaseFilters struct {
 	// status is one of these values (optional; free-text SN choice labels, e.g.
 	// "Completed", "Not-Applicable" -- not a closed enum at this layer).
 	ProjectOnboardingStatuses []string
+	// ExcludeProjectOnboardingStatuses filters to cases whose parent project's
+	// onboarding status is NOT one of these values (optional; same free-text
+	// vocabulary as ProjectOnboardingStatuses). Inverse of that field --
+	// e.g. values: ["In-Progress"] means "onboarding status is not in progress".
+	ExcludeProjectOnboardingStatuses []string
 	// ProjectTypeNames filters to cases whose parent project's type is one of
 	// these project-type names, e.g. "Subscription" (optional; the backing data
 	// source matches project type by name, not by id).

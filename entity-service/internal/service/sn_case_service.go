@@ -398,8 +398,9 @@ type snCaseFilters struct {
 	// InternalID: see domain.ParsedCaseFilters.InternalID doc comment. Exact
 	// match against ServiceNow's `u_wso2_case_id` column -- not part of the
 	// free-text SearchQuery scan.
-	InternalID                string   `json:"internalId,omitempty"`
-	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses,omitempty"`
+	InternalID                       string   `json:"internalId,omitempty"`
+	ProjectOnboardingStatuses        []string `json:"projectOnboardingStatuses,omitempty"`
+	ExcludeProjectOnboardingStatuses []string `json:"excludeProjectOnboardingStatuses,omitempty"`
 	// ProjectTypeNames carries project-type NAMES (e.g. "Subscription"), not
 	// sys_ids: CaseUtils.searchCases matches project.u_project_type.u_name.
 	// It goes out under its own key, "projectTypes", rather than reusing the
@@ -2170,44 +2171,45 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 	snCaseTypes := domainTypeKeysToSN(parsed.Types)
 
 	return snCaseFilters{
-		CaseTypes:                 snCaseTypes,
-		SearchQuery:               searchQuery,
-		ProjectIDs:                uuidsToSysids(parsed.ProjectIDs),
-		DeploymentIDs:             uuidsToSysids(parsed.DeploymentIDs),
-		StateKeys:                 domainStatesToSNIDs(parsed.States),
-		ExcludeStates:             domainStatesToSNIDs(parsed.ExcludeStates),
-		SeverityKeys:              domainSeveritiesToSNIDs(parsed.Severities),
-		IssueTypeKeys:             domainIssueTypesToSNIDs(parsed.IssueTypes),
-		EngagementTypeKeys:        domainEngagementTypesToSNIDs(parsed.EngagementTypes),
-		ClosedStartDate:           formatSNDateTimeUTC(parsed.ClosedStartDate),
-		ClosedEndDate:             formatSNDateTimeUTC(parsed.ClosedEndDate),
-		ResolvedStartDate:         formatSNDateTimeUTC(parsed.ResolvedStartDate),
-		ResolvedEndDate:           formatSNDateTimeUTC(parsed.ResolvedEndDate),
-		StartCreatedDate:          formatSNDateTimeUTC(parsed.StartCreatedDate),
-		EndCreatedDate:            formatSNDateTimeUTC(parsed.EndCreatedDate),
-		StartUpdatedDate:          formatSNDateTimeUTC(parsed.StartUpdatedDate),
-		EndUpdatedDate:            formatSNDateTimeUTC(parsed.EndUpdatedDate),
-		CreatedBy:                 parsed.CreatedBy,
-		CreatedByMe:               parsed.CreatedByMe,
-		WorkStateKeys:             domainWorkStatesToSNIDs(parsed.WorkStates),
-		AssignedUserIDs:           uuidsToSysids(parsed.AssignedUserIDs),
-		ProductNames:              parsed.ProductNames,
-		Tags:                      parsed.Tags,
-		ExcludeTags:               parsed.ExcludeTags,
-		ParentID:                  snParentIDFilter(parsed.ParentID),
-		Number:                    stringPtrValue(parsed.Number),
-		InternalID:                stringPtrValue(parsed.InternalID),
-		ProjectOnboardingStatuses: parsed.ProjectOnboardingStatuses,
-		ProjectTypeNames:          parsed.ProjectTypeNames,
-		CreTeamIDs:                uuidsToSysids(parsed.CreTeamIDs),
-		SreTeamIDs:                uuidsToSysids(parsed.SreTeamIDs),
-		AccountIDs:                uuidsToSysids(parsed.AccountIDs),
-		Unassigned:                parsed.Unassigned,
-		ResolutionNotesEmpty:      parsed.ResolutionNotesEmpty,
-		TaskSLAFilter:             buildSNTaskSLAFilter(parsed.TaskSLAFilter),
-		EscalationLevels:          parsed.EscalationLevels,
-		IsEscalated:               parsed.HasActiveEscalation,
-		OrGroups:                  buildSNCaseFilterGroups(parsed.OrGroups),
+		CaseTypes:                        snCaseTypes,
+		SearchQuery:                      searchQuery,
+		ProjectIDs:                       uuidsToSysids(parsed.ProjectIDs),
+		DeploymentIDs:                    uuidsToSysids(parsed.DeploymentIDs),
+		StateKeys:                        domainStatesToSNIDs(parsed.States),
+		ExcludeStates:                    domainStatesToSNIDs(parsed.ExcludeStates),
+		SeverityKeys:                     domainSeveritiesToSNIDs(parsed.Severities),
+		IssueTypeKeys:                    domainIssueTypesToSNIDs(parsed.IssueTypes),
+		EngagementTypeKeys:               domainEngagementTypesToSNIDs(parsed.EngagementTypes),
+		ClosedStartDate:                  formatSNDateTimeUTC(parsed.ClosedStartDate),
+		ClosedEndDate:                    formatSNDateTimeUTC(parsed.ClosedEndDate),
+		ResolvedStartDate:                formatSNDateTimeUTC(parsed.ResolvedStartDate),
+		ResolvedEndDate:                  formatSNDateTimeUTC(parsed.ResolvedEndDate),
+		StartCreatedDate:                 formatSNDateTimeUTC(parsed.StartCreatedDate),
+		EndCreatedDate:                   formatSNDateTimeUTC(parsed.EndCreatedDate),
+		StartUpdatedDate:                 formatSNDateTimeUTC(parsed.StartUpdatedDate),
+		EndUpdatedDate:                   formatSNDateTimeUTC(parsed.EndUpdatedDate),
+		CreatedBy:                        parsed.CreatedBy,
+		CreatedByMe:                      parsed.CreatedByMe,
+		WorkStateKeys:                    domainWorkStatesToSNIDs(parsed.WorkStates),
+		AssignedUserIDs:                  uuidsToSysids(parsed.AssignedUserIDs),
+		ProductNames:                     parsed.ProductNames,
+		Tags:                             parsed.Tags,
+		ExcludeTags:                      parsed.ExcludeTags,
+		ParentID:                         snParentIDFilter(parsed.ParentID),
+		Number:                           stringPtrValue(parsed.Number),
+		InternalID:                       stringPtrValue(parsed.InternalID),
+		ProjectOnboardingStatuses:        parsed.ProjectOnboardingStatuses,
+		ExcludeProjectOnboardingStatuses: parsed.ExcludeProjectOnboardingStatuses,
+		ProjectTypeNames:                 parsed.ProjectTypeNames,
+		CreTeamIDs:                       uuidsToSysids(parsed.CreTeamIDs),
+		SreTeamIDs:                       uuidsToSysids(parsed.SreTeamIDs),
+		AccountIDs:                       uuidsToSysids(parsed.AccountIDs),
+		Unassigned:                       parsed.Unassigned,
+		ResolutionNotesEmpty:             parsed.ResolutionNotesEmpty,
+		TaskSLAFilter:                    buildSNTaskSLAFilter(parsed.TaskSLAFilter),
+		EscalationLevels:                 parsed.EscalationLevels,
+		IsEscalated:                      parsed.HasActiveEscalation,
+		OrGroups:                         buildSNCaseFilterGroups(parsed.OrGroups),
 	}
 }
 

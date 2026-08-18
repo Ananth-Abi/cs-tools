@@ -187,6 +187,18 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			},
 		},
 		{
+			name: "projectOnboardingStatus notIn",
+			in:   []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "notIn", Values: []string{"In-Progress"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.ExcludeProjectOnboardingStatuses) != 1 || p.ExcludeProjectOnboardingStatuses[0] != "In-Progress" {
+					t.Fatalf("ExcludeProjectOnboardingStatuses = %v", p.ExcludeProjectOnboardingStatuses)
+				}
+				if len(p.ProjectOnboardingStatuses) != 0 {
+					t.Fatalf("ProjectOnboardingStatuses = %v, want empty", p.ProjectOnboardingStatuses)
+				}
+			},
+		},
+		{
 			name: "parentId eq",
 			in:   []domain.CaseFieldFilter{{Field: "parentId", Op: "eq", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
@@ -241,6 +253,7 @@ func TestParseCaseFieldFilters_Rejections(t *testing.T) {
 		{name: "createdOn bad date format", in: []domain.CaseFieldFilter{{Field: "createdOn", Op: "gte", Values: []string{"not-a-date"}}}},
 		{name: "number in unsupported", in: []domain.CaseFieldFilter{{Field: "number", Op: "in", Values: []string{"CS0441174"}}}},
 		{name: "internalId in unsupported", in: []domain.CaseFieldFilter{{Field: "internalId", Op: "in", Values: []string{"12345"}}}},
+		{name: "projectOnboardingStatus eq unsupported", in: []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "eq", Values: []string{"Completed"}}}},
 	}
 
 	for _, tc := range cases {
