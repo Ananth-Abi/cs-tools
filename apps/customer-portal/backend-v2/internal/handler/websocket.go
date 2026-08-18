@@ -35,6 +35,7 @@ import (
 // WebSocketHandler.
 type wsStreamer interface {
 	StreamChat(ctx context.Context, sessionID, payload string, caller aichatagent.BrowserConn) (map[string]json.RawMessage, error)
+	SendSideChannel(ctx context.Context, sessionID, payload string, caller aichatagent.BrowserConn) error
 }
 
 // wsMaxMessageBytes bounds the size of a single WebSocket frame this handler
@@ -54,12 +55,27 @@ const wsIdleTimeout = 5 * time.Minute
 type entityCommentCreator interface {
 	CreateComment(ctx context.Context, req entity.CreateCommentRequest) (entity.CreateCommentResponse, error)
 	UpdateConversation(ctx context.Context, id string, req entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error)
+	GetConversation(ctx context.Context, id string) (entity.ConversationDetails, error)
 	GetProject(ctx context.Context, id string) (entity.ProjectDetailsView, error)
 }
 
 // wsAutoResolveState is entity-service's ConversationState value used to
 // auto-resolve a conversation when the AI agent reports the issue solved.
 const wsAutoResolveState = "RESOLVED"
+
+// msgTypeFeedback/msgTypeTokenIncreaseRequest are the inbound side-channel
+// message types — a thumbs up/down on an answer, and a request asking support to
+// raise a token limit. Mirrors MSG_TYPE_FEEDBACK/MSG_TYPE_TOKEN_INCREASE_REQUEST
+// in apps/customer-portal/backend's modules/ai_chat_agent/constants.bal.
+const (
+	msgTypeFeedback             = "feedback"
+	msgTypeTokenIncreaseRequest = "token_increase_request"
+)
+
+// requestedByField names the actor on a token-increase request. It is always
+// rewritten server-side from the authenticated session — never trusted from the
+// browser — because it lands in a durable audit trail. See handleSideChannel.
+const requestedByField = "requestedBy"
 
 // wsSubprotocol is the WebSocket subprotocol this endpoint negotiates. The
 // frontend offers it (see WS_CUSTOMER_PORTAL in the webapp's apiConstants.ts)
@@ -339,6 +355,23 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 		return
 	}
 
+	// Side-channel messages — an answer rating, or a request to raise a token
+	// limit. Dispatched before everything below, because none of it applies to
+	// them and all of it causes harm:
+	//
+	//   - StreamChat reads until a "final" event, which the agent never sends
+	//     for these (it answers with a "*_ack"), so the turn stalled until the
+	//     read deadline. The browser-facing read loop is strictly sequential, so
+	//     that stalled the whole connection: the customer's next message was not
+	//     even read off the socket. The chat looked dead while it was fine.
+	//   - persisting the "user query" makes no sense for a rating, which carries
+	//     no message at all.
+	//   - the resolved/auto-resolve bookkeeping likewise does not apply.
+	if msgType, _ := parsed["type"].(string); msgType == msgTypeFeedback || msgType == msgTypeTokenIncreaseRequest {
+		h.handleSideChannel(ctx, conn, user, projectID, msgType, parsed)
+		return
+	}
+
 	conversationID, _ := parsed["conversationId"].(string)
 	if conversationID == "" || !uuidRe.MatchString(conversationID) {
 		_ = writeWSJSON(conn, wsEvent{
@@ -399,10 +432,91 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 		_ = json.Unmarshal(raw, &resolved)
 	}
 	if resolved {
+		// Never downgrade a conversation a case was created from: CONVERTED
+		// outranks RESOLVED. Without this check the agent reporting the issue
+		// solved would silently overwrite the converted state, and the chat
+		// stopped being attributable to the case it produced.
+		//
+		// A failed lookup deliberately does not block the transition — the
+		// pre-existing behaviour (resolve) is the safer default when the current
+		// state is unknown, and this whole branch is best-effort bookkeeping.
+		current, err := h.entity.GetConversation(ctx, conversationID)
+		if err != nil {
+			slog.WarnContext(ctx, "entity GetConversation failed before auto-resolve; proceeding", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
+		} else if isConvertedState(current.State) {
+			slog.DebugContext(ctx, "conversation already converted; skipping the resolved transition", "conversationID", conversationID)
+			return
+		}
 		if _, err := h.entity.UpdateConversation(ctx, conversationID, entity.UpdateConversationRequest{State: wsAutoResolveState}); err != nil {
 			slog.ErrorContext(ctx, "entity UpdateConversation failed to auto-resolve", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
 		}
 	}
+}
+
+// handleSideChannel forwards a rating or token-increase request to the AI agent
+// and pipes the acknowledgement back, bypassing the chat-turn path entirely.
+//
+// The requester is stamped from the authenticated session rather than trusted
+// from the browser, and rewritten unconditionally: when there is no session
+// email to stamp, any requestedBy the client supplied is *removed* rather than
+// forwarded. Otherwise that one path would let a caller write someone else's
+// name into a durable audit row. So the field is either this session's user or
+// absent, never client-supplied — the upstream falls back to the account when it
+// is absent. Mirrors the Ballerina backend's onMessage side-channel branch.
+func (h *WebSocketHandler) handleSideChannel(ctx context.Context, conn *websocket.Conn, user *middleware.UserInfo, projectID, msgType string, parsed map[string]any) {
+	conversationID, _ := parsed["conversationId"].(string)
+	if conversationID == "" || !uuidRe.MatchString(conversationID) {
+		// The client knows which answer it is rating even when this connection
+		// has not carried a turn yet, so a missing id is a client bug, not a
+		// resumable state. Dropped rather than surfaced: a failed rating must not
+		// interrupt the chat.
+		slog.ErrorContext(ctx, "discarding side-channel message: no usable conversation id", "userID", user.UserID, "msgType", msgType)
+		return
+	}
+
+	payload, dropped, err := stampRequestedBy(parsed, user.Email)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to re-encode side-channel payload", "userID", user.UserID, "msgType", msgType, "err", summarizeErr(err))
+		return
+	}
+	if dropped {
+		// Should not happen: an authenticated session always carries an email.
+		// Logged because the difference is a named requester versus an anonymous
+		// audit row.
+		slog.WarnContext(ctx, "dropping client-supplied requestedBy: no authenticated email on this session", "userID", user.UserID, "msgType", msgType)
+	}
+
+	agentSessionID := projectID + ":" + conversationID
+	if err := h.ai.SendSideChannel(ctx, agentSessionID, string(payload), conn); err != nil {
+		slog.ErrorContext(ctx, "aichatagent SendSideChannel failed", "userID", user.UserID, "conversationID", conversationID, "msgType", msgType, "err", summarizeErr(err))
+	}
+}
+
+// stampRequestedBy rewrites the requester on a side-channel payload from the
+// authenticated session, returning the re-encoded bytes and whether a
+// client-supplied value had to be discarded.
+//
+// The rewrite is unconditional: when email is empty, any requestedBy the client
+// supplied is *removed* rather than forwarded. Otherwise that one path would let
+// a caller write someone else's name into a durable audit row. So the field is
+// either this session's user or absent, never client-supplied — the upstream
+// falls back to the account when it is absent.
+func stampRequestedBy(parsed map[string]any, email string) (payload []byte, dropped bool, err error) {
+	if email != "" {
+		parsed[requestedByField] = email
+	} else if _, present := parsed[requestedByField]; present {
+		delete(parsed, requestedByField)
+		dropped = true
+	}
+	payload, err = json.Marshal(parsed)
+	return payload, dropped, err
+}
+
+// isConvertedState reports whether a conversation has already been converted
+// into a case. Compared case-insensitively because the state is a plain string
+// on the wire, and nil-safe because entity-service types it as optional.
+func isConvertedState(state *string) bool {
+	return state != nil && strings.EqualFold(strings.TrimSpace(*state), conversationStateConverted)
 }
 
 func writeWSJSON(conn *websocket.Conn, v any) error {

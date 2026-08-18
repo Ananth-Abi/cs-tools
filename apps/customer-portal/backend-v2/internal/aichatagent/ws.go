@@ -37,7 +37,19 @@ const (
 	eventPayloadKey = "payload"
 	eventFinal      = "final"
 	eventError      = "error"
+
+	// eventFeedbackAck/eventTokenRequestAck terminate a side-channel exchange.
+	// The agent answers a rating or a token-increase request with one of these
+	// and never sends a "final" — see SendSideChannel.
+	eventFeedbackAck     = "feedback_ack"
+	eventTokenRequestAck = "token_request_ack"
 )
+
+// sideChannelTimeout bounds how long SendSideChannel waits for an
+// acknowledgement. The upstream answers these in well under a second, so this
+// is far shorter than idleTimeout — a side-channel exchange must never park an
+// upstream connection for the length of a chat turn.
+const sideChannelTimeout = 30 * time.Second
 
 // maxMessageBytes bounds the size of a single frame read from the upstream
 // AI chat agent — mirrors internal/handler/websocket.go's wsMaxMessageBytes
@@ -185,4 +197,74 @@ func (c *WSClient) StreamChat(ctx context.Context, sessionID, payload string, ca
 		time.Now().Add(2*time.Second))
 
 	return finalPayload, nil
+}
+
+// SendSideChannel forwards a side-channel message — an answer rating, or a
+// request to raise a token limit — to the upstream agent and pipes events back
+// to caller until it acknowledges.
+//
+// Deliberately separate from StreamChat, because these are not chat turns: the
+// agent answers them with a "*_ack" and never sends a "final". Routing them
+// through StreamChat left it reading for an event that could not arrive until
+// the read deadline expired, and because the browser-facing read loop is
+// strictly sequential (it does not read the next frame until the current one is
+// handled) the whole connection stalled for that long — the customer's next
+// message was not even read off the socket, so the chat looked dead while the
+// socket was fine. Mirrors apps/customer-portal/backend's
+// ai_chat_agent:sendSideChannelMessage.
+//
+// A read timeout or a mid-exchange failure is reported as a nil error: the write
+// succeeded, so the rating may well have been stored, and telling the customer
+// their rating failed would be worse than saying nothing. Only a failure to
+// open or write to the upstream connection returns an error.
+func (c *WSClient) SendSideChannel(ctx context.Context, sessionID, payload string, caller BrowserConn) error {
+	conn, err := c.dial(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	conn.SetReadLimit(maxMessageBytes)
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
+		return fmt.Errorf("aichatagent: write side-channel message: %w", err)
+	}
+
+	acknowledged := false
+	for {
+		deadline := time.Now().Add(sideChannelTimeout)
+		if dl, ok := ctx.Deadline(); ok && dl.Before(deadline) {
+			deadline = dl
+		}
+		_ = conn.SetReadDeadline(deadline)
+
+		_, data, err := conn.ReadMessage()
+		if err != nil {
+			// Includes the read timeout and a normal upstream close.
+			break
+		}
+		if err := caller.WriteMessage(websocket.TextMessage, data); err != nil {
+			// The browser went away; nothing left to forward to.
+			break
+		}
+
+		var parsed map[string]json.RawMessage
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			continue
+		}
+		var evtType string
+		if raw, ok := parsed[eventTypeKey]; ok {
+			_ = json.Unmarshal(raw, &evtType)
+		}
+		if evtType == eventFeedbackAck || evtType == eventTokenRequestAck || evtType == eventError {
+			acknowledged = true
+			break
+		}
+	}
+
+	if acknowledged {
+		_ = conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "acknowledged"),
+			time.Now().Add(2*time.Second))
+	}
+	return nil
 }
