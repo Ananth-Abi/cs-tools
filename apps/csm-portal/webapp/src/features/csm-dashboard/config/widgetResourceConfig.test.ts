@@ -136,6 +136,28 @@ describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
     expect(parsed.createdOnGte).toBe("2026-01-01");
   });
 
+  it("carries sreTeam through to the href the same way creTeam does (CodeRabbit #3801153841/#3801153843)", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [{ field: "sreTeam", op: "in", values: ["team-sre-abt"] }],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.sreTeams).toEqual(["team-sre-abt"]);
+  });
+
+  it("creTeam and sreTeam survive together on the same widget, independently", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "creTeam", op: "in", values: ["team-abt"] },
+        { field: "sreTeam", op: "in", values: ["team-sre-abt"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.csTeams).toEqual(["team-abt"]);
+    expect(parsed.sreTeams).toEqual(["team-sre-abt"]);
+  });
+
   it("the org-wide-figure regression: team + tag-exclusion + state survive together, unchanged, end to end", () => {
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [

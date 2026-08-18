@@ -236,6 +236,9 @@ var snCaseTypeMap = map[string]string{
 	"security_report_analysis": "security_report_analysis",
 	"announcement":             "announcement",
 	"engagement":               "engagement",
+	"hosting":                  "hosting",
+	"hosting_query":            "hosting_query",
+	"hosting_task":             "hosting_task",
 }
 
 // snCaseTypeSysidMap maps ServiceNow caseType sysids to domain case type values.
@@ -246,6 +249,9 @@ var snCaseTypeSysidMap = map[string]string{
 	"ab36479047ccf510a0a29cd3846d43ee": "security_report_analysis",
 	"3b8b43311b58f010cb6898aebd4bcb8f": "announcement",
 	"8f8fc2c41b0bd550d64e64a2604bcb38": "engagement",
+	"bfa1473c1bbcb410cb6898aebd4bcb52": "hosting",
+	"80810ff81bbcb410cb6898aebd4bcb3c": "hosting_query",
+	"f46103f81bbcb410cb6898aebd4bcb27": "hosting_task",
 }
 
 // snCaseTypeToDomain converts a SN caseType entity ref to the domain type string.

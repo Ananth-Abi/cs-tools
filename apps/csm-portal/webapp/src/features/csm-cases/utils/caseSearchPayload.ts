@@ -108,6 +108,13 @@ export function buildCaseSearchFilters(
       values: filters.csTeams,
     });
   }
+  if (filters.sreTeams.length > 0) {
+    fieldFilters.push({
+      field: "sreTeam",
+      op: "in",
+      values: filters.sreTeams,
+    });
+  }
   // `tags`/`excludeTags` both target the `tag` field but with different ops
   // (`in`/`notIn`) — two independent entries, not a single one an op flag
   // toggles, so both may be active at once (the backend ANDs the array).

@@ -1058,6 +1058,49 @@ func TestSNCaseService_SearchCases_EmptyTypesFilterSendsNoTypeRestriction(t *tes
 	}
 }
 
+// TestSNCaseService_SearchCases_HostingCaseTypesTranslate verifies the three
+// SaaS/SRE-specific case types (hosting, hosting_query, hosting_task) are
+// accepted by search and translated to their own SN wire values, not
+// silently dropped by snCaseTypeMap the way they were before it carried
+// entries for them.
+func TestSNCaseService_SearchCases_HostingCaseTypesTranslate(t *testing.T) {
+	var gotBody struct {
+		Filters struct {
+			CaseTypes []string `json:"caseTypes"`
+		} `json:"filters"`
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "type", Op: "in", Values: []string{"hosting", "hosting_query", "hosting_task"}},
+			},
+		},
+	}
+	if _, err := svc.SearchCases(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"hosting", "hosting_query", "hosting_task"}
+	if len(gotBody.Filters.CaseTypes) != len(want) {
+		t.Fatalf("caseTypes = %v, want %v", gotBody.Filters.CaseTypes, want)
+	}
+	for i, w := range want {
+		if gotBody.Filters.CaseTypes[i] != w {
+			t.Fatalf("caseTypes[%d] = %q, want %q (hosting types must not be dropped)", i, gotBody.Filters.CaseTypes[i], w)
+		}
+	}
+}
+
 // TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload proves the
 // generic filters array (the new public contract) still produces the exact
 // same named-field Ballerina payload SearchCases has always sent, just fed by

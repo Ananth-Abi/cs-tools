@@ -111,6 +111,9 @@ func ParseChangeRequestFieldFilters(filters []domain.ChangeRequestFieldFilter) (
 			if err := requireChangeRequestFilterValues(f); err != nil {
 				return parsedChangeRequestFilters{}, err
 			}
+			if len(f.Values) != 1 {
+				return parsedChangeRequestFilters{}, &apierror.ValidationError{Msg: "filters: field \"createdOn\" accepts exactly one value"}
+			}
 			t, err := parseChangeRequestFilterDate(f, f.Values[0])
 			if err != nil {
 				return parsedChangeRequestFilters{}, err

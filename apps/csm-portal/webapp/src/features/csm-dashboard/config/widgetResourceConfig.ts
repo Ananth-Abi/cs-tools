@@ -232,6 +232,8 @@ function translateCaseDashboardFilters(
 
   const csTeams = caseFilterValues(fieldFilters, "creTeam");
   if (csTeams && csTeams.length > 0) out.csTeams = csTeams;
+  const sreTeams = caseFilterValues(fieldFilters, "sreTeam");
+  if (sreTeams && sreTeams.length > 0) out.sreTeams = sreTeams;
 
   // `tag` in vs. notIn -> two distinct CasesFilters fields, matched by
   // field+op together so one can never be mistaken for the other.

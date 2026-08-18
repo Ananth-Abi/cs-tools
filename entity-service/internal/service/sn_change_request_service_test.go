@@ -284,6 +284,28 @@ func TestSNChangeRequestService_SearchChangeRequests_CreatedEndDateBeforeStart(t
 	}
 }
 
+// TestSNChangeRequestService_SearchChangeRequests_CreatedOnMultipleValuesRejected
+// verifies a createdOn predicate carrying more than one value is rejected rather
+// than silently using only Values[0] and discarding the rest.
+func TestSNChangeRequestService_SearchChangeRequests_CreatedOnMultipleValuesRejected(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowChangeRequestService(nil)
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{
+			Filters: []domain.ChangeRequestFieldFilter{
+				{Field: "createdOn", Op: "gte", Values: []string{start.Format(time.RFC3339), end.Format(time.RFC3339)}},
+			},
+		},
+	}
+	_, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 // TestSNChangeRequestService_SearchChangeRequests_InvalidFilterField verifies an
 // unsupported filters[] field name is rejected before any SN call.
 func TestSNChangeRequestService_SearchChangeRequests_InvalidFilterField(t *testing.T) {

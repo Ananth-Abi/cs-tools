@@ -104,6 +104,10 @@ export interface CasesFilters {
   productNames: string[];
   /** CS team group ids (`creTeam` op:in) the case's project is scoped to. */
   csTeams: string[];
+  /** SRE team group ids (`sreTeam` op:in) the case's project is scoped to.
+   * Independent of `csTeams` -- a case's account may carry both a CRE and
+   * an SRE team assignment. */
+  sreTeams: string[];
   /** Tags the case must carry (`tag` op:in). Independent of `excludeTags` —
    * both may be set at once (the backend ANDs them). */
   tags: string[];
@@ -247,9 +251,9 @@ interface ActiveFilterChip {
  * individually removable, though, or a user landing on a dashboard-filtered
  * cases list has no way to see (or undo) *why* it's filtered — hence one
  * chip per active value here, shown regardless of whether the filter grid
- * itself is expanded. `csTeams`/`tags`/`excludeTags` are included here too:
- * their bar controls were removed as clutter (they are advanced, rarely
- * hand-picked, and a better home for advanced filters is still to be
+ * itself is expanded. `csTeams`/`sreTeams`/`tags`/`excludeTags` are included
+ * here too: their bar controls were removed as clutter (they are advanced,
+ * rarely hand-picked, and a better home for advanced filters is still to be
  * designed), so a chip is now the ONLY way a user can see or clear them
  * after arriving from a dashboard click-through.
  */
@@ -258,7 +262,9 @@ function buildActiveFilterChips(
   /** groupId -> team display name, so a team chip never shows a raw UUID.
    * Falls back to the id when the lookup has not resolved (or the team is
    * unknown) rather than hiding the chip — an unlabelled filter the user can
-   * still see and remove beats an invisible one. */
+   * still see and remove beats an invisible one. Covers both `creGroupId`
+   * and `sreGroupId` keys — a caller passing a merged map lets one lookup
+   * serve both `csTeams` and `sreTeams` chips. */
   teamLabels: Record<string, string> = {},
 ): ActiveFilterChip[] {
   const chips: ActiveFilterChip[] = [];
@@ -268,6 +274,14 @@ function buildActiveFilterChips(
       key: `csTeam-${groupId}`,
       label: `CS team: ${teamLabels[groupId] ?? groupId}`,
       onRemove: (f) => ({ ...f, csTeams: f.csTeams.filter((t) => t !== groupId) }),
+    });
+  });
+
+  filters.sreTeams.forEach((groupId) => {
+    chips.push({
+      key: `sreTeam-${groupId}`,
+      label: `SRE team: ${teamLabels[groupId] ?? groupId}`,
+      onRemove: (f) => ({ ...f, sreTeams: f.sreTeams.filter((t) => t !== groupId) }),
     });
   });
 
@@ -389,19 +403,19 @@ export default function CasesFilterBar({
   const activeCount = countActiveFilters(filters);
   const hasActive = activeCount > 0;
 
-  // Only fetch the team registry when a CS-team filter is actually set -- it
-  // exists solely to label that chip, and the cases page should not pay for it
-  // on every load now that the team bar control is gone.
-  const { data: teams } = useTeams(filters.csTeams.length > 0);
-  const teamLabels = useMemo(
-    () =>
-      Object.fromEntries(
-        (teams ?? [])
-          .filter((t): t is typeof t & { creGroupId: string } => Boolean(t.creGroupId))
-          .map((t) => [t.creGroupId, t.name]),
-      ),
-    [teams],
-  );
+  // Only fetch the team registry when a CS-team or SRE-team filter is
+  // actually set -- it exists solely to label those chips, and the cases
+  // page should not pay for it on every load now that the team bar control
+  // is gone.
+  const { data: teams } = useTeams(filters.csTeams.length > 0 || filters.sreTeams.length > 0);
+  const teamLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    for (const t of teams ?? []) {
+      if (t.creGroupId) labels[t.creGroupId] = t.name;
+      if (t.sreGroupId) labels[t.sreGroupId] = t.name;
+    }
+    return labels;
+  }, [teams]);
 
   const activeFilterChips = useMemo(
     () => buildActiveFilterChips(filters, teamLabels),
