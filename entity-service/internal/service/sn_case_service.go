@@ -402,8 +402,12 @@ type snCaseFilters struct {
 	// rejected outright by request validation. "projectTypeIds" has no
 	// remaining producer or consumer on either portal and is being retired
 	// from the contract alongside this change.
-	ProjectTypeNames     []string `json:"projectTypes,omitempty"`
-	IntegrationCsTeamIDs []string `json:"integrationCsTeamIds,omitempty"`
+	ProjectTypeNames []string `json:"projectTypes,omitempty"`
+	// CreTeamIDs and SreTeamIDs go out under the wire keys the Ballerina/SN
+	// contract already uses (integrationCsTeamIds, sreTeamIds) -- only the Go
+	// domain naming changed, not the wire protocol.
+	CreTeamIDs           []string `json:"integrationCsTeamIds,omitempty"`
+	SreTeamIDs           []string `json:"sreTeamIds,omitempty"`
 	Unassigned           bool     `json:"unassigned,omitempty"`
 	ResolutionNotesEmpty bool     `json:"resolutionNotesEmpty,omitempty"`
 	// TaskSLAFilter: SN-side join on Task SLA table, filtering by businessElapsedPercent
@@ -2187,7 +2191,8 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		InternalID:                stringPtrValue(parsed.InternalID),
 		ProjectOnboardingStatuses: parsed.ProjectOnboardingStatuses,
 		ProjectTypeNames:          parsed.ProjectTypeNames,
-		IntegrationCsTeamIDs:      uuidsToSysids(parsed.IntegrationCsTeamIDs),
+		CreTeamIDs:                uuidsToSysids(parsed.CreTeamIDs),
+		SreTeamIDs:                uuidsToSysids(parsed.SreTeamIDs),
 		Unassigned:                parsed.Unassigned,
 		ResolutionNotesEmpty:      parsed.ResolutionNotesEmpty,
 		TaskSLAFilter:             buildSNTaskSLAFilter(parsed.TaskSLAFilter),
@@ -2251,8 +2256,11 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 		}
 	}
 	// projectType values are free-text project-type names (no UUID validation);
-	// integrationCsTeam values are still UUIDs.
-	if err := validateUUIDs("integrationCsTeam", req.Parsed.IntegrationCsTeamIDs); err != nil {
+	// creTeam/sreTeam values are still UUIDs.
+	if err := validateUUIDs("creTeam", req.Parsed.CreTeamIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
+	if err := validateUUIDs("sreTeam", req.Parsed.SreTeamIDs); err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
 

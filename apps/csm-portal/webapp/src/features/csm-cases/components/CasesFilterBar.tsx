@@ -102,7 +102,7 @@ export interface CasesFilters {
   engagementTypes: BeEngagementType[];
   /** Product family names (e.g. "API Manager"); matches all versions of each. */
   productNames: string[];
-  /** CS team group ids (`integrationCsTeam` op:in) the case's project is scoped to. */
+  /** CS team group ids (`creTeam` op:in) the case's project is scoped to. */
   csTeams: string[];
   /** Tags the case must carry (`tag` op:in). Independent of `excludeTags` —
    * both may be set at once (the backend ANDs them). */
@@ -397,8 +397,8 @@ export default function CasesFilterBar({
     () =>
       Object.fromEntries(
         (teams ?? [])
-          .filter((t): t is typeof t & { groupId: string } => Boolean(t.groupId))
-          .map((t) => [t.groupId, t.name]),
+          .filter((t): t is typeof t & { creGroupId: string } => Boolean(t.creGroupId))
+          .map((t) => [t.creGroupId, t.name]),
       ),
     [teams],
   );

@@ -233,7 +233,7 @@ describe("DashboardWidgetPreviewPage", () => {
             { field: "state", op: "in", values: ["open"] },
             { field: "tag", op: "notIn", values: ["s_dip"] },
             {
-              field: "integrationCsTeam",
+              field: "creTeam",
               op: "in",
               values: ["22222222-2222-2222-2222-222222222222"],
             },
@@ -247,7 +247,7 @@ describe("DashboardWidgetPreviewPage", () => {
     expect(group).toHaveTextContent("state: open");
     expect(group).toHaveTextContent("tag (notIn): s_dip");
     expect(group).toHaveTextContent(
-      "integrationCsTeam: 22222222-2222-2222-2222-222222222222",
+      "creTeam: 22222222-2222-2222-2222-222222222222",
     );
   });
 

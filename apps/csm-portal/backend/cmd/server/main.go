@@ -346,13 +346,14 @@ func loadDashboards() *dashboard.Registry {
 // loadDirectory resolves the reference catalogues from environment
 // configuration, once, at startup:
 //
-//	CSM_TEAM_REGISTRY  the team registry as "teamKey|Display Name|FAMILY|groupId"
-//	                   rows separated by commas, where FAMILY is one of cre-abt,
-//	                   cre, sre-abt or sre (case insensitive) and FAMILY and
-//	                   groupId are both optional. Unset means no teams are
-//	                   configured; there is deliberately no default, because
-//	                   team names are organisation vocabulary that must not be
-//	                   committed here.
+//	CSM_TEAM_REGISTRY  the team registry as
+//	                   "teamKey|Display Name|FAMILY|creGroupId|sreGroupId" rows
+//	                   separated by commas, where FAMILY is one of cre-abt,
+//	                   cre, sre-abt or sre (case insensitive) and FAMILY,
+//	                   creGroupId, and sreGroupId are all optional. Unset means
+//	                   no teams are configured; there is deliberately no
+//	                   default, because team names are organisation vocabulary
+//	                   that must not be committed here.
 //	CSM_USER_ROLES     the assignable-role allow-list, comma separated. Unset
 //	                   falls back to the committed default list.
 //

@@ -176,7 +176,7 @@ function caseFilterEntry(
  * Every field the case-search DSL supports (see `caseFilterFieldSet` in
  * `case_filters.go`) now has a home in `CasesFilters` and is passed through
  * — this used to drop `taskSLABusinessElapsedPercent`, `escalationLevel`/
- * `escalation`, `integrationCsTeam`, `tag`, `projectOnboardingStatus`,
+ * `escalation`, `creTeam`/`sreTeam`, `tag`, `projectOnboardingStatus`,
  * `projectType`, and the `createdOn`/`updatedOn`/`closedOn` date ranges,
  * which was the root cause of the click-through data-loss bug this function
  * exists to fix (a tile reading a filtered count landed on the org-wide
@@ -230,7 +230,7 @@ function translateCaseDashboardFilters(
     out.workStates = workStates as CasesFilters["workStates"];
   }
 
-  const csTeams = caseFilterValues(fieldFilters, "integrationCsTeam");
+  const csTeams = caseFilterValues(fieldFilters, "creTeam");
   if (csTeams && csTeams.length > 0) out.csTeams = csTeams;
 
   // `tag` in vs. notIn -> two distinct CasesFilters fields, matched by

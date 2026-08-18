@@ -103,7 +103,7 @@ export function buildCaseSearchFilters(
   }
   if (filters.csTeams.length > 0) {
     fieldFilters.push({
-      field: "integrationCsTeam",
+      field: "creTeam",
       op: "in",
       values: filters.csTeams,
     });

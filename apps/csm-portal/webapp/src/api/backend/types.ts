@@ -806,7 +806,8 @@ export type BeCaseFieldFilterField =
   | "product"
   | "projectOnboardingStatus"
   | "projectType"
-  | "integrationCsTeam"
+  | "creTeam"
+  | "sreTeam"
   | "resolutionNotes"
   | "parentId"
   | "taskSLABusinessElapsedPercent"
@@ -2129,14 +2130,20 @@ export interface BeTeam {
   id: string;
   name: string;
   family?: string;
-  /** The backing data source's assignment group id, reformatted as this
-   * platform's UUID — present only when the deployment's team registry has
-   * one configured for this team. This is the id an `integrationCsTeam`
+  /** The backing CRE (Customer Renewal & Expansion) group's id, reformatted
+   * as this platform's UUID — present only when the deployment's team
+   * registry has one configured for this team. This is the id a `creTeam`
    * case filter entry actually needs (see
    * `BE_CURRENT_USER_FILTER_PLACEHOLDER`-style team filter substitution in
    * `teamFilterPlaceholder.ts`) — never `id` above, which is just the
    * registry key. */
-  groupId?: string;
+  creGroupId?: string;
+  /** The backing SRE (Site Reliability Engineering) group's id, reformatted
+   * as this platform's UUID — present only when the deployment's team
+   * registry has one configured for this team. This is the id an `sreTeam`
+   * case filter entry actually needs — never `id` above, which is just the
+   * registry key. */
+  sreGroupId?: string;
 }
 
 export interface BeTeamSearchPayload {
@@ -3061,10 +3068,3 @@ export interface BeDashboard {
   widgets: BeDashboardWidget[];
 }
 
-/** One team from `POST /teams/search`. `id` is the registry team key,
- * stable across environments (unlike a group id). */
-export interface BeTeam {
-  id: string;
-  name: string;
-  family?: string;
-}

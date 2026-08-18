@@ -75,21 +75,29 @@ interface DashboardWidgetTileProps {
    * widget's own search request's `sortBy` (see `useWidgetData`) —
    * opaque, like `filters`. */
   sortBy?: Record<string, unknown>;
-  /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
-   * an array of every team's `groupId` in the current dashboard's family
-   * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL`),
-   * threaded down from `CsmDashboardPage` for resolving this widget's own
-   * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`)
-   * — never the team registry key. `undefined` for a non-team-based
-   * dashboard, or while the team isn't resolved yet (any `integrationCsTeam`
-   * filter entry carrying the placeholder is then dropped, not sent
-   * literally). */
-  selectedTeamGroupId?: string | string[];
+  /** The currently selected team's own `creGroupId` (see
+   * `BeTeam.creGroupId`), or an array of every team's `creGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected (see
+   * `ALL_TEAMS_SENTINEL`), threaded down from `CsmDashboardPage` for
+   * resolving this widget's own `__current_team__` filter placeholder for a
+   * `creTeam` filter entry (see `teamFilterPlaceholder.ts`) — never the
+   * team registry key. `undefined` for a non-team-based dashboard, or while
+   * the team isn't resolved yet (any `creTeam` filter entry carrying the
+   * placeholder is then dropped, not sent literally). */
+  selectedTeamCreGroupId?: string | string[];
+  /** The currently selected team's own `sreGroupId` (see
+   * `BeTeam.sreGroupId`), or an array of every team's `sreGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected — the
+   * `sreTeam`-filter counterpart of {@link selectedTeamCreGroupId}, resolved
+   * independently. `undefined` in the same cases `selectedTeamCreGroupId`
+   * is (any `sreTeam` filter entry carrying the placeholder is then
+   * dropped, not sent literally). */
+  selectedTeamSreGroupId?: string | string[];
   /** Human-readable label for the selected team (its own display `name`, or
    * the literal `"All ABTs"`) — used to resolve the `{{currentTeam}}` text
    * placeholder (see `widgetTextPlaceholder.ts`) inside `displayName`/
    * `description` before render. `undefined` in the same cases
-   * `selectedTeamGroupId` is (the token is then stripped rather than left
+   * `selectedTeamCreGroupId` is (the token is then stripped rather than left
    * literally visible). */
   selectedTeamLabel?: string;
 }
@@ -121,7 +129,8 @@ export default function DashboardWidgetTile({
   slices,
   columns,
   sortBy,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
 }: DashboardWidgetTileProps): JSX.Element {
   const theme = useTheme();
@@ -162,7 +171,9 @@ export default function DashboardWidgetTile({
   // list-page URL.
   const resolvePlaceholders = (f: Record<string, unknown>): Record<string, unknown> =>
     resolveCurrentUserPlaceholder(
-      resolveRelativeDateFilters(resolveTeamPlaceholder(f, selectedTeamGroupId)),
+      resolveRelativeDateFilters(
+        resolveTeamPlaceholder(f, selectedTeamCreGroupId, selectedTeamSreGroupId),
+      ),
       currentUserId,
     );
   // Carried on every count/pie/bar click-through below so the resource's own
@@ -190,7 +201,8 @@ export default function DashboardWidgetTile({
     listLimit,
     0,
     shape !== "pie" && shape !== "bar" && isVisible,
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     sortBy,
     currentUserId,
   );
@@ -199,7 +211,8 @@ export default function DashboardWidgetTile({
     resourceType,
     filters,
     shape === "pie" || shape === "bar" ? (slices ?? []) : [],
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     currentUserId,
     isVisible,
   );

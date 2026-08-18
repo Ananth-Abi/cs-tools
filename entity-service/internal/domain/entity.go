@@ -1397,9 +1397,12 @@ type ParsedCaseFilters struct {
 	// these project-type names, e.g. "Subscription" (optional; the backing data
 	// source matches project type by name, not by id).
 	ProjectTypeNames []string
-	// IntegrationCsTeamIDs filters to cases whose parent account's integration CS
-	// team is one of these team UUIDs (optional).
-	IntegrationCsTeamIDs []string
+	// CreTeamIDs filters to cases whose parent account's CRE (Customer Renewal &
+	// Expansion) team is one of these team UUIDs (optional).
+	CreTeamIDs []string
+	// SreTeamIDs filters to cases whose parent account's SRE (Site Reliability
+	// Engineering) team is one of these team UUIDs (optional).
+	SreTeamIDs []string
 	// Unassigned, when true, filters to cases with no assigned engineer. false and
 	// omitted are treated identically (optional).
 	Unassigned bool
@@ -1427,7 +1430,7 @@ type ParsedCaseFilters struct {
 // Deliberately narrower than ParsedCaseFilters: only fields with a direct,
 // non-subquery ServiceNow field mapping are supported inside an OR branch (no
 // tags/excludeTags/taskSLAFilter/parentId/createdBy/date-range/
-// projectOnboardingStatus/projectType/integrationCsTeam/resolutionNotes/
+// projectOnboardingStatus/projectType/creTeam/sreTeam/resolutionNotes/
 // unassigned/hasActiveEscalation) -- service.ParseCaseFieldFilterGroups
 // rejects any of those fields inside a branch with a validation error, they
 // remain usable only via the top-level (AND-only) Filters array.
@@ -2262,6 +2265,17 @@ type ChangeRequestSort struct {
 	Order ChangeRequestSortOrder `json:"order"`
 }
 
+// ChangeRequestFieldFilter is a single predicate in a change request search's
+// generic filter expression array: "field op values", mirroring
+// CaseFieldFilter's contract. See service.ParseChangeRequestFieldFilters for
+// the field/op enum and translation into the internal representation posted
+// to ServiceNow.
+type ChangeRequestFieldFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Values []string `json:"values,omitempty"`
+}
+
 // SearchChangeRequestsFilters holds all optional filter criteria for a change request search.
 type SearchChangeRequestsFilters struct {
 	ProjectIDs      []string              `json:"projectIds"`
@@ -2275,6 +2289,15 @@ type SearchChangeRequestsFilters struct {
 	// ServiceNow's `number` column, routed as a first-class filter rather
 	// than through the free-text SearchQuery scan.
 	Number *string `json:"number,omitempty"`
+	// Filters is the generic field/op/values filter array, additive to the
+	// named fields above. Supported fields:
+	//   - "createdOn" (op gte/lte): a single RFC3339 timestamp or YYYY-MM-DD
+	//     date bounding the change request's created timestamp; gte is
+	//     inclusive "on or after", lte is inclusive "on or before". A lte
+	//     bound earlier than its own gte bound is rejected.
+	//   - "assignmentGroupId" (op in): sys_user_group UUIDs.
+	// See service.ParseChangeRequestFieldFilters.
+	Filters []ChangeRequestFieldFilter `json:"filters,omitempty"`
 }
 
 // SearchChangeRequestsRequest is the input for a change request search operation.
@@ -3311,6 +3334,16 @@ type IncidentSort struct {
 	Order IncidentSortOrder `json:"order"`
 }
 
+// IncidentFieldFilter is a single predicate in an incident search's generic
+// filter expression array: "field op values", mirroring CaseFieldFilter's
+// contract. See service.ParseIncidentFieldFilters for the field/op enum and
+// translation into the internal representation posted to ServiceNow.
+type IncidentFieldFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Values []string `json:"values,omitempty"`
+}
+
 // SearchIncidentsFilters holds all optional filter criteria for an incident search.
 type SearchIncidentsFilters struct {
 	SearchQuery string             `json:"searchQuery"`
@@ -3321,6 +3354,14 @@ type SearchIncidentsFilters struct {
 	// ServiceNow's `number` column, routed as a first-class filter rather
 	// than through the free-text SearchQuery scan.
 	Number *string `json:"number,omitempty"`
+	// Filters is the generic field/op/values filter array. Supported fields:
+	//   - "state" (op in): domain IncidentState enum values (NEW,
+	//     IN_PROGRESS, ON_HOLD, RESOLVED, CLOSED, CANCELLED), translated to
+	//     ServiceNow's raw incident_state numeric keys.
+	//   - "assignmentGroupId" (op in): sys_user_group UUIDs.
+	//   - "businessServiceId" (op in): business_service sys_id UUIDs.
+	// See service.ParseIncidentFieldFilters.
+	Filters []IncidentFieldFilter `json:"filters,omitempty"`
 }
 
 // SearchIncidentsRequest is the input for POST /incidents/search.

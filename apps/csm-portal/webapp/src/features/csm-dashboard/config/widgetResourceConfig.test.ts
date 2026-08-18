@@ -101,7 +101,7 @@ describe("WIDGET_RESOURCE_CONFIG.case.buildHref", () => {
 
 /**
  * Regression: the motivating bug for this whole feature. A widget filtering
- * `integrationCsTeam in [<team>]` + `tag notIn [s_dip]` + `state in [...]`
+ * `creTeam in [<team>]` + `tag notIn [s_dip]` + `state in [...]`
  * clicked through to `/cases?states=...` with the team and tag conditions
  * silently dropped — a tile reading 2 landed on a list of 30 (the org-wide
  * figure). Confirmed live three times before this fix. This suite proves the
@@ -110,10 +110,10 @@ describe("WIDGET_RESOURCE_CONFIG.case.buildHref", () => {
  * the right substring.
  */
 describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
-  it("carries integrationCsTeam, tag notIn, projectOnboardingStatus, escalation, escalationLevel, projectType, and SLA%/date ranges through to the href", () => {
+  it("carries creTeam, tag notIn, projectOnboardingStatus, escalation, escalationLevel, projectType, and SLA%/date ranges through to the href", () => {
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [
-        { field: "integrationCsTeam", op: "in", values: ["team-abt"] },
+        { field: "creTeam", op: "in", values: ["team-abt"] },
         { field: "tag", op: "notIn", values: ["s_dip"] },
         { field: "projectOnboardingStatus", op: "in", values: ["in_progress"] },
         { field: "escalation", op: "isNotEmpty" },
@@ -139,7 +139,7 @@ describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
   it("the org-wide-figure regression: team + tag-exclusion + state survive together, unchanged, end to end", () => {
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [
-        { field: "integrationCsTeam", op: "in", values: ["team-abt"] },
+        { field: "creTeam", op: "in", values: ["team-abt"] },
         { field: "tag", op: "notIn", values: ["s_dip"] },
         { field: "state", op: "in", values: ["open", "work_in_progress"] },
       ],
@@ -179,7 +179,7 @@ describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
     // hrefs were byte-identical because `taskSLABusinessElapsedPercent` was
     // dropped entirely — see the cases-list-advanced-filters task record.
     const teamFilters = [
-      { field: "integrationCsTeam", op: "in", values: ["22222222-2222-2222-2222-222222222222"] },
+      { field: "creTeam", op: "in", values: ["22222222-2222-2222-2222-222222222222"] },
       { field: "state", op: "in", values: ["open", "work_in_progress", "waiting_on_wso2"] },
     ];
     const atRiskHref = WIDGET_RESOURCE_CONFIG.case.buildHref({

@@ -100,8 +100,8 @@ func TestSearchUsers_UnfilteredBodyIsForwardedVerbatim(t *testing.T) {
 // accounts.creTeam.id/sreTeam.id already expose -- and must resolve to the
 // same group name a teamKey would.
 func TestSearchUsers_TeamFilterAcceptsUUIDForm(t *testing.T) {
-	// abt-1's fixture GroupID "aaaa...aaaa" (32 hex chars, see testTeamRegistry
-	// in helpers_test.go) resolves to this UUID.
+	// abt-1's fixture CreGroupID "aaaa...aaaa" (32 hex chars, see
+	// testTeamRegistry in helpers_test.go) resolves to this UUID.
 	captured, w := capturedSearch(t, `{"filters":{"teamIds":["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]}}`)
 	assertStatus(t, w, http.StatusOK)
 

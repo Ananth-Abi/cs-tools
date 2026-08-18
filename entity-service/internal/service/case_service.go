@@ -461,8 +461,11 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if len(parsed.ProjectTypeNames) > 0 {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "projectType" is not supported by this data source`}
 	}
-	if len(parsed.IntegrationCsTeamIDs) > 0 {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "integrationCsTeam" is not supported by this data source`}
+	if len(parsed.CreTeamIDs) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "creTeam" is not supported by this data source`}
+	}
+	if len(parsed.SreTeamIDs) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "sreTeam" is not supported by this data source`}
 	}
 	if parsed.Unassigned {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "assignedUserId" (isEmpty) is not supported by this data source`}

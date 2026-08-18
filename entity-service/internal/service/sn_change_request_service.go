@@ -92,6 +92,12 @@ type snChangeRequestFilters struct {
 	// Exact match against ServiceNow's `number` column -- not part of the
 	// free-text SearchQuery scan.
 	Number string `json:"number,omitempty"`
+	// CreatedStartDate/CreatedEndDate: see domain.SearchChangeRequestsFilters
+	// doc comment; mirrors ClosedStartDate/ClosedEndDate.
+	CreatedStartDate string `json:"createdStartDate,omitempty"`
+	CreatedEndDate   string `json:"createdEndDate,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
 }
 
 // snCRTypeIDMap maps domain ChangeRequestType enums to SN numeric type IDs.
@@ -106,6 +112,9 @@ var snCRTypeIDMap = map[domain.ChangeRequestType]int{
 
 // snCRStateIDMap maps domain ChangeRequestState enums to SN numeric state IDs.
 var snCRStateIDMap = map[domain.ChangeRequestState]int{
+	domain.ChangeRequestStateNew:              -5,
+	domain.ChangeRequestStateAssess:           -4,
+	domain.ChangeRequestStateAuthorize:        -3,
 	domain.ChangeRequestStateCustomerApproval: 5,
 	domain.ChangeRequestStateScheduled:        -2,
 	domain.ChangeRequestStateImplement:        -1,
@@ -130,6 +139,9 @@ var snCRSortFieldMap = map[domain.ChangeRequestSortField]string{
 }
 
 var validChangeRequestState = map[domain.ChangeRequestState]bool{
+	domain.ChangeRequestStateNew:              true,
+	domain.ChangeRequestStateAssess:           true,
+	domain.ChangeRequestStateAuthorize:        true,
 	domain.ChangeRequestStateCustomerApproval: true,
 	domain.ChangeRequestStateScheduled:        true,
 	domain.ChangeRequestStateImplement:        true,
@@ -178,6 +190,9 @@ func domainCRImpactsToSNIDs(impacts []domain.ChangeRequestImpact) []int {
 
 // snCRStateLabelMap maps SN state labels (lowercased) to domain ChangeRequestState enums.
 var snCRStateLabelMap = map[string]domain.ChangeRequestState{
+	"new":               domain.ChangeRequestStateNew,
+	"assess":            domain.ChangeRequestStateAssess,
+	"authorize":         domain.ChangeRequestStateAuthorize,
 	"customer approval": domain.ChangeRequestStateCustomerApproval,
 	"scheduled":         domain.ChangeRequestStateScheduled,
 	"implement":         domain.ChangeRequestStateImplement,
@@ -274,6 +289,14 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 	if err := validateUUIDs("projectIds", req.Filters.ProjectIDs); err != nil {
 		return domain.SearchChangeRequestsResponse{}, err
 	}
+	parsedFilters, err := ParseChangeRequestFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.SearchChangeRequestsResponse{}, err
+	}
+	if parsedFilters.CreatedEndDate != nil && parsedFilters.CreatedStartDate != nil &&
+		parsedFilters.CreatedEndDate.Before(*parsedFilters.CreatedStartDate) {
+		return domain.SearchChangeRequestsResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -289,13 +312,16 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 
 	payload := snChangeRequestSearchPayload{
 		Filters: snChangeRequestFilters{
-			ProjectIDs:      uuidsToSysids(req.Filters.ProjectIDs),
-			SearchQuery:     req.Filters.SearchQuery,
-			StateKeys:       domainCRStatesToSNIDs(req.Filters.States),
-			ImpactKeys:      domainCRImpactsToSNIDs(req.Filters.Impacts),
-			ClosedStartDate: formatSNDateTimeUTC(req.Filters.ClosedStartDate),
-			ClosedEndDate:   formatSNDateTimeUTC(req.Filters.ClosedEndDate),
-			Number:          stringPtrValue(req.Filters.Number),
+			ProjectIDs:         uuidsToSysids(req.Filters.ProjectIDs),
+			SearchQuery:        req.Filters.SearchQuery,
+			StateKeys:          domainCRStatesToSNIDs(req.Filters.States),
+			ImpactKeys:         domainCRImpactsToSNIDs(req.Filters.Impacts),
+			ClosedStartDate:    formatSNDateTimeUTC(req.Filters.ClosedStartDate),
+			ClosedEndDate:      formatSNDateTimeUTC(req.Filters.ClosedEndDate),
+			Number:             stringPtrValue(req.Filters.Number),
+			CreatedStartDate:   formatSNDateTimeUTC(parsedFilters.CreatedStartDate),
+			CreatedEndDate:     formatSNDateTimeUTC(parsedFilters.CreatedEndDate),
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

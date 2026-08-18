@@ -128,17 +128,21 @@ interface WidgetEditorDialogProps {
    * autocomplete suggestions (freeform text is still accepted — a widget
    * can also start a brand-new section right here). */
   sectionSuggestions: string[];
-  /** The team the Preview tile below should scope its data to, threaded
-   * through exactly as `DashboardWidgetGrid` threads it to every real tile
-   * (see that component's own doc comment) — otherwise a widget using the
-   * `__current_team__` filter placeholder or a `{{currentTeam}}` display-text
-   * token previews unfiltered data / an unresolved placeholder instead of
-   * what an admin would actually see on the live dashboard. `undefined` for
-   * a non-team-based dashboard, or while the team isn't resolved yet — see
-   * the editor page's own doc comment for where this comes from. */
-  selectedTeamGroupId?: string | string[];
-  /** See `selectedTeamGroupId` above; the human-readable counterpart for the
-   * `{{currentTeam}}` text token — see `DashboardWidgetGrid`. */
+  /** The team's `creGroupId` the Preview tile below should scope its data
+   * to, threaded through exactly as `DashboardWidgetGrid` threads it to
+   * every real tile (see that component's own doc comment) — otherwise a
+   * widget using the `__current_team__` filter placeholder in a `creTeam`
+   * entry or a `{{currentTeam}}` display-text token previews unfiltered
+   * data / an unresolved placeholder instead of what an admin would
+   * actually see on the live dashboard. `undefined` for a non-team-based
+   * dashboard, or while the team isn't resolved yet — see the editor
+   * page's own doc comment for where this comes from. */
+  selectedTeamCreGroupId?: string | string[];
+  /** See `selectedTeamCreGroupId` above; the `sreTeam`-filter counterpart,
+   * resolved independently. */
+  selectedTeamSreGroupId?: string | string[];
+  /** See `selectedTeamCreGroupId` above; the human-readable counterpart for
+   * the `{{currentTeam}}` text token — see `DashboardWidgetGrid`. */
   selectedTeamLabel?: string;
   onClose: () => void;
   onSave: (widget: BeDashboardWidget) => void;
@@ -158,7 +162,8 @@ export default function WidgetEditorDialog({
   widget,
   defaultSection,
   sectionSuggestions,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
   onClose,
   onSave,
@@ -227,7 +232,8 @@ export default function WidgetEditorDialog({
     previewSnapshot?.listLimit,
     0,
     columnPathSampleEnabled,
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     previewSnapshot?.sortBy,
     user?.id,
   );
@@ -582,7 +588,8 @@ export default function WidgetEditorDialog({
                 slices={previewSnapshot.slices}
                 columns={previewSnapshot.columns}
                 sortBy={previewSnapshot.sortBy}
-                selectedTeamGroupId={selectedTeamGroupId}
+                selectedTeamCreGroupId={selectedTeamCreGroupId}
+                selectedTeamSreGroupId={selectedTeamSreGroupId}
                 selectedTeamLabel={selectedTeamLabel}
               />
             </Box>

@@ -133,13 +133,14 @@ export default function CsmDashboardPage(): JSX.Element {
       : undefined;
   const selectedTeamId = urlTeamId ?? defaultTeamId;
 
-  // Every team, unfiltered, for resolving the selected team's `groupId` (the
-  // `__current_team__` filter placeholder's real value). Deliberately NOT
-  // scoped to the current dashboard's family the way AbtDashboardHeader's own
-  // picker query is (see abtFamilyForDashboardType): the signed-in user's own
-  // team can be outside that family (e.g. a `cre` non-ABT team member viewing
-  // a `cre` dashboard, whose picker only offers `cre-abt` teams), and
-  // `defaultTeamId` still needs it resolved to a real groupId. A separate,
+  // Every team, unfiltered, for resolving the selected team's `creGroupId`
+  // and `sreGroupId` (the `__current_team__` filter placeholder's real
+  // values). Deliberately NOT scoped to the current dashboard's family the
+  // way AbtDashboardHeader's own picker query is (see
+  // abtFamilyForDashboardType): the signed-in user's own team can be
+  // outside that family (e.g. a `cre` non-ABT team member viewing a `cre`
+  // dashboard, whose picker only offers `cre-abt` teams), and
+  // `defaultTeamId` still needs it resolved to real group ids. A separate,
   // differently-scoped query from the header's — react-query no longer
   // dedupes these into one fetch.
   const teams = useTeams(isTeamBased);
@@ -151,22 +152,32 @@ export default function CsmDashboardPage(): JSX.Element {
   // second, family-scoped query, since `teams.data` already has every
   // team's `family` on it.
   const currentDashboardFamily = abtFamilyForDashboardType(currentEntry?.type);
-  const allTeamsInFamilyGroupIds = useMemo(
+  const allTeamsInFamilyCreGroupIds = useMemo(
     () =>
       (teams.data ?? [])
         .filter((t) => t.family === currentDashboardFamily)
-        .map((t) => t.groupId)
+        .map((t) => t.creGroupId)
+        .filter((groupId): groupId is string => Boolean(groupId)),
+    [teams.data, currentDashboardFamily],
+  );
+  const allTeamsInFamilySreGroupIds = useMemo(
+    () =>
+      (teams.data ?? [])
+        .filter((t) => t.family === currentDashboardFamily)
+        .map((t) => t.sreGroupId)
         .filter((groupId): groupId is string => Boolean(groupId)),
     [teams.data, currentDashboardFamily],
   );
 
   const selectedTeam = teams.data?.find((t) => t.id === selectedTeamId);
-  const selectedTeamGroupId: string | string[] | undefined =
-    selectedTeamId === ALL_TEAMS_SENTINEL ? allTeamsInFamilyGroupIds : selectedTeam?.groupId;
+  const selectedTeamCreGroupId: string | string[] | undefined =
+    selectedTeamId === ALL_TEAMS_SENTINEL ? allTeamsInFamilyCreGroupIds : selectedTeam?.creGroupId;
+  const selectedTeamSreGroupId: string | string[] | undefined =
+    selectedTeamId === ALL_TEAMS_SENTINEL ? allTeamsInFamilySreGroupIds : selectedTeam?.sreGroupId;
   // Human-readable label for the selected team, threaded down for the
   // `{{currentTeam}}` widget text placeholder (see
-  // `widgetTextPlaceholder.ts`) — never the opaque `groupId` above, which is
-  // useless for display.
+  // `widgetTextPlaceholder.ts`) — never the opaque group ids above, which
+  // are useless for display.
   const selectedTeamLabel: string | undefined =
     selectedTeamId === ALL_TEAMS_SENTINEL ? "All ABTs" : selectedTeam?.name;
 
@@ -255,7 +266,8 @@ export default function CsmDashboardPage(): JSX.Element {
       />
       <AgentsLandingPagePilot
         dashboardId={dashboardKey}
-        selectedTeamGroupId={selectedTeamGroupId}
+        selectedTeamCreGroupId={selectedTeamCreGroupId}
+        selectedTeamSreGroupId={selectedTeamSreGroupId}
         selectedTeamLabel={selectedTeamLabel}
       />
     </Box>

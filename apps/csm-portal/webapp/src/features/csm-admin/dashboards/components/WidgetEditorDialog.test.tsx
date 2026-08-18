@@ -138,9 +138,9 @@ describe("WidgetEditorDialog", () => {
     expect(onDelete).toHaveBeenCalledTimes(1);
   });
 
-  it("threads selectedTeamGroupId/selectedTeamLabel into the Preview tile, exactly as the live dashboard grid does", async () => {
+  it("threads selectedTeamCreGroupId/selectedTeamLabel into the Preview tile, exactly as the live dashboard grid does", async () => {
     postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
-    renderDialog({ selectedTeamGroupId: "team-group-1", selectedTeamLabel: "Castor" });
+    renderDialog({ selectedTeamCreGroupId: "team-group-1", selectedTeamLabel: "Castor" });
 
     fireEvent.change(screen.getByLabelText("Widget display name"), {
       target: { value: "Cases — {{currentTeam}}" },
@@ -155,16 +155,16 @@ describe("WidgetEditorDialog", () => {
     await waitFor(() => expect(screen.getByText("Cases — Castor")).toBeInTheDocument());
   });
 
-  it("resolves an integrationCsTeam __current_team__ filter placeholder in Preview using the given selectedTeamGroupId", async () => {
+  it("resolves a creTeam __current_team__ filter placeholder in Preview using the given selectedTeamCreGroupId", async () => {
     postMock.mockResolvedValue({ total: 0, cases: [], limit: 1, offset: 0, hasMore: false });
-    renderDialog({ selectedTeamGroupId: "team-group-1", selectedTeamLabel: "Castor" });
+    renderDialog({ selectedTeamCreGroupId: "team-group-1", selectedTeamLabel: "Castor" });
 
     fireEvent.change(screen.getByLabelText("Widget display name"), {
       target: { value: "My team's cases" },
     });
     fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
     fireEvent.change(screen.getByLabelText("Filter field"), {
-      target: { value: "integrationCsTeam" },
+      target: { value: "creTeam" },
     });
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Operator" }));
     fireEvent.click(screen.getByRole("option", { name: "is any of" }));
@@ -179,7 +179,39 @@ describe("WidgetEditorDialog", () => {
       expect(postMock).toHaveBeenCalledWith(
         "/cases/search",
         {
-          filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-group-1"] }] },
+          filters: { filters: [{ field: "creTeam", op: "in", values: ["team-group-1"] }] },
+          pagination: { offset: 0, limit: 1 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+  });
+
+  it("resolves an sreTeam __current_team__ filter placeholder in Preview using the given selectedTeamSreGroupId, independently of creGroupId", async () => {
+    postMock.mockResolvedValue({ total: 0, cases: [], limit: 1, offset: 0, hasMore: false });
+    renderDialog({ selectedTeamSreGroupId: "sre-team-group-1", selectedTeamLabel: "Castor" });
+
+    fireEvent.change(screen.getByLabelText("Widget display name"), {
+      target: { value: "My SRE team's cases" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /add filter/i }));
+    fireEvent.change(screen.getByLabelText("Filter field"), {
+      target: { value: "sreTeam" },
+    });
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Operator" }));
+    fireEvent.click(screen.getByRole("option", { name: "is any of" }));
+    fireEvent.change(screen.getByLabelText("Filter value"), {
+      target: { value: "__current_team__" },
+    });
+    fireEvent.keyDown(screen.getByLabelText("Filter value"), { key: "Enter" });
+
+    fireEvent.click(screen.getByRole("button", { name: /^preview$/i }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { filters: [{ field: "sreTeam", op: "in", values: ["sre-team-group-1"] }] },
           pagination: { offset: 0, limit: 1 },
         },
         { signal: expect.any(AbortSignal) },

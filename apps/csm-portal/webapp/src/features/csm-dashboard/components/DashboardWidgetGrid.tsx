@@ -43,19 +43,27 @@ function widgetGridColumnSx(widget: BeDashboardWidget) {
 
 export interface DashboardWidgetGridProps {
   widgets: BeDashboardWidget[];
-  /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
-   * an array of every team's `groupId` in the current dashboard's family
-   * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL` in
-   * `teamFilterPlaceholder.ts`) — only meaningful for an `isTeamBased`
-   * dashboard, threaded straight through to every tile so each can resolve
-   * its own `__current_team__` filter placeholder. `undefined` for a
-   * non-team-based dashboard, or while the team isn't resolved yet. */
-  selectedTeamGroupId?: string | string[];
+  /** The currently selected team's own `creGroupId` (see
+   * `BeTeam.creGroupId`), or an array of every team's `creGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected (see
+   * `ALL_TEAMS_SENTINEL` in `teamFilterPlaceholder.ts`) — only meaningful
+   * for an `isTeamBased` dashboard, threaded straight through to every tile
+   * so each can resolve its own `__current_team__` filter placeholder for a
+   * `creTeam` filter entry. `undefined` for a non-team-based dashboard, or
+   * while the team isn't resolved yet. */
+  selectedTeamCreGroupId?: string | string[];
+  /** The currently selected team's own `sreGroupId` (see
+   * `BeTeam.sreGroupId`), or an array of every team's `sreGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected — the
+   * `sreTeam`-filter counterpart of {@link selectedTeamCreGroupId}, resolved
+   * independently. `undefined` in the same cases `selectedTeamCreGroupId`
+   * is. */
+  selectedTeamSreGroupId?: string | string[];
   /** Human-readable label for the selected team (its own display `name`,
    * or the literal `"All ABTs"`) — threaded down for each tile's own
    * `{{currentTeam}}` widget text placeholder (see
    * `widgetTextPlaceholder.ts`). `undefined` in the same cases
-   * `selectedTeamGroupId` is. */
+   * `selectedTeamCreGroupId` is. */
   selectedTeamLabel?: string;
   /** Per-widget action rendered as a small overlay on that widget's own
    * tile (e.g. the dashboard builder's "Edit widget" gear) — absent
@@ -97,7 +105,8 @@ export interface DashboardWidgetGridProps {
  */
 export default function DashboardWidgetGrid({
   widgets,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
   renderWidgetAction,
   renderSectionActions,
@@ -152,7 +161,8 @@ export default function DashboardWidgetGrid({
           slices={widget.slices}
           columns={widget.columns}
           sortBy={widget.sortBy}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
         {action && (
