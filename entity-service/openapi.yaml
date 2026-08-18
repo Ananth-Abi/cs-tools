@@ -6061,11 +6061,11 @@ components:
         fields (projectIds, states, impacts, closedStartDate/closedEndDate,
         number). Mirrors CaseFieldFilter's contract.
 
-        - **createdOn** (gte / lte): a single RFC3339 timestamp or YYYY-MM-DD
-          date bounding the change request's created timestamp. gte is
-          inclusive "on or after"; lte is inclusive "on or before". A lte
-          bound earlier than its own gte bound is rejected with a validation
-          error.
+        - **createdOn** (gte / lte): a single RFC3339 timestamp, YYYY-MM-DD
+          date, or relative-date placeholder (e.g. "__daysAgo:90__") bounding
+          the change request's created timestamp. gte is inclusive "on or
+          after"; lte is inclusive "on or before". A lte bound earlier than
+          its own gte bound is rejected with a validation error.
         - **assignmentGroupId** (in): sys_user_group UUIDs to filter the
           assignment group by.
 

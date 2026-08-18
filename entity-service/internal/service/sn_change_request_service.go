@@ -289,7 +289,7 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 	if err := validateUUIDs("projectIds", req.Filters.ProjectIDs); err != nil {
 		return domain.SearchChangeRequestsResponse{}, err
 	}
-	parsedFilters, err := ParseChangeRequestFieldFilters(req.Filters.Filters)
+	parsedFilters, err := ParseChangeRequestFieldFilters(req.Filters.Filters, time.Now().UTC())
 	if err != nil {
 		return domain.SearchChangeRequestsResponse{}, err
 	}
