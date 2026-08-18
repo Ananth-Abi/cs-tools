@@ -109,8 +109,17 @@ export default function CsmSideBar({
   const lastSectionId = useRef(getLastSectionId());
   const activeItem = pickActiveId(location.pathname, lastSectionId.current);
   useEffect(() => {
-    lastSectionId.current = activeItem;
-    setLastSectionId(activeItem);
+    // `lastSectionId` is the fallback used for routes with no owning section
+    // (see `pickActiveId`'s doc comment) -- it must stay a *section* id.
+    // `activeItem` can be a submenu child's own dotted id (e.g.
+    // `operations.incidents`); persisting that verbatim meant navigating to
+    // an unrelated, section-less route later read the stale child id back as
+    // the fallback and lit up/expanded the wrong (previous) section.
+    const owningSectionId = activeItem.includes(".")
+      ? activeItem.slice(0, activeItem.indexOf("."))
+      : activeItem;
+    lastSectionId.current = owningSectionId;
+    setLastSectionId(owningSectionId);
   }, [activeItem]);
 
   // A submenu child (e.g. `operations.incidents`, rendered without its own

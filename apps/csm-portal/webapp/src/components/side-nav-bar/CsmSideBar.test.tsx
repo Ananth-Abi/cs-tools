@@ -120,6 +120,22 @@ describe("CsmSideBar — active section on routes with no owning nav section", (
     renderAt("/people/user-1");
     expect(lastActiveItem()).toBe("admin");
   });
+
+  // Regression test: visiting a submenu child route (e.g.
+  // `/operations/incidents`) used to persist the *child's* dotted id
+  // (`operations.incidents`) as the remembered section, not the owning
+  // section (`operations`). A later visit to a section-less route then read
+  // that stale child id back as the fallback, lighting up the old child and
+  // auto-expanding Operations even though nothing about the new route has
+  // anything to do with it.
+  it("remembers the owning section, not the child's own dotted id, after visiting a submenu child route", () => {
+    renderAt("/operations/incidents");
+    expect(sessionStorage.getItem(LAST_SECTION_KEY)).toBe("operations");
+
+    sidebarPropsSpy.mockClear();
+    renderAt("/people/user-1");
+    expect(lastActiveItem()).toBe("operations");
+  });
 });
 
 describe("CsmSideBar — Operations/Security Center submenu", () => {
