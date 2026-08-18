@@ -62,9 +62,7 @@ func Run(ctx context.Context, reader sweepReader, updater projectUpdater, ntf no
 	var result Result
 
 	if projectID != "" {
-		if excludedProjectIDs[projectID] {
-			slog.InfoContext(ctx, "project excluded from evaluation", "projectID", projectID)
-			result.ProjectsExcluded++
+		if skipExcluded(ctx, projectID, excludedProjectIDs, &result) {
 			return result, nil
 		}
 
@@ -110,9 +108,7 @@ func Run(ctx context.Context, reader sweepReader, updater projectUpdater, ntf no
 		}
 
 		for _, proj := range page.Projects {
-			if excludedProjectIDs[proj.ID] {
-				slog.InfoContext(ctx, "project excluded from evaluation", "projectID", proj.ID)
-				result.ProjectsExcluded++
+			if skipExcluded(ctx, proj.ID, excludedProjectIDs, &result) {
 				continue
 			}
 
@@ -141,4 +137,17 @@ func Run(ctx context.Context, reader sweepReader, updater projectUpdater, ntf no
 	}
 
 	return result, nil
+}
+
+// skipExcluded reports whether id is in excludedProjectIDs, logging and
+// counting the skip in result if so. Shared by both of Run's paths (the
+// TEST_PROJECT_ID-scoped early check and the broad-sweep loop) so the
+// log line and counter update have exactly one definition.
+func skipExcluded(ctx context.Context, id string, excludedProjectIDs map[string]bool, result *Result) bool {
+	if !excludedProjectIDs[id] {
+		return false
+	}
+	slog.InfoContext(ctx, "project excluded from evaluation", "projectID", id)
+	result.ProjectsExcluded++
+	return true
 }
