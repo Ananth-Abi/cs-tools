@@ -14,9 +14,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Divider, Drawer, IconButton, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Divider, IconButton, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
 import { Check, X } from "@wso2/oxygen-ui-icons-react";
 import { useRef, type JSX, type ReactNode } from "react";
+import FloatingSlidePanel from "@components/FloatingSlidePanel";
 import RelativeDate from "@components/RelativeDate";
 import CasePreviewContent from "@features/csm-cases/components/CasePreviewContent";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
@@ -109,24 +110,19 @@ export default function TimeCardCasePreviewDrawer({
   useCloseOnOutsideClick(!!card, contentRef, QUICK_PREVIEW_EYE_SELECTOR, onClose);
 
   return (
-    <Drawer
-      anchor="right"
-      open={!!card}
-      onClose={onClose}
-      // No backdrop, and the modal's own full-viewport root made
-      // click-through (via slotProps.root below) -- a temporary Drawer's
-      // default backdrop (and, even hidden, its still-present modal root
-      // container) intercepts pointer events on the rest of the page, which
-      // would block clicking a different row's quick-preview eye while one
-      // preview is already open. `useCloseOnOutsideClick` above replaces the
-      // backdrop's own click-to-close behavior, minus the eye buttons (their
-      // own onClick already decides the next state).
-      hideBackdrop
-      slotProps={{
-        root: { sx: { pointerEvents: "none" } },
-        paper: { sx: { pointerEvents: "auto", width: { xs: "100%", sm: 420 } } },
-      }}
-    >
+    // `FloatingSlidePanel` (not `Drawer`) -- a `Drawer` is `Modal`-backed,
+    // which enforces a focus trap and marks the rest of the page
+    // `aria-hidden` for as long as it's open, regardless of `hideBackdrop`
+    // or pointer-events tricks (those only ever affected mouse clicks, not
+    // `Modal`'s own accessibility isolation). This panel has no backdrop
+    // and no modal behavior at all, so the rest of the page stays fully
+    // interactive for every input method -- not just the mouse -- letting
+    // a click on a different row's quick-preview eye land normally while
+    // this preview is already open. `useCloseOnOutsideClick` below replaces
+    // the click-to-close behavior a `Drawer`'s backdrop would otherwise
+    // give, minus the eye buttons (their own onClick already decides the
+    // next state).
+    <FloatingSlidePanel open={!!card} ariaLabel="Time card preview">
       {card && (
         <Box
           ref={contentRef}
@@ -225,6 +221,6 @@ export default function TimeCardCasePreviewDrawer({
           )}
         </Box>
       )}
-    </Drawer>
+    </FloatingSlidePanel>
   );
 }
