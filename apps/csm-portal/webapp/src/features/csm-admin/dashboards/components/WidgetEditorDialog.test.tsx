@@ -633,6 +633,36 @@ describe("WidgetEditorDialog", () => {
     expect(saved.groupBy).toEqual({ field: "severity", maxGroups: 5 });
   });
 
+  it("hides the manual slice editor for a widget with an existing groupBy, and saves slices as undefined even if drafts exist in local state", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "Cases by severity",
+      resourceType: "case",
+      shape: "pie",
+      gridWidth: 4,
+      query: {},
+      groupBy: { field: "severity" },
+      // A grouped widget shouldn't carry `slices` at all (the two are
+      // mutually exclusive), but this simulates local state somehow still
+      // holding slice drafts (e.g. leftover from before this widget was
+      // converted to group-by) to prove `buildWidget` omits them on save
+      // regardless, rather than trusting the hidden editor alone.
+      slices: [{ label: "Stale slice", query: {} }],
+    };
+    const { onSave } = renderDialog({ widget: existing });
+
+    // The manual slice editor UI itself must not be shown for a grouped
+    // widget — showing it would let an admin edit something that's
+    // silently dropped on save.
+    expect(screen.queryByRole("button", { name: /add slice/i })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Slice label")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save widget" }));
+    const saved = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(saved.groupBy).toEqual({ field: "severity" });
+    expect(saved.slices).toBeUndefined();
+  });
+
   it("clearing Row limit entirely unsets it, rather than writing NaN through", () => {
     const existing: BeDashboardWidget = {
       widgetId: "w1",

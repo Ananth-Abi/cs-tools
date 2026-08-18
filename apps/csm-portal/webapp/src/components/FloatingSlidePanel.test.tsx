@@ -85,4 +85,21 @@ describe("FloatingSlidePanel", () => {
     expect(hiddenRegion).toBeInTheDocument();
     expect(hiddenRegion).toHaveStyle({ visibility: "hidden" });
   });
+
+  it("stacks below modal dialogs (theme.zIndex.drawer, not theme.zIndex.modal + 1) so a dialog opened while the panel is exiting stays on top", () => {
+    render(
+      <FloatingSlidePanel open ariaLabel="Test panel">
+        <span>Panel content</span>
+      </FloatingSlidePanel>,
+    );
+
+    const region = document.body.querySelector('[role="region"]');
+    expect(region).toBeInTheDocument();
+    const panelZIndex = Number(window.getComputedStyle(region as Element).zIndex);
+    // MUI's default scale: drawer (1200) < modal (1300). The panel must sit
+    // at drawer level so TimeCardReviewDialog (a Modal-backed Dialog) can
+    // still cover it if opened while the panel is mid exit-transition.
+    expect(panelZIndex).toBe(1200);
+    expect(panelZIndex).toBeLessThan(1300);
+  });
 });

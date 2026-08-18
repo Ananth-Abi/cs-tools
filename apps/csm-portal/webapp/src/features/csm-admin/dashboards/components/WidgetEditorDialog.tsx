@@ -300,8 +300,17 @@ export default function WidgetEditorDialog({
       // gate here rather than trusting state alone stayed in sync.
       groupBy: shape === "pie" || shape === "bar" ? existingGroupBy : undefined,
       listLimit: shape === "list" ? listLimit : undefined,
+      // `groupBy` and `slices` are mutually exclusive on the wire (the
+      // backend enforces this — see `existingGroupBy`'s own doc comment) —
+      // an admin can still have stale rows sitting in `sliceDrafts` (the
+      // manual slice editor below is hidden, not cleared, while
+      // `existingGroupBy` is set), so this omits `slices` outright rather
+      // than trusting the UI having hidden the editor was enough on its
+      // own.
       slices:
-        shape === "pie" || shape === "bar" ? draftsToSlices(resourceType, sliceDrafts) : undefined,
+        (shape === "pie" || shape === "bar") && existingGroupBy === undefined
+          ? draftsToSlices(resourceType, sliceDrafts)
+          : undefined,
       columns: builtColumns.length > 0 ? builtColumns : undefined,
     };
   };
@@ -523,7 +532,21 @@ export default function WidgetEditorDialog({
             </>
           )}
 
-          {isChartShape && (
+          {isChartShape && existingGroupBy !== undefined && (
+            <>
+              <Divider />
+              <Typography variant="subtitle2">Slices</Typography>
+              <Typography variant="body2" color="text.secondary">
+                This widget groups its data by {existingGroupBy.field} instead of manual
+                slices — the two are mutually exclusive. There's no authoring UI yet to edit
+                or clear a group-by config from here (see this dialog's own doc comment); to
+                switch back to manual slices, change the shape away from pie/bar and back,
+                which clears it.
+              </Typography>
+            </>
+          )}
+
+          {isChartShape && existingGroupBy === undefined && (
             <>
               <Divider />
               <Typography variant="subtitle2">

@@ -85,7 +85,7 @@ export default function FloatingSlidePanel({
           right: 0,
           bottom: 0,
           width,
-          zIndex: (theme) => theme.zIndex.modal + 1,
+          zIndex: (theme) => theme.zIndex.drawer,
           overflow: "hidden",
         }}
       >
