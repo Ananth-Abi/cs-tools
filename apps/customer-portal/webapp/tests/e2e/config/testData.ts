@@ -425,7 +425,7 @@ export const DEPLOYMENT_PRODUCT_INPUT = {
   version: "4.4.0",
   cores: "4",
   tps: "100",
-  description: "Auamation test add product.",
+  description: "Automation test add product.",
   /** What the Manage Product modal changes the description to.
    *
    * Saved on its own: "Save Changes" closes the modal, and the update save that

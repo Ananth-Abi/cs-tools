@@ -16,12 +16,21 @@
 
 //
 // The deployment lifecycle on the Deployments tab of the project details page,
-// reached through the side nav as a user would: add, edit and delete. Adding a
-// product to a deployment is its own suite — see add-deployment-product.spec.ts.
+// reached through the side nav as a user would: add, edit the description,
+// rename and retype, create a non-production one, page the list, expand and
+// collapse a card, and delete. A nested `validation` describe covers the modals'
+// field gating and dismissal paths, and an `access` describe checks the tab is
+// reachable per project type. Adding a product to a deployment is its own suite —
+// see add-deployment-product.spec.ts.
 //
 // ⚠️ Writes to a REAL backend via POST /projects/{id}/deployments. Every test
-// creates its own deployment so that each can run alone, and only the delete
-// test disposes of what it made — the other two accumulate.
+// that needs a deployment creates its own so it can run alone, which is eight of
+// them: add, edit-description, rename-and-retype, non-production create,
+// expand/collapse, delete, and the two dismissal cases in `validation`. Only the
+// delete test disposes of what it made, so a full run leaves seven behind.
+//
+// The rest create nothing: the six Add Deployment gating cases never submit, the
+// pagination test only reads, and both access tests are read-only.
 //
 // "Delete" is a deactivation rather than a removal: it PATCHes
 // `{ active: false }` to the same endpoint the edit modal uses, and the record
@@ -34,8 +43,10 @@
 // first run; every later one failed, and — because the response wait originally
 // required a 2xx — failed as an unexplained 180s timeout rather than as a 409.
 //
-// Scoped to Managed Cloud Subscription: the Add Deployment button is withheld
-// for a Restricted project, and deployment access is a per-project feature flag.
+// Everything that writes is scoped to Managed Cloud Subscription: the Add
+// Deployment button is withheld for a Restricted project, and deployment access
+// is a per-project feature flag. The read-only `access` describe runs against
+// every project in DEPLOYMENT_ACCESS_PROJECTS, since it creates nothing.
 //
 
 import { test, expect, withSession, type Page } from "../../fixtures/test";
@@ -313,13 +324,19 @@ test.describe("Deployment", () => {
       );
     }
 
-    // A larger page shows more rows. Asserted through the range text, since how
-    // many deployments exist is environment data.
+    // A larger page fits more rows — but only up to however many exist, so the
+    // expectation comes from the list's own total rather than assuming there are
+    // more than one page's worth. On this project there are far more; on one with
+    // a handful, `min` is what keeps the assertion true instead of demanding rows
+    // that cannot be shown.
+    const total = await deployments.displayedTotal();
+    expect(total, "the range text should report a total").not.toBeNull();
+
     const larger = DEPLOYMENTS_LIST.rowsPerPageOptions.at(-1) as number;
     await deployments.selectRowsPerPage(larger);
     await expect
       .poll(() => deployments.displayedRowCount(), { timeout: 30_000 })
-      .toBeGreaterThan(pageSize);
+      .toBe(Math.min(larger, total as number));
 
     console.log(
       `Paged the deployments list and resized it to ${larger} per page`,
@@ -456,6 +473,21 @@ test.describe("Deployment", () => {
       skipWhenUnconfigured(project);
       const deployments = new ProjectDeploymentsPage(page);
       await deployments.openDeploymentsTab(project.id);
+
+      // The fixture has to be there for the backend to reject anything. Checked
+      // *before* submitting, because a missing fixture does not fail loudly: the
+      // create would succeed, leaving a permanent deployment with that name and
+      // reporting "expected 409, got 201" — after which the test would pass on
+      // every later run because it had created its own fixture.
+      //
+      // Being listed also means being active; a deactivated one is filtered out.
+      test.skip(
+        !(await deployments.isDeploymentListed(DEPLOYMENT_INPUT.existingName)),
+        `No active deployment named "${DEPLOYMENT_INPUT.existingName}" on this ` +
+          `project, so there is nothing to collide with. Update ` +
+          `DEPLOYMENT_INPUT.existingName in tests/e2e/config/testData.ts.`,
+      );
+
       await deployments.openAddDeploymentModal();
 
       await deployments.fillDeployment(

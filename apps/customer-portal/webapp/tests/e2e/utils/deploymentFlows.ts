@@ -27,6 +27,14 @@ import { ProjectDeploymentsPage } from "../pages/ProjectDeploymentsPage";
 import { DEPLOYMENT_INPUT, type ProjectFixture } from "../config/testData";
 import { expectSuccess } from "./caseFlows";
 
+/** How long to allow for the create request and the list to catch up.
+ *
+ * The suite configures no `expect` timeout, so assertions default to 5s and
+ * `waitForResponse` to 30s — both thin for a create against a real backend
+ * followed by a list refetch, inside tests that are given 180s. Matches the
+ * page objects' own LOAD_TIMEOUT_MS. */
+const LOAD_TIMEOUT_MS = 60_000;
+
 /**
  * Creates a deployment on a project and returns its name.
  *
@@ -80,6 +88,7 @@ export async function createDeployment(
         new URL(r.url()).pathname.endsWith(
           `/projects/${project.id}/deployments`,
         ) && r.request().method() === "POST",
+      { timeout: LOAD_TIMEOUT_MS },
     ),
     deployments.submit(),
   ]);
@@ -93,11 +102,12 @@ export async function createDeployment(
   expect(created.id, "backend returned no deployment id").toBeTruthy();
 
   // The modal closes and the new deployment shows up in the list — exactly
-  // once, since the name is unique to this run.
-  await expect(deployments.modal()).toBeHidden();
+  // once, since the name is unique to this run. Both wait on a refetch, so
+  // neither can rely on the 5s default.
+  await expect(deployments.modal()).toBeHidden({ timeout: LOAD_TIMEOUT_MS });
   const entry = deployments.deploymentEntry(deploymentName);
-  await expect(entry).toHaveCount(1);
-  await expect(entry).toBeVisible();
+  await expect(entry).toHaveCount(1, { timeout: LOAD_TIMEOUT_MS });
+  await expect(entry).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
   console.log(
     `Created deployment (${project.type}): ` +

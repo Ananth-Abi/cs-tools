@@ -310,6 +310,62 @@ export class ProjectDeploymentsPage {
   }
 
   /**
+   * Whether a deployment with this exact name is listed, paging to find it.
+   *
+   * The tab fetches one page at a time and offers no search, so the only way to
+   * answer this through the UI is to walk the pages. The page size is raised
+   * first to keep that short.
+   *
+   * Being listed also means being active: a deactivated deployment — what the
+   * delete action produces — is filtered out of the list, so a caller checking a
+   * fixture is present does not need to check its state separately.
+   *
+   * @param name - Full deployment name.
+   * @returns True when found on any page.
+   */
+  async isDeploymentListed(name: string): Promise<boolean> {
+    const largestPageSize = DEPLOYMENTS_LIST.rowsPerPageOptions.at(-1);
+    if (largestPageSize) await this.selectRowsPerPage(largestPageSize);
+
+    // Bounded by the number of pages the list reports, so a control that stops
+    // disabling itself cannot spin here forever.
+    const total = (await this.displayedTotal()) ?? 0;
+    const pages = Math.max(
+      1,
+      Math.ceil(total / (largestPageSize ?? DEPLOYMENTS_LIST.defaultRowsPerPage)),
+    );
+
+    for (let visited = 0; visited < pages; visited += 1) {
+      if ((await this.deploymentEntry(name).count()) > 0) return true;
+
+      const next = this.nextPageButton();
+      if (!(await next.isEnabled())) return false;
+
+      const from = await this.displayedFromRow();
+      await next.click();
+      // The rows are refetched, so wait for the range to move before reading the
+      // next page — otherwise this would search the same page twice.
+      await expect
+        .poll(() => this.displayedFromRow(), { timeout: LOAD_TIMEOUT_MS })
+        .not.toBe(from);
+    }
+
+    return (await this.deploymentEntry(name).count()) > 0;
+  }
+
+  /**
+   * How many deployments the list holds in total, from the range text.
+   *
+   * @returns The "of N" of "from–to of N", or null when not rendered.
+   */
+  async displayedTotal(): Promise<number | null> {
+    const match = MUI_PAGINATION.displayedRowsPattern.exec(
+      await this.displayedRows().innerText(),
+    );
+    return match ? Number(match[3]) : null;
+  }
+
+  /**
    * The page size the list is currently showing, from the range text.
    *
    * @returns The count of rows on this page, or null when not rendered.
@@ -863,9 +919,31 @@ export class ProjectDeploymentsPage {
     return this.modal().locator(MANAGE_PRODUCT.ids.tps);
   }
 
-  /** The current update level the product reports, e.g. "U12". */
-  currentUpdateLevel(): Locator {
-    return this.modal().getByText(MANAGE_PRODUCT.currentLevelLabel);
+  /** The "Current Update Level:" readout's label, which renders only once the
+   * product has an update history. */
+  currentUpdateLevelLabel(): Locator {
+    return this.modal().getByText(MANAGE_PRODUCT.currentLevelLabel, {
+      exact: true,
+    });
+  }
+
+  /**
+   * The level the readout reports, e.g. "U12".
+   *
+   * Scoped to the readout rather than matched page-wide: the same "U12" is also
+   * rendered as the entry's own badge in the list below, so an unscoped locator
+   * resolves to two elements. `.last()` picks the innermost container holding the
+   * label — the readout box itself, whose only other child is the value.
+   *
+   * @param level - Expected level, without the "U" prefix.
+   * @returns Locator for the value.
+   */
+  currentUpdateLevel(level: string): Locator {
+    return this.modal()
+      .locator("div")
+      .filter({ has: this.currentUpdateLevelLabel() })
+      .last()
+      .getByText(MANAGE_PRODUCT.currentLevelValue(level), { exact: true });
   }
 
   /**

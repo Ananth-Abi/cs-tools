@@ -257,18 +257,9 @@ test.describe("Deployment Product", () => {
 
     // The product now reports that level as its current one — the visible
     // consequence of the entry, rendered with a "U" prefix.
-    await expect(deployments.currentUpdateLevel()).toBeVisible();
-    // `.first()` because the level renders twice — the readout, and the entry's
-    // own badge in the list below it.
+    await expect(deployments.currentUpdateLevelLabel()).toBeVisible();
     await expect(
-      page
-        .getByText(
-          MANAGE_PRODUCT.currentLevelValue(
-            DEPLOYMENT_PRODUCT_INPUT.update.level,
-          ),
-          { exact: true },
-        )
-        .first(),
+      deployments.currentUpdateLevel(DEPLOYMENT_PRODUCT_INPUT.update.level),
     ).toBeVisible({ timeout: 30_000 });
 
     console.log(
@@ -443,13 +434,9 @@ test.describe("Deployment Product", () => {
     // reading the options straight after the response returned the pre-save list
     // (every level from 1 to 13), which looked like the filter not working at
     // all.
-    // `.first()` because the level renders twice once an entry exists — the
-    // readout above the form, and the entry's own badge in the list.
-    await expect(
-      page
-        .getByText(MANAGE_PRODUCT.currentLevelValue(level), { exact: true })
-        .first(),
-    ).toBeVisible({ timeout: 30_000 });
+    await expect(deployments.currentUpdateLevel(level)).toBeVisible({
+      timeout: 30_000,
+    });
 
     // Now that the product is at that level, it is no longer on offer — the
     // select lists only levels above the current one, which is what stops the
