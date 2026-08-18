@@ -738,7 +738,16 @@ type CaseView struct {
 	// CaseView), and the customer portal must not surface internal WSO2 support
 	// workflow state to end customers.
 	FixEta *time.Time `json:"fixEta"`
-	Tags   []Tag      `json:"tags"`
+	// Supplied by entity-service; previously not decoded here at all.
+	// Nullable throughout — nil means the upstream gave no value.
+	SLAResponseTime       *string    `json:"slaResponseTime"`
+	ClosedBy              *EntityRef `json:"closedBy"`
+	HasAutoClosed         *bool      `json:"hasAutoClosed"`
+	EngagementStartDate   *string    `json:"engagementStartDate"`
+	EngagementEndDate     *string    `json:"engagementEndDate"`
+	AcknowledgedBy        *EntityRef `json:"acknowledgedBy"`
+	EngagementPaymentType *string    `json:"engagementPaymentType"`
+	Tags                  []Tag      `json:"tags"`
 }
 
 // --- deployments ---

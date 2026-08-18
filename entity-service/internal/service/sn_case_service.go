@@ -117,6 +117,16 @@ type snCase struct {
 	// include a "worstCaseFixEta" key today, so this always unmarshals to nil. Ask:
 	// add a "worstCaseFixEta" (glide_date) field to the case response.
 	WorstCaseFixEta *string `json:"worstCaseFixEta"`
+	// Fields the Ballerina entity-service declares on CaseResponse that were
+	// not declared here, so encoding/json discarded them. All nullable: an
+	// absent key stays nil rather than becoming a zero value.
+	SLAResponseTime       *string          `json:"slaResponseTime"`
+	ClosedBy              *snCaseEntityRef `json:"closedBy"`
+	HasAutoClosed         *bool            `json:"hasAutoClosed"`
+	EngagementStartDate   *string          `json:"engagementStartDate"`
+	EngagementEndDate     *string          `json:"engagementEndDate"`
+	AcknowledgedBy        *snCaseEntityRef `json:"acknowledgedBy"`
+	EngagementPaymentType *snCaseLabel     `json:"engagementPaymentType"`
 }
 
 // snWatchListUser mirrors the watch-list user shape ServiceNow/Ballerina returns on both
@@ -903,6 +913,23 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 	}
 	if c.WorstCaseFixEta != nil && *c.WorstCaseFixEta != "" {
 		cv.WorstCaseFixEta = c.WorstCaseFixEta
+	}
+
+	// Pass-through of the fields declared alongside the fix-ETA group above.
+	// Refs get sysidToUUID applied like every other inbound ID; the date fields
+	// are already date-only strings on both sides, so no reformatting.
+	cv.SLAResponseTime = c.SLAResponseTime
+	cv.HasAutoClosed = c.HasAutoClosed
+	cv.EngagementStartDate = c.EngagementStartDate
+	cv.EngagementEndDate = c.EngagementEndDate
+	if c.ClosedBy != nil {
+		cv.ClosedBy = &domain.EntityRef{ID: sysidToUUID(c.ClosedBy.ID), Name: c.ClosedBy.Name}
+	}
+	if c.AcknowledgedBy != nil {
+		cv.AcknowledgedBy = &domain.EntityRef{ID: sysidToUUID(c.AcknowledgedBy.ID), Name: c.AcknowledgedBy.Name}
+	}
+	if c.EngagementPaymentType != nil && c.EngagementPaymentType.Label != "" {
+		cv.EngagementPaymentType = &c.EngagementPaymentType.Label
 	}
 	// Tags are not populated: not yet available in the backing service, see the
 	// CaseView.Tags doc comment. cv.Tags is left nil.

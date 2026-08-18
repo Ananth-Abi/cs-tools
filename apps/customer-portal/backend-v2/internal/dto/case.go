@@ -361,7 +361,16 @@ type CaseDetails struct {
 	ResolutionNotes       *string                      `json:"resolutionNotes,omitempty"`
 	WatchList             []CaseWatchListUser          `json:"watchList,omitempty"`
 	FixEta                *time.Time                   `json:"fixEta,omitempty"`
-	Tags                  []CaseTag                    `json:"tags,omitempty"`
+	// Exposed because the frontend's CaseDetails type declares them
+	// (features/support/types/cases.ts). AcknowledgedBy and
+	// EngagementPaymentType are decoded upstream but deliberately NOT exposed:
+	// no frontend consumer, so per CLAUDE.md they stay trimmed until one exists.
+	SLAResponseTime     *string   `json:"slaResponseTime,omitempty"`
+	ClosedBy            *Ref      `json:"closedBy,omitempty"`
+	HasAutoClosed       *bool     `json:"hasAutoClosed,omitempty"`
+	EngagementStartDate *string   `json:"engagementStartDate,omitempty"`
+	EngagementEndDate   *string   `json:"engagementEndDate,omitempty"`
+	Tags                []CaseTag `json:"tags,omitempty"`
 }
 
 // MapCaseDetails builds the portal response from entity-service's CaseView.
@@ -450,6 +459,11 @@ func MapCaseDetails(c entity.CaseView) CaseDetails {
 		ResolutionNotes:       c.ResolutionNotes,
 		WatchList:             watchList,
 		FixEta:                c.FixEta,
+		SLAResponseTime:       c.SLAResponseTime,
+		ClosedBy:              mapRef(c.ClosedBy),
+		HasAutoClosed:         c.HasAutoClosed,
+		EngagementStartDate:   c.EngagementStartDate,
+		EngagementEndDate:     c.EngagementEndDate,
 		Tags:                  tags,
 	}
 }
