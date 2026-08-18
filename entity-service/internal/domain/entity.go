@@ -578,10 +578,14 @@ type Product struct {
 }
 
 // SearchProductsRequest is the input for a product search operation.
-// SearchQuery is matched case-insensitively against name.
+// SearchQuery is matched case-insensitively against name. Class optionally
+// restricts results to a single product class; the set of accepted values
+// and the default applied when it is empty both depend on the active data
+// source — see the Postgres- and ServiceNow-backed search implementations.
 type SearchProductsRequest struct {
 	Pagination  Pagination `json:"pagination"`
 	SearchQuery string     `json:"searchQuery"`
+	Class       string     `json:"class"`
 }
 
 // SearchProductsResponse is the paginated result of a product search.
