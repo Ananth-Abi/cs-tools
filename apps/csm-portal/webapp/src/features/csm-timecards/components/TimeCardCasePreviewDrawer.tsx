@@ -159,7 +159,7 @@ export default function TimeCardCasePreviewDrawer({
               />
             )}
 
-            {actions.some((a) => a !== "edit") && (
+            {actions.some((a) => a === "approve" || a === "reject") && (
               <Box sx={{ display: "flex", gap: 1 }}>
                 {actions.includes("reject") && (
                   <Button
