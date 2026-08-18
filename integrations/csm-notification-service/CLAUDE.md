@@ -8,7 +8,7 @@ This service used to also expose `POST /events` (an HTTP ingest endpoint the bac
 
 The consume→dispatch path (event bus → `dispatch.Dispatcher`) **is real** — it sends actual emails, Google Chat alerts, and voice calls — but has one known, explicitly-flagged gap:
 
-- **SMS and direct call channels are unused.** `TwilioClient.SendSMS` has no caller anywhere in this service; `MakeCall` is only invoked by `handleIncidentCreated`. Both clients/methods exist and are tested (including live, via `cmd/twiliocheck`), just not wired to any event type yet.
+- **SMS and direct call channels are unused.** `TwilioClient.SendSMS` has no caller anywhere in this service; `MakeCall` is only invoked by `handleIncidentCreated`. Both clients/methods exist and are tested, just not wired to any event type yet.
 
 A dead-letter topic **does** exist now (see "Event-driven notifications" below) — a record that exhausts the main consumer's retries is published there rather than dropped, and a separate DLQ consumer gets its own retry pass at it. There's still no third tier past that: a record that also exhausts the DLQ consumer's retries is logged and dropped for good.
 
