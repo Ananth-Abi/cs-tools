@@ -98,6 +98,11 @@ type CommentView struct {
 	CreatedBy          string    `json:"createdBy"`
 	CreatedByFirstName string    `json:"createdByFirstName,omitempty"`
 	CreatedByLastName  string    `json:"createdByLastName,omitempty"`
+	// Inline images in the comment body. The frontend declares both on its
+	// CaseCommentInlineAttachment type (features/support/types/attachments.ts)
+	// and renders them in case and conversation threads.
+	HasInlineAttachments bool                      `json:"hasInlineAttachments,omitempty"`
+	InlineAttachments    []CommentInlineAttachment `json:"inlineAttachments,omitempty"`
 }
 
 // SearchCommentsResponse is the portal's response for POST /comments/search
@@ -112,18 +117,50 @@ type SearchCommentsResponse struct {
 	HasMore      bool          `json:"hasMore"`
 }
 
+// CommentInlineAttachment is an image embedded in a comment body. Field names
+// match the frontend's CaseCommentInlineAttachment exactly.
+type CommentInlineAttachment struct {
+	ID          string `json:"id"`
+	FileName    string `json:"fileName"`
+	ContentType string `json:"contentType"`
+	DownloadURL string `json:"downloadUrl"`
+	// Nil when the upstream had no parseable timestamp; omitted rather than
+	// serialised as a year-one date.
+	CreatedOn *time.Time `json:"createdOn,omitempty"`
+	CreatedBy string     `json:"createdBy"`
+}
+
+// mapCommentInlineAttachments converts entity-service's inline attachments to
+// the portal shape. Returns nil (omitted) rather than an empty slice when the
+// comment has none, so a plain comment does not grow an empty array.
+func mapCommentInlineAttachments(in []entity.InlineAttachment) []CommentInlineAttachment {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]CommentInlineAttachment, 0, len(in))
+	for _, a := range in {
+		out = append(out, CommentInlineAttachment{
+			ID: a.ID, FileName: a.FileName, ContentType: a.ContentType,
+			DownloadURL: a.DownloadURL, CreatedOn: a.CreatedOn, CreatedBy: a.CreatedBy,
+		})
+	}
+	return out
+}
+
 // MapSearchComments builds the portal response from entity-service's SearchCommentsResponse.
 func MapSearchComments(r entity.SearchCommentsResponse) SearchCommentsResponse {
 	comments := make([]CommentView, 0, len(r.Comments))
 	for _, c := range r.Comments {
 		comments = append(comments, CommentView{
-			ID:                 c.ID,
-			Content:            c.Content,
-			Type:               string(c.Type),
-			CreatedOn:          c.CreatedOn,
-			CreatedBy:          c.CreatedBy.FullName,
-			CreatedByFirstName: c.CreatedBy.FirstName,
-			CreatedByLastName:  c.CreatedBy.LastName,
+			ID:                   c.ID,
+			Content:              c.Content,
+			Type:                 string(c.Type),
+			CreatedOn:            c.CreatedOn,
+			CreatedBy:            c.CreatedBy.FullName,
+			CreatedByFirstName:   c.CreatedBy.FirstName,
+			CreatedByLastName:    c.CreatedBy.LastName,
+			HasInlineAttachments: c.HasInlineAttachments,
+			InlineAttachments:    mapCommentInlineAttachments(c.InlineAttachments),
 		})
 	}
 	return SearchCommentsResponse{
