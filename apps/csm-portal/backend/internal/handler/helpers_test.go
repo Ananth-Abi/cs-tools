@@ -690,6 +690,7 @@ type mockEntityTimeCardClient struct {
 	searchTimeCardsFn func(ctx context.Context, body []byte) ([]byte, error)
 	createTimeCardFn  func(ctx context.Context, body []byte) ([]byte, error)
 	updateTimeCardFn  func(ctx context.Context, id string, body []byte) ([]byte, error)
+	deleteTimeCardFn  func(ctx context.Context, id string) ([]byte, error)
 }
 
 func (m *mockEntityTimeCardClient) SearchTimeCards(ctx context.Context, body []byte) ([]byte, error) {
@@ -711,6 +712,13 @@ func (m *mockEntityTimeCardClient) UpdateTimeCard(ctx context.Context, id string
 		return m.updateTimeCardFn(ctx, id, body)
 	}
 	return []byte(`{"timeCard":{"id":"` + id + `","state":"submitted"}}`), nil
+}
+
+func (m *mockEntityTimeCardClient) DeleteTimeCard(ctx context.Context, id string) ([]byte, error) {
+	if m.deleteTimeCardFn != nil {
+		return m.deleteTimeCardFn(ctx, id)
+	}
+	return []byte(`{"message":"Time card deleted"}`), nil
 }
 
 // ----- mock entity deployment client -----
