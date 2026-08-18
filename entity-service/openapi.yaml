@@ -8060,9 +8060,10 @@ components:
             - state
             - assignmentGroupId
             - businessServiceId
+            - createdOn
         op:
           type: string
-          enum: [in]
+          enum: [in, gte, lte]
         values:
           type: array
           items:
@@ -8079,6 +8080,10 @@ components:
         - **businessServiceId** (in): business_service UUIDs to filter by
           (exact sys_id match, distinct from the product-name-matched filter
           used elsewhere).
+        - **createdOn** (gte/lte): a single value, either an RFC3339
+          timestamp, a YYYY-MM-DD date, or a relative-date placeholder (e.g.
+          "__daysAgo:90__"), same syntax as case search's own createdOn
+          filter.
 
     SearchIncidentsRequest:
       type: object

@@ -18,6 +18,7 @@ package service
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -27,15 +28,39 @@ import (
 // accepted by incident search. Anything else is rejected outright.
 var incidentFilterFieldSet = map[string]bool{
 	"state": true, "assignmentGroupId": true, "businessServiceId": true,
+	"createdOn": true,
 }
 
 // incidentFilterOpSet is the exact set of IncidentFieldFilter.Op values
 // accepted by incident search, independent of field. Field/op compatibility
-// is enforced separately in ParseIncidentFieldFilters -- today every
-// supported field only accepts "in", but the set is kept apart from the
-// per-field check to mirror case_filters.go's shape.
+// is enforced separately in ParseIncidentFieldFilters -- "in" covers state/
+// assignmentGroupId/businessServiceId, "gte"/"lte" cover createdOn (mirrors
+// case_filters.go's "createdOn" handling exactly, including its relative-date
+// placeholder support, e.g. "__daysAgo:90__").
 var incidentFilterOpSet = map[string]bool{
-	"in": true,
+	"in": true, "gte": true, "lte": true,
+}
+
+// parseIncidentFilterDate mirrors case_filters.go's parseCaseFilterDate,
+// retyped for domain.IncidentFieldFilter -- same RFC3339/date-only/
+// relative-placeholder parsing, same error message shape.
+func parseIncidentFilterDate(f domain.IncidentFieldFilter, value string, now time.Time) (*time.Time, error) {
+	if resolved, matched, err := resolveRelativeDate(value, now); err != nil {
+		return nil, err
+	} else if matched {
+		value = resolved
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return &t, nil
+	}
+	if t, err := time.Parse("2006-01-02", value); err == nil {
+		// A date-only lte bound means "on or before that whole day".
+		if f.Op == "lte" {
+			t = t.AddDate(0, 0, 1).Add(-time.Nanosecond)
+		}
+		return &t, nil
+	}
+	return nil, &apierror.ValidationError{Msg: fmt.Sprintf("filters: field %q op %q value %q must be an RFC3339 timestamp, YYYY-MM-DD date, or a recognized relative-date placeholder", f.Field, f.Op, value)}
 }
 
 // requireIncidentFilterValues rejects a filter entry whose op needs a
@@ -69,12 +94,17 @@ type parsedIncidentFilters struct {
 	// BusinessServiceIDs are business_service UUIDs (not yet converted to
 	// sysids).
 	BusinessServiceIDs []string
+	// StartCreatedDate is the inclusive lower bound of a createdOn "gte" filter.
+	StartCreatedDate *time.Time
+	// EndCreatedDate is the inclusive upper bound of a createdOn "lte" filter.
+	EndCreatedDate *time.Time
 }
 
 // ParseIncidentFieldFilters translates the incident-search wire contract's
 // generic filter array (domain.IncidentFieldFilter) into parsedIncidentFilters,
-// mirroring ParseCaseFieldFilters in case_filters.go.
-func ParseIncidentFieldFilters(filters []domain.IncidentFieldFilter) (parsedIncidentFilters, error) {
+// mirroring ParseCaseFieldFilters in case_filters.go. now is the reference
+// instant relative-date placeholders (e.g. "__daysAgo:90__") resolve against.
+func ParseIncidentFieldFilters(filters []domain.IncidentFieldFilter, now time.Time) (parsedIncidentFilters, error) {
 	var p parsedIncidentFilters
 
 	for _, f := range filters {
@@ -124,6 +154,23 @@ func ParseIncidentFieldFilters(filters []domain.IncidentFieldFilter) (parsedInci
 				return parsedIncidentFilters{}, err
 			}
 			p.BusinessServiceIDs = append(p.BusinessServiceIDs, f.Values...)
+
+		case "createdOn":
+			if err := requireIncidentFilterValues(f); err != nil {
+				return parsedIncidentFilters{}, err
+			}
+			t, err := parseIncidentFilterDate(f, f.Values[0], now)
+			if err != nil {
+				return parsedIncidentFilters{}, err
+			}
+			switch f.Op {
+			case "gte":
+				p.StartCreatedDate = t
+			case "lte":
+				p.EndCreatedDate = t
+			default:
+				return parsedIncidentFilters{}, badIncidentFilterCombo(f)
+			}
 		}
 	}
 

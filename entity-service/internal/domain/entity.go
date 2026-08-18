@@ -3372,6 +3372,9 @@ type SearchIncidentsFilters struct {
 	//     ServiceNow's raw incident_state numeric keys.
 	//   - "assignmentGroupId" (op in): sys_user_group UUIDs.
 	//   - "businessServiceId" (op in): business_service sys_id UUIDs.
+	//   - "createdOn" (op gte/lte): RFC3339 timestamp, YYYY-MM-DD date, or a
+	//     relative-date placeholder (e.g. "__daysAgo:90__"), same syntax as
+	//     case search's own "createdOn" filter.
 	// See service.ParseIncidentFieldFilters.
 	Filters []IncidentFieldFilter `json:"filters,omitempty"`
 }
