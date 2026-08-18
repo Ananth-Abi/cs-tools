@@ -317,6 +317,80 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	}, nil
 }
 
+// snIncidentGroupByPayload is the Choreo POST /incidents/group-by request body.
+type snIncidentGroupByPayload struct {
+	Filters   snIncidentFilters `json:"filters,omitempty"`
+	GroupBy   string            `json:"groupBy"`
+	MaxGroups int               `json:"maxGroups,omitempty"`
+}
+
+// GroupIncidentsBy implements IncidentService by calling the Choreo POST
+// /incidents/group-by endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into GroupByResponse.OthersCount. Filter parsing and validation
+// mirror SearchIncidents.
+func (s *snIncidentService) GroupIncidentsBy(ctx context.Context, req domain.GroupIncidentsByRequest) (domain.GroupByResponse, error) {
+	if req.GroupBy == "" {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	for _, p := range req.Filters.Priorities {
+		if !validIncidentPriority[p] {
+			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "priorities contains invalid value: " + string(p)}
+		}
+	}
+	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	priorityKeys := make([]int, 0, len(req.Filters.Priorities))
+	for _, p := range req.Filters.Priorities {
+		priorityKeys = append(priorityKeys, snIncidentPriorityKeyMap[p])
+	}
+
+	payload := snIncidentGroupByPayload{
+		Filters: snIncidentFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/incidents/group-by", token, payload)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	var resp domain.GroupByResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.GroupByResponse{}, fmt.Errorf("sn incidents: parse group-by response: %w", err)
+	}
+	return resp, nil
+}
+
 // snIncidentCategoryKeyMap maps domain IncidentCategory enums to SN category string values.
 var snIncidentCategoryKeyMap = map[domain.IncidentCategory]string{
 	domain.IncidentCategoryInquiry:             "inquiry",

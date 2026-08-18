@@ -184,6 +184,21 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// GroupCasesBy handles POST /cases/group-by.
+func (h *CaseHandler) GroupCasesBy(w http.ResponseWriter, r *http.Request) {
+	var req domain.GroupCasesByRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.GroupCasesBy(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // CreateCaseAttachment handles POST /attachments.
 func (h *CaseHandler) CreateCaseAttachment(w http.ResponseWriter, r *http.Request) {
 	var req domain.CreateAttachmentRequest

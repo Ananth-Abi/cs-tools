@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
@@ -139,6 +140,60 @@ func (s *snIncidentTaskService) SearchIncidentTasks(ctx context.Context, req dom
 		Limit:         req.Pagination.Limit,
 		Offset:        req.Pagination.Offset,
 	}, nil
+}
+
+// snIncidentTaskGroupByPayload is the Choreo POST /incident_tasks/group-by
+// request body.
+type snIncidentTaskGroupByPayload struct {
+	Filters   snIncidentTaskFilters `json:"filters,omitempty"`
+	GroupBy   string                `json:"groupBy"`
+	MaxGroups int                   `json:"maxGroups,omitempty"`
+}
+
+// GroupIncidentTasksBy implements IncidentTaskService by calling the Choreo
+// POST /incident_tasks/group-by endpoint: a single server-side aggregation
+// over the requested field, capped to the top MaxGroups buckets with the
+// remainder folded into GroupByResponse.OthersCount. Filter parsing and
+// validation mirror SearchIncidentTasks.
+func (s *snIncidentTaskService) GroupIncidentTasksBy(ctx context.Context, req domain.GroupIncidentTasksByRequest) (domain.GroupByResponse, error) {
+	if req.GroupBy == "" {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	parsedFilters, err := ParseIncidentTaskFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snIncidentTaskGroupByPayload{
+		Filters: snIncidentTaskFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			IncidentIDs:        uuidsToSysids(parsedFilters.IncidentIDs),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/incident_tasks/group-by", token, payload)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	var resp domain.GroupByResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.GroupByResponse{}, fmt.Errorf("sn incident tasks: parse group-by response: %w", err)
+	}
+	return resp, nil
 }
 
 // mapSNIncidentTaskToView maps a Choreo incident-task search-result payload

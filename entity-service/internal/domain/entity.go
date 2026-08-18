@@ -1481,11 +1481,52 @@ type SearchCasesRequest struct {
 	GroupBy string `json:"groupBy,omitempty"`
 }
 
+// GroupCasesByRequest is the input for the dedicated case group-by
+// aggregation endpoint. Unlike SearchCasesRequest.GroupBy (which returns a
+// bucket per value of a small fixed enum, computed client-side as one search
+// per value), this drives a single server-side aggregation over an
+// open-ended field such as account, capped to the top MaxGroups buckets with
+// the remainder folded into GroupByResponse.OthersCount.
+type GroupCasesByRequest struct {
+	Filters SearchCasesFilters `json:"filters"`
+	// GroupBy selects the field to aggregate by (e.g. "account", "state",
+	// "severity", "type"). Required.
+	GroupBy string `json:"groupBy"`
+	// MaxGroups caps the number of returned buckets to the top MaxGroups by
+	// count; the rest are folded into GroupByResponse.OthersCount (optional;
+	// the backing service applies a default when omitted).
+	MaxGroups int `json:"maxGroups,omitempty"`
+}
+
 // CaseGroup is one bucket in a grouped case-search result: Key is the group's
 // field value (e.g. a CaseState string), Count is the number of matching cases.
 type CaseGroup struct {
 	Key   string `json:"key"`
 	Count int    `json:"count"`
+}
+
+// GroupByBucket is one aggregated bucket in a server-side group-by result.
+// Key is the backing service's raw group value; Label is its human-readable
+// display form (identical to Key when the grouped field has no separate
+// label, e.g. an already-friendly account name). Count is the number of
+// matching records whose value of the grouped field falls in this bucket.
+type GroupByBucket struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// GroupByResponse is the shared result shape for every resource's dedicated
+// group-by aggregation endpoint (cases, incidents, problems, change requests,
+// incident tasks). Groups holds the top buckets by count, capped at the
+// request's MaxGroups when set; OthersCount folds every bucket beyond that
+// cap into a single count. TotalRecords is the total number of records
+// matching the request's filters, and always equals the sum of Groups'
+// counts plus OthersCount.
+type GroupByResponse struct {
+	Groups       []GroupByBucket `json:"groups"`
+	OthersCount  int             `json:"othersCount"`
+	TotalRecords int             `json:"totalRecords"`
 }
 
 // SearchCaseView is the unified case representation returned in search results.
@@ -2312,6 +2353,21 @@ type SearchChangeRequestsRequest struct {
 	Filters    SearchChangeRequestsFilters `json:"filters"`
 	SortBy     ChangeRequestSort           `json:"sortBy"`
 	Pagination Pagination                  `json:"pagination"`
+}
+
+// GroupChangeRequestsByRequest is the input for the dedicated change request
+// group-by aggregation endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into GroupByResponse.OthersCount.
+type GroupChangeRequestsByRequest struct {
+	Filters SearchChangeRequestsFilters `json:"filters"`
+	// GroupBy selects the field to aggregate by (e.g. "state",
+	// "assignmentGroup"). Required.
+	GroupBy string `json:"groupBy"`
+	// MaxGroups caps the number of returned buckets to the top MaxGroups by
+	// count; the rest are folded into GroupByResponse.OthersCount (optional;
+	// the backing service applies a default when omitted).
+	MaxGroups int `json:"maxGroups,omitempty"`
 }
 
 // SearchChangeRequestView is the unified change request representation returned in search results.
@@ -3391,6 +3447,21 @@ type SearchIncidentsRequest struct {
 	Pagination Pagination             `json:"pagination"`
 }
 
+// GroupIncidentsByRequest is the input for the dedicated incident group-by
+// aggregation endpoint: a single server-side aggregation over the requested
+// field, capped to the top MaxGroups buckets with the remainder folded into
+// GroupByResponse.OthersCount.
+type GroupIncidentsByRequest struct {
+	Filters SearchIncidentsFilters `json:"filters"`
+	// GroupBy selects the field to aggregate by (e.g. "state",
+	// "assignmentGroup", "businessService"). Required.
+	GroupBy string `json:"groupBy"`
+	// MaxGroups caps the number of returned buckets to the top MaxGroups by
+	// count; the rest are folded into GroupByResponse.OthersCount (optional;
+	// the backing service applies a default when omitted).
+	MaxGroups int `json:"maxGroups,omitempty"`
+}
+
 // SearchIncidentView is the unified incident representation returned in search results.
 type SearchIncidentView struct {
 	ID              *string    `json:"id"`
@@ -3682,6 +3753,21 @@ type SearchProblemsRequest struct {
 	Pagination Pagination            `json:"pagination"`
 }
 
+// GroupProblemsByRequest is the input for the dedicated problem group-by
+// aggregation endpoint: a single server-side aggregation over the requested
+// field, capped to the top MaxGroups buckets with the remainder folded into
+// GroupByResponse.OthersCount.
+type GroupProblemsByRequest struct {
+	Filters SearchProblemsFilters `json:"filters"`
+	// GroupBy selects the field to aggregate by (e.g. "state",
+	// "assignmentGroup"). Required.
+	GroupBy string `json:"groupBy"`
+	// MaxGroups caps the number of returned buckets to the top MaxGroups by
+	// count; the rest are folded into GroupByResponse.OthersCount (optional;
+	// the backing service applies a default when omitted).
+	MaxGroups int `json:"maxGroups,omitempty"`
+}
+
 // SearchProblemView is the problem representation returned in search results.
 type SearchProblemView struct {
 	ID              *string    `json:"id"`
@@ -3776,6 +3862,21 @@ type SearchIncidentTasksFilters struct {
 type SearchIncidentTasksRequest struct {
 	Filters    SearchIncidentTasksFilters `json:"filters"`
 	Pagination Pagination                 `json:"pagination"`
+}
+
+// GroupIncidentTasksByRequest is the input for the dedicated incident task
+// group-by aggregation endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into GroupByResponse.OthersCount.
+type GroupIncidentTasksByRequest struct {
+	Filters SearchIncidentTasksFilters `json:"filters"`
+	// GroupBy selects the field to aggregate by (e.g. "state",
+	// "assignmentGroup"). Required.
+	GroupBy string `json:"groupBy"`
+	// MaxGroups caps the number of returned buckets to the top MaxGroups by
+	// count; the rest are folded into GroupByResponse.OthersCount (optional;
+	// the backing service applies a default when omitted).
+	MaxGroups int `json:"maxGroups,omitempty"`
 }
 
 // IncidentTask is the incident-task representation returned in search results.
