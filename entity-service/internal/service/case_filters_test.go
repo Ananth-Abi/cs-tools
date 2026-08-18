@@ -59,6 +59,19 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			},
 		},
 		{
+			name: "accountId in maps to AccountIDs",
+			in: []domain.CaseFieldFilter{{
+				Field:  "accountId",
+				Op:     "in",
+				Values: []string{"00000000-0000-0000-0000-000000000000"},
+			}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.AccountIDs) != 1 || p.AccountIDs[0] != "00000000-0000-0000-0000-000000000000" {
+					t.Fatalf("AccountIDs = %v", p.AccountIDs)
+				}
+			},
+		},
+		{
 			name: "tag in maps to Tags",
 			in:   []domain.CaseFieldFilter{{Field: "tag", Op: "in", Values: []string{"patch"}}},
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
@@ -254,6 +267,7 @@ func TestParseCaseFieldFilters_Rejections(t *testing.T) {
 		{name: "number in unsupported", in: []domain.CaseFieldFilter{{Field: "number", Op: "in", Values: []string{"CS0441174"}}}},
 		{name: "internalId in unsupported", in: []domain.CaseFieldFilter{{Field: "internalId", Op: "in", Values: []string{"12345"}}}},
 		{name: "projectOnboardingStatus eq unsupported", in: []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "eq", Values: []string{"Completed"}}}},
+		{name: "accountId malformed UUID", in: []domain.CaseFieldFilter{{Field: "accountId", Op: "in", Values: []string{"not-a-uuid"}}}},
 	}
 
 	for _, tc := range cases {

@@ -169,8 +169,8 @@ func mapSNIncidentTaskToView(it snIncidentTask) domain.IncidentTask {
 // snIncidentTaskDetailResponse mirrors the Choreo GET /incident_tasks/{id} response.
 type snIncidentTaskDetailResponse struct {
 	ID              string                 `json:"id"`
-	Number          string                 `json:"number"`
-	Subject         string                 `json:"subject"`
+	Number          *string                `json:"number"`
+	Subject         *string                `json:"subject"`
 	State           *string                `json:"state"`
 	StateLabel      *string                `json:"stateLabel"`
 	Incident        *snIncidentTaskRef     `json:"incident"`
@@ -207,19 +207,21 @@ func (s *snIncidentTaskService) GetIncidentTask(ctx context.Context, id string) 
 // the domain detail view.
 func mapSNIncidentTaskDetailToView(it snIncidentTaskDetailResponse) domain.IncidentTaskDetail {
 	id := sysidToUUID(it.ID)
-	number := it.Number
-	subject := it.Subject
 
+	// Number/Subject stay nil (-> JSON null) when the upstream payload omits
+	// them, matching every other response field on this view -- unlike ID,
+	// which a detail response always carries (it's how the record was
+	// fetched), so it's fine as a plain, always-present string.
 	view := domain.IncidentTaskDetail{
 		ID:          &id,
-		Number:      &number,
-		Subject:     &subject,
+		Number:      it.Number,
+		Subject:     it.Subject,
 		State:       it.State,
 		StateLabel:  it.StateLabel,
 		Description: it.Description,
 		Priority:    it.Priority,
-		OpenedAt:    it.OpenedAt,
-		ClosedAt:    it.ClosedAt,
+		OpenedOn:    it.OpenedAt,
+		ClosedOn:    it.ClosedAt,
 	}
 	if it.Incident != nil {
 		view.Incident = &domain.CaseNumberRef{ID: sysidToUUID(it.Incident.ID), Number: it.Incident.Number}

@@ -2629,11 +2629,11 @@ export interface BeProblemDetail {
 }
 
 /**
- * List-item shape for `POST /incident_tasks/search`. No dedicated detail
+ * List-item shape for `POST /incident-tasks/search`. No dedicated detail
  * page exists for incident tasks in this app (unlike problem/incident), so
  * there is no separate `BeIncidentTaskDetail` type yet — `description`,
- * `priority`, `openedAt`, `closedAt` are on the backend's own
- * `GET /incident_tasks/{id}` response but have no frontend consumer today.
+ * `priority`, `openedOn`, `closedOn` are on the backend's own
+ * `GET /incident-tasks/{id}` response but have no frontend consumer today.
  * `stateLabel` is a pre-humanized display string the data source already
  * resolves server-side — prefer it over trying to humanize `state` (a raw,
  * data-source-specific integer with no stable domain enum here; see the

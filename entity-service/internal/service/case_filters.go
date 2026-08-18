@@ -527,6 +527,9 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
 			}
+			if err := validateUUIDs("filters: accountId", f.Values); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
 			p.AccountIDs = append(p.AccountIDs, f.Values...)
 
 		case "resolutionNotes":

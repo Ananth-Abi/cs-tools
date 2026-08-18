@@ -304,6 +304,28 @@ func TestSNIncidentService_SearchIncidents_InvalidFilterField(t *testing.T) {
 	}
 }
 
+// TestSNIncidentService_SearchIncidents_RejectsInvertedCreatedOnRange verifies
+// a createdOn lte bound before its gte bound is rejected with a validation
+// error before any SN call, instead of reaching ServiceNow and coming back
+// as an empty (200) result indistinguishable from "no matching incidents".
+func TestSNIncidentService_SearchIncidents_RejectsInvertedCreatedOnRange(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowIncidentService(nil)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "createdOn", Op: "gte", Values: []string{"2026-08-10"}},
+				{Field: "createdOn", Op: "lte", Values: []string{"2026-08-01"}},
+			},
+		},
+	}
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 // TestSNIncidentService_SearchIncidents_BusinessServiceIdInvalidUUID verifies a
 // malformed businessServiceId filter value is rejected with a clean
 // validation error before any SN call.

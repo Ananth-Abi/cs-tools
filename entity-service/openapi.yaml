@@ -3080,7 +3080,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /incident_tasks/search:
+  /incident-tasks/search:
     post:
       summary: Search incident tasks (ServiceNow data source only). Search and get only -- no create/update.
       operationId: searchIncidentTasks
@@ -3116,7 +3116,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /incident_tasks/{id}:
+  /incident-tasks/{id}:
     get:
       summary: Get a single incident task by ID (ServiceNow data source only).
       operationId: getIncidentTask
@@ -8826,10 +8826,10 @@ components:
         priority:
           type: string
           nullable: true
-        openedAt:
+        openedOn:
           type: string
           nullable: true
-        closedAt:
+        closedOn:
           type: string
           nullable: true
 

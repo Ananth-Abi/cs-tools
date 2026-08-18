@@ -3772,7 +3772,7 @@ type SearchIncidentTasksFilters struct {
 	Filters []IncidentTaskFieldFilter `json:"filters,omitempty"`
 }
 
-// SearchIncidentTasksRequest is the input for POST /incident_tasks/search.
+// SearchIncidentTasksRequest is the input for POST /incident-tasks/search.
 type SearchIncidentTasksRequest struct {
 	Filters    SearchIncidentTasksFilters `json:"filters"`
 	Pagination Pagination                 `json:"pagination"`
@@ -3799,7 +3799,7 @@ type SearchIncidentTasksResponse struct {
 }
 
 // IncidentTaskDetail is the full detail representation returned by
-// GET /incident_tasks/{id}.
+// GET /incident-tasks/{id}.
 //
 // State is a plain, unvalidated passthrough string from the data source
 // rather than a closed enum -- see SearchIncidentTasksFilters.Filters' doc
@@ -3815,8 +3815,8 @@ type IncidentTaskDetail struct {
 	AssignedTo      *EntityRef     `json:"assignedTo"`
 	Description     *string        `json:"description"`
 	Priority        *string        `json:"priority"`
-	OpenedAt        *string        `json:"openedAt"`
-	ClosedAt        *string        `json:"closedAt"`
+	OpenedOn        *string        `json:"openedOn"`
+	ClosedOn        *string        `json:"closedOn"`
 }
 
 // ConversationState represents the state of a conversation.

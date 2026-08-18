@@ -35,7 +35,7 @@ func NewIncidentTaskHandler(svc service.IncidentTaskService) *IncidentTaskHandle
 	return &IncidentTaskHandler{svc: svc}
 }
 
-// SearchIncidentTasks handles POST /incident_tasks/search.
+// SearchIncidentTasks handles POST /incident-tasks/search.
 func (h *IncidentTaskHandler) SearchIncidentTasks(w http.ResponseWriter, r *http.Request) {
 	var req domain.SearchIncidentTasksRequest
 	if !decodeRequest(w, r, &req) {
@@ -51,7 +51,7 @@ func (h *IncidentTaskHandler) SearchIncidentTasks(w http.ResponseWriter, r *http
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// GetIncidentTask handles GET /incident_tasks/{id}.
+// GetIncidentTask handles GET /incident-tasks/{id}.
 func (h *IncidentTaskHandler) GetIncidentTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	result, err := h.svc.GetIncidentTask(r.Context(), id)

@@ -212,6 +212,10 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
