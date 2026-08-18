@@ -504,10 +504,46 @@ describe("TimeCardsTable View details drawer", () => {
       />,
     );
 
+    // Assert the drawer's own "Engineer" field, not the case number --
+    // CS0352584/CS0352585 are already rendered in the table's Case column,
+    // so asserting those alone could pass even if the drawer never actually
+    // switched (or never opened at all).
     fireEvent.click(screen.getByTestId("timecard-view-tc-1"));
-    expect(screen.getByText("CS0352584")).toBeInTheDocument();
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("timecard-view-tc-2"));
-    expect(screen.getByText("CS0352585")).toBeInTheDocument();
+    expect(screen.getByText("John Roe")).toBeInTheDocument();
+    expect(screen.queryByText("Jane Doe")).not.toBeInTheDocument();
+  });
+});
+
+describe("TimeCardsTable — preview drawer respects bulk-selection gating", () => {
+  // Regression test: the row-level Approve/Reject buttons disable while a
+  // bulk selection is active (selectionActive), but the preview drawer used
+  // to always receive the card's full, unfiltered action list regardless --
+  // letting a user bypass that restriction by approving/rejecting from the
+  // drawer instead of the row.
+  it("does not offer Approve/Reject in the preview drawer while a bulk selection is active", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    const submittedCard: CsmTimeCard = { ...CARD, id: "tc-3", state: "submitted" };
+    renderWithClient(
+      <TimeCardsTable
+        cards={[submittedCard]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+        selectable
+        selectedIds={new Set(["tc-3"])}
+        onToggleSelect={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("timecard-view-tc-3"));
+
+    expect(screen.getByText("Time card")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
   });
 });

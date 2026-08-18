@@ -273,6 +273,7 @@ export default function CasesList({
                 <IconButton
                   size="small"
                   aria-label={`Quick preview ${rowLabel}`}
+                  aria-pressed={previewRow?.id === c.id}
                   onClick={(e) => {
                     e.stopPropagation();
                     setPreviewRow((prev) => (prev?.id === c.id ? null : c));

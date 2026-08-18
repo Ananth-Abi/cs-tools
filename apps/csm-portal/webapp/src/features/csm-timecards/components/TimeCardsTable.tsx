@@ -396,7 +396,19 @@ export default function TimeCardsTable({
       </Box>
       <TimeCardCasePreviewDrawer
         card={detailCard}
-        actions={detailCard ? cardActions(detailCard.state, roleFor(detailCard)) : []}
+        // Same gating as the row-level Approve/Reject buttons above: while a
+        // bulk selection is active, approve/reject only happens through the
+        // bulk toolbar. Without this filter the drawer would still offer its
+        // own Approve/Reject regardless of `selectionActive`, letting a
+        // direct decision bypass the same restriction the row buttons
+        // enforce.
+        actions={
+          detailCard
+            ? cardActions(detailCard.state, roleFor(detailCard)).filter(
+                (a) => !selectionActive || (a !== "approve" && a !== "reject"),
+              )
+            : []
+        }
         onClose={() => setDetailCard(null)}
         onDecide={(action) => {
           if (detailCard) onCardAction(detailCard, action);

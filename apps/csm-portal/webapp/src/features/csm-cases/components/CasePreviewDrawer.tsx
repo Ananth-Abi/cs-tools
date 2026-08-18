@@ -43,6 +43,14 @@ export default function CasePreviewDrawer({ row, onClose }: CasePreviewDrawerPro
       anchor="right"
       open={!!row}
       onClose={onClose}
+      // No backdrop: a temporary Drawer's default backdrop intercepts
+      // pointer events on the rest of the page, which would block clicking
+      // a different row's quick-preview eye while one preview is already
+      // open -- exactly the "switch straight to another row" behavior this
+      // drawer exists for. Closing still works via the eye toggle or the
+      // drawer's own close button; there's no click-outside-to-close to
+      // preserve here since those are already the two ways to close it.
+      hideBackdrop
       slotProps={{ paper: { sx: { width: { xs: "100%", sm: 420 } } } }}
     >
       {row && <CasePreviewContent row={row} onClose={onClose} />}

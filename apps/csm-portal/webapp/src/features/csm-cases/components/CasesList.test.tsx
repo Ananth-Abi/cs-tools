@@ -173,8 +173,12 @@ describe("CasesList quick preview", () => {
     );
 
     // The open drawer marks the rest of the page `aria-hidden` (MUI Modal's
-    // background containment for screen readers) — still clickable by mouse
-    // in real use, so the test reaches it the same way with `hidden: true`.
+    // background containment for screen readers, independent of the
+    // backdrop) — `hidden: true` reaches it the same way a real click would,
+    // since the drawer's `hideBackdrop` (CasePreviewDrawer.tsx) is what makes
+    // that click actually land in a browser: without it, MUI's default
+    // temporary-Drawer backdrop covers the rest of the page and intercepts
+    // pointer events, which would silently swallow this exact click.
     fireEvent.click(
       screen.getByRole("button", { name: "Quick preview CS-1008", hidden: true }),
     );
