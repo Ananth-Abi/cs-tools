@@ -469,4 +469,81 @@ describe("TimeCardsTable View details drawer", () => {
     fireEvent.click(screen.getByRole("link", { name: "View full details" }));
     await waitFor(() => expect(screen.getByTestId("location-probe")).toBeInTheDocument());
   });
+
+  it("closes the preview when the same row's eye is clicked again", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    const eye = screen.getByTestId("timecard-view-tc-1");
+    fireEvent.click(eye);
+    expect(screen.getByText("Time card")).toBeInTheDocument();
+
+    fireEvent.click(eye);
+    expect(screen.queryByText("Time card")).not.toBeInTheDocument();
+  });
+
+  it("switches the preview to a different row without requiring a close first", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD, APPROVED_CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    // Assert the drawer's own "Engineer" field, not the case number --
+    // CS0352584/CS0352585 are already rendered in the table's Case column,
+    // so asserting those alone could pass even if the drawer never actually
+    // switched (or never opened at all).
+    fireEvent.click(screen.getByTestId("timecard-view-tc-1"));
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("timecard-view-tc-2"));
+    expect(screen.getByText("John Roe")).toBeInTheDocument();
+    expect(screen.queryByText("Jane Doe")).not.toBeInTheDocument();
+  });
+});
+
+describe("TimeCardsTable — preview drawer respects bulk-selection gating", () => {
+  // Regression test: the row-level Approve/Reject buttons disable while a
+  // bulk selection is active (selectionActive), but the preview drawer used
+  // to always receive the card's full, unfiltered action list regardless --
+  // letting a user bypass that restriction by approving/rejecting from the
+  // drawer instead of the row.
+  it("does not offer Approve/Reject in the preview drawer while a bulk selection is active", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    const submittedCard: CsmTimeCard = { ...CARD, id: "tc-3", state: "submitted" };
+    renderWithClient(
+      <TimeCardsTable
+        cards={[submittedCard]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => APPROVER_ROLE_CTX}
+        onCardAction={vi.fn()}
+        selectable
+        selectedIds={new Set(["tc-3"])}
+        onToggleSelect={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("timecard-view-tc-3"));
+
+    expect(screen.getByText("Time card")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
 });

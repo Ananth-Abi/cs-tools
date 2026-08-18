@@ -127,4 +127,64 @@ describe("CasesList quick preview", () => {
     expect(screen.getByText("View full details")).toBeInTheDocument();
     expect(screen.queryByTestId("from-state")).not.toBeInTheDocument();
   });
+
+  it("closes the preview when the same row's eye is clicked again", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    const eye = screen.getByRole("button", { name: "Quick preview CS-1007" });
+    fireEvent.click(eye);
+    expect(screen.getByText("View full details")).toBeInTheDocument();
+
+    fireEvent.click(eye);
+    expect(screen.queryByText("View full details")).not.toBeInTheDocument();
+  });
+
+  it("switches the preview to a different row without requiring a close first", () => {
+    const otherCase: CsmCaseRow = {
+      ...CASE,
+      id: "case-2",
+      caseNumber: "CS-1008",
+      subject: "Login fails intermittently",
+    };
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE, otherCase]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick preview CS-1007" }));
+    expect(screen.getByRole("link", { name: "View full details" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/case-1"),
+    );
+
+    // The open drawer marks the rest of the page `aria-hidden` (MUI Modal's
+    // background containment for screen readers, independent of the
+    // backdrop) — `hidden: true` reaches it the same way a real click would,
+    // since the drawer's `hideBackdrop` (CasePreviewDrawer.tsx) is what makes
+    // that click actually land in a browser: without it, MUI's default
+    // temporary-Drawer backdrop covers the rest of the page and intercepts
+    // pointer events, which would silently swallow this exact click.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Quick preview CS-1008", hidden: true }),
+    );
+    expect(screen.getByRole("link", { name: "View full details" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/case-2"),
+    );
+  });
 });

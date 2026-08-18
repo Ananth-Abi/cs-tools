@@ -256,7 +256,10 @@ export default function DashboardWidgetTile({
   // all" link never carries a literal `__current_team__`/`__current_user__`
   // placeholder into the destination resource's own filters (see
   // `teamFilterPlaceholder.ts`/`currentUserFilterPlaceholder.ts`).
-  const href = config.buildHref(resolvePlaceholders(filters));
+  const href = config.buildHref(resolvePlaceholders(filters), {
+    widgetId,
+    displayName: resolvedDisplayName,
+  });
   const Icon = config.icon;
   const isListShape = shape === "list";
 
@@ -437,7 +440,10 @@ export default function DashboardWidgetTile({
     // (`pointerEvents: "auto"`) for the chart specifically, letting its own
     // click and keyboard handling work exactly as before.
     const ChartComponent = shape === "pie" ? DashboardPieChart : DashboardBarChart;
-    const tileHref = config.buildHref(resolvePlaceholders(filters));
+    const tileHref = config.buildHref(resolvePlaceholders(filters), {
+      widgetId,
+      displayName: resolvedDisplayName,
+    });
     const handleTileClick = (): void => {
       void navigate(tileHref, { state: dashboardReturnState });
     };
@@ -500,7 +506,10 @@ export default function DashboardWidgetTile({
               isError={pieData.isError}
               onSliceClick={(slice: PieSliceResult) =>
                 navigate(
-                  config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query))),
+                  config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query)), {
+                    widgetId,
+                    displayName: resolvedDisplayName,
+                  }),
                   { state: dashboardReturnState },
                 )
               }

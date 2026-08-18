@@ -15,10 +15,22 @@
 // under the License.
 
 import { Box, Link, Sidebar, Tooltip, Typography } from "@wso2/oxygen-ui";
-import { useEffect, useRef, type JSX } from "react";
+import { useCallback, useEffect, useMemo, useRef, type JSX } from "react";
 import { Link as NavigateLink, useLocation } from "react-router";
-import { navNodePath, navSectionForPath } from "@config/csmNavItems";
-import { featureState, visibleNavSections } from "@config/featureFlags";
+import {
+  type CsmNavSection,
+  navNodeById,
+  navNodeHref,
+  navNodeMatchForPath,
+  navNodePath,
+  navSectionForPath,
+} from "@config/csmNavItems";
+import {
+  featureState,
+  visibleNavChildren,
+  visibleNavSections,
+} from "@config/featureFlags";
+import { useNavTransition } from "@hooks/useNavTransition";
 import { preloadRoute } from "@utils/routePreloaders";
 
 /** Tooltip for a disabled WIP item. Includes the label so the collapsed rail
@@ -59,13 +71,30 @@ interface CsmSideBarProps {
   onToggleExpand?: (id: string) => void;
 }
 
+/**
+ * A section whose children get their own submenu entries in the rail (as
+ * opposed to a section like Customers/Settings, whose children live in an
+ * in-page tab/route strip instead). A query-param tab's `tab` field is the
+ * structural marker for this — see `CsmNavNode.tab`'s doc comment — so this
+ * stays correct if another section adopts the same pattern later, with no
+ * hardcoded id list to keep in sync.
+ */
+function isSubmenuSection(section: CsmNavSection): boolean {
+  return Boolean(section.children?.length) && (section.children ?? []).every((child) => Boolean(child.tab));
+}
+
 function pickActiveId(pathname: string, lastSectionId: string): string {
   if (pathname === "/" || pathname === "") return "dashboard";
-  // Highlight the owning *section* — a second-level tab has no rail entry of
-  // its own, so `/operations/incidents/42` still lights up Operations.
-  // Routes with no owning section (e.g. `/people/:id`, linked from all over
-  // the app, not just Settings > Users) fall back to whichever section was
-  // last active instead of hard-jumping to Dashboard.
+  // A submenu section's own child (e.g. `operations.incidents`) gets its own
+  // rail entry, so highlight *that* rather than the section — this is what
+  // lets the nested item light up and the parent auto-expand. Every other
+  // route (including a tab-less section's own child route, e.g.
+  // `/customers/accounts`, which has no rail entry of its own) still
+  // highlights the owning *section*. Routes with no owning section (e.g.
+  // `/people/:id`, linked from all over the app) fall back to whichever
+  // section was last active instead of hard-jumping to Dashboard.
+  const match = navNodeMatchForPath(pathname);
+  if (match?.node.tab !== undefined) return match.node.id;
   return navSectionForPath(pathname)?.id ?? lastSectionId;
 }
 
@@ -76,19 +105,64 @@ export default function CsmSideBar({
   onToggleExpand,
 }: CsmSideBarProps): JSX.Element {
   const location = useLocation();
+  const navigate = useNavTransition();
   const lastSectionId = useRef(getLastSectionId());
   const activeItem = pickActiveId(location.pathname, lastSectionId.current);
   useEffect(() => {
-    lastSectionId.current = activeItem;
-    setLastSectionId(activeItem);
+    // `lastSectionId` is the fallback used for routes with no owning section
+    // (see `pickActiveId`'s doc comment) -- it must stay a *section* id.
+    // `activeItem` can be a submenu child's own dotted id (e.g.
+    // `operations.incidents`); persisting that verbatim meant navigating to
+    // an unrelated, section-less route later read the stale child id back as
+    // the fallback and lit up/expanded the wrong (previous) section.
+    const owningSectionId = activeItem.includes(".")
+      ? activeItem.slice(0, activeItem.indexOf("."))
+      : activeItem;
+    lastSectionId.current = owningSectionId;
+    setLastSectionId(owningSectionId);
   }, [activeItem]);
+
+  // A submenu child (e.g. `operations.incidents`, rendered without its own
+  // navigating `Link` — see below) reaches here through Oxygen's own
+  // `onSelect`, dotted ids are how it's told apart from a flat top-level
+  // item's id (never dotted) whose Link already handled the navigation
+  // itself. A WIP child stays visible (so a deployment's config change is
+  // still legible in the rail) but inert, same intent as a WIP top-level
+  // section, just enforced here instead of structurally — Oxygen's own
+  // collapsed-rail popover reads a nested item's id/icon/label straight off
+  // its props, so it has to stay a plain `Sidebar.Item` rather than being
+  // wrapped in a disabling `Box`/`Tooltip` the way a top-level WIP section is.
+  const handleSelect = useCallback(
+    (id: string): void => {
+      if (id.includes(".") && featureState(id) !== "wip") {
+        const node = navNodeById(id);
+        if (node) navigate(navNodeHref(node));
+      }
+      onSelect?.(id);
+    },
+    [navigate, onSelect],
+  );
+
+  // A submenu section stays expanded whenever one of its own children is the
+  // active item, even on a fresh load before `onToggleExpand` has ever fired
+  // for it — `expandedMenus` alone can't do this since it starts empty every
+  // session. This intentionally overrides a manual collapse while that child
+  // is still the active page; collapsing only "sticks" once the user
+  // navigates elsewhere. That trade-off keeps the behaviour predictable
+  // (the section showing your current page is never hidden) rather than
+  // introducing separate "user closed this" state to track.
+  const effectiveExpandedMenus = useMemo(() => {
+    const dot = activeItem.indexOf(".");
+    if (dot === -1) return expandedMenus;
+    return { ...expandedMenus, [activeItem.slice(0, dot)]: true };
+  }, [expandedMenus, activeItem]);
 
   return (
     <Sidebar
       collapsed={collapsed}
       activeItem={activeItem}
-      expandedMenus={expandedMenus}
-      onSelect={onSelect}
+      expandedMenus={effectiveExpandedMenus}
+      onSelect={handleSelect}
       onToggleExpand={onToggleExpand}
     >
       <Sidebar.Nav>
@@ -132,6 +206,37 @@ export default function CsmSideBar({
                     </Box>
                   </Box>
                 </Tooltip>
+              );
+            }
+
+            // A submenu section (Operations, Security Center) renders its
+            // children as nested `Sidebar.Item`s instead of navigating
+            // directly: Oxygen shows a chevron and calls `onToggleExpand`
+            // for any item with nested items rather than `onSelect`, so this
+            // parent is deliberately NOT wrapped in a `Link` — only its
+            // children (below) navigate. A section whose config has hidden
+            // every one of its children falls through to the plain flat item
+            // instead of rendering an entry with nothing to expand.
+            const children = isSubmenuSection(item) ? visibleNavChildren(item) : [];
+            if (children.length > 0) {
+              return (
+                <Sidebar.Item id={item.id} key={item.id}>
+                  <Sidebar.ItemIcon>
+                    <item.icon size={20} />
+                  </Sidebar.ItemIcon>
+                  <Sidebar.ItemLabel>{item.label}</Sidebar.ItemLabel>
+                  {children.map((child) => {
+                    const childWip = featureState(child.id) === "wip";
+                    return (
+                      <Sidebar.Item id={child.id} key={child.id}>
+                        <Sidebar.ItemLabel>{child.label}</Sidebar.ItemLabel>
+                        {childWip && (
+                          <Sidebar.ItemBadge color="warning">WIP</Sidebar.ItemBadge>
+                        )}
+                      </Sidebar.Item>
+                    );
+                  })}
+                </Sidebar.Item>
               );
             }
 

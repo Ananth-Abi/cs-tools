@@ -44,6 +44,7 @@ const (
 	ResourceUser                 ResourceType = "user"
 	ResourceTimeCard             ResourceType = "time_card"
 	ResourceProblem              ResourceType = "problem"
+	ResourceIncidentTask         ResourceType = "incident_task"
 	ResourceProductVulnerability ResourceType = "product_vulnerability"
 	ResourceCallRequest          ResourceType = "call_request"
 	// ResourceServiceRequest, ResourceSecurityReportAnalysis,

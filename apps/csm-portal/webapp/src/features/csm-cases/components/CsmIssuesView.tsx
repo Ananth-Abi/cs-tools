@@ -68,16 +68,39 @@ const DEFAULT_ROWS_PER_PAGE = 20;
 const ROWS_PER_PAGE_OPTIONS = [10, DEFAULT_ROWS_PER_PAGE, BE_MAX_PAGE_LIMIT];
 
 // URL params owned by the filter state; cleared/rewritten on change while any
-// other params (e.g. a `tab` selection) are preserved.
+// other params (e.g. a `tab` selection) are preserved. Must cover every key
+// `writeCasesFiltersToUrl` can write — a key missing here never gets deleted
+// when its filter clears back to empty/null, so the stale URL value keeps
+// getting read back on the next render, making that one filter look
+// impossible to fully clear (found via workStates: selecting a work state
+// then trying to deselect it back to none silently failed because
+// `workStates` wasn't in this list).
 const FILTER_PARAM_KEYS = [
   "search",
   "severities",
   "states",
   "types",
   "assignees",
+  "workStates",
   "projects",
   "engagementTypes",
   "products",
+  "csTeams",
+  "sreTeams",
+  "tags",
+  "excludeTags",
+  "onboardingStatuses",
+  "slaPctGte",
+  "slaPctLte",
+  "escalation",
+  "escalationLevels",
+  "projectTypes",
+  "createdFrom",
+  "createdTo",
+  "updatedFrom",
+  "updatedTo",
+  "closedFrom",
+  "closedTo",
 ] as const;
 
 interface CsmIssuesViewProps {
@@ -92,6 +115,9 @@ interface CsmIssuesViewProps {
   lockedFilters?: Partial<CasesFilters>;
   /** Hide the case-type filter control (use when `lockedFilters` fixes it). */
   hideTypeFilter?: boolean;
+  /** Label for the case-type filter control; see `CasesFilterBar`'s own
+   * `typeFilterLabel` doc comment. Defaults to "Case type". */
+  typeFilterLabel?: string;
   /** Hide the project filter control (use when the view is project-scoped). */
   hideProjectFilter?: boolean;
   /** Show the engagement-type sub-filter (pass when the view is locked to engagement cases). */
@@ -126,6 +152,7 @@ export default function CsmIssuesView({
   entityNoun = "cases",
   lockedFilters,
   hideTypeFilter,
+  typeFilterLabel,
   hideProjectFilter,
   showEngagementTypeFilter,
   detailBasePath,
@@ -434,6 +461,7 @@ export default function CsmIssuesView({
         availableProjects={availableProjects}
         showSeverityFilter={showSeverityFilter}
         hideTypeFilter={hideTypeFilter}
+        typeFilterLabel={typeFilterLabel}
         hideProjectFilter={hideProjectFilter}
         showEngagementTypeFilter={showEngagementTypeFilter}
       />

@@ -273,6 +273,20 @@ export function navNodePath(node: CsmNavNode): string {
 }
 
 /**
+ * Where actually navigating to `node` should go. For a query-param tab
+ * (`tab` set), `href` is kept in the legacy `?tab=` shape purely so an old
+ * bookmarked/shared link in that form still resolves (see
+ * `LegacyQueryTabRedirect`) — the real, canonical destination is its first
+ * declared {@link CsmNavNode.routes} entry, the actual path-segment route
+ * (`/operations/incidents`, not `/operations?tab=incidents`). Every other
+ * node has no such split: `href` already is the real destination.
+ */
+export function navNodeHref(node: CsmNavNode): string {
+  if (node.tab && node.routes?.[0]) return node.routes[0];
+  return node.href;
+}
+
+/**
  * Route path prefixes a node owns. A query-param tab (`tab` set) owns only its
  * explicit {@link CsmNavNode.routes}: its `href` pathname is the *parent's*
  * landing route, which every sibling tab shares, so claiming it would make the

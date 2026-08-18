@@ -14,44 +14,67 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { MemoryRouter } from "react-router";
 import type { ReactNode } from "react";
 
-// Records each `activeItem` CsmSideBar hands the real Sidebar, without
-// reassigning an outer-scope variable during render (a mock function call
-// is not a render side effect the way a bare assignment is).
+// Records the props CsmSideBar hands the real Sidebar on each render, without
+// reassigning an outer-scope variable during render (a mock function call is
+// not a render side effect the way a bare assignment is).
 const sidebarPropsSpy = vi.fn();
 
-function lastActiveItem(): string | undefined {
-  return sidebarPropsSpy.mock.calls.at(-1)?.[0] as string | undefined;
+interface CapturedSidebarProps {
+  activeItem?: string;
+  expandedMenus?: Record<string, boolean>;
+  onSelect?: (id: string) => void;
 }
 
-// The real Sidebar's internal DOM/selection markup isn't this test's concern
-// -- only what `activeItem` CsmSideBar computed and handed it. Every
-// compound sub-component it renders (`Sidebar.Nav`, `.Item`, ...) is stubbed
-// to a passthrough so CsmSideBar's own JSX still resolves.
+function lastSidebarProps(): CapturedSidebarProps {
+  return (sidebarPropsSpy.mock.calls.at(-1)?.[0] ?? {}) as CapturedSidebarProps;
+}
+
+function lastActiveItem(): string | undefined {
+  return lastSidebarProps().activeItem;
+}
+
+const navigateMock = vi.fn();
+vi.mock("@hooks/useNavTransition", () => ({
+  useNavTransition: () => navigateMock,
+}));
+
+// The real Sidebar's internal DOM/selection/expand-collapse machinery isn't
+// this test's concern -- only what CsmSideBar computed and handed it
+// (activeItem, expandedMenus, onSelect) and what it rendered as nested
+// children. Every compound sub-component it renders (`Sidebar.Nav`,
+// `.Item`, ...) is stubbed to a passthrough so CsmSideBar's own JSX still
+// resolves and nested `Sidebar.Item`s render their labels for assertions.
 vi.mock("@wso2/oxygen-ui", async () => {
   const actual = await vi.importActual<typeof import("@wso2/oxygen-ui")>("@wso2/oxygen-ui");
   const Passthrough = ({ children }: { children?: ReactNode }) => <>{children}</>;
+  // A real (if bare) DOM element per item/label, not a fragment passthrough —
+  // so a nested item's own text is its own element's content for
+  // `getByText`, distinct from its parent's aggregate text.
+  const MockItem = ({ id, children }: { id?: string; children?: ReactNode }) => (
+    <div data-item-id={id}>{children}</div>
+  );
+  const MockItemLabel = ({ children }: { children?: ReactNode }) => <span>{children}</span>;
   function MockSidebar({
     activeItem,
+    expandedMenus,
+    onSelect,
     children,
-  }: {
-    activeItem?: string;
-    children?: ReactNode;
-  }) {
-    sidebarPropsSpy(activeItem);
+  }: CapturedSidebarProps & { children?: ReactNode }) {
+    sidebarPropsSpy({ activeItem, expandedMenus, onSelect });
     return <div data-testid="sidebar">{children}</div>;
   }
   MockSidebar.Nav = Passthrough;
   MockSidebar.Category = Passthrough;
   MockSidebar.CategoryLabel = Passthrough;
-  MockSidebar.Item = Passthrough;
+  MockSidebar.Item = MockItem;
   MockSidebar.ItemIcon = Passthrough;
-  MockSidebar.ItemLabel = Passthrough;
+  MockSidebar.ItemLabel = MockItemLabel;
   MockSidebar.ItemBadge = Passthrough;
   MockSidebar.Footer = Passthrough;
   return { ...actual, Sidebar: MockSidebar };
@@ -72,6 +95,7 @@ function renderAt(path: string): ReturnType<typeof render> {
 describe("CsmSideBar — active section on routes with no owning nav section", () => {
   beforeEach(() => {
     sidebarPropsSpy.mockClear();
+    navigateMock.mockClear();
     sessionStorage.clear();
   });
 
@@ -95,5 +119,90 @@ describe("CsmSideBar — active section on routes with no owning nav section", (
     sessionStorage.setItem(LAST_SECTION_KEY, "admin");
     renderAt("/people/user-1");
     expect(lastActiveItem()).toBe("admin");
+  });
+
+  // Regression test: visiting a submenu child route (e.g.
+  // `/operations/incidents`) used to persist the *child's* dotted id
+  // (`operations.incidents`) as the remembered section, not the owning
+  // section (`operations`). A later visit to a section-less route then read
+  // that stale child id back as the fallback, lighting up the old child and
+  // auto-expanding Operations even though nothing about the new route has
+  // anything to do with it.
+  it("remembers the owning section, not the child's own dotted id, after visiting a submenu child route", () => {
+    renderAt("/operations/incidents");
+    expect(sessionStorage.getItem(LAST_SECTION_KEY)).toBe("operations");
+
+    sidebarPropsSpy.mockClear();
+    renderAt("/people/user-1");
+    expect(lastActiveItem()).toBe("operations");
+  });
+});
+
+describe("CsmSideBar — Operations/Security Center submenu", () => {
+  beforeEach(() => {
+    sidebarPropsSpy.mockClear();
+    navigateMock.mockClear();
+    sessionStorage.clear();
+  });
+
+  it("renders Operations' children as nested items in the rail", () => {
+    renderAt("/dashboard");
+    expect(screen.getByText("Service requests")).toBeInTheDocument();
+    expect(screen.getByText("Change requests")).toBeInTheDocument();
+    expect(screen.getByText("Incidents")).toBeInTheDocument();
+    expect(screen.getByText("Problem management")).toBeInTheDocument();
+  });
+
+  it("renders Security Center's children as nested items in the rail", () => {
+    renderAt("/dashboard");
+    expect(screen.getByText("Security reports")).toBeInTheDocument();
+    expect(screen.getByText("Vulnerabilities")).toBeInTheDocument();
+  });
+
+  it("does not extend the submenu treatment to Customers/Settings — their children stay out of the rail", () => {
+    renderAt("/dashboard");
+    // Customers/Settings still switch tabs via their own in-page/route strip
+    // (`useRouteTabs`), untouched by this change — their children must not
+    // gain rail entries as a side effect of the Operations/Security work.
+    expect(screen.queryByText("Accounts")).not.toBeInTheDocument();
+    expect(screen.queryByText("User management")).not.toBeInTheDocument();
+  });
+
+  it("highlights the active child tab, not just the owning section, on a fresh load", () => {
+    renderAt("/operations/incidents");
+    expect(lastActiveItem()).toBe("operations.incidents");
+  });
+
+  it("auto-expands Operations on a fresh load when one of its children is active", () => {
+    renderAt("/operations/incidents");
+    expect(lastSidebarProps().expandedMenus?.operations).toBe(true);
+  });
+
+  it("auto-expands Security Center on a fresh load when one of its children is active", () => {
+    renderAt("/security-center/vulnerabilities");
+    expect(lastSidebarProps().expandedMenus?.["security-center"]).toBe(true);
+  });
+
+  it("does not force-expand Operations when a different section is active", () => {
+    renderAt("/dashboard");
+    expect(lastSidebarProps().expandedMenus?.operations).toBeFalsy();
+  });
+
+  it("navigates to the real path-segment route for a selected submenu child, not the legacy ?tab= href", () => {
+    renderAt("/dashboard");
+    lastSidebarProps().onSelect?.("operations.incidents");
+    expect(navigateMock).toHaveBeenCalledWith("/operations/incidents");
+  });
+
+  it("navigates a Security Center child selection to its own path-segment route", () => {
+    renderAt("/dashboard");
+    lastSidebarProps().onSelect?.("security-center.vulnerabilities");
+    expect(navigateMock).toHaveBeenCalledWith("/security-center/vulnerabilities");
+  });
+
+  it("does not navigate for a flat top-level section id selected directly (its own Link already handles it)", () => {
+    renderAt("/dashboard");
+    lastSidebarProps().onSelect?.("engagements");
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });

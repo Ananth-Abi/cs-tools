@@ -286,6 +286,24 @@ describe("WIDGET_RESOURCE_CONFIG — case-table resourceTypes beyond `case`", ()
     ).toBe("/announcements");
   });
 
+  // Regression test: incident_task has no dedicated list route of its own
+  // (only ever viewed as part of its parent incident), so its buildHref used
+  // to fall back to the plain, unfiltered incidents tab -- silently dropping
+  // this widget's own filters and landing the user on an unrelated result
+  // set. It must route through the generic dashboard-widget preview page
+  // instead, which is filter-aware, using the widgetId/displayName context
+  // DashboardWidgetTile passes at call time.
+  it("incident_task's buildHref routes to the widget preview page with widget context, not the unfiltered incidents tab", () => {
+    const href = WIDGET_RESOURCE_CONFIG.incident_task.buildHref(
+      { assignmentGroupIds: ["grp-1"] },
+      { widgetId: "widget-42", displayName: "My Incident Tasks" },
+    );
+    expect(href.startsWith("/dashboard/preview/incident-tasks?")).toBe(true);
+    const params = hrefParams(href);
+    expect(params.get("w")).toBe("widget-42");
+    expect(params.get("n")).toBe("My Incident Tasks");
+  });
+
   it("each of the four has its own distinct icon from `case` and from each other", () => {
     const icons = [
       WIDGET_RESOURCE_CONFIG.case.icon,

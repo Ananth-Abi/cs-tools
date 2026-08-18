@@ -109,6 +109,13 @@ export default function TimeCardCasePreviewDrawer({
       anchor="right"
       open={!!card}
       onClose={onClose}
+      // No backdrop: a temporary Drawer's default backdrop intercepts
+      // pointer events on the rest of the page, which would block clicking
+      // a different row's quick-preview eye while one preview is already
+      // open -- exactly the "switch straight to another row" behavior this
+      // drawer exists for. Closing still works via the eye toggle or the
+      // drawer's own close button.
+      hideBackdrop
       slotProps={{ paper: { sx: { width: { xs: "100%", sm: 420 } } } }}
     >
       {card && (
@@ -148,15 +155,17 @@ export default function TimeCardCasePreviewDrawer({
 
             <WorkLogComment html={card.workLogComment} />
 
-            {decision && (
+            {card.state === "submitted" && card.approvers && card.approvers.length > 0 && (
               <Field
-                label="Decision"
-                value={
-                  <Typography variant="body2" sx={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                    {decision}
-                  </Typography>
-                }
+                label="Approvers"
+                value={card.approvers.map((approver) => approver.name).join(", ")}
               />
+            )}
+
+            {decision && (
+              <Typography variant="body2" sx={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                {decision}
+              </Typography>
             )}
 
             {actions.some((a) => a === "approve" || a === "reject") && (

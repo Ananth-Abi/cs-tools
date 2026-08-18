@@ -437,8 +437,9 @@ func validate(loaded []sourced, requireType bool) error {
 var validWidgetResourceTypes = map[ResourceType]bool{
 	ResourceCase: true, ResourceIncident: true, ResourceChangeRequest: true,
 	ResourceAccount: true, ResourceProject: true, ResourceUser: true,
-	ResourceTimeCard: true, ResourceProblem: true, ResourceProductVulnerability: true,
-	ResourceCallRequest: true,
+	ResourceTimeCard: true, ResourceProblem: true, ResourceIncidentTask: true,
+	ResourceProductVulnerability: true,
+	ResourceCallRequest:          true,
 	// The remaining four case-table values (see ResourceServiceRequest's doc
 	// comment) — same /cases/search endpoint as ResourceCase, distinguished
 	// only by the auto-injected "type" filter (caseTableResourceTypes,

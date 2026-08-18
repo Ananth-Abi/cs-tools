@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -95,6 +96,12 @@ type snIncidentFilters struct {
 	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
 	// BusinessServiceIDs: business_service sys_ids (converted from UUIDs).
 	BusinessServiceIDs []string `json:"businessServiceIds,omitempty"`
+	// StartCreatedDate/EndCreatedDate: see domain.SearchIncidentsFilters
+	// Filters "createdOn" doc comment. Wire keys match case search's own
+	// startCreatedDate/endCreatedDate exactly (same UtcDateTimeString
+	// contract on the Ballerina/SN side).
+	StartCreatedDate string `json:"startCreatedDate,omitempty"`
+	EndCreatedDate   string `json:"endCreatedDate,omitempty"`
 }
 
 // snIncidentPriorityKeyMap maps domain IncidentPriority enums to SN numeric priority keys.
@@ -201,9 +208,13 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
-	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters)
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
 	if err != nil {
 		return domain.SearchIncidentsResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
@@ -231,6 +242,8 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 			StateKeys:          parsedFilters.StateKeys,
 			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
 			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

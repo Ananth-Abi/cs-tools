@@ -18,7 +18,6 @@ import { Box, Button, Typography } from "@wso2/oxygen-ui";
 import { ArrowLeft, Plus } from "@wso2/oxygen-ui-icons-react";
 import { type JSX } from "react";
 import { useLocation } from "react-router";
-import SectionTabs from "@components/section-tabs/SectionTabs";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ChangeRequestsTab from "@features/csm-operations/components/ChangeRequestsTab";
 import IncidentsTab from "@features/csm-operations/components/IncidentsTab";
@@ -34,15 +33,15 @@ import { usePathSectionTabs } from "@hooks/useSectionTabs";
  *
  * Which tabs exist comes from the navigation tree, so a deployment can restrict
  * one through `CSM_PORTAL_FEATURE_OVERRIDES` without touching this page.
+ *
+ * The tab switch itself lives in the sidebar now (Operations' submenu), not
+ * an in-page strip — `usePathSectionTabs` is kept only for its
+ * enabled/WIP-aware fallback (an invalid or restricted `:tab` still resolves
+ * to the first usable one) reading the same real path segment
+ * (`/operations/:tab`) the sidebar's submenu links navigate to.
  */
 export default function OperationsPage(): JSX.Element {
-  // Active tab is a real path segment (`/operations/:tab`), not `?tab=` —
-  // switching to a genuinely different content set is its own bookmarkable
-  // route, per this app's URL-shape rule. See `usePathSectionTabs` and the
-  // `operations` routes in App.tsx (including the legacy `?tab=` redirect for
-  // links shared/bookmarked before this section had its own path segment).
-  const tabs = usePathSectionTabs("operations", "/operations");
-  const activeTab = tabs.activeKey;
+  const { activeKey: activeTab } = usePathSectionTabs("operations", "/operations");
   const navigate = useNavTransition();
   // Set by a dashboard widget's click-through (see DashboardWidgetTile /
   // widgetListConfig.tsx), since this page has no dashboard context of its
@@ -71,8 +70,6 @@ export default function OperationsPage(): JSX.Element {
           Service requests, change requests, incidents, and problems across customers.
         </Typography>
       </Box>
-
-      <SectionTabs {...tabs} ariaLabel="Operations tabs" />
 
       {activeTab === "service-requests" && (
         <CsmIssuesView

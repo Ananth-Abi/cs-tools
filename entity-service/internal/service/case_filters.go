@@ -45,6 +45,7 @@ var caseFilterFieldSet = map[string]bool{
 	"projectOnboardingStatus": true, "projectType": true, "creTeam": true, "sreTeam": true,
 	"resolutionNotes": true, "parentId": true, "taskSLABusinessElapsedPercent": true,
 	"escalationLevel": true, "escalation": true, "number": true, "internalId": true,
+	"accountId": true,
 }
 
 // caseFilterOpSet is the exact set of CaseFieldFilter.Op values accepted by
@@ -480,13 +481,17 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			p.ProductNames = append(p.ProductNames, f.Values...)
 
 		case "projectOnboardingStatus":
-			if f.Op != "in" {
-				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
-			}
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
 			}
-			p.ProjectOnboardingStatuses = append(p.ProjectOnboardingStatuses, f.Values...)
+			switch f.Op {
+			case "in":
+				p.ProjectOnboardingStatuses = append(p.ProjectOnboardingStatuses, f.Values...)
+			case "notIn":
+				p.ExcludeProjectOnboardingStatuses = append(p.ExcludeProjectOnboardingStatuses, f.Values...)
+			default:
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
 
 		case "projectType":
 			if f.Op != "in" {
@@ -514,6 +519,18 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 				return domain.ParsedCaseFilters{}, err
 			}
 			p.SreTeamIDs = append(p.SreTeamIDs, f.Values...)
+
+		case "accountId":
+			if f.Op != "in" {
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			if err := validateUUIDs("filters: accountId", f.Values); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			p.AccountIDs = append(p.AccountIDs, f.Values...)
 
 		case "resolutionNotes":
 			// isNotEmpty has no prior equivalent: false and omitted were
@@ -722,7 +739,7 @@ func rejectUnsupportedOrGroupFields(parsed domain.ParsedCaseFilters) error {
 		return &apierror.ValidationError{Msg: "anyOf: field \"updatedOn\" is not supported inside an OR group"}
 	case len(parsed.ProductNames) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"product\" is not supported inside an OR group"}
-	case len(parsed.ProjectOnboardingStatuses) > 0:
+	case len(parsed.ProjectOnboardingStatuses) > 0 || len(parsed.ExcludeProjectOnboardingStatuses) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"projectOnboardingStatus\" is not supported inside an OR group"}
 	case len(parsed.ProjectTypeNames) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"projectType\" is not supported inside an OR group"}
@@ -730,6 +747,8 @@ func rejectUnsupportedOrGroupFields(parsed domain.ParsedCaseFilters) error {
 		return &apierror.ValidationError{Msg: "anyOf: field \"creTeam\" is not supported inside an OR group"}
 	case len(parsed.SreTeamIDs) > 0:
 		return &apierror.ValidationError{Msg: "anyOf: field \"sreTeam\" is not supported inside an OR group"}
+	case len(parsed.AccountIDs) > 0:
+		return &apierror.ValidationError{Msg: "anyOf: field \"accountId\" is not supported inside an OR group"}
 	case len(parsed.ExcludeStates) > 0:
 		// state+in is supported inside a branch (CaseFilterGroup.States);
 		// state+notIn is not modeled there.

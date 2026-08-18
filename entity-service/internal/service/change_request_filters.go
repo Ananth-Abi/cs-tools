@@ -56,10 +56,16 @@ func badChangeRequestFilterCombo(f domain.ChangeRequestFieldFilter) error {
 }
 
 // parseChangeRequestFilterDate parses a single filter value into a
-// date/time -- a full RFC3339 timestamp or a plain YYYY-MM-DD date
-// (interpreted as UTC midnight), mirroring parseCaseFilterDate's
-// non-relative-date handling in case_filters.go.
-func parseChangeRequestFilterDate(f domain.ChangeRequestFieldFilter, value string) (*time.Time, error) {
+// date/time -- a full RFC3339 timestamp, a plain YYYY-MM-DD date (interpreted
+// as UTC midnight), or a relative-date placeholder (e.g. "__daysAgo:90__"),
+// mirroring parseCaseFilterDate in case_filters.go. now is the reference
+// instant relative placeholders resolve against.
+func parseChangeRequestFilterDate(f domain.ChangeRequestFieldFilter, value string, now time.Time) (*time.Time, error) {
+	if resolved, matched, err := resolveRelativeDate(value, now); err != nil {
+		return nil, err
+	} else if matched {
+		value = resolved
+	}
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return &t, nil
 	}
@@ -70,7 +76,7 @@ func parseChangeRequestFilterDate(f domain.ChangeRequestFieldFilter, value strin
 		}
 		return &t, nil
 	}
-	return nil, &apierror.ValidationError{Msg: fmt.Sprintf("filters: field %q op %q value %q must be an RFC3339 timestamp or YYYY-MM-DD date", f.Field, f.Op, value)}
+	return nil, &apierror.ValidationError{Msg: fmt.Sprintf("filters: field %q op %q value %q must be an RFC3339 timestamp, YYYY-MM-DD date, or a recognized relative-date placeholder", f.Field, f.Op, value)}
 }
 
 // parsedChangeRequestFilters is the internal, named-field representation that
@@ -95,7 +101,7 @@ type parsedChangeRequestFilters struct {
 // CreatedEndDate-not-before-CreatedStartDate check, mirroring how
 // sn_change_request_service.go already does that check for
 // ClosedEndDate/ClosedStartDate post-parse.
-func ParseChangeRequestFieldFilters(filters []domain.ChangeRequestFieldFilter) (parsedChangeRequestFilters, error) {
+func ParseChangeRequestFieldFilters(filters []domain.ChangeRequestFieldFilter, now time.Time) (parsedChangeRequestFilters, error) {
 	var p parsedChangeRequestFilters
 
 	for _, f := range filters {
@@ -114,7 +120,7 @@ func ParseChangeRequestFieldFilters(filters []domain.ChangeRequestFieldFilter) (
 			if len(f.Values) != 1 {
 				return parsedChangeRequestFilters{}, &apierror.ValidationError{Msg: "filters: field \"createdOn\" accepts exactly one value"}
 			}
-			t, err := parseChangeRequestFilterDate(f, f.Values[0])
+			t, err := parseChangeRequestFilterDate(f, f.Values[0], now)
 			if err != nil {
 				return parsedChangeRequestFilters{}, err
 			}

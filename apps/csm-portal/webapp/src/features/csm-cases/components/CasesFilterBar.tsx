@@ -171,6 +171,15 @@ interface CasesFilterBarProps {
   showSeverityFilter?: boolean;
   /** Hide the case-type control when the surrounding view locks the type. */
   hideTypeFilter?: boolean;
+  /**
+   * Label for the case-type control. Defaults to "Case type"; a view that
+   * mixes every record type under a broader umbrella term (e.g. a project's
+   * Work items tab, which spans cases/service requests/security reports/
+   * engagements/announcements) can override it to "Work item type" so the
+   * label matches what the surrounding page calls these records, without
+   * changing the control's behavior or its `caseTypes` value shape.
+   */
+  typeFilterLabel?: string;
   /** Hide the project control when the surrounding view is project-scoped. */
   hideProjectFilter?: boolean;
   /** Show the engagement-type multi-select (only relevant when type is locked to engagement). */
@@ -397,6 +406,7 @@ export default function CasesFilterBar({
   availableProjects,
   showSeverityFilter = true,
   hideTypeFilter = false,
+  typeFilterLabel = "Case type",
   hideProjectFilter = false,
   showEngagementTypeFilter = false,
 }: CasesFilterBarProps): JSX.Element {
@@ -711,36 +721,41 @@ export default function CasesFilterBar({
                 label="State"
                 values={filters.states}
                 options={stateOptions}
-                // Work sub-state only applies to `work_in_progress` cases, so
-                // drop any selected work states when that state leaves the
-                // filter — keeps shared URLs / saved views from carrying an
-                // inert work-state selection.
+                // Work sub-state only applies when `work_in_progress` is the
+                // *sole* selected state — with other states also selected the
+                // work-state filter can't be applied server-side, so drop any
+                // selected work states as soon as the selection stops being
+                // exactly that one state.
                 onChange={(next) =>
                   onChange({
                     ...filters,
                     states: next,
-                    workStates: next.includes("work_in_progress")
-                      ? filters.workStates
-                      : [],
+                    workStates:
+                      next.length === 1 && next[0] === "work_in_progress"
+                        ? filters.workStates
+                        : [],
                   })
                 }
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-              {/* Only meaningful for `work_in_progress` cases (ongoing/paused
-                  are sub-states of it); disabled until that state is filtered
-                  in, so the control can't add an inert filter. */}
+              {/* Only meaningful when `work_in_progress` is the sole selected
+                  state (ongoing/paused are sub-states of it); disabled
+                  otherwise, so the control can't add an inert/unusable
+                  filter when combined with other states. */}
               <MultiSelectField
                 id="cases-filter-work-state"
                 label="Work state"
                 values={filters.workStates}
                 options={workStateOptions}
                 onChange={(next) => onChange({ ...filters, workStates: next })}
-                disabled={!filters.states.includes("work_in_progress")}
+                disabled={
+                  !(filters.states.length === 1 && filters.states[0] === "work_in_progress")
+                }
                 disabledTooltip={
-                  filters.states.includes("work_in_progress")
+                  filters.states.length === 1 && filters.states[0] === "work_in_progress"
                     ? undefined
-                    : `Select the "${STATE_LABEL.work_in_progress}" state to filter by work state`
+                    : `Select only the "${STATE_LABEL.work_in_progress}" state to filter by work state`
                 }
               />
             </Grid>
@@ -759,7 +774,7 @@ export default function CasesFilterBar({
               <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
                 <MultiSelectField
                   id="cases-filter-type"
-                  label="Case type"
+                  label={typeFilterLabel}
                   values={filters.caseTypes}
                   options={caseTypeOptions}
                   onChange={(next) => onChange({ ...filters, caseTypes: next })}
