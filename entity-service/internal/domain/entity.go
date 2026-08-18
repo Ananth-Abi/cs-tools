@@ -1403,6 +1403,8 @@ type ParsedCaseFilters struct {
 	// SreTeamIDs filters to cases whose parent account's SRE (Site Reliability
 	// Engineering) team is one of these team UUIDs (optional).
 	SreTeamIDs []string
+	// AccountIDs filters to cases belonging to one of these customer_account UUIDs (optional).
+	AccountIDs []string
 	// Unassigned, when true, filters to cases with no assigned engineer. false and
 	// omitted are treated identically (optional).
 	Unassigned bool
@@ -3421,6 +3423,18 @@ const (
 	IncidentStateCancelled  IncidentState = "CANCELLED"
 )
 
+// ProblemState represents the workflow state of a problem.
+type ProblemState string
+
+const (
+	ProblemStateNew               ProblemState = "NEW"
+	ProblemStateAssess            ProblemState = "ASSESS"
+	ProblemStateRootCauseAnalysis ProblemState = "ROOT_CAUSE_ANALYSIS"
+	ProblemStateFixInProgress     ProblemState = "FIX_IN_PROGRESS"
+	ProblemStateResolved          ProblemState = "RESOLVED"
+	ProblemStateClosed            ProblemState = "CLOSED"
+)
+
 // IncidentCategory represents the category of an incident.
 type IncidentCategory string
 
@@ -3628,6 +3642,16 @@ type IncidentView struct {
 	IncidentReport  *string `json:"incidentReport"`
 }
 
+// ProblemFieldFilter is a single predicate in a problem search's generic
+// filter expression array: "field op values", mirroring IncidentFieldFilter's
+// contract. See service.ParseProblemFieldFilters for the field/op enum and
+// translation into the internal representation posted to ServiceNow.
+type ProblemFieldFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Values []string `json:"values,omitempty"`
+}
+
 // SearchProblemsFilters holds all optional filter criteria for a problem search.
 type SearchProblemsFilters struct {
 	SearchQuery string `json:"searchQuery"`
@@ -3636,6 +3660,12 @@ type SearchProblemsFilters struct {
 	// ServiceNow's `number` column, routed as a first-class filter rather
 	// than through the free-text SearchQuery scan.
 	Number *string `json:"number,omitempty"`
+	// Filters is the generic field/op/values filter array. Supported fields:
+	//   - "state" (op in): domain ProblemState enum values, translated to
+	//     ServiceNow's raw problem_state numeric keys.
+	//   - "assignmentGroupId" (op in): sys_user_group UUIDs.
+	// See service.ParseProblemFieldFilters.
+	Filters []ProblemFieldFilter `json:"filters,omitempty"`
 }
 
 // SearchProblemsRequest is the input for POST /problems/search.
@@ -3700,6 +3730,85 @@ type CreateProblemRequest struct {
 	Subcategory       *string `json:"subcategory,omitempty"`
 	OriginCaseID      *string `json:"originCaseId,omitempty"`
 	PrimaryIncidentID *string `json:"primaryIncidentId,omitempty"`
+}
+
+// IncidentTaskFieldFilter is a single predicate in an incident-task search's
+// generic filter expression array: "field op values", mirroring
+// ProblemFieldFilter's contract. See service.ParseIncidentTaskFieldFilters
+// for the field/op enum and translation into the internal representation
+// posted to the backing data source.
+type IncidentTaskFieldFilter struct {
+	Field  string   `json:"field"`
+	Op     string   `json:"op"`
+	Values []string `json:"values,omitempty"`
+}
+
+// SearchIncidentTasksFilters holds all optional filter criteria for an
+// incident-task search.
+type SearchIncidentTasksFilters struct {
+	SearchQuery string `json:"searchQuery"`
+	// Number filters to the incident task whose human-readable number (e.g.
+	// "TASK0082453") exactly matches (optional). Exact match, not part of
+	// the free-text SearchQuery scan.
+	Number *string `json:"number,omitempty"`
+	// Filters is the generic field/op/values filter array. Supported fields:
+	//   - "state" (op in): a raw integer state value, NOT a domain enum.
+	//     Deliberate: incident_task shares its state choice list with the
+	//     data source's base task table, and that choice list is
+	//     inconsistent across task subtypes (overlapping/ambiguous values),
+	//     so there is no confirmed-complete, unambiguous enum to translate
+	//     through. Callers pass the raw integer directly.
+	//   - "assignmentGroupId" (op in): sys_user_group UUIDs.
+	//   - "incidentId" (op in): parent incident UUIDs.
+	// See service.ParseIncidentTaskFieldFilters.
+	Filters []IncidentTaskFieldFilter `json:"filters,omitempty"`
+}
+
+// SearchIncidentTasksRequest is the input for POST /incident_tasks/search.
+type SearchIncidentTasksRequest struct {
+	Filters    SearchIncidentTasksFilters `json:"filters"`
+	Pagination Pagination                 `json:"pagination"`
+}
+
+// IncidentTask is the incident-task representation returned in search results.
+type IncidentTask struct {
+	ID              *string        `json:"id"`
+	Number          *string        `json:"number"`
+	Subject         *string        `json:"subject"`
+	State           *string        `json:"state"`
+	StateLabel      *string        `json:"stateLabel"`
+	Incident        *CaseNumberRef `json:"incident"`
+	AssignmentGroup *EntityRef     `json:"assignmentGroup"`
+	AssignedTo      *EntityRef     `json:"assignedTo"`
+}
+
+// SearchIncidentTasksResponse is the paginated result of an incident-task search.
+type SearchIncidentTasksResponse struct {
+	IncidentTasks []IncidentTask `json:"incidentTasks"`
+	Total         int            `json:"total"`
+	Offset        int            `json:"offset"`
+	Limit         int            `json:"limit"`
+}
+
+// IncidentTaskDetail is the full detail representation returned by
+// GET /incident_tasks/{id}.
+//
+// State is a plain, unvalidated passthrough string from the data source
+// rather than a closed enum -- see SearchIncidentTasksFilters.Filters' doc
+// comment on why "state" has no domain enum for incident_task.
+type IncidentTaskDetail struct {
+	ID              *string        `json:"id"`
+	Number          *string        `json:"number"`
+	Subject         *string        `json:"subject"`
+	State           *string        `json:"state"`
+	StateLabel      *string        `json:"stateLabel"`
+	Incident        *CaseNumberRef `json:"incident"`
+	AssignmentGroup *EntityRef     `json:"assignmentGroup"`
+	AssignedTo      *EntityRef     `json:"assignedTo"`
+	Description     *string        `json:"description"`
+	Priority        *string        `json:"priority"`
+	OpenedAt        *string        `json:"openedAt"`
+	ClosedAt        *string        `json:"closedAt"`
 }
 
 // ConversationState represents the state of a conversation.

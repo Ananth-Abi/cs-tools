@@ -412,8 +412,10 @@ type snCaseFilters struct {
 	// CreTeamIDs and SreTeamIDs go out under the wire keys the Ballerina/SN
 	// contract already uses (integrationCsTeamIds, sreTeamIds) -- only the Go
 	// domain naming changed, not the wire protocol.
-	CreTeamIDs           []string `json:"integrationCsTeamIds,omitempty"`
-	SreTeamIDs           []string `json:"sreTeamIds,omitempty"`
+	CreTeamIDs []string `json:"integrationCsTeamIds,omitempty"`
+	SreTeamIDs []string `json:"sreTeamIds,omitempty"`
+	// AccountIDs: see domain.ParsedCaseFilters.AccountIDs doc comment.
+	AccountIDs           []string `json:"accountIds,omitempty"`
 	Unassigned           bool     `json:"unassigned,omitempty"`
 	ResolutionNotesEmpty bool     `json:"resolutionNotesEmpty,omitempty"`
 	// TaskSLAFilter: SN-side join on Task SLA table, filtering by businessElapsedPercent
@@ -2199,6 +2201,7 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 		ProjectTypeNames:          parsed.ProjectTypeNames,
 		CreTeamIDs:                uuidsToSysids(parsed.CreTeamIDs),
 		SreTeamIDs:                uuidsToSysids(parsed.SreTeamIDs),
+		AccountIDs:                uuidsToSysids(parsed.AccountIDs),
 		Unassigned:                parsed.Unassigned,
 		ResolutionNotesEmpty:      parsed.ResolutionNotesEmpty,
 		TaskSLAFilter:             buildSNTaskSLAFilter(parsed.TaskSLAFilter),
@@ -2267,6 +2270,9 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 		return domain.SearchCasesResponse{}, err
 	}
 	if err := validateUUIDs("sreTeam", req.Parsed.SreTeamIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
+	if err := validateUUIDs("accountId", req.Parsed.AccountIDs); err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
 

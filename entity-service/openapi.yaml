@@ -3080,6 +3080,85 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /incident_tasks/search:
+    post:
+      summary: Search incident tasks (ServiceNow data source only). Search and get only -- no create/update.
+      operationId: searchIncidentTasks
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchIncidentTasksRequest'
+      responses:
+        "200":
+          description: Paginated list of incident tasks matching the filters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchIncidentTasksResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /incident_tasks/{id}:
+    get:
+      summary: Get a single incident task by ID (ServiceNow data source only).
+      operationId: getIncidentTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The incident task detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentTaskDetail'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Incident task not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /conversations/search:
     post:
       summary: Search conversations (ServiceNow data source only).
@@ -4903,6 +4982,7 @@ components:
             - projectType
             - creTeam
             - sreTeam
+            - accountId
             - resolutionNotes
             - parentId
             - taskSLABusinessElapsedPercent
@@ -4992,6 +5072,8 @@ components:
           Expansion) team, as team UUIDs.
         - **sreTeam** (in): the parent account's SRE (Site Reliability
           Engineering) team, as team UUIDs.
+        - **accountId** (in): the case's parent customer account, as account
+          UUIDs.
         - **resolutionNotes** (isEmpty): values ignored; matches cases with
           empty resolution notes. isNotEmpty is not supported: false and
           omitted were always treated identically for this filter, so there
@@ -8453,6 +8535,33 @@ components:
           format: uuid
           nullable: true
 
+    ProblemFieldFilter:
+      type: object
+      required: [field, op]
+      properties:
+        field:
+          type: string
+          enum:
+            - state
+            - assignmentGroupId
+        op:
+          type: string
+          enum: [in]
+        values:
+          type: array
+          items:
+            type: string
+          description: Required and non-empty for every supported field/op combination.
+      description: |
+        One predicate in a problem search's generic filter expression array:
+        "field op values". Mirrors IncidentFieldFilter's contract.
+
+        - **state** (in): one of NEW/ASSESS/ROOT_CAUSE_ANALYSIS/
+          FIX_IN_PROGRESS/RESOLVED/CLOSED (the domain enum, not the backing
+          data source's raw numeric key).
+        - **assignmentGroupId** (in): sys_user_group UUIDs to filter the
+          assignment group by.
+
     SearchProblemsRequest:
       type: object
       properties:
@@ -8467,6 +8576,13 @@ components:
                 A single problem number (e.g. "PRB0010001"); matches exactly.
                 Routed as a first-class filter rather than through the
                 free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProblemFieldFilter'
+              description: >-
+                A generic field/op/values filter array. See
+                ProblemFieldFilter for the supported field/op combinations.
         pagination:
           $ref: '#/components/schemas/Pagination'
 
@@ -8564,6 +8680,147 @@ components:
           type: string
           nullable: true
         closedOn:
+          type: string
+          nullable: true
+
+    IncidentTaskFieldFilter:
+      type: object
+      required: [field, op]
+      properties:
+        field:
+          type: string
+          enum:
+            - state
+            - assignmentGroupId
+            - incidentId
+        op:
+          type: string
+          enum: [in]
+        values:
+          type: array
+          items:
+            type: string
+          description: Required and non-empty for every supported field/op combination.
+      description: |
+        One predicate in an incident-task search's generic filter expression
+        array: "field op values". Mirrors ProblemFieldFilter's contract, with
+        one deliberate difference on state.
+
+        - **state** (in): a raw integer state value, passed straight through
+          -- NOT a domain enum, unlike every other resource's state filter.
+          incident_task shares its state choice list with the base task
+          table, and that choice list is inconsistent across task subtypes in
+          this deployment (overlapping/ambiguous values), so there is no
+          confirmed-complete, unambiguous enum to translate through safely.
+        - **assignmentGroupId** (in): sys_user_group UUIDs to filter the
+          assignment group by.
+        - **incidentId** (in): parent incident UUIDs.
+
+    SearchIncidentTasksRequest:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            searchQuery:
+              type: string
+            number:
+              type: string
+              description: >-
+                A single incident task number (e.g. "TASK0082453"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/IncidentTaskFieldFilter'
+              description: >-
+                A generic field/op/values filter array. See
+                IncidentTaskFieldFilter for the supported field/op combinations.
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    IncidentTask:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        number:
+          type: string
+          nullable: true
+        subject:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+          description: Raw passthrough state value from the data source (see IncidentTaskFieldFilter).
+        stateLabel:
+          type: string
+          nullable: true
+        incident:
+          $ref: '#/components/schemas/CaseNumberRef'
+          nullable: true
+        assignmentGroup:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        assignedTo:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+
+    SearchIncidentTasksResponse:
+      type: object
+      properties:
+        incidentTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentTask'
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    IncidentTaskDetail:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        number:
+          type: string
+          nullable: true
+        subject:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+          description: Raw passthrough state value from the data source (see IncidentTaskFieldFilter).
+        stateLabel:
+          type: string
+          nullable: true
+        incident:
+          $ref: '#/components/schemas/CaseNumberRef'
+          nullable: true
+        assignmentGroup:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        assignedTo:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        priority:
+          type: string
+          nullable: true
+        openedAt:
+          type: string
+          nullable: true
+        closedAt:
           type: string
           nullable: true
 
