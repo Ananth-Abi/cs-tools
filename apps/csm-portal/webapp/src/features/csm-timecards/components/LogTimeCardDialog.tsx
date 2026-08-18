@@ -46,10 +46,7 @@ import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { initialsOf, resolveUserInfo } from "@utils/userClaims";
 import { useSearchUsers } from "@features/csm-users/api/useSearchUsers";
-import {
-  INTERNAL_USER_ROLES,
-  type NormalizedUser,
-} from "@features/csm-users/types/csmUsers";
+import type { NormalizedUser } from "@features/csm-users/types/csmUsers";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
 import type { SeverityOrUnset } from "@features/csm-dashboard/types/abtDashboard";
 import {
@@ -58,6 +55,7 @@ import {
   DEFAULT_ISSUE_COMPLEXITY,
   ISSUE_COMPLEXITY_OPTIONS,
   NON_BILLABLE_SEVERITIES,
+  TIMECARD_APPROVER_GROUP,
   WORK_LOG_MAX,
 } from "@features/csm-timecards/constants/timeCardConstants";
 import type {
@@ -251,10 +249,11 @@ export default function LogTimeCardDialog({
   const { data } = useSearchUsers({
     filters: {
       ...(search.length > 0 && { searchQuery: search }),
-      // Approvers must be real internal accounts — the backend requires a
-      // real UUID in `approverIds`, so there is no offline/mock fallback
-      // (a fabricated id would always be rejected on submit).
-      roleIds: INTERNAL_USER_ROLES,
+      // Approvers must hold the timecard_approver role — listing every
+      // internal WSO2 account here (the old INTERNAL_USER_ROLES filter)
+      // let a submitter pick literally anyone at the company, including
+      // people with no CS/team-lead involvement at all (digiops-cs#2821).
+      roleIds: [TIMECARD_APPROVER_GROUP],
       active: true,
     },
     pagination: { limit: 6, offset: 0 },
