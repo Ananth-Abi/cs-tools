@@ -576,6 +576,63 @@ describe("WidgetEditorDialog", () => {
     expect(newPathInput).toHaveValue("new.field");
   });
 
+  it("clears a groupBy config when the shape changes away from pie/bar", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "Cases by severity",
+      resourceType: "case",
+      shape: "pie",
+      gridWidth: 4,
+      query: {},
+      groupBy: { field: "severity" },
+    };
+    const { onSave } = renderDialog({ widget: existing });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Shape" }));
+    fireEvent.click(screen.getByRole("option", { name: "count" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save widget" }));
+    const saved = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(saved.groupBy).toBeUndefined();
+  });
+
+  it("clears a groupBy config when the resource type changes", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "Cases by severity",
+      resourceType: "case",
+      shape: "pie",
+      gridWidth: 4,
+      query: {},
+      groupBy: { field: "severity" },
+    };
+    const { onSave } = renderDialog({ widget: existing });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Resource type" }));
+    fireEvent.click(screen.getByRole("option", { name: "incident" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Save widget" }));
+    const saved = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(saved.groupBy).toBeUndefined();
+  });
+
+  it("retains an existing groupBy config when neither shape nor resource type changes", () => {
+    const existing: BeDashboardWidget = {
+      widgetId: "w1",
+      displayName: "Cases by severity",
+      resourceType: "case",
+      shape: "pie",
+      gridWidth: 4,
+      query: {},
+      groupBy: { field: "severity", maxGroups: 5 },
+    };
+    const { onSave } = renderDialog({ widget: existing });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save widget" }));
+    const saved = onSave.mock.calls[0][0] as BeDashboardWidget;
+    expect(saved.groupBy).toEqual({ field: "severity", maxGroups: 5 });
+  });
+
   it("clearing Row limit entirely unsets it, rather than writing NaN through", () => {
     const existing: BeDashboardWidget = {
       widgetId: "w1",

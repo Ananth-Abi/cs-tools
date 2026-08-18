@@ -33,7 +33,28 @@ import {
   shouldRetryWidgetFetch,
   withWidgetFetchSlot,
 } from "@features/csm-dashboard/utils/widgetFetchConcurrency";
+import { usesCaseFieldFilterDsl } from "@features/csm-admin/dashboards/utils/widgetQueryConditions";
 import type { PieSliceResult, WidgetPieData } from "@features/csm-dashboard/api/useWidgetPieData";
+
+/**
+ * Builds a named bucket's own click-through `query` — the same shape
+ * `DashboardWidgetTile`'s slice navigation merges under the widget's base
+ * `query` via `mergeWidgetFilters` (see that function's own doc comment for
+ * why the two resourceType families below are handled differently). A
+ * `case`-DSL resourceType's search contract has no flat top-level key for
+ * an arbitrary aggregated field, so it goes through the generic
+ * `field`/`op`/`values` predicate array; every other resourceType's own
+ * bespoke search contract keys straight off the field name.
+ */
+function bucketQuery(
+  resourceType: BeWidgetResourceType,
+  field: string,
+  key: string,
+): Record<string, unknown> {
+  return usesCaseFieldFilterDsl(resourceType)
+    ? { filters: [{ field, op: "eq", values: [key] }] }
+    : { [field]: key };
+}
 
 /**
  * Resolves a `shape: "pie"` widget's per-bucket values via a single
@@ -127,13 +148,26 @@ export function useWidgetGroupByData(
 
   const slices: PieSliceResult[] = buckets.map((bucket) => ({
     label: bucket.label,
-    query: {},
+    // Scopes this slice's own click-through to exactly this bucket (see
+    // `bucketQuery`'s own doc comment) — an empty `query` here would merge
+    // to the widget's unfiltered base result set instead of this bucket's,
+    // since `mergeWidgetFilters({...}, {})` is a no-op.
+    query: groupBy ? bucketQuery(resourceType, groupBy.field, bucket.key) : {},
     value: bucket.count,
   }));
   if (othersCount > 0) {
     slices.push({
       label: groupBy?.othersLabel ?? "Others",
+      // Unlike a named bucket, "Others" has no `key` of its own — the
+      // response only carries a rolled-up count, not a selector for
+      // "everything not in a named bucket" this hook could turn into a
+      // query. Leaving `query` empty would silently navigate to the
+      // widget's unscoped base result set (the exact bug this hook exists
+      // to fix for the named buckets above), so this slice is marked
+      // non-navigable instead — `DashboardWidgetTile` skips its
+      // click-through for a slice carrying this flag.
       query: {},
+      navigable: false,
       value: othersCount,
     });
   }

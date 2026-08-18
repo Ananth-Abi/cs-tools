@@ -529,15 +529,21 @@ export default function DashboardWidgetTile({
               total={pieData.total}
               isLoading={pieData.isLoading}
               isError={pieData.isError}
-              onSliceClick={(slice: PieSliceResult) =>
+              onSliceClick={(slice: PieSliceResult) => {
+                // See `PieSliceResult.navigable`'s own doc comment: a
+                // groupBy widget's synthetic "Others" bucket has no safe
+                // selector to navigate to, so it opts out of click-through
+                // entirely rather than falling through to the widget's own
+                // unscoped base result set.
+                if (slice.navigable === false) return;
                 navigate(
                   config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query)), {
                     widgetId,
                     displayName: resolvedDisplayName,
                   }),
                   { state: dashboardReturnState },
-                )
-              }
+                );
+              }}
             />
           </Box>
         </Box>

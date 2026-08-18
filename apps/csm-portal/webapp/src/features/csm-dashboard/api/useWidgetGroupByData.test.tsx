@@ -74,11 +74,54 @@ describe("useWidgetGroupByData", () => {
     );
 
     expect(result.current.slices).toEqual([
-      { label: "Critical", query: {}, value: 3 },
-      { label: "High", query: {}, value: 5 },
-      { label: "Others", query: {}, value: 2 },
+      {
+        label: "Critical",
+        query: { filters: [{ field: "severity", op: "eq", values: ["critical"] }] },
+        value: 3,
+      },
+      {
+        label: "High",
+        query: { filters: [{ field: "severity", op: "eq", values: ["high"] }] },
+        value: 5,
+      },
+      { label: "Others", query: {}, navigable: false, value: 2 },
     ]);
     expect(result.current.total).toBe(10);
+  });
+
+  it("scopes a non-case resourceType's named bucket to a flat top-level key", async () => {
+    postMock.mockResolvedValue({
+      groups: [{ key: "P1", label: "P1", count: 4 }],
+      othersCount: 0,
+      totalRecords: 4,
+    });
+
+    const { result } = renderHook(
+      () => useWidgetGroupByData("widget-1", "incident", {}, { field: "priority" }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.slices).toEqual([{ label: "P1", query: { priority: "P1" }, value: 4 }]);
+  });
+
+  it("marks the synthetic Others bucket non-navigable rather than giving it an unscoped query", async () => {
+    postMock.mockResolvedValue({
+      groups: [{ key: "critical", label: "Critical", count: 3 }],
+      othersCount: 2,
+      totalRecords: 5,
+    });
+
+    const { result } = renderHook(
+      () => useWidgetGroupByData("widget-1", "case", {}, { field: "severity" }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    const others = result.current.slices.find((s) => s.label === "Others");
+    expect(others).toEqual({ label: "Others", query: {}, navigable: false, value: 2 });
   });
 
   it("uses the configured othersLabel instead of the default 'Others'", async () => {
@@ -100,8 +143,12 @@ describe("useWidgetGroupByData", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(result.current.slices).toEqual([
-      { label: "Critical", query: {}, value: 3 },
-      { label: "Everything else", query: {}, value: 4 },
+      {
+        label: "Critical",
+        query: { filters: [{ field: "severity", op: "eq", values: ["critical"] }] },
+        value: 3,
+      },
+      { label: "Everything else", query: {}, navigable: false, value: 4 },
     ]);
     expect(result.current.total).toBe(7);
   });
@@ -120,7 +167,13 @@ describe("useWidgetGroupByData", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(result.current.slices).toEqual([{ label: "Critical", query: {}, value: 3 }]);
+    expect(result.current.slices).toEqual([
+      {
+        label: "Critical",
+        query: { filters: [{ field: "severity", op: "eq", values: ["critical"] }] },
+        value: 3,
+      },
+    ]);
     expect(result.current.total).toBe(3);
   });
 

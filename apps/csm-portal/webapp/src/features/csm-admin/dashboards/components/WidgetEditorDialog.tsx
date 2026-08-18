@@ -183,10 +183,16 @@ export default function WidgetEditorDialog({
   // No authoring UI for `groupBy` yet (it's now a real object config, not
   // the stale unused string this dialog used to expose as a raw text
   // field) — round-trip an existing widget's own `groupBy` verbatim so
-  // editing a slices-based field on a groupBy widget through this dialog
-  // doesn't silently drop it, but there's nothing here to author or clear
-  // it with.
-  const existingGroupBy = widget?.groupBy;
+  // editing this dialog without touching shape/resourceType doesn't
+  // silently drop it. `groupBy.field` is only meaningful for the
+  // resourceType it was configured under (there's no per-resourceType
+  // groupBy field list to validate against, unlike `slices`' filter
+  // conditions, so a resourceType change can't be reconciled — it's
+  // cleared outright, same as `conditions`/`columns` below) and only for
+  // shape `"pie"`/`"bar"` (the backend enforces `groupBy`/`slices` as
+  // mutually exclusive) — cleared on either change so a widget edited away
+  // from its original group-by config doesn't save a stale one.
+  const [existingGroupBy, setExistingGroupBy] = useState(widget?.groupBy);
   const [conditions, setConditions] = useState<FilterCondition[]>(() =>
     filterConditionsFromQuery(widget?.resourceType ?? "case", widget?.query),
   );
@@ -216,6 +222,22 @@ export default function WidgetEditorDialog({
     setSliceDrafts((prev) => prev.map((d) => ({ ...d, conditions: [] })));
     setColumnDrafts([]);
     setPreviewSnapshot(undefined);
+    // See `existingGroupBy`'s own doc comment: its `field` is only valid
+    // for the resourceType it was configured under, and there's nothing
+    // here to reconcile it against the new one.
+    setExistingGroupBy(undefined);
+  };
+
+  // See `existingGroupBy`'s own doc comment: `groupBy` only makes sense for
+  // shape `"pie"`/`"bar"` — clear it the moment the admin moves off either,
+  // so re-selecting "pie" a moment later doesn't accidentally resurrect it
+  // (the admin would need to know it was silently retained in state to
+  // expect that) and so `buildWidget`'s own shape check below and this
+  // state agree, rather than one masking a stale value the other would
+  // otherwise expose again.
+  const handleShapeChange = (next: BeWidgetShape): void => {
+    setShape(next);
+    if (next !== "pie" && next !== "bar") setExistingGroupBy(undefined);
   };
 
   const { user } = useCurrentUser();
@@ -271,7 +293,12 @@ export default function WidgetEditorDialog({
       gridWidth,
       query: queryFromFilterConditions(resourceType, conditions),
       section: section.trim() || undefined,
-      groupBy: existingGroupBy,
+      // Belt-and-suspenders alongside `existingGroupBy` already being
+      // cleared in state on an incompatible shape/resourceType change
+      // (see its own doc comment): `buildWidget` is the actual
+      // save-time serialization, so it re-asserts the same "pie"/"bar"
+      // gate here rather than trusting state alone stayed in sync.
+      groupBy: shape === "pie" || shape === "bar" ? existingGroupBy : undefined,
       listLimit: shape === "list" ? listLimit : undefined,
       slices:
         shape === "pie" || shape === "bar" ? draftsToSlices(resourceType, sliceDrafts) : undefined,
@@ -349,7 +376,7 @@ export default function WidgetEditorDialog({
               select
               label="Shape"
               value={shape}
-              onChange={(e) => setShape(e.target.value as BeWidgetShape)}
+              onChange={(e) => handleShapeChange(e.target.value as BeWidgetShape)}
               size="small"
               sx={{ minWidth: 160 }}
             >
