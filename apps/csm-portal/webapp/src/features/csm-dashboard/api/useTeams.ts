@@ -51,8 +51,9 @@ export function abtFamilyForDashboardType(
  * Every team from `POST /teams/search`, for the team selector a team-based
  * dashboard shows alongside the dashboard switcher (see
  * `AbtDashboardHeader`), and for `CsmDashboardPage` to resolve the selected
- * team's own `groupId` — the value substituted for the `__current_team__`
- * filter placeholder (see `teamFilterPlaceholder.ts`). `family`, when given,
+ * team's own `creGroupId`/`sreGroupId` — the values substituted for the
+ * `__current_team__` filter placeholder in a `creTeam`/`sreTeam` filter
+ * entry, respectively (see `teamFilterPlaceholder.ts`). `family`, when given,
  * scopes the result to that team family only (see
  * `abtFamilyForDashboardType`) — omitted, every team in the registry is
  * returned regardless of family.

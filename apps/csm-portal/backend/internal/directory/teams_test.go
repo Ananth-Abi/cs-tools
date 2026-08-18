@@ -18,9 +18,9 @@ package directory
 
 import "testing"
 
-// Regression: a supplied groupId was stored unvalidated. sourceIDToUUID passes
-// anything that is not exactly 32 hex characters through unchanged, so a typo
-// yielded a malformed id that matched nothing on the integrationCsTeam filter
+// Regression: a supplied creGroupId was stored unvalidated. sourceIDToUUID
+// passes anything that is not exactly 32 hex characters through unchanged, so
+// a typo yielded a malformed id that matched nothing on the creTeam filter
 // without erroring -- the same silent degradation the other field checks exist
 // to prevent.
 func TestParseTeamRegistry_RejectsMalformedGroupID(t *testing.T) {
@@ -31,14 +31,14 @@ func TestParseTeamRegistry_RejectsMalformedGroupID(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := ParseTeamRegistry(tc.raw); err == nil {
-				t.Fatal("ParseTeamRegistry returned no error, want a rejection of the malformed groupId")
+				t.Fatal("ParseTeamRegistry returned no error, want a rejection of the malformed creGroupId")
 			}
 		})
 	}
 }
 
 // A row with no groupId at all stays legal: the id is optional and such a team
-// is still listed, it just cannot scope the integrationCsTeam filter.
+// is still listed, it just cannot scope the creTeam filter.
 func TestParseTeamRegistry_AbsentGroupIDIsFine(t *testing.T) {
 	teams, err := ParseTeamRegistry("castor|Castor|cre-abt,vega|Vega")
 	if err != nil {
@@ -46,5 +46,49 @@ func TestParseTeamRegistry_AbsentGroupIDIsFine(t *testing.T) {
 	}
 	if len(teams) != 2 {
 		t.Fatalf("got %d teams, want 2", len(teams))
+	}
+}
+
+// A 5-field row supplies both the CRE and SRE group ids, and both parse
+// independently.
+func TestParseTeamRegistry_FiveFieldRowParsesBothGroupIDs(t *testing.T) {
+	teams, err := ParseTeamRegistry("castor|Castor|cre-abt|760e87b247c13910a0a29cd3846d4301|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(teams) != 1 {
+		t.Fatalf("got %d teams, want 1", len(teams))
+	}
+	if got := teams[0].CreGroupID; got != "760e87b247c13910a0a29cd3846d4301" {
+		t.Errorf("CreGroupID = %q, want the configured id", got)
+	}
+	if got := teams[0].SreGroupID; got != "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+		t.Errorf("SreGroupID = %q, want the configured id", got)
+	}
+}
+
+// A 4-field row still means "has a CRE group id, no SRE one" exactly as
+// before -- SreGroupID must stay empty.
+func TestParseTeamRegistry_FourFieldRowLeavesSreGroupIDEmpty(t *testing.T) {
+	teams, err := ParseTeamRegistry("castor|Castor|cre-abt|760e87b247c13910a0a29cd3846d4301")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(teams) != 1 {
+		t.Fatalf("got %d teams, want 1", len(teams))
+	}
+	if got := teams[0].CreGroupID; got != "760e87b247c13910a0a29cd3846d4301" {
+		t.Errorf("CreGroupID = %q, want the configured id", got)
+	}
+	if got := teams[0].SreGroupID; got != "" {
+		t.Errorf("SreGroupID = %q, want it empty for a 4-field row", got)
+	}
+}
+
+// A malformed sreGroupId in the 5th field is rejected the same way a
+// malformed creGroupId in the 4th field is.
+func TestParseTeamRegistry_RejectsMalformedSreGroupID(t *testing.T) {
+	if _, err := ParseTeamRegistry("castor|Castor|cre-abt|760e87b247c13910a0a29cd3846d4301|not-32-hex-chars"); err == nil {
+		t.Fatal("ParseTeamRegistry returned no error, want a rejection of the malformed sreGroupId")
 	}
 }

@@ -81,9 +81,10 @@ vi.mock("@features/csm-dashboard/api/useDashboardList", () => ({
 // None of these dashboards are team-based, so the header's team selector
 // never renders/fetches here, but useTeams still needs mocking since
 // AbtDashboardHeader (and now CsmDashboardPage itself, to resolve the
-// selected team's groupId) call it unconditionally (the fetch itself is
-// disabled via its `enabled` param) — without this, the real hook reaches
-// the real API client, which throws under vitest (no runtime config).
+// selected team's creGroupId/sreGroupId) call it unconditionally (the fetch
+// itself is disabled via its `enabled` param) — without this, the real hook
+// reaches the real API client, which throws under vitest (no runtime
+// config).
 vi.mock("@features/csm-dashboard/api/useTeams", () => ({
   useTeams: vi.fn(() => ({ data: undefined })),
   abtFamilyForDashboardType: vi.fn(() => undefined),
@@ -95,24 +96,32 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
 
 // Keeps this test focused on dashboard selection + the header; the widget
 // grid itself has its own tests (AgentsLandingPagePilot.test.tsx). Also
-// surfaces `selectedTeamGroupId` so the wiring from CsmDashboardPage down
-// can be asserted on without a real /teams/search round trip.
+// surfaces `selectedTeamCreGroupId`/`selectedTeamSreGroupId` so the wiring
+// from CsmDashboardPage down can be asserted on without a real
+// /teams/search round trip.
 vi.mock("@features/csm-dashboard/components/AgentsLandingPagePilot", () => ({
   default: ({
     dashboardId,
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     selectedTeamLabel,
   }: {
     dashboardId: string;
-    selectedTeamGroupId?: string | string[];
+    selectedTeamCreGroupId?: string | string[];
+    selectedTeamSreGroupId?: string | string[];
     selectedTeamLabel?: string;
   }) => (
     <div
       data-testid="agents-landing-pilot"
-      data-team-group-id={
-        Array.isArray(selectedTeamGroupId)
-          ? selectedTeamGroupId.join(",")
-          : (selectedTeamGroupId ?? "")
+      data-team-cre-group-id={
+        Array.isArray(selectedTeamCreGroupId)
+          ? selectedTeamCreGroupId.join(",")
+          : (selectedTeamCreGroupId ?? "")
+      }
+      data-team-sre-group-id={
+        Array.isArray(selectedTeamSreGroupId)
+          ? selectedTeamSreGroupId.join(",")
+          : (selectedTeamSreGroupId ?? "")
       }
       data-team-label={selectedTeamLabel ?? ""}
     >

@@ -244,7 +244,7 @@ describe("describeWidgetFilters", () => {
       describeWidgetFilters({
         filters: [
           {
-            field: "integrationCsTeam",
+            field: "creTeam",
             op: "in",
             values: ["22222222-2222-2222-2222-222222222222"],
           },
@@ -252,7 +252,7 @@ describe("describeWidgetFilters", () => {
       }),
     ).toEqual([
       {
-        field: "integrationCsTeam",
+        field: "creTeam",
         op: undefined,
         value: "22222222-2222-2222-2222-222222222222",
       },

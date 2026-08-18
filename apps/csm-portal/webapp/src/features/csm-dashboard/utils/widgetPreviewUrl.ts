@@ -152,7 +152,7 @@ export function buildWidgetPreviewHref(params: {
  * filter field and the value(s) it's currently set to, `op` set only for a
  * non-default (non-`in`) operator so a plain `field: value` reads cleanly
  * for the common case. Field names are the raw camelCase filter key (e.g.
- * `integrationCsTeam`); no friendly-label lookup exists for every filter
+ * `creTeam`); no friendly-label lookup exists for every filter
  * field across every resourceType, so this deliberately stays literal
  * rather than inventing a large label-mapping table for partial coverage. */
 export interface WidgetFilterSummaryEntry {

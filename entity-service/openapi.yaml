@@ -4901,7 +4901,8 @@ components:
             - product
             - projectOnboardingStatus
             - projectType
-            - integrationCsTeam
+            - creTeam
+            - sreTeam
             - resolutionNotes
             - parentId
             - taskSLABusinessElapsedPercent
@@ -4932,9 +4933,15 @@ components:
         field with an incompatible op, is rejected with a validation error.
 
         - **type** (in): case type, one of case/service_request/
-          security_report_analysis/announcement/engagement. For the ServiceNow
-          data source each value is translated to its SN caseTypes equivalent
-          (case → default_case).
+          security_report_analysis/announcement/engagement/hosting/
+          hosting_query/hosting_task. For the ServiceNow data source each
+          value is translated to its SN caseTypes equivalent (case →
+          default_case).
+          - `hosting`: a managed-cloud hosting case.
+          - `hosting_query`: a managed-cloud hosting query, a lighter-weight
+            question than a full hosting case.
+          - `hosting_task`: an internal hosting task raised against a
+            managed-cloud deployment.
         - **state** (in / notIn): one of open/work_in_progress/
           waiting_on_wso2/awaiting_info/reopened/solution_proposed/closed. in
           matches cases in any of the given states; notIn matches cases in
@@ -4981,8 +4988,10 @@ components:
           "Not-Applicable" -- not a closed enum at this layer).
         - **projectType** (in): the parent project's type, matched by the
           project type's name (e.g. "Subscription").
-        - **integrationCsTeam** (in): the parent account's integration CS
-          team, as team UUIDs.
+        - **creTeam** (in): the parent account's CRE (Customer Renewal &
+          Expansion) team, as team UUIDs.
+        - **sreTeam** (in): the parent account's SRE (Site Reliability
+          Engineering) team, as team UUIDs.
         - **resolutionNotes** (isEmpty): values ignored; matches cases with
           empty resolution notes. isNotEmpty is not supported: false and
           omitted were always treated identically for this filter, so there
@@ -5947,6 +5956,37 @@ components:
         message:
           type: string
 
+    ChangeRequestFieldFilter:
+      type: object
+      required: [field, op]
+      properties:
+        field:
+          type: string
+          enum:
+            - createdOn
+            - assignmentGroupId
+        op:
+          type: string
+          enum: [gte, lte, in]
+        values:
+          type: array
+          items:
+            type: string
+          description: Required and non-empty for every supported field/op combination.
+      description: |
+        One predicate in a change request search's generic filter expression
+        array: "field op values", additive to the search's other named filter
+        fields (projectIds, states, impacts, closedStartDate/closedEndDate,
+        number). Mirrors CaseFieldFilter's contract.
+
+        - **createdOn** (gte / lte): a single RFC3339 timestamp or YYYY-MM-DD
+          date bounding the change request's created timestamp. gte is
+          inclusive "on or after"; lte is inclusive "on or before". A lte
+          bound earlier than its own gte bound is rejected with a validation
+          error.
+        - **assignmentGroupId** (in): sys_user_group UUIDs to filter the
+          assignment group by.
+
     SearchChangeRequestsRequest:
       type: object
       properties:
@@ -5964,7 +6004,7 @@ components:
               type: array
               items:
                 type: string
-                enum: [customer_approval, scheduled, implement, review, customer_review, rollback, closed, canceled]
+                enum: [new, assess, authorize, customer_approval, scheduled, implement, review, customer_review, rollback, closed, canceled]
             impacts:
               type: array
               items:
@@ -5984,6 +6024,14 @@ components:
                 A single change request number (e.g. "CHG0010001"); matches
                 exactly. Routed as a first-class filter rather than through
                 the free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/ChangeRequestFieldFilter'
+              description: >-
+                A generic field/op/values filter array, additive to the named
+                filters above. See ChangeRequestFieldFilter for the supported
+                field/op combinations.
         sortBy:
           type: object
           required: [field, order]
@@ -7920,6 +7968,36 @@ components:
         updatedOn:
           type: string
 
+    IncidentFieldFilter:
+      type: object
+      required: [field, op]
+      properties:
+        field:
+          type: string
+          enum:
+            - state
+            - assignmentGroupId
+            - businessServiceId
+        op:
+          type: string
+          enum: [in]
+        values:
+          type: array
+          items:
+            type: string
+          description: Required and non-empty for every supported field/op combination.
+      description: |
+        One predicate in an incident search's generic filter expression
+        array: "field op values". Mirrors CaseFieldFilter's contract.
+
+        - **state** (in): one of NEW/IN_PROGRESS/ON_HOLD/RESOLVED/CLOSED/
+          CANCELLED (the domain enum, not ServiceNow's raw numeric key).
+        - **assignmentGroupId** (in): sys_user_group UUIDs to filter the
+          assignment group by.
+        - **businessServiceId** (in): business_service UUIDs to filter by
+          (exact sys_id match, distinct from the product-name-matched filter
+          used elsewhere).
+
     SearchIncidentsRequest:
       type: object
       properties:
@@ -7944,6 +8022,13 @@ components:
                 A single incident number (e.g. "INC0010001"); matches
                 exactly. Routed as a first-class filter rather than through
                 the free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/IncidentFieldFilter'
+              description: >-
+                A generic field/op/values filter array. See
+                IncidentFieldFilter for the supported field/op combinations.
         sortBy:
           type: object
           properties:

@@ -89,6 +89,12 @@ type snIncidentFilters struct {
 	// match against ServiceNow's `number` column -- not part of the
 	// free-text SearchQuery scan.
 	Number string `json:"number,omitempty"`
+	// StateKeys: see domain.SearchIncidentsFilters.StateKeys doc comment.
+	StateKeys []int `json:"stateKeys,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+	// BusinessServiceIDs: business_service sys_ids (converted from UUIDs).
+	BusinessServiceIDs []string `json:"businessServiceIds,omitempty"`
 }
 
 // snIncidentPriorityKeyMap maps domain IncidentPriority enums to SN numeric priority keys.
@@ -195,6 +201,10 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.SearchIncidentsResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -214,10 +224,13 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 
 	payload := snIncidentSearchPayload{
 		Filters: snIncidentFilters{
-			SearchQuery:  req.Filters.SearchQuery,
-			PriorityKeys: priorityKeys,
-			ParentIDs:    uuidsToSysids(req.Filters.ParentIDs),
-			Number:       stringPtrValue(req.Filters.Number),
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},

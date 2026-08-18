@@ -103,9 +103,16 @@ export function buildCaseSearchFilters(
   }
   if (filters.csTeams.length > 0) {
     fieldFilters.push({
-      field: "integrationCsTeam",
+      field: "creTeam",
       op: "in",
       values: filters.csTeams,
+    });
+  }
+  if (filters.sreTeams.length > 0) {
+    fieldFilters.push({
+      field: "sreTeam",
+      op: "in",
+      values: filters.sreTeams,
     });
   }
   // `tags`/`excludeTags` both target the `tag` field but with different ops

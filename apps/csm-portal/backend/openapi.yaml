@@ -5405,7 +5405,8 @@ components:
             - product
             - projectOnboardingStatus
             - projectType
-            - integrationCsTeam
+            - creTeam
+            - sreTeam
             - resolutionNotes
             - parentId
             - taskSLABusinessElapsedPercent
@@ -5480,8 +5481,12 @@ components:
           "Not-Applicable" -- not a closed enum at this layer).
         - **projectType** (in): the parent project's type, matched by the
           project type's name (e.g. "Subscription").
-        - **integrationCsTeam** (in): the parent account's integration CS
-          team, as team UUIDs.
+        - **creTeam** (in): the parent account's CRE (Customer Renewal &
+          Expansion) team, as team UUIDs.
+        - **sreTeam** (in): the parent account's SRE (Site Reliability
+          Engineering) team, as team UUIDs. Distinct from creTeam -- an
+          account can be assigned to both a CRE and an SRE team
+          independently.
         - **resolutionNotes** (isEmpty): values ignored; matches cases with
           empty resolution notes. isNotEmpty is not supported: false and
           omitted were always treated identically for this filter, so there
@@ -6479,13 +6484,20 @@ components:
             not every team is. This is the field a discipline-scoped team picker filters
             on via `SearchTeamsRequest.filters.family` — an SRE-scoped dashboard's picker
             requests `sre-abt` and gets only those teams back.
-        groupId:
+        creGroupId:
           type: string
           description: >
-            The backing group's id, suitable for the case search integrationCsTeamIds
-            filter. Present only when the deployment's team registry configured a
-            backing group id for this team; a team without one is still listed, just
-            not filter-scopable.
+            The backing CRE (Customer Renewal & Expansion) group's id, suitable for the
+            case search creTeamIds filter. Present only when the deployment's team
+            registry configured a backing CRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
+        sreGroupId:
+          type: string
+          description: >
+            The backing SRE (Site Reliability Engineering) group's id, suitable for the
+            case search sreTeamIds filter. Present only when the deployment's team
+            registry configured a backing SRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
 
     SearchTeamsRequest:
       type: object

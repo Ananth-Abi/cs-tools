@@ -1058,6 +1058,49 @@ func TestSNCaseService_SearchCases_EmptyTypesFilterSendsNoTypeRestriction(t *tes
 	}
 }
 
+// TestSNCaseService_SearchCases_HostingCaseTypesTranslate verifies the three
+// SaaS/SRE-specific case types (hosting, hosting_query, hosting_task) are
+// accepted by search and translated to their own SN wire values, not
+// silently dropped by snCaseTypeMap the way they were before it carried
+// entries for them.
+func TestSNCaseService_SearchCases_HostingCaseTypesTranslate(t *testing.T) {
+	var gotBody struct {
+		Filters struct {
+			CaseTypes []string `json:"caseTypes"`
+		} `json:"filters"`
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "type", Op: "in", Values: []string{"hosting", "hosting_query", "hosting_task"}},
+			},
+		},
+	}
+	if _, err := svc.SearchCases(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"hosting", "hosting_query", "hosting_task"}
+	if len(gotBody.Filters.CaseTypes) != len(want) {
+		t.Fatalf("caseTypes = %v, want %v", gotBody.Filters.CaseTypes, want)
+	}
+	for i, w := range want {
+		if gotBody.Filters.CaseTypes[i] != w {
+			t.Fatalf("caseTypes[%d] = %q, want %q (hosting types must not be dropped)", i, gotBody.Filters.CaseTypes[i], w)
+		}
+	}
+}
+
 // TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload proves the
 // generic filters array (the new public contract) still produces the exact
 // same named-field Ballerina payload SearchCases has always sent, just fed by
@@ -1118,6 +1161,71 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 		gotBody.Filters.ProjectTypeNames[0] != "Subscription" ||
 		gotBody.Filters.ProjectTypeNames[1] != "Free Trial" {
 		t.Fatalf("ProjectTypeNames = %v, want [Subscription, Free Trial] passed through unchanged", gotBody.Filters.ProjectTypeNames)
+	}
+}
+
+// TestSNCaseService_SearchCases_CreTeamAndSreTeamFiltersTranslateToSysidsOnTheirWireKeys
+// pins both team filters' wire form: creTeam (the renamed former
+// integrationCsTeam filter) must still travel under the wire key
+// "integrationCsTeamIds" -- the Ballerina/SN contract's key, unchanged by the
+// Go-side rename -- and the new sreTeam filter must travel under "sreTeamIds",
+// both as sysids converted from the UUIDs the filter DSL accepts.
+func TestSNCaseService_SearchCases_CreTeamAndSreTeamFiltersTranslateToSysidsOnTheirWireKeys(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	creUUID := sysidToUUID(testCreTeamSysid)
+	sreUUID := sysidToUUID(testSreTeamSysid)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "creTeam", Op: "in", Values: []string{creUUID}},
+				{Field: "sreTeam", Op: "in", Values: []string{sreUUID}},
+			},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope struct {
+		Filters map[string]json.RawMessage `json:"filters"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		t.Fatalf("decode request body: %v; raw: %s", err, rawBody)
+	}
+
+	gotCre, ok := envelope.Filters["integrationCsTeamIds"]
+	if !ok {
+		t.Fatalf("filters has no \"integrationCsTeamIds\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	if string(gotCre) != `["`+testCreTeamSysid+`"]` {
+		t.Fatalf("integrationCsTeamIds = %s, want [%q]", gotCre, testCreTeamSysid)
+	}
+
+	gotSre, ok := envelope.Filters["sreTeamIds"]
+	if !ok {
+		t.Fatalf("filters has no \"sreTeamIds\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	if string(gotSre) != `["`+testSreTeamSysid+`"]` {
+		t.Fatalf("sreTeamIds = %s, want [%q]", gotSre, testSreTeamSysid)
+	}
+
+	if _, ok := envelope.Filters["creTeamIds"]; ok {
+		t.Fatal("filters carries a \"creTeamIds\" key -- the wire key must stay integrationCsTeamIds")
 	}
 }
 

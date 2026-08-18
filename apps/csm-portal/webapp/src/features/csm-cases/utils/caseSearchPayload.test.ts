@@ -26,10 +26,24 @@ function filterOf(filters: CasesFilters, field: string) {
 }
 
 describe("buildCaseSearchFilters — new advanced-filter fields", () => {
-  it("emits integrationCsTeam op:in for csTeams", () => {
+  it("emits creTeam op:in for csTeams", () => {
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, csTeams: ["team-a"] };
-    expect(filterOf(filters, "integrationCsTeam")).toEqual([
-      { field: "integrationCsTeam", op: "in", values: ["team-a"] },
+    expect(filterOf(filters, "creTeam")).toEqual([
+      { field: "creTeam", op: "in", values: ["team-a"] },
+    ]);
+  });
+
+  it("emits sreTeam op:in for sreTeams, independently of creTeam", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      csTeams: ["team-a"],
+      sreTeams: ["team-sre-b"],
+    };
+    expect(filterOf(filters, "creTeam")).toEqual([
+      { field: "creTeam", op: "in", values: ["team-a"] },
+    ]);
+    expect(filterOf(filters, "sreTeam")).toEqual([
+      { field: "sreTeam", op: "in", values: ["team-sre-b"] },
     ]);
   });
 
