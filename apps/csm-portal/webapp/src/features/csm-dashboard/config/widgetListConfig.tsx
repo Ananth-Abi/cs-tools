@@ -25,6 +25,7 @@ import type {
   BeIncident,
   BeChangeRequestSearchView,
   BeProblemSearchView,
+  BeIncidentTaskSearchView,
   BeTimeCardView,
   BeTaskSummary,
   BeWidgetResourceType,
@@ -369,6 +370,64 @@ function ProblemWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.E
   );
 }
 
+/** Incident task: no standalone list or detail page exists for incident
+ * tasks in this app (unlike `problem`), so — mirroring `CallRequestWidgetList`
+ * below linking a call request's rows to its owning case — rows navigate
+ * straight to the owning incident's real detail page instead. Deliberately
+ * simpler than `ProblemWidgetList`: no preview drawer, since there is no
+ * incident-task-specific preview surface worth building for a resource with
+ * no detail page of its own to preview into (a plain list is an honest
+ * simplification here, not a shortcut). `stateLabel` (pre-humanized by the
+ * data source) is used for the state chip rather than `state` (a raw,
+ * data-source-specific integer — see `BeIncidentTaskSearchView.state`). */
+function IncidentTaskWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Element {
+  const incidentTasks = items as unknown as BeIncidentTaskSearchView[];
+  const dashboardReturnState = useDashboardReturnState();
+  const navigate = useNavTransition();
+  return (
+    <DashboardMiniTable
+      isLoading={isLoading}
+      emptyMessage="No incident tasks match this widget's filters."
+      columns={[
+        { label: "Number", width: "minmax(90px, 0.7fr)" },
+        { label: "Subject", width: "minmax(160px, 2fr)" },
+        { label: "State", width: "minmax(100px, 1fr)" },
+        { label: "Assignment group", width: "minmax(120px, 1fr)" },
+        { label: "Assigned to", width: "minmax(100px, 1fr)" },
+      ]}
+      rows={incidentTasks.map((task, i) => {
+        const incidentId = task.incident?.id;
+        const href = incidentId ? `/operations/incidents/${incidentId}` : undefined;
+        return {
+          key: task.id ?? `incident-task-${i}`,
+          onClick: href ? () => navigate(href, { state: dashboardReturnState }) : undefined,
+          cells: [
+            <Typography key="number" variant="body2" noWrap>
+              {task.number || "—"}
+            </Typography>,
+            <Typography key="subject" variant="body2" noWrap title={task.subject ?? undefined}>
+              {task.subject || "—"}
+            </Typography>,
+            task.stateLabel ? (
+              <Chip key="state" size="small" variant="outlined" label={task.stateLabel} />
+            ) : (
+              <Typography key="state" variant="body2">
+                —
+              </Typography>
+            ),
+            <Typography key="assignmentGroup" variant="body2" noWrap>
+              {task.assignmentGroup?.name || "—"}
+            </Typography>,
+            <Typography key="assignedTo" variant="body2" noWrap>
+              {task.assignedTo?.name || "—"}
+            </Typography>,
+          ],
+        };
+      })}
+    />
+  );
+}
+
 function AccountWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Element {
   const accounts = items as unknown as Account[];
   const dashboardReturnState = useDashboardReturnState();
@@ -690,6 +749,7 @@ export const WIDGET_LIST_RENDERERS: Record<
   incident: IncidentWidgetList,
   change_request: ChangeRequestWidgetList,
   problem: ProblemWidgetList,
+  incident_task: IncidentTaskWidgetList,
   account: AccountWidgetList,
   project: ProjectWidgetList,
   user: UserWidgetList,
