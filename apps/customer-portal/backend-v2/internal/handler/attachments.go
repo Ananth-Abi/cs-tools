@@ -117,7 +117,7 @@ func (h *AttachmentHandler) GetAttachmentContent(w http.ResponseWriter, r *http.
 	}
 
 	id := r.PathValue("id")
-	if id == "" || !uuidRe.MatchString(id) {
+	if id == "" || !isAttachmentID(id) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
@@ -144,7 +144,7 @@ func (h *AttachmentHandler) DeleteAttachment(w http.ResponseWriter, r *http.Requ
 	}
 
 	id := r.PathValue("id")
-	if id == "" || !uuidRe.MatchString(id) {
+	if id == "" || !isAttachmentID(id) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
@@ -169,7 +169,7 @@ func (h *AttachmentHandler) GetAttachment(w http.ResponseWriter, r *http.Request
 	}
 
 	id := r.PathValue("id")
-	if id == "" || !uuidRe.MatchString(id) {
+	if id == "" || !isAttachmentID(id) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}
