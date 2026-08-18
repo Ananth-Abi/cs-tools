@@ -47,11 +47,11 @@ type AccountSummary struct {
 
 // SearchAccountsResponse is the portal's response for POST /accounts/search.
 type SearchAccountsResponse struct {
-	Accounts []AccountSummary `json:"accounts"`
-	Total    int              `json:"total"`
-	Limit    int              `json:"limit"`
-	Offset   int              `json:"offset"`
-	HasMore  bool             `json:"hasMore"`
+	Accounts     []AccountSummary `json:"accounts"`
+	TotalRecords int              `json:"totalRecords"`
+	Limit        int              `json:"limit"`
+	Offset       int              `json:"offset"`
+	HasMore      bool             `json:"hasMore"`
 }
 
 // MapSearchAccounts builds the portal response from entity-service's SearchAccountsResponse.
@@ -75,11 +75,11 @@ func MapSearchAccounts(r entity.SearchAccountsResponse) SearchAccountsResponse {
 		})
 	}
 	return SearchAccountsResponse{
-		Accounts: accounts,
-		Total:    r.Total,
-		Limit:    r.Limit,
-		Offset:   r.Offset,
-		HasMore:  r.HasMore,
+		Accounts:     accounts,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
 }
 

@@ -85,11 +85,11 @@ type AttachmentSummary struct {
 
 // SearchAttachmentsResponse is the portal's response for POST /attachments/search.
 type SearchAttachmentsResponse struct {
-	Attachments []AttachmentSummary `json:"attachments"`
-	Total       int                 `json:"total"`
-	Limit       int                 `json:"limit"`
-	Offset      int                 `json:"offset"`
-	HasMore     bool                `json:"hasMore"`
+	Attachments  []AttachmentSummary `json:"attachments"`
+	TotalRecords int                 `json:"totalRecords"`
+	Limit        int                 `json:"limit"`
+	Offset       int                 `json:"offset"`
+	HasMore      bool                `json:"hasMore"`
 }
 
 // MapSearchAttachments builds the portal response from entity-service's SearchAttachmentsResponse.
@@ -111,11 +111,11 @@ func MapSearchAttachments(r entity.SearchAttachmentsResponse) SearchAttachmentsR
 		})
 	}
 	return SearchAttachmentsResponse{
-		Attachments: items,
-		Total:       r.Total,
-		Limit:       r.Limit,
-		Offset:      r.Offset,
-		HasMore:     r.HasMore,
+		Attachments:  items,
+		TotalRecords: r.Total,
+		Limit:        r.Limit,
+		Offset:       r.Offset,
+		HasMore:      r.HasMore,
 	}
 }
 

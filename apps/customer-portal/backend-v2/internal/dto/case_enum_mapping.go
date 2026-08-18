@@ -159,14 +159,71 @@ type IDLabelRef struct {
 // caseStateLabelWords. Falls back to a label-only ref (empty id) for a label
 // this table doesn't recognize, rather than dropping the field entirely —
 // the frontend still renders unrecognized labels, just without a usable id.
+// caseStateDisplayLabels turns entity-service's domain enum into the label the
+// frontend renders verbatim.
+//
+// entity-service deliberately returns UPPER/lower_snake_case domain enums rather
+// than raw ServiceNow labels — its CLAUDE.md forbids the latter outright — while
+// the Ballerina backend forwarded SN's own display text. So the portal showed
+// "work_in_progress" where it used to show "Work In Progress". Translating here
+// keeps entity-service's contract intact and restores what the frontend expects;
+// values match CaseStatus in features/support/constants/supportConstants.ts.
+var caseStateDisplayLabels = map[string]string{
+	"open":              "Open",
+	"work_in_progress":  "Work In Progress",
+	"awaiting_info":     "Awaiting Info",
+	"waiting_on_wso2":   "Waiting On WSO2",
+	"reopened":          "Reopened",
+	"solution_proposed": "Solution Proposed",
+	"closed":            "Closed",
+}
+
+// caseSeverityDisplayLabels turns the severity enum into the SN-style label the
+// frontend maps to its S0–S4 display names.
+//
+// The frontend keys SEVERITY_LABEL_TO_DISPLAY (features/dashboard/constants/dashboard.ts)
+// on exactly these strings — "Low (P4)" becomes "S4(Query)" — so the enum alone
+// misses the lookup and renders raw. These also match acceptedSeverityValues in
+// GET /projects/{id}/features, which is the same vocabulary.
+var caseSeverityDisplayLabels = map[string]string{
+	"catastrophic": "Catastrophic (P0)",
+	"critical":     "Critical (P1)",
+	"high":         "High (P2)",
+	"medium":       "Medium (P3)",
+	"low":          "Low (P4)",
+}
+
+// displayLabelOr returns the mapped display label for enum, falling back to the
+// value as received. Falling back rather than blanking means an enum this table
+// does not know still renders something, the same tolerance the *Ref helpers use
+// for unrecognised labels.
+func displayLabelOr(table map[string]string, value string) string {
+	if label, ok := table[strings.ToLower(strings.TrimSpace(value))]; ok {
+		return label
+	}
+	return value
+}
+
+// caseStateLookupKey normalises either representation of a case state — the
+// domain enum ("work_in_progress") or ServiceNow's display text
+// ("Work In Progress") — to caseStateLabelWords' space-separated key form.
+func caseStateLookupKey(label string) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimSpace(label)), "_", " ")
+}
+
 func caseStatusRef(label string) *IDLabelRef {
 	if label == "" {
 		return nil
 	}
-	if enum, ok := caseStateLabelWords[strings.ToLower(strings.TrimSpace(label))]; ok {
-		return &IDLabelRef{ID: caseStateIDs[enum], Label: label}
+	// caseStateLabelWords is keyed on ServiceNow's space-separated display text
+	// ("work in progress"), but cs-tools/entity-service emits the underscore
+	// domain enum ("work_in_progress") — so the lookup missed on every
+	// multi-word state and returned an empty id. Normalising underscores to
+	// spaces lets the one table match both forms.
+	if enum, ok := caseStateLabelWords[caseStateLookupKey(label)]; ok {
+		return &IDLabelRef{ID: caseStateIDs[enum], Label: displayLabelOr(caseStateDisplayLabels, enum)}
 	}
-	return &IDLabelRef{Label: label}
+	return &IDLabelRef{Label: displayLabelOr(caseStateDisplayLabels, label)}
 }
 
 // caseSeverityRef mirrors caseStatusRef for severity, scanning label words
@@ -179,10 +236,10 @@ func caseSeverityRef(label *string) *IDLabelRef {
 	for _, word := range strings.Fields(*label) {
 		w := strings.ToLower(strings.Trim(word, "(),"))
 		if enum, ok := caseSeverityLabelWords[w]; ok {
-			return &IDLabelRef{ID: caseSeverityIDs[enum], Label: *label}
+			return &IDLabelRef{ID: caseSeverityIDs[enum], Label: displayLabelOr(caseSeverityDisplayLabels, enum)}
 		}
 	}
-	return &IDLabelRef{Label: *label}
+	return &IDLabelRef{Label: displayLabelOr(caseSeverityDisplayLabels, *label)}
 }
 
 // caseIssueTypeRef mirrors caseStatusRef for issue type, matching

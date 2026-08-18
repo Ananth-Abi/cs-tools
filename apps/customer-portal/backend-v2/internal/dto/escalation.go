@@ -164,10 +164,10 @@ type Escalation struct {
 // EscalationSearchResponse is the portal's response for
 // POST /cases/{caseId}/escalations/search.
 type EscalationSearchResponse struct {
-	Escalations []Escalation `json:"escalations"`
-	Total       int          `json:"total"`
-	Offset      int          `json:"offset"`
-	Limit       int          `json:"limit"`
+	Escalations  []Escalation `json:"escalations"`
+	TotalRecords int          `json:"totalRecords"`
+	Offset       int          `json:"offset"`
+	Limit        int          `json:"limit"`
 }
 
 // MapEscalationSearchResponse builds the portal response from entity-service's
@@ -188,9 +188,9 @@ func MapEscalationSearchResponse(r entity.SearchEscalationsResponse) EscalationS
 		})
 	}
 	return EscalationSearchResponse{
-		Escalations: escalations,
-		Total:       r.Total,
-		Offset:      r.Offset,
-		Limit:       r.Limit,
+		Escalations:  escalations,
+		TotalRecords: r.Total,
+		Offset:       r.Offset,
+		Limit:        r.Limit,
 	}
 }
