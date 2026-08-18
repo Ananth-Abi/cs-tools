@@ -404,6 +404,80 @@ export const CALL_REQUEST_INPUT = {
 } as const;
 
 /**
+ * The product added to a freshly created deployment.
+ *
+ * ⚠️ Written to a real backend — `POST /deployments/{id}/products`. It attaches
+ * to the deployment the same run just created, so it does not accumulate against
+ * any pre-existing record.
+ *
+ * Only Product Name and Version are required by the modal; the rest are filled
+ * so the optional fields are exercised too.
+ */
+export const DEPLOYMENT_PRODUCT_INPUT = {
+  /** Option label in the modal's Product Name select. */
+  productName: "API Manager",
+  /** The same product as the deployment's product list renders it.
+   *
+   * The two differ: the select offers the short name while the list shows the
+   * full product label, so the row's control reads "Edit WSO2 API Manager" for
+   * a product picked as "API Manager". Verified live. */
+  listedProductName: "WSO2 API Manager",
+  version: "4.4.0",
+  cores: "4",
+  tps: "100",
+  description: "Auamation test add product.",
+  /** What the Manage Product modal changes the description to.
+   *
+   * Saved on its own: "Save Changes" closes the modal, and the update save that
+   * follows sends only the update list, so a description left unsaved would be
+   * discarded rather than carried along. */
+  updatedDescription: "product details updated by automation test.",
+  /** The entry added on the Update History tab.
+   *
+   * The level select offers only levels above the product's current one, so 12
+   * is available because every run adds its product to a deployment it just
+   * created — a product with no update history. Re-running against an existing
+   * product at level 12 or higher would find no such option. */
+  update: {
+    level: "12",
+    description: "This update level added by automation test.",
+    /** What the entry's description is edited to. */
+    editedDescription: "Update description edited by automation test.",
+    /** A second entry, added after the first. The level select offers only
+     * levels above the product's current one, so this must be higher than
+     * `level`. */
+    nextLevel: "13",
+  },
+  /** New Core Count and TPS for the manage-product edit, and an invalid value
+   * for the validation case.
+   *
+   * `validateFiniteNonNegative` turns a negative into `undefined`, which
+   * `JSON.stringify` then drops — so an invalid number is silently omitted from
+   * the request rather than rejected in the form. */
+  editedCores: "8",
+  editedTps: "200",
+  invalidCores: "-5",
+} as const;
+
+/**
+ * Project types whose Deployments tab is reachable.
+ *
+ * The tab is gated on `permissions.hasDeployments`
+ * (`filterProjectDetailsTabsByPermissions`), a per-project feature flag rather
+ * than anything the type label decides — so this is recorded per project rather
+ * than inferred.
+ *
+ * Cloud Support is deliberately absent: its deployment is hidden and locked to
+ * primary production for case creation (`autoSelectsDeployment`), and the
+ * deployment fixtures for it are empty, so there is nothing here to assert
+ * against.
+ */
+export const DEPLOYMENT_ACCESS_PROJECTS: ProjectType[] = [
+  ProjectType.SUBSCRIPTION,
+  ProjectType.MANAGED_CLOUD_SUBSCRIPTION,
+];
+
+/**
  * Whether each project's dashboard carries the Outstanding Operations donut.
  *
  * The chart is gated on `showOutstandingOpsChart` (`hasSR || hasCR`) — service
@@ -845,6 +919,14 @@ export interface DeploymentInput {
   /** Goes in the field labelled "Description *" — the modal does not call it
    * "Deployment Description". */
   description: string;
+  /** What the Edit Deployment modal changes the description to. */
+  updatedDescription: string;
+  /** A type other than the default, for editing the type and for creating a
+   * deployment that is not production. */
+  alternateType: DeploymentType;
+  /** Appended to a deployment's name when renaming it. The base name is already
+   * unique to the run, so this keeps the new one unique too. */
+  renameSuffix: string;
 }
 
 /**
@@ -860,6 +942,10 @@ export const DEPLOYMENT_INPUT: DeploymentInput = {
   type: DeploymentType.PRIMARY_PRODUCTION,
   description:
     "This is a test deployment for Automation Test MS Customer Project",
+  updatedDescription:
+    "Deployment description updated by automation test",
+  alternateType: DeploymentType.DEVELOPMENT,
+  renameSuffix: "renamed",
 };
 
 /** Content submitted by the create-security-report flow.

@@ -138,6 +138,171 @@ export const ADD_DEPLOYMENT = {
   },
 } as const;
 
+/** MUI TablePagination's default labels.
+ *
+ * Every paginated list in the portal renders the same control, so the strings
+ * are identical — the dashboard's cases table records its own copy under
+ * `DASHBOARD.casesTable.pagination` because it also pins that table's page
+ * sizes. */
+export const MUI_PAGINATION = {
+  rowsPerPageLabel: "Rows per page:",
+  nextPageButton: "Go to next page",
+  previousPageButton: "Go to previous page",
+  /** "1–10 of 87". The separator is an en dash; a hyphen is accepted too so a
+   * locale or MUI change does not break the match. */
+  displayedRowsPattern: /(\d+)[–-](\d+) of (\d+)/,
+} as const;
+
+/** The deployments list on the Deployments tab. */
+export const DEPLOYMENTS_LIST = {
+  /** `rowsPerPage` starts at 10 in ProjectDeployments. */
+  defaultRowsPerPage: 10,
+  /** The page sizes ListPagination is given here — fewer than its own default
+   * set, which includes 50. */
+  rowsPerPageOptions: [5, 10, 25],
+  /** Shown in place of the list when a project has no deployments. */
+  emptyMessage: "It seems there are no deployments associated with this project.",
+} as const;
+
+/** Edit Deployment modal, opened from a deployment card's toolbar.
+ *
+ * The toolbar control is per card but its accessible name is not — every card
+ * offers an identically named "Edit deployment" — so it has to be reached
+ * through the card it belongs to. */
+export const EDIT_DEPLOYMENT = {
+  openButton: "Edit deployment",
+  dialogTitle: "Edit Deployment",
+  dialogDescription: "Update deployment name, type, and description.",
+  submitButton: "Update",
+  cancelButton: "Cancel",
+  ids: {
+    name: "#edit-deployment-name",
+    type: "#edit-deployment-type",
+    description: "#edit-deployment-description",
+  },
+} as const;
+
+/** Delete-deployment confirmation, opened from a deployment card's toolbar.
+ *
+ * "Delete" is a deactivation, not a removal: confirming PATCHes
+ * `{ active: false }` to the same endpoint the edit modal uses, and the
+ * deployment drops out of the list. Like the edit control, the toolbar button is
+ * named identically on every card, so it has to be reached through its card. */
+export const DELETE_DEPLOYMENT = {
+  openButton: "Delete deployment",
+  dialogTitle: "Confirm Action",
+  confirmButton: "Confirm",
+  goBackButton: "Go Back",
+  /** The dialog names the deployment it is about, which is what tells the right
+   * card's dialog from another's. */
+  confirmMessage: (name: string) =>
+    `Are you sure you want to delete the deployment "${name}"? This action cannot be undone.`,
+} as const;
+
+/** Add WSO2 Product modal, opened from an expanded deployment on the
+ * Deployments tab.
+ *
+ * The deployment cards are MUI Accordions with `unmountOnExit`, so the Add
+ * Product button does not exist until the card is expanded. Like the Add
+ * Deployment modal, the fields carry real ids. */
+export const ADD_PRODUCT = {
+  openButton: "Add Product",
+  dialogTitle: "Add WSO2 Product",
+  dialogDescription: "Add a WSO2 product to this deployment environment.",
+  /** The modal's confirm control repeats the name of the button that opened it,
+   * so it must be scoped to the dialog. */
+  submitButton: "Add Product",
+  cancelButton: "Cancel",
+  ids: {
+    productName: "#product-name",
+    version: "#product-version",
+    cores: "#product-cores",
+    tps: "#product-tps",
+    description: "#product-description",
+  },
+  labels: {
+    productName: "Product Name *",
+    version: "Version *",
+    cores: "Core Count",
+    tps: "TPS (Transactions Per Second)",
+    description: "Description",
+  },
+  /** Each listed product carries a per-row edit control whose accessible name
+   * embeds the product's label — the reliable marker that it is listed, since
+   * the row's own text has no id or test id. */
+  rowEditButton: (productLabel: string) => `Edit ${productLabel}`,
+} as const;
+
+/** Delete-product confirmation, opened from a listed product's delete control.
+ *
+ * Like deleting a deployment, this is a deactivation: confirming PATCHes
+ * `{ active: false }` to the same endpoint the Manage Product modal saves
+ * through, and the product drops out of the list. */
+export const DELETE_PRODUCT = {
+  /** The row control carries the product's label, unlike the deployment
+   * toolbar's, so it needs no scoping to a card. */
+  openButton: (productLabel: string) => `Delete ${productLabel}`,
+  dialogTitle: "Confirm Action",
+  confirmButton: "Confirm",
+  goBackButton: "Go Back",
+  /** The dialog names the product with its version — "WSO2 API Manager (4.4.0)"
+   * — which is what tells the right product's dialog from another's. */
+  confirmMessage: (productLabel: string, version: string) =>
+    `Are you sure you want to delete "${productLabel} (${version})"? This action cannot be undone.`,
+} as const;
+
+/** Manage Product modal, opened from a listed product's edit control.
+ *
+ * Two tabs over one record: Product Details saves through "Save Changes", which
+ * closes the modal, while Update History saves through "Add Update" in the same
+ * footer. Both go to `PATCH /deployments/{id}/products/{id}`, but the update
+ * save sends only `{ updates }` — it does not carry a pending description edit,
+ * so the two have to be saved separately. */
+export const MANAGE_PRODUCT = {
+  dialogTitle: "Manage Product",
+  dialogDescription: "Update product details and manage update history",
+  tabs: {
+    details: "Product Details",
+    history: "Update History",
+  },
+  ids: {
+    description: "#manage-product-description",
+    cores: "#manage-product-cores",
+    tps: "#manage-product-tps",
+    /** Add New Update section, on the Update History tab. */
+    updateLevel: "#new-update-level",
+    appliedOn: "#new-applied-on",
+    updateDescription: "#new-update-description",
+  },
+  /** Per-entry controls on the Update History tab. The level is rendered with a
+   * "U" prefix — "U12" — in both the row's controls and the current-level
+   * readout. */
+  updateRow: {
+    editButton: (level: string) => `Edit update U${level}`,
+    deleteButton: (level: string) => `Delete update U${level}`,
+    /** The inline edit form's fields carry no ids, but their labels differ from
+     * the Add New Update section's — "Update Level" vs "Update Level *",
+     * "Date" vs "Applied On *", "Description" vs "Description (Optional)" — so
+     * an exact label match tells them apart. */
+    levelLabel: "Update Level",
+    dateLabel: "Date",
+    descriptionLabel: "Description",
+    saveButton: "Save",
+    cancelButton: "Cancel",
+  },
+  /** Readout above the Add New Update section. */
+  currentLevelLabel: "Current Update Level:",
+  currentLevelValue: (level: string) => `U${level}`,
+  /** Footer controls. Which of the two save buttons renders depends on the tab.
+   * The Update History tab has an in-tab Add Update button too, but only when it
+   * manages its own form — inside this modal it does not, so there is exactly
+   * one. */
+  saveButton: "Save Changes",
+  addUpdateButton: "Add Update",
+  closeButton: "Close",
+  updateAddedMessage: "Update history entry added successfully.",
+} as const;
+
 /** Get Help dropdown menu items (the arrow half of the split button). */
 export const GET_HELP_MENU = {
   trigger: "More help options",
