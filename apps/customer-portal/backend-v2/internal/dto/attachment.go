@@ -17,6 +17,7 @@
 package dto
 
 import (
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
@@ -104,7 +105,7 @@ func MapSearchAttachments(r entity.SearchAttachmentsResponse) SearchAttachmentsR
 			Type:          a.Type,
 			SizeBytes:     a.SizeBytes,
 			Description:   a.Description,
-			CreatedBy:     a.CreatedBy,
+			CreatedBy:     attachmentCreatedByName(a.CreatedBy),
 			CreatedOn:     a.CreatedOn,
 			DownloadURL:   a.DownloadURL,
 			PreviewURL:    a.PreviewURL,
@@ -133,6 +134,19 @@ type CaseAttachmentsResponse struct {
 
 // MapCaseAttachments builds the portal response from entity-service's
 // SearchAttachmentsResponse for GET /cases/{id}/attachments.
+// attachmentCreatedByName flattens entity-service's createdBy user object to the
+// single display string the portal contract exposes (the frontend's
+// AuditMetadata types createdBy as `string | null` and renders it directly, e.g.
+// "Uploaded by {createdBy}"). Prefers the resolved name and falls back to the
+// email, since Name is omitempty upstream and absent when the data source could
+// not resolve the uploader to a user record.
+func attachmentCreatedByName(u entity.UserRef) string {
+	if n := strings.TrimSpace(u.Name); n != "" {
+		return n
+	}
+	return strings.TrimSpace(u.Email)
+}
+
 func MapCaseAttachments(r entity.SearchAttachmentsResponse) CaseAttachmentsResponse {
 	items := make([]AttachmentSummary, 0, len(r.Attachments))
 	for _, a := range r.Attachments {
@@ -144,7 +158,7 @@ func MapCaseAttachments(r entity.SearchAttachmentsResponse) CaseAttachmentsRespo
 			Type:          a.Type,
 			SizeBytes:     a.SizeBytes,
 			Description:   a.Description,
-			CreatedBy:     a.CreatedBy,
+			CreatedBy:     attachmentCreatedByName(a.CreatedBy),
 			CreatedOn:     a.CreatedOn,
 			DownloadURL:   a.DownloadURL,
 			PreviewURL:    a.PreviewURL,
@@ -295,7 +309,7 @@ func MapDeploymentAttachments(r entity.SearchAttachmentsResponse) DeploymentAtta
 			Type:          a.Type,
 			SizeBytes:     a.SizeBytes,
 			Description:   a.Description,
-			CreatedBy:     a.CreatedBy,
+			CreatedBy:     attachmentCreatedByName(a.CreatedBy),
 			CreatedOn:     a.CreatedOn,
 			DownloadURL:   a.DownloadURL,
 			PreviewURL:    a.PreviewURL,

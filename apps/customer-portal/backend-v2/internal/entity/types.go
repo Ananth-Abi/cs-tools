@@ -992,10 +992,21 @@ type Attachment struct {
 	Type          string        `json:"type"`
 	SizeBytes     int           `json:"sizeBytes"`
 	Description   *string       `json:"description"`
-	CreatedBy     string        `json:"createdBy"`
-	CreatedOn     time.Time     `json:"createdOn"`
-	DownloadURL   *string       `json:"downloadUrl"`
-	PreviewURL    *string       `json:"previewUrl"`
+	// CreatedBy is an object, not a string: entity-service emits
+	// domain.UserRef ({id, name, userId, email}) here, unlike
+	// AttachmentDetail.CreatedBy which genuinely is a plain string. Declaring
+	// it as a string made json.Unmarshal fail with "cannot unmarshal object
+	// into Go value of type string", which aborted the whole decode and turned
+	// every GET /cases/{id}/attachments into a 500 even though entity-service
+	// had returned 200 with a valid list.
+	//
+	// entity-service also sends a sibling createdByUser (*domain.UserReference);
+	// it is deliberately not mirrored here because no portal consumer reads it
+	// and responses decode leniently, so the extra field is simply ignored.
+	CreatedBy   UserRef   `json:"createdBy"`
+	CreatedOn   time.Time `json:"createdOn"`
+	DownloadURL *string   `json:"downloadUrl"`
+	PreviewURL  *string   `json:"previewUrl"`
 }
 
 // SearchAttachmentsResponse is entity-service's response for POST /attachments/search.
