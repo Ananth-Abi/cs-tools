@@ -1150,6 +1150,42 @@ describe("DashboardWidgetTile", () => {
     );
   });
 
+  it("shape pie: renders a groupBy-configured widget via a single group-by call, including a synthetic Others slice", async () => {
+    postMock.mockResolvedValue({
+      groups: [
+        { key: "critical", label: "S1 · Critical", count: 1 },
+        { key: "high", label: "S2 · High", count: 3 },
+      ],
+      othersCount: 4,
+      totalRecords: 8,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="cases-by-severity"
+        displayName="Cases by severity"
+        resourceType="case"
+        shape="pie"
+        filters={{ filters: [{ field: "state", op: "in", values: ["open"] }] }}
+        groupBy={{ field: "severity", maxGroups: 2 }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("slice:S1 · Critical:1")).toBeInTheDocument());
+    expect(screen.getByText("slice:S2 · High:3")).toBeInTheDocument();
+    expect(screen.getByText("slice:Others:4")).toBeInTheDocument();
+    expect(postMock).toHaveBeenCalledTimes(1);
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/group-by",
+      {
+        filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
+        groupBy: "severity",
+        maxGroups: 2,
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
   it("shape pie: clicking a slice navigates to /cases with the widget's base filters merged under that slice's own filters", async () => {
     postMock.mockResolvedValue({ total: 2 });
 

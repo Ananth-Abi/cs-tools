@@ -180,7 +180,13 @@ export default function WidgetEditorDialog({
   const [section, setSection] = useState(widget?.section ?? defaultSection ?? "");
   const [gridWidth, setGridWidth] = useState(widget?.gridWidth ?? 3);
   const [listLimit, setListLimit] = useState<number | undefined>(widget?.listLimit);
-  const [groupBy, setGroupBy] = useState(widget?.groupBy ?? "");
+  // No authoring UI for `groupBy` yet (it's now a real object config, not
+  // the stale unused string this dialog used to expose as a raw text
+  // field) — round-trip an existing widget's own `groupBy` verbatim so
+  // editing a slices-based field on a groupBy widget through this dialog
+  // doesn't silently drop it, but there's nothing here to author or clear
+  // it with.
+  const existingGroupBy = widget?.groupBy;
   const [conditions, setConditions] = useState<FilterCondition[]>(() =>
     filterConditionsFromQuery(widget?.resourceType ?? "case", widget?.query),
   );
@@ -265,7 +271,7 @@ export default function WidgetEditorDialog({
       gridWidth,
       query: queryFromFilterConditions(resourceType, conditions),
       section: section.trim() || undefined,
-      groupBy: groupBy.trim() || undefined,
+      groupBy: existingGroupBy,
       listLimit: shape === "list" ? listLimit : undefined,
       slices:
         shape === "pie" || shape === "bar" ? draftsToSlices(resourceType, sliceDrafts) : undefined,
@@ -400,14 +406,6 @@ export default function WidgetEditorDialog({
                 slotProps={{ htmlInput: { min: 1 } }}
               />
             )}
-            <TextField
-              label="Group by (optional)"
-              value={groupBy}
-              onChange={(e) => setGroupBy(e.target.value)}
-              size="small"
-              sx={{ minWidth: 180 }}
-              helperText="Present on the wire; not used by the frontend today."
-            />
           </Box>
 
           <Divider />
@@ -586,6 +584,7 @@ export default function WidgetEditorDialog({
                 filters={previewSnapshot.query}
                 listLimit={previewSnapshot.listLimit}
                 slices={previewSnapshot.slices}
+                groupBy={previewSnapshot.groupBy}
                 columns={previewSnapshot.columns}
                 sortBy={previewSnapshot.sortBy}
                 selectedTeamCreGroupId={selectedTeamCreGroupId}
