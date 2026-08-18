@@ -245,3 +245,66 @@ func MapUpdatedAttachment(r entity.UpdateAttachmentResponse) UpdatedAttachment {
 		UpdatedBy: r.Attachment.UpdatedBy,
 	}
 }
+
+// CreateDeploymentAttachmentRequest mirrors the frontend's
+// PostDeploymentAttachmentRequest field-for-field. Like its case counterpart
+// there is no referenceId field: the deployment is scoped by the
+// {deploymentId} path parameter, never the body.
+type CreateDeploymentAttachmentRequest struct {
+	Name        string  `json:"name"`
+	Type        string  `json:"type"`
+	Content     string  `json:"content"`
+	Description *string `json:"description,omitempty"`
+}
+
+// BuildEntityCreateDeploymentAttachmentRequest translates the portal's request
+// into entity-service's CreateAttachmentRequest, forcing ReferenceID (from the
+// path) and ReferenceType to deployment, and renaming Content->File to match
+// entity-service's own field name.
+func BuildEntityCreateDeploymentAttachmentRequest(deploymentID string, req CreateDeploymentAttachmentRequest) entity.CreateAttachmentRequest {
+	return entity.CreateAttachmentRequest{
+		ReferenceID:   deploymentID,
+		ReferenceType: entity.ReferenceTypeDeployment,
+		Name:          req.Name,
+		Type:          req.Type,
+		File:          req.Content,
+		Description:   req.Description,
+	}
+}
+
+// DeploymentAttachmentsResponse is the portal's response for
+// GET /deployments/{deploymentId}/attachments. TotalRecords (not Total) to
+// match the frontend's shared pagination envelope, same as the case variant.
+type DeploymentAttachmentsResponse struct {
+	Attachments  []AttachmentSummary `json:"attachments"`
+	Offset       int                 `json:"offset"`
+	Limit        int                 `json:"limit"`
+	TotalRecords int                 `json:"totalRecords"`
+}
+
+// MapDeploymentAttachments builds the portal response from entity-service's
+// attachment search.
+func MapDeploymentAttachments(r entity.SearchAttachmentsResponse) DeploymentAttachmentsResponse {
+	items := make([]AttachmentSummary, 0, len(r.Attachments))
+	for _, a := range r.Attachments {
+		items = append(items, AttachmentSummary{
+			ID:            a.ID,
+			ReferenceID:   a.ReferenceID,
+			ReferenceType: string(a.ReferenceType),
+			Name:          a.Name,
+			Type:          a.Type,
+			SizeBytes:     a.SizeBytes,
+			Description:   a.Description,
+			CreatedBy:     a.CreatedBy,
+			CreatedOn:     a.CreatedOn,
+			DownloadURL:   a.DownloadURL,
+			PreviewURL:    a.PreviewURL,
+		})
+	}
+	return DeploymentAttachmentsResponse{
+		Attachments:  items,
+		Offset:       r.Offset,
+		Limit:        r.Limit,
+		TotalRecords: r.Total,
+	}
+}
