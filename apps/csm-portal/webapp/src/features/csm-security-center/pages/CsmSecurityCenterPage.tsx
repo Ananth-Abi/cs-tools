@@ -18,7 +18,6 @@ import { Box, Button, Typography } from "@wso2/oxygen-ui";
 import { ArrowLeft, Plus } from "@wso2/oxygen-ui-icons-react";
 import { type JSX } from "react";
 import { useLocation } from "react-router";
-import SectionTabs from "@components/section-tabs/SectionTabs";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ProductVulnerabilitiesTab from "@features/csm-security-center/components/ProductVulnerabilitiesTab";
 import { useNavTransition } from "@hooks/useNavTransition";
@@ -33,10 +32,17 @@ import { usePathSectionTabs } from "@hooks/useSectionTabs";
  *
  * Which tabs exist comes from the navigation tree, so a deployment can restrict
  * one through `CSM_PORTAL_FEATURE_OVERRIDES` without touching this page.
+ *
+ * The tab switch itself lives in the sidebar now (Security Center's
+ * submenu), not an in-page strip — `usePathSectionTabs` is kept only for its
+ * enabled/WIP-aware fallback reading the same real path segment
+ * (`/security-center/:tab`) the sidebar's submenu links navigate to.
  */
 export default function CsmSecurityCenterPage(): JSX.Element {
-  const tabs = usePathSectionTabs("security-center", "/security-center");
-  const activeTab = tabs.activeKey;
+  const { activeKey: activeTab } = usePathSectionTabs(
+    "security-center",
+    "/security-center",
+  );
   const navigate = useNavTransition();
   // Set by a dashboard widget's click-through, since this page has no
   // dashboard context of its own. The security-reports tab renders its own
@@ -64,8 +70,6 @@ export default function CsmSecurityCenterPage(): JSX.Element {
           Security reports and vulnerability posture across customer deployments.
         </Typography>
       </Box>
-
-      <SectionTabs {...tabs} ariaLabel="Security Center tabs" />
 
       {activeTab === "security-reports" && (
         <CsmIssuesView
