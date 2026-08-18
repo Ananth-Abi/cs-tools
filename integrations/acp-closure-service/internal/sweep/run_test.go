@@ -289,12 +289,23 @@ func TestRun_ScopedProjectFetchFailureIsFatal(t *testing.T) {
 // processProject call at all — while the other projects in the same page
 // are unaffected.
 func TestRun_SkipsExcludedProjectsInBroadSweep(t *testing.T) {
+	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	firingEndDate := now.AddDate(0, 0, 89).Format(time.RFC3339) // fires the 90-day window
+
 	reader := &mockEntityReader{
 		searchProjectsFn: func(ctx context.Context, body []byte) ([]byte, error) {
+			// p2 (the excluded one) is given a firing end date and an
+			// invalid suspensionProcessState — if processProject ever
+			// actually ran on it, that would produce a real, visible
+			// failure. Its endDate being null instead would make
+			// processProject a silent no-op either way, so the
+			// zero-failures assertion below couldn't distinguish
+			// "never evaluated" from "evaluated but harmless" (PR #1482
+			// review, CodeRabbit).
 			return []byte(`{
 				"projects": [
 					{"id": "p1", "endDate": null},
-					{"id": "p2", "endDate": null},
+					{"id": "p2", "endDate": "` + firingEndDate + `", "suspensionProcessState": "not-an-object"},
 					{"id": "p3", "endDate": null}
 				],
 				"total": 3, "limit": 50, "offset": 0, "hasMore": false
@@ -305,7 +316,7 @@ func TestRun_SkipsExcludedProjectsInBroadSweep(t *testing.T) {
 	ntf := &mockNotifier{}
 	excluded := map[string]bool{"p2": true}
 
-	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "", excluded)
+	result, err := Run(context.Background(), reader, updater, ntf, now, "", excluded)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
