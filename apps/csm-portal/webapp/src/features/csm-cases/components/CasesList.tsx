@@ -274,6 +274,7 @@ export default function CasesList({
                   size="small"
                   aria-label={`Quick preview ${rowLabel}`}
                   aria-pressed={previewRow?.id === c.id}
+                  data-quick-preview-eye="true"
                   onClick={(e) => {
                     e.stopPropagation();
                     setPreviewRow((prev) => (prev?.id === c.id ? null : c));

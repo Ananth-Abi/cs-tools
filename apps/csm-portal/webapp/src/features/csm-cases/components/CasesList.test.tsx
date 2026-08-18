@@ -179,12 +179,59 @@ describe("CasesList quick preview", () => {
     // that click actually land in a browser: without it, MUI's default
     // temporary-Drawer backdrop covers the rest of the page and intercepts
     // pointer events, which would silently swallow this exact click.
-    fireEvent.click(
-      screen.getByRole("button", { name: "Quick preview CS-1008", hidden: true }),
-    );
+    //
+    // A real click fires `mousedown` then `click` -- firing both (not just
+    // `click`) exercises `useCloseOnOutsideClick`'s own `mousedown` listener
+    // too, proving it excludes this eye button rather than racing its click
+    // handler and undoing the switch.
+    const otherEye = screen.getByRole("button", { name: "Quick preview CS-1008", hidden: true });
+    fireEvent.mouseDown(otherEye);
+    fireEvent.click(otherEye);
     expect(screen.getByRole("link", { name: "View full details" })).toHaveAttribute(
       "href",
       expect.stringContaining("/case-2"),
     );
+  });
+
+  it("closes the preview when clicking outside it, without needing the close button or the eye again", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick preview CS-1007" }));
+    expect(screen.getByText("View full details")).toBeInTheDocument();
+
+    // Any outside element -- here, the page body itself, well outside the
+    // drawer's own content -- should close it via the mousedown-level
+    // click-away listener, matching a real click's actual first event.
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByText("View full details")).not.toBeInTheDocument();
+  });
+
+  it("does not close the preview when clicking inside its own content", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick preview CS-1007" }));
+    const detailsLink = screen.getByRole("link", { name: "View full details" });
+    fireEvent.mouseDown(detailsLink);
+
+    expect(screen.getByRole("link", { name: "View full details" })).toBeInTheDocument();
   });
 });

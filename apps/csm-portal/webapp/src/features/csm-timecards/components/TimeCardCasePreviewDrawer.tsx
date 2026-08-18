@@ -16,14 +16,16 @@
 
 import { Box, Button, Divider, Drawer, IconButton, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
 import { Check, X } from "@wso2/oxygen-ui-icons-react";
-import type { JSX, ReactNode } from "react";
+import { useRef, type JSX, type ReactNode } from "react";
 import RelativeDate from "@components/RelativeDate";
 import CasePreviewContent from "@features/csm-cases/components/CasePreviewContent";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
+import { QUICK_PREVIEW_EYE_SELECTOR } from "@features/csm-cases/utils/quickPreviewEye";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
 import { billableLabel } from "@features/csm-timecards/constants/timeCardConstants";
 import { decisionSummary } from "@features/csm-timecards/utils/timeCardDecision";
 import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { useCloseOnOutsideClick } from "@hooks/useCloseOnOutsideClick";
 import type { TimecardAction } from "@features/csm-timecards/utils/timeSheetState";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 
@@ -103,23 +105,33 @@ export default function TimeCardCasePreviewDrawer({
 }: TimeCardCasePreviewDrawerProps): JSX.Element {
   const { data: caseDetail, isLoading, isError } = useGetCsmCaseDetail(card?.caseId);
   const decision = card ? decisionSummary(card) : null;
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  useCloseOnOutsideClick(!!card, contentRef, QUICK_PREVIEW_EYE_SELECTOR, onClose);
 
   return (
     <Drawer
       anchor="right"
       open={!!card}
       onClose={onClose}
-      // No backdrop: a temporary Drawer's default backdrop intercepts
-      // pointer events on the rest of the page, which would block clicking
-      // a different row's quick-preview eye while one preview is already
-      // open -- exactly the "switch straight to another row" behavior this
-      // drawer exists for. Closing still works via the eye toggle or the
-      // drawer's own close button.
+      // No backdrop, and the modal's own full-viewport root made
+      // click-through (via slotProps.root below) -- a temporary Drawer's
+      // default backdrop (and, even hidden, its still-present modal root
+      // container) intercepts pointer events on the rest of the page, which
+      // would block clicking a different row's quick-preview eye while one
+      // preview is already open. `useCloseOnOutsideClick` above replaces the
+      // backdrop's own click-to-close behavior, minus the eye buttons (their
+      // own onClick already decides the next state).
       hideBackdrop
-      slotProps={{ paper: { sx: { width: { xs: "100%", sm: 420 } } } }}
+      slotProps={{
+        root: { sx: { pointerEvents: "none" } },
+        paper: { sx: { pointerEvents: "auto", width: { xs: "100%", sm: 420 } } },
+      }}
     >
       {card && (
-        <Box sx={{ display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
+        <Box
+          ref={contentRef}
+          sx={{ display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}
+        >
           <Box sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
             <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1 }}>
               <Typography variant="subtitle2" color="text.secondary">
