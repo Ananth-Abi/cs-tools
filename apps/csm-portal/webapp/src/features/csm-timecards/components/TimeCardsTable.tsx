@@ -287,7 +287,9 @@ export default function TimeCardsTable({
                   <IconButton
                     size="small"
                     aria-label="View details"
+                    aria-pressed={detailCard?.id === c.id}
                     data-testid={`timecard-view-${c.id}`}
+                    data-quick-preview-eye="true"
                     onClick={() =>
                       setDetailCard((prev) => (prev?.id === c.id ? null : c))
                     }

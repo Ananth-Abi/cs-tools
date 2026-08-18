@@ -38,6 +38,35 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * empty selection. The URL always wins over all of that when it names a
  * (valid) dashboard.
  *
+ * Above even that team-based preferred predicate sits one more, narrower
+ * tier: `TEAM_DEFAULT_DASHBOARD_ID` maps a small, explicit set of team keys
+ * (the signed-in user's own `team.teamKey`, resolved the same way as above)
+ * straight onto a specific dashboard `id` — e.g. a
+ * `customer_onboarding`-team user always lands on `onboarding-engineer`,
+ * and an `apollo_sre_group`-team user always lands on `sre-abt`, regardless
+ * of that dashboard's own `isDefault`/`isTeamBased` flags (`sre-abt.json`
+ * has `isDefault: false` — flipping it to `true` would fail the backend's
+ * own "at most one isDefault dashboard, of any type" validation, since a
+ * CRE dashboard already claims it; see `registry.go`'s validation and the
+ * `preferredEntry` comment below for why default-selection isn't
+ * type-aware). This is deliberately a team-*identity* override, not a
+ * generalization of the `isDefault`/`isTeamBased`/`type` mechanism above
+ * (see the warning in the `preferredEntry` comment below about coupling
+ * default-selection to `type` — this tier doesn't touch that at all): it's
+ * additive and inert for every user whose `teamKey` isn't a key in the map
+ * (e.g. every non-mapped ABT team), who falls straight through to
+ * `preferredEntry` exactly as before. A mapped team key whose target
+ * dashboard id isn't present in the BE-loaded list (e.g. not yet
+ * registered, or a stale map entry) also falls straight through rather than
+ * erroring. Adding a further team to this treatment is a one-line addition
+ * to the map, never a new branch. For a team-based target dashboard (e.g.
+ * `sre-abt`), the team dropdown itself needs no separate wiring —
+ * `defaultTeamId` below already auto-selects the signed-in user's own
+ * `teamKey`, and `AbtDashboardHeader`'s picker already resolves
+ * apollo_sre_group/artemis_sre_group generically via
+ * `abtFamilyForDashboardType("sre") === "sre-abt"` against the team
+ * registry, same as every other ABT family.
+ *
  * The selection is a real path segment — `/dashboard/:dashboardId`, and for a
  * team-based dashboard `/dashboard/:dashboardId/:teamId` — rather than a
  * query param or fragment, matched by three sibling routes in App.tsx all
@@ -50,31 +79,6 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * entry that means the very first render after the defaults resolve, so a
  * refresh or share always lands on an explicit dashboard id, never the bare
  * index.
- *
- * Above even that team-based preferred predicate sits one more, narrower
- * tier: `TEAM_DEFAULT_DASHBOARD_ID` maps a small, explicit set of team keys
- * (the signed-in user's own `team.teamKey`, resolved the same way as above)
- * straight onto a specific dashboard `id` — e.g. an `apollo_sre_group`-team
- * user always lands on `sre-abt`, regardless of that dashboard's own
- * `isDefault`/`isTeamBased` flags (`sre-abt.json` has `isDefault: false` —
- * flipping it to `true` would fail the backend's own "at most one isDefault
- * dashboard, of any type" validation, since a CRE dashboard already claims
- * it; see `registry.go`'s validation and the `preferredEntry` comment below
- * for why default-selection isn't type-aware). This is deliberately a
- * team-*identity* override, not a generalization of the
- * `isDefault`/`isTeamBased`/`type` mechanism below: it's additive and inert
- * for every user whose `teamKey` isn't a key in the map, who falls straight
- * through to `preferredEntry` exactly as before. A mapped team key whose
- * target dashboard id isn't present in the BE-loaded list (e.g. not yet
- * registered, or a stale map entry) also falls straight through rather than
- * erroring. Adding a further team to this treatment is a one-line addition
- * to the map, never a new branch. Once a user is on `sre-abt`, the team
- * dropdown itself needs no separate wiring — `defaultTeamId` below already
- * auto-selects the signed-in user's own `teamKey` for any team-based
- * dashboard, and `AbtDashboardHeader`'s picker already resolves
- * apollo_sre_group/artemis_sre_group generically via
- * `abtFamilyForDashboardType("sre") === "sre-abt"` against the team
- * registry, same as every other ABT family.
  *
  * Dashboards are selected purely by dropdown — there is no other
  * per-dashboard scoping control. Every dashboard in the registry has at
@@ -91,6 +95,8 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * the same treatment.
  */
 const TEAM_DEFAULT_DASHBOARD_ID: Record<string, string> = {
+  customer_onboarding: "onboarding-engineer",
+  cs_migrations_team: "migration-engineer",
   apollo_sre_group: "sre-abt",
   artemis_sre_group: "sre-abt",
 };

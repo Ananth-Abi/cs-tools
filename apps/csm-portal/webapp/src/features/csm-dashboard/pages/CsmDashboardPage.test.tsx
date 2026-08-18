@@ -503,18 +503,50 @@ describe("CsmDashboardPage", () => {
     });
   });
 
-  describe("team-identity default dashboard override (SRE ABT)", () => {
-    // Registered dashboards including sre-abt, plus the usual
+  describe("team-identity default dashboard override", () => {
+    // Registered dashboards for the mapped teams, plus the usual
     // isDefault/!isTeamBased fallback and an isTeamBased dashboard, so these
     // tests can also confirm the override wins over both.
-    const LIST_WITH_SRE_ABT = [
+    const LIST_WITH_MAPPED_DASHBOARDS = [
       { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
       { id: "team_performance", displayName: "Team performance", isDefault: true, isTeamBased: true },
+      { id: "onboarding-engineer", displayName: "Onboarding engineer", isDefault: false, isTeamBased: false },
+      { id: "migration-engineer", displayName: "Migration engineer", isDefault: false, isTeamBased: false },
       { id: "sre-abt", displayName: "SRE ABT Dashboard", isDefault: false, isTeamBased: true, type: "sre" as const },
     ];
 
+    it("defaults a customer_onboarding-team user onto the onboarding-engineer dashboard", () => {
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "customer_onboarding", teamName: "Customer Onboarding" } },
+        isLoading: false,
+      });
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "onboarding-engineer",
+      );
+      expect(currentPath()).toBe("/dashboard/onboarding-engineer");
+    });
+
+    it("defaults a cs_migrations_team user onto the migration-engineer dashboard", () => {
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "cs_migrations_team", teamName: "CS Migrations" } },
+        isLoading: false,
+      });
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "migration-engineer",
+      );
+      expect(currentPath()).toBe("/dashboard/migration-engineer");
+    });
+
     it("defaults an apollo_sre_group-team user onto the sre-abt dashboard", () => {
-      mockListResult({ data: LIST_WITH_SRE_ABT, isLoading: false });
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
       mockCurrentUser({
         user: { team: { teamKey: "apollo_sre_group", teamName: "Apollo SRE Group" } },
         isLoading: false,
@@ -531,7 +563,7 @@ describe("CsmDashboardPage", () => {
     });
 
     it("defaults an artemis_sre_group-team user onto the sre-abt dashboard", () => {
-      mockListResult({ data: LIST_WITH_SRE_ABT, isLoading: false });
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
       mockCurrentUser({
         user: { team: { teamKey: "artemis_sre_group", teamName: "Artemis SRE Group" } },
         isLoading: false,
@@ -543,8 +575,8 @@ describe("CsmDashboardPage", () => {
       expect(currentPath()).toBe("/dashboard/sre-abt");
     });
 
-    it("leaves an unmapped team's existing default-selection behavior completely unchanged", () => {
-      mockListResult({ data: LIST_WITH_SRE_ABT, isLoading: false });
+    it("leaves an unmapped (e.g. ABT) team's existing default-selection behavior completely unchanged", () => {
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
       mockCurrentUser({
         user: { team: { teamKey: "cs_team_leads", teamName: "CS Team Leads" } },
         isLoading: false,
@@ -559,10 +591,21 @@ describe("CsmDashboardPage", () => {
       );
     });
 
+    it("leaves a no-team user's existing default-selection behavior completely unchanged", () => {
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
+      mockCurrentUser({ user: { team: undefined }, isLoading: false });
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "agents_pilot",
+      );
+    });
+
     it("lets a URL naming a different valid dashboard win over the team-identity default", () => {
-      mockListResult({ data: LIST_WITH_SRE_ABT, isLoading: false });
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
       mockCurrentUser({
-        user: { team: { teamKey: "apollo_sre_group", teamName: "Apollo SRE Group" } },
+        user: { team: { teamKey: "customer_onboarding", teamName: "Customer Onboarding" } },
         isLoading: false,
       });
 
@@ -574,13 +617,14 @@ describe("CsmDashboardPage", () => {
       expect(currentPath()).toBe("/dashboard/agents_pilot");
     });
 
-    it("falls through cleanly to the existing fallback chain when sre-abt isn't in the BE-returned list", () => {
-      // sre-abt deliberately absent here — the mapped team key still
-      // resolves, but the target dashboard isn't registered, so
-      // teamDefaultEntry must resolve to undefined and this must not throw.
+    it("falls through cleanly to the existing fallback chain when the mapped dashboard id isn't in the BE-returned list", () => {
+      // onboarding-engineer/migration-engineer/sre-abt deliberately absent
+      // here — the mapped team key still resolves, but the target
+      // dashboard isn't registered, so teamDefaultEntry must resolve to
+      // undefined and this must not throw.
       mockListResult({ data: DASHBOARD_LIST, isLoading: false });
       mockCurrentUser({
-        user: { team: { teamKey: "apollo_sre_group", teamName: "Apollo SRE Group" } },
+        user: { team: { teamKey: "customer_onboarding", teamName: "Customer Onboarding" } },
         isLoading: false,
       });
 

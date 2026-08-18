@@ -511,9 +511,36 @@ describe("TimeCardsTable View details drawer", () => {
     fireEvent.click(screen.getByTestId("timecard-view-tc-1"));
     expect(screen.getByText("Jane Doe")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId("timecard-view-tc-2"));
+    // A real click fires `mousedown` then `click` -- firing both (not just
+    // `click`) exercises `useCloseOnOutsideClick`'s own `mousedown` listener
+    // too, proving it excludes this eye button rather than racing its click
+    // handler and undoing the switch.
+    const otherEye = screen.getByTestId("timecard-view-tc-2");
+    fireEvent.mouseDown(otherEye);
+    fireEvent.click(otherEye);
     expect(screen.getByText("John Roe")).toBeInTheDocument();
     expect(screen.queryByText("Jane Doe")).not.toBeInTheDocument();
+  });
+
+  it("closes the preview when clicking outside it, without needing the close button or the eye again", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("timecard-view-tc-1"));
+    expect(screen.getByText("Time card")).toBeInTheDocument();
+
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByText("Time card")).not.toBeInTheDocument();
   });
 });
 

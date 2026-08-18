@@ -14,10 +14,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Drawer } from "@wso2/oxygen-ui";
-import type { JSX } from "react";
+import { Box, Drawer } from "@wso2/oxygen-ui";
+import { useRef, type JSX } from "react";
 import CasePreviewContent from "@features/csm-cases/components/CasePreviewContent";
+import { QUICK_PREVIEW_EYE_SELECTOR } from "@features/csm-cases/utils/quickPreviewEye";
 import type { CsmCaseRow } from "@features/csm-cases/types/csmCases";
+import { useCloseOnOutsideClick } from "@hooks/useCloseOnOutsideClick";
 
 interface CasePreviewDrawerProps {
   /** The row being previewed. `null` keeps the drawer mounted-but-closed, so
@@ -38,22 +40,34 @@ interface CasePreviewDrawerProps {
  * a time card's own summary, rather than duplicating it.
  */
 export default function CasePreviewDrawer({ row, onClose }: CasePreviewDrawerProps): JSX.Element {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  useCloseOnOutsideClick(!!row, contentRef, QUICK_PREVIEW_EYE_SELECTOR, onClose);
+
   return (
     <Drawer
       anchor="right"
       open={!!row}
       onClose={onClose}
-      // No backdrop: a temporary Drawer's default backdrop intercepts
-      // pointer events on the rest of the page, which would block clicking
-      // a different row's quick-preview eye while one preview is already
-      // open -- exactly the "switch straight to another row" behavior this
-      // drawer exists for. Closing still works via the eye toggle or the
-      // drawer's own close button; there's no click-outside-to-close to
-      // preserve here since those are already the two ways to close it.
+      // No backdrop, and the modal's own full-viewport root made
+      // click-through (via slotProps.root below) -- a temporary Drawer's
+      // default backdrop (and, even hidden, its still-present modal root
+      // container) intercepts pointer events on the rest of the page, which
+      // would block clicking a different row's quick-preview eye while one
+      // preview is already open. `useCloseOnOutsideClick` above replaces the
+      // backdrop's own click-to-close behavior, minus the eye buttons (their
+      // own onClick already decides the next state -- open a different row,
+      // or toggle the current one closed).
       hideBackdrop
-      slotProps={{ paper: { sx: { width: { xs: "100%", sm: 420 } } } }}
+      slotProps={{
+        root: { sx: { pointerEvents: "none" } },
+        paper: { sx: { pointerEvents: "auto", width: { xs: "100%", sm: 420 } } },
+      }}
     >
-      {row && <CasePreviewContent row={row} onClose={onClose} />}
+      {row && (
+        <Box ref={contentRef} sx={{ height: "100%" }}>
+          <CasePreviewContent row={row} onClose={onClose} />
+        </Box>
+      )}
     </Drawer>
   );
 }
