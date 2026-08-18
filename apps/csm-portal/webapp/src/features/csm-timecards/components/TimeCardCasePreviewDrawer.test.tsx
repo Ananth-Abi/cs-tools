@@ -146,6 +146,42 @@ describe("TimeCardCasePreviewDrawer", () => {
     expect(onDecide).toHaveBeenCalledWith("reject");
   });
 
+  it("lists the eligible approvers on a submitted card", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(
+      <TimeCardCasePreviewDrawer
+        card={{
+          ...CARD,
+          approvers: [
+            { id: "lead-1", name: "Lead One" },
+            { id: "lead-2", name: "Lead Two" },
+          ],
+        }}
+        actions={[]}
+        onClose={vi.fn()}
+        onDecide={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Approvers")).toBeInTheDocument();
+    expect(screen.getByText("Lead One, Lead Two")).toBeInTheDocument();
+  });
+
+  it("shows the decision text without a generic 'Decision' caption on a decided card", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    renderWithProviders(
+      <TimeCardCasePreviewDrawer
+        card={{ ...CARD, state: "approved", approvedByName: "Lead Person" }}
+        actions={[]}
+        onClose={vi.fn()}
+        onDecide={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Approved by: Lead Person")).toBeInTheDocument();
+    expect(screen.queryByText("Decision")).not.toBeInTheDocument();
+  });
+
   it("only shows the embedded case preview's 'View full details' close affordance, not a duplicate close button", async () => {
     getMock.mockResolvedValue({
       id: "case-1",
