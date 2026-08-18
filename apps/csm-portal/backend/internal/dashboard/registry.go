@@ -368,6 +368,7 @@ func validate(loaded []sourced, requireType bool) error {
 	byID := make(map[string]string, len(loaded))
 	defaultByType := make(map[Type]string, len(loaded))
 	untypedDefaultSource := ""
+	defaultForTeamKeySource := make(map[string]string, len(loaded))
 
 	for _, l := range loaded {
 		d := l.dashboard
@@ -386,6 +387,20 @@ func validate(loaded []sourced, requireType bool) error {
 
 		if err := validateWidgets(d, l.source); err != nil {
 			return err
+		}
+
+		// CsmDashboardPage selects a caller's landing dashboard by matching
+		// its team key against DefaultForTeamKeys, taking the first list
+		// entry with find. If two dashboards claimed the same team key, that
+		// choice would silently fall to list order instead of config intent.
+		// Track which dashboard claims each key and reject a second claim
+		// from a different source.
+		for _, teamKey := range d.DefaultForTeamKeys {
+			if prev, claimed := defaultForTeamKeySource[teamKey]; claimed && prev != l.source {
+				return fmt.Errorf("dashboard definitions: %s (id %q): defaultForTeamKeys key %q is already claimed by %s; each team key must resolve to exactly one dashboard",
+					l.source, d.ID, teamKey, prev)
+			}
+			defaultForTeamKeySource[teamKey] = l.source
 		}
 
 		// Before the type branch below, which skips the rest of the loop for an

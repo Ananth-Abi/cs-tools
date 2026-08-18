@@ -875,6 +875,45 @@ func TestParseDashboardsConfig_RejectsInvalidWidgets(t *testing.T) {
 	}
 }
 
+// A dashboard may claim a defaultForTeamKeys entry without any conflict --
+// the common case, and the one every real deployment relies on to land a
+// team's members on their own specialist dashboard.
+func TestLoadDir_DefaultForTeamKeysWithNoConflictIsFine(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "migration-engineer", "displayName": "Migration Engineer", "type": "cs", "defaultForTeamKeys": ["cs_migrations_team"], "widgets": []}`)
+
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LoadDir returned %d dashboards, want 2", len(got))
+	}
+}
+
+// TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership is the fix for the
+// gap CodeRabbit flagged: validate did not track defaultForTeamKeys
+// ownership at all, so two dashboards claiming the same team key would both
+// load, and CsmDashboardPage's find() would silently pick whichever came
+// first in dashboard list order -- an outcome driven by LoadDir's filename
+// ordering rather than by any config author's intent.
+func TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "migration-engineer", "displayName": "Migration Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+
+	_, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("LoadDir accepted two dashboards claiming the same defaultForTeamKeys entry; expected an error")
+	}
+	for _, want := range []string{"a.json", "b.json", "customer_onboarding", "defaultForTeamKeys"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
+		}
+	}
+}
+
 // The committed dashboards.example/ directory is what .env.example's
 // DASHBOARDS_DIR points at, so `cp .env.example .env && go run ./cmd/server`
 // works on a fresh clone (./dashboards is gitignored and a missing directory
