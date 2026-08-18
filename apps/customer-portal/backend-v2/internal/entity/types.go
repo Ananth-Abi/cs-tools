@@ -1141,12 +1141,12 @@ type SearchCommentsRequest struct {
 // CommentView is a single search result item from POST /comments/search.
 // InlineAttachment is an image embedded in a comment body.
 type InlineAttachment struct {
-	ID          string    `json:"id"`
-	FileName    string    `json:"fileName"`
-	ContentType string    `json:"contentType"`
-	DownloadURL string    `json:"downloadUrl"`
-	CreatedOn   time.Time `json:"createdOn"`
-	CreatedBy   string    `json:"createdBy"`
+	ID          string     `json:"id"`
+	FileName    string     `json:"fileName"`
+	ContentType string     `json:"contentType"`
+	DownloadURL string     `json:"downloadUrl"`
+	CreatedOn   *time.Time `json:"createdOn"`
+	CreatedBy   string     `json:"createdBy"`
 }
 
 type CommentView struct {

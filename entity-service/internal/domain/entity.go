@@ -1972,12 +1972,14 @@ type CommentUserRef struct {
 // InlineAttachment is an image embedded in a comment body. IDs are converted
 // from ServiceNow sysids to UUIDs like every other inbound identifier.
 type InlineAttachment struct {
-	ID          string    `json:"id"`
-	FileName    string    `json:"fileName"`
-	ContentType string    `json:"contentType"`
-	DownloadURL string    `json:"downloadUrl"`
-	CreatedOn   time.Time `json:"createdOn"`
-	CreatedBy   string    `json:"createdBy"`
+	ID          string `json:"id"`
+	FileName    string `json:"fileName"`
+	ContentType string `json:"contentType"`
+	DownloadURL string `json:"downloadUrl"`
+	// CreatedOn is nil when the upstream supplied no parseable timestamp — never
+	// a zero time, which would serialise as a real-looking year-one date.
+	CreatedOn *time.Time `json:"createdOn,omitempty"`
+	CreatedBy string     `json:"createdBy"`
 }
 
 type CaseComment struct {

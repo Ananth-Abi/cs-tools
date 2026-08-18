@@ -120,12 +120,14 @@ type SearchCommentsResponse struct {
 // CommentInlineAttachment is an image embedded in a comment body. Field names
 // match the frontend's CaseCommentInlineAttachment exactly.
 type CommentInlineAttachment struct {
-	ID          string    `json:"id"`
-	FileName    string    `json:"fileName"`
-	ContentType string    `json:"contentType"`
-	DownloadURL string    `json:"downloadUrl"`
-	CreatedOn   time.Time `json:"createdOn"`
-	CreatedBy   string    `json:"createdBy"`
+	ID          string `json:"id"`
+	FileName    string `json:"fileName"`
+	ContentType string `json:"contentType"`
+	DownloadURL string `json:"downloadUrl"`
+	// Nil when the upstream had no parseable timestamp; omitted rather than
+	// serialised as a year-one date.
+	CreatedOn *time.Time `json:"createdOn,omitempty"`
+	CreatedBy string     `json:"createdBy"`
 }
 
 // mapCommentInlineAttachments converts entity-service's inline attachments to

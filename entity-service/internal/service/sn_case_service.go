@@ -1128,9 +1128,11 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 				DownloadURL: ia.DownloadURL,
 				CreatedBy:   ia.CreatedBy,
 			}
+			// Left nil for an empty or unparseable value: a zero time would render as
+			// "0001-01-01T00:00:00Z" and read as a genuine timestamp.
 			if ia.CreatedOn != "" {
 				if parsed, err := time.Parse(snCreatedOnLayout, ia.CreatedOn); err == nil {
-					entry.CreatedOn = parsed
+					entry.CreatedOn = &parsed
 				}
 			}
 			inlineAttachments = append(inlineAttachments, entry)
