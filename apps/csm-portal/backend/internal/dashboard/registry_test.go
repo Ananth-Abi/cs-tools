@@ -312,26 +312,67 @@ func TestLoadDir_ContradictoryCombinations(t *testing.T) {
 	}
 }
 
-// Two defaults of DIFFERENT types are rejected too, for now. One default per
-// type is where this ends up, but only once the frontend selects on "type" --
-// today CsmDashboardPage picks on isDefault + isTeamBased and the
-// dashboard-list response does not even carry "type", so a second typed
-// default would be resolved by nothing but LoadDir's filename ordering.
-// Rejecting is the conservative half of that pair. When the frontend becomes
-// type-aware, this test flips to asserting they coexist.
-func TestLoadDir_RejectsASecondDefaultEvenOfADifferentType(t *testing.T) {
+// Two defaults of DIFFERENT types coexist: the frontend selects its landing
+// dashboard from the caller's own team family against "type", so a cre
+// default and an sre default (or a cs default) do not compete for one
+// global slot -- each type gets its own.
+func TestLoadDir_AllowsDefaultsOfDifferentTypesToCoexist(t *testing.T) {
 	dir := t.TempDir()
 	writeDefinition(t, dir, "a.json", `{"id": "a", "displayName": "A", "type": "cs", "isDefault": true, "widgets": []}`)
 	writeDefinition(t, dir, "b.json", `{"id": "b", "displayName": "B", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
 
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir rejected two isDefault dashboards of different types: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LoadDir returned %d dashboards, want 2", len(got))
+	}
+	if !got[0].IsDefault || got[0].Type != TypeCS {
+		t.Fatalf("a = %+v; want isDefault true, type cs", got[0])
+	}
+	if !got[1].IsDefault || got[1].Type != TypeCRE {
+		t.Fatalf("b = %+v; want isDefault true, type cre", got[1])
+	}
+}
+
+// A second isDefault dashboard of the SAME type is still rejected, exactly as
+// before -- the one-per-type rule is not "no rule at all".
+func TestLoadDir_RejectsASecondDefaultOfTheSameType(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "a", "displayName": "A", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "b", "displayName": "B", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
+
 	_, err := LoadDir(dir)
 	if err == nil {
-		t.Fatal("LoadDir accepted two isDefault dashboards of different types; expected an error")
+		t.Fatal("LoadDir accepted two isDefault dashboards of the same type; expected an error")
 	}
-	for _, want := range []string{"a.json", "b.json", "isDefault"} {
+	for _, want := range []string{"a.json", "b.json", "isDefault", "cre"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
 		}
+	}
+}
+
+// An untyped isDefault dashboard (only reachable via the deprecated
+// DASHBOARDS_CONFIG path) does not share a "slot" with a typed isDefault
+// dashboard -- it has no type to key off, so it must not collide with one.
+func TestParseDashboardsConfig_UntypedDefaultDoesNotCollideWithTypedDefault(t *testing.T) {
+	got, err := ParseDashboardsConfig(`[
+		{"id":"a","displayName":"A","isDefault":true,"widgets":[]},
+		{"id":"b","displayName":"B","type":"cs","isDefault":true,"widgets":[]}
+	]`)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig rejected an untyped default alongside a typed one: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ParseDashboardsConfig returned %d dashboards, want 2", len(got))
+	}
+	if !got[0].IsDefault || got[0].Type != "" {
+		t.Fatalf("a = %+v; want isDefault true, no type", got[0])
+	}
+	if !got[1].IsDefault || got[1].Type != TypeCS {
+		t.Fatalf("b = %+v; want isDefault true, type cs", got[1])
 	}
 }
 

@@ -5765,13 +5765,10 @@ components:
           enum: [cre, sre, cs]
           description: >
             Who the dashboard is built for. This is the field automatic
-            dashboard selection is intended to key off: a caller whose team
-            family is `cre-abt`/`cre` would land on the default `cre`
-            dashboard, `sre-abt`/`sre` on the default `sre` one, and a caller
-            with no team on the default `cs` one. That selection is NOT
-            implemented yet: the frontend still picks on isDefault plus
-            isTeamBased, and the loader correspondingly permits only one
-            isDefault dashboard in total.
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
             `cre` and `sre` are team-scoped and always carry
             isTeamBased true; `cs` is organisation-wide and always carries it
             false — the loader rejects any other combination at startup.
@@ -5780,9 +5777,24 @@ components:
         isDefault:
           type: boolean
           description: >
-            Whether this is the default dashboard to show first. At most one
-            dashboard in the registry may set it: the loader rejects a second
-            at startup, of any type, until selection becomes type-aware.
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
+        defaultForTeamKeys:
+          type: array
+          items:
+            type: string
+          description: >
+            Team registry keys (not group ids) that should land a
+            signed-in user on this dashboard by default, regardless of its
+            own type/isDefault/isTeamBased — an identity override resolved
+            client-side against the signed-in user's own team key. Most
+            dashboards leave this empty and rely on type-based selection
+            instead; it exists for a dashboard built for one specific
+            team's own workflow rather than the type/family model.
         isTeamBased:
           type: boolean
           description: >
@@ -5804,13 +5816,10 @@ components:
           enum: [cre, sre, cs]
           description: >
             Who the dashboard is built for. This is the field automatic
-            dashboard selection is intended to key off: a caller whose team
-            family is `cre-abt`/`cre` would land on the default `cre`
-            dashboard, `sre-abt`/`sre` on the default `sre` one, and a caller
-            with no team on the default `cs` one. That selection is NOT
-            implemented yet: the frontend still picks on isDefault plus
-            isTeamBased, and the loader correspondingly permits only one
-            isDefault dashboard in total.
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
             `cre` and `sre` are team-scoped and always carry
             isTeamBased true; `cs` is organisation-wide and always carries it
             false — the loader rejects any other combination at startup.
@@ -5819,9 +5828,12 @@ components:
         isDefault:
           type: boolean
           description: >
-            Whether this is the default dashboard to show first. At most one
-            dashboard in the registry may set it: the loader rejects a second
-            at startup, of any type, until selection becomes type-aware.
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
         targetTeam:
           type: string
           description: >

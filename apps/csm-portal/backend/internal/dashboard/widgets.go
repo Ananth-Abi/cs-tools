@@ -270,6 +270,19 @@ type Dashboard struct {
 	IsTeamBased bool             `json:"isTeamBased"`
 	Widgets     []WidgetTemplate `json:"widgets"`
 
+	// DefaultForTeamKeys lists team registry keys (BeTeam.id on the
+	// frontend, the values in this deployment's team registry -- not a
+	// group id) that should land a signed-in user on this dashboard by
+	// default, regardless of this dashboard's own IsDefault/IsTeamBased/
+	// Type -- an identity override resolved client-side against the
+	// signed-in user's own team.teamKey. Most dashboards should leave this
+	// empty and rely on Type-based selection instead (see Type's own doc
+	// comment); this exists for a dashboard that doesn't fit the
+	// type/family model at all -- e.g. a single-purpose specialist
+	// dashboard built for one specific team's own workflow rather than a
+	// team-scoped ABT dashboard.
+	DefaultForTeamKeys []string `json:"defaultForTeamKeys,omitempty"`
+
 	// FilterPresets is this dashboard's own map of presetKey -> literal
 	// filter fragment ({"field":...,"op":...,"values":...}), the
 	// dashboard-local half of the preset mechanism (see

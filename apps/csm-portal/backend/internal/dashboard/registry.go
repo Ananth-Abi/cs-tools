@@ -28,15 +28,12 @@ import (
 )
 
 // Type classifies a dashboard by the audience it is built for. It is the
-// field automatic dashboard selection is intended to key off: a caller whose
-// team family is cre-abt/cre would land on the default TypeCRE dashboard,
-// sre-abt/sre on the default TypeSRE one, and a caller with no team at all on
-// the default TypeCS one.
-//
-// That selection is NOT implemented yet. The frontend still picks its landing
-// dashboard on IsDefault plus IsTeamBased and never reads Type, which is why
-// validate below still permits only one IsDefault dashboard in total rather
-// than one per type.
+// field automatic dashboard selection keys off: a caller whose team family is
+// cre-abt/cre lands on the default TypeCRE dashboard, sre-abt/sre on the
+// default TypeSRE one, and a caller with no team at all on the default
+// TypeCS one. validate enforces at most one IsDefault dashboard per Type, so
+// a default of each type can coexist without either resolving by nothing
+// more than file ordering.
 type Type string
 
 const (
@@ -357,18 +354,20 @@ func finalize(loaded []sourced, requireType bool, sharedPresets map[string]map[s
 //   - type cs with isTeamBased true. cs is the organisation-wide dashboard,
 //     and it is what a caller with no team at all falls back to. A team
 //     picker on it contradicts both roles.
-//   - more than one isDefault dashboard, of any type. This is deliberately
-//     stricter than the eventual rule. Once the frontend keys default
-//     selection off "type" it will be one default PER type; today it does
-//     not -- CsmDashboardPage picks on isDefault + isTeamBased, and "type"
-//     is not even carried on the dashboard-list response yet -- so a second
-//     typed default would be accepted here and then resolved by nothing more
-//     than LoadDir's filename ordering. Loosen this to one-per-type in the
-//     same change that makes the frontend type-aware, not before.
+//   - more than one isDefault dashboard of the same type -- or, on the
+//     deprecated untyped DASHBOARDS_CONFIG path, more than one untyped
+//     isDefault dashboard. One isDefault dashboard per type is legal and by
+//     design: the frontend selects its landing dashboard from the caller's
+//     own team family against Type, so a cre default and an sre default (and
+//     a cs default) can all coexist without any of them resolving by nothing
+//     more than LoadDir's filename ordering. An untyped default does not
+//     share a "slot" with any typed default -- it has no type to key off --
+//     so it only ever collides with another untyped default, which is only
+//     reachable via the deprecated single-variable path.
 func validate(loaded []sourced, requireType bool) error {
 	byID := make(map[string]string, len(loaded))
-	defaultSource := ""
-	defaultType := Type("")
+	defaultByType := make(map[Type]string, len(loaded))
+	untypedDefaultSource := ""
 
 	for _, l := range loaded {
 		d := l.dashboard
@@ -392,14 +391,22 @@ func validate(loaded []sourced, requireType bool) error {
 		// Before the type branch below, which skips the rest of the loop for an
 		// untyped definition: an untyped isDefault dashboard counts here too,
 		// so two of them on the deprecated DASHBOARDS_CONFIG path are caught
-		// rather than left to file ordering.
+		// rather than left to file ordering. It is kept in its own bucket,
+		// separate from defaultByType, so it never collides with a typed
+		// default -- there is no type to key on, so there is no shared slot.
 		if d.IsDefault {
-			if defaultSource != "" {
-				return fmt.Errorf("dashboard definitions: %s (id %q, type %q): a second \"isDefault\" dashboard; %s (type %q) already claims it, and selection needs exactly one. Automatic selection is not type-aware yet, so which of the two you land on would depend only on filename ordering",
-					l.source, d.ID, d.Type, defaultSource, defaultType)
+			if d.Type == "" {
+				if untypedDefaultSource != "" {
+					return fmt.Errorf("dashboard definitions: %s (id %q): a second untyped \"isDefault\" dashboard; %s already claims the untyped default slot, and selection needs exactly one. This is only reachable via the deprecated DASHBOARDS_CONFIG path, which predates \"type\"",
+						l.source, d.ID, untypedDefaultSource)
+				}
+				untypedDefaultSource = l.source
+			} else if prev, claimed := defaultByType[d.Type]; claimed {
+				return fmt.Errorf("dashboard definitions: %s (id %q, type %q): a second \"isDefault\" dashboard of type %q; %s already claims that type's default, and selection needs exactly one default per type",
+					l.source, d.ID, d.Type, d.Type, prev)
+			} else {
+				defaultByType[d.Type] = l.source
 			}
-			defaultSource = l.source
-			defaultType = d.Type
 		}
 
 		if d.Type == "" {

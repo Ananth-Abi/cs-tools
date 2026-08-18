@@ -76,6 +76,12 @@ type dashboardListItemView struct {
 	Type        dashboard.Type `json:"type,omitempty"`
 	IsDefault   bool           `json:"isDefault"`
 	IsTeamBased bool           `json:"isTeamBased"`
+	// DefaultForTeamKeys is this dashboard's identity-override list (see
+	// dashboard.Dashboard.DefaultForTeamKeys). It has to be on the list
+	// view, not just the detail view: the frontend resolves default
+	// dashboard selection against the caller's own team key before it ever
+	// fetches a dashboard's detail.
+	DefaultForTeamKeys []string `json:"defaultForTeamKeys,omitempty"`
 }
 
 // dashboardDetailView is a dashboard's full metadata plus its resolved
@@ -121,11 +127,12 @@ func (h *DashboardHandler) GetDashboards(w http.ResponseWriter, r *http.Request)
 	views := make([]dashboardListItemView, 0, len(dashboards))
 	for _, d := range dashboards {
 		views = append(views, dashboardListItemView{
-			ID:          d.ID,
-			DisplayName: d.DisplayName,
-			Type:        d.Type,
-			IsDefault:   d.IsDefault,
-			IsTeamBased: d.IsTeamBased,
+			ID:                 d.ID,
+			DisplayName:        d.DisplayName,
+			Type:               d.Type,
+			IsDefault:          d.IsDefault,
+			IsTeamBased:        d.IsTeamBased,
+			DefaultForTeamKeys: d.DefaultForTeamKeys,
 		})
 	}
 
