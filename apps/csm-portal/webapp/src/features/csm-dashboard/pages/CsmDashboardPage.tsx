@@ -20,7 +20,11 @@ import { useNavigate, useParams } from "react-router";
 import AbtDashboardHeader from "@features/csm-dashboard/components/AbtDashboardHeader";
 import AgentsLandingPagePilot from "@features/csm-dashboard/components/AgentsLandingPagePilot";
 import { useDashboardList } from "@features/csm-dashboard/api/useDashboardList";
-import { abtFamilyForDashboardType, useTeams } from "@features/csm-dashboard/api/useTeams";
+import {
+  abtFamilyForDashboardType,
+  dashboardTypeForTeamFamily,
+  useTeams,
+} from "@features/csm-dashboard/api/useTeams";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import type { DashboardKey } from "@features/csm-dashboard/types/abtDashboard";
 import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
@@ -28,44 +32,32 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
 /**
  * Top-level CSM dashboard. The dashboard list is BE-driven (`GET
  * /dashboards`), and the initial selection depends on the signed-in user's
- * own ABT team membership (`GET /users/me`'s `team`, via `useCurrentUser`):
- * a user WITH a resolved team defaults to the first dashboard with BOTH
- * `isDefault` and `isTeamBased` set (with that team auto-selected — see
- * `selectedTeamId` below); a user with no team defaults to the first
- * dashboard with `isDefault` set and `isTeamBased` NOT set. If no dashboard
- * matches that preferred predicate, this falls back to the BE's own (any)
- * `isDefault` entry, then to the first dashboard in the list — never to an
- * empty selection. The URL always wins over all of that when it names a
- * (valid) dashboard.
+ * own ABT team membership (`GET /users/me`'s `team`, via `useCurrentUser`)
+ * through two independent tiers, checked in this order:
  *
- * Above even that team-based preferred predicate sits one more, narrower
- * tier: `TEAM_DEFAULT_DASHBOARD_ID` maps a small, explicit set of team keys
- * (the signed-in user's own `team.teamKey`, resolved the same way as above)
- * straight onto a specific dashboard `id` — e.g. a
- * `customer_onboarding`-team user always lands on `onboarding-engineer`,
- * and an `apollo_sre_group`-team user always lands on `sre-abt`, regardless
- * of that dashboard's own `isDefault`/`isTeamBased` flags (`sre-abt.json`
- * has `isDefault: false` — flipping it to `true` would fail the backend's
- * own "at most one isDefault dashboard, of any type" validation, since a
- * CRE dashboard already claims it; see `registry.go`'s validation and the
- * `preferredEntry` comment below for why default-selection isn't
- * type-aware). This is deliberately a team-*identity* override, not a
- * generalization of the `isDefault`/`isTeamBased`/`type` mechanism above
- * (see the warning in the `preferredEntry` comment below about coupling
- * default-selection to `type` — this tier doesn't touch that at all): it's
- * additive and inert for every user whose `teamKey` isn't a key in the map
- * (e.g. every non-mapped ABT team), who falls straight through to
- * `preferredEntry` exactly as before. A mapped team key whose target
- * dashboard id isn't present in the BE-loaded list (e.g. not yet
- * registered, or a stale map entry) also falls straight through rather than
- * erroring. Adding a further team to this treatment is a one-line addition
- * to the map, never a new branch. For a team-based target dashboard (e.g.
- * `sre-abt`), the team dropdown itself needs no separate wiring —
- * `defaultTeamId` below already auto-selects the signed-in user's own
- * `teamKey`, and `AbtDashboardHeader`'s picker already resolves
- * apollo_sre_group/artemis_sre_group generically via
- * `abtFamilyForDashboardType("sre") === "sre-abt"` against the team
- * registry, same as every other ABT family.
+ * 1. `defaultForTeamKeys` (see `BeDashboardListItem`): a dashboard can name
+ *    the exact team keys that should land on it outright, regardless of its
+ *    own `isDefault`/`isTeamBased`/`type` — for specialist, non-team-based
+ *    dashboards tier 2 below can never reach (e.g. `onboarding-engineer` for
+ *    a `customer_onboarding`-team user, `migration-engineer` for
+ *    `cs_migrations_team`). A team key naming a dashboard id that isn't in
+ *    the BE-loaded list (not yet registered, or a stale config entry) falls
+ *    straight through to tier 2 rather than erroring — see
+ *    `defaultForTeamKeyEntry` below.
+ * 2. The `isDefault`/`isTeamBased`/`type` predicate (`preferredEntry`
+ *    below): a user WITH a resolved team defaults to the dashboard with
+ *    BOTH `isDefault` and `isTeamBased` set, further narrowed by `type` when
+ *    the user's own team's `family` resolves to one (cre-abt/cre families to
+ *    the `cre` type, sre-abt/sre to `sre` — see `dashboardTypeForTeamFamily`
+ *    in `useTeams.ts`) — an unresolved family falls back to matching on
+ *    `isDefault && isTeamBased` alone, so this tier never regresses to
+ *    matching nothing. A user with no team defaults to the dashboard with
+ *    `isDefault` set and `isTeamBased` NOT set.
+ *
+ * If neither tier matches, this falls back to the BE's own (any)
+ * `isDefault` entry, then to the first dashboard in the list — never to an
+ * empty selection. The URL always wins over all of the above when it names
+ * a (valid) dashboard.
  *
  * The selection is a real path segment — `/dashboard/:dashboardId`, and for a
  * team-based dashboard `/dashboard/:dashboardId/:teamId` — rather than a
@@ -86,21 +78,6 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * widget grid.
  */
 
-/**
- * Team-identity override tier for default-dashboard selection — see the
- * module doc comment above. Keyed by the signed-in user's own
- * `team.teamKey`; a team not listed here is simply not in this map, which is
- * the common case (every non-mapped ABT team) and a deliberate no-op. Extend
- * this map (never add another single-team branch) when a further team needs
- * the same treatment.
- */
-const TEAM_DEFAULT_DASHBOARD_ID: Record<string, string> = {
-  customer_onboarding: "onboarding-engineer",
-  cs_migrations_team: "migration-engineer",
-  apollo_sre_group: "sre-abt",
-  artemis_sre_group: "sre-abt",
-};
-
 export default function CsmDashboardPage(): JSX.Element {
   const navigate = useNavigate();
   const { dashboardId: urlDashboardId, teamId: urlTeamIdRaw } = useParams<{
@@ -115,29 +92,63 @@ export default function CsmDashboardPage(): JSX.Element {
   const urlEntry = list?.find((d) => d.id === urlDashboardId);
 
   const userHasTeam = Boolean(currentUser.user?.team);
-  // Team-identity override (see module doc comment): a mapped teamKey wins
-  // outright over the isDefault/isTeamBased-based preferredEntry below —
-  // but only when that mapped dashboard id is actually in the BE-loaded
-  // list; otherwise this is `undefined` and falls through untouched.
-  const teamKey = currentUser.user?.team?.teamKey;
-  const teamDefaultDashboardId = teamKey ? TEAM_DEFAULT_DASHBOARD_ID[teamKey] : undefined;
-  const teamDefaultEntry = teamDefaultDashboardId
-    ? list?.find((d) => d.id === teamDefaultDashboardId)
+  // Every team, unfiltered — needed for three independent reasons: (1)
+  // resolving the signed-in user's OWN team's `family`, to derive
+  // `preferredDashboardType` below BEFORE the initial dashboard is even
+  // picked; (2) resolving the selected team's `creGroupId`/`sreGroupId` (the
+  // `__current_team__` filter placeholder's real values) once a dashboard
+  // IS picked; (3) "All ABTs" family filtering further down. Deliberately
+  // NOT scoped to any one family the way AbtDashboardHeader's own picker
+  // query is (see abtFamilyForDashboardType): the signed-in user's own team
+  // can be outside the current (or eventual) dashboard's family (e.g. a
+  // `cre` non-ABT team member viewing a `cre` dashboard, whose picker only
+  // offers `cre-abt` teams). Enabled unconditionally rather than gated on
+  // the current dashboard's `isTeamBased` — that used to be fine because
+  // this query was only needed once a dashboard was already selected, but
+  // it's now also an input to selecting one, so it can't wait on a value it
+  // helps produce. A separate, differently-scoped query from the header's —
+  // react-query no longer dedupes these into one fetch. Cheap: a 5-minute
+  // stale time and this list rarely changes mid-session.
+  const teams = useTeams(true);
+
+  // The user's own team's family, and the dashboard `type` it prefers (see
+  // `dashboardTypeForTeamFamily`) — `undefined` for a user with no team, an
+  // unresolved team (not yet in the teams list), or a family that doesn't
+  // map to a known dashboard type.
+  const userTeamFamily = teams.data?.find(
+    (t) => t.id === currentUser.user?.team?.teamKey,
+  )?.family;
+  const preferredDashboardType = dashboardTypeForTeamFamily(userTeamFamily);
+
+  // Tier 1 (see module doc comment): a dashboard naming the signed-in
+  // user's own teamKey in its own `defaultForTeamKeys` wins outright over
+  // the isDefault/isTeamBased/type-based `preferredEntry` below — but only
+  // when that dashboard id is actually in the BE-loaded list; otherwise
+  // this is `undefined` and falls through untouched.
+  const defaultForTeamKeyEntry = currentUser.user?.team?.teamKey
+    ? list?.find((d) => d.defaultForTeamKeys?.includes(currentUser.user!.team!.teamKey))
     : undefined;
-  // The preferred predicate per the user's own team membership: BOTH
-  // isDefault and isTeamBased must match (not isTeamBased alone, and not
-  // isDefault alone) — see the module doc comment above.
+  // Tier 2: the preferred predicate per the user's own team membership.
+  // BOTH isDefault and isTeamBased must match (not isTeamBased alone, and
+  // not isDefault alone) — see the module doc comment above — further
+  // narrowed by `type` when the user's own team's family resolves to one.
+  // An unresolved `preferredDashboardType` falls back to matching on
+  // isDefault && isTeamBased alone, so this predicate must never regress to
+  // matching nothing just because the type couldn't be resolved.
   //
-  // Deliberately type-blind: `type` IS on `BeDashboardListItem` now (added
-  // for the team picker's family filter, see abtFamilyForDashboardType in
-  // useTeams.ts), but default-dashboard selection still isn't keyed off it.
-  // The backend loader is held to ONE isDefault dashboard in total to match
-  // — without that, a second typed default would be perfectly valid config
-  // and which one a user landed on would come down to the backend's filename
-  // ordering. Making this type-aware and loosening the loader to one default
-  // per type are the same change; do not do either alone.
+  // The backend loader (registry.go's `validate`) still only permits ONE
+  // isDefault dashboard in the WHOLE registry, not one per type — so in
+  // today's real config this type check is inert (there is only ever one
+  // isDefault+isTeamBased dashboard to begin with) until that validation is
+  // loosened to one-per-type. It's added here now so this predicate
+  // doesn't need a second frontend change when that lands.
   const preferredEntry = userHasTeam
-    ? list?.find((d) => d.isDefault && d.isTeamBased)
+    ? list?.find(
+        (d) =>
+          d.isDefault &&
+          d.isTeamBased &&
+          (preferredDashboardType ? d.type === preferredDashboardType : true),
+      )
     : list?.find((d) => d.isDefault && !d.isTeamBased);
   // Fallback 1: the BE's own (any) isDefault entry, regardless of
   // isTeamBased — covers a registry that has no isDefault+isTeamBased (or
@@ -147,9 +158,13 @@ export default function CsmDashboardPage(): JSX.Element {
   // because the registry has no isDefault entry configured.
   const firstEntry = list && list.length > 0 ? list[0] : undefined;
   // True only while we genuinely don't know yet whether this user has a
-  // team — a failed profile fetch (isError) must not hang this forever, so
-  // it falls straight through to the defaults below instead.
-  const userProfilePending = currentUser.isLoading && !currentUser.isError;
+  // team, or (when they do) what that team's family is — a failed fetch
+  // (isError) on EITHER query must not hang this forever, so it falls
+  // straight through to the defaults below instead.
+  const userProfilePending =
+    (currentUser.isLoading || (userHasTeam && teams.isLoading)) &&
+    !currentUser.isError &&
+    !teams.isError;
 
   // The URL always wins when it names a dashboard actually in the loaded
   // list (stale/hand-edited hash falls through to the defaults below,
@@ -161,7 +176,7 @@ export default function CsmDashboardPage(): JSX.Element {
     if (userProfilePending) {
       currentEntry = undefined;
     } else {
-      currentEntry = teamDefaultEntry ?? preferredEntry ?? anyDefaultEntry ?? firstEntry;
+      currentEntry = defaultForTeamKeyEntry ?? preferredEntry ?? anyDefaultEntry ?? firstEntry;
     }
   }
 
@@ -186,18 +201,6 @@ export default function CsmDashboardPage(): JSX.Element {
         : ALL_TEAMS_SENTINEL
       : undefined;
   const selectedTeamId = urlTeamId ?? defaultTeamId;
-
-  // Every team, unfiltered, for resolving the selected team's `creGroupId`
-  // and `sreGroupId` (the `__current_team__` filter placeholder's real
-  // values). Deliberately NOT scoped to the current dashboard's family the
-  // way AbtDashboardHeader's own picker query is (see
-  // abtFamilyForDashboardType): the signed-in user's own team can be
-  // outside that family (e.g. a `cre` non-ABT team member viewing a `cre`
-  // dashboard, whose picker only offers `cre-abt` teams), and
-  // `defaultTeamId` still needs it resolved to real group ids. A separate,
-  // differently-scoped query from the header's — react-query no longer
-  // dedupes these into one fetch.
-  const teams = useTeams(isTeamBased);
 
   // "All ABTs" resolves to every team in the CURRENT DASHBOARD's own family
   // specifically (not the signed-in user's own team's family, which is what

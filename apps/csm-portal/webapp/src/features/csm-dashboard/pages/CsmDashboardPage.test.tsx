@@ -21,7 +21,9 @@ import "@testing-library/jest-dom/vitest";
 import type { JSX } from "react";
 import CsmDashboardPage from "@features/csm-dashboard/pages/CsmDashboardPage";
 import { useDashboardList } from "@features/csm-dashboard/api/useDashboardList";
+import { useTeams } from "@features/csm-dashboard/api/useTeams";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
+import type { BeTeam } from "@api/backend/types";
 
 /** Surfaces the router's current pathname for assertions — the
  * `MemoryRouter`'s history is in-memory, not reflected on `window.location`,
@@ -80,14 +82,26 @@ vi.mock("@features/csm-dashboard/api/useDashboardList", () => ({
 
 // None of these dashboards are team-based, so the header's team selector
 // never renders/fetches here, but useTeams still needs mocking since
-// AbtDashboardHeader (and now CsmDashboardPage itself, to resolve the
-// selected team's creGroupId/sreGroupId) call it unconditionally (the fetch
-// itself is disabled via its `enabled` param) — without this, the real hook
-// reaches the real API client, which throws under vitest (no runtime
-// config).
+// AbtDashboardHeader and CsmDashboardPage itself (to resolve the signed-in
+// user's own team family, and the selected team's creGroupId/sreGroupId)
+// call it unconditionally (the fetch itself is disabled via its `enabled`
+// param where applicable) — without this, the real hook reaches the real
+// API client, which throws under vitest (no runtime config).
+// `dashboardTypeForTeamFamily` is reimplemented here rather than imported
+// via `vi.importActual`: the real module transitively pulls in the
+// backend API client, which throws under vitest without runtime config
+// (see the real `useTeams` mock above for the same reason). It's a tiny,
+// pure function, so duplicating it is cheap; keep this in sync with the
+// real implementation in useTeams.ts if that one changes.
 vi.mock("@features/csm-dashboard/api/useTeams", () => ({
   useTeams: vi.fn(() => ({ data: undefined })),
   abtFamilyForDashboardType: vi.fn(() => undefined),
+  dashboardTypeForTeamFamily: (family: string | undefined) => {
+    if (!family) return undefined;
+    if (family.startsWith("cre")) return "cre";
+    if (family.startsWith("sre")) return "sre";
+    return undefined;
+  },
 }));
 
 vi.mock("@context/current-user/CurrentUserContext", () => ({
@@ -132,6 +146,7 @@ vi.mock("@features/csm-dashboard/components/AgentsLandingPagePilot", () => ({
 
 const mockedUseDashboardList = vi.mocked(useDashboardList);
 const mockedUseCurrentUser = vi.mocked(useCurrentUser);
+const mockedUseTeams = vi.mocked(useTeams);
 
 const DASHBOARD_LIST = [
   { id: "operations", displayName: "Operations", isDefault: false, isTeamBased: false },
@@ -161,13 +176,37 @@ function mockCurrentUser(
   } as unknown as ReturnType<typeof useCurrentUser>);
 }
 
+/** Mocks the unscoped `useTeams` call CsmDashboardPage makes to resolve the
+ * signed-in user's own team `family` (for type-based default selection) and
+ * the selected team's creGroupId/sreGroupId. Each mocked team should carry
+ * a `family` when the test cares about type/family-based default
+ * selection. */
+function mockTeams(
+  teams: BeTeam[],
+  overrides: Partial<ReturnType<typeof useTeams>> = {},
+): void {
+  mockedUseTeams.mockReturnValue({
+    data: teams,
+    isLoading: false,
+    isError: false,
+    ...overrides,
+  } as unknown as ReturnType<typeof useTeams>);
+}
+
 beforeEach(() => {
   mockedUseDashboardList.mockReset();
   mockedUseCurrentUser.mockReset();
+  mockedUseTeams.mockReset();
   // Default: a resolved profile with no team — most tests aren't about the
   // team-default-dashboard behavior, so this keeps them on the old
   // BE-isDefault-only path.
   mockCurrentUser({});
+  // Default: no teams resolved — most tests aren't about type/family-based
+  // default selection, so this keeps them on the existing permissive
+  // (family-blind) fallback path.
+  mockedUseTeams.mockReturnValue({ data: undefined } as unknown as ReturnType<
+    typeof useTeams
+  >);
 });
 
 describe("CsmDashboardPage", () => {
@@ -503,24 +542,103 @@ describe("CsmDashboardPage", () => {
     });
   });
 
-  describe("team-identity default dashboard override", () => {
-    // Registered dashboards for the mapped teams, plus the usual
-    // isDefault/!isTeamBased fallback and an isTeamBased dashboard, so these
-    // tests can also confirm the override wins over both.
-    const LIST_WITH_MAPPED_DASHBOARDS = [
+  describe("type/family-based default dashboard selection", () => {
+    // Two isDefault+isTeamBased dashboards of different types — the case
+    // the old (type-blind) predicate could never have handled, since it
+    // matched the first one it found regardless of the user's own team.
+    const LIST_WITH_TWO_TYPED_DEFAULTS = [
       { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
-      { id: "team_performance", displayName: "Team performance", isDefault: true, isTeamBased: true },
-      { id: "onboarding-engineer", displayName: "Onboarding engineer", isDefault: false, isTeamBased: false },
-      { id: "migration-engineer", displayName: "Migration engineer", isDefault: false, isTeamBased: false },
-      { id: "sre-abt", displayName: "SRE ABT Dashboard", isDefault: false, isTeamBased: true, type: "sre" as const },
+      {
+        id: "cre-abt",
+        displayName: "CRE ABT Dashboard",
+        isDefault: true,
+        isTeamBased: true,
+        type: "cre" as const,
+      },
+      {
+        id: "sre-abt",
+        displayName: "SRE ABT Dashboard",
+        isDefault: true,
+        isTeamBased: true,
+        type: "sre" as const,
+      },
     ];
 
-    it("defaults a customer_onboarding-team user onto the onboarding-engineer dashboard", () => {
-      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
+    it("lands a user whose team family is sre-abt on the sre-typed default, not the cre one", () => {
+      mockListResult({ data: LIST_WITH_TWO_TYPED_DEFAULTS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "artemis_sre_group", teamName: "Artemis SRE Group" } },
+        isLoading: false,
+      });
+      mockTeams([{ id: "artemis_sre_group", name: "Artemis SRE Group", family: "sre-abt" }]);
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent("sre-abt");
+      expect(currentPath()).toBe("/dashboard/sre-abt");
+    });
+
+    it("lands a user whose team family is cre-abt on the cre-typed default, not the sre one", () => {
+      mockListResult({ data: LIST_WITH_TWO_TYPED_DEFAULTS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "castor_cre_group", teamName: "Castor CRE Group" } },
+        isLoading: false,
+      });
+      mockTeams([{ id: "castor_cre_group", name: "Castor CRE Group", family: "cre-abt" }]);
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent("cre-abt");
+      expect(currentPath()).toBe("/dashboard/cre-abt");
+    });
+
+    it("falls back to the non-team-based default for a user with no team, even with two typed defaults present", () => {
+      mockListResult({ data: LIST_WITH_TWO_TYPED_DEFAULTS, isLoading: false });
+      mockCurrentUser({ user: { team: undefined }, isLoading: false });
+      mockTeams([]);
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent("agents_pilot");
+    });
+
+    it("still lands on SOME isDefault+isTeamBased entry when the user's team family is unresolved (permissive fallback)", () => {
+      mockListResult({ data: LIST_WITH_TWO_TYPED_DEFAULTS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "unknown_team", teamName: "Unknown Team" } },
+        isLoading: false,
+      });
+      // The team isn't in the loaded teams list at all, so its family
+      // can't resolve.
+      mockTeams([]);
+
+      renderAt("/dashboard");
+
+      const rendered = screen.getByTestId("agents-landing-pilot").textContent;
+      expect(["cre-abt", "sre-abt"]).toContain(rendered);
+    });
+  });
+
+  describe("defaultForTeamKeys default dashboard selection", () => {
+    const LIST_WITH_DEFAULT_FOR_TEAM_KEYS = [
+      { id: "agents_pilot", displayName: "Engineer overview", isDefault: true, isTeamBased: false },
+      { id: "team_performance", displayName: "Team performance", isDefault: true, isTeamBased: true },
+      {
+        id: "onboarding-engineer",
+        displayName: "Onboarding engineer",
+        isDefault: false,
+        isTeamBased: false,
+        defaultForTeamKeys: ["customer_onboarding"],
+      },
+    ];
+
+    it("wins over preferredEntry for a user whose team key is named in defaultForTeamKeys", () => {
+      mockListResult({ data: LIST_WITH_DEFAULT_FOR_TEAM_KEYS, isLoading: false });
       mockCurrentUser({
         user: { team: { teamKey: "customer_onboarding", teamName: "Customer Onboarding" } },
         isLoading: false,
       });
+      mockTeams([{ id: "customer_onboarding", name: "Customer Onboarding" }]);
 
       renderAt("/dashboard");
 
@@ -530,103 +648,28 @@ describe("CsmDashboardPage", () => {
       expect(currentPath()).toBe("/dashboard/onboarding-engineer");
     });
 
-    it("defaults a cs_migrations_team user onto the migration-engineer dashboard", () => {
-      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
-      mockCurrentUser({
-        user: { team: { teamKey: "cs_migrations_team", teamName: "CS Migrations" } },
-        isLoading: false,
-      });
-
-      renderAt("/dashboard");
-
-      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
-        "migration-engineer",
-      );
-      expect(currentPath()).toBe("/dashboard/migration-engineer");
-    });
-
-    it("defaults an apollo_sre_group-team user onto the sre-abt dashboard", () => {
-      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
-      mockCurrentUser({
-        user: { team: { teamKey: "apollo_sre_group", teamName: "Apollo SRE Group" } },
-        isLoading: false,
-      });
-
-      renderAt("/dashboard");
-
-      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent("sre-abt");
-      // The team selector's own derived default (the user's own teamKey)
-      // stays derived UI state, not written into the URL, until the user
-      // (or a shared URL) names a team explicitly — same as any other
-      // isTeamBased dashboard's cold-load canonicalization.
-      expect(currentPath()).toBe("/dashboard/sre-abt");
-    });
-
-    it("defaults an artemis_sre_group-team user onto the sre-abt dashboard", () => {
-      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
-      mockCurrentUser({
-        user: { team: { teamKey: "artemis_sre_group", teamName: "Artemis SRE Group" } },
-        isLoading: false,
-      });
-
-      renderAt("/dashboard");
-
-      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent("sre-abt");
-      expect(currentPath()).toBe("/dashboard/sre-abt");
-    });
-
-    it("leaves an unmapped (e.g. ABT) team's existing default-selection behavior completely unchanged", () => {
-      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
+    it("leaves an unmapped team's default-selection behavior unchanged", () => {
+      mockListResult({ data: LIST_WITH_DEFAULT_FOR_TEAM_KEYS, isLoading: false });
       mockCurrentUser({
         user: { team: { teamKey: "cs_team_leads", teamName: "CS Team Leads" } },
         isLoading: false,
       });
+      mockTeams([{ id: "cs_team_leads", name: "CS Team Leads" }]);
 
       renderAt("/dashboard");
 
-      // cs_team_leads isn't in TEAM_DEFAULT_DASHBOARD_ID, so this falls
-      // through to the existing preferredEntry (isDefault && isTeamBased).
       expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
         "team_performance",
       );
     });
 
-    it("leaves a no-team user's existing default-selection behavior completely unchanged", () => {
-      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
-      mockCurrentUser({ user: { team: undefined }, isLoading: false });
-
-      renderAt("/dashboard");
-
-      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
-        "agents_pilot",
-      );
-    });
-
-    it("lets a URL naming a different valid dashboard win over the team-identity default", () => {
-      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
-      mockCurrentUser({
-        user: { team: { teamKey: "customer_onboarding", teamName: "Customer Onboarding" } },
-        isLoading: false,
-      });
-
-      renderAt("/dashboard/agents_pilot");
-
-      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
-        "agents_pilot",
-      );
-      expect(currentPath()).toBe("/dashboard/agents_pilot");
-    });
-
-    it("falls through cleanly to the existing fallback chain when the mapped dashboard id isn't in the BE-returned list", () => {
-      // onboarding-engineer/migration-engineer/sre-abt deliberately absent
-      // here — the mapped team key still resolves, but the target
-      // dashboard isn't registered, so teamDefaultEntry must resolve to
-      // undefined and this must not throw.
+    it("falls through cleanly when defaultForTeamKeys names a dashboard id absent from the loaded list", () => {
       mockListResult({ data: DASHBOARD_LIST, isLoading: false });
       mockCurrentUser({
         user: { team: { teamKey: "customer_onboarding", teamName: "Customer Onboarding" } },
         isLoading: false,
       });
+      mockTeams([]);
 
       renderAt("/dashboard");
 
@@ -635,6 +678,22 @@ describe("CsmDashboardPage", () => {
       expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
         "agents_pilot",
       );
+    });
+
+    it("lets a URL naming a different valid dashboard win over the defaultForTeamKeys default", () => {
+      mockListResult({ data: LIST_WITH_DEFAULT_FOR_TEAM_KEYS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "customer_onboarding", teamName: "Customer Onboarding" } },
+        isLoading: false,
+      });
+      mockTeams([{ id: "customer_onboarding", name: "Customer Onboarding" }]);
+
+      renderAt("/dashboard/agents_pilot");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "agents_pilot",
+      );
+      expect(currentPath()).toBe("/dashboard/agents_pilot");
     });
   });
 });

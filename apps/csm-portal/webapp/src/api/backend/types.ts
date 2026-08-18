@@ -3123,6 +3123,14 @@ export interface BeDashboardListItem {
    * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`
    * in the webapp). */
   isTeamBased: boolean;
+  /** Team keys (the signed-in user's own `team.teamKey`) that should land
+   * on this dashboard outright as their default, regardless of this
+   * dashboard's own `isDefault`/`isTeamBased`/`type` — for specialist,
+   * non-team-based dashboards the `isDefault`+`isTeamBased`+`type` default
+   * mechanism can't reach (e.g. `onboarding-engineer` for
+   * `customer_onboarding`). Omitted where unused; see `CsmDashboardPage`'s
+   * module doc comment for how this tier fits into default selection. */
+  defaultForTeamKeys?: string[];
 }
 
 /**
