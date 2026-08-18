@@ -17,6 +17,7 @@
 package dto
 
 import (
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/entity"
@@ -35,6 +36,33 @@ type CreateCaseAttachmentRequest struct {
 	Description *string `json:"description,omitempty"`
 }
 
+// attachmentFileDataURI builds the base64 data URI entity-service requires for an
+// attachment upload.
+//
+// The frontend deliberately strips the "data:<mime>;base64," prefix before
+// sending: UploadAttachmentModal.tsx reads the file with readAsDataURL then
+// slices off everything up to the first comma, passing the MIME type separately
+// as `type`. entity-service validates the opposite — `file` must start with
+// "data:" and contain ";base64," — so forwarding the raw content fails with
+// "file must be a base64 data URI (e.g. data:image/png;base64,...)".
+//
+// Reconciling that mismatch is the DTO layer's job: the frontend contract stays
+// frozen and entity-service gets the shape it demands. A value that already looks
+// like a data URI passes through untouched, so a caller sending the full URI
+// keeps working.
+func attachmentFileDataURI(mimeType, content string) string {
+	if content == "" {
+		return ""
+	}
+	if strings.HasPrefix(content, "data:") && strings.Contains(content, ";base64,") {
+		return content
+	}
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+	return "data:" + mimeType + ";base64," + content
+}
+
 // BuildEntityCreateCaseAttachmentRequest translates the portal's request
 // into entity-service's CreateAttachmentRequest, forcing ReferenceID (from
 // the {id} path parameter) and ReferenceType to case, and renaming
@@ -45,7 +73,7 @@ func BuildEntityCreateCaseAttachmentRequest(caseID string, req CreateCaseAttachm
 		ReferenceType: entity.ReferenceTypeCase,
 		Name:          req.Name,
 		Type:          req.Type,
-		File:          req.Content,
+		File:          attachmentFileDataURI(req.Type, req.Content),
 		Description:   req.Description,
 	}
 }
@@ -267,7 +295,7 @@ func BuildEntityCreateDeploymentAttachmentRequest(deploymentID string, req Creat
 		ReferenceType: entity.ReferenceTypeDeployment,
 		Name:          req.Name,
 		Type:          req.Type,
-		File:          req.Content,
+		File:          attachmentFileDataURI(req.Type, req.Content),
 		Description:   req.Description,
 	}
 }

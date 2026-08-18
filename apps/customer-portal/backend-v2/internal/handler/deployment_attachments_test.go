@@ -110,9 +110,10 @@ func TestCreateDeploymentAttachment_ForcesReferenceFromPath(t *testing.T) {
 	if fake.gotCreate.ReferenceType != entity.ReferenceTypeDeployment {
 		t.Errorf("ReferenceType = %q, want %q", fake.gotCreate.ReferenceType, entity.ReferenceTypeDeployment)
 	}
-	// Content is renamed to File for entity-service's own field name.
-	if fake.gotCreate.File != "YmFzZTY0" {
-		t.Errorf("File = %q, want the request's content value", fake.gotCreate.File)
+	// Content becomes File, rebuilt into the base64 data URI entity-service
+	// requires (the frontend strips that prefix; see dto.attachmentFileDataURI).
+	if fake.gotCreate.File != "data:application/pdf;base64,YmFzZTY0" {
+		t.Errorf("File = %q, want the content rebuilt as a data URI", fake.gotCreate.File)
 	}
 	if fake.gotCreate.Name != "runbook.pdf" {
 		t.Errorf("Name = %q, want runbook.pdf", fake.gotCreate.Name)
