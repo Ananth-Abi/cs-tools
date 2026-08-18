@@ -512,6 +512,7 @@ describe("CsmDashboardPage", () => {
       { id: "team_performance", displayName: "Team performance", isDefault: true, isTeamBased: true },
       { id: "onboarding-engineer", displayName: "Onboarding engineer", isDefault: false, isTeamBased: false },
       { id: "migration-engineer", displayName: "Migration engineer", isDefault: false, isTeamBased: false },
+      { id: "sre-abt", displayName: "SRE ABT Dashboard", isDefault: false, isTeamBased: true },
     ];
 
     it("defaults a customer_onboarding-team user onto the onboarding-engineer dashboard", () => {
@@ -542,6 +543,36 @@ describe("CsmDashboardPage", () => {
         "migration-engineer",
       );
       expect(currentPath()).toBe("/dashboard/migration-engineer");
+    });
+
+    it("defaults an apollo_sre_group-team user onto the sre-abt dashboard", () => {
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "apollo_sre_group", teamName: "Apollo SRE Group" } },
+        isLoading: false,
+      });
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "sre-abt",
+      );
+      expect(currentPath()).toBe("/dashboard/sre-abt");
+    });
+
+    it("defaults an artemis_sre_group-team user onto the sre-abt dashboard", () => {
+      mockListResult({ data: LIST_WITH_MAPPED_DASHBOARDS, isLoading: false });
+      mockCurrentUser({
+        user: { team: { teamKey: "artemis_sre_group", teamName: "Artemis SRE Group" } },
+        isLoading: false,
+      });
+
+      renderAt("/dashboard");
+
+      expect(screen.getByTestId("agents-landing-pilot")).toHaveTextContent(
+        "sre-abt",
+      );
+      expect(currentPath()).toBe("/dashboard/sre-abt");
     });
 
     it("leaves an unmapped (e.g. ABT) team's existing default-selection behavior completely unchanged", () => {

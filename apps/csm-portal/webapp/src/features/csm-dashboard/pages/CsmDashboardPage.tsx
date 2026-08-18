@@ -85,6 +85,8 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
 const TEAM_DEFAULT_DASHBOARD_ID: Record<string, string> = {
   customer_onboarding: "onboarding-engineer",
   cs_migrations_team: "migration-engineer",
+  apollo_sre_group: "sre-abt",
+  artemis_sre_group: "sre-abt",
 };
 
 export default function CsmDashboardPage(): JSX.Element {
