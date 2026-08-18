@@ -14,11 +14,27 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Chip, Tooltip } from "@wso2/oxygen-ui";
-import type { JSX } from "react";
+import {
+  Box,
+  Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
+  TextField,
+  Tooltip,
+} from "@wso2/oxygen-ui";
+import { Pencil } from "@wso2/oxygen-ui-icons-react";
+import { useState, type JSX, type MouseEvent as ReactMouseEvent } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 import { useLocation } from "react-router";
 import {
+  renameRecentView,
   toggleRecentViewPin,
   useRecentViews,
   type RecentView,
@@ -46,6 +62,41 @@ export default function PinnedTabs(): JSX.Element {
   const navigate = useNavTransition();
   const location = useLocation();
   const pinned = useRecentViews().filter((e) => e.pinned);
+
+  // Right-click context menu (rename) — one shared anchor + target entry for
+  // whichever chip was last right-clicked, rather than per-chip state, since
+  // only one can be open at a time.
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [menuTarget, setMenuTarget] = useState<RecentView | null>(null);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+
+  const closeMenu = (): void => {
+    setMenuAnchor(null);
+    setMenuTarget(null);
+  };
+
+  const openContextMenu = (
+    e: ReactMouseEvent<HTMLElement>,
+    entry: RecentView,
+  ): void => {
+    e.preventDefault();
+    setMenuAnchor(e.currentTarget);
+    setMenuTarget(entry);
+  };
+
+  const openRenameDialog = (): void => {
+    if (!menuTarget) return;
+    setRenameValue(menuTarget.title);
+    setRenameDialogOpen(true);
+    setMenuAnchor(null);
+  };
+
+  const handleRenameSave = (): void => {
+    if (menuTarget) renameRecentView(menuTarget.kind, menuTarget.id, renameValue);
+    setRenameDialogOpen(false);
+    setMenuTarget(null);
+  };
 
   // Always occupy the flexible middle slot so the layout is identical whether or
   // not anything is pinned (and when signed out, where pins are not actionable).
@@ -88,6 +139,7 @@ export default function PinnedTabs(): JSX.Element {
               variant={active ? "filled" : "outlined"}
               onClick={() => navigate(entry.href)}
               onDelete={() => toggleRecentViewPin(entry.kind, entry.id)}
+              onContextMenu={(e: ReactMouseEvent<HTMLElement>) => openContextMenu(e, entry)}
               aria-label={`${shortLabel(entry)} — pinned tab`}
               sx={{
                 flexShrink: 0,
@@ -103,6 +155,53 @@ export default function PinnedTabs(): JSX.Element {
           </Tooltip>
         );
       })}
+
+      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeMenu}>
+        <MenuItem onClick={openRenameDialog}>
+          <ListItemIcon>
+            <Pencil size={16} />
+          </ListItemIcon>
+          <ListItemText primary="Rename" />
+        </MenuItem>
+      </Menu>
+
+      <Dialog
+        open={renameDialogOpen}
+        onClose={() => setRenameDialogOpen(false)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Rename pinned tab</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            size="small"
+            margin="dense"
+            label="Tab name"
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleRenameSave();
+              }
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" onClick={() => setRenameDialogOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleRenameSave}
+            disabled={!renameValue.trim()}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

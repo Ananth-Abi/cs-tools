@@ -92,6 +92,9 @@ interface CsmIssuesViewProps {
   lockedFilters?: Partial<CasesFilters>;
   /** Hide the case-type filter control (use when `lockedFilters` fixes it). */
   hideTypeFilter?: boolean;
+  /** Label for the case-type filter control; see `CasesFilterBar`'s own
+   * `typeFilterLabel` doc comment. Defaults to "Case type". */
+  typeFilterLabel?: string;
   /** Hide the project filter control (use when the view is project-scoped). */
   hideProjectFilter?: boolean;
   /** Show the engagement-type sub-filter (pass when the view is locked to engagement cases). */
@@ -126,6 +129,7 @@ export default function CsmIssuesView({
   entityNoun = "cases",
   lockedFilters,
   hideTypeFilter,
+  typeFilterLabel,
   hideProjectFilter,
   showEngagementTypeFilter,
   detailBasePath,
@@ -434,6 +438,7 @@ export default function CsmIssuesView({
         availableProjects={availableProjects}
         showSeverityFilter={showSeverityFilter}
         hideTypeFilter={hideTypeFilter}
+        typeFilterLabel={typeFilterLabel}
         hideProjectFilter={hideProjectFilter}
         showEngagementTypeFilter={showEngagementTypeFilter}
       />
