@@ -51,11 +51,50 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * refresh or share always lands on an explicit dashboard id, never the bare
  * index.
  *
+ * Above even that team-based preferred predicate sits one more, narrower
+ * tier: `TEAM_DEFAULT_DASHBOARD_ID` maps a small, explicit set of team keys
+ * (the signed-in user's own `team.teamKey`, resolved the same way as above)
+ * straight onto a specific dashboard `id` — e.g. an `apollo_sre_group`-team
+ * user always lands on `sre-abt`, regardless of that dashboard's own
+ * `isDefault`/`isTeamBased` flags (`sre-abt.json` has `isDefault: false` —
+ * flipping it to `true` would fail the backend's own "at most one isDefault
+ * dashboard, of any type" validation, since a CRE dashboard already claims
+ * it; see `registry.go`'s validation and the `preferredEntry` comment below
+ * for why default-selection isn't type-aware). This is deliberately a
+ * team-*identity* override, not a generalization of the
+ * `isDefault`/`isTeamBased`/`type` mechanism below: it's additive and inert
+ * for every user whose `teamKey` isn't a key in the map, who falls straight
+ * through to `preferredEntry` exactly as before. A mapped team key whose
+ * target dashboard id isn't present in the BE-loaded list (e.g. not yet
+ * registered, or a stale map entry) also falls straight through rather than
+ * erroring. Adding a further team to this treatment is a one-line addition
+ * to the map, never a new branch. Once a user is on `sre-abt`, the team
+ * dropdown itself needs no separate wiring — `defaultTeamId` below already
+ * auto-selects the signed-in user's own `teamKey` for any team-based
+ * dashboard, and `AbtDashboardHeader`'s picker already resolves
+ * apollo_sre_group/artemis_sre_group generically via
+ * `abtFamilyForDashboardType("sre") === "sre-abt"` against the team
+ * registry, same as every other ABT family.
+ *
  * Dashboards are selected purely by dropdown — there is no other
  * per-dashboard scoping control. Every dashboard in the registry has at
  * least one real (config-driven) widget, so this always renders the real
  * widget grid.
  */
+
+/**
+ * Team-identity override tier for default-dashboard selection — see the
+ * module doc comment above. Keyed by the signed-in user's own
+ * `team.teamKey`; a team not listed here is simply not in this map, which is
+ * the common case (every non-mapped ABT team) and a deliberate no-op. Extend
+ * this map (never add another single-team branch) when a further team needs
+ * the same treatment.
+ */
+const TEAM_DEFAULT_DASHBOARD_ID: Record<string, string> = {
+  apollo_sre_group: "sre-abt",
+  artemis_sre_group: "sre-abt",
+};
+
 export default function CsmDashboardPage(): JSX.Element {
   const navigate = useNavigate();
   const { dashboardId: urlDashboardId, teamId: urlTeamIdRaw } = useParams<{
@@ -70,6 +109,15 @@ export default function CsmDashboardPage(): JSX.Element {
   const urlEntry = list?.find((d) => d.id === urlDashboardId);
 
   const userHasTeam = Boolean(currentUser.user?.team);
+  // Team-identity override (see module doc comment): a mapped teamKey wins
+  // outright over the isDefault/isTeamBased-based preferredEntry below —
+  // but only when that mapped dashboard id is actually in the BE-loaded
+  // list; otherwise this is `undefined` and falls through untouched.
+  const teamKey = currentUser.user?.team?.teamKey;
+  const teamDefaultDashboardId = teamKey ? TEAM_DEFAULT_DASHBOARD_ID[teamKey] : undefined;
+  const teamDefaultEntry = teamDefaultDashboardId
+    ? list?.find((d) => d.id === teamDefaultDashboardId)
+    : undefined;
   // The preferred predicate per the user's own team membership: BOTH
   // isDefault and isTeamBased must match (not isTeamBased alone, and not
   // isDefault alone) — see the module doc comment above.
@@ -107,7 +155,7 @@ export default function CsmDashboardPage(): JSX.Element {
     if (userProfilePending) {
       currentEntry = undefined;
     } else {
-      currentEntry = preferredEntry ?? anyDefaultEntry ?? firstEntry;
+      currentEntry = teamDefaultEntry ?? preferredEntry ?? anyDefaultEntry ?? firstEntry;
     }
   }
 
