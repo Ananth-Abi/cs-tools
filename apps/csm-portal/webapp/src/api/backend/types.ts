@@ -2629,6 +2629,41 @@ export interface BeProblemDetail {
 }
 
 /**
+ * List-item shape for `POST /incident_tasks/search`. No dedicated detail
+ * page exists for incident tasks in this app (unlike problem/incident), so
+ * there is no separate `BeIncidentTaskDetail` type yet — `description`,
+ * `priority`, `openedAt`, `closedAt` are on the backend's own
+ * `GET /incident_tasks/{id}` response but have no frontend consumer today.
+ * `stateLabel` is a pre-humanized display string the data source already
+ * resolves server-side — prefer it over trying to humanize `state` (a raw,
+ * data-source-specific integer with no stable domain enum here; see the
+ * `state` field's own doc comment).
+ */
+export interface BeIncidentTaskSearchView {
+  id?: string;
+  number?: string;
+  subject?: string;
+  /** Raw integer state value as a string, NOT a translated enum — the
+   * underlying state choice list is inconsistent across task subtypes, so
+   * there is no confirmed-complete, unambiguous domain enum to translate
+   * through. Use `stateLabel` for display. */
+  state?: string;
+  stateLabel?: string;
+  /** The parent incident this task belongs to. */
+  incident?: BeCaseNumberRef | null;
+  assignmentGroup?: BeEntityRef | null;
+  assignedTo?: BeEntityRef | null;
+}
+
+/** Note: mirrors the problem/change-request/incident search responses — no `hasMore`. */
+export interface BeIncidentTaskSearchResponse {
+  incidentTasks: BeIncidentTaskSearchView[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
  * `POST /problems` body (ServiceNow data source only). `subject` is the only
  * required field. There is no `priority` field — priority is not settable on
  * create (SN computes/defaults it server-side, confirmed by live testing), so
@@ -2917,7 +2952,8 @@ export type BeWidgetResourceType =
   | "service_request"
   | "security_report_analysis"
   | "announcement"
-  | "engagement";
+  | "engagement"
+  | "incident_task";
 
 /**
  * How a widget's resolved data should be rendered. `pie` and `bar` both

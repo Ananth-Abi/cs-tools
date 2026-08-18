@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   Briefcase,
   Building2,
+  CheckSquare,
   Clock,
   Cog,
   FolderKanban,
@@ -387,6 +388,15 @@ function stateSecondaryLabel(item: WidgetItem): string | undefined {
   return state ? humanizeState(state) : undefined;
 }
 
+/** `incident_task`-only secondary label: unlike `stateSecondaryLabel`, this
+ * reads the data source's own pre-humanized `stateLabel` rather than trying
+ * to humanize `state` itself — `state` is a raw integer specific to the
+ * underlying data source's shared task table, with no stable domain enum to
+ * translate through (see `BeIncidentTaskSearchView.state`'s doc comment). */
+function incidentTaskStateSecondaryLabel(item: WidgetItem): string | undefined {
+  return asString(item.stateLabel);
+}
+
 export const WIDGET_RESOURCE_CONFIG: Record<
   BeWidgetResourceType,
   WidgetResourceConfig
@@ -524,6 +534,27 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     previewSlug: "problems",
     detailHref: (item) =>
       asString(item.id) ? `/operations/problems/${asString(item.id)}` : undefined,
+  },
+  // No standalone incident-task list or detail page exists in this app
+  // (confirmed: incident tasks are only ever viewed as part of their parent
+  // incident) -- both `buildHref` and `detailHref` land on the owning
+  // incident's real detail page instead, the same fallback `call_request`
+  // uses for landing on its owning case. Like `problem`, no dashboard widget
+  // filters incident tasks today, so the tile-level "view all" click is
+  // unfiltered.
+  incident_task: {
+    searchEndpoint: "/incident_tasks/search",
+    itemsKey: "incidentTasks",
+    primaryLabel: numberSubjectLabel,
+    secondaryLabel: incidentTaskStateSecondaryLabel,
+    buildHref: () => operationsHref("incidents"),
+    icon: CheckSquare,
+    iconColor: "warning",
+    previewSlug: "incident-tasks",
+    detailHref: (item) => {
+      const incidentId = nestedID(item.incident);
+      return incidentId ? `/operations/incidents/${incidentId}` : undefined;
+    },
   },
   account: {
     searchEndpoint: "/accounts/search",

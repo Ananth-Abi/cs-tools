@@ -57,6 +57,32 @@ type snProblemFilters struct {
 	// match against ServiceNow's `number` column -- not part of the
 	// free-text SearchQuery scan.
 	Number string `json:"number,omitempty"`
+	// StateKeys: see domain.SearchProblemsFilters.Filters doc comment.
+	StateKeys []int `json:"stateKeys,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+}
+
+// snProblemStateKeyMap maps domain ProblemState enums to ServiceNow's raw
+// problem_state numeric keys. Mirrors the SN Script Include's own
+// _PROBLEM_STATE_LABELS map -- note 105 does not exist in ServiceNow's own
+// numbering (a real gap, not an omission here).
+var snProblemStateKeyMap = map[domain.ProblemState]int{
+	domain.ProblemStateNew:               101,
+	domain.ProblemStateAssess:            102,
+	domain.ProblemStateRootCauseAnalysis: 103,
+	domain.ProblemStateFixInProgress:     104,
+	domain.ProblemStateResolved:          106,
+	domain.ProblemStateClosed:            107,
+}
+
+var validProblemState = map[domain.ProblemState]bool{
+	domain.ProblemStateNew:               true,
+	domain.ProblemStateAssess:            true,
+	domain.ProblemStateRootCauseAnalysis: true,
+	domain.ProblemStateFixInProgress:     true,
+	domain.ProblemStateResolved:          true,
+	domain.ProblemStateClosed:            true,
 }
 
 type snProblemService struct {
@@ -78,11 +104,20 @@ func (s *snProblemService) SearchProblems(ctx context.Context, req domain.Search
 	if err := validateExactNumber("number", req.Filters.Number); err != nil {
 		return domain.SearchProblemsResponse{}, err
 	}
+	parsedFilters, err := ParseProblemFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.SearchProblemsResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
 	payload := snProblemSearchPayload{
-		Filters:    snProblemFilters{SearchQuery: req.Filters.SearchQuery, Number: stringPtrValue(req.Filters.Number)},
+		Filters: snProblemFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+		},
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
 	}
 

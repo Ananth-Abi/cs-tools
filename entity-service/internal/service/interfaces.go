@@ -440,6 +440,19 @@ type ProblemService interface {
 	CreateProblem(ctx context.Context, req domain.CreateProblemRequest) (domain.ProblemDetail, error)
 }
 
+// IncidentTaskService defines the operations available on the incident_task entity.
+// Search and get only -- there is no create/update path.
+type IncidentTaskService interface {
+	// SearchIncidentTasks returns a paginated list of incident tasks filtered by
+	// optional search query and field filters. A ValidationError is returned for
+	// invalid input.
+	SearchIncidentTasks(ctx context.Context, req domain.SearchIncidentTasksRequest) (domain.SearchIncidentTasksResponse, error)
+
+	// GetIncidentTask returns the full detail of a single incident task by its UUID.
+	// A NotFoundError is returned if the incident task does not exist.
+	GetIncidentTask(ctx context.Context, id string) (domain.IncidentTaskDetail, error)
+}
+
 // ConversationService defines the operations available on the conversations entity.
 // All methods require the ServiceNow data source; there is no Postgres fallback.
 type ConversationService interface {
