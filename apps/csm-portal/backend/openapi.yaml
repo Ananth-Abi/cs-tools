@@ -5617,10 +5617,11 @@ components:
             - bar
           description: >
             How the widget's data should be rendered once resolved. shapes
-            "pie" and "bar" both resolve one search per slices entry, the
-            same way "count" resolves its own single search (see slices
-            below) — they differ only in how the frontend renders the same
-            resolved data (wedges vs. bars), not in how it's fetched.
+            "pie" and "bar" resolve via either "slices" (one search per
+            entry) or "groupBy" (one server-side aggregation call) — see
+            both below — and differ from each other only in how the
+            frontend renders the same resolved data (wedges vs. bars), not
+            in how it's fetched.
         gridWidth:
           type: integer
           minimum: 1
@@ -5640,18 +5641,47 @@ components:
             (caller-side; slices entry keys win on conflict) rather than
             queried on its own.
         groupBy:
-          type: string
-          description: Unused
+          type: object
+          description: >
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "slices" — a widget carries exactly one of the two (enforced at
+            dashboard-load time). Configures a single server-side
+            aggregation call instead of one search per literal slice: the
+            caller issues one POST /{resourceType}/group-by request (filters
+            = this widget's own query) and maps the response's groups/
+            othersCount into the same per-slice shape "slices" already
+            produces.
+          properties:
+            field:
+              type: string
+              description: >
+                Which field to group by. Each resourceType enforces its own
+                small allowlist server-side; an unsupported value is
+                rejected by the group-by call itself with a 400, not caught
+                here.
+            maxGroups:
+              type: integer
+              description: >
+                Top-N cutoff by count, descending; the remainder is summed
+                into one "Others" bucket. Omitted/zero defers to the
+                group-by endpoint's own default (12).
+            othersLabel:
+              type: string
+              description: >
+                Overrides the default "Others" label for the summed
+                remainder bucket.
+          required: [field]
         listLimit:
           type: integer
           description: Only meaningful for shape list; how many records to show
         slices:
           type: array
           description: >
-            Only meaningful for shapes "pie"/"bar": one search per entry,
-            each resolved via its own total, the same mechanism shape
-            "count" uses. Merge each entry's query under this widget's
-            own query (entry keys win on conflict) before searching.
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "groupBy": one search per entry, each resolved via its own
+            total, the same mechanism shape "count" uses. Merge each
+            entry's query under this widget's own query (entry keys win on
+            conflict) before searching.
           items:
             type: object
             properties:

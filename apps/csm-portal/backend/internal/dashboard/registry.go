@@ -493,6 +493,18 @@ func validateWidgets(d Dashboard, source string) error {
 			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"gridWidth\" is %d; it is a column count out of 12 and must be between 1 and 12",
 				source, d.ID, w.ID, w.GridWidth)
 		}
+		if (w.Shape == ShapePie || w.Shape == ShapeBar) && len(w.Slices) > 0 && w.GroupBy != nil {
+			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: carries both \"slices\" and \"groupBy\"; a %q/%q widget must use exactly one",
+				source, d.ID, w.ID, ShapePie, ShapeBar)
+		}
+		if (w.Shape == ShapePie || w.Shape == ShapeBar) && len(w.Slices) == 0 && w.GroupBy == nil {
+			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: shape %q needs either \"slices\" or \"groupBy\"",
+				source, d.ID, w.ID, w.Shape)
+		}
+		if w.GroupBy != nil && strings.TrimSpace(w.GroupBy.Field) == "" {
+			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy.field\" is empty",
+				source, d.ID, w.ID)
+		}
 	}
 
 	return nil

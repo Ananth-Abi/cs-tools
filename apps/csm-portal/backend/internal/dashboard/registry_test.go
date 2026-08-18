@@ -774,6 +774,24 @@ func TestLoadDir_RejectsInvalidWidgets(t *testing.T) {
 			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "count", "gridWidth": 13}`,
 			want:    `widget "w": "gridWidth" is 13`,
 		},
+		{
+			name: "pie widget with neither slices nor groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "pie", "gridWidth": 3,
+			 "query": {}}`,
+			want: `widget "w": shape "pie" needs either "slices" or "groupBy"`,
+		},
+		{
+			name: "bar widget with both slices and groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "bar", "gridWidth": 3,
+			 "query": {}, "slices": [{"label": "A", "query": {}}], "groupBy": {"field": "account"}}`,
+			want: `widget "w": carries both "slices" and "groupBy"`,
+		},
+		{
+			name: "groupBy with an empty field",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "pie", "gridWidth": 3,
+			 "query": {}, "groupBy": {"field": ""}}`,
+			want: `widget "w": "groupBy.field" is empty`,
+		},
 	}
 
 	for _, tc := range cases {
