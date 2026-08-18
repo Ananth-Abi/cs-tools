@@ -199,3 +199,55 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
     expect(screen.queryByLabelText(/^Exclude tags$/)).not.toBeInTheDocument();
   });
 });
+
+describe("CasesFilterBar — work-state filter only usable when state is exactly work_in_progress", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it("disables work state when no state is selected", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, states: [] });
+    expect(screen.getByRole("combobox", { name: "Work state" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("enables work state when work_in_progress is the sole selected state", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, states: ["work_in_progress"] });
+    expect(screen.getByRole("combobox", { name: "Work state" })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("disables work state when work_in_progress is selected alongside other states", () => {
+    renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      states: ["work_in_progress", "open"],
+      workStates: ["ongoing"],
+    });
+    expect(screen.getByRole("combobox", { name: "Work state" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("clears workStates when a second state is added alongside work_in_progress", () => {
+    const { onChange } = renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      states: ["work_in_progress"],
+      workStates: ["ongoing"],
+    });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(screen.getByRole("option", { name: "Open" }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        states: ["work_in_progress", "open"],
+        workStates: [],
+      }),
+    );
+  });
+});

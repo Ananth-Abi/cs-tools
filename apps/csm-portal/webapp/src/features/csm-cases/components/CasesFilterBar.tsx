@@ -711,36 +711,41 @@ export default function CasesFilterBar({
                 label="State"
                 values={filters.states}
                 options={stateOptions}
-                // Work sub-state only applies to `work_in_progress` cases, so
-                // drop any selected work states when that state leaves the
-                // filter — keeps shared URLs / saved views from carrying an
-                // inert work-state selection.
+                // Work sub-state only applies when `work_in_progress` is the
+                // *sole* selected state — with other states also selected the
+                // work-state filter can't be applied server-side, so drop any
+                // selected work states as soon as the selection stops being
+                // exactly that one state.
                 onChange={(next) =>
                   onChange({
                     ...filters,
                     states: next,
-                    workStates: next.includes("work_in_progress")
-                      ? filters.workStates
-                      : [],
+                    workStates:
+                      next.length === 1 && next[0] === "work_in_progress"
+                        ? filters.workStates
+                        : [],
                   })
                 }
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-              {/* Only meaningful for `work_in_progress` cases (ongoing/paused
-                  are sub-states of it); disabled until that state is filtered
-                  in, so the control can't add an inert filter. */}
+              {/* Only meaningful when `work_in_progress` is the sole selected
+                  state (ongoing/paused are sub-states of it); disabled
+                  otherwise, so the control can't add an inert/unusable
+                  filter when combined with other states. */}
               <MultiSelectField
                 id="cases-filter-work-state"
                 label="Work state"
                 values={filters.workStates}
                 options={workStateOptions}
                 onChange={(next) => onChange({ ...filters, workStates: next })}
-                disabled={!filters.states.includes("work_in_progress")}
+                disabled={
+                  !(filters.states.length === 1 && filters.states[0] === "work_in_progress")
+                }
                 disabledTooltip={
-                  filters.states.includes("work_in_progress")
+                  filters.states.length === 1 && filters.states[0] === "work_in_progress"
                     ? undefined
-                    : `Select the "${STATE_LABEL.work_in_progress}" state to filter by work state`
+                    : `Select only the "${STATE_LABEL.work_in_progress}" state to filter by work state`
                 }
               />
             </Grid>
