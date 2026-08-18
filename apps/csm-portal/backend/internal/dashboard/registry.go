@@ -368,7 +368,7 @@ func validate(loaded []sourced, requireType bool) error {
 	byID := make(map[string]string, len(loaded))
 	defaultByType := make(map[Type]string, len(loaded))
 	untypedDefaultSource := ""
-	defaultForTeamKeySource := make(map[string]string, len(loaded))
+	defaultForTeamKeyOwner := make(map[string]string, len(loaded))
 
 	for _, l := range loaded {
 		d := l.dashboard
@@ -394,13 +394,17 @@ func validate(loaded []sourced, requireType bool) error {
 		// entry with find. If two dashboards claimed the same team key, that
 		// choice would silently fall to list order instead of config intent.
 		// Track which dashboard claims each key and reject a second claim
-		// from a different source.
+		// from a different dashboard. Ownership is keyed by dashboard id, not
+		// source file: the deprecated DASHBOARDS_CONFIG path can decode
+		// multiple distinct dashboard objects from one source value, so two
+		// different dashboards sharing that source would otherwise both look
+		// like the same owner and never trip this check.
 		for _, teamKey := range d.DefaultForTeamKeys {
-			if prev, claimed := defaultForTeamKeySource[teamKey]; claimed && prev != l.source {
+			if prev, claimed := defaultForTeamKeyOwner[teamKey]; claimed && prev != d.ID {
 				return fmt.Errorf("dashboard definitions: %s (id %q): defaultForTeamKeys key %q is already claimed by %s; each team key must resolve to exactly one dashboard",
 					l.source, d.ID, teamKey, prev)
 			}
-			defaultForTeamKeySource[teamKey] = l.source
+			defaultForTeamKeyOwner[teamKey] = d.ID
 		}
 
 		// Before the type branch below, which skips the rest of the loop for an

@@ -898,6 +898,11 @@ func TestLoadDir_DefaultForTeamKeysWithNoConflictIsFine(t *testing.T) {
 // load, and CsmDashboardPage's find() would silently pick whichever came
 // first in dashboard list order -- an outcome driven by LoadDir's filename
 // ordering rather than by any config author's intent.
+//
+// Ownership is tracked by dashboard id (see
+// TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource
+// for why source alone is not enough), so the rejection here names the
+// owning dashboard's id, not its source file.
 func TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership(t *testing.T) {
 	dir := t.TempDir()
 	writeDefinition(t, dir, "a.json", `{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
@@ -907,7 +912,32 @@ func TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership(t *testing.T) {
 	if err == nil {
 		t.Fatal("LoadDir accepted two dashboards claiming the same defaultForTeamKeys entry; expected an error")
 	}
-	for _, want := range []string{"a.json", "b.json", "customer_onboarding", "defaultForTeamKeys"} {
+	for _, want := range []string{"b.json", "migration-engineer", "onboarding-engineer", "customer_onboarding", "defaultForTeamKeys"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
+		}
+	}
+}
+
+// TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource
+// is the regression test for the bug in the fix above (commit faa5265a6):
+// ownership was tracked by l.source, which is fine for LoadDir (one source
+// file per dashboard) but not for the deprecated DASHBOARDS_CONFIG path,
+// where ParseDashboardsConfig decodes many distinct dashboard objects out of
+// one JSON payload -- so every dashboard in that payload shares the exact
+// same l.source string. Two different dashboards in that single payload
+// claiming the same defaultForTeamKeys entry used to pass validation because
+// prev == l.source for both; tracking by d.ID instead means they no longer
+// share an owner and the second claim is correctly rejected.
+func TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource(t *testing.T) {
+	_, err := ParseDashboardsConfig(`[
+		{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []},
+		{"id": "migration-engineer", "displayName": "Migration Engineer", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}
+	]`)
+	if err == nil {
+		t.Fatal("ParseDashboardsConfig accepted two dashboards (sharing one DASHBOARDS_CONFIG source) claiming the same defaultForTeamKeys entry; expected an error")
+	}
+	for _, want := range []string{"migration-engineer", "onboarding-engineer", "customer_onboarding", "defaultForTeamKeys"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
 		}
