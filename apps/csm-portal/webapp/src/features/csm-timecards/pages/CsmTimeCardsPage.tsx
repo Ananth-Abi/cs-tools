@@ -19,6 +19,10 @@ import {
   AdapterDateFns,
   Box,
   DatePickers,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   MenuItem,
   Paper,
@@ -63,7 +67,7 @@ import {
   useMyTimeCards,
   type TimeCardPagination,
 } from "@features/csm-timecards/api/useTimeSheets";
-import { useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
+import { useDeleteTimeCard, useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
 import AsyncProjectMultiSelect from "@features/csm-cases/components/AsyncProjectMultiSelect";
 import { BackendApiError } from "@api/backend/client";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
@@ -185,6 +189,10 @@ export default function CsmTimeCardsPage(): JSX.Element {
   // projectName all come from the card being edited (see the render below).
   const [editingCard, setEditingCard] = useState<CsmTimeCard | null>(null);
   const updateTimeCard = useUpdateTimeCard();
+  // The card pending a delete confirmation, if any — mirrors
+  // CsmCaseDetailPage's own attachment-delete `pendingDelete` pattern.
+  const [pendingDelete, setPendingDelete] = useState<CsmTimeCard | null>(null);
+  const deleteTimeCard = useDeleteTimeCard();
 
   // Bulk-approve selection — Approvals tab only. Holds card ids rather than
   // whole cards so a background refetch (refresh button, or the queue
@@ -323,6 +331,7 @@ export default function CsmTimeCardsPage(): JSX.Element {
   const handleCardAction = (card: CsmTimeCard, action: TimecardAction): void => {
     if (action === "approve" || action === "reject") setReview({ card, action });
     else if (action === "edit") setEditingCard(card);
+    else if (action === "delete") setPendingDelete(card);
   };
 
   const toggleSelectCard = (card: CsmTimeCard): void => {
@@ -848,6 +857,57 @@ export default function CsmTimeCardsPage(): JSX.Element {
           }}
         />
       )}
+
+      <Dialog
+        open={!!pendingDelete}
+        onClose={() => {
+          if (!deleteTimeCard.isPending) setPendingDelete(null);
+        }}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Delete time card?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Permanently delete this {pendingDelete?.totalMinutes} min entry on{" "}
+            <strong>{pendingDelete?.caseNumber}</strong>? This can&apos;t be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            color="inherit"
+            onClick={() => setPendingDelete(null)}
+            disabled={deleteTimeCard.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={deleteTimeCard.isPending}
+            onClick={() => {
+              if (!pendingDelete) return;
+              const target = pendingDelete;
+              deleteTimeCard.mutate(target.id, {
+                onSuccess: () => {
+                  setPendingDelete(null);
+                  showSuccess("Time card deleted.");
+                },
+                onError: (err) => {
+                  setPendingDelete(null);
+                  const msg =
+                    err instanceof BackendApiError && err.status < 500 && err.message
+                      ? err.message
+                      : "Could not delete this time card.";
+                  showError(msg, err);
+                },
+              });
+            }}
+          >
+            {deleteTimeCard.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {review && (
         <TimeCardReviewDialog
