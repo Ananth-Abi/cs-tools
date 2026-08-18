@@ -139,13 +139,17 @@ export function readCasesFiltersFromUrl(
   params: URLSearchParams,
 ): CasesFilters {
   const states = parseCsv(params.get("states"), VALID_STATES);
-  // Work sub-states only apply to `work_in_progress` cases. Mirror the
-  // filter-bar invariant (the State control clears work states when that state
-  // leaves the selection) so a hand-edited / stale URL can't load an active but
-  // un-clearable work-state filter behind the disabled control.
-  const workStates = states.includes("work_in_progress")
-    ? parseCsv(params.get("workStates"), VALID_WORK_STATES)
-    : [];
+  // Work sub-states only apply to a search scoped to `work_in_progress` alone
+  // — the server can't apply a work-state filter once another state is also
+  // selected (see caseSearchPayload.ts's own matching guard). Mirror that
+  // exact-match invariant here (not just "includes work_in_progress") so a
+  // hand-edited / stale / dashboard-link URL with e.g.
+  // `states=work_in_progress,open&workStates=ongoing` can't load an active
+  // but un-clearable work-state filter behind the disabled control.
+  const workStates =
+    states.length === 1 && states[0] === "work_in_progress"
+      ? parseCsv(params.get("workStates"), VALID_WORK_STATES)
+      : [];
   return {
     search: params.get("search") ?? "",
     severities: parseCsv(params.get("severities"), VALID_SEVERITIES),

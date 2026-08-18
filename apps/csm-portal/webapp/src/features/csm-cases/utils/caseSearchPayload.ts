@@ -70,7 +70,17 @@ export function buildCaseSearchFilters(
   if (filters.caseTypes.length > 0) {
     fieldFilters.push({ field: "type", op: "in", values: filters.caseTypes });
   }
-  if (filters.workStates.length > 0) {
+  // Work state can only be applied server-side when "work_in_progress" is
+  // the sole selected state — enforced here (not just in the filter bar's
+  // own onChange) so a stale workStates value reaching this builder any
+  // other way (a saved view, a pinned/dashboard URL, a future caller) can
+  // never silently narrow the results to just in-progress/ongoing-paused
+  // cases when other states are also selected.
+  if (
+    filters.workStates.length > 0 &&
+    filters.states.length === 1 &&
+    filters.states[0] === "work_in_progress"
+  ) {
     fieldFilters.push({
       field: "workState",
       op: "in",

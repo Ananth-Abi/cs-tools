@@ -68,16 +68,39 @@ const DEFAULT_ROWS_PER_PAGE = 20;
 const ROWS_PER_PAGE_OPTIONS = [10, DEFAULT_ROWS_PER_PAGE, BE_MAX_PAGE_LIMIT];
 
 // URL params owned by the filter state; cleared/rewritten on change while any
-// other params (e.g. a `tab` selection) are preserved.
+// other params (e.g. a `tab` selection) are preserved. Must cover every key
+// `writeCasesFiltersToUrl` can write — a key missing here never gets deleted
+// when its filter clears back to empty/null, so the stale URL value keeps
+// getting read back on the next render, making that one filter look
+// impossible to fully clear (found via workStates: selecting a work state
+// then trying to deselect it back to none silently failed because
+// `workStates` wasn't in this list).
 const FILTER_PARAM_KEYS = [
   "search",
   "severities",
   "states",
   "types",
   "assignees",
+  "workStates",
   "projects",
   "engagementTypes",
   "products",
+  "csTeams",
+  "sreTeams",
+  "tags",
+  "excludeTags",
+  "onboardingStatuses",
+  "slaPctGte",
+  "slaPctLte",
+  "escalation",
+  "escalationLevels",
+  "projectTypes",
+  "createdFrom",
+  "createdTo",
+  "updatedFrom",
+  "updatedTo",
+  "closedFrom",
+  "closedTo",
 ] as const;
 
 interface CsmIssuesViewProps {
