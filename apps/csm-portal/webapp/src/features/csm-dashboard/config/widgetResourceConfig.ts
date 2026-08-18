@@ -53,6 +53,7 @@ import {
 import { writeChangeRequestFiltersToUrl } from "@features/csm-operations/utils/changeRequestsFiltersUrl";
 import { taskStateLabel } from "@features/csm-cases/utils/taskState";
 import type { BeTaskState } from "@api/backend/types";
+import { buildWidgetPreviewHref } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 
 /** A resolved search-result row, typed loosely since its real shape depends
  * on `resourceType` — the label extractors below narrow what they read. */
@@ -73,8 +74,16 @@ export interface WidgetResourceConfig {
   /** Optional secondary (muted) line for one list-shape row. */
   secondaryLabel?: (item: WidgetItem) => string | undefined;
   /** Where a click on this widget's tile navigates, given its (opaque,
-   * already current-user-resolved) filters. */
-  buildHref: (filters: Record<string, unknown>) => string;
+   * already current-user-resolved) filters. `ctx` (the owning widget's id
+   * and resolved display name) is only there for a resourceType with no
+   * dedicated list route of its own (see `incident_task` below) to route
+   * through the generic dashboard-widget preview page instead, which is the
+   * only destination that can render this exact widget's own filtered
+   * result set — every other resourceType ignores it. */
+  buildHref: (
+    filters: Record<string, unknown>,
+    ctx?: { widgetId: string; displayName: string },
+  ) => string;
   /** Icon shown on the tile, one per resource type (not per individual
    * widget — the backend registry doesn't carry per-widget icon metadata). */
   icon: LucideIcon;
@@ -535,19 +544,33 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     detailHref: (item) =>
       asString(item.id) ? `/operations/problems/${asString(item.id)}` : undefined,
   },
-  // No standalone incident-task list or detail page exists in this app
-  // (confirmed: incident tasks are only ever viewed as part of their parent
-  // incident) -- both `buildHref` and `detailHref` land on the owning
-  // incident's real detail page instead, the same fallback `call_request`
-  // uses for landing on its owning case. Like `problem`, no dashboard widget
-  // filters incident tasks today, so the tile-level "view all" click is
-  // unfiltered.
+  // No standalone incident-task list page exists in this app (confirmed:
+  // incident tasks are only ever viewed as part of their parent incident),
+  // so unlike every other resourceType here, `buildHref` can't land on a
+  // real list route of its own -- routing it to the plain incidents list
+  // (`/operations?tab=incidents`) would silently drop this widget's own
+  // filters and show an unrelated, unfiltered set of records. Route through
+  // the generic dashboard-widget preview page instead (via `previewSlug`
+  // below), which is filter-aware for every resourceType already.
+  // `detailHref` still lands on the owning incident's real detail page, the
+  // same fallback `call_request` uses for landing on its owning case.
   incident_task: {
-    searchEndpoint: "/incident_tasks/search",
+    searchEndpoint: "/incident-tasks/search",
     itemsKey: "incidentTasks",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: incidentTaskStateSecondaryLabel,
-    buildHref: () => operationsHref("incidents"),
+    // `ctx` is always passed by the real caller (`DashboardWidgetTile`); the
+    // fallback below only covers a caller that omits it (e.g. a test
+    // exercising this config directly), landing on the same "open this page
+    // from a dashboard widget" prompt `DashboardWidgetPreviewPage` already
+    // shows for any preview link missing its widget id.
+    buildHref: (filters, ctx) =>
+      buildWidgetPreviewHref({
+        previewSlug: "incident-tasks",
+        widgetId: ctx?.widgetId ?? "",
+        displayName: ctx?.displayName ?? "",
+        filters,
+      }),
     icon: CheckSquare,
     iconColor: "warning",
     previewSlug: "incident-tasks",
