@@ -324,6 +324,15 @@ type snIncidentGroupByPayload struct {
 	MaxGroups int               `json:"maxGroups,omitempty"`
 }
 
+// validIncidentGroupByField is the allow-list for
+// GroupIncidentsByRequest.GroupBy, matching openapi.yaml's
+// GroupIncidentsByRequest.groupBy enum exactly.
+var validIncidentGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+	"businessService": true,
+}
+
 // GroupIncidentsBy implements IncidentService by calling the Choreo POST
 // /incidents/group-by endpoint: a single server-side aggregation over the
 // requested field, capped to the top MaxGroups buckets with the remainder
@@ -332,6 +341,9 @@ type snIncidentGroupByPayload struct {
 func (s *snIncidentService) GroupIncidentsBy(ctx context.Context, req domain.GroupIncidentsByRequest) (domain.GroupByResponse, error) {
 	if req.GroupBy == "" {
 		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validIncidentGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.GroupByResponse{}, err

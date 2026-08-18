@@ -2539,6 +2539,9 @@ func (s *snCaseService) GroupCasesBy(ctx context.Context, req domain.GroupCasesB
 	if req.GroupBy == "" {
 		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
 	}
+	if !validCaseGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.GroupByResponse{}, err
 	}
@@ -2651,6 +2654,15 @@ func (s *snCaseService) GroupCasesBy(ctx context.Context, req domain.GroupCasesB
 	var resp domain.GroupByResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return domain.GroupByResponse{}, fmt.Errorf("sn cases: parse group-by response: %w", err)
+	}
+	// "account" is the only ID-valued field in validCaseGroupByField; SN
+	// returns its bucket keys as raw sys_ids, so convert them to this
+	// platform's UUIDs before returning. Every other allowed field (state,
+	// severity, type) is a plain enum and is left as-is.
+	if req.GroupBy == "account" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
 	}
 	return resp, nil
 }

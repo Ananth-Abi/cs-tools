@@ -83,6 +83,15 @@ var validCaseSeverity = map[domain.CaseSeverity]bool{
 	domain.CaseSeverityLow:          true,
 }
 
+// validCaseGroupByField is the allow-list for GroupCasesByRequest.GroupBy,
+// matching openapi.yaml's GroupCasesByRequest.groupBy enum exactly.
+var validCaseGroupByField = map[string]bool{
+	"account":  true,
+	"state":    true,
+	"severity": true,
+	"type":     true,
+}
+
 var validCaseIssueType = map[domain.CaseIssueType]bool{
 	domain.CaseIssueTypeError:                  true,
 	domain.CaseIssueTypePartialOutage:          true,

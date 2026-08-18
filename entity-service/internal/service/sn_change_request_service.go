@@ -399,6 +399,14 @@ type snChangeRequestGroupByPayload struct {
 	MaxGroups int                    `json:"maxGroups,omitempty"`
 }
 
+// validChangeRequestGroupByField is the allow-list for
+// GroupChangeRequestsByRequest.GroupBy, matching openapi.yaml's
+// GroupChangeRequestsByRequest.groupBy enum exactly.
+var validChangeRequestGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+}
+
 // GroupChangeRequestsBy implements ChangeRequestService by calling the
 // Choreo POST /change-requests/group-by endpoint: a single server-side
 // aggregation over the requested field, capped to the top MaxGroups buckets
@@ -407,6 +415,9 @@ type snChangeRequestGroupByPayload struct {
 func (s *snChangeRequestService) GroupChangeRequestsBy(ctx context.Context, req domain.GroupChangeRequestsByRequest) (domain.GroupByResponse, error) {
 	if req.GroupBy == "" {
 		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validChangeRequestGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.GroupByResponse{}, err

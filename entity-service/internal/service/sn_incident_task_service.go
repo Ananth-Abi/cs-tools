@@ -150,6 +150,14 @@ type snIncidentTaskGroupByPayload struct {
 	MaxGroups int                   `json:"maxGroups,omitempty"`
 }
 
+// validIncidentTaskGroupByField is the allow-list for
+// GroupIncidentTasksByRequest.GroupBy, matching openapi.yaml's
+// GroupIncidentTasksByRequest.groupBy enum exactly.
+var validIncidentTaskGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+}
+
 // GroupIncidentTasksBy implements IncidentTaskService by calling the Choreo
 // POST /incident_tasks/group-by endpoint: a single server-side aggregation
 // over the requested field, capped to the top MaxGroups buckets with the
@@ -158,6 +166,9 @@ type snIncidentTaskGroupByPayload struct {
 func (s *snIncidentTaskService) GroupIncidentTasksBy(ctx context.Context, req domain.GroupIncidentTasksByRequest) (domain.GroupByResponse, error) {
 	if req.GroupBy == "" {
 		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validIncidentTaskGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.GroupByResponse{}, err
@@ -192,6 +203,15 @@ func (s *snIncidentTaskService) GroupIncidentTasksBy(ctx context.Context, req do
 	var resp domain.GroupByResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return domain.GroupByResponse{}, fmt.Errorf("sn incident tasks: parse group-by response: %w", err)
+	}
+	// "assignmentGroup" is the only ID-valued field in
+	// validIncidentTaskGroupByField; SN returns its bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
 	}
 	return resp, nil
 }

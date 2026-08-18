@@ -166,6 +166,14 @@ type snProblemGroupByPayload struct {
 	MaxGroups int              `json:"maxGroups,omitempty"`
 }
 
+// validProblemGroupByField is the allow-list for
+// GroupProblemsByRequest.GroupBy, matching openapi.yaml's
+// GroupProblemsByRequest.groupBy enum exactly.
+var validProblemGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+}
+
 // GroupProblemsBy implements ProblemService by calling the Choreo POST
 // /problems/group-by endpoint: a single server-side aggregation over the
 // requested field, capped to the top MaxGroups buckets with the remainder
@@ -174,6 +182,9 @@ type snProblemGroupByPayload struct {
 func (s *snProblemService) GroupProblemsBy(ctx context.Context, req domain.GroupProblemsByRequest) (domain.GroupByResponse, error) {
 	if req.GroupBy == "" {
 		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validProblemGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.GroupByResponse{}, err
