@@ -148,8 +148,7 @@ Required — a record that exhausts the main consumer's retries is published her
 ```text
 csm-notification-service/
 ├── cmd/
-│   ├── server/main.go           # Entry point — starts the HTTP health server + both consumer groups
-│   └── twiliocheck/main.go      # Manual live-verification CLI (real SMS/call, not a test — see below)
+│   └── server/main.go           # Entry point — starts the HTTP health server + both consumer groups
 ├── internal/
 │   ├── apierror/               # Typed upstream error type (4xx/5xx passthrough)
 │   ├── middleware/
@@ -195,52 +194,6 @@ go vet ./...              # vet
 go test -race ./...       # vet + race-detector tests
 go build -o server ./cmd/server   # compile
 ```
-
-## Manual live verification (`cmd/twiliocheck`)
-
-`internal/notifications`'s `go test` suite runs entirely against a local
-mock server — it never talks to a real Twilio account. `cmd/twiliocheck` is
-a small standalone CLI for the times you actually need to confirm
-`TwilioClient` works against a **real** account: it sends one real SMS or
-places one real voice call and prints whether Twilio accepted it.
-
-**This is not an automated test.** It is never run by `go test` or CI, makes
-a real, billed request, and needs real credentials passed as environment
-variables (never commit them):
-
-```bash
-# SMS, via a Messaging Service (preferred — see Configuration above)
-TWILIO_ACCOUNT_SID=... TWILIO_AUTH_TOKEN=... \
-TWILIO_MESSAGING_SERVICE_SID=... TWILIO_TO_NUMBER=+1... \
-go run ./cmd/twiliocheck -channel=sms
-
-# Voice call — always needs TWILIO_FROM_NUMBER, a voice-capable Twilio number
-TWILIO_ACCOUNT_SID=... TWILIO_AUTH_TOKEN=... \
-TWILIO_FROM_NUMBER=+1... TWILIO_TO_NUMBER=+1... \
-go run ./cmd/twiliocheck -channel=call -voice=Polly.Raveena -language=en-IN
-```
-
-A `-message` flag overrides the default test message; `-voice`/`-language`
-(call only) override `TWILIO_VOICE`/`TWILIO_LANGUAGE` for one run, to try a
-voice without changing `.env`. `TWILIO_API_BASE_URL` points either binary at
-something other than real Twilio — e.g. a local mock server, useful for
-dry-running `twiliocheck` itself without spending anything.
-
-**A `202`/`"accepted"` result only means Twilio queued the request** — it is
-not proof of delivery. Cross-check the actual outcome via Twilio's own API
-(`GET /Calls/{Sid}.json` — `status`, `duration`; `GET /Messages.json?To=...`
-— `status`, `error_code`) before trusting a "succeeded" print from this
-tool. Two upstream errors we've hit doing exactly this:
-
-- `21215` on `-channel=call`: the destination country isn't enabled under
-  the Twilio console's **Voice** Geo Permissions.
-- `21612` on `-channel=sms`, persisting even after enabling **Messaging**
-  Geo Permissions for that country: a trial account's sole sender (a plain
-  long code) often can't complete SMS delivery to "High Risk"-flagged
-  destinations regardless of that toggle — this is an account-tier
-  limitation (upgrade from Trial), not a config or code issue. Voice and
-  SMS use different carrier interconnects, so one channel working doesn't
-  imply the other does.
 
 ## API Endpoints
 
