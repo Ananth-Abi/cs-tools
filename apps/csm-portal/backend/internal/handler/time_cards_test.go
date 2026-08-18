@@ -186,6 +186,10 @@ func TestDeleteTimeCard(t *testing.T) {
 		if capturedID != testTCID {
 			t.Errorf("upstream received id %q, want %q", capturedID, testTCID)
 		}
+		resp := decodeJSON[map[string]any](t, w)
+		if resp["message"] != "Time card deleted" {
+			t.Errorf("message = %v, want %q", resp["message"], "Time card deleted")
+		}
 	})
 
 	t.Run("upstream errors are mapped correctly", func(t *testing.T) {

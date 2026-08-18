@@ -2859,7 +2859,7 @@ export interface BeTimeCardMutationResponse {
 }
 
 export interface BeDeleteTimeCardResponse {
-  message: string;
+  message?: string;
 }
 
 // ---------------------------------------------------------------------------
