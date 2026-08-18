@@ -38,6 +38,23 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * empty selection. The URL always wins over all of that when it names a
  * (valid) dashboard.
  *
+ * Above even that team-based preferred predicate sits one more, narrower
+ * tier: `TEAM_DEFAULT_DASHBOARD_ID` maps a small, explicit set of team keys
+ * (the signed-in user's own `team.teamKey`, resolved the same way as above)
+ * straight onto a specific dashboard `id` — e.g. a
+ * `customer_onboarding`-team user always lands on `onboarding-engineer`,
+ * regardless of that dashboard's own `isDefault`/`isTeamBased` flags. This is
+ * deliberately a team-*identity* override, not a generalization of the
+ * `isDefault`/`isTeamBased`/`type` mechanism above (see the warning in the
+ * `preferredEntry` comment below about coupling default-selection to `type`
+ * — this tier doesn't touch that at all): it's additive and inert for every
+ * user whose `teamKey` isn't a key in the map (e.g. every ABT-team member),
+ * who falls straight through to `preferredEntry` exactly as before. A
+ * mapped team key whose target dashboard id isn't present in the BE-loaded
+ * list (e.g. not yet registered, or a stale map entry) also falls straight
+ * through rather than erroring. Adding a further team to this treatment is a
+ * one-line addition to the map, never a new branch.
+ *
  * The selection is a real path segment — `/dashboard/:dashboardId`, and for a
  * team-based dashboard `/dashboard/:dashboardId/:teamId` — rather than a
  * query param or fragment, matched by three sibling routes in App.tsx all
@@ -56,6 +73,20 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * least one real (config-driven) widget, so this always renders the real
  * widget grid.
  */
+
+/**
+ * Team-identity override tier for default-dashboard selection — see the
+ * module doc comment above. Keyed by the signed-in user's own
+ * `team.teamKey`; a team not listed here is simply not in this map, which is
+ * the common case (every ABT team) and a deliberate no-op. Extend this map
+ * (never add another single-team branch) when a further team needs the same
+ * treatment.
+ */
+const TEAM_DEFAULT_DASHBOARD_ID: Record<string, string> = {
+  customer_onboarding: "onboarding-engineer",
+  cs_migrations_team: "migration-engineer",
+};
+
 export default function CsmDashboardPage(): JSX.Element {
   const navigate = useNavigate();
   const { dashboardId: urlDashboardId, teamId: urlTeamIdRaw } = useParams<{
@@ -70,6 +101,15 @@ export default function CsmDashboardPage(): JSX.Element {
   const urlEntry = list?.find((d) => d.id === urlDashboardId);
 
   const userHasTeam = Boolean(currentUser.user?.team);
+  // Team-identity override (see module doc comment): a mapped teamKey wins
+  // outright over the isDefault/isTeamBased-based preferredEntry below —
+  // but only when that mapped dashboard id is actually in the BE-loaded
+  // list; otherwise this is `undefined` and falls through untouched.
+  const teamKey = currentUser.user?.team?.teamKey;
+  const teamDefaultDashboardId = teamKey ? TEAM_DEFAULT_DASHBOARD_ID[teamKey] : undefined;
+  const teamDefaultEntry = teamDefaultDashboardId
+    ? list?.find((d) => d.id === teamDefaultDashboardId)
+    : undefined;
   // The preferred predicate per the user's own team membership: BOTH
   // isDefault and isTeamBased must match (not isTeamBased alone, and not
   // isDefault alone) — see the module doc comment above.
@@ -107,7 +147,7 @@ export default function CsmDashboardPage(): JSX.Element {
     if (userProfilePending) {
       currentEntry = undefined;
     } else {
-      currentEntry = preferredEntry ?? anyDefaultEntry ?? firstEntry;
+      currentEntry = teamDefaultEntry ?? preferredEntry ?? anyDefaultEntry ?? firstEntry;
     }
   }
 
