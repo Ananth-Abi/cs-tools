@@ -469,4 +469,45 @@ describe("TimeCardsTable View details drawer", () => {
     fireEvent.click(screen.getByRole("link", { name: "View full details" }));
     await waitFor(() => expect(screen.getByTestId("location-probe")).toBeInTheDocument());
   });
+
+  it("closes the preview when the same row's eye is clicked again", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    const eye = screen.getByTestId("timecard-view-tc-1");
+    fireEvent.click(eye);
+    expect(screen.getByText("Time card")).toBeInTheDocument();
+
+    fireEvent.click(eye);
+    expect(screen.queryByText("Time card")).not.toBeInTheDocument();
+  });
+
+  it("switches the preview to a different row without requiring a close first", () => {
+    getMock.mockReturnValue(new Promise(() => {}));
+    renderWithClient(
+      <TimeCardsTable
+        cards={[CARD, APPROVED_CARD]}
+        isLoading={false}
+        emptyText="No cards"
+        groupBy="case"
+        roleFor={() => ROLE_CTX}
+        onCardAction={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("timecard-view-tc-1"));
+    expect(screen.getByText("CS0352584")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("timecard-view-tc-2"));
+    expect(screen.getByText("CS0352585")).toBeInTheDocument();
+  });
 });

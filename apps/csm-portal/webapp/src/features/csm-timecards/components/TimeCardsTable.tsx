@@ -115,6 +115,7 @@ export default function TimeCardsTable({
   const [detailCard, setDetailCard] = useState<CsmTimeCard | null>(null);
 
   const headerCells = [
+    "Preview",
     ...(showCaseColumn ? ["Case"] : []),
     ...(showEngineerColumn ? ["Engineer"] : []),
     "Project",
@@ -125,6 +126,7 @@ export default function TimeCardsTable({
   ];
   const grid = [
     ...(selectable ? ["40px"] : []),
+    "auto",
     ...(showCaseColumn ? ["minmax(120px, 0.9fr)"] : []),
     ...(showEngineerColumn ? ["minmax(140px, 1fr)"] : []),
     "minmax(160px, 1.4fr)",
@@ -276,6 +278,23 @@ export default function TimeCardsTable({
                     )}
                   </Box>
                 )}
+                {/* Quick preview, at the row's left edge (right after the
+                    optional bulk-select checkbox) so it's reachable without
+                    hunting across the row; the drawer opens on the right.
+                    Clicking the eye for the row already open closes it
+                    instead of re-opening the same preview. */}
+                <Box role="cell" sx={{ display: "flex", alignItems: "center" }}>
+                  <IconButton
+                    size="small"
+                    aria-label="View details"
+                    data-testid={`timecard-view-${c.id}`}
+                    onClick={() =>
+                      setDetailCard((prev) => (prev?.id === c.id ? null : c))
+                    }
+                  >
+                    <Eye size={16} />
+                  </IconButton>
+                </Box>
                 {showCaseColumn && (
                   <Typography role="cell" variant="body2" noWrap title={c.caseNumber}>
                     {c.caseNumber}
@@ -311,14 +330,6 @@ export default function TimeCardsTable({
                   role="cell"
                   sx={{ display: "flex", alignItems: "center", gap: 0.75, justifySelf: "end" }}
                 >
-                  <IconButton
-                    size="small"
-                    aria-label="View details"
-                    data-testid={`timecard-view-${c.id}`}
-                    onClick={() => setDetailCard(c)}
-                  >
-                    <Eye size={16} />
-                  </IconButton>
                   {/* Own actionable buttons regardless of showActionsColumn —
                       unlike approve/reject, editing and deleting are offered
                       to the card's own owner on every tab it can appear on
