@@ -5594,6 +5594,7 @@ components:
             - user
             - time_card
             - problem
+            - incident_task
             - product_vulnerability
             - call_request
             - service_request
