@@ -1139,6 +1139,16 @@ type SearchCommentsRequest struct {
 }
 
 // CommentView is a single search result item from POST /comments/search.
+// InlineAttachment is an image embedded in a comment body.
+type InlineAttachment struct {
+	ID          string    `json:"id"`
+	FileName    string    `json:"fileName"`
+	ContentType string    `json:"contentType"`
+	DownloadURL string    `json:"downloadUrl"`
+	CreatedOn   time.Time `json:"createdOn"`
+	CreatedBy   string    `json:"createdBy"`
+}
+
 type CommentView struct {
 	ID          string         `json:"id"`
 	ReferenceID string         `json:"referenceId"`
@@ -1146,6 +1156,9 @@ type CommentView struct {
 	Type        CommentType    `json:"type"`
 	CreatedOn   time.Time      `json:"createdOn"`
 	CreatedBy   CommentUserRef `json:"createdBy"`
+	// Images embedded in the comment body, supplied by entity-service.
+	HasInlineAttachments bool               `json:"hasInlineAttachments"`
+	InlineAttachments    []InlineAttachment `json:"inlineAttachments"`
 }
 
 // SearchCommentsResponse is entity-service's response for POST /comments/search.

@@ -1030,6 +1030,22 @@ type snComment struct {
 	// author is not a real user (e.g. "system") and when the ServiceNow side
 	// predates the field. See snUserRef.
 	CreatedByUser *snUserRef `json:"createdByUser"`
+	// Inline attachments are the images embedded in a comment body. Declared
+	// here because ServiceNow sends them and this struct previously dropped
+	// them; shape follows the Ballerina entity-service InlineAttachment record.
+	HasInlineAttachments bool                 `json:"hasInlineAttachments"`
+	InlineAttachments    []snInlineAttachment `json:"inlineAttachments"`
+}
+
+// snInlineAttachment is an image embedded in a comment body, as ServiceNow
+// returns it. IDs are sysids and are converted with sysidToUUID on the way out.
+type snInlineAttachment struct {
+	ID          string `json:"id"`
+	FileName    string `json:"fileName"`
+	ContentType string `json:"contentType"`
+	DownloadURL string `json:"downloadUrl"`
+	CreatedOn   string `json:"createdOn"`
+	CreatedBy   string `json:"createdBy"`
 }
 
 type snSearchCommentsResponse struct {
@@ -1100,6 +1116,25 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 		default:
 			commentType = domain.CommentTypeComment
 		}
+		// Inline attachments: sysid -> UUID like every other inbound ID, and the
+		// same createdOn layout. A parse failure on one image must not fail the
+		// whole comment page, so a bad timestamp leaves that entry's CreatedOn zero.
+		var inlineAttachments []domain.InlineAttachment
+		for _, ia := range c.InlineAttachments {
+			entry := domain.InlineAttachment{
+				ID:          sysidToUUID(ia.ID),
+				FileName:    ia.FileName,
+				ContentType: ia.ContentType,
+				DownloadURL: ia.DownloadURL,
+				CreatedBy:   ia.CreatedBy,
+			}
+			if ia.CreatedOn != "" {
+				if parsed, err := time.Parse(snCreatedOnLayout, ia.CreatedOn); err == nil {
+					entry.CreatedOn = parsed
+				}
+			}
+			inlineAttachments = append(inlineAttachments, entry)
+		}
 		comments = append(comments, domain.CaseComment{
 			ID:      sysidToUUID(c.ID),
 			CaseID:  sysidToUUID(c.ReferenceID),
@@ -1111,8 +1146,10 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 				LastName:  c.CreatedByLastName,
 				FullName:  c.CreatedByFullName,
 			},
-			CreatedByUser: snUserReference(c.CreatedByUser, c.CreatedBy, c.CreatedByFullName),
-			CreatedOn:     createdAt,
+			CreatedByUser:        snUserReference(c.CreatedByUser, c.CreatedBy, c.CreatedByFullName),
+			CreatedOn:            createdAt,
+			HasInlineAttachments: c.HasInlineAttachments,
+			InlineAttachments:    inlineAttachments,
 		})
 	}
 

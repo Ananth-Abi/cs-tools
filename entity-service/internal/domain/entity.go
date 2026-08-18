@@ -1969,6 +1969,17 @@ type CommentUserRef struct {
 }
 
 // CaseComment represents a comment on a support case.
+// InlineAttachment is an image embedded in a comment body. IDs are converted
+// from ServiceNow sysids to UUIDs like every other inbound identifier.
+type InlineAttachment struct {
+	ID          string    `json:"id"`
+	FileName    string    `json:"fileName"`
+	ContentType string    `json:"contentType"`
+	DownloadURL string    `json:"downloadUrl"`
+	CreatedOn   time.Time `json:"createdOn"`
+	CreatedBy   string    `json:"createdBy"`
+}
+
 type CaseComment struct {
 	ID        string         `json:"id"`
 	CaseID    string         `json:"caseId"`
@@ -1982,6 +1993,11 @@ type CaseComment struct {
 	// automation or integration account that is not a user. See UserReference.
 	CreatedByUser *UserReference `json:"createdByUser"`
 	CreatedOn     time.Time      `json:"createdOn"`
+	// HasInlineAttachments / InlineAttachments describe images embedded in the
+	// comment body. The upstream sends both; they were previously not decoded
+	// here at all. InlineAttachments is nil (not empty) when there are none.
+	HasInlineAttachments bool               `json:"hasInlineAttachments"`
+	InlineAttachments    []InlineAttachment `json:"inlineAttachments,omitempty"`
 }
 
 // CreateCaseCommentRequest is the input for creating a new case comment.
