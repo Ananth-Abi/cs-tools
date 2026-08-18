@@ -40,6 +40,27 @@ const maxZipUploadBytes = 25 << 20 // 25 MiB
 // uuidRe validates path parameters that are expected to be UUIDs.
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
+// sysidRe matches a bare ServiceNow sysid: 32 hex characters, no dashes.
+var sysidRe = regexp.MustCompile(`(?i)^[0-9a-f]{32}$`)
+
+// isAttachmentID reports whether id is a usable attachment identifier — either a
+// dashed UUID or a bare ServiceNow sysid.
+//
+// Attachment ids reach this API in both forms. The attachments list returns
+// dashed UUIDs (entity-service applies sysidToUUID), but an inline comment image
+// is referenced only by its `<img src="…/<sysid>.iix">`, and the frontend
+// extracts that 32-hex sysid directly (see the .iix regex in
+// features/support/utils/support.ts) before asking for its content. Rejecting
+// the sysid form makes every inline comment image fail.
+//
+// The Ballerina backend accepts both because its path parameter is typed
+// `entity:IdString`, a plain string alias with no format constraint. This keeps
+// the same contract while still refusing anything that is neither shape, so the
+// value remains safe to place in an upstream URL path.
+func isAttachmentID(id string) bool {
+	return uuidRe.MatchString(id) || sysidRe.MatchString(id)
+}
+
 // Error message constants matching the customer-portal error vocabulary.
 const (
 	ErrMsgUnauthorized = "You are not authorized to perform this action. Please try again."
