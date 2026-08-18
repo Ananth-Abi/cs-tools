@@ -173,12 +173,14 @@ type searchProjectsRequest struct {
 	SortOrder     string     `json:"sortOrder"`
 }
 
-// Result summarizes one full Run: how many projects were evaluated, and any
-// per-project failures encountered along the way. A non-empty Failures list
-// is a "soft" outcome — Run's own error return is reserved for a fatal
-// page-fetch failure that prevented the sweep from completing at all.
+// Result summarizes one full Run: how many projects were evaluated, how
+// many were skipped via EXCLUDED_PROJECT_IDS, and any per-project failures
+// encountered along the way. A non-empty Failures list is a "soft"
+// outcome — Run's own error return is reserved for a fatal page-fetch
+// failure that prevented the sweep from completing at all.
 type Result struct {
 	ProjectsEvaluated int
+	ProjectsExcluded  int
 	Failures          []ProjectFailure
 }
 
