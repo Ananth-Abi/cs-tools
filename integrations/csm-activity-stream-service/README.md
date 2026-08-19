@@ -70,6 +70,7 @@ The server auto-loads `.env` from the working directory at startup.
 ## Testing
 
 ```bash
+go vet ./...
 go test -race ./...
 ```
 

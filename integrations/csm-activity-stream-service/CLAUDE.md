@@ -86,7 +86,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 - `internal/caseevents` — `Handler` (consumes events, fans to BroadcastHub for the two SSE types)
 - `internal/entity` — minimal `CustomerEntityClient` (only `GetCase`, OAuth2 client-credentials, forwards `x-user-id-token` + correlation ID)
 - `internal/middleware` — `Auth`, `CORS`, `CorrelationID`, `Logger`, `SecurityHeaders` (mirrors csm-portal-backend)
-- `internal/handler` — `StreamCaseActivities` SSE handler + `response.go` helpers (`writeError`, `writeJSON`, `mapUpstreamErrorGeneric`, error constants)
+- `internal/handler` — `StreamCaseActivities` SSE handler + `response.go` helpers (`writeError`, `mapUpstreamErrorGeneric`, error constants)
 
 ## Known limitations
 
