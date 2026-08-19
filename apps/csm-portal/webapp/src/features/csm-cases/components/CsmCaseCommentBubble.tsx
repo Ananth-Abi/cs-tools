@@ -47,6 +47,12 @@ interface CsmCaseCommentBubbleProps {
   onImageClick?: (src: string, alt?: string) => void;
   /** Opens the call-request detail popup for a call-request link embedded in the comment body. */
   onCallRequestClick?: (sysId: string) => void;
+  /** Drops the author avatar and prefixes the name with "Commented by "
+   * instead — the avatar column eats a disproportionate share of a narrow
+   * container's width (e.g. `CasePreviewContent`'s ~420px drawer); the full
+   * Activities tab and the chat transcript dialog have room for it, so this
+   * defaults to off rather than changing either of those. */
+  compact?: boolean;
 }
 
 const SAFE_PROTOCOLS = ["http:", "https:"];
@@ -82,6 +88,7 @@ export default function CsmCaseCommentBubble({
   comment,
   onImageClick,
   onCallRequestClick,
+  compact = false,
 }: CsmCaseCommentBubbleProps): JSX.Element | null {
   const theme = useTheme();
   const isDarkMode = useDarkMode();
@@ -245,6 +252,12 @@ export default function CsmCaseCommentBubble({
             sx={{
               flex: 1,
               minWidth: 0,
+              // A system entry is backend HTML too, so it needs the same width
+              // containment as a regular comment body — see the full note on the
+              // rich-text host below for why `min-width: 0` alone doesn't hold.
+              maxWidth: "100%",
+              contain: "inline-size",
+              overflowX: "auto",
               overflowWrap: "anywhere",
               wordBreak: "break-word",
               "& p": { m: 0 },
@@ -278,17 +291,19 @@ export default function CsmCaseCommentBubble({
       id={comment.id}
       sx={{ display: "flex", gap: 1.5, alignItems: "flex-start", scrollMarginTop: 96 }}
     >
-      <Avatar
-        sx={{
-          bgcolor: avatarBg,
-          color: avatarFg,
-          width: 32,
-          height: 32,
-          fontSize: "0.85rem",
-        }}
-      >
-        {isBot ? <Bot size={16} /> : initialsOf(comment.authorName)}
-      </Avatar>
+      {!compact && (
+        <Avatar
+          sx={{
+            bgcolor: avatarBg,
+            color: avatarFg,
+            width: 32,
+            height: 32,
+            fontSize: "0.85rem",
+          }}
+        >
+          {isBot ? <Bot size={16} /> : initialsOf(comment.authorName)}
+        </Avatar>
+      )}
       <Paper
         variant="outlined"
         sx={{
@@ -308,6 +323,7 @@ export default function CsmCaseCommentBubble({
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
           <Typography variant="subtitle2">
+            {compact && "Commented by "}
             <UserRefLink
               name={comment.authorName}
               email={comment.authorUser?.email || comment.authorEmail}
@@ -332,6 +348,28 @@ export default function CsmCaseCommentBubble({
         <Box
           sx={{
             minWidth: 0,
+            maxWidth: "100%",
+            // Backend HTML can put an explicit pixel width on *any* element — a
+            // Word/Excel paste arrives as `<div style="width:2400px">`, and a
+            // `<pre>`/`<p>` can carry one just as easily — so the per-tag rules
+            // below can never cover every case.
+            //
+            // `contain: inline-size` is what actually stops it: it makes this
+            // box's own width independent of its contents, so an over-wide child
+            // can no longer inflate the *intrinsic* min-content width that
+            // otherwise propagates up the whole chain (bubble → feed → tab →
+            // page root → AppShell.Main) and drags the page off-screen, cutting
+            // off the header actions, the Overview grid's last column, and the
+            // timeline toolbar. `min-width: 0` / `overflow` alone do NOT do this:
+            // they zero a *flex item's* automatic minimum size, not the
+            // min-content contribution travelling up through block ancestors —
+            // verified empirically against this exact layout chain, where the
+            // page still blew out to 3080px with overflow set but no containment.
+            //
+            // `overflowX` then makes that over-wide content reachable by
+            // scrolling inside the comment, rather than being clipped away.
+            contain: "inline-size",
+            overflowX: "auto",
             overflowWrap: "anywhere",
             wordBreak: "break-word",
             "& p": { m: 0 },
@@ -345,11 +383,15 @@ export default function CsmCaseCommentBubble({
               fontSize: "0.85em",
               overflowWrap: "anywhere",
             },
+            // `maxWidth` matters as much as `overflowX` here: a `<pre>` carrying
+            // an explicit `width` would otherwise just *be* that wide, and
+            // `overflow-x` would have nothing to scroll.
             "& pre": {
               bgcolor: "background.default",
               p: 1,
               borderRadius: 1,
               overflowX: "auto",
+              maxWidth: "100%",
               fontFamily: "monospace",
               fontSize: "0.85em",
             },

@@ -69,9 +69,18 @@ export default function CreateServiceRequestPage(): JSX.Element {
   // CsmCaseDetailPage.tsx's "Create service request" button and
   // CreateRelatedCaseNavState's read in CsmCaseCreatePage.tsx for the
   // analogous case-create pattern.
-  const relatedCaseState = useLocation().state as
+  const location = useLocation();
+  const relatedCaseState = location.state as
     | CreateServiceRequestFromCaseNavState
     | undefined;
+
+  // Set when opened from a project's page Create menu
+  // (`/operations/service-requests/new?projectId=…`, state: { from:
+  // "/customers/projects/:id" }), so Back/Cancel return there instead of the
+  // hardcoded operations list, and the newly created service request's own
+  // Back button (reading this same convention) returns there too.
+  const backState = location.state as { from?: string } | undefined;
+  const backTarget = backState?.from ?? "/operations";
 
   // When opened from a project's page
   // (`/operations/service-requests/new?projectId=…`), the project is fixed
@@ -234,7 +243,7 @@ export default function CreateServiceRequestPage(): JSX.Element {
           `The service request was created, but ${failed} attachment${failed === 1 ? "" : "s"} failed to upload. You can add ${failed === 1 ? "it" : "them"} from the case page.`,
         );
       }
-      navigate(`/cases/${created.id}`);
+      navigate(`/cases/${created.id}`, { state: { from: backTarget } });
     } catch (err) {
       setSubmitting(false);
       // The backend surfaces real validation messages on 4xx; show them.
@@ -251,10 +260,10 @@ export default function CreateServiceRequestPage(): JSX.Element {
       <Button
         variant="text"
         startIcon={<ArrowLeft size={16} />}
-        onClick={() => navigate("/operations")}
+        onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to operations
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: relatedCaseId ? 0.5 : 2 }}>
         New service request
@@ -277,10 +286,10 @@ export default function CreateServiceRequestPage(): JSX.Element {
             }}
           >
             <Typography variant="body2" color="error.main">
-              Some dropdown options failed to load.
+              Some dropdown options failed to load. See the failed fields below for details.
             </Typography>
             <Button size="small" variant="outlined" onClick={retryOptions}>
-              Retry
+              Retry all
             </Button>
           </Box>
         )}
@@ -313,6 +322,8 @@ export default function CreateServiceRequestPage(): JSX.Element {
               </Select>
               {!projectId ? (
                 <FormHelperText>Select a project first</FormHelperText>
+              ) : deployments.isError ? (
+                <FormHelperText error>Failed to load deployments.</FormHelperText>
               ) : deployments.isLoading ? (
                 <FormHelperText>Loading deployments…</FormHelperText>
               ) : (deployments.data ?? []).length === 0 ? (
@@ -339,6 +350,8 @@ export default function CreateServiceRequestPage(): JSX.Element {
               </Select>
               {!deploymentId ? (
                 <FormHelperText>Select a deployment first</FormHelperText>
+              ) : deployedProducts.isError ? (
+                <FormHelperText error>Failed to load deployed products.</FormHelperText>
               ) : deployedProducts.isLoading ? (
                 <FormHelperText>Loading products…</FormHelperText>
               ) : (deployedProducts.data ?? []).length === 0 ? (
@@ -365,6 +378,8 @@ export default function CreateServiceRequestPage(): JSX.Element {
               </Select>
               {!deployedProductId ? (
                 <FormHelperText>Select a deployed product first</FormHelperText>
+              ) : catalogs.isError ? (
+                <FormHelperText error>Failed to load catalogs.</FormHelperText>
               ) : catalogs.isLoading ? (
                 <FormHelperText>Loading catalogs…</FormHelperText>
               ) : noCatalogs ? (
@@ -464,7 +479,7 @@ export default function CreateServiceRequestPage(): JSX.Element {
               Required field: {firstEmptyRequired}
             </Typography>
           )}
-          <Button variant="outlined" onClick={() => navigate("/operations")}>
+          <Button variant="outlined" onClick={() => navigate(backTarget)}>
             Cancel
           </Button>
           <Button

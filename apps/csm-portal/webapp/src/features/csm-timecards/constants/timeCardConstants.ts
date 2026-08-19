@@ -30,8 +30,9 @@ export interface ActivityBucket {
 
 /**
  * The five fixed activity categories, in display order — the activity types
- * from the Time Management requirement (ISSU-009). Write-only: the backend
- * accepts these hours on create but never returns them on read.
+ * from the Time Management requirement (ISSU-009). Shapes the log/edit-time
+ * form; the backend echoes these minutes back on read too (see
+ * `CsmTimeCard.breakdown`), which is what makes the edit form's prefill safe.
  */
 export const ACTIVITY_BUCKETS: ActivityBucket[] = [
   { key: "analysisDebugging", label: "Analysis and debugging" },
@@ -41,7 +42,7 @@ export const ACTIVITY_BUCKETS: ActivityBucket[] = [
   { key: "answering", label: "Answering" },
 ];
 
-/** Issue-complexity options (the ServiceNow "Issue Complexity" field). Write-only. */
+/** Issue-complexity options (the ServiceNow "Issue Complexity" field). */
 export const ISSUE_COMPLEXITY_OPTIONS: readonly IssueComplexity[] = [
   "N/A",
   "Low",

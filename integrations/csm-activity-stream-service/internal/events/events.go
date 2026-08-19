@@ -59,6 +59,6 @@ type CommentAddedPayload struct {
 
 // StatusChangedPayload is the Payload shape for TypeStatusChanged.
 type StatusChangedPayload struct {
-	Timestamp  string `json:"timestamp"`
-	NewStatus  string `json:"newStatus"`
+	Timestamp string `json:"timestamp"`
+	NewStatus string `json:"newStatus"`
 }

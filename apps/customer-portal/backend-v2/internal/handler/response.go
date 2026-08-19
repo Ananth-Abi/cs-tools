@@ -20,11 +20,13 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 
 	"github.com/wso2-open-operations/cs-tools/apps/customer-portal/backend-v2/internal/apierror"
@@ -154,6 +156,49 @@ func summarizeErr(err error) string {
 		}
 		return fmt.Sprintf("upstream status %d: %s", apiErr.StatusCode, apiErr.Body)
 	}
+	// Below here the failure carries no upstream HTTP status: a malformed
+	// upstream URL, a transport or TLS failure, a token fetch that never got a
+	// response, a cancelled context, or a response body this backend could not
+	// decode. All of them used to collapse into one opaque "upstream request
+	// failed", which made a 500 from any of these causes indistinguishable in
+	// the logs — a recommendations 500 took several rounds of guesswork to place
+	// because the log could not say whether the URL, the credentials, or the
+	// response shape was at fault.
+	//
+	// Categories and schema facts only. In particular this never logs
+	// err.Error() for a *url.Error, because that appends the full request URL
+	// (which for other clients can carry filter query params); url.Error.Err on
+	// its own does not.
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "upstream request timed out"
+	case errors.Is(err, context.Canceled):
+		return "upstream request canceled"
+	}
+
+	// Field/Type/Value here describe the contract, not the payload — e.g.
+	// `field "createdBy" expects string, got object` — so they are safe to log
+	// and they name the exact mismatch, which is the one thing that makes a
+	// Ballerina-to-Go field/type drift immediately obvious.
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		return fmt.Sprintf("response decode failed: field %q expects %s, got %s", typeErr.Field, typeErr.Type, typeErr.Value)
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
+		return fmt.Sprintf("response decode failed: malformed JSON at byte %d", syntaxErr.Offset)
+	}
+
+	// Op distinguishes a URL that would not parse ("parse") from a request that
+	// could not be sent ("Post"/"Get"); Err carries the reason without the URL —
+	// "unsupported protocol scheme", "invalid control character in URL", a dial
+	// failure — which is exactly what separates a misconfigured base URL from an
+	// unreachable or unauthorized upstream.
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) && urlErr.Err != nil {
+		return fmt.Sprintf("upstream %s failed: %s", urlErr.Op, urlErr.Err)
+	}
+
 	return "upstream request failed"
 }
 
@@ -194,3 +239,8 @@ func readBinaryBody(w http.ResponseWriter, r *http.Request, maxBytes int64) (bod
 	}
 	return body, true
 }
+
+// conversationStateConverted is the conversation state set when a case has been
+// created from a chat. It outranks RESOLVED — see handleMessage's resolved
+// branch in websocket.go, which refuses to downgrade it.
+const conversationStateConverted = "CONVERTED"

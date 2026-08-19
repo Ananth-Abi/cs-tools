@@ -85,10 +85,13 @@ func TestCaseService_SearchCases_RejectsUnsupportedPostgresFields(t *testing.T) 
 		{name: "parentId", filter: domain.CaseFieldFilter{Field: "parentId", Op: "eq", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
 		{name: "product", filter: domain.CaseFieldFilter{Field: "product", Op: "in", Values: []string{"API Manager"}}},
 		{name: "projectOnboardingStatus", filter: domain.CaseFieldFilter{Field: "projectOnboardingStatus", Op: "in", Values: []string{"Completed"}}},
-		{name: "projectType", filter: domain.CaseFieldFilter{Field: "projectType", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
-		{name: "integrationCsTeam", filter: domain.CaseFieldFilter{Field: "integrationCsTeam", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
+		{name: "projectType", filter: domain.CaseFieldFilter{Field: "projectType", Op: "in", Values: []string{"Subscription"}}},
+		{name: "creTeam", filter: domain.CaseFieldFilter{Field: "creTeam", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
+		{name: "sreTeam", filter: domain.CaseFieldFilter{Field: "sreTeam", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
 		{name: "assignedUserId isEmpty (Unassigned)", filter: domain.CaseFieldFilter{Field: "assignedUserId", Op: "isEmpty"}},
 		{name: "resolutionNotes isEmpty", filter: domain.CaseFieldFilter{Field: "resolutionNotes", Op: "isEmpty"}},
+		// state+in IS supported by this backend; only the exclusion is not.
+		{name: "state notIn", filter: domain.CaseFieldFilter{Field: "state", Op: "notIn", Values: []string{"closed"}}},
 	}
 
 	for _, tc := range cases {
@@ -198,13 +201,27 @@ func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
 			wantMsg: `field "escalation" is not supported by this data source`,
 		},
 		{
-			name: "orGroups",
+			name: "resolvedOn gte",
 			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
-				OrGroups: [][]domain.CaseFieldFilter{
-					{{Field: "state", Op: "in", Values: []string{"open"}}},
+				Filters: []domain.CaseFieldFilter{{Field: "resolvedOn", Op: "gte", Values: []string{"2026-01-01"}}},
+			}},
+			wantMsg: `field "resolvedOn" is not supported by this data source`,
+		},
+		{
+			name: "resolvedOn lte",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "resolvedOn", Op: "lte", Values: []string{"2026-01-31"}}},
+			}},
+			wantMsg: `field "resolvedOn" is not supported by this data source`,
+		},
+		{
+			name: "anyOf",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				AnyOf: []domain.CaseFilterBranch{
+					{Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}}},
 				},
 			}},
-			wantMsg: "orGroups is not supported by this data source",
+			wantMsg: "anyOf is not supported by this data source",
 		},
 		{
 			name:    "groupBy",

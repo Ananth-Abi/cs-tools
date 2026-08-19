@@ -14,7 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Chip, TablePagination, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Chip, TablePagination, Typography } from "@wso2/oxygen-ui";
+import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import {
   useCallback,
   useEffect,
@@ -25,11 +26,12 @@ import {
   type JSX,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
+import { useNavTransition } from "@hooks/useNavTransition";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { useBackendApi } from "@api/backend/client";
 import FilteredCsvExportButton from "@components/FilteredCsvExportButton";
@@ -58,6 +60,7 @@ import {
 } from "@features/csm-cases/utils/casesSort";
 import { stateLabel } from "@features/csm-dashboard/utils/abtDashboard";
 import { WORK_STATE_LABEL } from "@features/csm-cases/utils/caseWorkState";
+import RefreshButton from "@components/RefreshButton";
 import type { BeCaseSearchPayload, BeCaseSearchResponse } from "@api/backend/types";
 import type { CsmCaseRow } from "@features/csm-cases/types/csmCases";
 
@@ -65,16 +68,39 @@ const DEFAULT_ROWS_PER_PAGE = 20;
 const ROWS_PER_PAGE_OPTIONS = [10, DEFAULT_ROWS_PER_PAGE, BE_MAX_PAGE_LIMIT];
 
 // URL params owned by the filter state; cleared/rewritten on change while any
-// other params (e.g. a `tab` selection) are preserved.
+// other params (e.g. a `tab` selection) are preserved. Must cover every key
+// `writeCasesFiltersToUrl` can write — a key missing here never gets deleted
+// when its filter clears back to empty/null, so the stale URL value keeps
+// getting read back on the next render, making that one filter look
+// impossible to fully clear (found via workStates: selecting a work state
+// then trying to deselect it back to none silently failed because
+// `workStates` wasn't in this list).
 const FILTER_PARAM_KEYS = [
   "search",
   "severities",
   "states",
   "types",
   "assignees",
+  "workStates",
   "projects",
   "engagementTypes",
   "products",
+  "csTeams",
+  "sreTeams",
+  "tags",
+  "excludeTags",
+  "onboardingStatuses",
+  "slaPctGte",
+  "slaPctLte",
+  "escalation",
+  "escalationLevels",
+  "projectTypes",
+  "createdFrom",
+  "createdTo",
+  "updatedFrom",
+  "updatedTo",
+  "closedFrom",
+  "closedTo",
 ] as const;
 
 interface CsmIssuesViewProps {
@@ -89,6 +115,9 @@ interface CsmIssuesViewProps {
   lockedFilters?: Partial<CasesFilters>;
   /** Hide the case-type filter control (use when `lockedFilters` fixes it). */
   hideTypeFilter?: boolean;
+  /** Label for the case-type filter control; see `CasesFilterBar`'s own
+   * `typeFilterLabel` doc comment. Defaults to "Case type". */
+  typeFilterLabel?: string;
   /** Hide the project filter control (use when the view is project-scoped). */
   hideProjectFilter?: boolean;
   /** Show the engagement-type sub-filter (pass when the view is locked to engagement cases). */
@@ -99,6 +128,15 @@ interface CsmIssuesViewProps {
    * concept — SRA and Engagements don't surface it, but the main case list
    * keeps it). */
   hideSeverityColumn?: boolean;
+  /**
+   * Suppress this view's own "Back" button. Set when embedding this view as
+   * a sub-tab of a page that already renders its own page-level Back button
+   * (e.g. a project's Work items tab) — `location.state.from` is set on the
+   * *route*, not per-tab, so an embedded view still sees it and would
+   * otherwise render a second, redundant Back button pointing at the exact
+   * same destination as the outer page's.
+   */
+  hideBackButton?: boolean;
 }
 
 /**
@@ -114,16 +152,31 @@ export default function CsmIssuesView({
   entityNoun = "cases",
   lockedFilters,
   hideTypeFilter,
+  typeFilterLabel,
   hideProjectFilter,
   showEngagementTypeFilter,
   detailBasePath,
   hideSeverityColumn,
+  hideBackButton,
 }: CsmIssuesViewProps): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo<CasesFilters>(
     () => readCasesFiltersFromUrl(searchParams),
     [searchParams],
   );
+
+  const location = useLocation();
+  const navigate = useNavTransition();
+  // Set by DashboardWidgetTile's count/pie/bar click-throughs, since this
+  // view has no dashboard context of its own (unlike the dashboard's
+  // list-shape widget, whose embedded CasesList sets the same `from` shape
+  // pointing at the dashboard itself). `location.state` belongs to the
+  // *route*, not this component, so when this view is embedded as a
+  // project's Work items sub-tab it still sees whatever `from` the project
+  // page itself was reached with -- callers embedding it that way must pass
+  // `hideBackButton`, since the outer page already renders its own Back
+  // button to the same destination.
+  const backTo = (location.state as { from?: string } | null)?.from;
 
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
@@ -188,13 +241,15 @@ export default function CsmIssuesView({
     [filters, debouncedSearch, showSeverityFilter, lockedFilters],
   );
 
-  const { data, isLoading, isFetching, isError, error } = useGetCsmCases(
-    queryFilters,
-    page,
-    rowsPerPage,
-    true,
-    sortOrder,
-  );
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+    dataUpdatedAt,
+  } = useGetCsmCases(queryFilters, page, rowsPerPage, true, sortOrder);
 
   const handleSortOrderChange = (order: CasesSortOrder): void => {
     setSortOrder(order);
@@ -346,6 +401,17 @@ export default function CsmIssuesView({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      {backTo && !hideBackButton && (
+        <Button
+          variant="text"
+          size="small"
+          startIcon={<ArrowLeft size={16} />}
+          onClick={() => navigate(backTo)}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          Back
+        </Button>
+      )}
       <Box
         sx={{
           display: "flex",
@@ -367,6 +433,12 @@ export default function CsmIssuesView({
           {breachedCount > 0 && (
             <Chip size="small" color="error" label={`${breachedCount} breached`} />
           )}
+          <RefreshButton
+            onRefresh={() => void refetch()}
+            isFetching={isFetching}
+            updatedAt={dataUpdatedAt}
+            label={`Refresh ${entityNoun}`}
+          />
           <FilteredCsvExportButton<CsmCaseRow>
             entityName={entityNoun.replace(/\s+/g, "-")}
             entityNounPlural={entityNoun}
@@ -389,6 +461,7 @@ export default function CsmIssuesView({
         availableProjects={availableProjects}
         showSeverityFilter={showSeverityFilter}
         hideTypeFilter={hideTypeFilter}
+        typeFilterLabel={typeFilterLabel}
         hideProjectFilter={hideProjectFilter}
         showEngagementTypeFilter={showEngagementTypeFilter}
       />

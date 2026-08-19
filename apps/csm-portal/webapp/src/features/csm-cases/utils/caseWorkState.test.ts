@@ -16,7 +16,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  canResumeToUnlockPublicReply,
   caseAcceptsPublicComments,
+  effectiveWorkState,
   publicCommentGateReason,
 } from "./caseWorkState";
 
@@ -47,25 +49,112 @@ describe("caseAcceptsPublicComments", () => {
 });
 
 describe("publicCommentGateReason", () => {
-  it("returns null when public comments are allowed", () => {
-    expect(publicCommentGateReason("work_in_progress", "ongoing")).toBeNull();
+  it("returns null when public comments are allowed and the caller is the assignee", () => {
+    expect(
+      publicCommentGateReason("work_in_progress", "ongoing", true),
+    ).toBeNull();
   });
 
-  it("gives a resume hint for a paused case", () => {
-    expect(publicCommentGateReason("work_in_progress", "paused")).toMatch(
-      /paused/i,
+  it("gives a resume hint for the assignee's paused case", () => {
+    expect(
+      publicCommentGateReason("work_in_progress", "paused", true),
+    ).toMatch(/paused/i);
+  });
+
+  it("gives an in-progress hint for other states when the caller is the assignee", () => {
+    expect(publicCommentGateReason("open", null, true)).toMatch(
+      /in progress/i,
     );
-  });
-
-  it("gives an in-progress hint for other states", () => {
-    expect(publicCommentGateReason("open", null)).toMatch(/in progress/i);
-    expect(publicCommentGateReason("closed", null)).toMatch(/in progress/i);
+    expect(publicCommentGateReason("closed", null, true)).toMatch(
+      /in progress/i,
+    );
   });
 
   it("does not promise a work-note fallback (pending the backend exemption)", () => {
-    expect(publicCommentGateReason("open", null)).not.toMatch(/work note/i);
-    expect(publicCommentGateReason("work_in_progress", "paused")).not.toMatch(
+    expect(publicCommentGateReason("open", null, true)).not.toMatch(
       /work note/i,
     );
+    expect(
+      publicCommentGateReason("work_in_progress", "paused", true),
+    ).not.toMatch(/work note/i);
+  });
+
+  it("blocks a non-assignee with the ownership reason, even on an otherwise-open case", () => {
+    expect(
+      publicCommentGateReason("work_in_progress", "ongoing", false),
+    ).toMatch(/assigned engineer/i);
+  });
+
+  it("blocks a non-assignee with the ownership reason rather than the state/paused reason", () => {
+    const reason = publicCommentGateReason(
+      "work_in_progress",
+      "paused",
+      false,
+    );
+    expect(reason).toMatch(/assigned engineer/i);
+    expect(reason).not.toMatch(/paused/i);
+  });
+
+  it("blocks a non-assignee with the ownership reason regardless of case state", () => {
+    expect(publicCommentGateReason("open", null, false)).toMatch(
+      /assigned engineer/i,
+    );
+    expect(publicCommentGateReason("closed", null, false)).toMatch(
+      /assigned engineer/i,
+    );
+  });
+});
+
+describe("canResumeToUnlockPublicReply", () => {
+  it("is true for the engineer's own paused, work_in_progress case", () => {
+    expect(
+      canResumeToUnlockPublicReply("work_in_progress", "paused", true),
+    ).toBe(true);
+  });
+
+  it("is false when the case isn't assigned to the signed-in engineer, even if paused", () => {
+    expect(
+      canResumeToUnlockPublicReply("work_in_progress", "paused", false),
+    ).toBe(false);
+  });
+
+  it("is false once the case is already ongoing (nothing to resume)", () => {
+    expect(
+      canResumeToUnlockPublicReply("work_in_progress", "ongoing", true),
+    ).toBe(false);
+  });
+
+  it("is false when the case hasn't started yet, regardless of assignee", () => {
+    expect(canResumeToUnlockPublicReply("open", null, true)).toBe(false);
+    expect(canResumeToUnlockPublicReply("open", null, false)).toBe(false);
+  });
+
+  // A null/undefined workState on a work_in_progress case is a real, expected
+  // state (e.g. data predating the work-state feature), not just "open"'s
+  // absent-workState case above — and it's resumable, matching
+  // CaseActionBar's own deliberate handling of the same case (see its
+  // "anything else (paused OR a null work-state in-progress case) is
+  // resumable" comment in buildSecondaryItems). Requiring workState ===
+  // "paused" exactly here would hide this quick-fix for a case where the
+  // action bar's own "Resume work" item is still shown and functional.
+  it("is true for a work_in_progress case with a null or undefined work state", () => {
+    expect(canResumeToUnlockPublicReply("work_in_progress", null, true)).toBe(
+      true,
+    );
+    expect(
+      canResumeToUnlockPublicReply("work_in_progress", undefined, true),
+    ).toBe(true);
+  });
+});
+
+describe("effectiveWorkState", () => {
+  it("passes through an explicit work state as-is", () => {
+    expect(effectiveWorkState("ongoing")).toBe("ongoing");
+    expect(effectiveWorkState("paused")).toBe("paused");
+  });
+
+  it("treats a never-set work state as paused", () => {
+    expect(effectiveWorkState(null)).toBe("paused");
+    expect(effectiveWorkState(undefined)).toBe("paused");
   });
 });

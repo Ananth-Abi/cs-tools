@@ -20,8 +20,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
 )
 
 // UserService defines the operations available on the user entity.
@@ -77,6 +79,27 @@ type EventPublishFailureService interface {
 	// SearchEventPublishFailures returns a paginated list of rows matching
 	// the filters in req, newest first.
 	SearchEventPublishFailures(ctx context.Context, req domain.SearchEventPublishFailuresRequest) (domain.SearchEventPublishFailuresResponse, error)
+}
+
+// EventPublisherService publishes domain events to the case-events Event Hub
+// topic for csm-notification-service (and any other future consumer) to
+// react to — see eventPublisherService's doc comment for the wire format and
+// failure handling. Not yet constructed in cmd/api/main.go or called by any
+// handler/service — the next step is wiring NewEventPublisherService in and
+// calling Publish from whichever service methods create/update cases,
+// comments, and incidents.
+type EventPublisherService interface {
+	// Publish builds the {type, entityId, payload} envelope for eventType/
+	// entityID/payload and publishes it to Event Hub, keyed by entityID so
+	// every event about the same entity stays ordered on the same
+	// partition. If the publish itself fails (Event Hub never acknowledges
+	// it), Publish makes a best-effort call to CreateEventPublishFailure to
+	// durably record the failure before returning the original publish
+	// error.
+	Publish(ctx context.Context, eventType events.Type, entityID string, payload json.RawMessage) error
+	// Close releases the underlying Kafka connection. Safe to call once
+	// during shutdown.
+	Close()
 }
 
 // SNAccountService defines the account operations backed by the ServiceNow data source.
@@ -235,6 +258,11 @@ type CaseService interface {
 	// A ValidationError is returned for invalid input; any other error indicates an
 	// infrastructure failure.
 	SearchCases(ctx context.Context, req domain.SearchCasesRequest) (domain.SearchCasesResponse, error)
+	// GroupCasesBy returns server-side aggregated counts of cases per value of
+	// req.GroupBy (e.g. account), capped to the top req.MaxGroups buckets with
+	// the remainder folded into GroupByResponse.OthersCount. A ValidationError
+	// is returned for invalid input.
+	GroupCasesBy(ctx context.Context, req domain.GroupCasesByRequest) (domain.GroupByResponse, error)
 	// CreateCaseComment creates a new comment on the case identified by req.CaseID.
 	// A ValidationError is returned for invalid input or constraint violations.
 	CreateCaseComment(ctx context.Context, req domain.CreateCaseCommentRequest) (domain.CreateCaseCommentResponse, error)
@@ -269,19 +297,15 @@ type CaseService interface {
 	DeleteCaseAttachment(ctx context.Context, req domain.DeleteAttachmentRequest) (domain.DeleteAttachmentResponse, error)
 	// AddCaseTag attaches a free-text label to the case identified by caseID.
 	// A ValidationError is returned for invalid input (e.g. malformed UUID, empty label).
-	// Not yet available in the backing service: no Ballerina adapter exists yet for
-	// ServiceNow's generic label/label_entry mechanism; see AddCaseTagRequest doc comment.
 	AddCaseTag(ctx context.Context, caseID, label string) (domain.Tag, error)
 	// RemoveCaseTag removes the tag identified by tagID from the case identified by caseID.
 	// A NotFoundError is returned if the tag does not exist on the case.
-	// Not yet available in the backing service: same gap as AddCaseTag above.
 	RemoveCaseTag(ctx context.Context, caseID, tagID string) error
-	// SearchTags returns the tags (not scoped to any single case) whose label matches query,
-	// for FE autocomplete when attaching a tag to a case. An empty query returns all known tags.
-	// limit caps the number of results (<=0 means use the downstream default).
-	// Not yet available in the backing service: no Ballerina/Choreo endpoint exists yet for a
-	// case-agnostic tag search; see SearchTags in sn_case_service.go for the requested contract.
-	SearchTags(ctx context.Context, query string, limit int) ([]domain.Tag, error)
+	// SearchTags returns the tags (not scoped to any single case) whose label matches
+	// req.Filters.SearchQuery, for FE autocomplete when attaching a tag to a case. An empty
+	// query returns all known tags. req.Limit caps the number of results (<=0 means use the
+	// downstream default).
+	SearchTags(ctx context.Context, req domain.SearchTagsRequest) ([]domain.Tag, error)
 	// GetCaseFeedback returns the feedback previously submitted for the case identified
 	// by id. A NotFoundError is returned if none has been submitted.
 	// Supported by the ServiceNow data source only.
@@ -329,6 +353,11 @@ type CallRequestService interface {
 	// SearchCallRequests returns a paginated list of call requests for the given case.
 	// A ValidationError is returned for invalid input.
 	SearchCallRequests(ctx context.Context, req domain.SearchCallRequestsRequest) (domain.SearchCallRequestsResponse, error)
+	// SearchAllCallRequests returns a paginated list of call requests across all
+	// cases, filtered by assignee/state -- distinct from SearchCallRequests, which
+	// is scoped to one case and has no filter set of its own.
+	// A ValidationError is returned for invalid input.
+	SearchAllCallRequests(ctx context.Context, req domain.SearchAllCallRequestsRequest) (domain.SearchCallRequestsResponse, error)
 	// UpdateCallRequest updates the state or other fields of a call request.
 	// The target state selects the behaviour (customer/agent transitions, scheduling,
 	// rejection, conclusion with notes). A ValidationError is returned for invalid
@@ -345,6 +374,12 @@ type ChangeRequestService interface {
 	// SearchChangeRequests returns a paginated list of change requests filtered by optional
 	// project IDs, state keys, impact keys, date ranges, and search query.
 	SearchChangeRequests(ctx context.Context, req domain.SearchChangeRequestsRequest) (domain.SearchChangeRequestsResponse, error)
+
+	// GroupChangeRequestsBy returns server-side aggregated counts of change requests
+	// per value of req.GroupBy, capped to the top req.MaxGroups buckets with the
+	// remainder folded into GroupByResponse.OthersCount. A ValidationError is
+	// returned for invalid input.
+	GroupChangeRequestsBy(ctx context.Context, req domain.GroupChangeRequestsByRequest) (domain.GroupByResponse, error)
 
 	// GetChangeRequest returns the full detail of a single change request by its UUID.
 	GetChangeRequest(ctx context.Context, id string) (domain.ChangeRequest, error)
@@ -376,6 +411,13 @@ type TimeCardService interface {
 	// case, using the same filters as SearchTimeCards. Supported by the ServiceNow data
 	// source only.
 	SearchCaseTimeCards(ctx context.Context, req domain.SearchTimeCardsRequest) (domain.SearchCaseTimeCardsResponse, error)
+	// DeleteTimeCard permanently deletes a time card. Matches UpdateTimeCard's
+	// trust model exactly: this only validates the ID's shape and forwards the
+	// caller's token to SN, which enforces that only the submitter may delete
+	// their own card, and only while it's still in the submitted state — see
+	// UpdateTimeCard's own doc comment for why that authorization isn't (and,
+	// consistent with every other write here, shouldn't be) duplicated in Go.
+	DeleteTimeCard(ctx context.Context, req domain.DeleteTimeCardRequest) (domain.DeleteTimeCardResponse, error)
 }
 
 // ConfigurationItemService defines the operations available on the configuration items entity.
@@ -475,6 +517,12 @@ type IncidentService interface {
 	// priority keys, and parent IDs. A ValidationError is returned for invalid input.
 	SearchIncidents(ctx context.Context, req domain.SearchIncidentsRequest) (domain.SearchIncidentsResponse, error)
 
+	// GroupIncidentsBy returns server-side aggregated counts of incidents per
+	// value of req.GroupBy, capped to the top req.MaxGroups buckets with the
+	// remainder folded into GroupByResponse.OthersCount. A ValidationError is
+	// returned for invalid input.
+	GroupIncidentsBy(ctx context.Context, req domain.GroupIncidentsByRequest) (domain.GroupByResponse, error)
+
 	// CreateIncident creates a new incident in ServiceNow.
 	// callerId, category, serviceId, impact, urgency, and subject are required.
 	CreateIncident(ctx context.Context, req domain.CreateIncidentRequest) (domain.CreateIncidentResponse, error)
@@ -486,6 +534,10 @@ type IncidentService interface {
 	// UpdateIncident partially updates an existing incident. At least one field must be
 	// provided. A NotFoundError is returned if the incident does not exist.
 	UpdateIncident(ctx context.Context, req domain.UpdateIncidentRequest) (domain.UpdateIncidentResponse, error)
+
+	// SearchIncidentActivities returns a paginated activity feed for an incident.
+	// Confirmed as a real, distinct endpoint from SearchCaseActivities.
+	SearchIncidentActivities(ctx context.Context, req domain.SearchIncidentActivitiesRequest) (domain.SearchIncidentActivitiesResponse, error)
 }
 
 // ProblemService defines the operations available on the problems entity.
@@ -494,6 +546,12 @@ type ProblemService interface {
 	// A ValidationError is returned for invalid input.
 	SearchProblems(ctx context.Context, req domain.SearchProblemsRequest) (domain.SearchProblemsResponse, error)
 
+	// GroupProblemsBy returns server-side aggregated counts of problems per
+	// value of req.GroupBy, capped to the top req.MaxGroups buckets with the
+	// remainder folded into GroupByResponse.OthersCount. A ValidationError is
+	// returned for invalid input.
+	GroupProblemsBy(ctx context.Context, req domain.GroupProblemsByRequest) (domain.GroupByResponse, error)
+
 	// GetProblem returns the full detail of a single problem by its UUID.
 	// A NotFoundError is returned if the problem does not exist.
 	GetProblem(ctx context.Context, id string) (domain.ProblemDetail, error)
@@ -501,6 +559,25 @@ type ProblemService interface {
 	// CreateProblem creates a new problem. Subject is required; OriginCaseID is optional.
 	// Supported by the ServiceNow data source only.
 	CreateProblem(ctx context.Context, req domain.CreateProblemRequest) (domain.ProblemDetail, error)
+}
+
+// IncidentTaskService defines the operations available on the incident_task entity.
+// Search and get only -- there is no create/update path.
+type IncidentTaskService interface {
+	// SearchIncidentTasks returns a paginated list of incident tasks filtered by
+	// optional search query and field filters. A ValidationError is returned for
+	// invalid input.
+	SearchIncidentTasks(ctx context.Context, req domain.SearchIncidentTasksRequest) (domain.SearchIncidentTasksResponse, error)
+
+	// GroupIncidentTasksBy returns server-side aggregated counts of incident
+	// tasks per value of req.GroupBy, capped to the top req.MaxGroups buckets
+	// with the remainder folded into GroupByResponse.OthersCount. A
+	// ValidationError is returned for invalid input.
+	GroupIncidentTasksBy(ctx context.Context, req domain.GroupIncidentTasksByRequest) (domain.GroupByResponse, error)
+
+	// GetIncidentTask returns the full detail of a single incident task by its UUID.
+	// A NotFoundError is returned if the incident task does not exist.
+	GetIncidentTask(ctx context.Context, id string) (domain.IncidentTaskDetail, error)
 }
 
 // ConversationService defines the operations available on the conversations entity.
@@ -544,18 +621,6 @@ type EscalationService interface {
 	// Action defaults to ESCALATE when omitted; Reason is required when the (defaulted)
 	// action is ESCALATE. A ValidationError is returned for invalid input.
 	CreateEscalation(ctx context.Context, req domain.CreateEscalationRequest) (domain.CreateEscalationResponse, error)
-}
-
-// RoleService serves the platform's assignable-role catalogue.
-type RoleService interface {
-	// SearchRoles returns a paginated slice of the role catalogue.
-	SearchRoles(ctx context.Context, req domain.SearchRolesRequest) (domain.SearchRolesResponse, error)
-}
-
-// TeamService serves the team registry.
-type TeamService interface {
-	// SearchTeams returns a paginated slice of the team registry.
-	SearchTeams(ctx context.Context, req domain.SearchTeamsRequest) (domain.SearchTeamsResponse, error)
 }
 
 // InstanceService defines the operations available on the instances entity.

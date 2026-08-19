@@ -38,7 +38,6 @@ import {
   Eye,
   History,
   Link as LinkIcon,
-  MapPin,
   Paperclip,
   Plus,
   Search,
@@ -78,6 +77,7 @@ import type { ProjectDetails } from "@features/csm-projects/types/csmProjects";
 import type { BeDeployment } from "@api/backend/types";
 import RelativeTime from "@components/RelativeTime";
 import UserRefLink from "@components/UserRefLink";
+import RefreshButton from "@components/RefreshButton";
 
 // ---------------------------------------------------------------------------
 // Shared widget shell
@@ -241,23 +241,11 @@ export function CustomerContextWidget({
           )}
         </Typography>
       </MetaRow>
-      <MetaRow label="Account Manager">
-        <Typography variant="body2">{ctx.accountManager}</Typography>
-      </MetaRow>
       {ctx.technicalOwner && (
         <MetaRow label="Technical Owner">
           <Typography variant="body2">{ctx.technicalOwner}</Typography>
         </MetaRow>
       )}
-      <MetaRow label="Region">
-        <Typography
-          variant="body2"
-          sx={{ display: "flex", alignItems: "center", gap: 0.5 }}
-        >
-          <MapPin size={12} />
-          {ctx.region}
-        </Typography>
-      </MetaRow>
       {(ctx.creTeam || ctx.sreTeam) && (
         <MetaRow label="CRE / SRE team">
           <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
@@ -565,6 +553,9 @@ export function WatchersWidget({
   onAdd,
   onRemove,
   isSaving,
+  onRefresh,
+  isRefreshing,
+  refreshedAt,
 }: {
   watchers: CaseWatcher[];
   /** Add a watcher by email — the caller PATCHes the full replacement watch
@@ -576,6 +567,11 @@ export function WatchersWidget({
   onRemove?: (watcher: CaseWatcher) => void;
   /** True while a watch-list PATCH is in flight; disables add/remove. */
   isSaving?: boolean;
+  /** Re-runs the case-detail query the watch list comes from. Omit to hide
+   * the refresh control. */
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  refreshedAt?: number;
 }): JSX.Element {
   const [addOpen, setAddOpen] = useState(false);
   const existingEmails = useMemo(
@@ -591,17 +587,27 @@ export function WatchersWidget({
       title="Watchers"
       icon={<Users size={16} />}
       action={
-        onAdd ? (
-          <Button
-            size="small"
-            variant="text"
-            startIcon={<Plus size={14} />}
-            disabled={isSaving}
-            onClick={() => setAddOpen((v) => !v)}
-          >
-            Add watcher
-          </Button>
-        ) : undefined
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          {onRefresh && (
+            <RefreshButton
+              onRefresh={onRefresh}
+              isFetching={!!isRefreshing}
+              updatedAt={refreshedAt}
+              label="Refresh watchers"
+            />
+          )}
+          {onAdd && (
+            <Button
+              size="small"
+              variant="text"
+              startIcon={<Plus size={14} />}
+              disabled={isSaving}
+              onClick={() => setAddOpen((v) => !v)}
+            >
+              Add watcher
+            </Button>
+          )}
+        </Box>
       }
     >
       {watchers.length === 0 ? (
@@ -744,6 +750,9 @@ export function AttachmentsWidget({
   onDelete,
   deletingId,
   preview,
+  onRefresh,
+  isRefreshing,
+  refreshedAt,
 }: {
   attachments: CaseAttachment[];
   /** List query is loading. */
@@ -781,6 +790,10 @@ export function AttachmentsWidget({
     previewTarget: CaseAttachment | null;
     onPreviewTargetChange: (attachment: CaseAttachment | null) => void;
   };
+  /** Re-runs the attachments list query. Omit to hide the refresh control. */
+  onRefresh?: () => void;
+  isRefreshing?: boolean;
+  refreshedAt?: number;
 }): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const sorted = [...attachments].sort(
@@ -803,6 +816,14 @@ export function AttachmentsWidget({
         icon={<Paperclip size={16} />}
         action={
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+            {onRefresh && (
+              <RefreshButton
+                onRefresh={onRefresh}
+                isFetching={!!isRefreshing}
+                updatedAt={refreshedAt}
+                label="Refresh attachments"
+              />
+            )}
             {onUpload && (
               <Button
                 size="small"

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -60,6 +61,9 @@ type snProject struct {
 	EndDate   string                  `json:"endDate"`
 	CreatedOn string                  `json:"createdOn"`
 	Account   snProjectSummaryAccount `json:"account"`
+	// ActiveCasesCount is required (not a pointer) because the portal's
+	// ProjectListItem types it as a non-optional number.
+	ActiveCasesCount int `json:"activeCasesCount"`
 	snProjectClosureFields
 }
 
@@ -98,8 +102,47 @@ type snProjectPagination struct {
 // snCreatedOnLayout is the datetime format used by the Choreo API.
 const snCreatedOnLayout = "2006-01-02 15:04:05"
 
+// snAltCreatedOnLayout is an alternate datetime format ServiceNow occasionally
+// returns instead of snCreatedOnLayout for the same fields (createdOn, updatedOn,
+// resolvedOn, autoclosureStateTime, ...). Root cause (confirmed via Choreo prod
+// logs): an SN-side script include reads these fields with
+// GlideRecord.getDisplayValue(), which renders per session locale, instead of
+// getValue(), which is always canonical ISO. Fixing that is out of scope here
+// (the SN scoped app is shared with the live customer portal) — see
+// parseSNDateTime, the Go-side tolerant parser that works around it.
+const snAltCreatedOnLayout = "01-02-2006 15:04:05"
+
 // snDateLayout is the date-only format used by the Choreo API for start/end dates.
 const snDateLayout = "2006-01-02"
+
+// parseSNDateTime parses a ServiceNow datetime string, tolerating both formats
+// observed in production. It tries snCreatedOnLayout first — the overwhelmingly
+// common case, and the fast path — and only on failure falls back to
+// snAltCreatedOnLayout.
+//
+// Before this helper existed, a bare time.Parse(snCreatedOnLayout, ...) on one
+// of these fields would return an error, and callers turned that into a 500 —
+// even though the underlying SN write (case update, new comment) had already
+// succeeded. See the case/comment PATCH and POST paths in sn_case_service.go
+// and sn_comment_service.go.
+//
+// callSite and field identify where the value came from, for the WARN logged
+// when the fallback format is the one that actually matched: this keeps the
+// upstream format drift visible/monitorable instead of silently masked. If
+// neither format parses, the original snCreatedOnLayout error is returned
+// unchanged — a genuinely malformed value still fails the request.
+func parseSNDateTime(ctx context.Context, callSite, field, value string) (time.Time, error) {
+	t, err := time.Parse(snCreatedOnLayout, value)
+	if err == nil {
+		return t, nil
+	}
+	if alt, altErr := time.Parse(snAltCreatedOnLayout, value); altErr == nil {
+		slog.WarnContext(ctx, "sn date field in alternate MM-DD-YYYY format, applied fallback parse",
+			"callSite", callSite, "field", field)
+		return alt, nil
+	}
+	return time.Time{}, err
+}
 
 type snProjectService struct {
 	client     *integrationservice.Client
@@ -196,6 +239,7 @@ func (s *snProjectService) SearchProjects(ctx context.Context, req domain.Search
 			EndDate:          endDate,
 			CreatedOn:        createdOn,
 			Account:          account,
+			ActiveCasesCount: p.ActiveCasesCount,
 			ProjectClosureFields: domain.ProjectClosureFields{
 				ClosureState:                    p.ClosureState,
 				EndDateClosureState:             p.EndDateClosureState,
@@ -228,6 +272,21 @@ type snProjectDetailsResponse struct {
 	EndDate   string           `json:"endDate"`
 	Type      snProjectType    `json:"type"`
 	Account   snProjectAccount `json:"account"`
+
+	// Query/onboarding entitlement balances and onboarding milestones.
+	// ServiceNow types the hour fields as decimals and may omit any of them, so
+	// each is a pointer — a nil balance ("not tracked for this project") is a
+	// different fact from a zero one ("tracked, none left").
+	TotalQueryHours          *float64 `json:"totalQueryHours"`
+	ConsumedQueryHours       *float64 `json:"consumedQueryHours"`
+	RemainingQueryHours      *float64 `json:"remainingQueryHours"`
+	TotalOnboardingHours     *float64 `json:"totalOnboardingHours"`
+	ConsumedOnboardingHours  *float64 `json:"consumedOnboardingHours"`
+	RemainingOnboardingHours *float64 `json:"remainingOnboardingHours"`
+	GoLiveDate               *string  `json:"goLiveDate"`
+	GoLivePlanDate           *string  `json:"goLivePlanDate"`
+	OnboardingExpiryDate     *string  `json:"onboardingExpiryDate"`
+	OnboardingStatus         *string  `json:"onboardingStatus"`
 	snProjectClosureFields
 }
 
@@ -239,9 +298,34 @@ type snProjectAccount struct {
 	Region          *string `json:"region"`
 	HasAgent        bool    `json:"hasAgent"`
 	HasKbReferences bool    `json:"hasKbReferences"`
+	// The owning and technical contacts live on the account, not the project —
+	// matching Ballerina's ProjectResponse.account and the portal's
+	// ProjectDetailsAccount type.
+	OwnerEmail          *string `json:"ownerEmail"`
+	TechnicalOwnerEmail *string `json:"technicalOwnerEmail"`
+	DeactivationDate    *string `json:"deactivationDate"`
 }
 
 // GetProjectByID implements ProjectService by calling the Choreo GET /projects/{id} endpoint.
+// optionalSNProjectDate parses an optional ServiceNow date, returning nil when
+// the field is absent or empty.
+//
+// A present-but-malformed value is an error rather than a silent nil, matching
+// how this file already treated account activationDate before these fields were
+// added. Note this means one bad date fails the whole project read; that
+// strictness is inherited deliberately rather than newly introduced, so all
+// optional project dates behave the same way.
+func optionalSNProjectDate(label string, v *string) (*time.Time, error) {
+	if v == nil || *v == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(snDateLayout, *v)
+	if err != nil {
+		return nil, fmt.Errorf("sn projects: parse %s %q: %w", label, *v, err)
+	}
+	return &t, nil
+}
+
 func (s *snProjectService) GetProjectByID(ctx context.Context, id string) (domain.ProjectDetailsView, error) {
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -275,13 +359,25 @@ func (s *snProjectService) GetProjectByID(ctx context.Context, id string) (domai
 		return domain.ProjectDetailsView{}, fmt.Errorf("sn projects: project %q: %w", sn.ID, err)
 	}
 
-	var activationDate *time.Time
-	if sn.Account.ActivationDate != nil && *sn.Account.ActivationDate != "" {
-		t, err := time.Parse(snDateLayout, *sn.Account.ActivationDate)
-		if err != nil {
-			return domain.ProjectDetailsView{}, fmt.Errorf("sn projects: parse account activationDate %q: %w", *sn.Account.ActivationDate, err)
-		}
-		activationDate = &t
+	activationDate, err := optionalSNProjectDate("account activationDate", sn.Account.ActivationDate)
+	if err != nil {
+		return domain.ProjectDetailsView{}, err
+	}
+	deactivationDate, err := optionalSNProjectDate("account deactivationDate", sn.Account.DeactivationDate)
+	if err != nil {
+		return domain.ProjectDetailsView{}, err
+	}
+	goLiveDate, err := optionalSNProjectDate("goLiveDate", sn.GoLiveDate)
+	if err != nil {
+		return domain.ProjectDetailsView{}, err
+	}
+	goLivePlanDate, err := optionalSNProjectDate("goLivePlanDate", sn.GoLivePlanDate)
+	if err != nil {
+		return domain.ProjectDetailsView{}, err
+	}
+	onboardingExpiryDate, err := optionalSNProjectDate("onboardingExpiryDate", sn.OnboardingExpiryDate)
+	if err != nil {
+		return domain.ProjectDetailsView{}, err
 	}
 
 	return domain.ProjectDetailsView{
@@ -302,14 +398,29 @@ func (s *snProjectService) GetProjectByID(ctx context.Context, id string) (domai
 			ComplianceViolationDate:         sn.ComplianceViolationDate,
 			SuspensionProcessState:          sn.SuspensionProcessState,
 		},
+		ProjectEngagementFields: domain.ProjectEngagementFields{
+			TotalQueryHours:          sn.TotalQueryHours,
+			ConsumedQueryHours:       sn.ConsumedQueryHours,
+			RemainingQueryHours:      sn.RemainingQueryHours,
+			TotalOnboardingHours:     sn.TotalOnboardingHours,
+			ConsumedOnboardingHours:  sn.ConsumedOnboardingHours,
+			RemainingOnboardingHours: sn.RemainingOnboardingHours,
+			GoLiveDate:               goLiveDate,
+			GoLivePlanDate:           goLivePlanDate,
+			OnboardingExpiryDate:     onboardingExpiryDate,
+			OnboardingStatus:         sn.OnboardingStatus,
+		},
 		Account: domain.ProjectAccountRef{
 			ID:                  sysidToUUID(sn.Account.ID),
 			Name:                sn.Account.Name,
 			ActivationDate:      activationDate,
+			DeactivationDate:    deactivationDate,
 			Tier:                sn.Account.SupportTier,
 			Region:              sn.Account.Region,
 			AgentEnabled:        sn.Account.HasAgent,
 			KbReferencesEnabled: sn.Account.HasKbReferences,
+			OwnerEmail:          sn.Account.OwnerEmail,
+			TechnicalOwnerEmail: sn.Account.TechnicalOwnerEmail,
 		},
 	}, nil
 }

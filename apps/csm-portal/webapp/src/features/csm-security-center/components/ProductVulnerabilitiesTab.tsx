@@ -32,6 +32,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Search } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type ChangeEvent, type JSX } from "react";
+import { useLocation } from "react-router";
 import QueryErrorState from "@components/QueryErrorState";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useSearchProductVulnerabilities } from "@features/csm-security-center/api/useSearchProductVulnerabilities";
@@ -42,6 +43,7 @@ import {
 } from "@features/csm-security-center/utils/vulnerabilities";
 import type { BeVulnerabilityPriority } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
+import RefreshButton from "@components/RefreshButton";
 
 const DEFAULT_ROWS_PER_PAGE = 20;
 const ROWS_PER_PAGE_OPTIONS = [10, 20, 50];
@@ -53,6 +55,7 @@ const ROWS_PER_PAGE_OPTIONS = [10, 20, 50];
  */
 export default function ProductVulnerabilitiesTab(): JSX.Element {
   const navigate = useNavTransition();
+  const location = useLocation();
   const [searchInput, setSearchInput] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<BeVulnerabilityPriority | "">("");
   const [page, setPage] = useState(0);
@@ -70,7 +73,7 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
     [debouncedSearch, priorityFilter, page, rowsPerPage],
   );
 
-  const { data, isLoading, isError, error, isFetching } =
+  const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } =
     useSearchProductVulnerabilities(payload);
 
   const vulnerabilities = data?.productVulnerabilities ?? [];
@@ -93,7 +96,8 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2, flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
         <TextField
           value={searchInput}
           onChange={handleSearchChange}
@@ -129,6 +133,13 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
             </MenuItem>
           ))}
         </TextField>
+        </Box>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label="Refresh vulnerabilities"
+        />
       </Box>
 
       <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
@@ -180,15 +191,26 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
                   const detailPath = `/security-center/vulnerabilities/${encodeURIComponent(
                     vuln.id,
                   )}`;
+                  // `parentState` nests this tab's OWN inherited state (e.g.
+                  // `{ from: "/dashboard" }`, when this page was itself
+                  // reached from a dashboard widget) so the detail page can
+                  // restore it on its own way back — otherwise a
+                  // dashboard → here → detail → Back round trip would land
+                  // back on this tab with no `from`, silently dropping its
+                  // own Back button.
+                  const detailState = {
+                    from: `${location.pathname}${location.search}`,
+                    parentState: location.state ?? null,
+                  };
                   return (
                   <TableRow
                     key={vuln.id}
                     hover
-                    onClick={() => navigate(detailPath)}
+                    onClick={() => navigate(detailPath, { state: detailState })}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        navigate(detailPath);
+                        navigate(detailPath, { state: detailState });
                       }
                     }}
                     tabIndex={0}

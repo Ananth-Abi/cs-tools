@@ -48,22 +48,22 @@ func TestGetCase(t *testing.T) {
 		wantErr        bool
 	}{
 		{
-			name: "success",
-			responseBody: []byte(`{"id":"CASE-1","state":"open"}`),
+			name:           "success",
+			responseBody:   []byte(`{"id":"CASE-1","state":"open"}`),
 			responseStatus: http.StatusOK,
-			wantErr: false,
+			wantErr:        false,
 		},
 		{
-			name: "not found",
-			responseBody: []byte(`{"message":"Case not found"}`),
+			name:           "not found",
+			responseBody:   []byte(`{"message":"Case not found"}`),
 			responseStatus: http.StatusNotFound,
-			wantErr: true,
+			wantErr:        true,
 		},
 		{
-			name: "upstream error",
-			responseBody: []byte(`{"message":"Internal server error"}`),
+			name:           "upstream error",
+			responseBody:   []byte(`{"message":"Internal server error"}`),
 			responseStatus: http.StatusInternalServerError,
-			wantErr: true,
+			wantErr:        true,
 		},
 	}
 
@@ -79,7 +79,7 @@ func TestGetCase(t *testing.T) {
 			tokenSrv := newCustomerTokenServer(t)
 			defer tokenSrv.Close()
 
-tokenFetchTimeout = 5 * time.Second
+			tokenFetchTimeout = 5 * time.Second
 			t.Cleanup(func() { tokenFetchTimeout = 10 * time.Second })
 
 			cfg := CustomerEntityConfig{

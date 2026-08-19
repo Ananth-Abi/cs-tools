@@ -25,8 +25,8 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Check, X } from "@wso2/oxygen-ui-icons-react";
-import RelativeTime from "@components/RelativeTime";
+import RelativeDate from "@components/RelativeDate";
+import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 import {
   billableLabel,
   LEAD_COMMENT_MAX,
@@ -65,10 +65,42 @@ function Field({ label, value }: { label: string; value: string }): JSX.Element 
 }
 
 /**
+ * The engineer's own work-log comment from submission — ServiceNow rich-text
+ * HTML, so it's sanitized and rendered as HTML (same policy as a case
+ * comment's body). Renders nothing when the card has none (e.g. logged
+ * before this field was mapped).
+ */
+function WorkLogComment({ html }: { html?: string }): JSX.Element | null {
+  if (!html || isBlankHtml(html)) return null;
+  const safeHtml = sanitizeRichTextHtml(html);
+  return (
+    <Box>
+      <Typography variant="caption" color="text.secondary">
+        Engineer's comment
+      </Typography>
+      <Box
+        sx={{
+          fontSize: "0.875rem",
+          lineHeight: 1.5,
+          wordBreak: "break-word",
+          "& p": { my: 0.5 },
+          "& p:first-of-type": { mt: 0 },
+          "& p:last-child": { mb: 0 },
+          "& ul, & ol": { my: 0.5, pl: 3 },
+          "& a": { color: "primary.main" },
+          "& img": { maxWidth: "100%", height: "auto" },
+        }}
+        dangerouslySetInnerHTML={{ __html: safeHtml }}
+      />
+    </Box>
+  );
+}
+
+/**
  * Team-lead review of a submitted time card, then accept or reject with an
  * optional comment. Only shows what the backend actually returns on read —
- * issue complexity, work-log comment and the per-activity minute breakdown
- * are accepted on create but never echoed back, so they aren't shown here.
+ * issue complexity and the per-activity minute breakdown are accepted on
+ * create but never echoed back, so they aren't shown here.
  */
 export default function TimeCardReviewDialog({
   card,
@@ -120,10 +152,12 @@ export default function TimeCardReviewDialog({
                 Logged
               </Typography>
               <Typography variant="body2">
-                <RelativeTime iso={card.workDate} />
+                <RelativeDate value={card.workDate} />
               </Typography>
             </Box>
           </Box>
+
+          <WorkLogComment html={card.workLogComment} />
 
           <TextField
             label={
@@ -155,7 +189,6 @@ export default function TimeCardReviewDialog({
           <Button
             color="error"
             variant="outlined"
-            startIcon={<X size={16} />}
             onClick={() => decide("rejected")}
             disabled={isDeciding}
           >
@@ -164,9 +197,8 @@ export default function TimeCardReviewDialog({
         )}
         {action !== "reject" && (
           <Button
-            color="success"
+            color="primary"
             variant="outlined"
-            startIcon={<Check size={16} />}
             onClick={() => decide("approved")}
             disabled={isDeciding}
           >

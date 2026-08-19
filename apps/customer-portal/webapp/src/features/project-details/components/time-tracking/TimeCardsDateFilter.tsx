@@ -14,23 +14,31 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import {
-  Card,
-  Box,
-  Typography,
-  TextField,
-  InputAdornment,
-  Button,
-} from "@wso2/oxygen-ui";
+import { Box, Typography, Button, DatePickers, AdapterDateFns } from "@wso2/oxygen-ui";
 import { Calendar, X } from "@wso2/oxygen-ui-icons-react";
-import { type JSX } from "react";
+import { format } from "date-fns";
+
+const { LocalizationProvider, DatePicker } = DatePickers;
+import type { JSX } from "react";
 import type { TimeCardsDateFilterProps } from "@features/project-details/types/projectDetailsComponents";
 
+function parseDateOnly(value: string): Date | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateOnly(date: Date): string {
+  return format(date, "yyyy-MM-dd");
+}
+
 /**
- * TimeCardsDateFilter provides date range filters for time cards.
+ * TimeCardsDateFilter provides a compact time-range filter for time cards.
  *
- * @param {TimeCardsDateFilterProps} props - Date values, change handlers, and optional clear handler.
- * @returns {JSX.Element} The rendered filter card.
+ * @param {TimeCardsDateFilterProps} props - Date values and change handlers.
+ * @returns {JSX.Element} The rendered filter row.
  */
 export default function TimeCardsDateFilter({
   startDate,
@@ -38,108 +46,74 @@ export default function TimeCardsDateFilter({
   onStartDateChange,
   onEndDateChange,
   onClear,
-  hasFilters,
 }: TimeCardsDateFilterProps): JSX.Element {
+  const hasFilters = Boolean(startDate || endDate);
+  const parsedStart = parseDateOnly(startDate);
+  const parsedEnd = parseDateOnly(endDate);
+
   return (
-    <Card
-      sx={{
-        p: 3,
-        display: "flex",
-        flexDirection: "column",
-        gap: 3,
-      }}
-    >
+    <LocalizationProvider dateAdapter={AdapterDateFns}>
       <Box
         sx={{
           display: "flex",
           alignItems: "center",
-          gap: 2,
+          gap: 1.5,
           flexWrap: "wrap",
         }}
       >
-        <Typography
-          variant="body2"
-          component="label"
-          sx={{
-            fontWeight: 500,
-            color: "text.secondary",
-            whiteSpace: "nowrap",
-          }}
-        >
-          Filter by Date Range:
+        <Calendar size={18} />
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          Time Range:
         </Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography
-              component="label"
-              htmlFor="time-cards-start-date"
-              variant="body2"
-              sx={{
-                fontWeight: 500,
-                color: "text.secondary",
-                whiteSpace: "nowrap",
-              }}
-            >
-              From:
-            </Typography>
-            <TextField
-              id="time-cards-start-date"
-              type="date"
-              size="small"
-              value={startDate}
-              onChange={(e) => onStartDateChange(e.target.value)}
-              sx={{ minWidth: 200 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Calendar size={16} />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Box>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography
-              component="label"
-              htmlFor="time-cards-end-date"
-              variant="body2"
-              sx={{
-                fontWeight: 500,
-                color: "text.secondary",
-                whiteSpace: "nowrap",
-              }}
-            >
-              To:
-            </Typography>
-            <TextField
-              id="time-cards-end-date"
-              type="date"
-              size="small"
-              value={endDate}
-              onChange={(e) => onEndDateChange(e.target.value)}
-              sx={{ minWidth: 200 }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <Calendar size={16} />
-                  </InputAdornment>
-                ),
-              }}
-            />
-          </Box>
-          {hasFilters && onClear && (
-            <Button
-              variant="text"
-              size="small"
-              onClick={onClear}
-              startIcon={<X size={16} />}
-              sx={{ color: "text.secondary" }}
-            >
-              Clear
-            </Button>
-          )}
-        </Box>
+        <DatePicker
+          value={parsedStart}
+          disableFuture
+          maxDate={parsedEnd ?? undefined}
+          onChange={(date) => {
+            onStartDateChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
+          }}
+          slotProps={{
+            textField: {
+              id: "time-cards-start-date",
+              size: "small",
+              sx: { minWidth: 160 },
+              slotProps: { htmlInput: { "aria-label": "Start date" } },
+            },
+            field: { clearable: true },
+          }}
+        />
+        <Typography variant="body2" color="text.secondary">
+          to
+        </Typography>
+        <DatePicker
+          value={parsedEnd}
+          disableFuture
+          minDate={parsedStart ?? undefined}
+          onChange={(date) => {
+            onEndDateChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
+          }}
+          slotProps={{
+            textField: {
+              id: "time-cards-end-date",
+              size: "small",
+              sx: { minWidth: 160 },
+              slotProps: { htmlInput: { "aria-label": "End date" } },
+            },
+            field: { clearable: true },
+          }}
+        />
+        {hasFilters && onClear && (
+          <Button
+            variant="text"
+            size="small"
+            onClick={onClear}
+            startIcon={<X size={16} />}
+            sx={{ color: "text.secondary" }}
+          >
+            Clear
+          </Button>
+        )}
       </Box>
-    </Card>
+    </LocalizationProvider>
   );
 }

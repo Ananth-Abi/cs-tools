@@ -28,6 +28,7 @@ import {
   Skeleton,
   Tab,
   Tabs,
+  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import {
@@ -43,12 +44,10 @@ import {
   Paperclip,
   PauseCircle,
   Phone,
-  Plus,
-  Users,
   X,
 } from "@wso2/oxygen-ui-icons-react";
-import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
-import { useLocation, useParams } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useLocation } from "react-router";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
 import {
   usePatchCsmCase,
@@ -84,7 +83,9 @@ import {
   useGetCsmCaseAttachmentContent,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
 import CsmCaseCommentInput from "@features/csm-cases/components/CsmCaseCommentInput";
-import CaseActionBar from "@features/csm-cases/components/CaseActionBar";
+import CaseActionBar, {
+  canAcknowledge,
+} from "@features/csm-cases/components/CaseActionBar";
 import AssignEngineerDialog from "@features/csm-cases/components/AssignEngineerDialog";
 import ResolutionDialog from "@features/csm-cases/components/ResolutionDialog";
 import ChangeSeverityDialog from "@features/csm-cases/components/ChangeSeverityDialog";
@@ -104,6 +105,7 @@ import AddTagDialog from "@features/csm-cases/components/AddTagDialog";
 import { useCreateCaseTask } from "@features/csm-cases/api/useCreateCaseTask";
 import { useAddCaseTag, useRemoveCaseTag } from "@features/csm-cases/api/useCaseTags";
 import { ChildCasesWidget } from "@features/csm-cases/components/ChildCasesWidget";
+import { LinkedServiceRequestsWidget } from "@features/csm-cases/components/LinkedServiceRequestsWidget";
 import { LinkedChangeRequestsWidget } from "@features/csm-cases/components/LinkedChangeRequestsWidget";
 import { CreateGithubIssueDialog } from "@features/csm-cases/components/CreateGithubIssueDialog";
 import { isCloudSupportSubscription } from "@features/csm-projects/utils/subscriptionType";
@@ -111,6 +113,7 @@ import { usePostCaseGithubIssue } from "@features/csm-cases/api/useCsmCaseGithub
 import CaseActivitiesFeed from "@features/csm-cases/components/CaseActivitiesFeed";
 import { scrollToFragmentWithRetry } from "@features/csm-cases/utils/permalinkScroll";
 import CaseMetaBand from "@features/csm-cases/components/CaseMetaBand";
+import RefreshButton from "@components/RefreshButton";
 import {
   AttachmentsWidget,
   CustomerContextWidget,
@@ -128,9 +131,9 @@ import { CaseSlaTable } from "@features/csm-cases/components/CaseSlaTable";
 import { useGetCsmCaseSlas } from "@features/csm-cases/api/useGetCsmCaseSlas";
 import CaseTimeCardsPanel from "@features/csm-timecards/components/CaseTimeCardsPanel";
 import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDialog";
-import { usePostTimeCard } from "@features/csm-timecards/api/useTimeCards";
+import { usePostTimeCard, useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
+import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
-import { parentRecordPath } from "@features/csm-cases/utils/parentRecordRoute";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
   isBlankHtml,
@@ -140,12 +143,15 @@ import {
 } from "@utils/sanitizeHtml";
 import { useDarkMode } from "@utils/useDarkMode";
 import {
+  canResumeToUnlockPublicReply as computeCanResumeToUnlockPublicReply,
+  effectiveWorkState,
   publicCommentGateReason,
   WORK_STATE_LABEL,
 } from "@features/csm-cases/utils/caseWorkState";
 import { useRecordRecentView } from "@features/csm-recent/hooks/useRecentViews";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
+import { useSuccessBanner } from "@context/success-banner/SuccessBannerContext";
 import QueryErrorState from "@components/QueryErrorState";
 import RelativeTime from "@components/RelativeTime";
 import SeverityChip from "@components/SeverityChip";
@@ -155,12 +161,15 @@ import type {
   CaseAttachment,
   CaseLifecycleAction,
   CaseWatcher,
+  CreateChangeRequestFromCaseNavState,
   CreateIncidentFromCaseNavState,
   CreateRelatedCaseNavState,
   CreateServiceRequestFromCaseNavState,
 } from "@features/csm-cases/types/csmCases";
 import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
 function MetaCell({
   label,
@@ -284,9 +293,14 @@ const TAB_DEFS: Array<{
 }> = [
   { id: "activities", label: "Activities", icon: <Activity size={16} /> },
   { id: "details", label: "Details", icon: <ListChecks size={16} /> },
-  { id: "related", label: "Related", icon: <Users size={16} /> },
+  // Label is "Linked Items", not "Related" — "related" is also a distinct
+  // link type (LinkCaseDialog's CaseLinkType) shown inside this same tab,
+  // and reusing the word for the tab name too was confusing the two. Same
+  // chain-link icon as "Link to another case"/"Linked service requests"
+  // inside this tab, not the people icon "Related" used.
+  { id: "related", label: "Linked Items", icon: <LinkIcon size={16} /> },
   { id: "watchers", label: "Watchers", icon: <Eye size={16} /> },
-  { id: "sla", label: "SLAs", icon: <Clock size={16} />, hidden: true },
+  { id: "sla", label: "SLAs", icon: <Clock size={16} /> },
   { id: "attachments", label: "Attachments", icon: <Paperclip size={16} /> },
   { id: "time", label: "Time tracking", icon: <Layers size={16} /> },
   { id: "call-requests", label: "Call requests", icon: <Phone size={16} /> },
@@ -296,9 +310,18 @@ const TAB_DEFS: Array<{
   // it's just unreachable via tab navigation while hidden.
   { id: "tasks", label: "Tasks", icon: <CheckSquare size={16} />, hidden: true },
 ];
+// Only the ids with a rendered `<Tab>` — a caller-supplied list for
+// `useQueryParamTabs`, not the nav tree. A hidden tab like "tasks" is
+// deliberately excluded: `useQueryParamTabs` would otherwise treat
+// `?tab=tasks` as "recognised" and select it as `activeTab`, but with no
+// matching `<Tab>` in the strip that leaves the underlying MUI `Tabs` value
+// out of range and nothing visually selected.
+const CASE_TAB_IDS: readonly CaseTabId[] = TAB_DEFS.filter(
+  (t) => !t.hidden,
+).map((t) => t.id);
 
 export default function CsmCaseDetailPage(): JSX.Element {
-  const { caseId } = useParams<{ caseId: string }>();
+  const caseId = useNormalizedIdParam("caseId");
   const navigate = useNavTransition();
   const location = useLocation();
   const isEngagementRoute = location.pathname.startsWith("/engagements/");
@@ -310,11 +333,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const backPath = isEngagementRoute
     ? "/engagements"
     : isServiceRequestRoute
-      ? "/operations?tab=service_requests"
+      ? "/operations/service-requests"
       : isAnnouncementRoute
         ? "/announcements"
         : isSecurityReportRoute
-          ? "/security-center?tab=security_reports"
+          ? "/security-center/security-reports"
           : "/cases";
   const detailPath = isEngagementRoute
     ? `/engagements/${caseId}`
@@ -332,7 +355,15 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // detail page, which never got the state set.
   const fromListState = location.state as { from?: string } | undefined;
   const resolvedBackPath = fromListState?.from ?? backPath;
-  const { data, isLoading, isError, error } = useGetCsmCaseDetail(caseId);
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch: refetchCaseDetail,
+    isFetching: isFetchingCaseDetail,
+    dataUpdatedAt: caseDetailUpdatedAt,
+  } = useGetCsmCaseDetail(caseId);
   // The route alone isn't a reliable signal once data has loaded: a "Related
   // case" link always points at /cases/:id regardless of the target's actual
   // type, so an announcement opened that way would otherwise render the full
@@ -374,13 +405,33 @@ export default function CsmCaseDetailPage(): JSX.Element {
     // requests, engagements, security reports) lands on its dedicated route with
     // empty state, and Back then falls through to the bare route-specific path,
     // dropping the filters, search and sort that got the user here.
-    navigate(canonicalDetailPath, { replace: true, state: { from: resolvedBackPath } });
-  }, [isMisrouted, canonicalDetailPath, caseId, navigate, resolvedBackPath]);
+    //
+    // Also carries the current `?tab=` and `#fragment` forward onto the
+    // canonical target — without this, following a "Related case" link (which
+    // always points at the non-canonical /cases/:id) to a case opened on a
+    // specific tab, or a permalink, silently dropped both the moment the case
+    // turned out to be an engagement/announcement/service request/security
+    // report and got redirected to its real route.
+    navigate(
+      { pathname: canonicalDetailPath, search: location.search, hash: location.hash },
+      { replace: true, state: { from: resolvedBackPath } },
+    );
+  }, [
+    isMisrouted,
+    canonicalDetailPath,
+    caseId,
+    navigate,
+    resolvedBackPath,
+    location.search,
+    location.hash,
+  ]);
 
   const {
     data: comments,
     isLoading: isCommentsLoading,
     isError: isCommentsError,
+    refetch: refetchComments,
+    isFetching: isFetchingComments,
   } = useGetCsmCaseComments(caseId);
   // Audited field/state changes (the "State changes" lifecycle lane), loaded
   // from the dedicated activities endpoint — kept separate from the comments
@@ -389,6 +440,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
     data: activityAudit,
     isLoading: isActivityLoading,
     isError: isActivityError,
+    refetch: refetchActivities,
+    isFetching: isFetchingActivities,
   } = useGetCsmCaseActivities(caseId);
   // Live updates: invalidates the two queries above whenever another viewer
   // adds a comment or the case's status changes, so this tab doesn't rely
@@ -403,6 +456,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
     data: chatMessages,
     isLoading: isChatLoading,
     isError: isChatError,
+    refetch: refetchChat,
+    isFetching: isFetchingChat,
   } = useGetCsmConversationMessages(data?.conversationId);
   const postComment = usePostCsmCaseComment();
   const {
@@ -410,6 +465,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
     isLoading: isAttachmentsLoading,
     isError: isAttachmentsError,
     refetch: refetchAttachments,
+    isFetching: isFetchingAttachments,
+    dataUpdatedAt: attachmentsUpdatedAt,
   } = useGetCsmCaseAttachments(caseId);
   const postAttachment = usePostCsmCaseAttachment();
   const downloadAttachment = useDownloadCsmCaseAttachment();
@@ -423,9 +480,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const { data: slaList } = useGetCsmCaseSlas(
     isAnnouncement ? undefined : caseId,
   );
-  const { data: callRequests } = useGetCsmCaseCallRequests(
-    isAnnouncement ? undefined : caseId,
-  );
+  const {
+    data: callRequests,
+    refetch: refetchCallRequests,
+    isFetching: isFetchingCallRequests,
+  } = useGetCsmCaseCallRequests(isAnnouncement ? undefined : caseId);
   const { data: caseTasks } = useSearchCaseTasks(
     isAnnouncement ? undefined : caseId,
   );
@@ -433,18 +492,25 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // only runs when the case actually has a deployment link (SN-sourced cases
   // may have none). Reuses the project's deployment list rather than a
   // single-deployment GET, since the backend has no `/deployments/{id}` route.
-  const { data: projectDeployments, isLoading: isProjectDeploymentsLoading } =
-    useSearchDeployments(
-      data?.productContext.deploymentId ? data.projectId : undefined,
-    );
+  const {
+    data: projectDeployments,
+    isLoading: isProjectDeploymentsLoading,
+    refetch: refetchProjectDeployments,
+    isFetching: isFetchingProjectDeployments,
+  } = useSearchDeployments(
+    data?.productContext.deploymentId ? data.projectId : undefined,
+  );
   const liveDeployment = projectDeployments?.find(
     (d) => d.id === data?.productContext.deploymentId,
   );
   // Richer account/project facts for the Customer card, beyond what's
   // embedded in the case-detail payload's `customerContext` snapshot.
-  const { data: caseProject, isLoading: isCaseProjectLoading } = useGetProject(
-    data?.projectId,
-  );
+  const {
+    data: caseProject,
+    isLoading: isCaseProjectLoading,
+    refetch: refetchCaseProject,
+    isFetching: isFetchingCaseProject,
+  } = useGetProject(data?.projectId);
   const patchCase = usePatchCsmCase(caseId);
   const patchCaseById = usePatchCsmCaseById();
   const createTask = useCreateCaseTask(caseId);
@@ -462,14 +528,31 @@ export default function CsmCaseDetailPage(): JSX.Element {
     claims?.email?.split("@")[0] ||
     "Unknown engineer";
   const { showError } = useErrorBanner();
+  const { showSuccess } = useSuccessBanner();
   const isDarkMode = useDarkMode();
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [activeTab, setActiveTab] = useState<CaseTabId>("activities");
+  // Kept in the URL (`?tab=`), not local state, so a shared/bookmarked link
+  // to a specific tab survives a refresh. Unlike the plain `useState` this
+  // replaced, `setActiveTab` writes through the router — see the two
+  // "force to Activities" effects below for why the render-time adjustments
+  // that used to call it directly were moved into effects instead: calling a
+  // *router* navigation synchronously during render (as opposed to this
+  // component's own local `useState` setters, which the surrounding
+  // render-time resets still use safely) risks updating the Router's state
+  // while this component is still rendering.
+  const { activeTab, setActiveTab } = useQueryParamTabs<CaseTabId>(
+    CASE_TAB_IDS,
+    "activities",
+  );
   // Permalink fragment (`/cases/:id#<entry-id>`), consumed by the scroll and
   // highlight effect further down. Hoisted up here because two render-time
   // state adjustments below both need it: the per-case reset and the
   // per-fragment Activities-tab force.
   const permalinkFragment = location.hash?.replace(/^#/, "") ?? "";
+  // Tracked separately from patchCase.isPending: that flag is shared with the
+  // lifecycle transitions, and reusing it would spin the state button whenever
+  // someone acknowledges (and vice versa).
+  const [isAcknowledging, setIsAcknowledging] = useState(false);
   const [metaCollapsed, setMetaCollapsed] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -489,6 +572,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
   } | null>(null);
   const [severityOpen, setSeverityOpen] = useState(false);
   const [logTimeOpen, setLogTimeOpen] = useState(false);
+  // The card being edited, if any — mutually exclusive with logTimeOpen
+  // (create); LogTimeCardDialog is rendered once for whichever is set.
+  const [editTimeCard, setEditTimeCard] = useState<CsmTimeCard | null>(null);
   const [githubIssueOpen, setGithubIssueOpen] = useState(false);
   // Inline error shown inside the Git-issue dialog (e.g. the SN routing 422 /
   // state 409). Cleared when the dialog opens or a submit is retried.
@@ -499,6 +585,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     useState<BeCreateCaseGithubIssueResponse | null>(null);
   const postGithubIssue = usePostCaseGithubIssue();
   const postTimeCard = usePostTimeCard();
+  const updateTimeCard = useUpdateTimeCard();
   // Attachment pending delete confirmation (drives the confirm dialog).
   const [pendingDelete, setPendingDelete] = useState<CaseAttachment | null>(
     null,
@@ -530,6 +617,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setResolutionDialog(null);
     setSeverityOpen(false);
     setLogTimeOpen(false);
+    // Not just cosmetic: the edit dialog renders on editTimeCard alone, so a
+    // card left open here would stay mounted against the new case and submit
+    // a PATCH for the *previous* case's card.
+    setEditTimeCard(null);
     setGithubIssueOpen(false);
     setGithubIssueError(null);
     setGithubIssueResult(null);
@@ -543,29 +634,34 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setCreateTaskOpen(false);
     setFixEtaOpen(false);
     setAddTagOpen(false);
-    // Following a permalink from one case to another keeps this page mounted and
-    // can carry the *same* fragment (e.g. #description → #description), so the
-    // fragment-keyed force below won't fire. Force it here instead, otherwise
-    // the new case would open on whatever tab the previous one was left on.
-    if (permalinkFragment) setActiveTab("activities");
+    // The permalink-fragment-triggered force to Activities (for both this
+    // case-change and a same-case fragment change) lives in one effect below
+    // — see `permalinkForceRef` — rather than here, since `setActiveTab` now
+    // writes through the router and so can't be called synchronously during
+    // render the way this block's own local `useState` resets safely can.
   }
 
   // isAnnouncement can only be confirmed once `data` loads (see its
   // definition above) — if a case reached via /cases/:id turns out to be an
   // announcement and the active tab is one hidden for announcements, fall
-  // back to Activities. Same render-time adjustment pattern as the reset
-  // above rather than an effect, to avoid an extra render pass.
-  if (
-    isAnnouncement &&
-    (activeTab === "related" ||
-      activeTab === "watchers" ||
-      activeTab === "sla" ||
-      activeTab === "time" ||
-      activeTab === "call-requests" ||
-      activeTab === "tasks")
-  ) {
-    setActiveTab("activities");
-  }
+  // back to Activities. Unlike the plain local-state resets above, this
+  // can't safely run during render any more: `setActiveTab` now writes
+  // through the router (`useQueryParamTabs`), and a router write during
+  // render risks updating the Router's state while this component is still
+  // rendering — so it's an effect instead.
+  useEffect(() => {
+    if (
+      isAnnouncement &&
+      (activeTab === "related" ||
+        activeTab === "watchers" ||
+        activeTab === "sla" ||
+        activeTab === "time" ||
+        activeTab === "call-requests" ||
+        activeTab === "tasks")
+    ) {
+      setActiveTab("activities");
+    }
+  }, [isAnnouncement, activeTab, setActiveTab]);
 
   // Twitter-style permalinks: when the URL has a fragment matching an entry id,
   // jump to the Activities tab and hand off to `scrollToFragmentWithRetry`,
@@ -584,24 +680,41 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // fragment link is followed, which is why the bug reads as "new tab only."
   const activitiesFeedReady =
     !isCommentsLoading && !isChatLoading && !isActivityLoading;
-  // Forcing the Activities tab is a state adjustment, done during render like
-  // the prevCaseId reset above — not in the effect below. It has to be keyed on
-  // the fragment *changing*: the effect's other dependency
-  // (`activitiesFeedReady`) flips false → true as the three feed sources
-  // settle, so a setActiveTab living inside the effect re-ran on that flip and
-  // dragged a user who had switched tabs while the feed loaded back to
-  // Activities. Keyed on the fragment, the tab is forced once per link.
+  // Forces the Activities tab exactly once per permalink — on the case or the
+  // fragment actually changing, tracked by this ref rather than `activeTab`
+  // itself (which would re-force every time the *effect* below re-ran, e.g.
+  // when `activitiesFeedReady` flips false → true as the three feed sources
+  // settle, dragging a user who had since switched tabs back to Activities).
+  // A ref rather than the `prevCaseId`-style render-time `useState` reset
+  // above: `setActiveTab` now writes through the router (`useQueryParamTabs`),
+  // so it can't run synchronously during render — this has to be an effect,
+  // and an effect needs its "did this change" comparison done inside itself
+  // (a `useState`-based previous-value comparison during render, like
+  // `prevCaseId`'s, would have already resolved to "unchanged" by the time
+  // this effect runs).
   //
-  // No adjustment is needed on first mount: `activeTab` already starts at
-  // "activities", so initialising prevFragment to the current fragment is
-  // correct rather than a missed force. Following a permalink to a *different*
-  // case with the same fragment is handled by the prevCaseId block above,
-  // since the fragment itself does not change there.
-  const [prevFragment, setPrevFragment] = useState(permalinkFragment);
-  if (permalinkFragment !== prevFragment) {
-    setPrevFragment(permalinkFragment);
-    if (permalinkFragment) setActiveTab("activities");
-  }
+  // Following a permalink to a *different* case with the *same* fragment
+  // (e.g. #description → #description) is covered by comparing `caseId` here
+  // too, not just `permalinkFragment` — the fragment alone wouldn't change in
+  // that case, so the old case's tab would otherwise carry over unforced.
+  // Starts unset rather than pre-seeded with the current `caseId`/fragment:
+  // on a cold load that already has a permalink fragment in the URL (e.g.
+  // `?tab=attachments#entry-9`), a pre-seeded ref would make the "did it
+  // change" check below false on the very first render, so the tab would
+  // never get forced to Activities and the page would stay wherever `?tab=`
+  // pointed instead of jumping to the linked entry.
+  const permalinkForceRef = useRef<
+    { caseId: string | undefined; fragment: string } | undefined
+  >(undefined);
+  useEffect(() => {
+    const prev = permalinkForceRef.current;
+    const changed =
+      !prev || prev.caseId !== caseId || prev.fragment !== permalinkFragment;
+    permalinkForceRef.current = { caseId, fragment: permalinkFragment };
+    if (changed && permalinkFragment) {
+      setActiveTab("activities");
+    }
+  }, [caseId, permalinkFragment, setActiveTab]);
   useEffect(() => {
     // Wait for the feed to actually be able to render the target before
     // attempting to find it — see the comment above.
@@ -619,6 +732,38 @@ export default function CsmCaseDetailPage(): JSX.Element {
       },
     });
   }, [permalinkFragment, activitiesFeedReady, showError]);
+
+  // Re-runs every source the Activities tab's merged timeline draws from —
+  // comments, the audit trail, the linked chat transcript (a no-op when
+  // disabled), attachments, and call requests (the last only enriches a
+  // field-change entry that references one, but a stale label there is still
+  // worth refreshing). ServiceNow only refreshes a single tab like this in
+  // its own case UI; the whole page previously had to be reloaded to see
+  // this tab's data change.
+  const isRefreshingActivities =
+    isFetchingComments ||
+    isFetchingActivities ||
+    isFetchingChat ||
+    isFetchingAttachments ||
+    isFetchingCallRequests;
+  const refreshActivitiesTab = (): void => {
+    void refetchComments();
+    void refetchActivities();
+    void refetchChat();
+    void refetchAttachments();
+    void refetchCallRequests();
+  };
+
+  // Re-runs every source the Details tab renders: the case itself plus the
+  // two supplemental lookups (project, live deployment) the Customer/Product
+  // cards enrich with.
+  const isRefreshingDetails =
+    isFetchingCaseDetail || isFetchingCaseProject || isFetchingProjectDeployments;
+  const refreshDetailsTab = (): void => {
+    void refetchCaseDetail();
+    void refetchCaseProject();
+    void refetchProjectDeployments();
+  };
 
   useEffect(() => {
     // State-transition feedback is sticky (persists until dismissed) so it
@@ -668,6 +813,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
       others: MyOngoingCase[],
       successMessage: string,
       successSeverity: FeedbackSeverity,
+      // Defaults to the inline sticky banner; `startWork`'s `assign_to_me`
+      // caller overrides this to the floating success toast instead — see
+      // the note on `startWork` below.
+      reportSuccess: (message: string) => void = () =>
+        setFeedback({ message: successMessage, severity: successSeverity, sticky: true }),
     ) => {
       if (others.length > 0) {
         setPauseConflict(others);
@@ -679,14 +829,35 @@ export default function CsmCaseDetailPage(): JSX.Element {
         showError("Could not mark the case ongoing. Please try again.", err);
         return;
       }
-      setFeedback({
-        message: successMessage,
-        severity: successSeverity,
-        sticky: true,
-      });
+      reportSuccess(successMessage);
     },
     [patchCase, showError],
   );
+
+  // Acknowledge: claim the case as the signed-in engineer. First-write-wins
+  // upstream, so a race with the out-of-band acknowledgement link (or another
+  // engineer clicking at the same moment) resolves to whoever landed first and
+  // is reported as such rather than surfacing as an error. The refetch that
+  // usePatchCsmCase triggers is what removes the button, so nothing here has to
+  // reconcile local state.
+  const onAcknowledge = useCallback(async (): Promise<void> => {
+    setIsAcknowledging(true);
+    try {
+      const result = await patchCase.mutateAsync({ acknowledge: true });
+      const holder = result.case?.acknowledgedBy?.name?.trim();
+      showSuccess(
+        result.case?.alreadyAcknowledged
+          ? holder
+            ? `This case was already acknowledged by ${holder}.`
+            : "This case was already acknowledged."
+          : "Case acknowledged.",
+      );
+    } catch (err) {
+      showError("Could not acknowledge the case. Please try again.", err);
+    } finally {
+      setIsAcknowledging(false);
+    }
+  }, [patchCase, showError, showSuccess]);
 
   // Starting work: enforce the single-active-case rule.
   // 1) look up the engineer's other ongoing cases (abort on failure — we
@@ -695,7 +866,14 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // "Start progress" transition and the "Assign to me" shortcut, which also
   // puts the case into progress once the assignment lands.
   const startWork = useCallback(
-    async (successMessage: string, successSeverity: FeedbackSeverity) => {
+    async (
+      successMessage: string,
+      successSeverity: FeedbackSeverity,
+      // "Assign to me" passes the floating success toast here instead of the
+      // default inline banner (see `resolveOngoingConflict`) — everything
+      // else sharing this function (Start/Resume work) keeps the banner.
+      reportSuccess?: (message: string) => void,
+    ) => {
       if (!data) return;
       const caseId = data.id;
       let others: MyOngoingCase[];
@@ -719,7 +897,31 @@ export default function CsmCaseDetailPage(): JSX.Element {
         );
         return;
       }
-      await resolveOngoingConflict(others, successMessage, successSeverity);
+
+      // Auto-acknowledge as a side effect of starting work: an engineer who
+      // starts work on an unacknowledged, acknowledgeable case has implicitly
+      // claimed it, so don't make them separately click "Acknowledge" too.
+      // Evaluated against the pre-PATCH `data` closed over above, not a
+      // refetch — severity never changes via this flow and `acknowledgedBy`
+      // can only change if someone else acknowledges concurrently, which the
+      // backend's first-write-wins semantics already handle gracefully. The
+      // `state` PATCH above and this `acknowledge` PATCH must stay separate
+      // calls: the entity-service rejects combining `state` and `acknowledge`
+      // (and other mutually-exclusive fields) in one request. This is a
+      // bonus, not the action the user asked for, so it's best-effort: any
+      // failure here must not block `resolveOngoingConflict` below, and we
+      // don't surface a separate error toast — the Acknowledge button simply
+      // stays visible afterward, which is a safe, correct fallback the
+      // engineer can act on manually.
+      if (canAcknowledge(data)) {
+        try {
+          await patchCase.mutateAsync({ acknowledge: true });
+        } catch {
+          // Swallow: see comment above.
+        }
+      }
+
+      await resolveOngoingConflict(others, successMessage, successSeverity, reportSuccess);
     },
     [data, findMyOngoingCases, patchCase, showError, resolveOngoingConflict],
   );
@@ -754,7 +956,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
             { assigneeEmail: currentUserEmail },
             {
               onSuccess: () =>
-                void startWork(LIFECYCLE_TOAST.assign_to_me, LIFECYCLE_SEVERITY.assign_to_me),
+                void startWork(
+                  LIFECYCLE_TOAST.assign_to_me,
+                  LIFECYCLE_SEVERITY.assign_to_me,
+                  showSuccess,
+                ),
               onError: (err) =>
                 showError("Could not assign the case to you.", err),
             },
@@ -775,7 +981,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
             relatedCaseNumber: data.caseNumber,
             deploymentId: data.productContext.deploymentId,
             deployedProductId: data.productContext.deployedProductId,
-            severity: data.severity,
+            // The related case's severity only prefills the new-case form
+            // when it's a real S0-S4 value — an "unset" source severity
+            // leaves the (required) field blank so the engineer must pick
+            // one, same as any other case with no severity to carry over.
+            severity: data.severity === "unset" ? undefined : data.severity,
             issueType: data.issueType,
             subject: `Related Case : ${data.subject}`,
           };
@@ -875,6 +1085,22 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
+      // Create change request navigates to the change-request create form,
+      // pre-filled with this service request as the new change request's
+      // "Originating service request" — mirrors the create_incident handler
+      // above. Only offered for a service request (see CaseActionBar's
+      // caseType gate on this menu item).
+      if (action.secondary === "create_change_request" && data) {
+        const navState: CreateChangeRequestFromCaseNavState = {
+          caseId: data.id,
+          caseNumber: data.caseNumber,
+          caseSubject: data.subject,
+          projectId: data.projectId,
+        };
+        navigate("/operations/change-requests/new", { state: navState });
+        return;
+      }
+
       // Link to incident opens the search-and-pick dialog; the PATCH happens
       // in onLinkIncident once a target incident is chosen.
       if (action.secondary === "link_incident") {
@@ -913,7 +1139,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
               onSuccess: () =>
                 setFeedback({
                   message:
-                    "Work paused — customer replies are disabled until you resume.",
+                    "Work paused — you can't post public replies until you resume.",
                   severity: "warning",
                   sticky: true,
                 }),
@@ -998,6 +1224,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [
       data,
       showError,
+      showSuccess,
       patchCase,
       findMyOngoingCases,
       detailPath,
@@ -1056,17 +1283,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
         {
           onSuccess: () => {
             setAssignOpen(false);
-            setFeedback({
-              message: "Case reassigned.",
-              severity: "success",
-              sticky: true,
-            });
+            showSuccess("Case reassigned.");
           },
           onError: (err) => showError("Could not reassign the case.", err),
         },
       );
     },
-    [patchCase, showError],
+    [patchCase, showError, showSuccess],
   );
 
   // Submits the Post Resolution Activity dialog: PATCHes state alongside
@@ -1478,17 +1701,30 @@ export default function CsmCaseDetailPage(): JSX.Element {
   }
 
   const c = data;
-  // Narrowed once here so the JSX below can use it without a non-null
-  // assertion — `c.relatedCase` on its own doesn't stay narrowed across the
-  // `onClick` closure.
-  const relatedCase = c.relatedCase;
   const isClosed = c.state === "closed";
   // The backend rejects a customer-visible comment unless the case is
-  // work_in_progress + ongoing. Internal work notes are allowed in any state,
-  // so this only disables the public-reply path in the composer — never work
-  // notes. Mirrors the BFF comment guard so the engineer sees a clear reason
-  // instead of a generic error.
-  const publicReplyGateReason = publicCommentGateReason(c.state, c.workState);
+  // work_in_progress + ongoing AND the signed-in engineer is the case's
+  // assignee. Internal work notes are allowed in any state, so this only
+  // disables the public-reply path in the composer — never work notes.
+  // Mirrors the BFF comment guard so the engineer sees a clear reason instead
+  // of a generic error.
+  const publicReplyGateReason = publicCommentGateReason(
+    c.state,
+    c.workState,
+    c.assigneeIsMe,
+  );
+  // The composer's inline "Resume work" quick-fix only applies to this one
+  // lock reason — the case is already work_in_progress and assigned to the
+  // signed-in engineer, just paused, so resuming is the single-field PATCH
+  // `onAction` already runs for "toggle_work_state" below. The other lock
+  // reason (not started yet) needs the full assign/start flow, which doesn't
+  // belong in the composer; `assigneeIsMe` also excludes another engineer's
+  // paused case, matching CaseActionBar's own gate on the same action.
+  const canResumeToUnlockPublicReply = computeCanResumeToUnlockPublicReply(
+    c.state,
+    c.workState,
+    c.assigneeIsMe,
+  );
   // FE-only, advisory close-gate: warn when the case has an open task, so the
   // engineer isn't surprised by a close rejection. Best-effort — the task
   // *list* (`POST /cases/{id}/tasks/search`) returns `BeTaskSummary`, which
@@ -1591,57 +1827,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 <SeverityChip severity={c.severity} withLabel />
               )}
             {!isAnnouncement && <StateChip state={c.state} />}
-            {!isAnnouncement && relatedCase && (
-              <Chip
-                size="small"
-                variant="outlined"
-                clickable
-                icon={<LinkIcon size={14} />}
-                label={`Related: ${relatedCase.caseNumber ?? relatedCase.id}`}
-                // Carries the same "back to list" target forward — there's no
-                // breadcrumb chain back through this case, so the related
-                // case's own back button returns to the filtered list this
-                // one was opened from rather than losing it a step early.
-                onClick={() =>
-                  navigate(`/cases/${relatedCase.id}`, {
-                    state: { from: resolvedBackPath },
-                  })
-                }
-                sx={{ fontWeight: 600 }}
-              />
-            )}
-            {!isAnnouncement &&
-              c.parentCase &&
-              (() => {
-                const parentPath = parentRecordPath(c.parentCase);
-                return (
-                  <Chip
-                    size="small"
-                    variant="outlined"
-                    clickable={parentPath !== null}
-                    icon={<LinkIcon size={14} />}
-                    label={`Parent: ${c.parentCase.caseNumber ?? c.parentCase.id}`}
-                    // Carries the "back to list" target forward the same way
-                    // the related-case chip does, so the parent record's own
-                    // back button returns to the filtered list this case was
-                    // opened from.
-                    onClick={
-                      parentPath === null
-                        ? undefined
-                        : () =>
-                            navigate(parentPath, {
-                              state: { from: resolvedBackPath },
-                            })
-                    }
-                    title={
-                      parentPath === null
-                        ? "This parent record's type could not be resolved, so it cannot be opened from here."
-                        : undefined
-                    }
-                    sx={{ fontWeight: 600 }}
-                  />
-                );
-              })()}
+            {/* Related/Parent moved to CaseMetaBand's Overview cells — those
+                are singular facts (never more than one each), so a compact
+                "Cell" fits better than a chip crowding this row, especially
+                once both are present on the same case at once. */}
             {!isAnnouncement &&
               c.autoclosureStep &&
               c.autoclosureStep !== "DEFAULT" && (
@@ -1658,12 +1847,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   sx={{ fontWeight: 600 }}
                 />
               )}
-            {!isAnnouncement && c.state === "work_in_progress" && c.workState && (
+            {!isAnnouncement && c.state === "work_in_progress" && (
               <Chip
                 size="small"
                 variant="outlined"
-                color={c.workState === "paused" ? "warning" : "default"}
-                label={WORK_STATE_LABEL[c.workState]}
+                color={effectiveWorkState(c.workState) === "paused" ? "warning" : "default"}
+                label={WORK_STATE_LABEL[effectiveWorkState(c.workState)]}
                 sx={{ fontWeight: 600 }}
               />
             )}
@@ -1689,7 +1878,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
               caseDetail={c}
               onAction={onAction}
               closeBlockedReason={closeBlockedReason}
-              isPending={patchCase.isPending}
+              isPending={patchCase.isPending && !isAcknowledging}
+              onAcknowledge={onAcknowledge}
+              isAcknowledging={isAcknowledging}
             />
           </Box>
         )}
@@ -1747,10 +1938,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   t.id !== "time" &&
                   t.id !== "call-requests")),
           ).map((t) => {
-            // Counts shown only where the tab IS the list (unambiguous). Not
-            // shown for "related" — ChildCasesWidget runs its own scoped
-            // query for the child-case list, so no count is available here
-            // without an extra fetch.
+            // Counts shown only where the tab IS the list (unambiguous), or
+            // where the parent case-detail object already has the list in
+            // hand. "related" sums linkedChangeRequests + linkedServiceRequests
+            // (both already present on `c`); ChildCasesWidget is still
+            // excluded since it runs its own scoped query and would need an
+            // extra fetch to get a count.
             const count =
               t.id === "watchers"
                 ? c.watchers.length
@@ -1764,7 +1957,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
                         ? callRequests?.length
                         : t.id === "tasks"
                           ? caseTasks?.total
-                          : undefined;
+                          : t.id === "related"
+                            ? (c.linkedChangeRequests?.length ?? 0) +
+                              (c.linkedServiceRequests?.length ?? 0)
+                            : undefined;
             return (
               <Tab
                 key={t.id}
@@ -1812,6 +2008,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
               <CsmCaseCommentInput
                 disabled={!caseId || isClosed}
                 publicCommentDisabledReason={publicReplyGateReason}
+                canResumeToUnlockPublicReply={canResumeToUnlockPublicReply}
+                onResumeWork={() => onAction({ secondary: "toggle_work_state" })}
+                isResumingWork={patchCase.isPending}
                 autoFocus
                 onSubmit={async (bodyHtml, internal, commentAttachments) => {
                   if (!caseId) return;
@@ -1882,15 +2081,29 @@ export default function CsmCaseDetailPage(): JSX.Element {
           )}
 
           <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-              <Typography variant="subtitle2">Activity timeline</Typography>
-              {!isCommentsLoading && (
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  label={`${safeComments.length + (activityAudit?.length ?? 0) + attachmentList.length} entries`}
-                />
-              )}
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1.5,
+              }}
+            >
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                <Typography variant="subtitle2">Activity timeline</Typography>
+                {!isCommentsLoading && (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    label={`${safeComments.length + (activityAudit?.length ?? 0) + attachmentList.length} entries`}
+                  />
+                )}
+              </Box>
+              <RefreshButton
+                onRefresh={refreshActivitiesTab}
+                isFetching={isRefreshingActivities}
+                label="Refresh activity timeline"
+              />
             </Box>
 
             {isCommentsLoading || isChatLoading || isActivityLoading ? (
@@ -1956,7 +2169,15 @@ export default function CsmCaseDetailPage(): JSX.Element {
           }}
         >
           <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
-            <Typography variant="subtitle2">Identifiers &amp; timestamps</Typography>
+            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+              <Typography variant="subtitle2">Identifiers &amp; timestamps</Typography>
+              <RefreshButton
+                onRefresh={refreshDetailsTab}
+                isFetching={isRefreshingDetails}
+                updatedAt={caseDetailUpdatedAt}
+                label="Refresh case details"
+              />
+            </Box>
             <Box
               sx={{
                 display: "grid",
@@ -2004,6 +2225,14 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 sx={{
                   typography: "body2",
                   color: "text.primary",
+                  // Same containment the comment bubble needs — see the long
+                  // note in `CsmCaseCommentBubble`. This description is backend
+                  // HTML too, so it can carry an explicit pixel width that would
+                  // otherwise drag the whole page off-screen.
+                  minWidth: 0,
+                  maxWidth: "100%",
+                  contain: "inline-size",
+                  overflowX: "auto",
                   "& p": { mb: 0.5 },
                   "& p:last-child": { mb: 0 },
                 }}
@@ -2040,76 +2269,75 @@ export default function CsmCaseDetailPage(): JSX.Element {
       )}
 
       {activeTab === "related" && (
-        <Box
-          sx={{
-            display: "grid",
-            gap: 2,
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "repeat(2, minmax(0, 1fr))",
-            },
-            alignItems: "start",
-          }}
-        >
-          <ChildCasesWidget caseId={c.id} />
-          {/* Content-relevance, not a data-source gate: shown whenever this is
-              a service request (the only case type that carries the link) or
-              the list already has entries — never checks the record's data
-              source. */}
-          {(isServiceRequest || (c.linkedChangeRequests?.length ?? 0) > 0) && (
-            <LinkedChangeRequestsWidget changeRequests={c.linkedChangeRequests} />
-          )}
-          <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1, flexWrap: "wrap" }}>
-              <Typography variant="subtitle2">Linked service requests</Typography>
-              <Box sx={{ display: "flex", gap: 1 }}>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<Plus size={14} />}
-                  onClick={() => {
-                    const navState: CreateServiceRequestFromCaseNavState = {
-                      projectId: c.projectId,
-                      relatedCaseId: c.id,
-                      relatedCaseNumber: c.caseNumber,
-                      deploymentId: c.productContext.deploymentId,
-                      deployedProductId: c.productContext.deployedProductId,
-                    };
-                    navigate("/operations/service-requests/new", { state: navState });
-                  }}
-                >
-                  Create service request
-                </Button>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {/* Case-level action, not scoped to any one card below: the dialog
+              lets the user pick parent-vs-related for any target case, so it
+              doesn't belong nested inside one specific relationship card. The
+              refresh button on the other side of this same row re-runs the
+              case-detail query, which is where each card's linked-item refs
+              (id/number/name) come from — each card's own enrichment data
+              (state, assignee, ...) has its own refresh button instead. */}
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 1 }}>
+            {/* Same read-only-once-closed rule as the comment composer,
+                attachment upload, and tag add/remove below — a link PATCH
+                on a closed case would otherwise fail server-side and only
+                surface as a generic error banner instead of being disabled
+                up front with a clear reason. */}
+            <Tooltip title={isClosed ? "This case is closed — it's read-only." : ""}>
+              <Box component="span">
                 <Button
                   size="small"
                   variant="outlined"
                   startIcon={<LinkIcon size={14} />}
                   onClick={() => setLinkCaseOpen(true)}
+                  disabled={isClosed}
                 >
                   Link to another case
                 </Button>
               </Box>
-            </Box>
-            {c.linkedServiceRequests && c.linkedServiceRequests.length > 0 ? (
-              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                {c.linkedServiceRequests.map((sr) => (
-                  <Chip
-                    key={sr.id}
-                    size="small"
-                    variant="outlined"
-                    clickable
-                    label={`${sr.number} — ${sr.name}`}
-                    onClick={() => navigate(`/cases/${encodeURIComponent(sr.id)}`)}
-                    sx={{ fontWeight: 600 }}
-                  />
-                ))}
-              </Box>
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                No service requests linked to this case.
-              </Typography>
+            </Tooltip>
+            <RefreshButton
+              onRefresh={() => void refetchCaseDetail()}
+              isFetching={isFetchingCaseDetail}
+              updatedAt={caseDetailUpdatedAt}
+              label="Refresh linked items"
+            />
+          </Box>
+          <Box
+            sx={{
+              display: "grid",
+              gap: 2,
+              gridTemplateColumns: {
+                xs: "1fr",
+                md: "repeat(2, minmax(0, 1fr))",
+              },
+              alignItems: "start",
+            }}
+          >
+            <ChildCasesWidget caseId={c.id} />
+            {/* Content-relevance, not a data-source gate: shown whenever this is
+                a service request (the only case type that carries the link) or
+                the list already has entries — never checks the record's data
+                source. */}
+            {(isServiceRequest || (c.linkedChangeRequests?.length ?? 0) > 0) && (
+              <LinkedChangeRequestsWidget changeRequests={c.linkedChangeRequests} />
             )}
-          </Card>
+            <LinkedServiceRequestsWidget
+              caseId={c.id}
+              linkedServiceRequests={c.linkedServiceRequests}
+              createDisabled={isClosed}
+              onCreateServiceRequest={() => {
+                const navState: CreateServiceRequestFromCaseNavState = {
+                  projectId: c.projectId,
+                  relatedCaseId: c.id,
+                  relatedCaseNumber: c.caseNumber,
+                  deploymentId: c.productContext.deploymentId,
+                  deployedProductId: c.productContext.deployedProductId,
+                };
+                navigate("/operations/service-requests/new", { state: navState });
+              }}
+            />
+          </Box>
         </Box>
       )}
 
@@ -2117,14 +2345,17 @@ export default function CsmCaseDetailPage(): JSX.Element {
         <Box sx={{ display: "grid", gap: 2, gridTemplateColumns: "1fr" }}>
           {/* Watchers list — moved off the (single-line) overview Cell so a
               long watch list has room to wrap as chips, and given its own
-              tab (split out of "Related") since it's not actually related
-              content. Add/remove are inline here (no separate dialog);
+              tab (split out of "Linked Items") since it's not actually a
+              linked record. Add/remove are inline here (no separate dialog);
               "Manage watchers…" in the action bar just jumps to this tab. */}
           <WatchersWidget
             watchers={c.watchers}
             onAdd={onAddWatcher}
             onRemove={onRemoveWatcher}
             isSaving={patchCase.isPending}
+            onRefresh={() => void refetchCaseDetail()}
+            isRefreshing={isFetchingCaseDetail}
+            refreshedAt={caseDetailUpdatedAt}
           />
         </Box>
       )}
@@ -2139,6 +2370,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
             loading={isAttachmentsLoading}
             error={isAttachmentsError}
             onRetry={() => void refetchAttachments()}
+            onRefresh={() => void refetchAttachments()}
+            isRefreshing={isFetchingAttachments}
+            refreshedAt={attachmentsUpdatedAt}
             uploading={postAttachment.isPending}
             uploadError={
               postAttachment.isError
@@ -2165,6 +2399,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
           <CaseTimeCardsPanel
             caseId={c.id}
             onLogTime={() => setLogTimeOpen(true)}
+            onEditTimeCard={setEditTimeCard}
           />
         </Box>
       )}
@@ -2294,16 +2529,42 @@ export default function CsmCaseDetailPage(): JSX.Element {
         />
       )}
 
-      {logTimeOpen && (
+      {(logTimeOpen || editTimeCard) && (
         <LogTimeCardDialog
           caseId={c.id}
           caseNumber={c.caseNumber ?? c.id}
           caseSeverity={c.severity}
           projectId={c.projectId}
           projectName={c.projectName}
-          isSubmitting={postTimeCard.isPending}
-          onClose={() => setLogTimeOpen(false)}
-          onSubmit={(input) =>
+          editingCard={editTimeCard ?? undefined}
+          isSubmitting={editTimeCard ? updateTimeCard.isPending : postTimeCard.isPending}
+          onClose={() => {
+            setLogTimeOpen(false);
+            setEditTimeCard(null);
+          }}
+          onSubmit={(input) => {
+            // "cardId" only exists on an edit submission — see
+            // LogTimeCardSubmit's doc comment.
+            if ("cardId" in input) {
+              updateTimeCard.mutate(input, {
+                onSuccess: () => {
+                  setEditTimeCard(null);
+                  setFeedback({
+                    message: "Time card updated.",
+                    severity: "success",
+                    sticky: false,
+                  });
+                },
+                onError: (err) => {
+                  const msg =
+                    err instanceof BackendApiError && err.status < 500 && err.message
+                      ? err.message
+                      : "Could not save your changes.";
+                  showError(msg, err);
+                },
+              });
+              return;
+            }
             postTimeCard.mutate(input, {
               onSuccess: () => {
                 setLogTimeOpen(false);
@@ -2324,8 +2585,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
                     : "Could not log time.";
                 showError(msg, err);
               },
-            })
-          }
+            });
+          }}
         />
       )}
 

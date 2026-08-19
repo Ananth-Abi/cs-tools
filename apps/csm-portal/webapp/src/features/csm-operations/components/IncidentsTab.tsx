@@ -30,7 +30,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { useCallback, useMemo, useState, type ChangeEvent, type JSX } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import { useNavTransition } from "@hooks/useNavTransition";
 import QueryErrorState from "@components/QueryErrorState";
 import FilteredCsvExportButton from "@components/FilteredCsvExportButton";
@@ -53,6 +53,7 @@ import {
   writeIncidentFiltersToUrl,
 } from "@features/csm-operations/utils/incidentsFiltersUrl";
 import IncidentsFilterBar from "@features/csm-operations/components/IncidentsFilterBar";
+import RefreshButton from "@components/RefreshButton";
 import type { BeIncident, BeIncidentSearchPayload, BeIncidentSearchResponse } from "@api/backend/types";
 
 const DEFAULT_ROWS_PER_PAGE = 20;
@@ -79,6 +80,7 @@ function formatDate(value?: string | null): string {
 export default function IncidentsTab(): JSX.Element {
   const navigate = useNavTransition();
   const api = useBackendApi();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo<IncidentFilters>(
     () => readIncidentFiltersFromUrl(searchParams),
@@ -98,7 +100,8 @@ export default function IncidentsTab(): JSX.Element {
     [filters, debouncedSearch, page, rowsPerPage],
   );
 
-  const { data, isLoading, isError, error, isFetching } = useSearchIncidents(payload);
+  const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } =
+    useSearchIncidents(payload);
 
   const incidents = data?.incidents ?? [];
   const total = data?.total ?? 0;
@@ -169,7 +172,13 @@ export default function IncidentsTab(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1 }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1 }}>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label="Refresh incidents"
+        />
         <FilteredCsvExportButton<BeIncident>
           entityName="incidents"
           header={["Number", "Subject", "Caller", "State", "Priority", "Opened", "Updated"]}
@@ -248,7 +257,12 @@ export default function IncidentsTab(): JSX.Element {
                     // type allows) still get distinct React keys.
                     key={incident.id ?? `incident-${index}`}
                     hover
-                    onClick={() => incident.id && navigate(`/operations/incidents/${incident.id}`)}
+                    onClick={() =>
+                      incident.id &&
+                      navigate(`/operations/incidents/${incident.id}`, {
+                        state: { from: `${location.pathname}${location.search}` },
+                      })
+                    }
                     sx={{ cursor: "pointer" }}
                   >
                     <TableCell>{incident.number || "—"}</TableCell>

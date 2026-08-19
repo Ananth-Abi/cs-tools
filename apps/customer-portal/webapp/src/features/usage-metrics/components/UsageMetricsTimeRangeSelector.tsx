@@ -17,11 +17,12 @@
 import {
   Box,
   Button,
-  InputAdornment,
-  TextField,
   Typography,
+  DatePickers,
+  AdapterDateFns,
 } from "@wso2/oxygen-ui";
 import { Calendar } from "@wso2/oxygen-ui-icons-react";
+import { format } from "date-fns";
 import type { JSX } from "react";
 import {
   USAGE_METRICS_CUSTOM_RANGE_APPLY,
@@ -42,6 +43,20 @@ import {
 } from "@features/usage-metrics/types/usageMetrics";
 import { UsageTimeRange } from "@features/project-details/types/usage";
 import { getUsagePresetShortLabel } from "@features/usage-metrics/utils/usageMetricsTab";
+
+const { LocalizationProvider, DatePicker } = DatePickers;
+
+function parseDateOnly(value: string): Date | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDateOnly(date: Date): string {
+  return format(date, "yyyy-MM-dd");
+}
 
 /**
  * Preset and custom date range controls for Usage & Metrics panels.
@@ -138,45 +153,51 @@ export default function UsageMetricsTimeRangeSelector({
           {timeRange === UsageTimeRange.CUSTOM && (
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5, ml: 1 }}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                  <TextField
-                    type="date"
-                    size="small"
-                    value={customStart}
-                    onChange={(e) => onCustomStartChange(e.target.value)}
-                    error={!!customRangeError}
-                    sx={{ minWidth: 160, maxWidth: "100%" }}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <Calendar size={16} />
-                        </InputAdornment>
-                      ),
-                    }}
-                  />
-                  <Typography
-                    variant="body2"
-                    color="text.secondary"
-                    sx={{ mx: 0.5 }}
-                  >
-                    {USAGE_METRICS_CUSTOM_RANGE_TO}
-                  </Typography>
-                  <TextField
-                    type="date"
-                    size="small"
-                    value={customEnd}
-                    onChange={(e) => onCustomEndChange(e.target.value)}
-                    error={!!customRangeError}
-                    sx={{ minWidth: 160, maxWidth: "100%" }}
-                    InputProps={{
-                      startAdornment: (
-                        <InputAdornment position="start">
-                          <Calendar size={16} />
-                        </InputAdornment>
-                      ),
-                    }}
-                  />
-                </Box>
+                <LocalizationProvider dateAdapter={AdapterDateFns}>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                    <DatePicker
+                      value={parseDateOnly(customStart)}
+                      disableFuture
+                      maxDate={parseDateOnly(customEnd) ?? undefined}
+                      onChange={(date) => {
+                        onCustomStartChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
+                      }}
+                      slotProps={{
+                        textField: {
+                          size: "small",
+                          error: !!customRangeError,
+                          sx: { minWidth: 160, maxWidth: "100%" },
+                          slotProps: { htmlInput: { "aria-label": "Custom range start date" } },
+                        },
+                        field: { clearable: true },
+                      }}
+                    />
+                    <Typography
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ mx: 0.5 }}
+                    >
+                      {USAGE_METRICS_CUSTOM_RANGE_TO}
+                    </Typography>
+                    <DatePicker
+                      value={parseDateOnly(customEnd)}
+                      disableFuture
+                      minDate={parseDateOnly(customStart) ?? undefined}
+                      onChange={(date) => {
+                        onCustomEndChange(date instanceof Date && !isNaN(date.getTime()) ? formatDateOnly(date) : "");
+                      }}
+                      slotProps={{
+                        textField: {
+                          size: "small",
+                          error: !!customRangeError,
+                          sx: { minWidth: 160, maxWidth: "100%" },
+                          slotProps: { htmlInput: { "aria-label": "Custom range end date" } },
+                        },
+                        field: { clearable: true },
+                      }}
+                    />
+                  </Box>
+                </LocalizationProvider>
                 <Box sx={{ display: "flex", gap: 1 }}>
                   <Button
                     size="small"

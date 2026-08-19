@@ -17,9 +17,11 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -39,10 +41,11 @@ var caseFilterFieldSet = map[string]bool{
 	"type": true, "state": true, "severity": true, "engagementType": true,
 	"issueType": true, "workState": true, "tag": true, "projectId": true,
 	"deploymentId": true, "assignedUserId": true, "createdBy": true,
-	"createdOn": true, "updatedOn": true, "closedOn": true, "product": true,
-	"projectOnboardingStatus": true, "projectType": true, "integrationCsTeam": true,
+	"createdOn": true, "updatedOn": true, "closedOn": true, "resolvedOn": true, "product": true,
+	"projectOnboardingStatus": true, "projectType": true, "creTeam": true, "sreTeam": true,
 	"resolutionNotes": true, "parentId": true, "taskSLABusinessElapsedPercent": true,
-	"escalationLevel": true, "escalation": true,
+	"escalationLevel": true, "escalation": true, "number": true, "internalId": true,
+	"accountId": true,
 }
 
 // caseFilterOpSet is the exact set of CaseFieldFilter.Op values accepted by
@@ -262,14 +265,23 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			}
 
 		case "state":
-			if f.Op != "in" {
+			switch f.Op {
+			case "in":
+				if err := requireCaseFilterValues(f); err != nil {
+					return domain.ParsedCaseFilters{}, err
+				}
+				for _, v := range f.Values {
+					p.States = append(p.States, domain.CaseState(v))
+				}
+			case "notIn":
+				if err := requireCaseFilterValues(f); err != nil {
+					return domain.ParsedCaseFilters{}, err
+				}
+				for _, v := range f.Values {
+					p.ExcludeStates = append(p.ExcludeStates, domain.CaseState(v))
+				}
+			default:
 				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
-			}
-			if err := requireCaseFilterValues(f); err != nil {
-				return domain.ParsedCaseFilters{}, err
-			}
-			for _, v := range f.Values {
-				p.States = append(p.States, domain.CaseState(v))
 			}
 
 		case "severity":
@@ -444,6 +456,23 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
 			}
 
+		case "resolvedOn":
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			t, err := parseCaseFilterDate(f, f.Values[0], now)
+			if err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			switch f.Op {
+			case "gte":
+				p.ResolvedStartDate = t
+			case "lte":
+				p.ResolvedEndDate = t
+			default:
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+
 		case "product":
 			if f.Op != "in" {
 				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
@@ -454,13 +483,17 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			p.ProductNames = append(p.ProductNames, f.Values...)
 
 		case "projectOnboardingStatus":
-			if f.Op != "in" {
-				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
-			}
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
 			}
-			p.ProjectOnboardingStatuses = append(p.ProjectOnboardingStatuses, f.Values...)
+			switch f.Op {
+			case "in":
+				p.ProjectOnboardingStatuses = append(p.ProjectOnboardingStatuses, f.Values...)
+			case "notIn":
+				p.ExcludeProjectOnboardingStatuses = append(p.ExcludeProjectOnboardingStatuses, f.Values...)
+			default:
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
 
 		case "projectType":
 			if f.Op != "in" {
@@ -469,16 +502,37 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
 			}
-			p.ProjectTypeIDs = append(p.ProjectTypeIDs, f.Values...)
+			p.ProjectTypeNames = append(p.ProjectTypeNames, f.Values...)
 
-		case "integrationCsTeam":
+		case "creTeam":
 			if f.Op != "in" {
 				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
 			}
 			if err := requireCaseFilterValues(f); err != nil {
 				return domain.ParsedCaseFilters{}, err
 			}
-			p.IntegrationCsTeamIDs = append(p.IntegrationCsTeamIDs, f.Values...)
+			p.CreTeamIDs = append(p.CreTeamIDs, f.Values...)
+
+		case "sreTeam":
+			if f.Op != "in" {
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			p.SreTeamIDs = append(p.SreTeamIDs, f.Values...)
+
+		case "accountId":
+			if f.Op != "in" {
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			if err := validateUUIDs("filters: accountId", f.Values); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			p.AccountIDs = append(p.AccountIDs, f.Values...)
 
 		case "resolutionNotes":
 			// isNotEmpty has no prior equivalent: false and omitted were
@@ -502,6 +556,32 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 			}
 			id := f.Values[0]
 			p.ParentID = &id
+
+		case "number":
+			if f.Op != "eq" {
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			if len(f.Values) != 1 {
+				return domain.ParsedCaseFilters{}, &apierror.ValidationError{Msg: "filters: number eq requires exactly one value"}
+			}
+			number := f.Values[0]
+			p.Number = &number
+
+		case "internalId":
+			if f.Op != "eq" {
+				return domain.ParsedCaseFilters{}, badCaseFilterCombo(f)
+			}
+			if err := requireCaseFilterValues(f); err != nil {
+				return domain.ParsedCaseFilters{}, err
+			}
+			if len(f.Values) != 1 {
+				return domain.ParsedCaseFilters{}, &apierror.ValidationError{Msg: "filters: internalId eq requires exactly one value"}
+			}
+			internalID := f.Values[0]
+			p.InternalID = &internalID
 
 		case "taskSLABusinessElapsedPercent":
 			if err := requireCaseFilterValues(f); err != nil {
@@ -556,18 +636,54 @@ func ParseCaseFieldFilters(filters []domain.CaseFieldFilter, callerEmail string,
 // the wire. Not a routable address.
 const orGroupCallerEmailSentinel = "or-group-validation@invalid"
 
-// ParseCaseFieldFilterGroups translates SearchCasesFilters.OrGroups (each an
-// independent CaseFieldFilter array) into domain.CaseFilterGroup entries,
-// reusing ParseCaseFieldFilters's per-field parsing/validation for every
-// group. Only fields with a direct, non-subquery ServiceNow mapping are
-// allowed inside a branch (see domain.CaseFilterGroup doc comment) -- a group
-// containing any other field is rejected with a validation error naming the
-// unsupported field, rather than silently dropping it.
-func ParseCaseFieldFilterGroups(groups [][]domain.CaseFieldFilter) ([]domain.CaseFilterGroup, error) {
-	result := make([]domain.CaseFilterGroup, 0, len(groups))
-	for _, group := range groups {
+// branchFilterErrorPrefix is the JSON path ParseCaseFieldFilters roots every
+// validation message at. Inside an OR branch that path is wrong: the filter
+// array lives at anyOf[i].filters, not at the top-level filters, and the
+// public contract reports the location a client actually has to edit.
+const branchFilterErrorPrefix = "filters:"
+
+// relocateBranchFilterError rewrites a ParseCaseFieldFilters validation error
+// raised while parsing branch index i so its path names the branch --
+// "filters: unsupported field: x" becomes
+// "anyOf[0].filters: unsupported field: x". The ValidationError type is
+// preserved so the error still maps to a 400; an error that is not one of
+// ours, or that is not rooted at "filters:", is returned untouched rather than
+// having a path glued onto a message that never carried one.
+func relocateBranchFilterError(err error, i int) error {
+	var v *apierror.ValidationError
+	if !errors.As(err, &v) || !strings.HasPrefix(v.Msg, branchFilterErrorPrefix) {
+		return err
+	}
+	return &apierror.ValidationError{
+		Msg: fmt.Sprintf("anyOf[%d].%s", i, v.Msg),
+	}
+}
+
+// ParseCaseFieldFilterGroups translates SearchCasesFilters.AnyOf (each branch
+// carrying its own independent CaseFieldFilter array) into
+// domain.CaseFilterGroup entries, reusing ParseCaseFieldFilters's per-field
+// parsing/validation for every branch. Only fields with a direct,
+// non-subquery ServiceNow mapping are allowed inside a branch (see
+// domain.CaseFilterGroup doc comment) -- a branch containing any other field
+// is rejected with a validation error naming the unsupported field, rather
+// than silently dropping it.
+func ParseCaseFieldFilterGroups(branches []domain.CaseFilterBranch) ([]domain.CaseFilterGroup, error) {
+	result := make([]domain.CaseFilterGroup, 0, len(branches))
+	for i, branch := range branches {
+		group := branch.Filters
+		// A branch with no predicates constrains nothing, and the branches are
+		// OR'd against each other -- so a single empty one widens the WHOLE
+		// result set to every case, with a 200 and nothing in any log to show
+		// for it. `"anyOf": [{}]` decodes cleanly into this, so the schema does
+		// not catch it either (openapi.yaml now carries minItems: 1 for the
+		// clients that do validate, but the server cannot rely on that).
+		if len(group) == 0 {
+			return nil, &apierror.ValidationError{
+				Msg: fmt.Sprintf("anyOf[%d].filters: an OR branch must carry at least one filter predicate; an empty branch matches everything and would silently widen the whole result set", i),
+			}
+		}
 		// now is irrelevant here: rejectUnsupportedOrGroupFields below rejects any
-		// date-range field (createdOn/updatedOn/closedOn) inside an OR-group branch,
+		// date-range field (createdOn/updatedOn/closedOn/resolvedOn) inside an OR-group branch,
 		// so this call never actually resolves a relative-date placeholder.
 		//
 		// orGroupCallerEmailSentinel stands in for the caller's email so the
@@ -579,7 +695,7 @@ func ParseCaseFieldFilterGroups(groups [][]domain.CaseFieldFilter) ([]domain.Cas
 		// rejects, and CreatedBy/CreatedByMe are not copied into CaseFilterGroup.
 		parsed, err := ParseCaseFieldFilters(group, orGroupCallerEmailSentinel, nil, time.Now().UTC())
 		if err != nil {
-			return nil, err
+			return nil, relocateBranchFilterError(err, i)
 		}
 		if err := rejectUnsupportedOrGroupFields(parsed); err != nil {
 			return nil, err
@@ -606,33 +722,47 @@ func ParseCaseFieldFilterGroups(groups [][]domain.CaseFieldFilter) ([]domain.Cas
 func rejectUnsupportedOrGroupFields(parsed domain.ParsedCaseFilters) error {
 	switch {
 	case len(parsed.Tags) > 0 || len(parsed.ExcludeTags) > 0:
-		return &apierror.ValidationError{Msg: "orGroups: field \"tag\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"tag\" is not supported inside an OR group"}
 	case parsed.ParentID != nil:
-		return &apierror.ValidationError{Msg: "orGroups: field \"parentId\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"parentId\" is not supported inside an OR group"}
+	case parsed.Number != nil:
+		return &apierror.ValidationError{Msg: "anyOf: field \"number\" is not supported inside an OR group"}
+	case parsed.InternalID != nil:
+		return &apierror.ValidationError{Msg: "anyOf: field \"internalId\" is not supported inside an OR group"}
 	case len(parsed.CreatedBy) > 0 || parsed.CreatedByMe:
-		return &apierror.ValidationError{Msg: "orGroups: field \"createdBy\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"createdBy\" is not supported inside an OR group"}
 	case parsed.ClosedStartDate != nil || parsed.ClosedEndDate != nil:
-		return &apierror.ValidationError{Msg: "orGroups: field \"closedOn\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"closedOn\" is not supported inside an OR group"}
+	case parsed.ResolvedStartDate != nil || parsed.ResolvedEndDate != nil:
+		return &apierror.ValidationError{Msg: "anyOf: field \"resolvedOn\" is not supported inside an OR group"}
 	case parsed.StartCreatedDate != nil || parsed.EndCreatedDate != nil:
-		return &apierror.ValidationError{Msg: "orGroups: field \"createdOn\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"createdOn\" is not supported inside an OR group"}
 	case parsed.StartUpdatedDate != nil || parsed.EndUpdatedDate != nil:
-		return &apierror.ValidationError{Msg: "orGroups: field \"updatedOn\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"updatedOn\" is not supported inside an OR group"}
 	case len(parsed.ProductNames) > 0:
-		return &apierror.ValidationError{Msg: "orGroups: field \"product\" is not supported inside an OR group"}
-	case len(parsed.ProjectOnboardingStatuses) > 0:
-		return &apierror.ValidationError{Msg: "orGroups: field \"projectOnboardingStatus\" is not supported inside an OR group"}
-	case len(parsed.ProjectTypeIDs) > 0:
-		return &apierror.ValidationError{Msg: "orGroups: field \"projectType\" is not supported inside an OR group"}
-	case len(parsed.IntegrationCsTeamIDs) > 0:
-		return &apierror.ValidationError{Msg: "orGroups: field \"integrationCsTeam\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"product\" is not supported inside an OR group"}
+	case len(parsed.ProjectOnboardingStatuses) > 0 || len(parsed.ExcludeProjectOnboardingStatuses) > 0:
+		return &apierror.ValidationError{Msg: "anyOf: field \"projectOnboardingStatus\" is not supported inside an OR group"}
+	case len(parsed.ProjectTypeNames) > 0:
+		return &apierror.ValidationError{Msg: "anyOf: field \"projectType\" is not supported inside an OR group"}
+	case len(parsed.CreTeamIDs) > 0:
+		return &apierror.ValidationError{Msg: "anyOf: field \"creTeam\" is not supported inside an OR group"}
+	case len(parsed.SreTeamIDs) > 0:
+		return &apierror.ValidationError{Msg: "anyOf: field \"sreTeam\" is not supported inside an OR group"}
+	case len(parsed.AccountIDs) > 0:
+		return &apierror.ValidationError{Msg: "anyOf: field \"accountId\" is not supported inside an OR group"}
+	case len(parsed.ExcludeStates) > 0:
+		// state+in is supported inside a branch (CaseFilterGroup.States);
+		// state+notIn is not modeled there.
+		return &apierror.ValidationError{Msg: "anyOf: field \"state\" (notIn) is not supported inside an OR group"}
 	case parsed.Unassigned:
-		return &apierror.ValidationError{Msg: "orGroups: field \"assignedUserId\" (isEmpty) is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"assignedUserId\" (isEmpty) is not supported inside an OR group"}
 	case parsed.ResolutionNotesEmpty:
-		return &apierror.ValidationError{Msg: "orGroups: field \"resolutionNotes\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"resolutionNotes\" is not supported inside an OR group"}
 	case parsed.TaskSLAFilter != nil:
-		return &apierror.ValidationError{Msg: "orGroups: field \"taskSLABusinessElapsedPercent\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"taskSLABusinessElapsedPercent\" is not supported inside an OR group"}
 	case parsed.HasActiveEscalation != nil:
-		return &apierror.ValidationError{Msg: "orGroups: field \"escalation\" is not supported inside an OR group"}
+		return &apierror.ValidationError{Msg: "anyOf: field \"escalation\" is not supported inside an OR group"}
 	}
 	return nil
 }

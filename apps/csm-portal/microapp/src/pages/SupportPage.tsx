@@ -23,6 +23,7 @@ import { cases } from "@src/services/cases";
 import { currentUser } from "@src/services/currentUser";
 import type { CaseState } from "@src/types";
 import { ErrorBoundary } from "@components/common/ErrorBoundary";
+import { ListItemErrorBoundary } from "@components/common/ListItemErrorBoundary";
 import { CaseCard, CaseCardSkeleton } from "@components/support/CaseCard";
 import { EmptyState } from "@components/support/EmptyState";
 import { ErrorState } from "@components/support/ErrorState";
@@ -183,7 +184,9 @@ function CaseListContent({
 
   // sortBy: updatedOn desc is sent on every request (see cases.ts) but isn't reliably honored
   // upstream — re-sort client-side as a backstop. See compareByUpdatedOnDesc for why.
-  const items = data.pages.flatMap((page) => page.items).sort((a, b) => compareByUpdatedOnDesc(a.updatedOn, b.updatedOn));
+  const items = data.pages
+    .flatMap((page) => page.items)
+    .sort((a, b) => compareByUpdatedOnDesc(a.updatedOn, b.updatedOn));
   const total = data.pages[0]?.total ?? items.length;
 
   if (items.length === 0) return <EmptyState message={TAB_CONFIG.case.emptyMessage} />;
@@ -195,7 +198,9 @@ function CaseListContent({
       </Typography>
 
       {items.map((item) => (
-        <CaseCard key={item.id} item={item} />
+        <ListItemErrorBoundary key={item.id} context="case card">
+          <CaseCard item={item} />
+        </ListItemErrorBoundary>
       ))}
 
       {/* IntersectionObserver can miss a zero-height target, so give the sentinel 1px to observe. */}

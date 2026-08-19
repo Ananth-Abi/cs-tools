@@ -73,6 +73,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | `EMAIL_CLIENT_SECRET` | OAuth2 client secret for the email service (optional) |
 | `EMAIL_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 | `EMAIL_FROM_ADDRESS` | Fixed "From" address used for every outgoing email (optional) |
+| `EMAIL_SENDING_ENABLED` | Temporary killswitch — set to `false` to log instead of actually sending `case.*` emails (recipient links are still resolved either way); unset/anything else means real sending. Doesn't affect Google Chat or Twilio |
 
 ### Google Chat notification channel
 

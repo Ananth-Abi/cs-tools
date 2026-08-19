@@ -26,13 +26,13 @@ import (
 
 // Error message constants matching the customer-portal error vocabulary.
 const (
-	ErrMsgUnauthorized      = "You are not authorized to perform this action. Please try again."
-	ErrMsgForbidden         = "Access to the requested resource is forbidden!"
-	ErrMsgNotFound          = "The requested resource was not found!"
-	ErrMsgBadRequest        = "Invalid request payload."
-	ErrMsgInternal          = "An internal server error occurred. Please try again later."
-	ErrMsgInvalidUUID       = "Invalid UUID format."
-	errMsgReadBody          = "Failed to read request body."
+	ErrMsgUnauthorized = "You are not authorized to perform this action. Please try again."
+	ErrMsgForbidden    = "Access to the requested resource is forbidden!"
+	ErrMsgNotFound     = "The requested resource was not found!"
+	ErrMsgBadRequest   = "Invalid request payload."
+	ErrMsgInternal     = "An internal server error occurred. Please try again later."
+	ErrMsgInvalidUUID  = "Invalid UUID format."
+	errMsgReadBody     = "Failed to read request body."
 )
 
 // errorBody is the JSON error payload format matching the customer-portal pattern.

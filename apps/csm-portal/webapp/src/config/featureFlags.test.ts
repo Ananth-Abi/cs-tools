@@ -50,7 +50,7 @@ describe("featureState", () => {
   it("treats anything absent from the config as a working feature", () => {
     expect(featureState("operations")).toBe("enabled");
     expect(featureState("operations.incidents")).toBe("enabled");
-    expect(featureState("admin.roles")).toBe("enabled");
+    expect(featureState("admin.user-management.roles")).toBe("enabled");
   });
 
   it("treats an id that isn't in the nav tree as enabled", () => {
@@ -95,13 +95,13 @@ describe("featureState", () => {
 
 describe("override parsing", () => {
   it("accepts the map as a JSON string, for string-only config injection", () => {
-    setOverrides(JSON.stringify({ "admin.roles": "hidden" }));
-    expect(featureState("admin.roles")).toBe("hidden");
+    setOverrides(JSON.stringify({ "admin.user-management.roles": "hidden" }));
+    expect(featureState("admin.user-management.roles")).toBe("hidden");
   });
 
   it("ignores a malformed JSON string and warns", () => {
     setOverrides("{not json");
-    expect(featureState("admin.roles")).toBe("enabled");
+    expect(featureState("admin.user-management.roles")).toBe("enabled");
     expect(console.warn).toHaveBeenCalled();
   });
 
@@ -159,15 +159,18 @@ describe("navigation helpers", () => {
   });
 
   it("separates visible tabs from usable ones", () => {
-    setOverrides({ "admin.roles": "wip", "admin.groups": "hidden" });
-    const admin = navNodeById("admin");
-    expect(admin).toBeDefined();
-    const visible = visibleNavChildren(admin!).map((child) => child.id);
-    const enabled = enabledNavChildren(admin!).map((child) => child.id);
-    expect(visible).toContain("admin.roles");
-    expect(visible).not.toContain("admin.groups");
-    expect(enabled).not.toContain("admin.roles");
-    expect(enabled).toContain("admin.users");
+    setOverrides({
+      "admin.user-management.roles": "wip",
+      "admin.user-management.groups": "hidden",
+    });
+    const userManagement = navNodeById("admin.user-management");
+    expect(userManagement).toBeDefined();
+    const visible = visibleNavChildren(userManagement!).map((child) => child.id);
+    const enabled = enabledNavChildren(userManagement!).map((child) => child.id);
+    expect(visible).toContain("admin.user-management.roles");
+    expect(visible).not.toContain("admin.user-management.groups");
+    expect(enabled).not.toContain("admin.user-management.roles");
+    expect(enabled).toContain("admin.user-management.users");
   });
 
   it("offers only usable destinations to the quick-nav palette", () => {
@@ -185,6 +188,20 @@ describe("navigation helpers", () => {
     expect(incidents?.label).toBe("Incidents");
     expect(incidents?.sublabel).toBe("Operations");
     expect(incidents?.href).toBe("/operations?tab=incidents");
+  });
+
+  it("flattens a grandchild tab too, labelled by its immediate parent", () => {
+    const users = navigableNavNodes().find(
+      (node) => node.id === "admin.user-management.users",
+    );
+    expect(users?.label).toBe("Users");
+    expect(users?.sublabel).toBe("User management");
+    expect(users?.href).toBe("/admin/user-management/users");
+
+    const userManagement = navigableNavNodes().find(
+      (node) => node.id === "admin.user-management",
+    );
+    expect(userManagement?.sublabel).toBe("Settings");
   });
 });
 

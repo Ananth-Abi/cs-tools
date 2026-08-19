@@ -87,11 +87,16 @@ type entityCaseClient interface {
 	DeleteCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	CreateCallRequest(ctx context.Context, body []byte) ([]byte, error)
 	SearchCallRequests(ctx context.Context, body []byte) ([]byte, error)
+	SearchAllCallRequests(ctx context.Context, body []byte) ([]byte, error)
 	PatchCallRequest(ctx context.Context, callRequestID string, body []byte) ([]byte, error)
 	CreateCaseGithubIssue(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	AddCaseTag(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	RemoveCaseTag(ctx context.Context, caseID, tagID string) ([]byte, error)
-	SearchTags(ctx context.Context, query string, limit int) ([]byte, error)
+	SearchTags(ctx context.Context, body []byte) ([]byte, error)
+	// GetUserMe resolves the caller's own platform user record — the same
+	// call that backs GET /users/me. Needed by the public-comment ownership
+	// guard; see CaseHandler.resolveCurrentUserID.
+	GetUserMe(ctx context.Context) ([]byte, error)
 }
 
 // CaseHandler handles HTTP requests for case operations, delegating to the
@@ -162,6 +167,40 @@ func (h *CaseHandler) WaitPendingPublishes(ctx context.Context) {
 	case <-done:
 	case <-ctx.Done():
 	}
+}
+
+// resolveCurrentUserID returns the caller's platform user id — the id
+// GET /users/me resolves via the entity service — for comparing against a
+// platform record's own user references (e.g. a case's assigned engineer).
+//
+// This is deliberately NOT user.UserID from the JWT: that claim is whatever
+// identity value the gateway/identity provider embeds, an identifier from a
+// completely different space than the platform's own user record id. The two
+// are never equal, so comparing them always fails. The dashboard
+// "__current_user__" placeholder had exactly this bug and was fixed the same
+// way, by resolving the caller through GET /users/me instead of trusting the
+// raw claim.
+//
+// Returns an empty id when the lookup fails or yields nothing, so callers
+// gating on it fail closed rather than falling back to an id that can never
+// match.
+func (h *CaseHandler) resolveCurrentUserID(r *http.Request, user *middleware.UserInfo) string {
+	raw, err := h.entity.GetUserMe(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetUserMe failed while resolving the caller's platform user id", "userID", user.UserID, "err", err)
+		return ""
+	}
+	var me struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &me); err != nil {
+		slog.ErrorContext(r.Context(), "entity GetUserMe: parse response failed while resolving the caller's platform user id", "userID", user.UserID, "err", err)
+		return ""
+	}
+	if me.ID == "" {
+		slog.ErrorContext(r.Context(), "entity GetUserMe returned an empty id while resolving the caller's platform user id", "userID", user.UserID)
+	}
+	return me.ID
 }
 
 // maxRequestBodyBytes caps incoming request bodies at 1 MiB to prevent memory DoS.
@@ -292,8 +331,11 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		var currentCase struct {
-			State     string  `json:"state"`
-			WorkState *string `json:"workState"`
+			State            string  `json:"state"`
+			WorkState        *string `json:"workState"`
+			AssignedEngineer *struct {
+				ID *string `json:"id"`
+			} `json:"assignedEngineer"`
 		}
 		if err := json.Unmarshal(current, &currentCase); err != nil {
 			slog.ErrorContext(r.Context(), "failed to parse case state for comment guard", "userID", user.UserID, "caseID", caseID, "err", err)
@@ -302,6 +344,23 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 		}
 		if currentCase.State != "work_in_progress" || currentCase.WorkState == nil || *currentCase.WorkState != "ongoing" {
 			writeError(w, http.StatusConflict, ErrMsgCommentNotAllowed)
+			return
+		}
+		// Ownership check. assignedEngineer.id is a platform user record id, so
+		// it can only be compared against the caller's own platform id — never
+		// against the identity provider's user id on the JWT. Resolved here,
+		// after the state gate, so the extra lookup is only paid on a request
+		// that would otherwise be accepted.
+		currentUserID := h.resolveCurrentUserID(r, user)
+		if currentUserID == "" {
+			// The caller's identity could not be established, so ownership
+			// cannot be decided either way: fail closed, but as a server-side
+			// failure rather than a misleading "you are not the assignee".
+			writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+			return
+		}
+		if currentCase.AssignedEngineer == nil || currentCase.AssignedEngineer.ID == nil || *currentCase.AssignedEngineer.ID != currentUserID {
+			writeError(w, http.StatusForbidden, ErrMsgCommentNotOwnCase)
 			return
 		}
 	}
@@ -690,9 +749,10 @@ func (h *CaseHandler) RemoveCaseTag(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SearchTags handles GET /tags/search.
-// Forwards the q and limit query parameters to the entity service and returns
-// the raw response verbatim.
+// SearchTags handles POST /tags/search.
+// The JSON body ({filters:{searchQuery}, limit}) is forwarded to the entity
+// service verbatim, and the raw response returned as-is. Limit bounds are
+// enforced upstream, so there is nothing to re-validate here.
 func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -700,21 +760,79 @@ func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := r.URL.Query().Get("q")
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
 
-	var limit int
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		parsed, err := strconv.Atoi(limitStr)
-		if err != nil || parsed < 0 || parsed > 100 {
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	h.forwardTagSearch(w, r, user.UserID, body)
+}
+
+// tagSearchRequest is the request body of POST /tags/search. It exists only so
+// the deprecated GET alias can build the exact same bytes the POST forwards;
+// the POST itself never decodes the body, it passes it through untouched.
+type tagSearchRequest struct {
+	Filters struct {
+		SearchQuery string `json:"searchQuery"`
+	} `json:"filters"`
+	Limit int `json:"limit"`
+}
+
+// SearchTagsQuery handles GET /tags/search?q={query}&limit={limit}, the
+// query-parameter form tag search used before it moved to a JSON body. The
+// parameters are translated into the POST body and forwarded through the same
+// client call, so only one request shape ever leaves this service.
+//
+// Deprecated: use POST /tags/search instead. This alias exists only to bridge
+// one release, so callers still on the GET do not get a 405 while this service
+// and its callers are deployed separately. Delete it once that release has
+// shipped.
+func (h *CaseHandler) SearchTagsQuery(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	var req tagSearchRequest
+	req.Filters.SearchQuery = r.URL.Query().Get("q")
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
 			writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 			return
 		}
-		limit = parsed
+		// Bounds are enforced upstream, as they are for the POST; a value that
+		// is merely out of range is forwarded and rejected there.
+		req.Limit = parsed
 	}
 
-	result, err := h.entity.SearchTags(r.Context(), q, limit)
+	body, err := json.Marshal(req)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "entity SearchTags failed", "userID", user.UserID, "err", err)
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	h.forwardTagSearch(w, r, user.UserID, body)
+}
+
+// forwardTagSearch is the single outbound path shared by POST /tags/search and
+// its deprecated GET alias.
+func (h *CaseHandler) forwardTagSearch(w http.ResponseWriter, r *http.Request, userID string, body []byte) {
+	result, err := h.entity.SearchTags(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchTags failed", "userID", userID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search tags.")
 		return
 	}
@@ -723,7 +841,11 @@ func (h *CaseHandler) SearchTags(w http.ResponseWriter, r *http.Request) {
 }
 
 // PatchCase handles PATCH /cases/{id}.
-// Accepts state, severity, workState, watchList, or assigneeEmail and forwards to the entity service.
+// Accepts state, severity, workState, watchList, assigneeEmail, or acknowledge and forwards
+// to the entity service. The body is forwarded verbatim, so fields with no local guard (like
+// acknowledge, whose first-write-wins semantics and role gate both live upstream) need no
+// handling here — only state and workState are pre-validated, because their guards depend on
+// the case's current state.
 func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -950,6 +1072,47 @@ func (h *CaseHandler) SearchCallRequests(w http.ResponseWriter, r *http.Request)
 	result, err := h.entity.SearchCallRequests(r.Context(), entityBody)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchCallRequests failed", "userID", user.UserID, "caseID", caseID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to search call requests.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// SearchAllCallRequests handles POST /call-requests/search — standalone call
+// request search across all cases (not scoped to one case; see SearchCallRequests
+// for that path, which is nested under /cases/{id}/). Raw pass-through
+// body/response. Despite the shared "search" name with the case-scoped path,
+// this is a distinct route (flat, no case-id path param) with no collision --
+// forwards to the entity service's own /call-requests/search-all, which keeps
+// its "-all" suffix to stay distinct from ITS sibling case-scoped path.
+func (h *CaseHandler) SearchAllCallRequests(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !isJSONObjectOrEmpty(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SearchAllCallRequests(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchAllCallRequests failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search call requests.")
 		return
 	}

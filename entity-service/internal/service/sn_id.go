@@ -16,6 +16,35 @@
 
 package service
 
+import (
+	"fmt"
+	"unicode/utf8"
+
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
+)
+
+// maxExactNumberLen bounds an exact-match record-number filter
+// (incident/problem/change-request `number`) before it reaches the
+// ServiceNow client. Deliberately a length cap only, not a format/prefix
+// check: the case search's own number/internalId filters (case_filters.go)
+// don't validate format either, and every entity type's real number prefix
+// is an SN configuration detail this layer shouldn't hardcode assumptions
+// about.
+const maxExactNumberLen = 50
+
+// validateExactNumber checks an optional exact-match number filter value,
+// returning nil for an absent (nil) filter. Mirrors validateSearchQuery's
+// length-cap style (user_service.go) for the free-text path.
+func validateExactNumber(fieldName string, number *string) error {
+	if number == nil {
+		return nil
+	}
+	if utf8.RuneCountInString(*number) > maxExactNumberLen {
+		return &apierror.ValidationError{Msg: fmt.Sprintf("%s cannot exceed %d characters", fieldName, maxExactNumberLen)}
+	}
+	return nil
+}
+
 // sysidToUUID converts a 32-character ServiceNow sysid to a standard UUID by
 // inserting hyphens at the canonical 8-4-4-4-12 positions.
 // Returns the input unchanged if it is not exactly 32 hex characters.
@@ -43,6 +72,17 @@ func snParentIDFilter(uuid *string) string {
 		return ""
 	}
 	return uuidToSysid(*uuid)
+}
+
+// stringPtrValue dereferences an optional string filter value, returning ""
+// (omitted via omitempty) when nil. Unlike snParentIDFilter, no sysid
+// conversion applies: number and internalId are opaque ServiceNow values,
+// not UUIDs.
+func stringPtrValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // uuidsToSysids converts a slice of UUID strings to sysids.

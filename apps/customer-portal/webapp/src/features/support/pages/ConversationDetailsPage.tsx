@@ -52,6 +52,7 @@ import type {
   ChatHistoryItem,
 } from "@features/support/types/conversations";
 import { ChatSender } from "@features/support/types/conversations";
+import { MAX_FEEDBACK_TAGS } from "@features/support/constants/feedbackTags";
 import ApiErrorState from "@components/error/ApiErrorState";
 import type { Message } from "@features/support/types/conversations";
 import ConversationKnowledgeRecommendations from "@features/support/components/knowledge-base/ConversationKnowledgeRecommendations";
@@ -335,6 +336,19 @@ export default function ConversationDetailsPage(): JSX.Element {
   const [inputValue, setInputValueState] = useState("");
   const [resetTrigger, setResetTrigger] = useState(0);
   const [isSending, setIsSending] = useState(false);
+  // Feature-flagged (config.js): 👍/👎 on Novera answers. Passing the handlers
+  // as undefined is what hides the row — ChatMessageBubble only renders it when
+  // it has somewhere to send a rating — so no separate prop is needed.
+  const feedbackEnabled =
+    window.config?.CUSTOMER_PORTAL_NOVERA_FEEDBACK_ENABLED ?? false;
+  // Mirrors isSending for the socket's onClose handler. The hook installs
+  // ws.onclose during connect(), so that closure captures the options object
+  // from whichever render connected — reading isSending directly there would
+  // see a stale value. A ref is always current.
+  const isSendingRef = useRef(false);
+  useEffect(() => {
+    isSendingRef.current = isSending;
+  }, [isSending]);
   const [isInputDisabled, setIsInputDisabled] = useState(false);
   const [newMessages, setNewMessages] = useState<Message[]>([]);
   const inputValueRef = useRef("");
@@ -381,7 +395,9 @@ export default function ConversationDetailsPage(): JSX.Element {
         const idx = prev.findIndex((m) => m.id === activeId);
         if (idx === -1) return prev;
         pendingFinalRef.current = null;
-        const { finalMessage } = pending;
+        const { finalMessage, payload } = pending;
+        const answerId =
+          typeof payload.messageId === "string" ? payload.messageId : undefined;
         const msg = prev[idx];
         const next = [...prev];
         next[idx] = {
@@ -389,6 +405,8 @@ export default function ConversationDetailsPage(): JSX.Element {
           isLoading: false,
           isError: false,
           text: finalMessage || msg.text,
+          showFeedbackActions: !!answerId,
+          feedbackMessageId: answerId,
           isStreaming: false,
           thinkingSteps: [],
           thinkingLabel: null,
@@ -428,7 +446,7 @@ export default function ConversationDetailsPage(): JSX.Element {
     return () => window.clearInterval(id);
   }, [dequeueOneTypedToken, flushPendingFinalIfReady]);
 
-  const { connect, sendUserMessage } = useChatWebSocket({
+  const { connect, sendUserMessage, isConnected } = useChatWebSocket({
     onEvent: (event) => {
       switch (event.type) {
         case "thinking_start":
@@ -488,6 +506,36 @@ export default function ConversationDetailsPage(): JSX.Element {
           flushPendingFinalIfReady();
           break;
         }
+        case "feedback_ack": {
+          const ackId = String(event.messageId ?? "");
+          const ackRating =
+            event.rating === 1 ? 1 : event.rating === -1 ? -1 : null;
+          // The server echoes what it actually stored, after dropping any tag it
+          // does not recognise — so adopt its list unconditionally. An absent
+          // `tags` field means it stored none (an older backend ignores the
+          // field entirely), so fall back to [] rather than keeping our
+          // optimistic value: showing chips as selected when nothing was saved
+          // tells the user something untrue.
+          const ackTags = Array.isArray(event.tags)
+            ? (event.tags as unknown[]).filter(
+                (t): t is string => typeof t === "string",
+              )
+            : undefined;
+          if (ackId) {
+            setNewMessages((prev) =>
+              prev.map((m) =>
+                m.feedbackMessageId === ackId
+                  ? {
+                      ...m,
+                      feedbackRating: ackRating,
+                      feedbackTags: ackTags ?? [],
+                    }
+                  : m,
+              ),
+            );
+          }
+          break;
+        }
         case "error":
           pendingFinalRef.current = null;
           tokenQueueRef.current = [];
@@ -513,6 +561,27 @@ export default function ConversationDetailsPage(): JSX.Element {
         isLoading: false,
         isError: true,
         text: "WebSocket connection error.",
+        thinkingSteps: [],
+        isStreaming: false,
+      }));
+      setIsSending(false);
+    },
+    // A close is not always an error — the socket can drop mid-exchange (gateway
+    // timeout, upstream reset) without onerror ever firing. Nothing else clears
+    // isSending, and both send paths are guarded by it, so leaving it set makes
+    // the composer permanently dead: the hook reconnects, isConnected flips back
+    // to true, and every later message is silently swallowed with the typing
+    // indicator still spinning. Recover only if a send was actually in flight,
+    // so an idle close does not mark a finished answer as failed.
+    onClose: () => {
+      if (!isSendingRef.current) return;
+      pendingFinalRef.current = null;
+      tokenQueueRef.current = [];
+      upsertActiveBotMessage((msg) => ({
+        ...msg,
+        isLoading: false,
+        isError: true,
+        text: "Connection lost before the answer arrived. Please try again.",
         thinkingSteps: [],
         isStreaming: false,
       }));
@@ -592,6 +661,109 @@ export default function ConversationDetailsPage(): JSX.Element {
     await sendViaWebSocket(text);
     return true;
   }, [accountId, isSending, projectId, sendViaWebSocket, setInputValueAndRef]);
+
+  // Answer feedback (👍/👎) over the existing chat socket (#2534). Optimistic
+  // with revert-on-failure; feedback_ack confirms the persisted value.
+  // Latest feedback submission per messageId, so a stale rejection cannot
+  // roll back a newer vote. A ref, not state: it must not trigger a render.
+  const feedbackSeqRef = useRef<Map<string, number>>(new Map());
+
+  const submitFeedback = useCallback(
+    (messageId: string, rating: 1 | -1, tags?: string[]) => {
+      if (!projectId) return;
+
+      // Mark this as the latest submission for the message. Clicking 👍 then
+      // 👎 leaves two sends in flight; if the first rejects after the second
+      // resolved, its rollback must not undo the newer vote.
+      const seq = (feedbackSeqRef.current.get(messageId) ?? 0) + 1;
+      feedbackSeqRef.current.set(messageId, seq);
+
+      // Remember what was showing so a failure restores it, rather than
+      // clearing a rating the user had already given (and we had persisted).
+      let previousRating: 1 | -1 | null = null;
+      setNewMessages((prev) =>
+        prev.map((m) => {
+          if (m.feedbackMessageId !== messageId) return m;
+          previousRating = m.feedbackRating ?? null;
+          return {
+            ...m,
+            feedbackRating: rating,
+            ...(tags ? { feedbackTags: tags } : {}),
+          };
+        }),
+      );
+
+      void connect(projectId)
+        .then(() =>
+          sendUserMessage({
+            type: "feedback",
+            messageId,
+            rating,
+            conversationId: conversationId ?? undefined,
+            accountId: accountId || undefined,
+            projectId: projectId || undefined,
+            // Names, not just ids: a reviewer reading the dashboard should see
+            // who this came from without resolving sys_ids by hand. Already
+            // loaded for this page, so this costs no extra request.
+            accountName: projectDetails?.account?.name || undefined,
+            projectName: projectDetails?.name || undefined,
+            conversationName: summary?.chatNumber || undefined,
+            ...(tags ? { tags } : {}),
+          }),
+        )
+        .catch(() => {
+          if (feedbackSeqRef.current.get(messageId) !== seq) return;
+          setNewMessages((prev) =>
+            prev.map((m) =>
+              m.feedbackMessageId === messageId
+                ? { ...m, feedbackRating: previousRating }
+                : m,
+            ),
+          );
+        });
+    },
+    [
+      accountId,
+      connect,
+      conversationId,
+      projectId,
+      projectDetails?.account?.name,
+      projectDetails?.name,
+      summary?.chatNumber,
+      sendUserMessage,
+    ],
+  );
+
+  /**
+   * Toggle a reason tag on an answer that has already been rated. Re-sends the
+   * same feedback event with the new list — the backend upserts on
+   * (conversation, message), so this replaces rather than accumulating rows.
+   * Capped client-side at MAX_FEEDBACK_TAGS; the server enforces the same limit.
+   */
+  const handleFeedbackTag = useCallback(
+    (messageId: string, tag: string) => {
+      const msg = newMessages.find((m) => m.feedbackMessageId === messageId);
+      if (!msg?.feedbackRating) return;
+      const current = msg.feedbackTags ?? [];
+      const next = current.includes(tag)
+        ? current.filter((t) => t !== tag)
+        : current.length >= MAX_FEEDBACK_TAGS
+          ? current
+          : [...current, tag];
+      if (next === current) return;
+      submitFeedback(messageId, msg.feedbackRating, next);
+    },
+    [newMessages, submitFeedback],
+  );
+
+  const handleThumbsUp = useCallback(
+    (messageId: string) => submitFeedback(messageId, 1),
+    [submitFeedback],
+  );
+  const handleThumbsDown = useCallback(
+    (messageId: string) => submitFeedback(messageId, -1),
+    [submitFeedback],
+  );
 
   const conversationStatus = summary?.status;
   const conversationStatusLabel = conversationStatus ?? "--";
@@ -814,7 +986,13 @@ export default function ConversationDetailsPage(): JSX.Element {
                     m.isLoading ? (
                       <LoadingDotsBubble key={m.id} />
                     ) : (
-                      <ChatMessageBubble key={m.id} message={m} />
+                      <ChatMessageBubble
+                        key={m.id}
+                        message={m}
+                        onThumbsUp={feedbackEnabled && isConnected ? handleThumbsUp : undefined}
+                        onThumbsDown={feedbackEnabled && isConnected ? handleThumbsDown : undefined}
+                        onFeedbackTag={isConnected ? handleFeedbackTag : undefined}
+                      />
                     ),
                   )}
                 </>

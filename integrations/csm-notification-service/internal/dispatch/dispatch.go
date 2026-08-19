@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/url"
 	"slices"
@@ -74,6 +75,15 @@ type Dispatcher struct {
 	call       callSender
 	links      linkResolver
 
+	// emailSendingEnabled gates only sendPerGroup's actual SendEmail call —
+	// a temporary killswitch (EMAIL_SENDING_ENABLED) for disabling real
+	// email delivery for the four case.* types without touching Twilio or
+	// Google Chat. When false, sendPerGroup logs what it would have sent
+	// instead of calling d.email. Link resolution (groupByLink) still runs
+	// either way, so this doesn't mask a broken recipientlinks/entity-service
+	// path — only the final send is skipped.
+	emailSendingEnabled bool
+
 	// doneMu/done track which (record, channel) pairs have already
 	// succeeded — see handleIncidentCreated's doc comment for why this
 	// exists. In-memory only: this is a stopgap for not having a durable
@@ -87,14 +97,16 @@ type Dispatcher struct {
 	done   map[string]bool
 }
 
-// NewDispatcher constructs a Dispatcher.
-func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver) *Dispatcher {
+// NewDispatcher constructs a Dispatcher. See Dispatcher.emailSendingEnabled's
+// doc comment for what emailSendingEnabled controls.
+func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailSendingEnabled bool) *Dispatcher {
 	return &Dispatcher{
-		email:      email,
-		googleChat: googleChat,
-		call:       call,
-		links:      links,
-		done:       make(map[string]bool),
+		email:               email,
+		googleChat:          googleChat,
+		call:                call,
+		links:               links,
+		emailSendingEnabled: emailSendingEnabled,
+		done:                make(map[string]bool),
 	}
 }
 
@@ -280,6 +292,13 @@ func commentLinkFor(caseLink, commentID string) string {
 // recipient/group counts small enough, that this case accepts the
 // duplication rather than adding the same tracking here.
 func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]string, subject string, render func(caseLink string) string) error {
+	if !d.emailSendingEnabled {
+		for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
+			slog.InfoContext(ctx, "dispatch: email sending disabled (EMAIL_SENDING_ENABLED=false); not sending",
+				"subject", subject, "recipientCount", len(groups[caseLink]))
+		}
+		return nil
+	}
 	var errs []error
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
 		if err := d.email.SendEmail(ctx, groups[caseLink], nil, nil, nil, subject, render(caseLink), nil); err != nil {

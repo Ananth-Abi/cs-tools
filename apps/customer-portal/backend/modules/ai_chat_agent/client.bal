@@ -39,10 +39,15 @@ final http:Client aiChatAgentClient = check new (aiChatAgentBaseUrl, {
     }
 });
 
-isolated function createAiChatAgentWsClient(string sessionId) returns websocket:Client|error {
-    return new (string `${aiChatAgentWsBaseUrl}/ws?sessionId=${sessionId}`, {
+isolated function createAiChatAgentWsClient(string sessionId, decimal? readTimeout = ())
+        returns websocket:Client|error {
+    websocket:ClientConfiguration config = {
         auth: {
             ...clientCredentialsOauth2ConfigWs
         }
-    });
+    };
+    if readTimeout is decimal {
+        config.readTimeout = readTimeout;
+    }
+    return new (string `${aiChatAgentWsBaseUrl}/ws?sessionId=${sessionId}`, config);
 }

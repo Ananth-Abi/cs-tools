@@ -31,7 +31,10 @@ import {
 import { Phone, Plus, RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import { useEffect, useState, type JSX } from "react";
 import type { BeCallRequestView, BeCallRequestStateKey } from "@api/backend/types";
-import type { CaseState, Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type {
+  CaseState,
+  SeverityOrUnset,
+} from "@features/csm-dashboard/types/abtDashboard";
 import {
   useGetCsmCaseCallRequests,
   usePostCsmCaseCallRequest,
@@ -50,6 +53,7 @@ import { RejectCallDialog } from "./RejectCallDialog";
 import { SendCallNotesDialog } from "./SendCallNotesDialog";
 import { CancelCallDialog } from "./CancelCallDialog";
 import { CallRequestsTable } from "./CallRequestsTable";
+import RefreshButton from "@components/RefreshButton";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -57,8 +61,8 @@ import { CallRequestsTable } from "./CallRequestsTable";
 
 interface CallRequestsWidgetProps {
   caseId: string;
-  /** Case severity (S0-S4) — passed to the create dialog to enforce the lead-time rule. */
-  severity?: Severity;
+  /** Case severity — passed to the create dialog to enforce the lead-time rule. */
+  severity?: SeverityOrUnset;
   /**
    * Case's current state — the data source only accepts a call request while
    * the case is in one of a fixed set of states. Gates both the "Create call
@@ -95,10 +99,8 @@ export function CallRequestsWidget({
   const [stateFilter, setStateFilter] = useState<BeCallRequestStateKey | "">("");
   const activeStates = stateFilter ? [stateFilter] : undefined;
 
-  const { data, isLoading, isError, refetch } = useGetCsmCaseCallRequests(
-    caseId,
-    activeStates,
-  );
+  const { data, isLoading, isError, refetch, isFetching, dataUpdatedAt } =
+    useGetCsmCaseCallRequests(caseId, activeStates);
   const postCallRequest = usePostCsmCaseCallRequest();
   const patchCallRequest = usePatchCsmCaseCallRequest();
 
@@ -282,6 +284,12 @@ export function CallRequestsWidget({
             )}
           </Box>
           <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
+            <RefreshButton
+              onRefresh={() => void refetch()}
+              isFetching={isFetching}
+              updatedAt={dataUpdatedAt}
+              label="Refresh call requests"
+            />
             {/* State filter */}
             <FormControl size="small" sx={{ minWidth: 180 }}>
               <InputLabel id="cr-filter-label">Filter by state</InputLabel>

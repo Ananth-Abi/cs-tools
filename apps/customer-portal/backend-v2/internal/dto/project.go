@@ -29,14 +29,20 @@ import (
 // complianceViolationDate and suspensionProcessState — these are WSO2-internal
 // closure/compliance workflow fields not meant for customer display.
 type ProjectSummary struct {
-	ID               string     `json:"id"`
-	Name             string     `json:"name"`
-	Key              string     `json:"key"`
-	SubscriptionType string     `json:"subscriptionType"`
-	StartDate        *time.Time `json:"startDate,omitempty"`
-	EndDate          *time.Time `json:"endDate,omitempty"`
-	CreatedOn        time.Time  `json:"createdOn"`
-	ClosureState     *string    `json:"closureState,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Key              string `json:"key"`
+	SubscriptionType string `json:"subscriptionType"`
+	// Type is what the frontend actually reads (project.type.label); see
+	// projectTypeRef. subscriptionType is kept for existing consumers.
+	Type         *IDLabelRef `json:"type,omitempty"`
+	StartDate    *time.Time  `json:"startDate,omitempty"`
+	EndDate      *time.Time  `json:"endDate,omitempty"`
+	CreatedOn    time.Time   `json:"createdOn"`
+	ClosureState *string     `json:"closureState,omitempty"`
+	// No omitempty: the frontend's ProjectListItem types activeCasesCount as a
+	// required number, so a project with no active cases must still send 0.
+	ActiveCasesCount int `json:"activeCasesCount"`
 }
 
 // SearchProjectsResponse is the portal's response for POST /projects/search.
@@ -59,10 +65,12 @@ func MapSearchProjects(r entity.SearchProjectsResponse) SearchProjectsResponse {
 			Name:             p.Name,
 			Key:              p.Key,
 			SubscriptionType: p.SubscriptionType,
+			Type:             projectTypeRef(p.SubscriptionType),
 			StartDate:        p.StartDate,
 			EndDate:          p.EndDate,
 			CreatedOn:        p.CreatedOn,
 			ClosureState:     p.ClosureState,
+			ActiveCasesCount: p.ActiveCasesCount,
 		})
 	}
 	return SearchProjectsResponse{
@@ -112,6 +120,11 @@ type ProjectAccount struct {
 	HasAgent        bool       `json:"hasAgent"`
 	HasKbReferences bool       `json:"hasKbReferences"`
 	ActivationDate  *time.Time `json:"activationDate,omitempty"`
+	// The owning and technical contacts belong to the account, matching the
+	// frontend's ProjectDetailsAccount type.
+	DeactivationDate    *time.Time `json:"deactivationDate,omitempty"`
+	OwnerEmail          *string    `json:"ownerEmail,omitempty"`
+	TechnicalOwnerEmail *string    `json:"technicalOwnerEmail,omitempty"`
 }
 
 // ProjectDetails is the portal's response for GET /projects/{id}.
@@ -125,11 +138,34 @@ type ProjectDetails struct {
 	Name             string         `json:"name"`
 	Key              string         `json:"key"`
 	SubscriptionType string         `json:"subscriptionType"`
-	StartDate        time.Time      `json:"startDate"`
-	EndDate          time.Time      `json:"endDate"`
-	CreatedOn        time.Time      `json:"createdOn"`
-	UpdatedOn        time.Time      `json:"updatedOn"`
-	ClosureState     *string        `json:"closureState,omitempty"`
+	// Type is what the frontend actually reads (project.type.label); see
+	// projectTypeRef. subscriptionType is kept for existing consumers.
+	Type         *IDLabelRef `json:"type,omitempty"`
+	StartDate    time.Time   `json:"startDate"`
+	EndDate      time.Time   `json:"endDate"`
+	CreatedOn    time.Time   `json:"createdOn"`
+	UpdatedOn    time.Time   `json:"updatedOn"`
+	ClosureState *string     `json:"closureState,omitempty"`
+
+	// Query/onboarding entitlement balances and onboarding milestones, named as
+	// the frontend's ProjectDetails type declares them
+	// (features/project-hub/types/projects.ts). Customer-appropriate: these are
+	// the customer's own entitlement and onboarding progress, and the portal has
+	// always shown them — the Ballerina backend served all of them.
+	//
+	// omitempty on a pointer omits only nil, so a genuine zero balance still
+	// serialises: "tracked, none remaining" stays distinguishable from
+	// "not tracked".
+	TotalQueryHours          *float64   `json:"totalQueryHours,omitempty"`
+	ConsumedQueryHours       *float64   `json:"consumedQueryHours,omitempty"`
+	RemainingQueryHours      *float64   `json:"remainingQueryHours,omitempty"`
+	TotalOnboardingHours     *float64   `json:"totalOnboardingHours,omitempty"`
+	ConsumedOnboardingHours  *float64   `json:"consumedOnboardingHours,omitempty"`
+	RemainingOnboardingHours *float64   `json:"remainingOnboardingHours,omitempty"`
+	GoLiveDate               *time.Time `json:"goLiveDate,omitempty"`
+	GoLivePlanDate           *time.Time `json:"goLivePlanDate,omitempty"`
+	OnboardingExpiryDate     *time.Time `json:"onboardingExpiryDate,omitempty"`
+	OnboardingStatus         *string    `json:"onboardingStatus,omitempty"`
 }
 
 // MapProjectDetails builds the portal response from entity-service's ProjectDetailsView.
@@ -144,14 +180,30 @@ func MapProjectDetails(p entity.ProjectDetailsView) ProjectDetails {
 			HasAgent:        p.Account.AgentEnabled,
 			HasKbReferences: p.Account.KbReferencesEnabled,
 			ActivationDate:  p.Account.ActivationDate,
+
+			DeactivationDate:    p.Account.DeactivationDate,
+			OwnerEmail:          p.Account.OwnerEmail,
+			TechnicalOwnerEmail: p.Account.TechnicalOwnerEmail,
 		},
 		Name:             p.Name,
 		Key:              p.Key,
 		SubscriptionType: p.SubscriptionType,
+		Type:             projectTypeRef(p.SubscriptionType),
 		StartDate:        p.StartDate,
 		EndDate:          p.EndDate,
 		CreatedOn:        p.CreatedOn,
 		UpdatedOn:        p.UpdatedOn,
 		ClosureState:     p.ClosureState,
+
+		TotalQueryHours:          p.TotalQueryHours,
+		ConsumedQueryHours:       p.ConsumedQueryHours,
+		RemainingQueryHours:      p.RemainingQueryHours,
+		TotalOnboardingHours:     p.TotalOnboardingHours,
+		ConsumedOnboardingHours:  p.ConsumedOnboardingHours,
+		RemainingOnboardingHours: p.RemainingOnboardingHours,
+		GoLiveDate:               p.GoLiveDate,
+		GoLivePlanDate:           p.GoLivePlanDate,
+		OnboardingExpiryDate:     p.OnboardingExpiryDate,
+		OnboardingStatus:         p.OnboardingStatus,
 	}
 }

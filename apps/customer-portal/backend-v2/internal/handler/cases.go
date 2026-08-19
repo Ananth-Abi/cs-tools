@@ -32,6 +32,7 @@ type entityCaseClient interface {
 	SearchCases(ctx context.Context, req entity.SearchCasesRequest) (entity.SearchCasesResponse, error)
 	GetCase(ctx context.Context, id string) (entity.CaseView, error)
 	CreateCase(ctx context.Context, req entity.CreateCaseRequest) (entity.CreateCaseResponse, error)
+	UpdateConversation(ctx context.Context, id string, req entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error)
 	UpdateCase(ctx context.Context, id string, req entity.UpdateCaseRequest) (entity.UpdateCaseResponse, error)
 	CreateCaseComment(ctx context.Context, caseID string, req entity.CreateCaseCommentRequest) (entity.CreateCaseCommentResponse, error)
 	SearchCaseActivities(ctx context.Context, caseID string, req entity.SearchCaseActivitiesRequest) (entity.SearchCaseActivitiesResponse, error)
@@ -210,6 +211,19 @@ func (h *CaseHandler) CreateCase(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "entity CreateCase failed", "userID", user.UserID, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to create case.")
 		return
+	}
+
+	// A case raised from a Novera chat marks that conversation Converted so it
+	// stops counting as an active chat. Deliberately after the response is
+	// decided and non-blocking: the case already exists, so a conversion failure
+	// must not turn a successful creation into an error. entity-service does not
+	// do this itself even though the id is forwarded on the create request —
+	// same as the Ballerina backend, which forwards payload.conversationId and
+	// still performs this update explicitly.
+	if req.ConversationID != "" && uuidRe.MatchString(req.ConversationID) {
+		if _, err := h.entity.UpdateConversation(r.Context(), req.ConversationID, entity.UpdateConversationRequest{State: conversationStateConverted}); err != nil {
+			slog.ErrorContext(r.Context(), "entity UpdateConversation failed to mark the source conversation converted", "userID", user.UserID, "conversationID", req.ConversationID, "err", summarizeErr(err))
+		}
 	}
 
 	writeJSONValue(w, http.StatusCreated, dto.MapCaseCreate(result))

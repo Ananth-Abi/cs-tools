@@ -270,6 +270,14 @@ type stubEntity struct {
 	project entity.ProjectDetailsView
 	err     error
 	calls   int
+
+	// conversation/conversationErr script GetConversation, which handleMessage
+	// consults before downgrading a CONVERTED conversation to RESOLVED.
+	conversation    entity.ConversationDetails
+	conversationErr error
+	// updatedStates records every state UpdateConversation was asked to set, so
+	// a test can assert the transition was skipped rather than merely reordered.
+	updatedStates []string
 }
 
 func (s *stubEntity) GetProject(_ context.Context, _ string) (entity.ProjectDetailsView, error) {
@@ -281,8 +289,13 @@ func (s *stubEntity) CreateComment(_ context.Context, _ entity.CreateCommentRequ
 	return entity.CreateCommentResponse{}, nil
 }
 
-func (s *stubEntity) UpdateConversation(_ context.Context, _ string, _ entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error) {
+func (s *stubEntity) UpdateConversation(_ context.Context, _ string, req entity.UpdateConversationRequest) (entity.UpdateConversationResponse, error) {
+	s.updatedStates = append(s.updatedStates, req.State)
 	return entity.UpdateConversationResponse{}, nil
+}
+
+func (s *stubEntity) GetConversation(_ context.Context, _ string) (entity.ConversationDetails, error) {
+	return s.conversation, s.conversationErr
 }
 
 // TestHandleWebSocket_ProjectAccessGatesTheUpgrade asserts the account lookup

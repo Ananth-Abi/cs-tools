@@ -20,9 +20,15 @@ entity-service/
 │   │   ├── postgres.go          # pgxpool setup and connection
 │   │   └── migrate.go           # Schema migration runner
 │   ├── domain/entity.go         # Shared domain types (Case, Page, inputs)
+│   ├── events/events.go         # Envelope{Type, EntityID, Payload} — the case-events wire shape, kept in sync by hand with apps/csm-portal/backend and csm-notification-service's own copies
+│   ├── eventbus/
+│   │   ├── config.go            # Config + SASL/PLAIN setup for Azure Event Hub's Kafka-compatible endpoint
+│   │   ├── producer.go          # Producer — publish a record, wait for ack
+│   │   └── logger.go            # Bridges kafka-go's Logger/ErrorLogger to slog
 │   ├── service/
 │   │   ├── interfaces.go        # CaseRepository and CaseService interfaces
-│   │   └── entity_service.go    # Business logic — pagination, validation
+│   │   ├── entity_service.go    # Business logic — pagination, validation
+│   │   └── event_publisher_service.go # EventPublisherService.Publish — builds the envelope, publishes it, records a failure if Event Hub doesn't ack (not yet wired into main.go — no caller)
 │   ├── repository/
 │   │   ├── entity_repo.go       # SQL queries against the "case" table
 │   │   └── tx.go                # Transaction helper
@@ -111,35 +117,29 @@ HTTP Request
 
 > `.env` file is loaded automatically if present. Absent `.env` is silently ignored; a malformed one causes a fatal startup error.
 
-### Directory vocabularies
+### Directory vocabularies — moved
 
-Two curated lists are supplied as configuration rather than code, so adding a team or a role is a
-config change and a restart, not a release. Both are parsed at startup: **a malformed value is
-fatal**, so a typo stops a deploy instead of silently emptying a page.
+`CSM_TEAM_REGISTRY` and `CSM_USER_ROLES` are **no longer read by this service**. The team registry
+and the assignable-role allow-list are organisation vocabulary; they now live in the CSM portal
+backend, which resolves them once at startup and serves `POST /teams/search` and
+`POST /roles/search` from memory. This service holds no organisation vocabulary at all.
 
-| Variable            | Required | Default                | Description                                                          |
-| ------------------- | -------- | ---------------------- | -------------------------------------------------------------------- |
-| CSM_TEAM_REGISTRY   | No       | — (empty registry)     | Team catalogue. Rows separated by `,`, fields within a row by `\|`.    |
-| CSM_USER_ROLES      | No       | the built-in role list | Assignable-role allow-list, comma-separated.                          |
+Configure them in `apps/csm-portal/backend/.env` — see that module's
+[README](../apps/csm-portal/backend/README.md#directory-vocabularies). Setting them here has no
+effect.
 
-```bash
-# Rows are `teamKey|Display Name` or `teamKey|Display Name|FAMILY`.
-# The names below are placeholders — supply the real ones per environment.
-CSM_TEAM_REGISTRY="alpha|Alpha Team|CRE,beta|Beta Team|SRE,gamma|Gamma Team"
+### Event Hub — not yet wired in
 
-CSM_USER_ROLES="agent,admin,commenter,customer,customer_admin,partner,partner_admin,internal,external,timecard_approver"
-```
+`internal/service.EventPublisherService` publishes domain events (`case.created`, `case.comment_added`,
+`case.status_changed`, `case.assigned`, `incident.created`) to Event Hub's Kafka-compatible endpoint for
+`csm-notification-service` to consume. It is not constructed in `cmd/api/main.go` yet — no service method
+calls `Publish`.
 
-`CSM_TEAM_REGISTRY` has **no default, by design**. Team names are organisation vocabulary and are
-deliberately not committed to this repository — only placeholders appear here and in
-`.env.example`. Unset, the registry is empty and team lookups return nothing, with a warning
-logged. `displayName` is matched verbatim against the backing data source's group name when
-resolving members, so a wrong or blank one resolves **zero members silently**; that is why an empty
-field is rejected outright.
-
-`CSM_USER_ROLES` does have a default, because role names are generic platform vocabulary rather
-than organisation-specific. It drives both the `roleIds` filter validation and the catalogue that
-`POST /roles/search` serves, so the picker and the filter cannot disagree.
+| Variable | Description |
+|---|---|
+| `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` (optional) |
+| `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string — must be namespace-scoped (no `EntityPath`), not scoped to a single Event Hub (optional) |
+| `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (optional) |
 
 ## Security Scanning
 
@@ -154,6 +154,18 @@ gosec -fmt=text ./...
 ```
 
 The scan should report **0 issues**. If a new finding appears, fix the root cause before merging — do not suppress it without a code review.
+
+Run [govulncheck](https://golang.org/x/vuln/cmd/govulncheck) to check for known vulnerabilities:
+
+```bash
+# Install govulncheck (once)
+go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# Run from entity-service
+govulncheck ./...
+```
+
+The scan should report **no vulnerabilities**. Most findings are Go standard-library CVEs tied to the toolchain patch pinned in `go.mod`'s `go` directive — bump it to the latest `1.26.x` patch and run `go mod tidy` to resolve them.
 
 ## License
 
