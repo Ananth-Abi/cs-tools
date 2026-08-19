@@ -497,6 +497,12 @@ type ProjectAccountRef struct {
 	Region              *string    `json:"region"`
 	AgentEnabled        bool       `json:"agentEnabled"`
 	KbReferencesEnabled bool       `json:"kbReferencesEnabled"`
+	DeactivationDate    *time.Time `json:"deactivationDate"`
+	// OwnerEmail/TechnicalOwnerEmail are the account's owning and technical
+	// contacts. They sit on the account rather than the project, matching
+	// Ballerina's ProjectResponse.account and the portal's ProjectDetailsAccount.
+	OwnerEmail          *string `json:"ownerEmail"`
+	TechnicalOwnerEmail *string `json:"technicalOwnerEmail"`
 }
 
 // ProjectClosureFields groups the ServiceNow-only closure-tracking fields
@@ -531,6 +537,26 @@ type ProjectClosureFields struct {
 // ProjectDetailsView is the enriched response shape for GET /projects/{id}.
 // It embeds the linked account and uses createdOn/updatedOn for consistency
 // with the ProjectView search result.
+// ProjectEngagementFields carries a project's query/onboarding entitlement
+// balances and onboarding milestones.
+//
+// Grouped and embedded like ProjectClosureFields so the JSON stays flat. Every
+// field is a pointer: ServiceNow may omit any of them, and a nil balance ("not
+// tracked for this project") is a different fact from a zero one ("tracked, none
+// remaining") — a customer seeing 0 of 0 hours is not the same as seeing nothing.
+type ProjectEngagementFields struct {
+	TotalQueryHours          *float64   `json:"totalQueryHours"`
+	ConsumedQueryHours       *float64   `json:"consumedQueryHours"`
+	RemainingQueryHours      *float64   `json:"remainingQueryHours"`
+	TotalOnboardingHours     *float64   `json:"totalOnboardingHours"`
+	ConsumedOnboardingHours  *float64   `json:"consumedOnboardingHours"`
+	RemainingOnboardingHours *float64   `json:"remainingOnboardingHours"`
+	GoLiveDate               *time.Time `json:"goLiveDate"`
+	GoLivePlanDate           *time.Time `json:"goLivePlanDate"`
+	OnboardingExpiryDate     *time.Time `json:"onboardingExpiryDate"`
+	OnboardingStatus         *string    `json:"onboardingStatus"`
+}
+
 type ProjectDetailsView struct {
 	ID               string            `json:"id"`
 	Account          ProjectAccountRef `json:"account"`
@@ -542,6 +568,7 @@ type ProjectDetailsView struct {
 	EndDate          time.Time         `json:"endDate"`
 	CreatedOn        time.Time         `json:"createdOn"`
 	UpdatedOn        time.Time         `json:"updatedOn"`
+	ProjectEngagementFields
 	ProjectClosureFields
 }
 
@@ -620,6 +647,9 @@ type ProjectView struct {
 	// for this project (e.g. ServiceNow leaves it blank).
 	EndDate   *time.Time `json:"endDate"`
 	CreatedOn time.Time  `json:"createdOn"`
+	// ActiveCasesCount is a plain int, not a pointer: the portal's
+	// ProjectListItem types it as a required number.
+	ActiveCasesCount int `json:"activeCasesCount"`
 	// Account is nil when the project has no linked account (ServiceNow data source only).
 	Account *EntityRef `json:"account"`
 	ProjectClosureFields

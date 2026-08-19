@@ -5056,6 +5056,19 @@ components:
     ProjectAccountRef:
       type: object
       properties:
+        ownerEmail:
+          type: string
+          nullable: true
+          description: Email of the account owner.
+        technicalOwnerEmail:
+          type: string
+          nullable: true
+          description: Email of the account technical owner.
+        deactivationDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Date the account was deactivated.
         id:
           type: string
         name:
@@ -5077,6 +5090,49 @@ components:
     ProjectDetailsView:
       type: object
       properties:
+        totalQueryHours:
+          type: number
+          nullable: true
+          description: Total query hours entitlement. Null when not tracked for this project.
+        consumedQueryHours:
+          type: number
+          nullable: true
+          description: Query hours consumed. Null when not tracked.
+        remainingQueryHours:
+          type: number
+          nullable: true
+          description: Query hours remaining. Null when not tracked; 0 means none remaining.
+        totalOnboardingHours:
+          type: number
+          nullable: true
+          description: Total onboarding hours entitlement. Null when not tracked.
+        consumedOnboardingHours:
+          type: number
+          nullable: true
+          description: Onboarding hours consumed. Null when not tracked.
+        remainingOnboardingHours:
+          type: number
+          nullable: true
+          description: Onboarding hours remaining. Null when not tracked; 0 means none remaining.
+        goLiveDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Actual go-live date.
+        goLivePlanDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Planned go-live date.
+        onboardingExpiryDate:
+          type: string
+          format: date-time
+          nullable: true
+          description: Date the onboarding entitlement expires.
+        onboardingStatus:
+          type: string
+          nullable: true
+          description: Onboarding status as reported by ServiceNow.
         id:
           type: string
         account:
@@ -5139,6 +5195,9 @@ components:
     ProjectView:
       type: object
       properties:
+        activeCasesCount:
+          type: integer
+          description: Number of currently active cases on the project.
         id:
           type: string
         name:
