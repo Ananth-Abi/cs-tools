@@ -704,7 +704,14 @@ export type BeCaseUpdatePayload =
   | (Omit<BeCaseUpdateNever, "workState"> & { workState: BeCaseWorkState })
   /** Email of the engineer to assign (ServiceNow only). */
   | (Omit<BeCaseUpdateNever, "assigneeEmail"> & { assigneeEmail: string })
-  /** Full replacement watch list as emails (ServiceNow only). */
+  /**
+   * Full replacement watch list, as platform user UUIDs — not a delta, and
+   * not emails: the backend resolves each id to whatever identifier the
+   * backing data source's own payload declares. Cannot be empty: the request
+   * shape can't distinguish an empty list from an absent field, so `[]` is
+   * rejected as an empty update (an incident's watch list *can* be cleared —
+   * see {@link BeUpdateIncidentPayload}).
+   */
   | (Omit<BeCaseUpdateNever, "watchList"> & { watchList: string[] })
   /**
    * UUID of another case, incident, change request, or problem to link this
@@ -2530,6 +2537,11 @@ export interface BeUpdateIncidentPayload {
   configurationItemId?: string | null;
   assignmentGroupId?: string | null;
   assignedEngineerId?: string | null;
+  /**
+   * Full replacement watch list, as platform user UUIDs — not a delta. An
+   * explicitly empty array is meaningful and clears the watch list; omitting
+   * the key leaves it unchanged.
+   */
   watchList?: string[];
   workNotes?: string | null;
   additionalComments?: string | null;
