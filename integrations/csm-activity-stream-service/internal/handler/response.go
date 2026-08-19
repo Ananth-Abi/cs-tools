@@ -47,13 +47,6 @@ func writeError(w http.ResponseWriter, statusCode int, message string) {
 	_ = json.NewEncoder(w).Encode(errorBody{Message: message})
 }
 
-// writeJSON writes a raw JSON response with the given status code.
-func writeJSON(w http.ResponseWriter, statusCode int, data []byte) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(statusCode)
-	_, _ = w.Write(data) // #nosec G705 -- Content-Type: application/json already set; SecurityHeaders middleware adds X-Content-Type-Options: nosniff
-}
-
 // mapUpstreamErrorGeneric is mapUpstreamError's counterpart for every
 // non-PATCH endpoint: 401/403/404 still translate to the fixed messages, but
 // every other case — 400, 409, 422, 5xx, and unmapped statuses alike — falls
