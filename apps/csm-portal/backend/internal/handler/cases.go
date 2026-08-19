@@ -32,7 +32,6 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventpublisher"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/events"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/stream"
 )
 
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -100,7 +99,6 @@ type entityCaseClient interface {
 type CaseHandler struct {
 	entity    entityCaseClient
 	publisher *eventpublisher.Publisher
-	hub       *stream.BroadcastHub
 	// pending tracks in-flight publishAsync goroutines so shutdown can wait
 	// for them before closing publisher — see WaitPendingPublishes. Zero
 	// value is a ready-to-use sync.WaitGroup, so this needs no constructor
@@ -111,11 +109,9 @@ type CaseHandler struct {
 // NewCaseHandler creates a CaseHandler backed by the given entity client.
 // publisher may be nil — every publish call site below must check for that
 // (see publishAsync) — since Event Hub config is optional in this backend
-// (see cmd/server/main.go), matching the existing case-events consumer's
-// own "unset means don't run" convention. hub may also be nil under the same
-// condition; StreamCaseActivities checks for that before registering.
-func NewCaseHandler(entity entityCaseClient, publisher *eventpublisher.Publisher, hub *stream.BroadcastHub) *CaseHandler {
-	return &CaseHandler{entity: entity, publisher: publisher, hub: hub}
+// (see cmd/server/main.go).
+func NewCaseHandler(entity entityCaseClient, publisher *eventpublisher.Publisher) *CaseHandler {
+	return &CaseHandler{entity: entity, publisher: publisher}
 }
 
 // publishAsyncTimeout bounds the detached publish below.
