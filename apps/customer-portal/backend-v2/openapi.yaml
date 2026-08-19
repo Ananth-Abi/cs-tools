@@ -6328,6 +6328,12 @@ components:
         activeCasesCount:
           type: integer
           description: Number of currently active cases on the project. Always present.
+        # Project type as an {id, label} reference. The label matches the portal's
+        # ProjectType enum exactly: it gates the Operations navigation item and
+        # drives severity and product-default rules. Omitted when the upstream
+        # subscription type is empty.
+        type:
+          $ref: '#/components/schemas/IdLabelRef'
         id:
           type: string
         name:
@@ -6430,6 +6436,12 @@ components:
         onboardingStatus:
           type: string
           description: Onboarding status.
+        # Project type as an {id, label} reference. The label matches the portal's
+        # ProjectType enum exactly: it gates the Operations navigation item and
+        # drives severity and product-default rules. Omitted when the upstream
+        # subscription type is empty.
+        type:
+          $ref: '#/components/schemas/IdLabelRef'
         id:
           type: string
         account:

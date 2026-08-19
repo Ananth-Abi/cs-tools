@@ -29,14 +29,17 @@ import (
 // complianceViolationDate and suspensionProcessState — these are WSO2-internal
 // closure/compliance workflow fields not meant for customer display.
 type ProjectSummary struct {
-	ID               string     `json:"id"`
-	Name             string     `json:"name"`
-	Key              string     `json:"key"`
-	SubscriptionType string     `json:"subscriptionType"`
-	StartDate        *time.Time `json:"startDate,omitempty"`
-	EndDate          *time.Time `json:"endDate,omitempty"`
-	CreatedOn        time.Time  `json:"createdOn"`
-	ClosureState     *string    `json:"closureState,omitempty"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Key              string `json:"key"`
+	SubscriptionType string `json:"subscriptionType"`
+	// Type is what the frontend actually reads (project.type.label); see
+	// projectTypeRef. subscriptionType is kept for existing consumers.
+	Type         *IDLabelRef `json:"type,omitempty"`
+	StartDate    *time.Time  `json:"startDate,omitempty"`
+	EndDate      *time.Time  `json:"endDate,omitempty"`
+	CreatedOn    time.Time   `json:"createdOn"`
+	ClosureState *string     `json:"closureState,omitempty"`
 	// No omitempty: the frontend's ProjectListItem types activeCasesCount as a
 	// required number, so a project with no active cases must still send 0.
 	ActiveCasesCount int `json:"activeCasesCount"`
@@ -62,6 +65,7 @@ func MapSearchProjects(r entity.SearchProjectsResponse) SearchProjectsResponse {
 			Name:             p.Name,
 			Key:              p.Key,
 			SubscriptionType: p.SubscriptionType,
+			Type:             projectTypeRef(p.SubscriptionType),
 			StartDate:        p.StartDate,
 			EndDate:          p.EndDate,
 			CreatedOn:        p.CreatedOn,
@@ -134,11 +138,14 @@ type ProjectDetails struct {
 	Name             string         `json:"name"`
 	Key              string         `json:"key"`
 	SubscriptionType string         `json:"subscriptionType"`
-	StartDate        time.Time      `json:"startDate"`
-	EndDate          time.Time      `json:"endDate"`
-	CreatedOn        time.Time      `json:"createdOn"`
-	UpdatedOn        time.Time      `json:"updatedOn"`
-	ClosureState     *string        `json:"closureState,omitempty"`
+	// Type is what the frontend actually reads (project.type.label); see
+	// projectTypeRef. subscriptionType is kept for existing consumers.
+	Type         *IDLabelRef `json:"type,omitempty"`
+	StartDate    time.Time   `json:"startDate"`
+	EndDate      time.Time   `json:"endDate"`
+	CreatedOn    time.Time   `json:"createdOn"`
+	UpdatedOn    time.Time   `json:"updatedOn"`
+	ClosureState *string     `json:"closureState,omitempty"`
 
 	// Query/onboarding entitlement balances and onboarding milestones, named as
 	// the frontend's ProjectDetails type declares them
@@ -181,6 +188,7 @@ func MapProjectDetails(p entity.ProjectDetailsView) ProjectDetails {
 		Name:             p.Name,
 		Key:              p.Key,
 		SubscriptionType: p.SubscriptionType,
+		Type:             projectTypeRef(p.SubscriptionType),
 		StartDate:        p.StartDate,
 		EndDate:          p.EndDate,
 		CreatedOn:        p.CreatedOn,
