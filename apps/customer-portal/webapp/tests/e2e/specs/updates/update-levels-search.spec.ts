@@ -396,24 +396,28 @@ test.describe("Update Levels", () => {
     // search that was in effect comes back with it — the parameters were written
     // onto the URL, and this is where that pays off. Soft, because it is a
     // consequence of the history behaviour rather than the thing under test.
-    const url = new URL(page.url());
     await expect
       .soft(updates.searchButton(), "the search should still be complete")
       .toBeEnabled();
-    expect
-      .soft(url.searchParams.get(UPDATES.urlParams.product))
-      .toBe(UPDATES_SEARCH_INPUT.productName);
 
+    // Asserted through `toHaveURL`, which retries: the parameters are restored as
+    // the page remounts, so reading `page.url()` once can catch it before they
+    // are back.
+    await expect
+      .soft(page, "the search parameters should be restored")
+      .toHaveURL(
+        new RegExp(
+          `[?&]${UPDATES.urlParams.product}=${UPDATES_SEARCH_INPUT.productName}(&|$)`,
+        ),
+      );
+
+    const restored = new URL(page.url()).searchParams.toString();
     console.log(
       `Update level ${level}: went back to the search ` +
-        `(params ${url.searchParams.toString() ? "restored" : "dropped"})`,
+        `(params ${restored ? "restored" : "dropped"})`,
     );
   });
 
-  //
-  // Validation. Nothing here searches successfully, and nothing is written —
-  // the rules are all about which choices the form allows.
-  //
   test(`${UPDATES_SEARCH_INPUT.projectType} — downloads the update levels report`, async ({
     page,
   }) => {
@@ -509,6 +513,10 @@ test.describe("Update Levels", () => {
     );
   });
 
+  //
+  // Validation. Nothing here searches successfully, and nothing is written —
+  // the rules are all about which choices the form allows.
+  //
   test.describe("validation", () => {
     test(`${UPDATES_SEARCH_INPUT.projectType} — offers only levels above the start as the end`, async ({
       page,
@@ -528,9 +536,22 @@ test.describe("Update Levels", () => {
       );
 
       const startOptions = await updates.optionLabels(updates.startLevelSelect());
-      expect(startOptions.length, "no start levels offered").toBeGreaterThan(1);
+      expect(
+        startOptions.length,
+        "at least two start levels are needed for one to sit above another",
+      ).toBeGreaterThan(1);
 
+      // Guarded like every other runtime discovery here: without this, a level
+      // that is not on offer makes the option click time out on a missing element
+      // rather than saying which fixture value is wrong.
       const start = UPDATES_SEARCH_INPUT.viewLevel;
+      test.skip(
+        !startOptions.includes(start),
+        `Level ${start} is not offered as a start level for ` +
+          `${UPDATES_SEARCH_INPUT.productName} ${UPDATES_SEARCH_INPUT.productVersion}. ` +
+          `Update UPDATES_SEARCH_INPUT.viewLevel in tests/e2e/config/testData.ts.`,
+      );
+
       await updates.chooseOption(updates.startLevelSelect(), start);
 
       // The end select lists only levels above the start, which is what makes an

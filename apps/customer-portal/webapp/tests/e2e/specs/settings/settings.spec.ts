@@ -229,7 +229,9 @@ test.describe("Settings", () => {
       }
     }
 
-    console.log(`Settings: ${role} removed from ${email} and restored`);
+    // The user is not named: the report is no place for an address, and the test
+    // only ever acts on the account in SETTINGS_USER_INPUT anyway.
+    console.log(`Settings: ${role} role removed and restored`);
   });
 
   test("changes the font size from the Display tab", async ({ page }) => {

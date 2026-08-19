@@ -46,6 +46,16 @@ on:
       #- customer-portal-milestone-1
   workflow_dispatch:
 
+# The specs write to a single shared staging tenant: a service request comment, a
+# kept attachment per case, a call request, deployments. Two runs overlapping
+# would interleave those writes — two dispatches could both find a record absent
+# and both create it. Serialised rather than cancelled, because a half-finished
+# run leaves records behind either way and cancelling mid-write is worse than
+# queueing.
+concurrency:
+  group: e2e-tests
+  cancel-in-progress: false
+
 jobs:
   e2e:
     name: Run Playwright E2E tests

@@ -250,6 +250,11 @@ export class AnnouncementsPage {
   /**
    * The range the pagination reports.
    *
+   * Guarded on the control existing: `innerText` on a missing element waits for
+   * it and then throws, so without this the "not rendered" case — an empty list,
+   * or a total that fits on one page — would surface as a timeout rather than as
+   * the null a caller can skip on.
+   *
    * @returns from/to/total, or null when the range is not rendered.
    */
   async displayedRange(): Promise<{
@@ -257,6 +262,8 @@ export class AnnouncementsPage {
     to: number;
     total: number;
   } | null> {
+    if ((await this.displayedRows().count()) === 0) return null;
+
     const match = MUI_PAGINATION.displayedRowsPattern.exec(
       await this.displayedRows().innerText(),
     );
