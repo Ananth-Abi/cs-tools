@@ -20,8 +20,10 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
 )
 
 // UserService defines the operations available on the user entity.
@@ -77,6 +79,27 @@ type EventPublishFailureService interface {
 	// SearchEventPublishFailures returns a paginated list of rows matching
 	// the filters in req, newest first.
 	SearchEventPublishFailures(ctx context.Context, req domain.SearchEventPublishFailuresRequest) (domain.SearchEventPublishFailuresResponse, error)
+}
+
+// EventPublisherService publishes domain events to the case-events Event Hub
+// topic for csm-notification-service (and any other future consumer) to
+// react to — see eventPublisherService's doc comment for the wire format and
+// failure handling. Not yet constructed in cmd/api/main.go or called by any
+// handler/service — the next step is wiring NewEventPublisherService in and
+// calling Publish from whichever service methods create/update cases,
+// comments, and incidents.
+type EventPublisherService interface {
+	// Publish builds the {type, entityId, payload} envelope for eventType/
+	// entityID/payload and publishes it to Event Hub, keyed by entityID so
+	// every event about the same entity stays ordered on the same
+	// partition. If the publish itself fails (Event Hub never acknowledges
+	// it), Publish makes a best-effort call to CreateEventPublishFailure to
+	// durably record the failure before returning the original publish
+	// error.
+	Publish(ctx context.Context, eventType events.Type, entityID string, payload json.RawMessage) error
+	// Close releases the underlying Kafka connection. Safe to call once
+	// during shutdown.
+	Close()
 }
 
 // SNAccountService defines the account operations backed by the ServiceNow data source.

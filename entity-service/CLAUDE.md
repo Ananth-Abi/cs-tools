@@ -42,6 +42,33 @@ and the assignable-role allow-list are organisation vocabulary and live in the C
 portal backend (`apps/csm-portal/backend`), resolved once at startup. This service
 holds no organisation vocabulary at all — do not reintroduce it.
 
+## Event Hub publishing
+
+`internal/eventbus` (a minimal Kafka producer for Azure Event Hub's
+Kafka-compatible endpoint, `EVENT_HUB_BROKER`/`EVENT_HUB_CONNECTION_STRING`/
+`EVENT_HUB_TOPIC`) and `internal/events` (`Envelope{Type, EntityID, Payload}`,
+the wire shape `csm-notification-service` consumes) are ported from
+`apps/csm-portal/backend`'s own copies of the same packages — that backend's
+`internal/eventbus`/`internal/events` predate these and remain in place; the
+two are kept in sync by hand, same as `csm-notification-service`'s own copy.
+
+`service.EventPublisherService` (`internal/service/event_publisher_service.go`)
+wraps a `kafkaProducer` (satisfied by `*eventbus.Producer`) and publishes a
+domain event via `Publish(ctx, eventType, entityID, payload)`, keyed by
+`entityID` so every event about the same case/incident stays ordered on the
+same partition. If Event Hub doesn't acknowledge the publish, it durably
+records the failure via `EventPublishFailureService.CreateEventPublishFailure`
+— called directly, in-process, unlike `apps/csm-portal/backend`'s own
+`eventpublisher.Publisher`, which has to reach this same table over HTTP
+(`POST /event-publish-failures`) since it lives in a different service.
+
+**Not yet wired in**: `NewEventPublisherService` is not constructed in
+`cmd/api/main.go`, and no service method calls `Publish` yet. The next step is
+constructing it (gated on `EVENT_HUB_BROKER`, mirroring
+`apps/csm-portal/backend/cmd/server/main.go`'s own optional wiring) and
+calling `Publish` from whichever service methods create/update cases,
+comments, and incidents.
+
 ## Adding a new entity
 
 Follow these steps in order:

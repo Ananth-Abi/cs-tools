@@ -20,9 +20,15 @@ entity-service/
 │   │   ├── postgres.go          # pgxpool setup and connection
 │   │   └── migrate.go           # Schema migration runner
 │   ├── domain/entity.go         # Shared domain types (Case, Page, inputs)
+│   ├── events/events.go         # Envelope{Type, EntityID, Payload} — the case-events wire shape, kept in sync by hand with apps/csm-portal/backend and csm-notification-service's own copies
+│   ├── eventbus/
+│   │   ├── config.go            # Config + SASL/PLAIN setup for Azure Event Hub's Kafka-compatible endpoint
+│   │   ├── producer.go          # Producer — publish a record, wait for ack
+│   │   └── logger.go            # Bridges kafka-go's Logger/ErrorLogger to slog
 │   ├── service/
 │   │   ├── interfaces.go        # CaseRepository and CaseService interfaces
-│   │   └── entity_service.go    # Business logic — pagination, validation
+│   │   ├── entity_service.go    # Business logic — pagination, validation
+│   │   └── event_publisher_service.go # EventPublisherService.Publish — builds the envelope, publishes it, records a failure if Event Hub doesn't ack (not yet wired into main.go — no caller)
 │   ├── repository/
 │   │   ├── entity_repo.go       # SQL queries against the "case" table
 │   │   └── tx.go                # Transaction helper
@@ -121,6 +127,19 @@ backend, which resolves them once at startup and serves `POST /teams/search` and
 Configure them in `apps/csm-portal/backend/.env` — see that module's
 [README](../apps/csm-portal/backend/README.md#directory-vocabularies). Setting them here has no
 effect.
+
+### Event Hub — not yet wired in
+
+`internal/service.EventPublisherService` publishes domain events (`case.created`, `case.comment_added`,
+`case.status_changed`, `case.assigned`, `incident.created`) to Event Hub's Kafka-compatible endpoint for
+`csm-notification-service` to consume. It is not constructed in `cmd/api/main.go` yet — no service method
+calls `Publish`.
+
+| Variable | Description |
+|---|---|
+| `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` (optional) |
+| `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string — must be namespace-scoped (no `EntityPath`), not scoped to a single Event Hub (optional) |
+| `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (optional) |
 
 ## Security Scanning
 
