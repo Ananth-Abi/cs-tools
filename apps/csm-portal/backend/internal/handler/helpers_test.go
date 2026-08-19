@@ -563,6 +563,27 @@ func (m *mockEntityProblemClient) CreateProblem(ctx context.Context, body []byte
 	return []byte(`{}`), nil
 }
 
+// ----- mock entity incident task client -----
+
+type mockEntityIncidentTaskClient struct {
+	searchIncidentTasksFn func(ctx context.Context, body []byte) ([]byte, error)
+	getIncidentTaskFn     func(ctx context.Context, id string) ([]byte, error)
+}
+
+func (m *mockEntityIncidentTaskClient) SearchIncidentTasks(ctx context.Context, body []byte) ([]byte, error) {
+	if m.searchIncidentTasksFn != nil {
+		return m.searchIncidentTasksFn(ctx, body)
+	}
+	return []byte(`{}`), nil
+}
+
+func (m *mockEntityIncidentTaskClient) GetIncidentTask(ctx context.Context, id string) ([]byte, error) {
+	if m.getIncidentTaskFn != nil {
+		return m.getIncidentTaskFn(ctx, id)
+	}
+	return []byte(`{}`), nil
+}
+
 // ----- mock entity change request client -----
 
 type mockEntityChangeRequestClient struct {
