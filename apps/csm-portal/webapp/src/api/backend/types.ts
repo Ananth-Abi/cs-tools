@@ -2983,7 +2983,13 @@ export interface BeDashboardPieSlice {
   label: string;
   /** Falls back to a fixed rotation over the same palette if omitted. */
   color?: BeWidgetPaletteColor;
-  query: Record<string, unknown>;
+  /** `null` when a hand-authored dashboard config's slice omits its own
+   * `query` entirely — the backend's `PieSlice.Query` (a bare
+   * `map[string]any`) has no load-time requirement that a slice carry one,
+   * so it marshals to JSON `null` rather than `{}` when absent. Treat the
+   * same as an empty object: this slice contributes only the widget's own
+   * base `query` (see {@link BeDashboardWidget.query}). */
+  query: Record<string, unknown> | null;
 }
 
 /** Alternative to {@link BeDashboardPieSlice}[] for shapes "pie"/"bar":
@@ -3067,8 +3073,16 @@ export interface BeDashboardWidget {
    * `query`. For shapes "pie"/"bar" this is a shared base merged under
    * every slice's own `query` (see {@link BeDashboardPieSlice}), rather
    * than queried on its own.
+   *
+   * `null` for a shape "pie"/"bar" widget that carries no top-level
+   * criteria of its own — a legitimate, backend-accepted config where every
+   * slice supplies its own complete `query` (the backend's own
+   * `WidgetTemplate.Query` requirement is only "slices OR groupBy OR
+   * query", never "query" unconditionally — see
+   * `apps/csm-portal/backend/internal/dashboard/registry.go`). Treat the
+   * same as an empty object.
    */
-  query: Record<string, unknown>;
+  query: Record<string, unknown> | null;
   /** Only meaningful for shapes "pie"/"bar": one server-side
    * `POST /{resourceType}/group-by` call instead of one `search` per
    * slice. Mutually exclusive with `slices` — the backend enforces

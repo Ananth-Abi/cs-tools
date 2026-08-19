@@ -158,7 +158,11 @@ export default function DashboardWidgetGrid({
           description={widget.description}
           resourceType={widget.resourceType}
           shape={widget.shape}
-          filters={widget.query}
+          // `widget.query` is legally absent for a slices-only pie/bar
+          // widget (see `BeDashboardWidget.query`'s doc comment) — default
+          // to `{}` here too, at the source, on top of `mergeWidgetFilters`
+          // and `useWidgetData`/`useWidgetPieData` already tolerating it.
+          filters={widget.query ?? {}}
           listLimit={widget.listLimit}
           slices={widget.slices}
           groupBy={widget.groupBy}
