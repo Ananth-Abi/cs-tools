@@ -450,6 +450,19 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 		// A failed lookup deliberately does not block the transition — the
 		// pre-existing behaviour (resolve) is the safer default when the current
 		// state is unknown, and this whole branch is best-effort bookkeeping.
+		//
+		// This read-then-write is NOT atomic, and cannot be made so from here:
+		// entity.UpdateConversationRequest carries a state and nothing else, and
+		// entity-service's conversation API has no conditional-update
+		// precondition (no expected-state field, no If-Match/ETag). So a case
+		// created from this chat in the window between the read and the write
+		// still gets downgraded to RESOLVED. The window is short and one-
+		// directional — a CONVERTED write landing after this one wins correctly —
+		// and the result is a mis-stated state, recoverable via
+		// PATCH /conversations/{id}, which accepts "converted". Closing it
+		// properly needs a conditional update upstream; do not simulate one with
+		// a re-read-and-correct loop here, which can lose the same way and would
+		// fight a legitimate concurrent update.
 		current, err := h.entity.GetConversation(ctx, conversationID)
 		if err != nil {
 			slog.WarnContext(ctx, "entity GetConversation failed before auto-resolve; proceeding", "userID", user.UserID, "conversationID", conversationID, "err", summarizeErr(err))
