@@ -54,23 +54,22 @@ export default function MultiSelectField<T extends string>({
   disabled,
   disabledTooltip,
 }: MultiSelectFieldProps<T>): JSX.Element {
+  // Label sits centered in the box like a placeholder when nothing is
+  // selected, and shrinks into the outline notch once a value is chosen —
+  // matching the async pickers (e.g. AsyncAssigneeMultiSelect's Autocomplete)
+  // rather than MUI's focus-driven default, since a disabled field can never
+  // be focused and would otherwise be stuck looking different from its
+  // enabled, unselected siblings.
+  const hasValue = values.length > 0;
+
   const field = (
     <FormControl fullWidth size="small" disabled={disabled}>
-      {/*
-       * `shrink` is forced rather than left to MUI's default (filled ||
-       * focused || adornedStart from FormControl context): a disabled Select
-       * can never be focused, so an empty-valued disabled field would
-       * otherwise be permanently stuck in the unshrunk "resting" label
-       * position instead of the notched one every other state of this same
-       * Select renders. A Select's label always belongs in the notch
-       * regardless of disabled/value state.
-       */}
-      <InputLabel id={`${id}-label`} shrink>
+      <InputLabel id={`${id}-label`} shrink={hasValue}>
         {label}
       </InputLabel>
       <Select
         multiple
-        notched
+        notched={hasValue}
         labelId={`${id}-label`}
         id={id}
         value={values}
