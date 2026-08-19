@@ -20,6 +20,7 @@ import { useRef, type JSX, type KeyboardEvent, type ReactNode } from "react";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router";
 import { useElementVisibleOnce } from "@hooks/useElementVisibleOnce";
 import type {
+  BeDashboardGroupByConfig,
   BeDashboardPieSlice,
   BeDashboardWidgetColumn,
   BeWidgetResourceType,
@@ -28,6 +29,7 @@ import type {
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
 import { useWidgetPieData, type PieSliceResult } from "@features/csm-dashboard/api/useWidgetPieData";
+import { useWidgetGroupByData } from "@features/csm-dashboard/api/useWidgetGroupByData";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
 import GenericColumnList from "@features/csm-dashboard/components/GenericColumnList";
@@ -62,8 +64,13 @@ interface DashboardWidgetTileProps {
   listLimit?: number;
   /** Only meaningful for shape "pie"/"bar"; one search per slice (see
    * `useWidgetPieData`). Empty/absent renders an empty chart rather than
-   * crashing. */
+   * crashing. Mutually exclusive with `groupBy` — a widget carries at most
+   * one of the two (backend-enforced). */
   slices?: BeDashboardPieSlice[];
+  /** Only meaningful for shape "pie"/"bar"; a single server-side
+   * `POST {resourceType}/group-by` call instead of one search per slice
+   * (see `useWidgetGroupByData`). Mutually exclusive with `slices`. */
+  groupBy?: BeDashboardGroupByConfig;
   /** Only meaningful for shape "list". When set (non-empty), this widget
    * renders through the generic `GenericColumnList` (resolving each
    * column's dot-path against every response item) instead of
@@ -127,6 +134,7 @@ export default function DashboardWidgetTile({
   filters,
   listLimit,
   slices,
+  groupBy,
   columns,
   sortBy,
   selectedTeamCreGroupId,
@@ -206,7 +214,7 @@ export default function DashboardWidgetTile({
     sortBy,
     currentUserId,
   );
-  const pieData = useWidgetPieData(
+  const sliceData = useWidgetPieData(
     widgetId,
     resourceType,
     filters,
@@ -216,6 +224,23 @@ export default function DashboardWidgetTile({
     currentUserId,
     isVisible,
   );
+  // groupBy is the alternative to slices for shapes "pie"/"bar" — mutually
+  // exclusive, backend-enforced (never both, never neither for those
+  // shapes). Both hooks are called unconditionally (rules of hooks; a
+  // widget's shape/config never changes across this component's lifetime)
+  // and only one of them ever actually fires a request, gated by its own
+  // `groupBy`/`slices` argument being empty/undefined.
+  const groupByData = useWidgetGroupByData(
+    widgetId,
+    resourceType,
+    filters,
+    shape === "pie" || shape === "bar" ? groupBy : undefined,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
+    currentUserId,
+    isVisible,
+  );
+  const pieData = groupBy ? groupByData : sliceData;
   // True while this widget carries a `__current_user__` filter and the
   // signed-in user's profile hasn't loaded yet. `useWidgetData`/
   // `useWidgetPieData` hold their requests in that window (see
@@ -504,15 +529,21 @@ export default function DashboardWidgetTile({
               total={pieData.total}
               isLoading={pieData.isLoading}
               isError={pieData.isError}
-              onSliceClick={(slice: PieSliceResult) =>
+              onSliceClick={(slice: PieSliceResult) => {
+                // See `PieSliceResult.navigable`'s own doc comment: a
+                // groupBy widget's synthetic "Others" bucket has no safe
+                // selector to navigate to, so it opts out of click-through
+                // entirely rather than falling through to the widget's own
+                // unscoped base result set.
+                if (slice.navigable === false) return;
                 navigate(
                   config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query)), {
                     widgetId,
                     displayName: resolvedDisplayName,
                   }),
                   { state: dashboardReturnState },
-                )
-              }
+                );
+              }}
             />
           </Box>
         </Box>

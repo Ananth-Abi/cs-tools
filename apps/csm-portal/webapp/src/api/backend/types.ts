@@ -2986,6 +2986,38 @@ export interface BeDashboardPieSlice {
   query: Record<string, unknown>;
 }
 
+/** Alternative to {@link BeDashboardPieSlice}[] for shapes "pie"/"bar":
+ * one server-side `POST /{resourceType}/group-by` call instead of one
+ * `search` per hand-authored slice. Mutually exclusive with `slices` —
+ * the backend enforces exactly one of the two at config-load time. */
+export interface BeDashboardGroupByConfig {
+  /** The field to aggregate on — forwarded verbatim as that request's
+   * `groupBy` key. */
+  field: string;
+  /** Caps the number of returned buckets; anything beyond that rolls up
+   * into the response's `othersCount`. */
+  maxGroups?: number;
+  /** Label for the synthetic "everything else" bucket built from
+   * `othersCount`. Defaults to `"Others"` when omitted. */
+  othersLabel?: string;
+}
+
+/** One bucket of a `POST /{resourceType}/group-by` response. */
+export interface BeGroupByBucket {
+  key: string;
+  label: string;
+  count: number;
+}
+
+/** Response shape of `POST /{resourceType}/group-by`. `othersCount` covers
+ * every record outside the returned `groups` (capped by `maxGroups`);
+ * `totalRecords` is the grand total across `groups` plus `othersCount`. */
+export interface BeGroupByResponse {
+  groups: BeGroupByBucket[];
+  othersCount: number;
+  totalRecords: number;
+}
+
 /** Rendering hint for a {@link BeDashboardWidgetColumn}'s resolved value.
  * Omitted (or `"text"`) renders plain text; `"date"` formats a date/
  * date-time string the same way the app's existing hardcoded list renderers
@@ -3037,11 +3069,13 @@ export interface BeDashboardWidget {
    * than queried on its own.
    */
   query: Record<string, unknown>;
-  /** Present on the wire; unused today — `slices` is what actually drives
-   * pie/bar grouping. */
-  groupBy?: string;
+  /** Only meaningful for shapes "pie"/"bar": one server-side
+   * `POST /{resourceType}/group-by` call instead of one `search` per
+   * slice. Mutually exclusive with `slices` — the backend enforces
+   * exactly one of the two for those shapes (never both, never neither). */
+  groupBy?: BeDashboardGroupByConfig;
   /** Only meaningful for shapes "pie"/"bar": one search per slice, each
-   * read via its own `total`. */
+   * read via its own `total`. Mutually exclusive with `groupBy`. */
   slices?: BeDashboardPieSlice[];
   /** Only meaningful for shape list; how many records to show. */
   listLimit?: number;
@@ -3089,6 +3123,14 @@ export interface BeDashboardListItem {
    * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`
    * in the webapp). */
   isTeamBased: boolean;
+  /** Team keys (the signed-in user's own `team.teamKey`) that should land
+   * on this dashboard outright as their default, regardless of this
+   * dashboard's own `isDefault`/`isTeamBased`/`type` — for specialist,
+   * non-team-based dashboards the `isDefault`+`isTeamBased`+`type` default
+   * mechanism can't reach (e.g. `onboarding-engineer` for
+   * `customer_onboarding`). Omitted where unused; see `CsmDashboardPage`'s
+   * module doc comment for how this tier fits into default selection. */
+  defaultForTeamKeys?: string[];
 }
 
 /**

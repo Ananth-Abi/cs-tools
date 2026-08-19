@@ -391,6 +391,98 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 	}, nil
 }
 
+// snChangeRequestGroupByPayload is the Choreo POST /change-requests/group-by
+// request body.
+type snChangeRequestGroupByPayload struct {
+	Filters   snChangeRequestFilters `json:"filters,omitempty"`
+	GroupBy   string                 `json:"groupBy"`
+	MaxGroups int                    `json:"maxGroups,omitempty"`
+}
+
+// validChangeRequestGroupByField is the allow-list for
+// GroupChangeRequestsByRequest.GroupBy, matching openapi.yaml's
+// GroupChangeRequestsByRequest.groupBy enum exactly.
+var validChangeRequestGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+}
+
+// GroupChangeRequestsBy implements ChangeRequestService by calling the
+// Choreo POST /change-requests/group-by endpoint: a single server-side
+// aggregation over the requested field, capped to the top MaxGroups buckets
+// with the remainder folded into GroupByResponse.OthersCount. Filter
+// parsing and validation mirror SearchChangeRequests.
+func (s *snChangeRequestService) GroupChangeRequestsBy(ctx context.Context, req domain.GroupChangeRequestsByRequest) (domain.GroupByResponse, error) {
+	if req.GroupBy == "" {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validChangeRequestGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	if req.Filters.ClosedEndDate != nil && req.Filters.ClosedStartDate != nil &&
+		req.Filters.ClosedEndDate.Before(*req.Filters.ClosedStartDate) {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "closedEndDate must not be before closedStartDate"}
+	}
+	for _, s := range req.Filters.States {
+		if !validChangeRequestState[s] {
+			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "states contains invalid value: " + string(s)}
+		}
+	}
+	for _, i := range req.Filters.Impacts {
+		if !validChangeRequestImpact[i] {
+			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "impacts contains invalid value: " + string(i)}
+		}
+	}
+	if err := validateUUIDs("projectIds", req.Filters.ProjectIDs); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	parsedFilters, err := ParseChangeRequestFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if parsedFilters.CreatedEndDate != nil && parsedFilters.CreatedStartDate != nil &&
+		parsedFilters.CreatedEndDate.Before(*parsedFilters.CreatedStartDate) {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snChangeRequestGroupByPayload{
+		Filters: snChangeRequestFilters{
+			ProjectIDs:         uuidsToSysids(req.Filters.ProjectIDs),
+			SearchQuery:        req.Filters.SearchQuery,
+			StateKeys:          domainCRStatesToSNIDs(req.Filters.States),
+			ImpactKeys:         domainCRImpactsToSNIDs(req.Filters.Impacts),
+			ClosedStartDate:    formatSNDateTimeUTC(req.Filters.ClosedStartDate),
+			ClosedEndDate:      formatSNDateTimeUTC(req.Filters.ClosedEndDate),
+			Number:             stringPtrValue(req.Filters.Number),
+			CreatedStartDate:   formatSNDateTimeUTC(parsedFilters.CreatedStartDate),
+			CreatedEndDate:     formatSNDateTimeUTC(parsedFilters.CreatedEndDate),
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/change-requests/group-by", token, payload)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	var resp domain.GroupByResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.GroupByResponse{}, fmt.Errorf("sn change requests: parse group-by response: %w", err)
+	}
+	return resp, nil
+}
+
 // snCreateChangeRequestPayload is the Choreo POST /change-requests request body.
 type snCreateChangeRequestPayload struct {
 	Subject             string  `json:"subject"`

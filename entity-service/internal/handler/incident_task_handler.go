@@ -51,6 +51,22 @@ func (h *IncidentTaskHandler) SearchIncidentTasks(w http.ResponseWriter, r *http
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// GroupIncidentTasksBy handles POST /incident-tasks/group-by.
+func (h *IncidentTaskHandler) GroupIncidentTasksBy(w http.ResponseWriter, r *http.Request) {
+	var req domain.GroupIncidentTasksByRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.GroupIncidentTasksBy(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // GetIncidentTask handles GET /incident-tasks/{id}.
 func (h *IncidentTaskHandler) GetIncidentTask(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

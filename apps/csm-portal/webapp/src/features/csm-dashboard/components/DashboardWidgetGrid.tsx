@@ -118,17 +118,19 @@ export default function DashboardWidgetGrid({
 
   /**
    * Invalidates only the widget-data queries belonging to `widgetIds` —
-   * both shapes' query keys carry a widget id, just at a different
+   * every shape's query key carries a widget id, just at a different
    * position: `[KEY, widgetId, ...]` for count/list (see `useWidgetData`),
-   * `[KEY, "pie-slice", widgetId, ...]` for pie/bar (see
-   * `useWidgetPieData`).
+   * `[KEY, "pie-slice", widgetId, ...]` for pie/bar via `slices` (see
+   * `useWidgetPieData`), `[KEY, "group-by", widgetId, ...]` for pie/bar via
+   * `groupBy` (see `useWidgetGroupByData`).
    */
   const invalidateWidgets = (widgetIds: Set<string>): Promise<void> =>
     queryClient.invalidateQueries({
       predicate: (query) => {
         const key = query.queryKey;
         if (key[0] !== ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA) return false;
-        const widgetId = key[1] === "pie-slice" ? key[2] : key[1];
+        const widgetId =
+          key[1] === "pie-slice" || key[1] === "group-by" ? key[2] : key[1];
         return typeof widgetId === "string" && widgetIds.has(widgetId);
       },
     });
@@ -159,6 +161,7 @@ export default function DashboardWidgetGrid({
           filters={widget.query}
           listLimit={widget.listLimit}
           slices={widget.slices}
+          groupBy={widget.groupBy}
           columns={widget.columns}
           sortBy={widget.sortBy}
           selectedTeamCreGroupId={selectedTeamCreGroupId}

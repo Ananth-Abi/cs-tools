@@ -33,6 +33,12 @@ import {
 
 export interface PieSliceResult extends BeDashboardPieSlice {
   value: number;
+  /** Defaults to `true` (every hand-authored slice is click-through by
+   * design). `false` only for a groupBy widget's synthetic "Others" bucket
+   * when the API gives it no safe selector of its own to navigate to (see
+   * `useWidgetGroupByData`) — `DashboardWidgetTile` skips click-through for
+   * a slice carrying this. */
+  navigable?: boolean;
 }
 
 export interface WidgetPieData {

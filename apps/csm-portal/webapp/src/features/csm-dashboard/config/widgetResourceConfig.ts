@@ -67,6 +67,12 @@ type WidgetItem = Record<string, unknown>;
 export interface WidgetResourceConfig {
   /** `POST` endpoint this resource's own search lives at. */
   searchEndpoint: string;
+  /** `POST` endpoint for a server-side group-by aggregation, for a
+   * `shape: "pie"`/`"bar"` widget configured with `groupBy` instead of
+   * `slices` (see `useWidgetGroupByData`). Only the resourceTypes backed
+   * by an entity-service group-by endpoint carry this — omitted means that
+   * resourceType doesn't support `groupBy` widgets at all. */
+  groupByEndpoint?: string;
   /** Key the response's item array is nested under. */
   itemsKey: string;
   /** Primary (bold) line for one list-shape row. */
@@ -412,6 +418,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
 > = {
   case: {
     searchEndpoint: "/cases/search",
+    groupByEndpoint: "/cases/group-by",
     itemsKey: "cases",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
@@ -429,9 +436,13 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   // Rows are still case rows (same `BeCaseSearchView` shape), so these reuse
   // `case`'s own primaryLabel/secondaryLabel/list renderer verbatim; only the
   // icon/color/click-through destination differ per type, mirroring
-  // `CASE_TYPE_COLOR`'s own per-type palette in `caseType.ts`.
+  // `CASE_TYPE_COLOR`'s own per-type palette in `caseType.ts`. Same reasoning
+  // extends `groupByEndpoint`: they share `/cases/group-by` with `case` too
+  // (the implied `type` filter is just another entry in the resolved
+  // `filters` posted to that endpoint, same as it is for `/cases/search`).
   service_request: {
     searchEndpoint: "/cases/search",
+    groupByEndpoint: "/cases/group-by",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -450,6 +461,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   security_report_analysis: {
     searchEndpoint: "/cases/search",
+    groupByEndpoint: "/cases/group-by",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -468,6 +480,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   announcement: {
     searchEndpoint: "/cases/search",
+    groupByEndpoint: "/cases/group-by",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -483,6 +496,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   engagement: {
     searchEndpoint: "/cases/search",
+    groupByEndpoint: "/cases/group-by",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -494,6 +508,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   incident: {
     searchEndpoint: "/incidents/search",
+    groupByEndpoint: "/incidents/group-by",
     itemsKey: "incidents",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: (item) => asString(item.priority),
@@ -513,6 +528,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   change_request: {
     searchEndpoint: "/change-requests/search",
+    groupByEndpoint: "/change-requests/group-by",
     itemsKey: "changeRequests",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
@@ -532,6 +548,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   problem: {
     searchEndpoint: "/problems/search",
+    groupByEndpoint: "/problems/group-by",
     itemsKey: "problems",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
@@ -556,6 +573,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   // same fallback `call_request` uses for landing on its owning case.
   incident_task: {
     searchEndpoint: "/incident-tasks/search",
+    groupByEndpoint: "/incident-tasks/group-by",
     itemsKey: "incidentTasks",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: incidentTaskStateSecondaryLabel,

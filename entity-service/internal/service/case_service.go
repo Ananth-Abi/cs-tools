@@ -83,6 +83,15 @@ var validCaseSeverity = map[domain.CaseSeverity]bool{
 	domain.CaseSeverityLow:          true,
 }
 
+// validCaseGroupByField is the allow-list for GroupCasesByRequest.GroupBy,
+// matching openapi.yaml's GroupCasesByRequest.groupBy enum exactly.
+var validCaseGroupByField = map[string]bool{
+	"account":  true,
+	"state":    true,
+	"severity": true,
+	"type":     true,
+}
+
 var validCaseIssueType = map[domain.CaseIssueType]bool{
 	domain.CaseIssueTypeError:                  true,
 	domain.CaseIssueTypePartialOutage:          true,
@@ -521,6 +530,10 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 		Limit:  req.Pagination.Limit,
 		Offset: req.Pagination.Offset,
 	}, nil
+}
+
+func (s *caseService) GroupCasesBy(_ context.Context, _ domain.GroupCasesByRequest) (domain.GroupByResponse, error) {
+	return domain.GroupByResponse{}, &apierror.ServiceUnavailableError{Msg: "groupBy is only supported for the ServiceNow data source"}
 }
 
 func (s *caseService) CreateCaseAttachment(_ context.Context, _ domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {

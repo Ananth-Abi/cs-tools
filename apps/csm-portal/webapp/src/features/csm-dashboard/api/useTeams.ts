@@ -48,6 +48,25 @@ export function abtFamilyForDashboardType(
 }
 
 /**
+ * The rough inverse of `abtFamilyForDashboardType`: maps a team's own
+ * `family` (e.g. `"sre-abt"`, `"cre"`) to the dashboard `type` its default
+ * selection should prefer — any family starting with `"cre"` to the `cre`
+ * type, any starting with `"sre"` to `sre`. Returns `undefined` for a
+ * family that doesn't start with either prefix (or an unresolved
+ * family), which callers must treat as "no type preference," not as a
+ * dashboard-selection dead end — see `preferredEntry` in
+ * `CsmDashboardPage.tsx`.
+ */
+export function dashboardTypeForTeamFamily(
+  family: string | undefined,
+): BeDashboardListItem["type"] {
+  if (!family) return undefined;
+  if (family.startsWith("cre")) return "cre";
+  if (family.startsWith("sre")) return "sre";
+  return undefined;
+}
+
+/**
  * Every team from `POST /teams/search`, for the team selector a team-based
  * dashboard shows alongside the dashboard switcher (see
  * `AbtDashboardHeader`), and for `CsmDashboardPage` to resolve the selected

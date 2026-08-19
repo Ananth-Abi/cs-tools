@@ -825,6 +825,51 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /cases/group-by:
+    post:
+      summary: >-
+        Server-side aggregation of cases by a single field (e.g. account, top
+        N + Others).
+      description: >-
+        Unlike the searchCases operation's own groupBy parameter (which is
+        limited to a small fixed enum computed as a fan-out of per-value
+        searches), this drives a single aggregation query over an open-ended
+        field such as account, capped to the top maxGroups buckets with the
+        remainder folded into othersCount.
+      operationId: groupCasesBy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupCasesByRequest'
+      responses:
+        "200":
+          description: Aggregated case counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupByResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: >-
+            groupBy is only supported for the ServiceNow data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /cases/{id}/comments:
     post:
       summary: Create a comment on a support case.
@@ -2206,6 +2251,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /change-requests/group-by:
+    post:
+      summary: >-
+        Server-side aggregation of change requests by a single field
+        (ServiceNow data source only).
+      operationId: groupChangeRequestsBy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupChangeRequestsByRequest'
+      responses:
+        "200":
+          description: Aggregated change request counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupByResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /time-cards/search:
     post:
       summary: Search time cards (ServiceNow data source only).
@@ -2959,6 +3036,38 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /incidents/group-by:
+    post:
+      summary: >-
+        Server-side aggregation of incidents by a single field (ServiceNow
+        data source only).
+      operationId: groupIncidentsBy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupIncidentsByRequest'
+      responses:
+        "200":
+          description: Aggregated incident counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupByResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /problems:
     post:
       summary: Create a new problem (available on data sources that support problem management).
@@ -3026,6 +3135,38 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
           description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /problems/group-by:
+    post:
+      summary: >-
+        Server-side aggregation of problems by a single field (ServiceNow
+        data source only).
+      operationId: groupProblemsBy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupProblemsByRequest'
+      responses:
+        "200":
+          description: Aggregated problem counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupByResponse'
+        "400":
+          description: Bad request.
           content:
             application/json:
               schema:
@@ -3105,6 +3246,38 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "401":
           description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /incident-tasks/group-by:
+    post:
+      summary: >-
+        Server-side aggregation of incident tasks by a single field
+        (ServiceNow data source only).
+      operationId: groupIncidentTasksBy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupIncidentTasksByRequest'
+      responses:
+        "200":
+          description: Aggregated incident task counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupByResponse'
+        "400":
+          description: Bad request.
           content:
             application/json:
               schema:
@@ -5183,6 +5356,23 @@ components:
             fan-out of per-value count queries against the ServiceNow data
             source; not supported by the Postgres data source.
 
+    GroupCasesByRequest:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          $ref: '#/components/schemas/SearchCasesFilters'
+        groupBy:
+          type: string
+          enum: [account, state, severity, type]
+          description: The field to aggregate case counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into GroupByResponse.othersCount. Optional; a
+            default is applied when omitted.
+
     UserReference:
       type: object
       nullable: true
@@ -5679,6 +5869,49 @@ components:
           type: integer
           description: Number of matching cases in this group.
 
+    GroupByBucket:
+      type: object
+      required: [key, label, count]
+      description: >-
+        One aggregated bucket in a server-side group-by result. Shared by
+        every resource's dedicated group-by endpoint (cases, incidents,
+        problems, change requests, incident tasks).
+      properties:
+        key:
+          type: string
+          description: The raw value of the grouped field for this bucket.
+        label:
+          type: string
+          description: >-
+            Human-readable display form of key (identical to key when the
+            grouped field has no separate label).
+        count:
+          type: integer
+          description: Number of matching records in this bucket.
+
+    GroupByResponse:
+      type: object
+      required: [groups, othersCount, totalRecords]
+      description: >-
+        The shared result shape for every resource's dedicated group-by
+        aggregation endpoint.
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupByBucket'
+          description: The top buckets by count, capped at the request's maxGroups.
+        othersCount:
+          type: integer
+          description: >-
+            The number of matching records folded together because their
+            bucket fell outside the top maxGroups.
+        totalRecords:
+          type: integer
+          description: >-
+            Total number of records matching the request's filters; always
+            equals the sum of groups' counts plus othersCount.
+
     AddCaseTagRequest:
       type: object
       required: [label]
@@ -6140,6 +6373,64 @@ components:
               minimum: 1
               maximum: 50
               default: 20
+
+    GroupChangeRequestsByRequest:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as SearchChangeRequestsRequest.filters.
+          properties:
+            projectIds:
+              type: array
+              items:
+                type: string
+                format: uuid
+            searchQuery:
+              type: string
+            states:
+              type: array
+              items:
+                type: string
+                enum: [new, assess, authorize, customer_approval, scheduled, implement, review, customer_review, rollback, closed, canceled]
+            impacts:
+              type: array
+              items:
+                type: string
+                enum: [high, medium, low]
+            closedStartDate:
+              type: string
+              format: date-time
+              description: "ISO-8601 UTC datetime (YYYY-MM-DDTHH:MM:SSZ)"
+            closedEndDate:
+              type: string
+              format: date-time
+              description: "ISO-8601 UTC datetime (YYYY-MM-DDTHH:MM:SSZ)"
+            number:
+              type: string
+              description: >-
+                A single change request number (e.g. "CHG0010001"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/ChangeRequestFieldFilter'
+              description: >-
+                A generic field/op/values filter array, additive to the named
+                filters above. See ChangeRequestFieldFilter for the supported
+                field/op combinations.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate change request counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into GroupByResponse.othersCount. Optional; a
+            default is applied when omitted.
 
     SearchChangeRequestView:
       type: object
@@ -8132,6 +8423,50 @@ components:
         pagination:
           $ref: '#/components/schemas/Pagination'
 
+    GroupIncidentsByRequest:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as SearchIncidentsRequest.filters.
+          properties:
+            searchQuery:
+              type: string
+            priorities:
+              type: array
+              items:
+                type: string
+                enum: [CRITICAL, HIGH, MODERATE, LOW, PLANNING]
+            parentIds:
+              type: array
+              items:
+                type: string
+                format: uuid
+            number:
+              type: string
+              description: >-
+                A single incident number (e.g. "INC0010001"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/IncidentFieldFilter'
+              description: >-
+                A generic field/op/values filter array. See
+                IncidentFieldFilter for the supported field/op combinations.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup, businessService]
+          description: The field to aggregate incident counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into GroupByResponse.othersCount. Optional; a
+            default is applied when omitted.
+
     SearchIncidentView:
       type: object
       properties:
@@ -8595,6 +8930,40 @@ components:
         pagination:
           $ref: '#/components/schemas/Pagination'
 
+    GroupProblemsByRequest:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as SearchProblemsRequest.filters.
+          properties:
+            searchQuery:
+              type: string
+            number:
+              type: string
+              description: >-
+                A single problem number (e.g. "PRB0010001"); matches exactly.
+                Routed as a first-class filter rather than through the
+                free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProblemFieldFilter'
+              description: >-
+                A generic field/op/values filter array. See
+                ProblemFieldFilter for the supported field/op combinations.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate problem counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into GroupByResponse.othersCount. Optional; a
+            default is applied when omitted.
+
     SearchProblemView:
       type: object
       properties:
@@ -8748,6 +9117,40 @@ components:
                 IncidentTaskFieldFilter for the supported field/op combinations.
         pagination:
           $ref: '#/components/schemas/Pagination'
+
+    GroupIncidentTasksByRequest:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as SearchIncidentTasksRequest.filters.
+          properties:
+            searchQuery:
+              type: string
+            number:
+              type: string
+              description: >-
+                A single incident task number (e.g. "TASK0082453"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
+            filters:
+              type: array
+              items:
+                $ref: '#/components/schemas/IncidentTaskFieldFilter'
+              description: >-
+                A generic field/op/values filter array. See
+                IncidentTaskFieldFilter for the supported field/op combinations.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate incident task counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into GroupByResponse.othersCount. Optional; a
+            default is applied when omitted.
 
     IncidentTask:
       type: object
