@@ -105,7 +105,7 @@ func (m *mockLinkResolver) ResolveLinks(ctx context.Context, emails []string, pr
 const testRecipient = "test-recipient@example.com"
 
 func newTestDispatcher(email emailSender, chat googleChatSender, call callSender) *Dispatcher {
-	return NewDispatcher(email, chat, call, &mockLinkResolver{})
+	return NewDispatcher(email, chat, call, &mockLinkResolver{}, true)
 }
 
 func TestDispatcher_Handle_CaseCreated(t *testing.T) {
@@ -129,6 +129,28 @@ func TestDispatcher_Handle_CaseCreated(t *testing.T) {
 	}
 	if !strings.Contains(got.htmlBody, "Something broke") {
 		t.Error("htmlBody does not contain the case title")
+	}
+}
+
+// TestDispatcher_Handle_EmailSendingDisabled verifies the EMAIL_SENDING_ENABLED
+// killswitch: Handle still succeeds and still resolves recipient links (a
+// broken link resolver should still surface as an error, disabled or not),
+// but never actually calls SendEmail.
+func TestDispatcher_Handle_EmailSendingDisabled(t *testing.T) {
+	mock := &mockEmailSender{}
+	links := &mockLinkResolver{}
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links, false)
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(mock.calls) != 0 {
+		t.Fatalf("expected 0 emails sent while disabled, got %d", len(mock.calls))
+	}
+	if len(links.gotEmails) != 1 || links.gotEmails[0] != testRecipient {
+		t.Errorf("expected link resolution to still run while disabled, gotEmails = %v", links.gotEmails)
 	}
 }
 
@@ -156,7 +178,7 @@ func TestDispatcher_Handle_CommentAdded(t *testing.T) {
 func TestDispatcher_Handle_CommentAdded_LinksToCommentFragment(t *testing.T) {
 	mock := &mockEmailSender{}
 	links := &mockLinkResolver{linkFor: func(string) string { return "https://csm.example.com/cases/CASE-1" }}
-	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links)
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links, true)
 
 	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["test-recipient@example.com"]}}`)}
 
@@ -211,7 +233,7 @@ func TestDispatcher_Handle_TwoRecipientsTwoLinks_SendsTwoEmails(t *testing.T) {
 		}
 		return "https://csm.example.com/cases/CASE-1"
 	}}
-	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links)
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links, true)
 
 	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["customer@acme.com","agent@wso2.com"]}}`)}
 
@@ -271,7 +293,7 @@ func TestDispatcher_Handle_TwoRecipientsSameLink_SendsOneEmail(t *testing.T) {
 func TestDispatcher_Handle_ResolveLinksFails_NoEmailSent(t *testing.T) {
 	mock := &mockEmailSender{}
 	links := &mockLinkResolver{err: errors.New("entity-service unreachable")}
-	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links)
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links, true)
 
 	record := eventbus.Record{Value: []byte(`{"type":"case.status_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","newStatus":"Open","recipients":["test-recipient@example.com"]}}`)}
 
@@ -367,7 +389,7 @@ const validIncidentRecord = `{"type":"incident.created","entityId":"INC-1","payl
 func TestDispatcher_Handle_IncidentCreated(t *testing.T) {
 	chat := &mockGoogleChatSender{}
 	call := &mockCallSender{}
-	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{})
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, true)
 
 	record := eventbus.Record{Value: []byte(validIncidentRecord)}
 
@@ -397,7 +419,7 @@ func TestDispatcher_Handle_IncidentCreated(t *testing.T) {
 func TestDispatcher_Handle_IncidentCreated_ChatFailureStillPlacesCall(t *testing.T) {
 	chat := &mockGoogleChatSender{err: errors.New("webhook unreachable")}
 	call := &mockCallSender{}
-	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{})
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, true)
 
 	record := eventbus.Record{Value: []byte(validIncidentRecord)}
 
@@ -412,7 +434,7 @@ func TestDispatcher_Handle_IncidentCreated_ChatFailureStillPlacesCall(t *testing
 func TestDispatcher_Handle_IncidentCreated_CallFailureStillSendsChat(t *testing.T) {
 	chat := &mockGoogleChatSender{}
 	call := &mockCallSender{err: errors.New("twilio unreachable")}
-	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{})
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, true)
 
 	record := eventbus.Record{Value: []byte(validIncidentRecord)}
 
@@ -435,7 +457,7 @@ func TestDispatcher_Handle_IncidentCreated_CallFailureStillSendsChat(t *testing.
 func TestDispatcher_Handle_IncidentCreated_RetryDoesNotResendSucceededChannel(t *testing.T) {
 	chat := &mockGoogleChatSender{}
 	call := &mockCallSender{err: errors.New("twilio unreachable")}
-	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{})
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, true)
 
 	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(validIncidentRecord)}
 
@@ -465,7 +487,7 @@ func TestDispatcher_Handle_IncidentCreated_RetryDoesNotResendSucceededChannel(t 
 func TestDispatcher_Handle_IncidentCreated_ForgetsAfterFullSuccess(t *testing.T) {
 	chat := &mockGoogleChatSender{}
 	call := &mockCallSender{}
-	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{})
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, true)
 
 	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(validIncidentRecord)}
 
@@ -480,7 +502,7 @@ func TestDispatcher_Handle_IncidentCreated_ForgetsAfterFullSuccess(t *testing.T)
 func TestDispatcher_Handle_IncidentCreated_BothFail(t *testing.T) {
 	chat := &mockGoogleChatSender{err: errors.New("webhook unreachable")}
 	call := &mockCallSender{err: errors.New("twilio unreachable")}
-	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{})
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, true)
 
 	record := eventbus.Record{Value: []byte(validIncidentRecord)}
 
