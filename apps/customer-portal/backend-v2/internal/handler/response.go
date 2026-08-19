@@ -194,3 +194,8 @@ func readBinaryBody(w http.ResponseWriter, r *http.Request, maxBytes int64) (bod
 	}
 	return body, true
 }
+
+// conversationStateConverted is the conversation state set when a case has been
+// created from a chat. It outranks RESOLVED — see handleMessage's resolved
+// branch in websocket.go, which refuses to downgrade it.
+const conversationStateConverted = "CONVERTED"
