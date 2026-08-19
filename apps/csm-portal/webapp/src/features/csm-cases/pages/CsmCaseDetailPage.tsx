@@ -117,6 +117,7 @@ import {
   AttachmentsWidget,
   CustomerContextWidget,
   ProductContextWidget,
+  RequestDetailsWidget,
   TagsWidget,
   WatchersWidget,
 } from "@features/csm-cases/components/CaseDetailWidgets";
@@ -2240,6 +2241,19 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 }}
               />
             </Card>
+          )}
+          {/* Service-request-only: the catalog answers the requester filled
+              in. Reuses the page's single `isServiceRequest` signal (route +
+              loaded caseType) rather than adding a parallel one. Always
+              rendered for an SR — the widget itself shows the empty state, so
+              a request that captured no answers stays visible as a data
+              problem instead of silently vanishing. */}
+          {isServiceRequest && (
+            <RequestDetailsWidget
+              catalog={c.catalog}
+              catalogItem={c.catalogItem}
+              variables={c.requestVariables}
+            />
           )}
           <CustomerContextWidget
             ctx={c.customerContext}

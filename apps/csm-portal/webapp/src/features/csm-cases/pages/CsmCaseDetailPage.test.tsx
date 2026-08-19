@@ -15,7 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import {
   MemoryRouter,
@@ -305,6 +305,10 @@ vi.mock("@features/csm-cases/components/CaseDetailWidgets", () => ({
   AttachmentsWidget: () => null,
   CustomerContextWidget: () => null,
   ProductContextWidget: () => null,
+  // Stubbed to a probe rather than `null`: the tests below assert only that
+  // the page mounts it for a service request and not for a plain case. The
+  // widget's own rendering is covered in CaseDetailWidgets.test.tsx.
+  RequestDetailsWidget: () => <div data-testid="request-details-widget" />,
   TagsWidget: () => null,
   WatchersWidget: () => null,
 }));
@@ -740,4 +744,58 @@ describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () 
       screen.queryByTestId("log-time-card-dialog-probe"),
     ).not.toBeInTheDocument();
   });
+});
+
+describe("CsmCaseDetailPage — Request details card", () => {
+  function mockCaseType(caseType?: string): void {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? { ...buildCase(id), caseType } : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+  }
+
+  afterEach(() => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? buildCase(id) : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+  });
+
+  it("renders the card in the Details tab of a service request", () => {
+    mockCaseType("service_request");
+
+    renderPageAt(
+      "/operations/service-requests/case-1?tab=details",
+      "/operations/service-requests/:caseId",
+    );
+
+    expect(screen.getByTestId("request-details-widget")).toBeInTheDocument();
+  });
+
+  it("does not render the card in the Details tab of a plain case", () => {
+    mockCaseType(undefined);
+
+    renderPageAt("/cases/case-1?tab=details");
+
+    expect(
+      screen.queryByTestId("request-details-widget"),
+    ).not.toBeInTheDocument();
+  });
+
+  // Not covered here: a service request opened through the generic
+  // /cases/:id route. The page's canonical-redirect gate bounces it to
+  // /operations/service-requests/:id behind a skeleton before any tab body
+  // renders, so `caseType`'s half of the signal can't be observed from that
+  // entry point. It is the same `isServiceRequest` value either way — the
+  // page computes it once (route || caseType) and this card reuses it.
 });

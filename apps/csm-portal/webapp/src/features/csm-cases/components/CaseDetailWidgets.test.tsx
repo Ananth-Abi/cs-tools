@@ -32,6 +32,7 @@ vi.mock("@api/backend/client", () => ({
 import {
   AttachmentsWidget,
   CustomerContextWidget,
+  RequestDetailsWidget,
   TagsWidget,
   WatchersWidget,
 } from "@features/csm-cases/components/CaseDetailWidgets";
@@ -39,6 +40,7 @@ import { useSearchUsers } from "@features/csm-users/api/useSearchUsers";
 import type {
   CaseAttachment,
   CaseCustomerContext,
+  CaseRequestVariable,
   CaseTag,
   CaseWatcher,
 } from "@features/csm-cases/types/csmCases";
@@ -474,5 +476,109 @@ describe("CustomerContextWidget", () => {
     );
     expect(screen.getByText("SRE Beta")).toBeInTheDocument();
     expect(screen.queryByText("CRE Alpha")).not.toBeInTheDocument();
+  });
+});
+
+describe("RequestDetailsWidget", () => {
+  const CATALOG = { id: "catalog-1", name: "Managed Cloud" };
+  const CATALOG_ITEM = { id: "catalog-item-1", name: "Product Update" };
+
+  // Deliberately not in alphabetical order — the widget must preserve the
+  // order the backing data source returned, not impose one of its own.
+  const VARIABLES: CaseRequestVariable[] = [
+    { name: "Reason For Migration", value: "End of support" },
+    { name: "Approval Reference", value: "CHG-0001" },
+    { name: "Additional Notes", value: "" },
+  ];
+
+  it("renders the catalog and catalog item", () => {
+    renderWithRouter(
+      <RequestDetailsWidget
+        catalog={CATALOG}
+        catalogItem={CATALOG_ITEM}
+        variables={VARIABLES}
+      />,
+    );
+
+    expect(screen.getByText("Catalog")).toBeInTheDocument();
+    expect(screen.getByText("Managed Cloud")).toBeInTheDocument();
+    expect(screen.getByText("Catalog item")).toBeInTheDocument();
+    expect(screen.getByText("Product Update")).toBeInTheDocument();
+  });
+
+  it("renders an em dash for a catalog/catalog item the record does not carry", () => {
+    renderWithRouter(
+      <RequestDetailsWidget
+        variables={[{ name: "Reason For Migration", value: "End of support" }]}
+      />,
+    );
+
+    // Exactly two: the Catalog cell and the Catalog item cell. The single
+    // answer is non-blank, so it contributes none.
+    expect(screen.getAllByText("\u2014")).toHaveLength(2);
+  });
+
+  it("renders the answers in the order the backend returned them", () => {
+    const { container } = renderWithRouter(
+      <RequestDetailsWidget
+        catalog={CATALOG}
+        catalogItem={CATALOG_ITEM}
+        variables={VARIABLES}
+      />,
+    );
+
+    const questions = Array.from(container.querySelectorAll("dt")).map(
+      (dt) => dt.textContent,
+    );
+    expect(questions).toEqual([
+      "Reason For Migration",
+      "Approval Reference",
+      "Additional Notes",
+    ]);
+  });
+
+  it("pairs each question with its answer", () => {
+    const { container } = renderWithRouter(
+      <RequestDetailsWidget
+        catalog={CATALOG}
+        catalogItem={CATALOG_ITEM}
+        variables={VARIABLES}
+      />,
+    );
+
+    const answers = Array.from(container.querySelectorAll("dd")).map(
+      (dd) => dd.textContent,
+    );
+    expect(answers).toEqual(["End of support", "CHG-0001", "\u2014"]);
+  });
+
+  it("renders an em dash — not nothing — for a question that was asked and left blank", () => {
+    const { container } = renderWithRouter(
+      <RequestDetailsWidget
+        catalog={CATALOG}
+        catalogItem={CATALOG_ITEM}
+        variables={[{ name: "Additional Notes", value: "" }]}
+      />,
+    );
+
+    const dd = container.querySelector("dd");
+    expect(dd).not.toBeNull();
+    expect(dd).toHaveTextContent("\u2014");
+  });
+
+  it("renders the empty state rather than hiding the card when there are no answers", () => {
+    renderWithRouter(
+      <RequestDetailsWidget catalog={CATALOG} catalogItem={CATALOG_ITEM} />,
+    );
+
+    expect(screen.getByText("Request details")).toBeInTheDocument();
+    expect(screen.getByText("No request details captured.")).toBeInTheDocument();
+    expect(screen.getByText("Managed Cloud")).toBeInTheDocument();
+  });
+
+  it("renders the empty state for an explicitly empty answer list too", () => {
+    renderWithRouter(<RequestDetailsWidget variables={[]} />);
+
+    expect(screen.getByText("No request details captured.")).toBeInTheDocument();
   });
 });

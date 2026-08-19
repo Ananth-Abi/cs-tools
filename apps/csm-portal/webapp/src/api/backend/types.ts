@@ -284,6 +284,16 @@ export interface BeCaseAccountRef {
 }
 
 /**
+ * One answered catalog-item question on a service request, as returned inside
+ * `GET /cases/{id}`. Both fields are always present and non-null; `value` is
+ * `""` when the question was asked but left blank.
+ */
+export interface BeCaseVariableAnswer {
+  name: string;
+  value: string;
+}
+
+/**
  * `GET /cases/{id}` response — the rich CaseView. Unlike {@link BeCase} (the
  * flat create/legacy shape), it embeds the related entities as objects, so the
  * UI gets account / project / deployment / deployed-product / reporter names
@@ -344,6 +354,14 @@ export interface BeCaseView {
   /** SR catalog refs (managed-cloud); null for non-catalog cases. */
   catalog?: BeEntityRef | null;
   catalogItem?: BeEntityRef | null;
+  /**
+   * The answers the requester gave to the catalog item's questions, in the
+   * backing data source's display order. Omitted entirely (never `null`,
+   * never `[]`) when the case has no answers or is not a catalog request, so
+   * "omitted" and "asked but left blank" stay distinguishable: `value` is
+   * always a string and may be `""` for a question that was left blank.
+   */
+  variables?: BeCaseVariableAnswer[];
   /** Assigned team and linked chat conversation; null when not set. */
   assignedTeam?: BeEntityRef | null;
   conversation?: BeEntityRef | null;
@@ -594,15 +612,37 @@ export interface BeSearchCatalogsResponse {
 }
 
 /**
+ * One selectable option on a choice-type catalog-item variable. Note the
+ * asymmetry with {@link BeCatalogItemVariable.choices}: the array itself is
+ * omitted when the variable has no choices, but once present every option
+ * object carries all three keys, each of which may be `null`. An option whose
+ * `value` is `null` cannot be submitted and is skipped by the form.
+ */
+export interface BeCatalogItemVariableChoice {
+  /** Submitted value. `null` for a malformed option — not renderable. */
+  value: string | null;
+  /** Display label; falls back to `value` when `null`. */
+  text: string | null;
+  /** Display order within the choice list. */
+  order: number | null;
+}
+
+/**
  * A catalog-item variable (form field). The contract carries the question
- * text, display order, and a free-form `type` hint, but no choice/option list
- * or mandatory flag — so the portal renders every variable as a text field.
+ * text, display order, a free-form `type` hint and, for choice-type
+ * variables, the list of selectable options. There is still no mandatory
+ * flag, so the portal decides required-ness client-side.
  */
 export interface BeCatalogItemVariable {
   id: string;
   questionText?: string;
   order?: number;
   type?: string;
+  /**
+   * Selectable options for a choice-type variable. Omitted entirely (never
+   * `null`, never `[]`) on non-choice variables.
+   */
+  choices?: BeCatalogItemVariableChoice[];
 }
 
 /** `GET /catalogs/{catalogId}/items/{catalogItemId}/variables` response. */

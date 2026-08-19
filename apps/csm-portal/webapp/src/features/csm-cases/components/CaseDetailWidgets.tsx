@@ -33,6 +33,7 @@ import {
   ArrowUpRight,
   Building,
   CheckCircle,
+  ClipboardList,
   Clock,
   Download,
   Eye,
@@ -50,7 +51,15 @@ import {
   Users,
   X,
 } from "@wso2/oxygen-ui-icons-react";
-import { useMemo, useRef, useState, type ChangeEvent, type JSX, type ReactNode } from "react";
+import {
+  Fragment,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type JSX,
+  type ReactNode,
+} from "react";
 import { Link as RouterLink } from "react-router";
 import { formatBytes } from "@utils/formatBytes";
 import DirectoryEntityChip from "@features/csm-admin/components/DirectoryEntityChip";
@@ -64,6 +73,7 @@ import type {
   CaseAuditEntry,
   CaseCustomerContext,
   CaseProductContext,
+  CaseRequestVariable,
   CaseTag,
   CaseTimeLogEntry,
   CaseWatcher,
@@ -1083,6 +1093,102 @@ export function AuditTimelineWidget({
             ))
         )}
       </Box>
+    </WidgetCard>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// 8. Service-request "Request details"
+// ---------------------------------------------------------------------------
+
+/** Placeholder for a value the backing data source did not give us. */
+const NO_VALUE = "\u2014";
+
+/**
+ * The catalog, catalog item, and the answers the requester gave to that
+ * item's questions — the payload a service request is actually made of, and
+ * which the engineer working it otherwise cannot see anywhere in the portal.
+ *
+ * Renders even when `variables` is empty: an SR with no captured answers is a
+ * real upstream data problem, and hiding the card would make it invisible.
+ * An answer that is present but blank renders as an em dash, so "asked and
+ * left blank" stays distinguishable from "never asked".
+ */
+export function RequestDetailsWidget({
+  catalog,
+  catalogItem,
+  variables,
+}: {
+  catalog?: { id: string; name: string };
+  catalogItem?: { id: string; name: string };
+  /** In the backing data source's display order — never re-sorted here. */
+  variables?: CaseRequestVariable[];
+}): JSX.Element {
+  const answers = variables ?? [];
+  return (
+    <WidgetCard title="Request details" icon={<ClipboardList size={16} />}>
+      <MetaRow label="Catalog">
+        <Typography variant="body2">{catalog?.name || NO_VALUE}</Typography>
+      </MetaRow>
+      <MetaRow label="Catalog item">
+        <Typography variant="body2">{catalogItem?.name || NO_VALUE}</Typography>
+      </MetaRow>
+      {answers.length === 0 ? (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+          No request details captured.
+        </Typography>
+      ) : (
+        <Box
+          component="dl"
+          sx={{
+            display: "grid",
+            // Single column on narrow viewports so a long question and its
+            // answer stack instead of squeezing; two columns from sm up.
+            gridTemplateColumns: {
+              xs: "minmax(0, 1fr)",
+              sm: "minmax(0, 12rem) minmax(0, 1fr)",
+            },
+            columnGap: 1.5,
+            rowGap: 0.75,
+            alignItems: "baseline",
+            m: 0,
+            mt: 1.5,
+            pt: 1.5,
+            borderTop: 1,
+            borderColor: "divider",
+          }}
+        >
+          {answers.map((v, i) => (
+            // The data source guarantees no id per answer and question text
+            // is not guaranteed unique, so the index is part of the key.
+            <Fragment key={`${v.name}-${i}`}>
+              <Typography
+                component="dt"
+                variant="caption"
+                color="text.secondary"
+                sx={{ minWidth: 0, overflowWrap: "anywhere" }}
+              >
+                {v.name}
+              </Typography>
+              <Typography
+                component="dd"
+                variant="body2"
+                color={v.value ? "text.primary" : "text.secondary"}
+                sx={{
+                  m: 0,
+                  minWidth: 0,
+                  // Long single-token answers (paths, ids, URLs) must wrap
+                  // rather than push a horizontal scrollbar onto the page.
+                  overflowWrap: "anywhere",
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {v.value || NO_VALUE}
+              </Typography>
+            </Fragment>
+          ))}
+        </Box>
+      )}
     </WidgetCard>
   );
 }
