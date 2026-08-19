@@ -41,10 +41,10 @@ The incoming `x-user-id-token` is forwarded to the entity-service `GetCase` call
 
 | Variable | Required | Description |
 |---|---|---|
-| `EVENT_HUB_BROKER` | Yes (gates the whole service) | Kafka-compatible bootstrap address, e.g. `<namespace>.servicebus.windows.net:9093` |
-| `EVENT_HUB_CONNECTION_STRING` | Yes | Shared Access Policy connection string (namespace-scoped, no EntityPath) |
-| `EVENT_HUB_TOPIC` | Yes | Event Hub name = Kafka topic (`case-events`) |
-| `EVENT_HUB_CONSUMER_GROUP` | Yes | Base consumer group name (suffixed per-replica with `-replica-<hostname>`); e.g. `csm-activity-stream-service` |
+| `EVENT_HUB_BROKER` | No — optional feature gate | Kafka-compatible bootstrap address, e.g. `<namespace>.servicebus.windows.net:9093`. Left unset, the service starts and serves only the health check; the SSE endpoint returns 503 |
+| `EVENT_HUB_CONNECTION_STRING` | Required once `EVENT_HUB_BROKER` is set | Shared Access Policy connection string (namespace-scoped, no EntityPath) |
+| `EVENT_HUB_TOPIC` | Required once `EVENT_HUB_BROKER` is set | Event Hub name = Kafka topic (`case-events`) |
+| `EVENT_HUB_CONSUMER_GROUP` | No (default `csm-activity-stream-service`) | Base consumer group name (suffixed per-replica with `-replica-<hostname>`) |
 | `STREAM_PORT` | No (default 9092) | Port the SSE listener binds to |
 | `STREAM_CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the SSE endpoint; fail-closed |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the health listener (:8080); fail-closed |

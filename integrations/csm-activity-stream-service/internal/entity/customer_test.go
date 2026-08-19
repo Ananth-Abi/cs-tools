@@ -122,9 +122,14 @@ tokenFetchTimeout = 5 * time.Second
 }
 
 func TestCustomerEntityClient_ContextValuesForwarded(t *testing.T) {
-	var capturedReq *http.Request
+	// Sent through a buffered channel rather than a shared variable: the
+	// server handler runs on its own goroutine, and reading a plain
+	// variable it wrote from the test goroutine with no synchronization is
+	// a data race (go test -race flags it) even though GetCase returning
+	// happens-after the handler running in practice.
+	capturedHeaders := make(chan http.Header, 1)
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedReq = r
+		capturedHeaders <- r.Header.Clone()
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"id":"CASE-1"}`))
 	}))
@@ -132,9 +137,6 @@ func TestCustomerEntityClient_ContextValuesForwarded(t *testing.T) {
 
 	tokenSrv := newCustomerTokenServer(t)
 	defer tokenSrv.Close()
-
-	tokenFetchTimeout = 1 * time.Millisecond
-	t.Cleanup(func() { tokenFetchTimeout = 10 * time.Second })
 
 	cfg := CustomerEntityConfig{
 		BaseURL:      apiSrv.URL,
@@ -154,13 +156,11 @@ func TestCustomerEntityClient_ContextValuesForwarded(t *testing.T) {
 		t.Fatalf("GetCase failed: %v", err)
 	}
 
-	if capturedReq == nil {
-		t.Fatal("capturedReq is nil")
-	}
-	if got := capturedReq.Header.Get("x-user-id-token"); got != "test-id-token" {
+	headers := <-capturedHeaders
+	if got := headers.Get("x-user-id-token"); got != "test-id-token" {
 		t.Errorf("x-user-id-token = %q, want %q", got, "test-id-token")
 	}
-	if got := capturedReq.Header.Get("X-CSM-Correlation-ID"); got != "test-correlation-id" {
+	if got := headers.Get("X-CSM-Correlation-ID"); got != "test-correlation-id" {
 		t.Errorf("X-CSM-Correlation-ID = %q, want %q", got, "test-correlation-id")
 	}
 }
