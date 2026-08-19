@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +73,19 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			},
 		},
 		{
+			name: "accountId in maps to AccountIDs",
+			in: []domain.CaseFieldFilter{{
+				Field:  "accountId",
+				Op:     "in",
+				Values: []string{"00000000-0000-0000-0000-000000000000"},
+			}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.AccountIDs) != 1 || p.AccountIDs[0] != "00000000-0000-0000-0000-000000000000" {
+					t.Fatalf("AccountIDs = %v", p.AccountIDs)
+				}
+			},
+		},
+		{
 			name: "tag in maps to Tags",
 			in:   []domain.CaseFieldFilter{{Field: "tag", Op: "in", Values: []string{"patch"}}},
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
@@ -86,6 +100,53 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
 				if len(p.ExcludeTags) != 1 || p.ExcludeTags[0] != "patch" {
 					t.Fatalf("ExcludeTags = %v", p.ExcludeTags)
+				}
+			},
+		},
+		{
+			name: "state in maps to States",
+			in:   []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open", "reopened"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.States) != 2 || p.States[0] != "open" || p.States[1] != "reopened" {
+					t.Fatalf("States = %v", p.States)
+				}
+				if len(p.ExcludeStates) != 0 {
+					t.Fatalf("ExcludeStates = %v, want empty", p.ExcludeStates)
+				}
+			},
+		},
+		{
+			name: "state notIn maps to ExcludeStates",
+			in:   []domain.CaseFieldFilter{{Field: "state", Op: "notIn", Values: []string{"awaiting_info", "solution_proposed", "closed"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				want := []domain.CaseState{"awaiting_info", "solution_proposed", "closed"}
+				if len(p.ExcludeStates) != len(want) {
+					t.Fatalf("ExcludeStates = %v, want %v", p.ExcludeStates, want)
+				}
+				for i, w := range want {
+					if p.ExcludeStates[i] != w {
+						t.Fatalf("ExcludeStates = %v, want %v", p.ExcludeStates, want)
+					}
+				}
+				// notIn must never be folded into the positive allowlist: that
+				// would silently invert the predicate's meaning.
+				if len(p.States) != 0 {
+					t.Fatalf("States = %v, want empty: notIn must not populate the in list", p.States)
+				}
+			},
+		},
+		{
+			name: "state in and notIn are independent and may be combined",
+			in: []domain.CaseFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"open", "work_in_progress"}},
+				{Field: "state", Op: "notIn", Values: []string{"closed"}},
+			},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.States) != 2 {
+					t.Fatalf("States = %v, want 2 entries", p.States)
+				}
+				if len(p.ExcludeStates) != 1 || p.ExcludeStates[0] != "closed" {
+					t.Fatalf("ExcludeStates = %v, want [closed]", p.ExcludeStates)
 				}
 			},
 		},
@@ -153,11 +214,41 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			},
 		},
 		{
+			name: "projectOnboardingStatus notIn",
+			in:   []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "notIn", Values: []string{"In-Progress"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.ExcludeProjectOnboardingStatuses) != 1 || p.ExcludeProjectOnboardingStatuses[0] != "In-Progress" {
+					t.Fatalf("ExcludeProjectOnboardingStatuses = %v", p.ExcludeProjectOnboardingStatuses)
+				}
+				if len(p.ProjectOnboardingStatuses) != 0 {
+					t.Fatalf("ProjectOnboardingStatuses = %v, want empty", p.ProjectOnboardingStatuses)
+				}
+			},
+		},
+		{
 			name: "parentId eq",
 			in:   []domain.CaseFieldFilter{{Field: "parentId", Op: "eq", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
 				if p.ParentID == nil || *p.ParentID != "00000000-0000-0000-0000-000000000000" {
 					t.Fatalf("ParentID = %v", p.ParentID)
+				}
+			},
+		},
+		{
+			name: "number eq",
+			in:   []domain.CaseFieldFilter{{Field: "number", Op: "eq", Values: []string{"CS0441174"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.Number == nil || *p.Number != "CS0441174" {
+					t.Fatalf("Number = %v", p.Number)
+				}
+			},
+		},
+		{
+			name: "internalId eq",
+			in:   []domain.CaseFieldFilter{{Field: "internalId", Op: "eq", Values: []string{"12345"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.InternalID == nil || *p.InternalID != "12345" {
+					t.Fatalf("InternalID = %v", p.InternalID)
 				}
 			},
 		},
@@ -187,6 +278,10 @@ func TestParseCaseFieldFilters_Rejections(t *testing.T) {
 		{name: "resolutionNotes isNotEmpty unsupported", in: []domain.CaseFieldFilter{{Field: "resolutionNotes", Op: "isNotEmpty"}}},
 		{name: "createdBy eq non-placeholder literal", in: []domain.CaseFieldFilter{{Field: "createdBy", Op: "eq", Values: []string{"someone@example.com"}}}},
 		{name: "createdOn bad date format", in: []domain.CaseFieldFilter{{Field: "createdOn", Op: "gte", Values: []string{"not-a-date"}}}},
+		{name: "number in unsupported", in: []domain.CaseFieldFilter{{Field: "number", Op: "in", Values: []string{"CS0441174"}}}},
+		{name: "internalId in unsupported", in: []domain.CaseFieldFilter{{Field: "internalId", Op: "in", Values: []string{"12345"}}}},
+		{name: "projectOnboardingStatus eq unsupported", in: []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "eq", Values: []string{"Completed"}}}},
+		{name: "accountId malformed UUID", in: []domain.CaseFieldFilter{{Field: "accountId", Op: "in", Values: []string{"not-a-uuid"}}}},
 	}
 
 	for _, tc := range cases {
@@ -385,7 +480,7 @@ func TestParseCaseFieldFilterGroups_CreatedByRejectedAsValidationError(t *testin
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ParseCaseFieldFilterGroups([][]domain.CaseFieldFilter{tc.group})
+			_, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{{Filters: tc.group}})
 			if err == nil {
 				t.Fatalf("expected an error, got nil")
 			}
@@ -397,7 +492,7 @@ func TestParseCaseFieldFilterGroups_CreatedByRejectedAsValidationError(t *testin
 			if !errors.As(err, &ve) {
 				t.Fatalf("err = %v (%T), want *apierror.ValidationError", err, err)
 			}
-			const want = `orGroups: field "createdBy" is not supported inside an OR group`
+			const want = `anyOf: field "createdBy" is not supported inside an OR group`
 			if ve.Msg != want {
 				t.Errorf("Msg = %q, want %q", ve.Msg, want)
 			}
@@ -405,11 +500,109 @@ func TestParseCaseFieldFilterGroups_CreatedByRejectedAsValidationError(t *testin
 	}
 }
 
+// state+in is one of the fields an OR branch does model, but state+notIn is
+// not: CaseFilterGroup has no exclusion field, so accepting it would drop the
+// predicate and widen the branch's result set.
+func TestParseCaseFieldFilterGroups_RejectsStateNotIn(t *testing.T) {
+	branch := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{{Field: "state", Op: "notIn", Values: []string{"closed"}}},
+	}
+	_, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{branch})
+	var ve *apierror.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v (%T), want *apierror.ValidationError", err, err)
+	}
+	const want = `anyOf: field "state" (notIn) is not supported inside an OR group`
+	if ve.Msg != want {
+		t.Errorf("Msg = %q, want %q", ve.Msg, want)
+	}
+}
+
+// state+in stays accepted inside a branch -- the rejection above must not
+// have caught the positive form too.
+func TestParseCaseFieldFilterGroups_AcceptsStateIn(t *testing.T) {
+	branch := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}},
+	}
+	groups, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{branch})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(groups) != 1 || len(groups[0].States) != 1 || groups[0].States[0] != "open" {
+		t.Fatalf("groups = %+v, want one branch with States [open]", groups)
+	}
+}
+
+// A branch is parsed by ParseCaseFieldFilters, which roots every message it
+// raises at the top-level "filters" path. Returned unchanged, that path is a
+// lie inside an OR group: the array the client has to fix lives at
+// anyOf[i].filters, and the public contract says so. The index has to be the
+// offending branch's, not always zero.
+func TestParseCaseFieldFilterGroups_BranchErrorsCarryTheAnyOfPath(t *testing.T) {
+	valid := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}},
+	}
+
+	cases := []struct {
+		name     string
+		branches []domain.CaseFilterBranch
+		want     string
+	}{
+		{
+			name: "invalid field in the first branch",
+			branches: []domain.CaseFilterBranch{
+				{Filters: []domain.CaseFieldFilter{{Field: "notAField", Op: "in", Values: []string{"x"}}}},
+			},
+			want: "anyOf[0].filters: unsupported field: notAField",
+		},
+		{
+			name: "invalid op in the first branch",
+			branches: []domain.CaseFilterBranch{
+				{Filters: []domain.CaseFieldFilter{{Field: "state", Op: "notAnOp", Values: []string{"open"}}}},
+			},
+			want: "anyOf[0].filters: unsupported op: notAnOp",
+		},
+		{
+			name: "field/op combination the field does not support",
+			branches: []domain.CaseFilterBranch{
+				{Filters: []domain.CaseFieldFilter{{Field: "state", Op: "eq", Values: []string{"open"}}}},
+			},
+			want: `anyOf[0].filters: field "state" does not support op "eq"`,
+		},
+		{
+			name:     "invalid field in a later branch reports that branch's index",
+			branches: []domain.CaseFilterBranch{valid, valid, {Filters: []domain.CaseFieldFilter{{Field: "notAField", Op: "in", Values: []string{"x"}}}}},
+			want:     "anyOf[2].filters: unsupported field: notAField",
+		},
+		{
+			name:     "invalid op in a later branch reports that branch's index",
+			branches: []domain.CaseFilterBranch{valid, {Filters: []domain.CaseFieldFilter{{Field: "severity", Op: "notAnOp", Values: []string{"high"}}}}},
+			want:     "anyOf[1].filters: unsupported op: notAnOp",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseCaseFieldFilterGroups(tc.branches)
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			var ve *apierror.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v (%T), want *apierror.ValidationError", err, err)
+			}
+			if ve.Msg != tc.want {
+				t.Errorf("Msg = %q, want %q", ve.Msg, tc.want)
+			}
+		})
+	}
+}
+
 // The sentinel caller email must never leak into a parsed group.
 func TestParseCaseFieldFilterGroups_SupportedFieldsParse(t *testing.T) {
-	groups, err := ParseCaseFieldFilterGroups([][]domain.CaseFieldFilter{
-		{{Field: "state", Op: "in", Values: []string{"open", "closed"}}},
-		{{Field: "severity", Op: "in", Values: []string{"high"}}},
+	groups, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{
+		{Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open", "closed"}}}},
+		{Filters: []domain.CaseFieldFilter{{Field: "severity", Op: "in", Values: []string{"high"}}}},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -422,5 +615,54 @@ func TestParseCaseFieldFilterGroups_SupportedFieldsParse(t *testing.T) {
 	}
 	if len(groups[1].Severities) != 1 || groups[1].Severities[0] != domain.CaseSeverity("high") {
 		t.Errorf("groups[1].Severities = %v, want [high]", groups[1].Severities)
+	}
+}
+
+// An OR branch carrying no predicates constrains nothing, and because the
+// branches are OR'd against each other one such branch widens the ENTIRE
+// result set: every case matches, silently, with a 200 and no error anywhere.
+// It has to be rejected at parse time. `"anyOf": [{}]` is valid JSON against
+// the schema's own shape, so nothing upstream catches it either.
+func TestParseCaseFieldFilterGroups_RejectsEmptyBranch(t *testing.T) {
+	valid := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}},
+	}
+
+	cases := []struct {
+		name     string
+		branches []domain.CaseFilterBranch
+		want     string
+	}{
+		{
+			name:     `"anyOf": [{}] -- filters key absent entirely`,
+			branches: []domain.CaseFilterBranch{{}},
+			want:     "anyOf[0].filters: an OR branch must carry at least one filter predicate",
+		},
+		{
+			name:     `"anyOf": [{"filters": []}] -- present but empty`,
+			branches: []domain.CaseFilterBranch{{Filters: []domain.CaseFieldFilter{}}},
+			want:     "anyOf[0].filters: an OR branch must carry at least one filter predicate",
+		},
+		{
+			name:     "an empty branch alongside valid ones still reports its own index",
+			branches: []domain.CaseFilterBranch{valid, valid, {}},
+			want:     "anyOf[2].filters: an OR branch must carry at least one filter predicate",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			groups, err := ParseCaseFieldFilterGroups(tc.branches)
+			if err == nil {
+				t.Fatalf("expected an error, got nil and %d group(s) -- an unconstrained branch was forwarded", len(groups))
+			}
+			var ve *apierror.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v (%T), want *apierror.ValidationError (400)", err, err)
+			}
+			if !strings.HasPrefix(ve.Msg, tc.want) {
+				t.Errorf("Msg = %q, want prefix %q", ve.Msg, tc.want)
+			}
+		})
 	}
 }

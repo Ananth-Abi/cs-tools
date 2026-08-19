@@ -18,6 +18,7 @@ import type {
   CaseState,
   CaseWorkState,
   Severity,
+  SeverityOrUnset,
   SlaClockType,
 } from "@features/csm-dashboard/types/abtDashboard";
 import type {
@@ -56,7 +57,13 @@ export interface CsmCaseRow {
   projectName: string;
   /** Affected WSO2 product (e.g. "WSO2 Identity Server"). Used for list filtering. */
   product: string;
-  severity: Severity;
+  /**
+   * `"unset"` when the source has no severity value at all (empty/missing),
+   * or the value doesn't match anything `severityFromBe` recognizes — a
+   * distinct fact from "the severity really is S3/Medium", never collapsed
+   * into a real severity. See `severityFromBe` in `api/backend/mappers.ts`.
+   */
+  severity: SeverityOrUnset;
   state: CaseState;
   /**
    * Case type (BE `typeKey` / search `caseType`). Optional: a legacy row may
@@ -421,6 +428,28 @@ export interface CreateServiceRequestFromCaseNavState {
 }
 
 /**
+ * Router (`navigate(..., { state })`) payload carried from a service
+ * request's "Create change request…" action (case detail action bar) to
+ * `/operations/change-requests/new`, so the create-change-request form's
+ * "Originating service request" picker can pre-select the service request the
+ * action was opened from and scope its search to the same project — see
+ * CsmCaseDetailPage.tsx's `create_change_request` handler and
+ * CreateChangeRequestPage.tsx's read of `useLocation().state`. Distinct from
+ * ChangeRequestsTab.tsx's own "Create change request" button, which navigates
+ * to the same route with no state at all — that entry point has no service
+ * request to prefill or scope by, so its picker searches the whole system
+ * exactly as it always has. `projectId` is optional here (unlike the sibling
+ * nav states above) because a legacy case row can omit it; the picker simply
+ * skips scoping when it's absent.
+ */
+export interface CreateChangeRequestFromCaseNavState {
+  caseId: string;
+  caseNumber?: string;
+  caseSubject?: string;
+  projectId?: string;
+}
+
+/**
  * Router (`navigate(..., { state })`) payload carried from a case's "Create
  * incident from case…" action to `/operations/incidents/new`, so the
  * create-incident form can prefill from the originating case without a
@@ -448,6 +477,14 @@ export interface CreateIncidentFromCaseNavState {
 export interface CsmCaseDetail extends CsmCaseRow {
   description: string;
   assignmentGroup: string;
+  /**
+   * The engineer who acknowledged the case — a first-write-wins claim that
+   * someone has seen it and picked it up, distinct from being assigned to it.
+   * Absent when nobody has acknowledged yet, which is what makes the
+   * acknowledge action available. Cleared upstream when the case's type or
+   * severity changes or it is reopened, so it can become absent again.
+   */
+  acknowledgedBy?: { name: string; email?: string };
   /** Category of issue reported, when set (e.g. "total_outage", "question"). */
   issueType?: BeCaseIssueType;
   /**

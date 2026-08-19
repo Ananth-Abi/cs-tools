@@ -30,7 +30,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { useCallback, useMemo, useState, type ChangeEvent, type JSX } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import { useNavTransition } from "@hooks/useNavTransition";
 import QueryErrorState from "@components/QueryErrorState";
 import FilteredCsvExportButton from "@components/FilteredCsvExportButton";
@@ -52,6 +52,7 @@ import {
   writeChangeRequestFiltersToUrl,
 } from "@features/csm-operations/utils/changeRequestsFiltersUrl";
 import ChangeRequestsFilterBar from "@features/csm-operations/components/ChangeRequestsFilterBar";
+import RefreshButton from "@components/RefreshButton";
 import type {
   BeChangeRequestSearchPayload,
   BeChangeRequestSearchResponse,
@@ -89,6 +90,7 @@ function toISOEnd(date: string): string {
 export default function ChangeRequestsTab(): JSX.Element {
   const navigate = useNavTransition();
   const api = useBackendApi();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo<ChangeRequestFilters>(
     () => readChangeRequestFiltersFromUrl(searchParams),
@@ -117,7 +119,7 @@ export default function ChangeRequestsTab(): JSX.Element {
     [debouncedSearch, filters.states, filters.impacts, filters.closedStartDate, filters.closedEndDate, page, rowsPerPage],
   );
 
-  const { data, isLoading, isError, error, isFetching } =
+  const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } =
     useSearchChangeRequests(payload);
 
   const changeRequests = data?.changeRequests ?? [];
@@ -186,7 +188,13 @@ export default function ChangeRequestsTab(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1 }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1 }}>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label="Refresh change requests"
+        />
         <FilteredCsvExportButton<BeChangeRequestSearchView>
           entityName="change-requests"
           header={["Number", "Subject", "Project", "State", "Impact", "Planned start", "Updated"]}
@@ -262,7 +270,11 @@ export default function ChangeRequestsTab(): JSX.Element {
                   <TableRow
                     key={cr.id}
                     hover
-                    onClick={() => navigate(`/operations/change-requests/${cr.id}`)}
+                    onClick={() =>
+                      navigate(`/operations/change-requests/${cr.id}`, {
+                        state: { from: `${location.pathname}${location.search}` },
+                      })
+                    }
                     sx={{ cursor: "pointer" }}
                   >
                     <TableCell>{cr.number || "—"}</TableCell>

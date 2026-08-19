@@ -96,6 +96,18 @@ gosec -fmt=text ./...
 
 The scan should report **0 issues**. If a new finding appears, fix the root cause before merging — do not suppress it without a code review.
 
+Run [govulncheck](https://golang.org/x/vuln/cmd/govulncheck) to check for known vulnerabilities:
+
+```bash
+# Install govulncheck (once)
+go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# Run from apps/csm-portal/backend
+govulncheck ./...
+```
+
+The scan should report **no vulnerabilities**. Most findings are Go standard-library CVEs tied to the toolchain patch pinned in `go.mod`'s `go` directive — bump it to the latest `1.26.x` patch and run `go mod tidy` to resolve them.
+
 ## Configuration
 
 Copy `.env` and fill in the values:
@@ -155,6 +167,73 @@ Two independent things share these variables, both optional (left unset, neither
 |---|---|
 | `SCIM_BASE_URL` | Base URL of the SCIM operations service |
 | `SCIM_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+
+### Notifications — email channel (not yet wired in)
+
+`internal/notifications` (`EmailClient.SendEmail`) is ready to use but is not constructed in `cmd/server/main.go` — no handler calls it yet. These variables are not read by any code today; they're documented here for when the first caller is added, which should reuse the shared `OAUTH2_*` credentials above rather than adding its own. Each notification channel gets its own `NOTIFICATIONS_<CHANNEL>_*` prefix for its channel-specific settings — SMS/Twilio will follow this same convention once added.
+
+| Variable | Description |
+|---|---|
+| `NOTIFICATIONS_EMAIL_BASE_URL` | Base URL of the email notification service (optional) |
+| `NOTIFICATIONS_EMAIL_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+| `NOTIFICATIONS_EMAIL_FROM_ADDRESS` | Fixed "From" address used for every outgoing email (optional) |
+
+### Notifications — Google Chat channel
+
+`internal/notifications` (`GoogleChatClient.SendIncidentAlert`) posts a card message — title, short description, and an "Open in CSM Portal" button — to a Google Chat space via an incoming webhook. There's one space per product (each WSO2 product has its own space), so the client is configured with a list of `{product, webhookUrl}` pairs and routes each alert to the space matching the case's product (case- and whitespace-insensitive match; an unconfigured product returns an error rather than falling back). Unlike every other upstream client it does not use the shared `OAUTH2_*` credentials; a webhook URL is the only credential needed per space (Space settings > Apps & integrations > Webhooks). It's called from `POST /notifications/google-chat/alerts` (see [API Endpoints](#notifications) below), which today is triggered manually rather than from real case/incident creation.
+
+| Variable | Description |
+|---|---|
+| `NOTIFICATIONS_GOOGLE_CHAT_SPACES` | JSON array of `{"product","webhookUrl"}` objects, one per Google Chat space — e.g. `[{"product":"api-manager","webhookUrl":"https://chat.googleapis.com/..."}]`. Optional — left unset, malformed, Google Chat alerts are unavailable but startup and every other endpoint work normally |
+| `CSM_PORTAL_WEB_BASE_URL` | Base URL of the CSM portal webapp, used to build the "Open in CSM Portal" link at `/operations/incidents/{caseId}` (e.g. `http://localhost:3001` for local dev). Optional — only needed alongside `NOTIFICATIONS_GOOGLE_CHAT_SPACES` above |
+
+### Dashboards
+
+Dashboard definitions are files, one JSON file per dashboard, read once at startup and held in
+memory. The filename is irrelevant — `id`, `displayName` and `type` come from the file's own
+content. A malformed, unreadable or duplicate-`id` file **fails startup naming the file** rather
+than being skipped: a silently dropped dashboard is invisible. See `dashboards.example/` for the
+schema.
+
+| Variable | Description |
+|---|---|
+| `DASHBOARDS_DIR` | Directory holding one `*.json` file per dashboard. `.env.example` ships `./dashboards.example` so a fresh clone starts; for a real set, `cp -r dashboards.example dashboards` (`./dashboards` is gitignored) and point this at it. A missing directory is fatal |
+| `DASHBOARDS_HOT_RELOAD` | Re-read `DASHBOARDS_DIR` on every request instead of serving the startup snapshot. Parsed with `strconv.ParseBool`, so `1`/`t`/`true`/`yes`-style values are not interchangeable — `1`, `t`, `T`, `TRUE`, `true`, `True` are true, and an unparseable non-empty value logs a warning and is treated as false. **Local development only**; default false |
+| `DASHBOARDS_CONFIG` | **Deprecated.** The whole registry crammed into one JSON array variable. Honoured only when `DASHBOARDS_DIR` is unset, and warns when used. Malformed content is fatal |
+
+### Directory vocabularies
+
+Two curated lists are supplied as configuration rather than code, so adding a team or a role is a
+config change and a restart, not a release. Both are parsed at startup: **a malformed value is
+fatal**, so a typo stops a deploy instead of silently emptying a page. They previously lived in
+`entity-service`; that service no longer reads them.
+
+| Variable | Description |
+|---|---|
+| `CSM_TEAM_REGISTRY` | Team catalogue. `teamKey\|Display Name\|FAMILY\|groupId` rows separated by `,`; `FAMILY` and `groupId` are optional. Optional overall — unset means no teams (startup warns) |
+| `CSM_USER_ROLES` | Assignable-role allow-list, comma-separated. Optional; unset uses the built-in list |
+
+```bash
+# FAMILY is one of CRE-ABT, CRE, SRE-ABT, SRE (case insensitive). Any other
+# family value — or a duplicate team key or display name — fails startup
+# naming the offending row.
+# The names below are placeholders — supply the real ones per environment.
+CSM_TEAM_REGISTRY="alpha|Alpha Team|CRE-ABT,beta|Beta Team|SRE-ABT,gamma|Gamma Team"
+
+CSM_USER_ROLES="agent,admin,commenter,customer,customer_admin,partner,partner_admin,internal,external,timecard_approver"
+```
+
+`CSM_TEAM_REGISTRY` has **no default, by design**. Team names are organisation vocabulary and are
+deliberately not committed to this repository — only placeholders appear here and in
+`.env.example`. Unset, the registry is empty and team lookups return nothing, with a warning
+logged. `Display Name` is matched verbatim against the backing data source's group name when
+resolving members, so a wrong or blank one resolves **zero members silently**; that is why an empty
+field is rejected outright. The registry is resolved into an in-memory index at startup, so
+`POST /teams/search` makes no upstream call at all.
+
+`CSM_USER_ROLES` does have a default, because role names are generic platform vocabulary rather
+than organisation-specific. It drives both the `roleIds` filter validation and the catalogue that
+`POST /roles/search` serves, so the picker and the filter cannot disagree.
 
 ### Auth
 
@@ -246,6 +325,7 @@ backend/
 - `GET /users/me` — Get current user profile (`id`, `email`, `firstName`, `lastName`, `timeZone`, `roles` from entity service; `phoneNumber` from SCIM)
 - `PATCH /users/me` — Update current user profile (`phoneNumber` via SCIM, `timeZone` via entity service)
 - `POST /users/search` — Search users; optional `filters` (`searchQuery`, `roles`, `userNames`, `emails`, `active`) and `sortBy` (`field`, `order`); response shape depends on data source (`User` for postgres, `SNUser` for ServiceNow)
+- `GET /users/{id}` — Get one user's full profile (ServiceNow data source only); adds `teams` (derived from `groups`) and, for external contacts only, `externalAccount` (`exists`/`locked`, from SCIM's "external" org search). Both are best-effort — absent rather than failing the request if their lookup fails
 
 ### Accounts
 
@@ -302,7 +382,7 @@ backend/
 ### Conversations
 
 - `GET /conversations/{id}/messages` — Get paginated messages for a conversation; optional query params `limit` (1–100, default 20) and `offset` (default 0) (ServiceNow data source only)
-- `POST /conversations/search` — Search conversations; optional `filters` (`projectIds`, `states` (`ACTIVE`/`RESOLVED`), `searchQuery`, `createdByMe`) and `sortBy` (`field`: `createdOn`/`updatedOn`, `order`) (ServiceNow data source only)
+- `POST /conversations/search` — Search conversations; optional `filters` (`projectIds`, `states` (`ACTIVE`/`RESOLVED`/`CONVERTED`/`ABANDONED`/`CLOSED`), `searchQuery`, `number` (exact match), `createdByMe`, `createdBy` (list of creator emails)) and `sortBy` (`field`: `createdOn`/`updatedOn`, `order`) (ServiceNow data source only)
 
 ### Updates
 

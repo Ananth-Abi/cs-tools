@@ -74,6 +74,13 @@ export interface SnUser {
   mobilePhone?: string | null;
   userType?: UserType;
   active: boolean;
+  /**
+   * Whether the data source has locked the account out (e.g. too many failed
+   * sign-in attempts) — independent of {@link active}: a user can be active
+   * but locked out. Distinct from {@link ExternalAccountStatus.locked}, which
+   * is a separate concept from the SCIM "external" org.
+   */
+  lockedOut: boolean;
   createdOn: string;
   updatedOn: string;
   roles: string[];
@@ -115,11 +122,22 @@ export interface UserProjectAccess {
 }
 
 /**
+ * SCIM "external" org existence/lock status for an external contact, from
+ * `GET /users/{id}`'s `externalAccount` block. `locked` is `null` when the
+ * account doesn't exist or its lock state couldn't be determined.
+ */
+export interface ExternalAccountStatus {
+  exists: boolean;
+  locked: boolean | null;
+}
+
+/**
  * `GET /users/{id}` response: the user row plus every group they belong to,
  * the subset of those that are teams, and — for external contacts — their
- * per-project access. Populated only for users sourced from the data source
- * that carries group and project-contact records. The membership and
- * project-access blocks are best-effort: empty rather than absent when their
+ * per-project access and SCIM account status. Populated only for users
+ * sourced from the data source that carries group and project-contact
+ * records. The membership, project-access, and externalAccount blocks are
+ * best-effort: empty/absent rather than failing the whole request when their
  * upstream lookup fails.
  */
 export interface SnUserDetail extends SnUser {
@@ -127,6 +145,8 @@ export interface SnUserDetail extends SnUser {
   teams?: UserTeamRef[];
   /** Present for external contacts only. */
   projectAccess?: UserProjectAccess[];
+  /** Present for external contacts only; absent when the SCIM lookup itself failed. */
+  externalAccount?: ExternalAccountStatus;
 }
 
 export interface UserSearchFilters {
@@ -201,6 +221,8 @@ export interface NormalizedUser {
   userType?: UserType;
   /** Present only from the ServiceNow source. */
   active?: boolean;
+  /** Present only from the ServiceNow source; see {@link SnUser.lockedOut}. */
+  lockedOut?: boolean;
   /** Present only from the ServiceNow source. */
   roles?: string[];
   /** Present from either source, when the caller requested the full profile. */
@@ -232,6 +254,7 @@ export function normalizeUser(u: User | SnUser): NormalizedUser {
       timezone: u.timeZone ?? null,
       userType: u.userType,
       active: u.active,
+      lockedOut: u.lockedOut,
       roles: u.roles,
       phone: u.mobilePhone ?? null,
       createdOn: u.createdOn,
@@ -260,6 +283,8 @@ export interface NormalizedUserDetail extends NormalizedUser {
   groups?: UserGroupRef[];
   teams?: UserTeamRef[];
   projectAccess?: UserProjectAccess[];
+  /** Present for external contacts only; absent when the SCIM lookup itself failed. */
+  externalAccount?: ExternalAccountStatus;
 }
 
 /** Maps `GET /users/{id}`'s response into {@link NormalizedUserDetail}. */
@@ -269,6 +294,7 @@ export function normalizeUserDetail(u: SnUserDetail): NormalizedUserDetail {
     groups: u.groups,
     teams: u.teams,
     projectAccess: u.projectAccess,
+    externalAccount: u.externalAccount,
   };
 }
 

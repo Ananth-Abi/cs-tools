@@ -239,4 +239,17 @@ describe("CsmCaseCommentBubble", () => {
     expect(screen.getByText("System")).toBeInTheDocument();
     expect(screen.getByText("Case reassigned")).toBeInTheDocument();
   });
+
+  it("renders an avatar and no 'Commented by' prefix by default", () => {
+    renderWithProviders(<CsmCaseCommentBubble comment={makeComment({})} />);
+    expect(document.querySelector(".MuiAvatar-root")).toBeInTheDocument();
+    expect(screen.queryByText(/Commented by/)).not.toBeInTheDocument();
+  });
+
+  it("drops the avatar and prefixes the name with 'Commented by' in compact mode", () => {
+    renderWithProviders(<CsmCaseCommentBubble comment={makeComment({})} compact />);
+    expect(document.querySelector(".MuiAvatar-root")).not.toBeInTheDocument();
+    expect(screen.getByText(/Commented by/)).toBeInTheDocument();
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+  });
 });

@@ -58,6 +58,12 @@ func (r *productRepo) SearchProducts(ctx context.Context, req domain.SearchProdu
 		argIdx++
 	}
 
+	if req.Class != "" {
+		where += fmt.Sprintf(" AND class = $%d::product_class_enum", argIdx)
+		filterArgs = append(filterArgs, req.Class)
+		argIdx++
+	}
+
 	countQuery := "SELECT COUNT(*) FROM products " + where
 
 	dataQuery := fmt.Sprintf(

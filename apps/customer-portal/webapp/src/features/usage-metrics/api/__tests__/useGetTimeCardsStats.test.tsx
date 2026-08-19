@@ -37,23 +37,24 @@ vi.mock("@hooks/useLogger", () => ({
   }),
 }));
 
+const authFetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const url = String(input);
+  if (url.includes("/stats/time-cards")) {
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        totalHours: 400,
+        billableHours: 400,
+        nonBillableHours: 0,
+      }),
+    };
+  }
+  throw new Error(`Unexpected request: ${url}`);
+});
+
 vi.mock("@/hooks/useAuthApiClient", () => ({
-  useAuthApiClient: () =>
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/stats/time-cards")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            totalHours: 400,
-            billableHours: 400,
-            nonBillableHours: 0,
-          }),
-        };
-      }
-      throw new Error(`Unexpected request: ${url}`);
-    }),
+  useAuthApiClient: () => authFetchMock,
 }));
 
 const createWrapper = () => {
@@ -100,5 +101,52 @@ describe("useGetTimeCardsStats", () => {
     expect(data?.totalHours).toBe(6.67);
     expect(data?.billableHours).toBe(6.67);
     expect(data?.nonBillableHours).toBe(0);
+
+    const requestedUrl = new URL(String(authFetchMock.mock.calls[0][0]));
+    expect(requestedUrl.searchParams.size).toBe(2);
+    expect(requestedUrl.searchParams.get("startDate")).toBe("2025-01-01");
+    expect(requestedUrl.searchParams.get("endDate")).toBe("2025-12-31");
+  });
+
+  it("should request stats without any query params when no dates are provided", async () => {
+    const { result } = renderHook(
+      () => useGetTimeCardsStats({ projectId: "project-1" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const requestedUrl = String(authFetchMock.mock.calls[0][0]);
+    expect(requestedUrl).toBe("https://api.test/projects/project-1/stats/time-cards");
+  });
+
+  it("should include only startDate when endDate is not provided", async () => {
+    const { result } = renderHook(
+      () =>
+        useGetTimeCardsStats({ projectId: "project-1", startDate: "2025-01-01" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const requestedUrl = new URL(String(authFetchMock.mock.calls[0][0]));
+    expect(requestedUrl.searchParams.size).toBe(1);
+    expect(requestedUrl.searchParams.get("startDate")).toBe("2025-01-01");
+    expect(requestedUrl.searchParams.has("endDate")).toBe(false);
+  });
+
+  it("should include only endDate when startDate is not provided", async () => {
+    const { result } = renderHook(
+      () =>
+        useGetTimeCardsStats({ projectId: "project-1", endDate: "2025-12-31" }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const requestedUrl = new URL(String(authFetchMock.mock.calls[0][0]));
+    expect(requestedUrl.searchParams.size).toBe(1);
+    expect(requestedUrl.searchParams.get("endDate")).toBe("2025-12-31");
+    expect(requestedUrl.searchParams.has("startDate")).toBe(false);
   });
 });

@@ -22,7 +22,6 @@
 
 import type {
   BeAttachment,
-  BeCaseCommentAuthor,
   BeComment,
   BeCreatableCommentType,
   BeCaseSeverity,
@@ -38,6 +37,7 @@ import type { UserReference } from "@/types/userReference";
 import type {
   CaseState,
   Severity,
+  SeverityOrUnset,
 } from "@features/csm-dashboard/types/abtDashboard";
 
 // ---------------------------------------------------------------------------
@@ -45,20 +45,25 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Best-effort mapping from the backend's five-step priority taxonomy onto the
- * UI's S0-S4 severity scale. Until the BE adds explicit severity, priority
- * doubles as the source.
+ * Best-effort mapping from the backend's severity string onto the UI's
+ * S0-S4 severity scale — plus the explicit `"unset"` state.
+ *
+ * A falsy value (the backend sends `""` for a case with no severity — it
+ * never defaults one to Medium/S3) and an unrecognized string both map to
+ * `"unset"`, never to `"S3"`: "we don't know the severity" and "the severity
+ * really is Medium" are different facts and must never render/filter
+ * identically. See `SeverityChip` for the distinct "Unset" badge.
  */
-export function severityFromPriority(priority: string | undefined): Severity {
-  if (!priority) return "S3";
-  const s = priority.toLowerCase();
+export function severityFromBe(severity: string | undefined): SeverityOrUnset {
+  if (!severity) return "unset";
+  const s = severity.toLowerCase();
   // Match both P-notation ("Low (P4)", "P4") and legacy English names.
   if (s.includes("p0") || s === "catastrophic") return "S0";
   if (s.includes("p1") || s === "critical") return "S1";
   if (s.includes("p2") || s === "high") return "S2";
   if (s.includes("p3") || s === "medium") return "S3";
   if (s.includes("p4") || s === "low") return "S4";
-  return "S3";
+  return "unset";
 }
 
 export function priorityFromSeverity(severity: Severity): BeCaseSeverity {
@@ -126,60 +131,35 @@ export function commentTypeFromInternal(
   return internal ? "work_note" : "comment";
 }
 
-/** Best display name from a nested comment-author block, falling back to id. */
-function authorDisplayName(author: BeCaseCommentAuthor): string {
-  const full = author.fullName?.trim();
-  if (full) return full;
-  const composed = [author.firstName, author.lastName]
-    .filter((p) => p && p.trim())
-    .join(" ")
-    .trim();
-  return composed || author.id || "Unknown";
+/** Best display name off a {@link BeUserReference}, falling back to email. */
+function authorDisplayName(author: BeUserReference): string {
+  return author.name?.trim() || author.email?.trim() || "Unknown";
 }
 
-/**
- * Best display name from a {@link BeComment}. The search/messages endpoints
- * embed a nested `createdBy` object (`{id, firstName, lastName, fullName}`); the
- * comment-create ack echoes `createdBy` as a bare string. Handle both.
- */
+/** Best display name from a {@link BeComment}'s canonical `createdBy` reference. */
 function commentAuthorName(comment: BeComment): string {
-  const cb = comment.createdBy;
-  if (cb && typeof cb === "object") return authorDisplayName(cb);
-  if (typeof cb === "string" && cb.trim()) return cb;
-  return "Unknown";
+  return comment.createdBy ? authorDisplayName(comment.createdBy) : "Unknown";
 }
 
 /**
  * Best-effort email for a {@link BeComment}'s author, so the FE can link the
- * author name to their profile page. The nested author block's `id` field IS
- * the user's email (confirmed live: `{"createdBy":{"id":"rashmika@wso2.com",…}}`).
- * The create-ack's bare-string `createdBy` carries no email, so this is
- * `undefined` in that case.
+ * author name to their profile page.
  */
 function commentAuthorEmail(comment: BeComment): string | undefined {
-  const cb = comment.createdBy;
-  return cb && typeof cb === "object" ? cb.id || undefined : undefined;
+  return comment.createdBy?.email || undefined;
 }
 
 /**
  * Novera/bot sender detection — mirrors the customer portal's
  * `isNoveraOrBotSender`. Chat messages carry no role field, and the backend
  * normalizes `type` to `comment`/`work_note`/`activity` (a `bot` type never
- * survives), so the bot is identified by author NAME: the nested
- * `createdBy.id` or `createdBy.fullName` (or the bare string on the create ack)
- * equalling `"Novera"`. The `type === "bot"` check is a defensive fallback.
+ * survives), so the bot is identified by the author's `name` equalling
+ * `"Novera"`. The `type === "bot"` check is a defensive fallback.
  */
 function isBotSender(comment: BeComment): boolean {
-  const cb = comment.createdBy;
-  const names =
-    cb && typeof cb === "object"
-      ? [cb.id, cb.fullName]
-      : [typeof cb === "string" ? cb : ""];
-  const isNovera = names.some(
-    (n) => (n ?? "").trim().toLowerCase() === "novera",
-  );
+  const name = (comment.createdBy?.name ?? "").trim().toLowerCase();
   const ty = (comment.type ?? "").trim().toLowerCase();
-  return ty === "bot" || isNovera;
+  return ty === "bot" || name === "novera";
 }
 
 // The backend normalizes `type` to the singular enum (`work_note`/`comment`/
@@ -215,7 +195,7 @@ export function uiCommentFromBe(
     caseId: comment.referenceId ?? "",
     authorName: commentAuthorName(comment),
     authorEmail: commentAuthorEmail(comment),
-    authorUser: userReferenceFromBe(comment.createdByUser),
+    authorUser: userReferenceFromBe(comment.createdBy),
     // For a chatbot the body is Markdown; the bubble renders it as Markdown.
     // Otherwise it is rich-text HTML, sanitised on render.
     bodyHtml: comment.content ?? "",
@@ -236,9 +216,9 @@ export function uiAttachmentFromBe(att: BeAttachment): CaseAttachment {
     filename: att.name,
     size: att.sizeBytes,
     contentType: att.type,
-    uploadedBy: att.createdBy.name?.trim() || att.createdBy.email?.trim() || "Unknown",
-    uploadedByEmail: att.createdBy.email || undefined,
-    uploadedByUser: userReferenceFromBe(att.createdByUser),
+    uploadedBy: att.createdBy?.name?.trim() || att.createdBy?.email?.trim() || "Unknown",
+    uploadedByEmail: att.createdBy?.email || undefined,
+    uploadedByUser: userReferenceFromBe(att.createdBy),
     uploadedAt: att.createdOn,
   };
 }

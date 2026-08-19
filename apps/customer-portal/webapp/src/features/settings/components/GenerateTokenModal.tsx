@@ -87,7 +87,7 @@ export default function GenerateTokenModal({
 
     let userErr: string | null = null;
     if (tokenType === RegistryTokenType.SERVICE && !selectedUser) {
-      userErr = "Please select an integration user for service tokens.";
+      userErr = "Please select a system user for service tokens.";
     }
     setCreatedForError(userErr);
 
@@ -237,7 +237,7 @@ export default function GenerateTokenModal({
             <Typography variant="body2" color="text.secondary">
               {tokenType === RegistryTokenType.USER
                 ? "Generate a personal registry token for WSO2 Updates 2.0 access. The token will be created for your account."
-                : "Generate a service registry token for automation and CI/CD pipelines. You must assign it to an integration user."}
+                : "Generate a service registry token for automation and CI/CD pipelines. You must assign it to a system user."}
             </Typography>
 
             <TextField
@@ -259,7 +259,7 @@ export default function GenerateTokenModal({
               }
             />
 
-            {/* Service token: select integration user */}
+            {/* Service token: select system user */}
             {tokenType === RegistryTokenType.SERVICE && (
               <Autocomplete
                 options={integrationUsers}
@@ -273,12 +273,12 @@ export default function GenerateTokenModal({
                 renderInput={(params) => (
                   <TextField
                     {...params}
-                    label="Integration User (Created For)"
+                    label="System User (Created For)"
                     required
                     error={!!createdForError}
                     helperText={
                       createdForError ??
-                      "Select the integration user this service token is created for."
+                      "Select the system user this service token is created for."
                     }
                     InputProps={{
                       ...params.InputProps,

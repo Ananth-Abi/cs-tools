@@ -30,6 +30,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type ChangeEvent, type JSX } from "react";
+import { useLocation } from "react-router";
 import { useNavTransition } from "@hooks/useNavTransition";
 import QueryErrorState from "@components/QueryErrorState";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
@@ -41,6 +42,7 @@ import {
   type ProblemFilters,
 } from "@features/csm-operations/utils/problems";
 import ProblemsFilterBar from "@features/csm-operations/components/ProblemsFilterBar";
+import RefreshButton from "@components/RefreshButton";
 
 const DEFAULT_ROWS_PER_PAGE = 20;
 const ROWS_PER_PAGE_OPTIONS = [10, 20, 50];
@@ -52,6 +54,7 @@ const ROWS_PER_PAGE_OPTIONS = [10, 20, 50];
  */
 export default function ProblemsTab(): JSX.Element {
   const navigate = useNavTransition();
+  const location = useLocation();
   const [filters, setFilters] = useState<ProblemFilters>(DEFAULT_PROBLEM_FILTERS);
   const [isFiltersOpen, setIsFiltersOpen] = useState(true);
   const [page, setPage] = useState(0);
@@ -69,7 +72,8 @@ export default function ProblemsTab(): JSX.Element {
     [debouncedSearch, filters.states, page, rowsPerPage],
   );
 
-  const { data, isLoading, isError, error, isFetching } = useSearchProblems(payload);
+  const { data, isLoading, isError, error, isFetching, refetch, dataUpdatedAt } =
+    useSearchProblems(payload);
 
   const problems = data?.problems ?? [];
   const total = data?.total ?? 0;
@@ -91,7 +95,13 @@ export default function ProblemsTab(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-      <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 1 }}>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label="Refresh problems"
+        />
         <Button
           variant="contained"
           color="primary"
@@ -154,15 +164,16 @@ export default function ProblemsTab(): JSX.Element {
               ) : (
                 problems.map((problem) => {
                   const detailPath = `/operations/problems/${problem.id}`;
+                  const detailState = { from: `${location.pathname}${location.search}` };
                   return (
                   <TableRow
                     key={problem.id}
                     hover
-                    onClick={() => navigate(detailPath)}
+                    onClick={() => navigate(detailPath, { state: detailState })}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        navigate(detailPath);
+                        navigate(detailPath, { state: detailState });
                       }
                     }}
                     tabIndex={0}

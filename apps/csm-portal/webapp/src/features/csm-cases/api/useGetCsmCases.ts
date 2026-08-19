@@ -26,6 +26,7 @@ import {
   resolveAssignedUserIds,
 } from "@features/csm-cases/utils/caseSearchPayload";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
+import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import type { BeCaseSearchPayload, BeCaseSearchResponse } from "@api/backend/types";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
@@ -37,6 +38,13 @@ import {
   DEFAULT_CASES_SORT,
   type CasesSortOrder,
 } from "@features/csm-cases/utils/casesSort";
+
+/**
+ * How many exact identifier hits to pin above the first page. A case number is
+ * unique, so this is realistically 1; the small headroom covers a WSO2 case id
+ * that repeats across projects without ever pinning an unbounded block.
+ */
+const EXACT_MATCH_LIMIT = 5;
 
 /**
  * Cross-project CSM cases list.
@@ -142,25 +150,114 @@ export function useGetCsmCases(
       // One cross-project case search. No account/project directory scan: the
       // list has no Customer column, and the old scan paged the entire account
       // directory to resolve a name nothing renders.
-      const casesResponse = await api.post<
-        BeCaseSearchPayload,
-        BeCaseSearchResponse
-      >("/cases/search", {
-          pagination: { offset, limit: pageSize },
+      const runSearch = (
+        searchOptions?: { forceFreeText?: boolean; alsoFreeText?: boolean },
+        pagination = { offset, limit: pageSize },
+      ): Promise<BeCaseSearchResponse> =>
+        api.post<BeCaseSearchPayload, BeCaseSearchResponse>("/cases/search", {
+          pagination,
           sortBy: { field: "updatedOn", order: sortOrder },
-          filters: buildCaseSearchFilters(filters, search, assignedUserIds),
-      });
+          filters: buildCaseSearchFilters(
+            filters,
+            search,
+            assignedUserIds,
+            searchOptions,
+          ),
+        });
 
-      const cases: CsmCaseRow[] = (casesResponse.cases ?? []).map((c) =>
+      // A query shaped like a case number / WSO2 id runs BOTH legs at once: the
+      // exact indexed lookup and the free-text CONTAINS scan. Neither alone is
+      // right — exact-only loses cases that merely reference the number in their
+      // description, while free-text-only is what let an unrelated case outrank
+      // (or hide) the one actually being looked up. Running them in parallel
+      // costs no extra latency over the free-text leg it already ran.
+      const isIdentifierQuery =
+        search.length > 0 && classifyCaseQuery(search) !== "text";
+
+      if (!isIdentifierQuery) {
+        const casesResponse = await runSearch();
+        const cases: CsmCaseRow[] = (casesResponse.cases ?? []).map((c) =>
+          mapCaseSearchViewToRow(c, currentUserEmail),
+        );
+        return {
+          cases,
+          total: casesResponse.total ?? cases.length,
+          limit: casesResponse.limit ?? pageSize,
+          offset: casesResponse.offset ?? offset,
+          hasMore: casesResponse.hasMore ?? false,
+        };
+      }
+
+      // The merged sequence is [pinned exact hits] followed by the free-text
+      // hits with those same rows removed. Pinning consumes slots at the front,
+      // so from page 1 on, the free-text window starts one row early and is
+      // over-fetched — otherwise the row displaced off page 0 would be skipped
+      // entirely (page 1 would resume at `offset`, past it).
+      //
+      // The real hit count isn't known until the exact leg resolves, and both
+      // legs are issued together, so the window is shaped for the realistic
+      // case of a single hit (an identifier is unique) and `pinShift` below
+      // reconciles the guess once both have landed.
+      const ASSUMED_PIN_COUNT = 1;
+      const textOffset = page === 0 ? 0 : Math.max(0, offset - ASSUMED_PIN_COUNT);
+      const [exactResponse, textResponse, overlapResponse] = await Promise.all([
+        // Page-independent: fetched once from the top rather than re-queried
+        // per page, since an identifier match is a tiny, fixed result.
+        runSearch(undefined, { offset: 0, limit: EXACT_MATCH_LIMIT }),
+        runSearch(
+          { forceFreeText: true },
+          { offset: textOffset, limit: pageSize + EXACT_MATCH_LIMIT },
+        ),
+        // How many of the exact hits the free-text scan already counts. Only
+        // its `total` is read, so this asks for a single row. Without it the
+        // merged total has to be guessed, and guessing low makes the last row
+        // unreachable: the paginator stops offering pages before it.
+        runSearch({ alsoFreeText: true }, { offset: 0, limit: 1 }),
+      ]);
+
+      const exactRows = (exactResponse.cases ?? []).map((c) =>
         mapCaseSearchViewToRow(c, currentUserEmail),
       );
+      const exactIds = new Set(exactRows.map((c) => c.id));
+      // Dropped from every page of the free-text leg, not just the first, so a
+      // pinned case can't also reappear further down its own result set.
+      const textRows = (textResponse.cases ?? [])
+        .map((c) => mapCaseSearchViewToRow(c, currentUserEmail))
+        .filter((c) => !exactIds.has(c.id));
+
+      // Nothing was pinned after all (no exact hit), so the extra leading row
+      // this page fetched belongs to the previous page — drop it.
+      const pinShift =
+        page === 0
+          ? 0
+          : ASSUMED_PIN_COUNT - Math.min(exactRows.length, ASSUMED_PIN_COUNT);
+      const cases = (
+        page === 0 ? [...exactRows, ...textRows] : textRows.slice(pinShift)
+      ).slice(0, pageSize);
+
+      // Page-independent by construction: both terms are totals over the whole
+      // result set, never over the page currently in hand. An earlier version
+      // compared the pinned rows against the fetched page, which made the
+      // reported total change as the user paged.
+      //
+      // Pinning usually reorders rather than adds, because the free-text scan
+      // also covers the number/WSO2-id columns — so an exact hit is normally
+      // already inside `textTotal`, and `overlapTotal` says exactly how many
+      // are. Only the remainder is genuinely new: an identifier the scan misses
+      // entirely, which is the anomaly this feature exists for. Undercounting
+      // there is not cosmetic — the paginator stops offering pages at `total`,
+      // so a row past that point can never be reached.
+      const textTotal = textResponse.total ?? textRows.length;
+      const overlapTotal = overlapResponse.total ?? 0;
+      const pinnedNotCounted = Math.max(0, exactRows.length - overlapTotal);
+      const total = textTotal + pinnedNotCounted;
 
       return {
         cases,
-        total: casesResponse.total ?? cases.length,
-        limit: casesResponse.limit ?? pageSize,
-        offset: casesResponse.offset ?? offset,
-        hasMore: casesResponse.hasMore ?? false,
+        total,
+        limit: pageSize,
+        offset,
+        hasMore: offset + cases.length < total,
       };
     },
     enabled,

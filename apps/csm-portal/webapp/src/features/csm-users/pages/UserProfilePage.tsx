@@ -31,7 +31,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, type JSX, type ReactNode } from "react";
-import { Link as RouterLink, useParams } from "react-router";
+import { Link as RouterLink, useLocation, useParams } from "react-router";
 import QueryErrorState from "@components/QueryErrorState";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
@@ -41,6 +41,7 @@ import DirectoryEntityChip from "@features/csm-admin/components/DirectoryEntityC
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import {
   INTERNAL_USER_ROLES,
+  type ExternalAccountStatus,
   type NormalizedUserDetail,
   type UserProjectAccess,
 } from "@features/csm-users/types/csmUsers";
@@ -103,6 +104,22 @@ function isInternalUser(user: NormalizedUserDetail): boolean {
   return (user.roles ?? []).some((r) =>
     (INTERNAL_USER_ROLES as string[]).includes(r),
   );
+}
+
+const WSO2_EMAIL_DOMAIN = "@wso2.com";
+
+/**
+ * True for a wso2.com email, regardless of `userType`/`roles`. The SCIM
+ * "external" org can never contain such an account (reserved for WSO2
+ * staff), so the External account field/alert are skipped for one even when
+ * ServiceNow tags the row with a non-internal role -- e.g. a wso2.com
+ * contact recorded under a customer-facing role for testing. Narrower than
+ * {@link isInternalUser}: it only gates the SCIM-sourced UI below, not the
+ * page's broader internal/external framing (team vs. project access, etc.),
+ * which ServiceNow's own `userType`/roles still own.
+ */
+function isWso2Email(email: string): boolean {
+  return email.toLowerCase().endsWith(WSO2_EMAIL_DOMAIN);
 }
 
 type ChipColor = "success" | "warning" | "error" | "default";
@@ -201,6 +218,52 @@ function TeamMetaCell({ user }: { user: NormalizedUserDetail }): JSX.Element {
 }
 
 /**
+ * SCIM "external" org exists/locked chips for an external contact, rendered
+ * in the Overview grid — the slot an internal user's Team/Phone cells
+ * occupy, since the two are mutually exclusive. Absent `status` (the SCIM
+ * lookup itself failed, best-effort per the backend) reads "Unavailable"
+ * rather than a false "Not found".
+ */
+function ExternalAccountMetaCell({
+  status,
+}: {
+  status?: ExternalAccountStatus;
+}): JSX.Element {
+  return (
+    <MetaCell label="External account">
+      {!status ? (
+        <Typography variant="body2" color="text.secondary">
+          Unavailable
+        </Typography>
+      ) : (
+        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+          <Chip
+            size="small"
+            label={status.exists ? "Exists" : "Not found"}
+            color={status.exists ? "success" : "warning"}
+            variant="outlined"
+          />
+          {status.exists && (
+            <Chip
+              size="small"
+              label={
+                status.locked === null
+                  ? "Lock status unknown"
+                  : status.locked
+                    ? "Locked"
+                    : "Unlocked"
+              }
+              color={status.locked ? "error" : "default"}
+              variant="outlined"
+            />
+          )}
+        </Box>
+      )}
+    </MetaCell>
+  );
+}
+
+/**
  * Roles and (for internal users) groups as two side-by-side chip clusters in
  * one card, rather than three separate cards — a user rarely has enough
  * groups to justify a card of its own, and putting roles and groups next to
@@ -272,6 +335,12 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
         <Alert severity="error" variant="outlined">
           This user's account is inactive — they can't access any project's cases,
           regardless of the per-project rows below.
+        </Alert>
+      )}
+
+      {user.externalAccount?.locked === true && !isWso2Email(user.email) && (
+        <Alert severity="error" variant="outlined">
+          This user's external account is locked — they can't sign in until it's unlocked.
         </Alert>
       )}
 
@@ -386,11 +455,28 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
  * team (internal users only), roles, created/updated times, plus — split by
  * `userType` — an internal user's group memberships or an external user's
  * per-project access (with the reason surfaced whenever a project doesn't
- * grant case access, per `UserProjectAccess.grantsCaseAccess`).
+ * grant case access, per `UserProjectAccess.grantsCaseAccess`) and SCIM
+ * "external" org exists/locked status (`externalAccount`).
  */
 export default function UserProfilePage(): JSX.Element {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavTransition();
+  // This page is reachable from arbitrary contexts (any user reference —
+  // case creator/assignee, comment author, dashboard widget row), so there's
+  // no single canonical "list" to fall back to the way other detail pages
+  // have. Prefer the URL the row link captured (if any) so "back" returns to
+  // the exact view the engineer came from; browser history otherwise, same
+  // as before this carried no `from` state at all. `parentState` is
+  // whatever state that captured list page was itself carrying (e.g.
+  // `{ from: "/dashboard" }`) — forwarded back onto it below so a
+  // dashboard → list → here → Back round trip restores the list's own Back
+  // button instead of silently dropping it. Ignored (harmlessly) when
+  // `backTarget` falls back to the numeric `-1` history pop.
+  const backState = useLocation().state as
+    | { from?: string; parentState?: unknown }
+    | undefined;
+  const backTarget = backState?.from ?? -1;
+  const backNavState = backState?.parentState ?? undefined;
 
   const { data: user, isLoading, isError, error } = useGetUserById(id);
 
@@ -406,7 +492,7 @@ export default function UserProfilePage(): JSX.Element {
   if (isError) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <BackButton onClick={() => navigate(-1)} />
+        <BackButton onClick={() => navigate(backTarget, { state: backNavState })} />
         <QueryErrorState
           message={error instanceof Error && error.message.trim() ? error.message : "Failed to load user."}
           error={error}
@@ -418,7 +504,7 @@ export default function UserProfilePage(): JSX.Element {
   if (!user) {
     return (
       <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        <BackButton onClick={() => navigate(-1)} />
+        <BackButton onClick={() => navigate(backTarget, { state: backNavState })} />
         <Typography variant="h5">User not found</Typography>
         <Typography variant="body2" color="text.secondary">
           No user with id <code>{id}</code>.
@@ -431,7 +517,7 @@ export default function UserProfilePage(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
-      <BackButton onClick={() => navigate(-1)} />
+      <BackButton onClick={() => navigate(backTarget, { state: backNavState })} />
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
@@ -442,13 +528,25 @@ export default function UserProfilePage(): JSX.Element {
             color={internal ? "primary" : "default"}
             variant="outlined"
           />
-          {user.active !== undefined && (
-            <Chip
-              size="small"
-              label={user.active ? "Active" : "Inactive"}
-              color={user.active ? "success" : "default"}
-              variant="outlined"
-            />
+          {/* Locked out takes priority over Active in this single top-line status
+              chip — a locked-out account isn't usable regardless of its Active
+              flag, so showing "Active" here would be misleading. Both attributes
+              are still shown separately (and unconditionally) in the Overview
+              card below; this chip is just the headline. Named to be unambiguous
+              next to the unrelated SCIM "external" account lock chip in the
+              Overview grid (see `ExternalAccountMetaCell`), a different lock
+              concept. */}
+          {user.lockedOut === true ? (
+            <Chip size="small" label="Locked out" color="error" variant="outlined" />
+          ) : (
+            user.active !== undefined && (
+              <Chip
+                size="small"
+                label={user.active ? "Active" : "Inactive"}
+                color={user.active ? "success" : "default"}
+                variant="outlined"
+              />
+            )
           )}
         </Box>
         <Typography variant="body2" color="text.secondary">
@@ -477,14 +575,41 @@ export default function UserProfilePage(): JSX.Element {
               {user.email}
             </Typography>
           </MetaCell>
-          {internal && <TeamMetaCell user={user} />}
           <MetaCell label="Timezone">
             <Typography variant="body2">{user.timezone ?? "Not set"}</Typography>
           </MetaCell>
+          {/* Account status and Locked out are two independent attributes — a
+              locked-out user can also be Active — so both are always shown
+              here, separately, even though the header chip above collapses them
+              into one headline status. */}
+          {user.lockedOut !== undefined && (
+            <MetaCell label="Locked out">
+              <Chip
+                size="small"
+                label={user.lockedOut ? "Yes" : "No"}
+                color={user.lockedOut ? "error" : "default"}
+                variant="outlined"
+              />
+            </MetaCell>
+          )}
+          {internal && <TeamMetaCell user={user} />}
+          {user.active !== undefined && (
+            <MetaCell label="Account status">
+              <Chip
+                size="small"
+                label={user.active ? "Active" : "Inactive"}
+                color={user.active ? "success" : "default"}
+                variant="outlined"
+              />
+            </MetaCell>
+          )}
           {internal && (
             <MetaCell label="Phone">
               <Typography variant="body2">{user.phone ?? "Not set"}</Typography>
             </MetaCell>
+          )}
+          {!internal && !isWso2Email(user.email) && (
+            <ExternalAccountMetaCell status={user.externalAccount} />
           )}
           <MetaCell label="Created on">
             <Typography variant="body2">{formatDateTime(user.createdOn)}</Typography>

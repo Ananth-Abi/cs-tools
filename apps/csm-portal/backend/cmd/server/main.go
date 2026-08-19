@@ -35,6 +35,7 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/caseevents"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventpublisher"
@@ -49,11 +50,14 @@ func main() {
 	loadDotEnv(".env")
 	middleware.ConfigureLogger()
 
-	// The dashboard registry is config-driven and loaded once at startup; a
-	// missing or malformed DASHBOARDS_CONFIG logs an error (see
-	// ParseDashboardsConfig) and leaves it empty rather than failing
-	// startup, since no other endpoint depends on it.
-	dashboard.Dashboards = dashboard.ParseDashboardsConfig(os.Getenv("DASHBOARDS_CONFIG"))
+	dashboard.SetActive(loadDashboards())
+
+	// Reference data is resolved once, here, and then only ever read from
+	// memory: the team registry (key <-> display name <-> backing group id <->
+	// platform UUID) and the assignable-role allow-list are both derivable from
+	// configuration alone, so nothing about them needs an upstream call on the
+	// request path.
+	dir := loadDirectory()
 
 	// All upstream service clients (entity, updates, SCIM, and future notification
 	// channels) authenticate as the same OAuth2 client-credentials app; only the
@@ -118,7 +122,7 @@ func main() {
 	}
 
 	caseHandler := handler.NewCaseHandler(customerEntityClient, eventPublisher, activityHub)
-	dashboardHandler := handler.NewDashboardHandler(customerEntityClient)
+	dashboardHandler := handler.NewDashboardHandler()
 	accountHandler := handler.NewAccountHandler(customerEntityClient)
 	projectHandler := handler.NewProjectHandler(customerEntityClient)
 	productHandler := handler.NewProductHandler(customerEntityClient)
@@ -127,7 +131,7 @@ func main() {
 	itServiceHandler := handler.NewITServiceHandler(customerEntityClient)
 	serviceOfferingHandler := handler.NewServiceOfferingHandler(customerEntityClient)
 	groupHandler := handler.NewGroupHandler(customerEntityClient)
-	referenceHandler := handler.NewReferenceHandler(customerEntityClient)
+	referenceHandler := handler.NewReferenceHandler(dir)
 	configurationItemHandler := handler.NewConfigurationItemHandler(customerEntityClient)
 	catalogHandler := handler.NewCatalogHandler(customerEntityClient)
 	timeCardHandler := handler.NewTimeCardHandler(customerEntityClient)
@@ -156,7 +160,7 @@ func main() {
 		Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
 	}
 	scimClient := scim.NewClient(scimCfg)
-	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient)
+	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -182,11 +186,17 @@ func main() {
 	mux.HandleFunc("DELETE /attachments/{id}", caseHandler.DeleteCaseAttachment)
 	mux.HandleFunc("POST /cases/{id}/call-requests", caseHandler.CreateCallRequest)
 	mux.HandleFunc("POST /cases/{id}/call-requests/search", caseHandler.SearchCallRequests)
+	mux.HandleFunc("POST /call-requests/search", caseHandler.SearchAllCallRequests)
 	mux.HandleFunc("PATCH /cases/{caseId}/call-requests/{callRequestId}", caseHandler.PatchCallRequest)
 	mux.HandleFunc("POST /cases/{id}/github-issues", caseHandler.CreateCaseGithubIssue)
 	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseTag)
 	mux.HandleFunc("DELETE /cases/{id}/tags/{tagId}", caseHandler.RemoveCaseTag)
-	mux.HandleFunc("GET /tags/search", caseHandler.SearchTags)
+	mux.HandleFunc("POST /tags/search", caseHandler.SearchTags)
+	// Deprecated: the query-parameter form of tag search, kept for one release
+	// so this service and its callers can be deployed independently. Remove it
+	// (and CaseHandler.SearchTagsQuery) once every caller is on the POST.
+	//nolint:staticcheck // SA1019: intentional one-release compatibility route; remove with the handler.
+	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)
 	mux.HandleFunc("GET /dashboards/{dashboardId}", dashboardHandler.GetDashboardDetail)
@@ -227,6 +237,7 @@ func main() {
 	mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 	mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 	mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+	mux.HandleFunc("DELETE /time-cards/{id}", timeCardHandler.DeleteTimeCard)
 	mux.HandleFunc("POST /catalogs/search", catalogHandler.SearchCatalogs)
 	mux.HandleFunc("GET /catalogs/{catalogId}/items/{catalogItemId}/variables", catalogHandler.GetCatalogItemVariables)
 	mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
@@ -246,6 +257,7 @@ func main() {
 	mux.HandleFunc("PATCH /incidents/{id}", incidentHandler.PatchIncident)
 	mux.HandleFunc("POST /incidents/{id}/comments", incidentHandler.CreateIncidentComment)
 	mux.HandleFunc("POST /incidents/{id}/comments/search", incidentHandler.SearchIncidentComments)
+	mux.HandleFunc("POST /incidents/{id}/activities/search", incidentHandler.SearchIncidentActivities)
 	mux.HandleFunc("POST /change-requests/{id}/comments", changeRequestHandler.CreateChangeRequestComment)
 	mux.HandleFunc("POST /change-requests/{id}/comments/search", changeRequestHandler.SearchChangeRequestComments)
 	mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
@@ -413,6 +425,125 @@ func main() {
 	}
 
 	slog.Info("CSM Portal Backend stopped")
+}
+
+// loadDashboards builds the dashboard registry from configuration, and exits
+// the process on any failure. Every failure mode here is a misconfigured
+// deploy, and the alternative — starting up with dashboards silently missing
+// — is exactly the class of quiet failure this codebase keeps getting bitten
+// by. It is deliberately fatal even though no other endpoint depends on the
+// registry.
+//
+// Configuration, in precedence order:
+//
+//	DASHBOARDS_DIR         a directory of per-dashboard *.json files. Preferred.
+//	DASHBOARDS_CONFIG      DEPRECATED single-variable JSON array. Used only
+//	                       when DASHBOARDS_DIR is unset.
+//	DASHBOARDS_HOT_RELOAD  Any strconv.ParseBool-true value (1, t, T, TRUE,
+//	                       true, True) re-reads DASHBOARDS_DIR on every request
+//	                       instead of serving the startup snapshot, so editing
+//	                       a definition needs no restart. Local development
+//	                       only; the default (unset/false) does the startup
+//	                       read once and never touches the disk again. A
+//	                       non-empty unparseable value warns and is false.
+//	DASHBOARD_PRESETS_FILE a JSON file of presetKey -> literal filter fragment
+//	                       ({"field":...,"op":...,"values":...}), shared
+//	                       across every dashboard in DASHBOARDS_DIR (a
+//	                       dashboard's own top-level "filterPresets" shadows a
+//	                       same-named entry here). Only consulted on the
+//	                       DASHBOARDS_DIR path — the deprecated
+//	                       DASHBOARDS_CONFIG path has no directory of its own
+//	                       to keep a presets file alongside. Unset is legal
+//	                       and means no shared presets, same as unset
+//	                       DASHBOARDS_DIR itself.
+//
+// Neither DASHBOARDS_DIR nor DASHBOARDS_CONFIG set is legal and yields no
+// dashboards: a deployment that has not configured any must still start and
+// serve every other endpoint.
+func loadDashboards() *dashboard.Registry {
+	dir := strings.TrimSpace(os.Getenv("DASHBOARDS_DIR"))
+	if dir == "" {
+		dashboards, err := dashboard.ParseDashboardsConfig(os.Getenv("DASHBOARDS_CONFIG"))
+		if err != nil {
+			slog.Error("invalid DASHBOARDS_CONFIG", "err", err)
+			os.Exit(1)
+		}
+		return dashboard.NewStaticRegistry(dashboards)
+	}
+
+	presetsFile := strings.TrimSpace(os.Getenv("DASHBOARD_PRESETS_FILE"))
+
+	// ParseBool rather than a "true" string compare: the latter silently reads
+	// 1, yes and on as OFF, and never reports a typo at all -- the operator
+	// sets the variable, sees no hot reload and no log line, and has nothing to
+	// go on. Unparseable is a warning, not fatal: hot reload is a local-dev
+	// convenience, and refusing to boot over it would be worse than defaulting
+	// to the safe (off) value.
+	hotReload := false
+	if raw := strings.TrimSpace(os.Getenv("DASHBOARDS_HOT_RELOAD")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			slog.Warn("DASHBOARDS_HOT_RELOAD is not a boolean; treating it as false",
+				"value", raw, "expected", "1, t, T, TRUE, true, True, 0, f, F, FALSE, false, False")
+		}
+		hotReload = parsed
+	}
+	registry, err := dashboard.NewDirRegistry(dir, hotReload, presetsFile)
+	if err != nil {
+		slog.Error("invalid dashboard definitions", "dir", dir, "presetsFile", presetsFile, "err", err)
+		os.Exit(1)
+	}
+	if hotReload {
+		slog.Warn("DASHBOARDS_HOT_RELOAD is on: dashboard definitions are re-read from disk on every request. Intended for local development only",
+			"dir", dir)
+	}
+	slog.Info("loaded dashboard definitions", "dir", dir, "presetsFile", presetsFile, "count", len(registry.Dashboards()), "hotReload", hotReload)
+	return registry
+}
+
+// loadDirectory resolves the reference catalogues from environment
+// configuration, once, at startup:
+//
+//	CSM_TEAM_REGISTRY  the team registry as
+//	                   "teamKey|Display Name|FAMILY|creGroupId|sreGroupId" rows
+//	                   separated by commas, where FAMILY is one of cre-abt,
+//	                   cre, sre-abt or sre (case insensitive) and FAMILY,
+//	                   creGroupId, and sreGroupId are all optional. Unset means
+//	                   no teams are configured; there is deliberately no
+//	                   default, because team names are organisation vocabulary
+//	                   that must not be committed here.
+//	CSM_USER_ROLES     the assignable-role allow-list, comma separated. Unset
+//	                   falls back to the committed default list.
+//
+// A malformed row is fatal and names the offending row. It has to be: a team
+// silently dropped from the registry does not error anywhere -- it just removes
+// that team from every picker and resolves its members to no team at all, which
+// surfaces days later as "why is my dashboard wrong". An empty registry is
+// legal and only warned about, so a deployment that has not configured one yet
+// still starts and serves every other endpoint.
+func loadDirectory() *directory.Directory {
+	teams, err := directory.ParseTeamRegistry(os.Getenv("CSM_TEAM_REGISTRY"))
+	if err != nil {
+		slog.Error("invalid CSM_TEAM_REGISTRY", "err", err)
+		os.Exit(1)
+	}
+	roles, err := directory.ParseRoles(os.Getenv("CSM_USER_ROLES"))
+	if err != nil {
+		slog.Error("invalid CSM_USER_ROLES", "err", err)
+		os.Exit(1)
+	}
+
+	dir, err := directory.New(teams, roles)
+	if err != nil {
+		slog.Error("invalid reference configuration", "err", err)
+		os.Exit(1)
+	}
+
+	if dir.TeamCount() == 0 {
+		slog.Warn("team registry is empty: the team catalogue and every team filter will return nothing")
+	}
+	slog.Info("resolved reference catalogues", "teams", dir.TeamCount(), "roles", dir.RoleCount())
+	return dir
 }
 
 func mustEnv(key string) string {

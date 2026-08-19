@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWidgetPreviewHref,
+  describeWidgetFilters,
   parseWidgetPreviewFilters,
   resolveCurrentUserSentinels,
 } from "./widgetPreviewUrl";
@@ -32,7 +33,7 @@ describe("widgetPreviewUrl", () => {
       filters: { severities: ["critical", "high"], states: ["open"] },
     });
 
-    expect(href.startsWith("/dashboard/cases?")).toBe(true);
+    expect(href.startsWith("/dashboard/preview/cases?")).toBe(true);
     const params = new URLSearchParams(href.split("?")[1]);
     expect(params.get("w")).toBe("my_critical_open");
     expect(params.get("n")).toBe("My Critical & High Cases");
@@ -149,5 +150,116 @@ describe("widgetPreviewUrl", () => {
       { field: "assignedUserId", op: "in", values: [CURRENT_USER_ID] },
       { field: "severity", op: "in", values: ["critical"] },
     ]);
+  });
+});
+
+/**
+ * Regression: the preview URL used to drop each filter entry's `op`, so every
+ * entry decoded back as `in`. That INVERTED `notIn` (a tag exclusion became a
+ * tag filter) and dropped value-less ops entirely, silently widening
+ * "Unassigned Cases" into "all cases". Found by live click-through testing,
+ * not by any unit test -- hence this one.
+ */
+describe("widget preview URL — filter op round-trip", () => {
+  function roundTrip(filters: { field: string; op: string; values?: string[] }[]) {
+    const href = buildWidgetPreviewHref({
+      previewSlug: "cases",
+      widgetId: "w1",
+      displayName: "W",
+      filters: { filters },
+    });
+    const qs = href.split("?")[1] ?? "";
+    return parseWidgetPreviewFilters(new URLSearchParams(qs));
+  }
+
+  it("preserves notIn instead of inverting it to in", () => {
+    const parsed = roundTrip([{ field: "tag", op: "notIn", values: ["s_dip"] }]);
+    const entries = (parsed.filters as { filters: { field: string; op: string }[] }).filters;
+    expect(entries).toEqual([{ field: "tag", op: "notIn", values: ["s_dip"] }]);
+  });
+
+  it("preserves value-less ops rather than dropping them", () => {
+    const parsed = roundTrip([{ field: "assignedUserId", op: "isEmpty", values: [] }]);
+    const entries = (parsed.filters as { filters: { field: string; op: string }[] }).filters;
+    expect(entries).toEqual([{ field: "assignedUserId", op: "isEmpty", values: [] }]);
+  });
+
+  it("keeps the bare field=values form for the default in op", () => {
+    const href = buildWidgetPreviewHref({
+      previewSlug: "cases",
+      widgetId: "w1",
+      displayName: "W",
+      filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
+    });
+    expect(href).toContain("state=open");
+    expect(href).not.toContain("~");
+  });
+
+  it("round-trips a mixed filter set faithfully", () => {
+    const input = [
+      { field: "state", op: "in", values: ["open", "reopened"] },
+      { field: "tag", op: "notIn", values: ["s_dip", "patch"] },
+      { field: "escalation", op: "isNotEmpty", values: [] },
+    ];
+    const parsed = roundTrip(input);
+    const entries = (parsed.filters as { filters: unknown[] }).filters;
+    expect(entries).toEqual(input);
+  });
+});
+
+describe("describeWidgetFilters", () => {
+  it("flattens the flat resourceType filter shape into readable field: value entries", () => {
+    expect(
+      describeWidgetFilters({ severities: ["critical", "high"], states: ["open"] }),
+    ).toEqual([
+      { field: "severities", value: "critical, high" },
+      { field: "states", value: "open" },
+    ]);
+  });
+
+  it("flattens the case field/op/values DSL shape, omitting the op for the default 'in'", () => {
+    expect(
+      describeWidgetFilters({
+        filters: [
+          { field: "state", op: "in", values: ["open"] },
+          { field: "tag", op: "notIn", values: ["s_dip"] },
+        ],
+      }),
+    ).toEqual([
+      { field: "state", op: undefined, value: "open" },
+      { field: "tag", op: "notIn", value: "s_dip" },
+    ]);
+  });
+
+  it("still shows a value-less op (isEmpty/isNotEmpty) rather than silently dropping it", () => {
+    expect(
+      describeWidgetFilters({
+        filters: [{ field: "escalation", op: "isNotEmpty", values: [] }],
+      }),
+    ).toEqual([{ field: "escalation", op: "isNotEmpty", value: "(no value)" }]);
+  });
+
+  it("shows an already-resolved team filter's real groupId value, not a placeholder", () => {
+    expect(
+      describeWidgetFilters({
+        filters: [
+          {
+            field: "creTeam",
+            op: "in",
+            values: ["22222222-2222-2222-2222-222222222222"],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        field: "creTeam",
+        op: undefined,
+        value: "22222222-2222-2222-2222-222222222222",
+      },
+    ]);
+  });
+
+  it("returns an empty list for empty/absent filters", () => {
+    expect(describeWidgetFilters({})).toEqual([]);
   });
 });

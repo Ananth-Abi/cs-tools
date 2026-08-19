@@ -24,6 +24,7 @@
 
 import { describe, expect, it } from "vitest";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
+import { readCasesFiltersFromUrl } from "@features/csm-cases/utils/casesFiltersUrl";
 
 function hrefParams(href: string): URLSearchParams {
   const [, qs] = href.split("?");
@@ -95,5 +96,222 @@ describe("WIDGET_RESOURCE_CONFIG.case.buildHref", () => {
     const params = hrefParams(href);
     expect(params.has("engagementTypes")).toBe(false);
     expect(params.has("workStates")).toBe(false);
+  });
+});
+
+/**
+ * Regression: the motivating bug for this whole feature. A widget filtering
+ * `creTeam in [<team>]` + `tag notIn [s_dip]` + `state in [...]`
+ * clicked through to `/cases?states=...` with the team and tag conditions
+ * silently dropped — a tile reading 2 landed on a list of 30 (the org-wide
+ * figure). Confirmed live three times before this fix. This suite proves the
+ * full round trip end to end: `translateCaseDashboardFilters` ->
+ * `casesHref` -> `readCasesFiltersFromUrl` — not just that the href contains
+ * the right substring.
+ */
+describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
+  it("carries creTeam, tag notIn, projectOnboardingStatus, escalation, escalationLevel, projectType, and SLA%/date ranges through to the href", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "creTeam", op: "in", values: ["team-abt"] },
+        { field: "tag", op: "notIn", values: ["s_dip"] },
+        { field: "projectOnboardingStatus", op: "in", values: ["in_progress"] },
+        { field: "escalation", op: "isNotEmpty" },
+        { field: "escalationLevel", op: "in", values: ["L1"] },
+        { field: "projectType", op: "in", values: ["enterprise"] },
+        { field: "taskSLABusinessElapsedPercent", op: "gte", values: ["80"] },
+        { field: "createdOn", op: "gte", values: ["2026-01-01"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.csTeams).toEqual(["team-abt"]);
+    expect(parsed.excludeTags).toEqual(["s_dip"]);
+    expect(parsed.tags).toEqual([]); // must NOT be inverted into an inclusion
+    expect(parsed.onboardingStatuses).toEqual(["in_progress"]);
+    expect(parsed.hasEscalation).toBe(true);
+    expect(parsed.escalationLevels).toEqual(["L1"]);
+    expect(parsed.projectTypes).toEqual(["enterprise"]);
+    expect(parsed.slaElapsedPctGte).toBe(80);
+    expect(parsed.createdOnGte).toBe("2026-01-01");
+  });
+
+  it("carries sreTeam through to the href the same way creTeam does (CodeRabbit #3801153841/#3801153843)", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [{ field: "sreTeam", op: "in", values: ["team-sre-abt"] }],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.sreTeams).toEqual(["team-sre-abt"]);
+  });
+
+  it("creTeam and sreTeam survive together on the same widget, independently", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "creTeam", op: "in", values: ["team-abt"] },
+        { field: "sreTeam", op: "in", values: ["team-sre-abt"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.csTeams).toEqual(["team-abt"]);
+    expect(parsed.sreTeams).toEqual(["team-sre-abt"]);
+  });
+
+  it("the org-wide-figure regression: team + tag-exclusion + state survive together, unchanged, end to end", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "creTeam", op: "in", values: ["team-abt"] },
+        { field: "tag", op: "notIn", values: ["s_dip"] },
+        { field: "state", op: "in", values: ["open", "work_in_progress"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.csTeams).toEqual(["team-abt"]);
+    expect(parsed.excludeTags).toEqual(["s_dip"]);
+    expect(parsed.states).toEqual(["open", "work_in_progress"]);
+  });
+
+  it("hasEscalation:false (isEmpty) round-trips distinctly from isNotEmpty", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [{ field: "escalation", op: "isEmpty" }],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+    expect(parsed.hasEscalation).toBe(false);
+  });
+
+  it("gte and lte on the same date field both survive independently", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "updatedOn", op: "gte", values: ["2026-01-01"] },
+        { field: "updatedOn", op: "lte", values: ["2026-06-30"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+    expect(parsed.updatedOnGte).toBe("2026-01-01");
+    expect(parsed.updatedOnLte).toBe("2026-06-30");
+  });
+
+  it("`abt_sla_at_risk` (>=80% elapsed) and `abt_sla_violations` (>=100% elapsed) now produce distinct hrefs, each carrying its own threshold", () => {
+    // Mirrors the two real widgets' `filters` verbatim (reference/dashboard-config.json,
+    // team placeholder already resolved to a concrete groupId — the same
+    // shape `DashboardWidgetTile` passes to `buildHref` after
+    // `resolveTeamPlaceholder`). Before the data-layer commit these two
+    // hrefs were byte-identical because `taskSLABusinessElapsedPercent` was
+    // dropped entirely — see the cases-list-advanced-filters task record.
+    const teamFilters = [
+      { field: "creTeam", op: "in", values: ["22222222-2222-2222-2222-222222222222"] },
+      { field: "state", op: "in", values: ["open", "work_in_progress", "waiting_on_wso2"] },
+    ];
+    const atRiskHref = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        ...teamFilters,
+        { field: "taskSLABusinessElapsedPercent", op: "gte", values: ["80"] },
+      ],
+    });
+    const violationsHref = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        ...teamFilters,
+        { field: "taskSLABusinessElapsedPercent", op: "gte", values: ["100"] },
+      ],
+    });
+
+    expect(atRiskHref).not.toBe(violationsHref);
+
+    const atRiskParsed = readCasesFiltersFromUrl(hrefParams(atRiskHref));
+    const violationsParsed = readCasesFiltersFromUrl(hrefParams(violationsHref));
+    expect(atRiskParsed.slaElapsedPctGte).toBe(80);
+    expect(violationsParsed.slaElapsedPctGte).toBe(100);
+    // Both still carry the shared team/state constraints — only the
+    // threshold differs.
+    expect(atRiskParsed.csTeams).toEqual(violationsParsed.csTeams);
+    expect(atRiskParsed.states).toEqual(violationsParsed.states);
+  });
+});
+
+/**
+ * service_request / security_report_analysis / announcement / engagement:
+ * additional case-table resourceTypes (see `BeWidgetResourceType`), all
+ * routing to the same /cases/search endpoint and response shape as `case`
+ * (only the click-through destination differs per type).
+ */
+describe("WIDGET_RESOURCE_CONFIG — case-table resourceTypes beyond `case`", () => {
+  it("all route to /cases/search and read the cases[] items key, same as case", () => {
+    for (const type of [
+      "service_request",
+      "security_report_analysis",
+      "announcement",
+      "engagement",
+    ] as const) {
+      expect(WIDGET_RESOURCE_CONFIG[type].searchEndpoint).toBe("/cases/search");
+      expect(WIDGET_RESOURCE_CONFIG[type].itemsKey).toBe("cases");
+    }
+  });
+
+  it("service_request's buildHref lands on the operations service-requests tab with translated filters", () => {
+    const href = WIDGET_RESOURCE_CONFIG.service_request.buildHref({
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+    });
+    expect(href.startsWith("/operations?")).toBe(true);
+    const params = hrefParams(href);
+    expect(params.get("tab")).toBe("service_requests");
+    expect(params.get("states")).toBe("open");
+  });
+
+  it("security_report_analysis's buildHref lands on the security center security-reports tab with translated filters", () => {
+    const href = WIDGET_RESOURCE_CONFIG.security_report_analysis.buildHref({
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+    });
+    expect(href.startsWith("/security-center?")).toBe(true);
+    const params = hrefParams(href);
+    expect(params.get("tab")).toBe("security_reports");
+    expect(params.get("states")).toBe("open");
+  });
+
+  it("engagement's buildHref lands on /engagements with translated filters", () => {
+    const href = WIDGET_RESOURCE_CONFIG.engagement.buildHref({
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+    });
+    expect(href.startsWith("/engagements?")).toBe(true);
+    const params = hrefParams(href);
+    expect(params.get("states")).toBe("open");
+  });
+
+  it("announcement's buildHref is the unfiltered /announcements page (no URL filter scheme exists there yet)", () => {
+    expect(
+      WIDGET_RESOURCE_CONFIG.announcement.buildHref({
+        filters: [{ field: "state", op: "in", values: ["open"] }],
+      }),
+    ).toBe("/announcements");
+  });
+
+  // Regression test: incident_task has no dedicated list route of its own
+  // (only ever viewed as part of its parent incident), so its buildHref used
+  // to fall back to the plain, unfiltered incidents tab -- silently dropping
+  // this widget's own filters and landing the user on an unrelated result
+  // set. It must route through the generic dashboard-widget preview page
+  // instead, which is filter-aware, using the widgetId/displayName context
+  // DashboardWidgetTile passes at call time.
+  it("incident_task's buildHref routes to the widget preview page with widget context, not the unfiltered incidents tab", () => {
+    const href = WIDGET_RESOURCE_CONFIG.incident_task.buildHref(
+      { assignmentGroupIds: ["grp-1"] },
+      { widgetId: "widget-42", displayName: "My Incident Tasks" },
+    );
+    expect(href.startsWith("/dashboard/preview/incident-tasks?")).toBe(true);
+    const params = hrefParams(href);
+    expect(params.get("w")).toBe("widget-42");
+    expect(params.get("n")).toBe("My Incident Tasks");
+  });
+
+  it("each of the four has its own distinct icon from `case` and from each other", () => {
+    const icons = [
+      WIDGET_RESOURCE_CONFIG.case.icon,
+      WIDGET_RESOURCE_CONFIG.service_request.icon,
+      WIDGET_RESOURCE_CONFIG.security_report_analysis.icon,
+      WIDGET_RESOURCE_CONFIG.announcement.icon,
+      WIDGET_RESOURCE_CONFIG.engagement.icon,
+    ];
+    expect(new Set(icons).size).toBe(icons.length);
   });
 });

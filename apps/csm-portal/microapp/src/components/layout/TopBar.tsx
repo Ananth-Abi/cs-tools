@@ -73,7 +73,7 @@ function ExitButton() {
     <>
       <IconButton
         disableRipple
-        color="error"
+        color="primary"
         sx={{
           gap: 1,
           position: "absolute",
@@ -96,7 +96,7 @@ function ExitButton() {
         open={open}
         title="Return to Apps"
         description="Are you sure you want to leave this application?"
-        confirmColor="error"
+        confirmColor="primary"
         confirmLabel="Leave"
         onClose={() => setOpen(false)}
         onConfirm={goToMyAppsScreen}

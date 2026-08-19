@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, TablePagination, TextField, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Chip, TablePagination, TextField, Typography } from "@wso2/oxygen-ui";
 import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type ChangeEvent, type JSX } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
@@ -23,9 +23,11 @@ import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
+import RefreshButton from "@components/RefreshButton";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
 import { resourceTypeForPreviewSlug } from "@features/csm-dashboard/config/widgetResourceConfig";
 import {
+  describeWidgetFilters,
   parseWidgetPreviewFilters,
   resolveCurrentUserSentinels,
 } from "@features/csm-dashboard/utils/widgetPreviewUrl";
@@ -144,7 +146,14 @@ function DashboardWidgetPreviewContent({
     return trimmed ? { ...filters, searchQuery: trimmed } : filters;
   }, [filters, debouncedSearch]);
 
-  const { data, isLoading, isError } = useWidgetData(
+  // What's actually being queried, made visible rather than trusted
+  // silently — the exact filters this page is about to send, in the same
+  // already-resolved shape `useWidgetData` below queries with (no
+  // `__current_team__`/`@me` placeholders left to decode). Excludes the
+  // free-text search term, which the search box right below already shows.
+  const filterSummary = useMemo(() => describeWidgetFilters(filters), [filters]);
+
+  const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useWidgetData(
     widgetId,
     resourceType,
     queriedFilters,
@@ -167,7 +176,34 @@ function DashboardWidgetPreviewContent({
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       {backButton}
-      <Typography variant="h5">{displayName}</Typography>
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="h5">{displayName}</Typography>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label={`Refresh ${displayName}`}
+        />
+      </Box>
+      {filterSummary.length > 0 && (
+        <Box
+          role="group"
+          aria-label="Active filters"
+          sx={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 1 }}
+        >
+          <Typography variant="caption" color="text.secondary">
+            Filtered by:
+          </Typography>
+          {filterSummary.map((entry) => (
+            <Chip
+              key={`${entry.field}-${entry.op ?? "in"}`}
+              size="small"
+              variant="outlined"
+              label={`${entry.field}${entry.op ? ` (${entry.op})` : ""}: ${entry.value}`}
+            />
+          ))}
+        </Box>
+      )}
       <TextField
         size="small"
         label="Search"

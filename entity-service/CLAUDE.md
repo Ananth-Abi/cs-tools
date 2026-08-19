@@ -36,13 +36,11 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `DB_NAME`     | yes      | —       | Database name              |
 | `DB_SSLMODE`  | no       | —       | `disable` or `require`    |
 | `SERVER_PORT` | no       | `8080`  | HTTP listen port           |
-| `CSM_TEAM_REGISTRY` | no | — (empty registry) | Curated team vocabulary: `teamKey\|Display Name\|FAMILY` rows separated by commas, family optional (`CRE`/`SRE`). Deliberately has no default — team names are organisation vocabulary and must never be committed to this repo. A malformed row is fatal at startup. |
-| `CSM_USER_ROLES` | no | the 10 built-in role names | Assignable-role allow-list, comma-separated. Validates the `roleIds` user filter and is the catalogue `POST /roles/search` serves, so the dropdown and the filter cannot disagree. |
 
-Both are flat single-line strings on purpose: the deployment platform's
-configuration UI is one-dimensional and stringifies nested collections, so a
-structured registry cannot be deployed at all. Do not introduce nested-collection
-configuration here.
+`CSM_TEAM_REGISTRY` and `CSM_USER_ROLES` are **not read here**. The team registry
+and the assignable-role allow-list are organisation vocabulary and live in the CSM
+portal backend (`apps/csm-portal/backend`), resolved once at startup. This service
+holds no organisation vocabulary at all — do not reintroduce it.
 
 ## Adding a new entity
 
@@ -196,3 +194,4 @@ Missing a `sysidToUUID()` call on a response ID means callers receive a bare sys
 - All SQL uses parameterized queries; never interpolate user input into query strings
 - Validate and reject unexpected input at the handler boundary before it reaches the service or repository
 - **Security fixes in PRs** — when a change is made to fix a security issue (gosec findings, input sanitization, etc.), do not mention it in the PR title or description; describe the change in neutral functional terms only
+- **Run govulncheck on every change** — `govulncheck ./...` (install once: `go install golang.org/x/vuln/cmd/govulncheck@latest`) must report no vulnerabilities before opening a PR. Most findings here are Go standard-library CVEs tied to the toolchain patch version pinned in `go.mod`'s `go` directive — bump it to the latest `1.26.x` patch (and run `go mod tidy` so the toolchain download matches) rather than working around the symptom. A finding in a third-party module (e.g. `golang.org/x/text`, pulled in transitively via `pgx`) is fixed with `go get <module>@<fixed-version>`

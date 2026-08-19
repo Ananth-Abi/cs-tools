@@ -21,6 +21,7 @@ import {
   Menu,
   MenuItem,
   Tooltip,
+  Typography,
 } from "@wso2/oxygen-ui";
 import {
   AlertTriangle,
@@ -32,6 +33,7 @@ import {
   Copy,
   Gauge,
   GitBranch,
+  GitPullRequest,
   Inbox,
   Link as LinkIcon,
   ListChecks,
@@ -46,8 +48,12 @@ import type {
   CaseLifecycleAction,
   CsmCaseDetail,
 } from "@features/csm-cases/types/csmCases";
-import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
+import type {
+  CaseState,
+  SeverityOrUnset,
+} from "@features/csm-dashboard/types/abtDashboard";
 import { stateLabel } from "@features/csm-dashboard/utils/abtDashboard";
+import UserRefLink from "@components/UserRefLink";
 
 /**
  * Presentation for a transition *into* a given state. The button LABEL is never
@@ -207,6 +213,10 @@ interface SecondaryItem {
  *   - Link to incident               → ISSU-021 (PATCH /cases/{id} { parentId }, see
  *                                       LinkIncidentDialog.tsx)
  *   - Raise Git issue                → ISSU-020
+ *   - Create change request          → service-request-only. Navigates to the change-request
+ *                                       create form pre-filled with this service request as the
+ *                                       "Originating service request" (POST /change-requests, then
+ *                                       PATCH { caseId } — see CreateChangeRequestPage.tsx).
  *   - Create task                    → ISSU-025 (POST /cases/{caseId}/tasks, see CreateTaskDialog.tsx).
  *                                       Kept here even though a Tasks tab exists: that tab is
  *                                       still `hidden` in CsmCaseDetailPage's TAB_DEFS, so this
@@ -282,6 +292,21 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
   const gitIssueStateBlocked = !GIT_ISSUE_ALLOWED_STATES.includes(
     caseDetail.state,
   );
+
+  // Only a service request can be the "Originating service request" a change
+  // request links back to (see the create form's picker), so the action is
+  // offered only there — mirrors the same `caseType === "service_request"`
+  // gate the Related tab already applies to LinkedChangeRequestsWidget.
+  if (caseDetail.caseType === "service_request") {
+    items.push({
+      key: "create_change_request",
+      label: "Create change request…",
+      icon: <GitPullRequest size={16} />,
+      divider: true,
+      disabled: caseClosed,
+      tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
+    });
+  }
 
   items.push(
     {
@@ -387,6 +412,39 @@ interface CaseActionBarProps {
    * so a click has visible feedback even before the resulting toast/state
    * change lands. */
   isPending?: boolean;
+  /**
+   * Acknowledge the case as the signed-in engineer. When omitted, the
+   * acknowledge button is never rendered — so a caller that has no acknowledge
+   * mutation wired up cannot show a dead button.
+   */
+  onAcknowledge?: () => void | Promise<unknown>;
+  /** True while the acknowledge PATCH is in flight. */
+  isAcknowledging?: boolean;
+}
+
+/**
+ * Severities whose cases are worth acknowledging. S4 is excluded deliberately:
+ * it mirrors which cases the out-of-band acknowledgement notifications are
+ * raised for, so the button appears on exactly the cases an engineer could
+ * already have acknowledged from a notification, and on no others.
+ * `caseDetail.severity` may be `"unset"` (case has no severity value) —
+ * typed `SeverityOrUnset` so `.has()` accepts it directly; it is never a
+ * member of this set, so an unset-severity case is correctly never
+ * acknowledgeable.
+ */
+const ACKNOWLEDGEABLE_SEVERITIES = new Set<SeverityOrUnset>(["S0", "S1", "S2", "S3"]);
+
+/**
+ * Whether the acknowledge action applies to this case: nobody has claimed it
+ * yet and it is severe enough to be worth claiming. Acknowledgement is
+ * first-write-wins, so once `acknowledgedBy` is set there is nothing left to
+ * do and the button disappears rather than turning into a no-op.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- exported so CsmCaseDetailPage's startWork can reuse the same acknowledgeability check rather than duplicating it (fast-refresh DX only)
+export function canAcknowledge(caseDetail: CsmCaseDetail): boolean {
+  return (
+    !caseDetail.acknowledgedBy && ACKNOWLEDGEABLE_SEVERITIES.has(caseDetail.severity)
+  );
 }
 
 /**
@@ -401,6 +459,8 @@ export default function CaseActionBar({
   onAction,
   closeBlockedReason,
   isPending = false,
+  onAcknowledge,
+  isAcknowledging = false,
 }: CaseActionBarProps): JSX.Element {
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [stateMenuAnchor, setStateMenuAnchor] = useState<HTMLElement | null>(null);
@@ -431,6 +491,20 @@ export default function CaseActionBar({
         justifyContent: { xs: "flex-start", md: "flex-end" },
       }}
     >
+      {!!caseDetail.acknowledgedBy && ACKNOWLEDGEABLE_SEVERITIES.has(caseDetail.severity) && (
+        // Leads the bar as context, read before the action buttons. Mutually
+        // exclusive with the Acknowledge button below (only one of the two
+        // ever renders, since one implies the case is already claimed and
+        // the other implies it isn't) — they sit in different positions,
+        // not "the same slot": this leads the bar, the button trails it.
+        <Typography variant="body2" color="text.secondary" noWrap>
+          Acknowledged by{" "}
+          <UserRefLink
+            name={caseDetail.acknowledgedBy.name}
+            email={caseDetail.acknowledgedBy.email}
+          />
+        </Typography>
+      )}
       {primary.length === 1 && (
         // A single reachable state needs no menu — show the transition
         // itself as one click rather than "Change state" → pick the only item.
@@ -506,6 +580,24 @@ export default function CaseActionBar({
             })}
           </Menu>
         </>
+      )}
+
+      {!!onAcknowledge && canAcknowledge(caseDetail) && (
+        // Sits between the state control and "More": claiming a case is a
+        // lighter act than moving it through its lifecycle, so it trails the
+        // primary transition rather than leading the bar. No leading icon,
+        // for the same plain label-only look as "Change state"/"More" — a
+        // spinner still appears in its place while the claim is in flight.
+        <Button
+          size="small"
+          variant="outlined"
+          color="primary"
+          startIcon={isAcknowledging ? <CircularProgress size={14} color="inherit" /> : undefined}
+          disabled={isAcknowledging || isPending}
+          onClick={() => void onAcknowledge()}
+        >
+          Acknowledge
+        </Button>
       )}
 
       <Button
