@@ -56,9 +56,21 @@ export default function MultiSelectField<T extends string>({
 }: MultiSelectFieldProps<T>): JSX.Element {
   const field = (
     <FormControl fullWidth size="small" disabled={disabled}>
-      <InputLabel id={`${id}-label`}>{label}</InputLabel>
+      {/*
+       * `shrink` is forced rather than left to MUI's default (filled ||
+       * focused || adornedStart from FormControl context): a disabled Select
+       * can never be focused, so an empty-valued disabled field would
+       * otherwise be permanently stuck in the unshrunk "resting" label
+       * position instead of the notched one every other state of this same
+       * Select renders. A Select's label always belongs in the notch
+       * regardless of disabled/value state.
+       */}
+      <InputLabel id={`${id}-label`} shrink>
+        {label}
+      </InputLabel>
       <Select
         multiple
+        notched
         labelId={`${id}-label`}
         id={id}
         value={values}
