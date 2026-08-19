@@ -1733,6 +1733,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "413":
           description: RequestEntityTooLarge
           content:
@@ -3223,6 +3229,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
         "413":
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
           description: RequestEntityTooLarge
           content:
             application/json:
@@ -4425,6 +4437,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "413":
           description: RequestEntityTooLarge
           content:
@@ -4785,6 +4803,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "413":
           description: RequestEntityTooLarge
           content:
@@ -4884,6 +4908,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "413":
           description: RequestEntityTooLarge
           content:
@@ -4931,6 +4961,12 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
           content:
             application/json:
               schema:

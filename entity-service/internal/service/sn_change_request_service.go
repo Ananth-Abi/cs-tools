@@ -480,6 +480,15 @@ func (s *snChangeRequestService) AggregateChangeRequests(ctx context.Context, re
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return domain.AggregateResponse{}, fmt.Errorf("sn change requests: parse aggregate response: %w", err)
 	}
+	// "assignmentGroup" is the only ID-valued field in
+	// validChangeRequestAggregateField; SN returns its bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
 	return resp, nil
 }
 

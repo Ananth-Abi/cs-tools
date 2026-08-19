@@ -219,6 +219,15 @@ func (s *snProblemService) AggregateProblems(ctx context.Context, req domain.Agg
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return domain.AggregateResponse{}, fmt.Errorf("sn problems: parse aggregate response: %w", err)
 	}
+	// "assignmentGroup" is the only ID-valued field in
+	// validProblemAggregateField; SN returns its bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
 	return resp, nil
 }
 

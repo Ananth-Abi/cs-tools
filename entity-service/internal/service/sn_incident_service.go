@@ -400,6 +400,15 @@ func (s *snIncidentService) AggregateIncidents(ctx context.Context, req domain.A
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return domain.AggregateResponse{}, fmt.Errorf("sn incidents: parse aggregate response: %w", err)
 	}
+	// "assignmentGroup" and "businessService" are the only ID-valued fields
+	// in validIncidentAggregateField; SN returns their bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" || req.GroupBy == "businessService" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
 	return resp, nil
 }
 
