@@ -96,6 +96,7 @@ type ProjectView struct {
 	StartDate        *time.Time `json:"startDate"`
 	EndDate          *time.Time `json:"endDate"`
 	CreatedOn        time.Time  `json:"createdOn"`
+	ActiveCasesCount int        `json:"activeCasesCount"`
 	ProjectClosureFields
 }
 
@@ -117,6 +118,9 @@ type ProjectAccountRef struct {
 	Region              *string    `json:"region"`
 	AgentEnabled        bool       `json:"agentEnabled"`
 	KbReferencesEnabled bool       `json:"kbReferencesEnabled"`
+	DeactivationDate    *time.Time `json:"deactivationDate"`
+	OwnerEmail          *string    `json:"ownerEmail"`
+	TechnicalOwnerEmail *string    `json:"technicalOwnerEmail"`
 }
 
 // ProjectDetailsView is entity-service's response for GET /projects/{id}.
@@ -131,6 +135,22 @@ type ProjectDetailsView struct {
 	EndDate          time.Time         `json:"endDate"`
 	CreatedOn        time.Time         `json:"createdOn"`
 	UpdatedOn        time.Time         `json:"updatedOn"`
+
+	// Query/onboarding entitlement balances and onboarding milestones.
+	// entity-service groups these in an embedded ProjectEngagementFields, which
+	// flattens in JSON, so they are declared flat here. Pointers throughout: a
+	// nil balance means "not tracked for this project", which is a different
+	// fact from a zero one, "tracked, none remaining".
+	TotalQueryHours          *float64   `json:"totalQueryHours"`
+	ConsumedQueryHours       *float64   `json:"consumedQueryHours"`
+	RemainingQueryHours      *float64   `json:"remainingQueryHours"`
+	TotalOnboardingHours     *float64   `json:"totalOnboardingHours"`
+	ConsumedOnboardingHours  *float64   `json:"consumedOnboardingHours"`
+	RemainingOnboardingHours *float64   `json:"remainingOnboardingHours"`
+	GoLiveDate               *time.Time `json:"goLiveDate"`
+	GoLivePlanDate           *time.Time `json:"goLivePlanDate"`
+	OnboardingExpiryDate     *time.Time `json:"onboardingExpiryDate"`
+	OnboardingStatus         *string    `json:"onboardingStatus"`
 	ProjectClosureFields
 }
 

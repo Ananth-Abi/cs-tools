@@ -6325,6 +6325,9 @@ components:
     ProjectSummary:
       type: object
       properties:
+        activeCasesCount:
+          type: integer
+          description: Number of currently active cases on the project. Always present.
         id:
           type: string
         name:
@@ -6366,6 +6369,16 @@ components:
         supportTier (not tier) to match the frontend's read site.
       type: object
       properties:
+        ownerEmail:
+          type: string
+          description: Email of the account owner.
+        technicalOwnerEmail:
+          type: string
+          description: Email of the account technical owner.
+        deactivationDate:
+          type: string
+          format: date-time
+          description: Date the account was deactivated.
         id:
           type: string
         name:
@@ -6384,6 +6397,39 @@ components:
     ProjectDetails:
       type: object
       properties:
+        totalQueryHours:
+          type: number
+          description: Total query hours entitlement. Omitted when not tracked.
+        consumedQueryHours:
+          type: number
+          description: Query hours consumed. Omitted when not tracked.
+        remainingQueryHours:
+          type: number
+          description: Query hours remaining. Omitted when not tracked; 0 means none remaining.
+        totalOnboardingHours:
+          type: number
+          description: Total onboarding hours entitlement. Omitted when not tracked.
+        consumedOnboardingHours:
+          type: number
+          description: Onboarding hours consumed. Omitted when not tracked.
+        remainingOnboardingHours:
+          type: number
+          description: Onboarding hours remaining. Omitted when not tracked; 0 means none remaining.
+        goLiveDate:
+          type: string
+          format: date-time
+          description: Actual go-live date.
+        goLivePlanDate:
+          type: string
+          format: date-time
+          description: Planned go-live date.
+        onboardingExpiryDate:
+          type: string
+          format: date-time
+          description: Date the onboarding entitlement expires.
+        onboardingStatus:
+          type: string
+          description: Onboarding status.
         id:
           type: string
         account:
