@@ -17,12 +17,54 @@
 package middleware_test
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/middleware"
 )
+
+// capturingHandler is a minimal slog.Handler that records every attr of the
+// first record it receives, so a test can assert on what Logger actually
+// logs — not just what the client's own recorder captured, which (via
+// httptest.ResponseRecorder's own first-write-wins behavior) can pass even
+// when what Logger itself logs is wrong.
+type capturingHandler struct {
+	attrs map[string]slog.Value
+}
+
+func newCapturingHandler() *capturingHandler {
+	return &capturingHandler{attrs: map[string]slog.Value{}}
+}
+
+func (h *capturingHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
+	r.Attrs(func(a slog.Attr) bool {
+		h.attrs[a.Key] = a.Value
+		return true
+	})
+	return nil
+}
+
+func (h *capturingHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *capturingHandler) WithGroup(_ string) slog.Handler      { return h }
+
+// captureLog swaps slog's default logger for the duration of fn, restoring
+// the previous one afterward, and returns whatever the first log record
+// captured. Not safe to run concurrently with another test doing the same —
+// callers must not mark themselves t.Parallel().
+func captureLog(t *testing.T, fn func()) *capturingHandler {
+	t.Helper()
+	h := newCapturingHandler()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	defer slog.SetDefault(prev)
+	fn()
+	return h
+}
 
 func TestLogger_CallsNextAndPreservesResponse(t *testing.T) {
 	t.Parallel()
@@ -96,5 +138,93 @@ func TestLogger_IgnoresRepeatedWriteHeader(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("status = %d, want %d (only the first WriteHeader call should count)", w.Code, http.StatusCreated)
+	}
+}
+
+// Not t.Parallel(): swaps the global slog default for the duration of the
+// test (see captureLog) and must not overlap with another test doing the
+// same.
+func TestLogger_LogsEffectiveStatusNotASupersededWriteHeader(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hi")) // implicitly commits 200
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	var clientStatus int
+	captured := captureLog(t, func() {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		w := httptest.NewRecorder()
+		middleware.Logger(next).ServeHTTP(w, r)
+		clientStatus = w.Code
+	})
+
+	if clientStatus != http.StatusOK {
+		t.Fatalf("client status = %d, want %d", clientStatus, http.StatusOK)
+	}
+	if loggedStatus := captured.attrs["status"].Int64(); loggedStatus != int64(clientStatus) {
+		t.Errorf("logged status = %d, want it to match what the client actually received (%d)", loggedStatus, clientStatus)
+	}
+}
+
+// Not t.Parallel(): see TestLogger_LogsEffectiveStatusNotASupersededWriteHeader.
+func TestLogger_LogsFirstOfRepeatedWriteHeaderCalls(t *testing.T) {
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusAccepted)
+	})
+
+	var clientStatus int
+	captured := captureLog(t, func() {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		w := httptest.NewRecorder()
+		middleware.Logger(next).ServeHTTP(w, r)
+		clientStatus = w.Code
+	})
+
+	if clientStatus != http.StatusCreated {
+		t.Fatalf("client status = %d, want %d", clientStatus, http.StatusCreated)
+	}
+	if loggedStatus := captured.attrs["status"].Int64(); loggedStatus != int64(clientStatus) {
+		t.Errorf("logged status = %d, want it to match what the client actually received (%d)", loggedStatus, clientStatus)
+	}
+}
+
+// Not t.Parallel(): see TestLogger_LogsEffectiveStatusNotASupersededWriteHeader.
+// Logger wraps the whole mux (see cmd/server/main.go's real middleware
+// chain), not individual routes — r.Pattern is only populated once the mux
+// itself has matched, so that's the shape this test (and the one below it)
+// exercises.
+func TestLogger_LogsMatchedRoutePatternNotRawPath(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /cases/{id}/activities/stream", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	captured := captureLog(t, func() {
+		r := httptest.NewRequest(http.MethodGet, "/cases/attacker@example.com/activities/stream", nil)
+		w := httptest.NewRecorder()
+		middleware.Logger(mux).ServeHTTP(w, r)
+	})
+
+	if got := captured.attrs["path"].String(); got != "GET /cases/{id}/activities/stream" {
+		t.Errorf("logged path = %q, want the matched route pattern, not the literal caller-supplied path", got)
+	}
+}
+
+// Not t.Parallel(): see TestLogger_LogsEffectiveStatusNotASupersededWriteHeader.
+func TestLogger_LogsUnmatchedForNoRouteMatch(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	captured := captureLog(t, func() {
+		r := httptest.NewRequest(http.MethodGet, "/does-not-exist/attacker@example.com", nil)
+		w := httptest.NewRecorder()
+		middleware.Logger(mux).ServeHTTP(w, r)
+	})
+
+	if got := captured.attrs["path"].String(); got != "unmatched" {
+		t.Errorf(`logged path = %q, want "unmatched" rather than falling back to the literal caller-supplied path`, got)
 	}
 }
