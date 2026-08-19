@@ -23,8 +23,8 @@ const ADMIN = { isOwner: false, isApprover: false, isAdmin: true };
 const NONE = { isOwner: false, isApprover: false, isAdmin: false };
 
 describe("cardActions", () => {
-  it("owner never has actions, even on a submitted card", () => {
-    expect(cardActions("submitted", OWNER)).toEqual([]);
+  it("owner can edit or delete their own submitted card", () => {
+    expect(cardActions("submitted", OWNER)).toEqual(["edit", "delete"]);
   });
   it("approver approves/rejects a submitted card that isn't their own", () => {
     expect(cardActions("submitted", APPROVER)).toEqual(["approve", "reject"]);
@@ -35,8 +35,10 @@ describe("cardActions", () => {
   it("no actions for a non-approver, non-owner", () => {
     expect(cardActions("submitted", NONE)).toEqual([]);
   });
-  it("no actions once decided (approved/rejected)", () => {
+  it("no actions once decided (approved/rejected), even for the owner", () => {
     expect(cardActions("approved", APPROVER)).toEqual([]);
     expect(cardActions("rejected", APPROVER)).toEqual([]);
+    expect(cardActions("approved", OWNER)).toEqual([]);
+    expect(cardActions("rejected", OWNER)).toEqual([]);
   });
 });

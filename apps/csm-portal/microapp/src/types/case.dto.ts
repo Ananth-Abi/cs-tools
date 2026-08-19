@@ -44,11 +44,16 @@ export interface EntityRefDto {
   name: string;
 }
 
+// The canonical {id, email, name} UserReference shape (openapi.yaml), used for CaseViewDto's
+// createdBy — confirmed live against a real response. Previously modeled as {id, displayName,
+// userId, email}, none of which (besides id/email) exist on the real object — CaseDetailPage's
+// `displayName` read always came up empty and silently fell back to rendering the email instead
+// of the name. openapi.yaml marks both UserReference and CaseView.createdBy nullable, so callers
+// must not assume a CaseViewDto always has one.
 export interface UserRefDto {
-  id: string;
-  displayName: string;
-  userId: string;
+  id: string | null;
   email: string;
+  name: string;
 }
 
 export interface UserIdEmailRefDto {
@@ -56,10 +61,15 @@ export interface UserIdEmailRefDto {
   email: string;
 }
 
+// CaseView/CaseSearchView.assignedEngineer both reference the canonical UserReference schema
+// (openapi.yaml) — {id: string|null, email: string, name: string} — not the separate,
+// differently-nullable AssignedEngineerRef schema used elsewhere (e.g. acknowledgedBy). Field
+// names already matched reality (no render crash), but id/email's nullability were backwards:
+// id can genuinely be null, email is always populated when assignedEngineer itself is non-null.
 export interface AssignedEngineerRefDto {
-  id: string;
+  id: string | null;
   name: string;
-  email: string | null;
+  email: string;
 }
 
 export interface CaseNumberRefDto {
@@ -93,6 +103,9 @@ export interface CaseSearchFiltersDto {
   engagementTypes?: EngagementType[];
   /** Product family names (e.g. "API Manager"); matches all versions of each. */
   productNames?: string[];
+  /** UUID of the case whose children (their own `parentId` pointing here) to find — the
+   * hierarchical major-case/child-case relationship. Mirrors the webapp's useSearchChildCases. */
+  parentId?: string;
 }
 
 export interface CaseSearchPayloadDto {
@@ -110,7 +123,13 @@ export interface CaseSearchPayloadDto {
 export interface CaseSearchViewDto {
   id: string;
   number: string;
-  wso2Id: string;
+  // openapi.yaml's CaseSearchView documents this field as `wso2Id`, but the live /cases/search
+  // response sends it as `internalId` (confirmed live: {"id":"20d3964f-...","internalId":"CPPSUB-175",
+  // "number":"CS0441016",...}) — same spec-vs-reality drift already documented elsewhere in this
+  // file. `wso2Id` is kept as the app-facing name in case.model.ts's CaseSummary/CaseDetail (it's
+  // the concept name used throughout the UI); only this wire-level DTO field is renamed to match
+  // what actually arrives.
+  internalId: string;
   subject: string;
   description: string;
   // Only meaningful for the "case" type — null for service_request/security_report_analysis/etc.
@@ -127,9 +146,15 @@ export interface CaseSearchViewDto {
   createdOn?: string;
   updatedOn?: string;
   closedOn: string | null;
-  // The case-search view returns the creator's email as a plain string (unlike
-  // the by-id detail view, which returns a full user object).
-  createdBy: string;
+  // This comment used to claim the case-search view returns the creator's email as a plain
+  // string, unlike the by-id detail view. That was never true: openapi.yaml documents
+  // CaseSearchView.createdBy as the same nullable UserReference ({id, email, name}) as the
+  // detail view, and live data confirms it (e.g. {"id":null,"email":"hesara@wso2.com","name":""}).
+  // Rendering this directly as a string (AnnouncementCard.tsx, which shows CaseSummary.createdBy)
+  // crashed with "Objects are not valid as a React child" and nothing caught it, so the whole
+  // Announcements page went blank. Same bug class as CaseCommentDto/AttachmentViewDto/CaseViewDto's
+  // createdBy fields, just the one instance not caught in that earlier pass.
+  createdBy: string | UserRefDto | null;
   project: EntityRefDto;
   deployment: EntityRefDto | null;
   deployedProduct: EntityRefDto | null;
@@ -148,10 +173,21 @@ export interface CaseSearchResponseDto {
   hasMore: boolean;
 }
 
+// A linked case/service-request/change-request reference on the case-detail response — only
+// id/number/name are ever carried (mirrors the webapp's BeLinkedServiceRequestRef/
+// BeLinkedChangeRequestRef); `name` is the target's subject, nullable on records without one.
+export interface CaseLinkRefDto {
+  id: string;
+  number: string;
+  name: string | null;
+}
+
 export interface CaseViewDto {
   id: string;
   number: string;
-  wso2Id: string;
+  // See CaseSearchViewDto's internalId comment — same spec-vs-reality field-name drift, confirmed
+  // by this same symptom (case detail header not showing a second id) on the by-id detail view.
+  internalId: string;
   subject: string;
   description: string;
   severity: string | null;
@@ -163,7 +199,7 @@ export interface CaseViewDto {
   createdOn?: string;
   updatedOn?: string;
   closedOn: string | null;
-  createdBy: UserRefDto;
+  createdBy: UserRefDto | null;
   project: EntityRefDto;
   deployment: EntityRefDto | null;
   deployedProduct: DeployedProductRefDto | null;
@@ -177,20 +213,16 @@ export interface CaseViewDto {
   relatedCase: CaseNumberRefDto | null;
   account: AccountRefDto | null;
   nextStates: CaseState[];
+  linkedServiceRequests?: CaseLinkRefDto[] | null;
+  linkedChangeRequests?: CaseLinkRefDto[] | null;
 }
 
 export type CaseCommentType = "work_note" | "comment" | "activity";
 
-// openapi.yaml declares `createdBy` as a plain string, but the live entity-service response
-// doesn't consistently match that — it comes back as a richer {id, firstName, lastName, fullName}
-// object for at least some comments (same createdBy string-vs-object drift already seen on
-// CaseSearchViewDto — see reference_csm_announcements memory). Modeled as a union and normalized
-// to a display string in `toComment` rather than trusted as a string at the DTO boundary.
 export interface CaseCommentAuthorDto {
-  id?: string;
-  firstName?: string;
-  lastName?: string;
-  fullName?: string;
+  id: string | null;
+  email: string;
+  name: string;
 }
 
 export interface CaseCommentDto {
@@ -230,9 +262,10 @@ export interface CaseCommentCreateResponseDto {
   };
 }
 
-// Backend's UpdateCaseRequest: exactly one of state/severity/workState/assigneeEmail must be
-// provided per PATCH call (they're mutually exclusive `oneOf` branches in openapi.yaml) —
-// resolutionCode/cause/closeNotes are the exception, allowed alongside `state` only.
+// Backend's UpdateCaseRequest: exactly one of state/severity/workState/assigneeEmail/parentId/
+// relatedCaseId must be provided per PATCH call (they're mutually exclusive `oneOf` branches in
+// openapi.yaml) — resolutionCode/cause/closeNotes are the exception, allowed alongside `state`
+// only.
 export interface CasePatchPayloadDto {
   state?: CaseState;
   severity?: CaseSeverity;
@@ -241,6 +274,12 @@ export interface CasePatchPayloadDto {
   resolutionCode?: CaseResolutionCode;
   cause?: CaseCause;
   closeNotes?: string;
+  /** Links this case to another as its parent (the hierarchical major-case/child-case
+   * relationship) — this case can't close while it has open children linked this way. */
+  parentId?: string;
+  /** Cross-links this case to another as a related case — looser than `parentId`, not subject to
+   * the child-case close restriction. */
+  relatedCaseId?: string;
 }
 
 export interface UpdateCaseResponseDto {
@@ -335,17 +374,15 @@ export interface ServiceRequestCreatePayloadDto {
   catalogId: string;
   catalogItemId: string;
   variables: CaseVariableDto[];
+  /** UUID of the case this service request is filed from — links the new request back to it in
+   * the same create call, mirroring the webapp's CreateServiceRequestFromCaseNavState flow. */
+  relatedCaseId?: string;
 }
 
 export interface CreatedCaseDto {
   id: string;
 }
 
-// POST /cases wraps the created case in a { message, case } envelope rather than returning it
-// flat — confirmed against the webapp's usePostCsmCase.ts (BeCaseCreateResponse/BeCreatedCase),
-// which unwraps res.case for exactly this reason. openapi.yaml's postCases 201 response
-// ($ref: Case) doesn't reflect the envelope; trust the webapp's actual working code over the spec
-// here, same doc-vs-reality gap seen elsewhere in this backend family.
 export interface CaseCreateResponseDto {
   message?: string;
   case: CreatedCaseDto;

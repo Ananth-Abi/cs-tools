@@ -17,8 +17,6 @@
 package handler
 
 import (
-	"encoding/json"
-	"log/slog"
 	"net/http"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
@@ -26,31 +24,41 @@ import (
 )
 
 // dashboardPieSliceView is one wedge of a Shape "pie" widget — see
-// dashboard.PieSlice. Filters is this slice's own criteria only (already
-// __current_user__-resolved), meant to be merged under the parent widget's
-// own (also resolved) Filters by the caller.
+// dashboard.PieSlice. Query is this slice's own criteria verbatim, including
+// any unresolved "__current_user__"/"__current_team__" placeholder a filter
+// value carries — the caller (frontend) resolves those client-side (see
+// apps/csm-portal/webapp/src/features/csm-dashboard/utils/teamFilterPlaceholder.ts
+// for the pattern this mirrors), and merges Query under the parent widget's
+// own Query itself.
 type dashboardPieSliceView struct {
-	Label   string         `json:"label"`
-	Color   string         `json:"color,omitempty"`
-	Filters map[string]any `json:"filters"`
+	Label string         `json:"label"`
+	Color string         `json:"color,omitempty"`
+	Query map[string]any `json:"query"`
 }
 
 // dashboardWidgetView is a single widget's filter criteria and display
 // metadata, returned as part of GET /dashboards/{dashboardId}. The caller
 // resolves each widget's own data by issuing its own POST /{resourceType}s/search
-// request (see ResourceType) with Filters.
+// request (see ResourceType), passing Query as that request's filters.
 type dashboardWidgetView struct {
-	WidgetID     string                  `json:"widgetId"`
-	DisplayName  string                  `json:"displayName"`
-	Description  string                  `json:"description,omitempty"`
-	ResourceType dashboard.ResourceType  `json:"resourceType"`
-	Shape        dashboard.Shape         `json:"shape"`
-	GridWidth    int                     `json:"gridWidth"`
-	Filters      map[string]any          `json:"filters"`
-	GroupBy      string                  `json:"groupBy,omitempty"`
-	ListLimit    int                     `json:"listLimit,omitempty"`
-	Slices       []dashboardPieSliceView `json:"slices,omitempty"`
-	Section      string                  `json:"section,omitempty"`
+	WidgetID     string                   `json:"widgetId"`
+	DisplayName  string                   `json:"displayName"`
+	Description  string                   `json:"description,omitempty"`
+	ResourceType dashboard.ResourceType   `json:"resourceType"`
+	Shape        dashboard.Shape          `json:"shape"`
+	GridWidth    int                      `json:"gridWidth"`
+	Query        map[string]any           `json:"query"`
+	GroupBy      *dashboard.GroupByConfig `json:"groupBy,omitempty"`
+	ListLimit    int                      `json:"listLimit,omitempty"`
+	Slices       []dashboardPieSliceView  `json:"slices,omitempty"`
+	Section      string                   `json:"section,omitempty"`
+	// Columns and SortBy are only meaningful for Shape "list" — see
+	// dashboard.WidgetTemplate.Columns/SortBy. Forwarded verbatim: Columns
+	// is display config the BE never resolves, and SortBy is opaque search
+	// criteria like Query, just for that ResourceType's own /search
+	// request's "sortBy" instead of its "filters".
+	Columns []dashboard.Column `json:"columns,omitempty"`
+	SortBy  map[string]any     `json:"sortBy,omitempty"`
 }
 
 // dashboardListItemView is a dashboard's list-level metadata, returned by
@@ -60,8 +68,20 @@ type dashboardWidgetView struct {
 type dashboardListItemView struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"displayName"`
-	IsDefault   bool   `json:"isDefault"`
-	IsTeamBased bool   `json:"isTeamBased"`
+	// Type classifies the dashboard's audience ("cre", "sre", "cs"). The
+	// frontend picks the dashboard to open from it plus the caller's own
+	// team family, so it has to be on the list view: the choice is made
+	// before any detail fetch. Omitted for a definition that predates the
+	// field (only possible via the deprecated DASHBOARDS_CONFIG).
+	Type        dashboard.Type `json:"type,omitempty"`
+	IsDefault   bool           `json:"isDefault"`
+	IsTeamBased bool           `json:"isTeamBased"`
+	// DefaultForTeamKeys is this dashboard's identity-override list (see
+	// dashboard.Dashboard.DefaultForTeamKeys). It has to be on the list
+	// view, not just the detail view: the frontend resolves default
+	// dashboard selection against the caller's own team key before it ever
+	// fetches a dashboard's detail.
+	DefaultForTeamKeys []string `json:"defaultForTeamKeys,omitempty"`
 }
 
 // dashboardDetailView is a dashboard's full metadata plus its resolved
@@ -69,6 +89,7 @@ type dashboardListItemView struct {
 type dashboardDetailView struct {
 	ID          string                `json:"id"`
 	DisplayName string                `json:"displayName"`
+	Type        dashboard.Type        `json:"type,omitempty"`
 	IsDefault   bool                  `json:"isDefault"`
 	TargetTeam  string                `json:"targetTeam"`
 	IsTeamBased bool                  `json:"isTeamBased"`
@@ -77,50 +98,21 @@ type dashboardDetailView struct {
 
 // DashboardHandler handles HTTP requests for the config-driven dashboard
 // widget pilot.
-type DashboardHandler struct {
-	entity entityUserClient
-}
-
-// NewDashboardHandler creates a DashboardHandler backed by the given entity
-// client, used to resolve the caller's own platform user id (see
-// resolveCurrentUserID) for widgets whose filters need it.
-func NewDashboardHandler(entity entityUserClient) *DashboardHandler {
-	return &DashboardHandler{entity: entity}
-}
-
-// resolveCurrentUserID returns the caller's platform user id — the same id
-// GET /users/me resolves via the entity service — for substituting
-// dashboard.CurrentUserPlaceholder into widget filters.
 //
-// This is deliberately NOT user.UserID from the JWT: that claim is whatever
-// identity value the gateway/IdP embeds (e.g. the Asgardeo subject), which is
-// a different id than the platform's own SN/Postgres-backed user record.
-// Using the JWT claim directly here was the actual bug behind an
-// "identity-mapping gap" this task had, until now, treated as an accepted
-// ServiceNow DEV environment limitation: /cases/search correctly rejected
-// that id with "no active user found for sys_id ..." because it was never a
-// valid sys_id to begin with. Falls back to the JWT claim (rather than an
-// empty string) only if the entity lookup itself fails, so a transient
-// entity-service error degrades to the previous (broken but non-crashing)
-// behavior instead of a hard failure.
-func (h *DashboardHandler) resolveCurrentUserID(r *http.Request, user *middleware.UserInfo) string {
-	raw, err := h.entity.GetUserMe(r.Context())
-	if err != nil {
-		slog.ErrorContext(r.Context(), "entity GetUserMe failed while resolving dashboard current-user id", "userID", user.UserID, "err", err)
-		return user.UserID
-	}
-	var me struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &me); err != nil {
-		slog.ErrorContext(r.Context(), "entity GetUserMe: parse response failed while resolving dashboard current-user id", "userID", user.UserID, "err", err)
-		return user.UserID
-	}
-	if me.ID == "" {
-		slog.ErrorContext(r.Context(), "entity GetUserMe returned an empty id while resolving dashboard current-user id", "userID", user.UserID)
-		return user.UserID
-	}
-	return me.ID
+// It has no upstream dependency: every widget's Query/Slices are served
+// straight from the registry, with any "__current_user__"/"__current_team__"
+// placeholder a filter value carries left exactly as configured for the
+// frontend to resolve client-side. Resolving the current user's own platform
+// id used to require an entity-service round trip (GET /users/me) on every
+// request here; that responsibility moved to the frontend, which already
+// resolves GET /users/me for its own purposes and can substitute the id
+// itself, the same way it already does for "__current_team__" (see
+// apps/csm-portal/webapp/src/features/csm-dashboard/utils/teamFilterPlaceholder.ts).
+type DashboardHandler struct{}
+
+// NewDashboardHandler creates a DashboardHandler.
+func NewDashboardHandler() *DashboardHandler {
+	return &DashboardHandler{}
 }
 
 // GetDashboards handles GET /dashboards.
@@ -131,13 +123,16 @@ func (h *DashboardHandler) GetDashboards(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	views := make([]dashboardListItemView, 0, len(dashboard.Dashboards))
-	for _, d := range dashboard.Dashboards {
+	dashboards := dashboard.All()
+	views := make([]dashboardListItemView, 0, len(dashboards))
+	for _, d := range dashboards {
 		views = append(views, dashboardListItemView{
-			ID:          d.ID,
-			DisplayName: d.DisplayName,
-			IsDefault:   d.IsDefault,
-			IsTeamBased: d.IsTeamBased,
+			ID:                 d.ID,
+			DisplayName:        d.DisplayName,
+			Type:               d.Type,
+			IsDefault:          d.IsDefault,
+			IsTeamBased:        d.IsTeamBased,
+			DefaultForTeamKeys: d.DefaultForTeamKeys,
 		})
 	}
 
@@ -153,13 +148,11 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 	}
 
 	dashboardID := r.PathValue("dashboardId")
-	d, ok := dashboard.DashboardByID(dashboardID)
+	d, ok := dashboard.ByID(dashboardID)
 	if !ok {
 		writeError(w, http.StatusNotFound, ErrMsgNotFound)
 		return
 	}
-
-	currentUserID := h.resolveCurrentUserID(r, user)
 
 	widgets := make([]dashboardWidgetView, 0, len(d.Widgets))
 	for _, tpl := range d.Widgets {
@@ -168,9 +161,9 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 			slices = make([]dashboardPieSliceView, 0, len(tpl.Slices))
 			for _, slice := range tpl.Slices {
 				slices = append(slices, dashboardPieSliceView{
-					Label:   slice.Label,
-					Color:   slice.Color,
-					Filters: dashboard.ResolveSliceFilters(slice, currentUserID),
+					Label: slice.Label,
+					Color: slice.Color,
+					Query: slice.Query,
 				})
 			}
 		}
@@ -181,17 +174,20 @@ func (h *DashboardHandler) GetDashboardDetail(w http.ResponseWriter, r *http.Req
 			ResourceType: tpl.ResourceType,
 			Shape:        tpl.Shape,
 			GridWidth:    tpl.GridWidth,
-			Filters:      dashboard.ResolveFilters(tpl, currentUserID),
+			Query:        tpl.Query,
 			GroupBy:      tpl.GroupBy,
 			ListLimit:    tpl.ListLimit,
 			Slices:       slices,
 			Section:      tpl.Section,
+			Columns:      tpl.Columns,
+			SortBy:       tpl.SortBy,
 		})
 	}
 
 	writeJSONValue(w, http.StatusOK, dashboardDetailView{
 		ID:          d.ID,
 		DisplayName: d.DisplayName,
+		Type:        d.Type,
 		IsDefault:   d.IsDefault,
 		TargetTeam:  d.TargetTeam,
 		IsTeamBased: d.IsTeamBased,

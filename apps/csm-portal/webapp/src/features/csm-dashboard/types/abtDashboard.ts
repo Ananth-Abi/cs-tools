@@ -16,6 +16,15 @@
 
 export type Severity = "S0" | "S1" | "S2" | "S3" | "S4";
 
+/**
+ * Severity plus the "no value" state: a case whose source has no severity set
+ * (empty/missing, or a value `severityFromBe` doesn't recognize — never sent
+ * to us as `"medium"`) is a distinct fact from "the severity really is
+ * S3/Medium" and must never render/filter as one. Not one of the S0-S4 filter
+ * options by design — see `severityFromBe` in `api/backend/mappers.ts`.
+ */
+export type SeverityOrUnset = Severity | "unset";
+
 export type CaseState =
   | "open"
   | "work_in_progress"

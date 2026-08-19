@@ -14,18 +14,20 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Card, Typography } from "@wso2/oxygen-ui";
+import { Box, Card, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { ChevronDown, ChevronUp } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX, type ReactNode } from "react";
 import { Link as RouterLink } from "react-router";
 import { tierLabel, tierColor } from "@features/csm-cases/utils/caseTier";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
+import { parentRecordPath } from "@features/csm-cases/utils/parentRecordRoute";
 import SemanticChip from "@components/SemanticChip";
 import UserRefLink from "@components/UserRefLink";
 import DeploymentDetailsDialog from "@features/csm-projects/components/DeploymentDetailsDialog";
 import type { BeDeploymentType } from "@api/backend/types";
 import { announcementStateRole } from "@features/csm-announcements/utils/announcementState";
 import { STATE_LABEL } from "@features/csm-dashboard/utils/abtDashboard";
+import { formatDateOnlyForDisplay } from "@utils/dateTime";
 
 interface CaseMetaBandProps {
   detail: CsmCaseDetail;
@@ -69,9 +71,15 @@ function Cell({
 
 function LinkText({
   to,
+  state,
   children,
 }: {
   to: string;
+  /** Router state forwarded to the destination — e.g. `{ from: ... }` so a
+   * case-to-case link (unlike Account/Project, which have no "Back" button
+   * of their own to feed) can return to this page instead of falling
+   * through to a hardcoded list route. */
+  state?: unknown;
   children: ReactNode;
 }): JSX.Element {
   return (
@@ -80,6 +88,7 @@ function LinkText({
     <Typography
       component={RouterLink}
       to={to}
+      state={state}
       variant="body2"
       noWrap
       sx={(t) => ({
@@ -177,6 +186,12 @@ export default function CaseMetaBand({
   const product = c.productContext;
   const tier = c.customerContext.tier;
   const [showDeployment, setShowDeployment] = useState(false);
+  // So Back on the Account/Project/related-case/parent-case page returns here
+  // instead of falling through to that page's own hardcoded list route (same
+  // fix already applied to ChildCasesWidget/LinkedServiceRequestsWidget's row
+  // navigation) — those destination pages read `location.state.from`.
+  const backState = { from: `/cases/${c.id}` };
+  const parentPath = parentRecordPath(c.parentCase);
   // Deployment/product/assignee are support-workflow facts (which environment,
   // who's triaging it) that don't apply to a read-only announcement broadcast —
   // mirrors the hidden SLA/time-tracking/call-request tabs and action bar.
@@ -272,7 +287,7 @@ export default function CaseMetaBand({
         >
           <Cell label="Account" maxWidth={isAnnouncement ? 240 : undefined}>
             {c.accountId ? (
-              <LinkText to={`/customers/accounts/${c.accountId}`}>
+              <LinkText to={`/customers/accounts/${c.accountId}`} state={backState}>
                 {c.customer}
               </LinkText>
             ) : (
@@ -297,7 +312,7 @@ export default function CaseMetaBand({
           )}
           <Cell label="Project" maxWidth={isAnnouncement ? 240 : undefined}>
             {c.projectId ? (
-              <LinkText to={`/customers/projects/${c.projectId}`}>
+              <LinkText to={`/customers/projects/${c.projectId}`} state={backState}>
                 {c.projectName}
               </LinkText>
             ) : (
@@ -368,6 +383,49 @@ export default function CaseMetaBand({
                   )}
                 </Typography>
               </Cell>
+              {c.relatedCase && (
+                <Cell label="Related case">
+                  <LinkText to={`/cases/${c.relatedCase.id}`} state={backState}>
+                    {c.relatedCase.caseNumber ?? c.relatedCase.id}
+                  </LinkText>
+                </Cell>
+              )}
+              {c.parentCase && (
+                <Cell label="Parent case">
+                  {parentPath ? (
+                    <LinkText to={parentPath} state={backState}>
+                      {c.parentCase.caseNumber ?? c.parentCase.id}
+                    </LinkText>
+                  ) : (
+                    <Tooltip title="This parent record's type could not be resolved, so it can't be opened from here.">
+                      <Typography variant="body2" noWrap color="text.secondary">
+                        {c.parentCase.caseNumber ?? c.parentCase.id}
+                      </Typography>
+                    </Tooltip>
+                  )}
+                </Cell>
+              )}
+              {c.bestCaseFixEta != null && (
+                <Cell label="Best case fix ETA">
+                  <Typography variant="body2" noWrap>
+                    {formatDateOnlyForDisplay(c.bestCaseFixEta)}
+                  </Typography>
+                </Cell>
+              )}
+              {c.mostLikelyFixEta != null && (
+                <Cell label="Most likely fix ETA">
+                  <Typography variant="body2" noWrap>
+                    {formatDateOnlyForDisplay(c.mostLikelyFixEta)}
+                  </Typography>
+                </Cell>
+              )}
+              {c.worstCaseFixEta != null && (
+                <Cell label="Worst case fix ETA">
+                  <Typography variant="body2" noWrap>
+                    {formatDateOnlyForDisplay(c.worstCaseFixEta)}
+                  </Typography>
+                </Cell>
+              )}
             </>
           )}
         </Box>

@@ -56,6 +56,7 @@ import {
   CLONE_SOURCE_GAP_MESSAGE,
   type CloneChangeRequestNavState,
 } from "@features/csm-operations/utils/changeRequests";
+import type { CreateChangeRequestFromCaseNavState } from "@features/csm-cases/types/csmCases";
 import type {
   BeChangeRequestCategory,
   BeChangeRequestImpact,
@@ -212,14 +213,29 @@ export default function CreateChangeRequestPage(): JSX.Element {
   const postChangeRequest = usePostChangeRequest();
   const patchChangeRequest = usePatchChangeRequest();
 
-  // Set when opened from a change request's "Clone" action, which navigates
-  // here with router state (not query params) — see
-  // CsmChangeRequestDetailPage.tsx's cloneChangeRequest and
-  // buildCloneChangeRequestNavState's doc comment for exactly which fields
-  // this can and can't carry over. Read once: this form's state is what the
-  // user edits from here on, so a later change to the *source* record must
-  // not reach back in and overwrite what they've typed.
-  const cloneState = useLocation().state as CloneChangeRequestNavState | undefined;
+  // This form can be opened two ways, each carrying its own router state
+  // (not query params) — read once: this form's state is what the user edits
+  // from here on, so a later change to the *source* record must not reach
+  // back in and overwrite what they've typed. The two shapes are mutually
+  // exclusive; narrow on `caseId`, the field only the latter carries.
+  //   - Clone, from a change request's "Clone" action — see
+  //     CsmChangeRequestDetailPage.tsx's cloneChangeRequest and
+  //     buildCloneChangeRequestNavState's doc comment for exactly which
+  //     fields this can and can't carry over.
+  //   - A service request's own "Create change request…" action — see
+  //     CsmCaseDetailPage.tsx's create_change_request handler and
+  //     CreateChangeRequestFromCaseNavState's doc comment. Carries the
+  //     originating service request (and its project, for scoping the
+  //     picker's search) so the "Originating service request" field below
+  //     starts pre-selected rather than blank.
+  const locationState = useLocation().state as
+    | CloneChangeRequestNavState
+    | CreateChangeRequestFromCaseNavState
+    | undefined;
+  const cloneState =
+    locationState && !("caseId" in locationState) ? locationState : undefined;
+  const fromCaseState =
+    locationState && "caseId" in locationState ? locationState : undefined;
 
   // Slice on seed as well as on change: a source record at or beyond the cap
   // would otherwise load untrimmed, show a negative characters-left count, and
@@ -260,7 +276,22 @@ export default function CreateChangeRequestPage(): JSX.Element {
   const [requestedById, setRequestedById] = useState("");
   // The service request this change request was raised from, when picked.
   // Not part of BeCreateChangeRequestPayload — see handleSubmit's comment.
-  const [caseId, setCaseId] = useState("");
+  // Pre-selected when opened from that service request's own "Create change
+  // request…" action; stays fully editable from there — the field remains a
+  // normal AsyncEntitySelect, not a locked/read-only control, so a wrong
+  // pre-fill (or a genuine need to link a different service request instead)
+  // can still be corrected without leaving the form.
+  const [caseId, setCaseId] = useState(fromCaseState?.caseId ?? "");
+  // Display label for the pre-filled `caseId` above until a fresh search for
+  // the same id resolves one from the backend (see AsyncEntitySelect's
+  // `knownLabel`).
+  const fromCaseKnownLabel = fromCaseState
+    ? caseSearchLabel({
+        id: fromCaseState.caseId,
+        number: fromCaseState.caseNumber,
+        subject: fromCaseState.caseSubject,
+      })
+    : undefined;
 
   // Defaults "Requested by" to the signed-in user, matching the legacy
   // ServiceNow form's own behaviour (usePostChangeRequest.ts/BE doesn't do
@@ -443,6 +474,13 @@ export default function CreateChangeRequestPage(): JSX.Element {
           {CLONE_SOURCE_GAP_MESSAGE}
         </Alert>
       )}
+      {fromCaseState && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Linking to {fromCaseState.caseNumber ?? "the service request"} — its id is
+          carried through automatically as the Originating service request below (see
+          "More options").
+        </Alert>
+      )}
 
       <Card variant="outlined" sx={{ p: 3 }}>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -569,9 +607,11 @@ export default function CreateChangeRequestPage(): JSX.Element {
               fields most requests won't need up front. */}
           <Accordion
             disableGutters
-            // Auto-expanded when cloning and an engineer carried over, so
-            // the prefilled value isn't hidden behind a collapsed section.
-            defaultExpanded={!!cloneState?.assignedEngineerId}
+            // Auto-expanded when cloning and an engineer carried over, or
+            // when opened from a service request with its id pre-filled
+            // below, so the prefilled value isn't hidden behind a collapsed
+            // section.
+            defaultExpanded={!!cloneState?.assignedEngineerId || !!fromCaseState}
             sx={{ "&:before": { display: "none" }, mt: 1 }}
           >
             <AccordionSummary expandIcon={<ChevronDown size={16} />}>
@@ -681,13 +721,26 @@ export default function CreateChangeRequestPage(): JSX.Element {
                     value={caseId}
                     onChange={setCaseId}
                     disabled={isSubmitting}
-                    // This form carries no account/project field, so there's
-                    // no context available to narrow suggestions — the search
-                    // is across all service requests by number/subject.
+                    // Opened from a service request's own "Create change
+                    // request…" action: its project is threaded through as
+                    // `searchExtra` so the search prefers service requests
+                    // from the same project first (see
+                    // useSearchServiceRequestsForSelect's doc comment for how
+                    // that stays additive, not a hard filter). Opened any
+                    // other way (this page's own "New change request" entry
+                    // point, or a Clone) there's no case context at all, so
+                    // `searchExtra` is undefined and the search stays exactly
+                    // the unscoped, system-wide search it's always been.
                     useSearch={useSearchServiceRequestsForSelect}
+                    searchExtra={fromCaseState?.projectId}
                     getId={(c) => c.id}
                     getLabel={caseSearchLabel}
-                    helperText="Links this change request back to the service request it was raised from."
+                    knownLabel={fromCaseKnownLabel}
+                    helperText={
+                      fromCaseState
+                        ? "Pre-filled from the service request you opened this from — change it if that's not right."
+                        : "Links this change request back to the service request it was raised from."
+                    }
                   />
                 </Box>
               </Box>

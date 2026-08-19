@@ -23,17 +23,27 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/scim"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
 
-// testUser is the authenticated user injected into request contexts.
+// testUser is the authenticated user injected into request contexts. UserID is
+// the identity provider's user id carried on the gateway-validated token — it
+// is NOT the platform's own user record id (see testPlatformUserID).
 var testUser = &middleware.UserInfo{
 	Email:  "agent@example.com",
-	UserID: "user-123",
+	UserID: "f2d9bf5b-7067-43dc-8578-802c8623af5d",
 	Groups: []string{"csm-agents"},
 }
+
+// testPlatformUserID is the id GET /users/me resolves for testUser: the
+// platform's own user record id, from a different id space than
+// testUser.UserID. Any check comparing a platform record's user reference
+// against the caller must use this one; the two values are deliberately kept
+// distinct here so a regression back to the token claim fails the tests.
+const testPlatformUserID = "94a1b01b-1b3c-f050-cb68-98aebd4bcb27"
 
 // withUser returns r with testUser stored in its context.
 func withUser(r *http.Request) *http.Request {
@@ -98,11 +108,23 @@ type mockEntityCaseClient struct {
 	deleteCaseAttachmentFn     func(ctx context.Context, attachmentID string) ([]byte, error)
 	createCallRequestFn        func(ctx context.Context, body []byte) ([]byte, error)
 	searchCallRequestsFn       func(ctx context.Context, body []byte) ([]byte, error)
+	searchAllCallRequestsFn    func(ctx context.Context, body []byte) ([]byte, error)
 	patchCallRequestFn         func(ctx context.Context, callRequestID string, body []byte) ([]byte, error)
 	createCaseGithubIssueFn    func(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	addCaseTagFn               func(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	removeCaseTagFn            func(ctx context.Context, caseID, tagID string) ([]byte, error)
-	searchTagsFn               func(ctx context.Context, query string, limit int) ([]byte, error)
+	searchTagsFn               func(ctx context.Context, body []byte) ([]byte, error)
+	getUserMeFn                func(ctx context.Context) ([]byte, error)
+}
+
+// GetUserMe defaults to the platform user record for testUser: note the id is
+// deliberately NOT testUser.UserID, mirroring production where the identity
+// provider's user id and the platform's own record id are unrelated values.
+func (m *mockEntityCaseClient) GetUserMe(ctx context.Context) ([]byte, error) {
+	if m.getUserMeFn != nil {
+		return m.getUserMeFn(ctx)
+	}
+	return []byte(`{"id":"` + testPlatformUserID + `","email":"` + testUser.Email + `"}`), nil
 }
 
 func (m *mockEntityCaseClient) CreateCase(ctx context.Context, body []byte) ([]byte, error) {
@@ -196,6 +218,13 @@ func (m *mockEntityCaseClient) SearchCallRequests(ctx context.Context, body []by
 	return []byte(`{"callRequests":[],"total":0,"limit":20,"offset":0}`), nil
 }
 
+func (m *mockEntityCaseClient) SearchAllCallRequests(ctx context.Context, body []byte) ([]byte, error) {
+	if m.searchAllCallRequestsFn != nil {
+		return m.searchAllCallRequestsFn(ctx, body)
+	}
+	return []byte(`{"callRequests":[],"total":0,"limit":20,"offset":0}`), nil
+}
+
 func (m *mockEntityCaseClient) PatchCallRequest(ctx context.Context, callRequestID string, body []byte) ([]byte, error) {
 	if m.patchCallRequestFn != nil {
 		return m.patchCallRequestFn(ctx, callRequestID, body)
@@ -224,9 +253,9 @@ func (m *mockEntityCaseClient) RemoveCaseTag(ctx context.Context, caseID, tagID 
 	return nil, nil
 }
 
-func (m *mockEntityCaseClient) SearchTags(ctx context.Context, query string, limit int) ([]byte, error) {
+func (m *mockEntityCaseClient) SearchTags(ctx context.Context, body []byte) ([]byte, error) {
 	if m.searchTagsFn != nil {
-		return m.searchTagsFn(ctx, query, limit)
+		return m.searchTagsFn(ctx, body)
 	}
 	return []byte(`{"tags":[]}`), nil
 }
@@ -255,13 +284,21 @@ func (m *mockUpdatesClient) SearchUpdatesBetweenUpdateLevels(ctx context.Context
 // ----- mock SCIM client -----
 
 type mockSCIMClient struct {
-	searchUserFn      func(ctx context.Context, email string) (*scim.UserInfo, error)
-	updateUserPhoneFn func(ctx context.Context, userID, mobile string) (*string, error)
+	searchUserFn         func(ctx context.Context, email string) (*scim.UserInfo, error)
+	searchExternalUserFn func(ctx context.Context, email string) (*scim.ExternalUserInfo, error)
+	updateUserPhoneFn    func(ctx context.Context, userID, mobile string) (*string, error)
 }
 
 func (m *mockSCIMClient) SearchUser(ctx context.Context, email string) (*scim.UserInfo, error) {
 	if m.searchUserFn != nil {
 		return m.searchUserFn(ctx, email)
+	}
+	return nil, nil
+}
+
+func (m *mockSCIMClient) SearchExternalUser(ctx context.Context, email string) (*scim.ExternalUserInfo, error) {
+	if m.searchExternalUserFn != nil {
+		return m.searchExternalUserFn(ctx, email)
 	}
 	return nil, nil
 }
@@ -289,24 +326,35 @@ func (m *mockEntityUserClient) GetUser(ctx context.Context, id string) ([]byte, 
 	return []byte(`{"id":"` + id + `","email":"","roles":[],"groups":[],"teams":[]}`), nil
 }
 
-// mockEntityReferenceClient stubs the role-catalogue and team-registry calls.
-type mockEntityReferenceClient struct {
-	searchRolesFn func(ctx context.Context, body []byte) ([]byte, error)
-	searchTeamsFn func(ctx context.Context, body []byte) ([]byte, error)
-}
+// testTeamRegistry is a representative registry in its configured wire form: an
+// account-based team with a family and a backing group id, a bare row with
+// neither (some real rows legitimately have only two fields), and a team from
+// the other discipline. Every name is an invented placeholder.
+const testTeamRegistry = "abt-1|ABT One|cre-abt|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa," +
+	"abt-2|ABT Two," +
+	"beta|Beta Team|sre-abt|bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
-func (m *mockEntityReferenceClient) SearchRoles(ctx context.Context, body []byte) ([]byte, error) {
-	if m.searchRolesFn != nil {
-		return m.searchRolesFn(ctx, body)
-	}
-	return []byte(`{"roles":[],"total":0,"offset":0,"limit":50}`), nil
-}
+// testRoles is a two-entry allow-list, small enough that "the catalogue is
+// exactly what was configured" is a cheap assertion.
+const testRoles = "agent,timecard_approver"
 
-func (m *mockEntityReferenceClient) SearchTeams(ctx context.Context, body []byte) ([]byte, error) {
-	if m.searchTeamsFn != nil {
-		return m.searchTeamsFn(ctx, body)
+// testDirectory builds the startup-resolved catalogue a handler is constructed
+// with, from the same parse path main() uses.
+func testDirectory(t *testing.T) *directory.Directory {
+	t.Helper()
+	teams, err := directory.ParseTeamRegistry(testTeamRegistry)
+	if err != nil {
+		t.Fatalf("ParseTeamRegistry(%q): %v", testTeamRegistry, err)
 	}
-	return []byte(`{"teams":[],"total":0,"offset":0,"limit":50}`), nil
+	roles, err := directory.ParseRoles(testRoles)
+	if err != nil {
+		t.Fatalf("ParseRoles(%q): %v", testRoles, err)
+	}
+	dir, err := directory.New(teams, roles)
+	if err != nil {
+		t.Fatalf("directory.New: %v", err)
+	}
+	return dir
 }
 
 func (m *mockEntityUserClient) GetUserMe(ctx context.Context) ([]byte, error) {
@@ -428,12 +476,13 @@ func (m *mockEntityProductClient) SearchProductVersions(ctx context.Context, pro
 // ----- mock entity incident client -----
 
 type mockEntityIncidentClient struct {
-	searchIncidentsFn func(ctx context.Context, body []byte) ([]byte, error)
-	createIncidentFn  func(ctx context.Context, body []byte) ([]byte, error)
-	getIncidentFn     func(ctx context.Context, id string) ([]byte, error)
-	patchIncidentFn   func(ctx context.Context, id string, body []byte) ([]byte, error)
-	createCommentFn   func(ctx context.Context, body []byte) ([]byte, error)
-	searchCommentsFn  func(ctx context.Context, body []byte) ([]byte, error)
+	searchIncidentsFn          func(ctx context.Context, body []byte) ([]byte, error)
+	createIncidentFn           func(ctx context.Context, body []byte) ([]byte, error)
+	getIncidentFn              func(ctx context.Context, id string) ([]byte, error)
+	patchIncidentFn            func(ctx context.Context, id string, body []byte) ([]byte, error)
+	createCommentFn            func(ctx context.Context, body []byte) ([]byte, error)
+	searchCommentsFn           func(ctx context.Context, body []byte) ([]byte, error)
+	searchIncidentActivitiesFn func(ctx context.Context, id string, body []byte) ([]byte, error)
 }
 
 func (m *mockEntityIncidentClient) SearchIncidents(ctx context.Context, body []byte) ([]byte, error) {
@@ -476,6 +525,13 @@ func (m *mockEntityIncidentClient) SearchComments(ctx context.Context, body []by
 		return m.searchCommentsFn(ctx, body)
 	}
 	return []byte(`{"comments":[],"total":0,"limit":20,"offset":0}`), nil
+}
+
+func (m *mockEntityIncidentClient) SearchIncidentActivities(ctx context.Context, id string, body []byte) ([]byte, error) {
+	if m.searchIncidentActivitiesFn != nil {
+		return m.searchIncidentActivitiesFn(ctx, id, body)
+	}
+	return []byte(`{"activity":[],"total":0,"limit":20,"offset":0,"hasMore":false}`), nil
 }
 
 // ----- mock entity problem client -----
@@ -634,6 +690,7 @@ type mockEntityTimeCardClient struct {
 	searchTimeCardsFn func(ctx context.Context, body []byte) ([]byte, error)
 	createTimeCardFn  func(ctx context.Context, body []byte) ([]byte, error)
 	updateTimeCardFn  func(ctx context.Context, id string, body []byte) ([]byte, error)
+	deleteTimeCardFn  func(ctx context.Context, id string) ([]byte, error)
 }
 
 func (m *mockEntityTimeCardClient) SearchTimeCards(ctx context.Context, body []byte) ([]byte, error) {
@@ -655,6 +712,13 @@ func (m *mockEntityTimeCardClient) UpdateTimeCard(ctx context.Context, id string
 		return m.updateTimeCardFn(ctx, id, body)
 	}
 	return []byte(`{"timeCard":{"id":"` + id + `","state":"submitted"}}`), nil
+}
+
+func (m *mockEntityTimeCardClient) DeleteTimeCard(ctx context.Context, id string) ([]byte, error) {
+	if m.deleteTimeCardFn != nil {
+		return m.deleteTimeCardFn(ctx, id)
+	}
+	return []byte(`{"message":"Time card deleted"}`), nil
 }
 
 // ----- mock entity deployment client -----

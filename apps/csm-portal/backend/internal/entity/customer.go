@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 )
 
 // CreateCase calls POST /cases on the entity service.
@@ -113,18 +112,6 @@ func (c *CustomerEntityClient) GetUser(ctx context.Context, id string) ([]byte, 
 	return c.do(ctx, http.MethodGet, fmt.Sprintf("/users/%s", url.PathEscape(id)), nil)
 }
 
-// SearchRoles calls POST /roles/search on the entity service.
-// Response is returned as raw JSON.
-func (c *CustomerEntityClient) SearchRoles(ctx context.Context, body []byte) ([]byte, error) {
-	return c.do(ctx, http.MethodPost, "/roles/search", body)
-}
-
-// SearchTeams calls POST /teams/search on the entity service.
-// Response is returned as raw JSON.
-func (c *CustomerEntityClient) SearchTeams(ctx context.Context, body []byte) ([]byte, error) {
-	return c.do(ctx, http.MethodPost, "/teams/search", body)
-}
-
 // GetAccount calls GET /accounts/{id} on the entity service.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) GetAccount(ctx context.Context, id string) ([]byte, error) {
@@ -201,6 +188,12 @@ func (c *CustomerEntityClient) GetIncident(ctx context.Context, id string) ([]by
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) PatchIncident(ctx context.Context, id string, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/incidents/%s", url.PathEscape(id)), body)
+}
+
+// SearchIncidentActivities calls POST /incidents/{id}/activities/search on the entity service.
+// Response is returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) SearchIncidentActivities(ctx context.Context, id string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, fmt.Sprintf("/incidents/%s/activities/search", url.PathEscape(id)), body)
 }
 
 // SearchProblems calls POST /problems/search on the entity service.
@@ -307,6 +300,11 @@ func (c *CustomerEntityClient) UpdateTimeCard(ctx context.Context, id string, bo
 	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/time-cards/%s", url.PathEscape(id)), body)
 }
 
+// DeleteTimeCard calls DELETE /time-cards/{id} on the entity service.
+func (c *CustomerEntityClient) DeleteTimeCard(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/time-cards/%s", url.PathEscape(id)), nil)
+}
+
 // CreateCaseAttachment calls POST /attachments on the entity service.
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) CreateCaseAttachment(ctx context.Context, body []byte) ([]byte, error) {
@@ -365,6 +363,13 @@ func (c *CustomerEntityClient) CreateCallRequest(ctx context.Context, body []byt
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) SearchCallRequests(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/call-requests/search", body)
+}
+
+// SearchAllCallRequests calls POST /call-requests/search-all on the entity service
+// (standalone call request search, not scoped to a parent case). Response is
+// returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) SearchAllCallRequests(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/call-requests/search-all", body)
 }
 
 // PatchCallRequest calls PATCH /call-requests/{id} on the entity service.
@@ -477,19 +482,8 @@ func (c *CustomerEntityClient) RemoveCaseTag(ctx context.Context, caseID, tagID 
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/cases/%s/tags/%s", url.PathEscape(caseID), url.PathEscape(tagID)), nil)
 }
 
-// SearchTags calls GET /tags/search on the entity service.
-// Response is returned as raw JSON; typed response structs are deferred.
-func (c *CustomerEntityClient) SearchTags(ctx context.Context, query string, limit int) ([]byte, error) {
-	params := url.Values{}
-	if query != "" {
-		params.Set("q", query)
-	}
-	if limit > 0 {
-		params.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/tags/search"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
-	return c.do(ctx, http.MethodGet, path, nil)
+// SearchTags calls POST /tags/search on the entity service.
+// The request body is forwarded verbatim; the response is returned as raw JSON.
+func (c *CustomerEntityClient) SearchTags(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/tags/search", body)
 }

@@ -14,13 +14,37 @@
 # specific language governing permissions and limitations
 # under the License.
 
+# ⚠️ NOT RUNNABLE IN CI YET — session provisioning is unsolved.
+#
+# The specs authenticate by replaying a captured browser session from
+# apps/customer-portal/webapp/tests/e2e/storageState/session.json. That file
+# holds real tokens and is git-ignored, so it does not exist on a runner. Without
+# it withSession() skips every test and the job exits 0 — a green tick that means
+# "nothing ran", not "E2E passed". The guard step below turns that into an
+# explicit failure instead.
+#
+# Before enabling this on push/PR, three things need settling:
+#   1. Session provisioning — inject a bundle from a secret, or drive a real
+#      login. Access tokens expire in well under an hour, so a stored secret goes
+#      stale between runs.
+#   2. Target environment — .env.e2e points at staging with E2E_NO_WEBSERVER=1,
+#      so the build/preview steps below are currently inert: the tests never hit
+#      localhost:3000. (They could not anyway — public/config.js is git-ignored,
+#      so a preview build boots without runtime config.) Either drop those steps
+#      or capture a localhost session and override E2E_BASE_URL here.
+#   3. Test data — the creation specs write to a REAL backend and there is no
+#      delete endpoint, so every run leaves permanent cases and service requests.
+#      Only the "Create Case — validation" suite is side-effect free.
+#
+# Kept as workflow_dispatch-only until the above is resolved.
+
 name: END TO END TESTS
 
 on:
   #push:
     #branches:
       #- customer-portal-milestone-1
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   e2e:
@@ -46,6 +70,18 @@ jobs:
           node-version: 20
           cache: pnpm
           cache-dependency-path: apps/customer-portal/webapp/pnpm-lock.yaml
+
+      # Fail fast rather than reporting a green "all skipped" run. withSession()
+      # skips every spec when the bundle is absent, which Playwright counts as
+      # success — so without this check the job passes having tested nothing.
+      - name: Verify E2E session bundle is present
+        run: |
+          if [ ! -f tests/e2e/storageState/session.json ]; then
+            echo "::error::No tests/e2e/storageState/session.json on the runner."
+            echo "::error::Every spec would skip and this job would pass without testing anything."
+            echo "::error::See the header of .github/workflows/e2e-tests.yml — CI session provisioning is not solved yet."
+            exit 1
+          fi
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

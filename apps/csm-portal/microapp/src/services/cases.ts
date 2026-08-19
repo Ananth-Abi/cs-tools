@@ -32,6 +32,8 @@ import type {
   CaseSearchFiltersDto,
   CaseSearchPayloadDto,
   CaseSearchResponseDto,
+  CaseSeverity,
+  CaseState,
   CaseType,
   CaseViewDto,
   CreatedCaseDto,
@@ -50,12 +52,65 @@ export interface CaseSearchResult {
   hasMore: boolean;
 }
 
+interface CaseFieldFilter {
+  field: string;
+  op: "eq" | "in" | "notIn" | "isEmpty" | "isNotEmpty" | "gte" | "lte";
+  values?: string[];
+}
+
+// The literal `values` entry a createdBy+eq filter must carry to mean "the authenticated
+// caller" — mirrors entity-service's case_filters.go currentUserFilterPlaceholder.
+const CURRENT_USER_FILTER_PLACEHOLDER = "__current_user_email__";
+
+// /cases/search's wire contract is the generic field/op/values filter array (see
+// entity-service's case_filters.go ParseCaseFieldFilters), not the named-field shape
+// CaseSearchFiltersDto's callers build for convenience — mirrors the webapp's
+// buildCaseSearchFilters (caseSearchPayload.ts). This is the one place that translates between
+// them, so every call site below can keep building the convenience shape.
+function toWireFilters(filters: CaseSearchFiltersDto = {}): { searchQuery?: string; filters?: CaseFieldFilter[] } {
+  const fieldFilters: CaseFieldFilter[] = [];
+  if (filters.types?.length) fieldFilters.push({ field: "type", op: "in", values: filters.types });
+  if (filters.states?.length) fieldFilters.push({ field: "state", op: "in", values: filters.states });
+  if (filters.severities?.length) fieldFilters.push({ field: "severity", op: "in", values: filters.severities });
+  if (filters.workStates?.length) fieldFilters.push({ field: "workState", op: "in", values: filters.workStates });
+  if (filters.issueTypes?.length) fieldFilters.push({ field: "issueType", op: "in", values: filters.issueTypes });
+  if (filters.engagementTypes?.length)
+    fieldFilters.push({ field: "engagementType", op: "in", values: filters.engagementTypes });
+  if (filters.projectIds?.length) fieldFilters.push({ field: "projectId", op: "in", values: filters.projectIds });
+  if (filters.deploymentIds?.length)
+    fieldFilters.push({ field: "deploymentId", op: "in", values: filters.deploymentIds });
+  if (filters.assignedUserIds?.length)
+    fieldFilters.push({ field: "assignedUserId", op: "in", values: filters.assignedUserIds });
+  if (filters.productNames?.length) fieldFilters.push({ field: "product", op: "in", values: filters.productNames });
+  if (filters.createdByMe)
+    fieldFilters.push({ field: "createdBy", op: "eq", values: [CURRENT_USER_FILTER_PLACEHOLDER] });
+  if (filters.parentId) fieldFilters.push({ field: "parentId", op: "eq", values: [filters.parentId] });
+
+  return {
+    ...(filters.searchQuery && { searchQuery: filters.searchQuery }),
+    ...(fieldFilters.length > 0 && { filters: fieldFilters }),
+  };
+}
+
+// The one place any caller — inside this module or elsewhere in the app — should hit
+// `/cases/search` from: applies the CaseSearchFiltersDto -> wire-contract translation above, so
+// no other module needs to know the endpoint expects the generic filter array. Exported (not just
+// used internally) for announcements.ts/engagements.ts/securityReports.ts, which each scope the
+// same endpoint to one case `type` and previously posted to it directly with the old shape.
+export async function postCasesSearch(payload: CaseSearchPayloadDto = {}): Promise<CaseSearchResponseDto> {
+  const { data } = await apiClient.post<CaseSearchResponseDto>(CASES_SEARCH_ENDPOINT, {
+    ...payload,
+    filters: toWireFilters(payload.filters),
+  });
+  return data;
+}
+
 // Exported (not just used internally) so the Home dashboard's composition query can fan out
 // count-only searches (`pagination: { limit: 1 }`, read `.total`) without going through the
 // `cases.all` query-options wrapper — mirrors the webapp's useCaseComposition.ts, which calls its
 // api client directly for the same reason.
 export const getAllCases = async (payload: CaseSearchPayloadDto = {}): Promise<CaseSearchResult> => {
-  const { data } = await apiClient.post<CaseSearchResponseDto>(CASES_SEARCH_ENDPOINT, payload);
+  const data = await postCasesSearch(payload);
   const items = data.cases.map(toCaseSummary);
   return {
     items,
@@ -224,6 +279,58 @@ const postComment = async (id: string, payload: CaseCommentCreatePayloadDto): Pr
 
 const CASES_PAGE_LIMIT = 20;
 
+export interface ChildCaseRow {
+  id: string;
+  number: string;
+  subject: string;
+  severity: CaseSeverity | null;
+  state: CaseState;
+  assigneeName: string | null;
+}
+
+const CHILD_CASES_LIMIT = 20;
+
+// Child cases of `parentCaseId` — cases whose own `parentId` points at it (the hierarchical
+// major-case/child-case relationship). Reuses the general cross-project search rather than a
+// dedicated endpoint, mirroring the webapp's useSearchChildCases. Single page (20 cases) — a case
+// with more children than that isn't expected, same assumption the webapp makes.
+const searchChildCases = async (parentCaseId: string): Promise<{ cases: ChildCaseRow[]; total: number }> => {
+  const result = await getAllCases({
+    filters: { types: ALL_CASE_TYPES, parentId: parentCaseId },
+    pagination: { offset: 0, limit: CHILD_CASES_LIMIT },
+  });
+  return {
+    cases: result.items.map((c) => ({
+      id: c.id,
+      number: c.number,
+      subject: c.subject,
+      severity: c.severity,
+      state: c.state,
+      assigneeName: c.assignedEngineer?.name ?? null,
+    })),
+    total: result.total,
+  };
+};
+
+// Don't fire LinkCaseDialog's search until the user has typed something searchable — mirrors the
+// webapp's QUICK_CASE_MIN_QUERY_LEN.
+export const QUICK_SEARCH_MIN_QUERY_LEN = 2;
+const QUICK_SEARCH_LIMIT = 8;
+
+// Free-text case lookup for LinkCaseDialog's search-and-pick — the same `/cases/search` the cases
+// list itself uses. Explicitly requests every case sub-type (mirrors the webapp's
+// useQuickCaseSearch): entity-service defaults `filters.types` to `["case"]` only when the caller
+// omits it, which would otherwise hide service requests/security reports/etc. from this search.
+const quickSearchCases = async (query: string): Promise<CaseSummary[]> => {
+  const trimmed = query.trim();
+  if (trimmed.length < QUICK_SEARCH_MIN_QUERY_LEN) return [];
+  const result = await getAllCases({
+    filters: { types: ALL_CASE_TYPES, searchQuery: trimmed },
+    pagination: { offset: 0, limit: QUICK_SEARCH_LIMIT },
+  });
+  return result.items;
+};
+
 export const cases = {
   all: (payload: CaseSearchPayloadDto = {}) =>
     queryOptions({
@@ -256,6 +363,26 @@ export const cases = {
     queryOptions({
       queryKey: ["case", id, "comments"],
       queryFn: () => getCaseComments(id),
+    }),
+
+  // Linked Items tab: child cases (own `parentId` pointing at this one) — shared by both the
+  // Child cases card and Linked service requests' enrichment (same underlying relationship, see
+  // that widget's own comment), so both queries dedupe against this one cache entry.
+  searchChildren: (caseId: string | undefined) =>
+    queryOptions({
+      queryKey: ["cases", "children", caseId ?? ""],
+      queryFn: () => (caseId ? searchChildCases(caseId) : Promise.resolve({ cases: [], total: 0 })),
+      enabled: !!caseId,
+      staleTime: 30_000,
+    }),
+
+  // Linked Items tab: LinkCaseDialog's search-and-pick.
+  quickSearch: (query: string) =>
+    queryOptions({
+      queryKey: ["cases", "quick-search", query.trim()],
+      queryFn: () => quickSearchCases(query),
+      enabled: query.trim().length >= QUICK_SEARCH_MIN_QUERY_LEN,
+      staleTime: 15_000,
     }),
 
   create: createCase,

@@ -111,6 +111,15 @@ var validCaseSeverity = map[domain.CaseSeverity]bool{
 	domain.CaseSeverityLow:          true,
 }
 
+// validCaseGroupByField is the allow-list for GroupCasesByRequest.GroupBy,
+// matching openapi.yaml's GroupCasesByRequest.groupBy enum exactly.
+var validCaseGroupByField = map[string]bool{
+	"account":  true,
+	"state":    true,
+	"severity": true,
+	"type":     true,
+}
+
 var validCaseIssueType = map[domain.CaseIssueType]bool{
 	domain.CaseIssueTypeError:                  true,
 	domain.CaseIssueTypePartialOutage:          true,
@@ -471,6 +480,14 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 		parsed.EndUpdatedDate.Before(*parsed.StartUpdatedDate) {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "updatedOn: lte value must not be before gte value"}
 	}
+	// resolvedOn has no backing column in the relational schema and
+	// caseRepo.SearchCases models no predicate for it, so accepting it here
+	// would drop the bound silently and answer 200 with every case rather
+	// than the resolved-in-range ones asked for. Reject, same as every other
+	// predicate this data source cannot express.
+	if parsed.ResolvedStartDate != nil || parsed.ResolvedEndDate != nil {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "resolvedOn" is not supported by this data source`}
+	}
 
 	// These fields dot-walk into ServiceNow-specific concepts (tags,
 	// project-onboarding-status, integration-CS-team, etc.) that have no
@@ -482,6 +499,11 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if len(parsed.ExcludeTags) > 0 {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "tag" (notIn) is not supported by this data source`}
 	}
+	// state+in is supported here; state+notIn has no repository query support,
+	// and dropping an exclusion silently would widen the result set.
+	if len(parsed.ExcludeStates) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "state" (notIn) is not supported by this data source`}
+	}
 	if parsed.ParentID != nil {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "parentId" is not supported by this data source`}
 	}
@@ -491,11 +513,14 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if len(parsed.ProjectOnboardingStatuses) > 0 {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "projectOnboardingStatus" is not supported by this data source`}
 	}
-	if len(parsed.ProjectTypeIDs) > 0 {
+	if len(parsed.ProjectTypeNames) > 0 {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "projectType" is not supported by this data source`}
 	}
-	if len(parsed.IntegrationCsTeamIDs) > 0 {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "integrationCsTeam" is not supported by this data source`}
+	if len(parsed.CreTeamIDs) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "creTeam" is not supported by this data source`}
+	}
+	if len(parsed.SreTeamIDs) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "sreTeam" is not supported by this data source`}
 	}
 	if parsed.Unassigned {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "assignedUserId" (isEmpty) is not supported by this data source`}
@@ -520,8 +545,8 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	if parsed.HasActiveEscalation != nil {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: `field "escalation" is not supported by this data source`}
 	}
-	if len(req.Filters.OrGroups) > 0 {
-		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "orGroups is not supported by this data source"}
+	if len(req.Filters.AnyOf) > 0 {
+		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "anyOf is not supported by this data source"}
 	}
 	if req.GroupBy != "" {
 		return domain.SearchCasesResponse{}, &apierror.ValidationError{Msg: "groupBy is not supported by this data source"}
@@ -553,6 +578,10 @@ func (s *caseService) SearchCases(ctx context.Context, req domain.SearchCasesReq
 	}, nil
 }
 
+func (s *caseService) GroupCasesBy(_ context.Context, _ domain.GroupCasesByRequest) (domain.GroupByResponse, error) {
+	return domain.GroupByResponse{}, &apierror.ServiceUnavailableError{Msg: "groupBy is only supported for the ServiceNow data source"}
+}
+
 func (s *caseService) CreateCaseAttachment(_ context.Context, _ domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error) {
 	return domain.CreateAttachmentResponse{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
 }
@@ -581,7 +610,7 @@ func (s *caseService) RemoveCaseTag(_ context.Context, _, _ string) error {
 	return &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
 }
 
-func (s *caseService) SearchTags(_ context.Context, _ string, _ int) ([]domain.Tag, error) {
+func (s *caseService) SearchTags(_ context.Context, _ domain.SearchTagsRequest) ([]domain.Tag, error) {
 	return nil, &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
 }
 

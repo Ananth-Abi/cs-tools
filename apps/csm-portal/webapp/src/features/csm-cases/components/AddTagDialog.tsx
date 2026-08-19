@@ -42,7 +42,7 @@ interface AddTagDialogProps {
 /**
  * Add a tag to a case (`POST /cases/{id}/tags`). Tags are a curated,
  * pre-existing vocabulary, not free text — this is search-and-SELECT only:
- * it searches existing labels via `GET /tags/search` as the user types
+ * it searches existing labels via `POST /tags/search` as the user types
  * (debounced), but there is no "create a new tag" fallback for typed text
  * with no match. ServiceNow-source only; the caller surfaces a rejection on
  * another source.

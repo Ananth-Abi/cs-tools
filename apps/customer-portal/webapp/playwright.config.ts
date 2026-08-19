@@ -15,6 +15,26 @@
 // under the License.
 
 import { defineConfig, devices } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// This package is ESM ("type": "module"), so __dirname does not exist — derive
+// the config's own directory so the env files resolve regardless of cwd.
+const CONFIG_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+// Load E2E env files (see .env.e2e for the documented variables). Uses node's
+// built-in loader rather than a dotenv dependency, and it never overwrites a
+// variable already present in the environment — so precedence is:
+//   real env / CLI  >  .env.e2e.local (personal, git-ignored)  >  .env.e2e
+// Load order matters: the first file to define a key wins, so the personal
+// override file is read first.
+for (const file of [".env.e2e.local", ".env.e2e"]) {
+  const envPath = path.join(CONFIG_DIR, file);
+  if (fs.existsSync(envPath)) {
+    process.loadEnvFile(envPath);
+  }
+}
 
 // Base URL of the locally-served app (vite dev server, see vite.config.ts).
 // Override with E2E_BASE_URL to point at a deployed environment, and set

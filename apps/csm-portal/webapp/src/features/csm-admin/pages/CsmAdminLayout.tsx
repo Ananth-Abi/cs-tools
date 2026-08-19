@@ -14,24 +14,74 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Typography } from "@wso2/oxygen-ui";
-import { type JSX, Suspense } from "react";
-import { Outlet } from "react-router";
+import { Box, Button, Typography } from "@wso2/oxygen-ui";
+import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
+import { type JSX, Suspense, useMemo } from "react";
+import { Outlet, useLocation, useNavigate } from "react-router";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import SectionTabs from "@components/section-tabs/SectionTabs";
 import { useRouteTabs } from "@hooks/useSectionTabs";
+import { useCurrentUser } from "@context/current-user/CurrentUserContext";
+import { hasDashboardBuilderAccess } from "@features/csm-admin/dashboards/utils/dashboardBuilderAccess";
+
+/** The tile-grid landing route itself — everything deeper under it gets the back link below. */
+const USER_MANAGEMENT_INDEX_PATH = "/admin/user-management";
 
 /**
- * Settings shell. The tabs come from the navigation tree, so which of Users /
- * Roles / Groups / Permissions this deployment offers (and which are chipped as
- * work in progress) is decided by `CSM_PORTAL_FEATURE_OVERRIDES` rather than
- * hardcoded here.
+ * Settings shell. A single top-level tab strip, driven by the navigation
+ * tree, for [User management, Dashboards]. User management no longer has its
+ * own nested tab strip underneath it — its Users/Roles/Groups/Teams/
+ * Permissions directories are chosen from a tile grid instead
+ * (`CsmUserManagementLandingPage`, rendered at the `user-management` index
+ * route). Since a directory page reached via a tile has no tab strip to
+ * click back through, this shell adds an explicit "Back to User management"
+ * link at the top of the page -- before the "Settings" title, matching every
+ * other page's Back button position -- whenever the current route is one
+ * level or more below that index route.
+ *
+ * The "Dashboards" tab is additionally filtered by the signed-in user's own
+ * admin role (frontend-only — see `dashboardBuilderAccess.ts` for why this
+ * tab specifically needs it, unlike its sibling). This never removes a tab
+ * `CSM_PORTAL_FEATURE_OVERRIDES` itself hid/marked WIP — it only ever narrows
+ * what a non-admin sees further.
  */
 export default function CsmAdminLayout(): JSX.Element {
-  const tabs = useRouteTabs("admin");
+  const { user } = useCurrentUser();
+  const isAdmin = hasDashboardBuilderAccess(user?.roles);
+  const allTabs = useRouteTabs("admin");
+  const tabs = useMemo(() => {
+    const visible = allTabs.tabs.filter((tab) => tab.node.id !== "admin.dashboards" || isAdmin);
+    // `allTabs.activeKey` was resolved against the UNFILTERED list — if
+    // filtering it out here just removed the active one (a non-admin whose
+    // URL still names it), fall back to this narrower list's own first tab
+    // rather than handing `<Tabs>` a `value` with no matching `<Tab>`.
+    const activeKey = visible.some((tab) => tab.key === allTabs.activeKey)
+      ? allTabs.activeKey
+      : (visible[0]?.key ?? "");
+    return { ...allTabs, tabs: visible, activeKey };
+  }, [allTabs, isAdmin]);
+
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const showBackToUserManagement = pathname.startsWith(`${USER_MANAGEMENT_INDEX_PATH}/`);
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      {/* Top of the page, before the title -- same position every other
+          page's Back button uses (see `UserProfilePage.tsx`/
+          `CsmProjectDetailPage.tsx`), not tucked below the tab strip. */}
+      {showBackToUserManagement && (
+        <Button
+          variant="text"
+          size="small"
+          startIcon={<ArrowLeft size={16} />}
+          onClick={() => navigate(USER_MANAGEMENT_INDEX_PATH)}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          Back to User management
+        </Button>
+      )}
+
       <Typography variant="h5">Settings</Typography>
 
       <SectionTabs {...tabs} ariaLabel="Settings tabs" scrollable />

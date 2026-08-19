@@ -16,6 +16,7 @@
 
 import {
   Box,
+  Button,
   Chip,
   Skeleton,
   Table,
@@ -28,16 +29,19 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { useMemo, useState, type ChangeEvent, type JSX } from "react";
-import { Link as RouterLink } from "react-router";
+import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
+import { useMemo, useState, type ChangeEvent, type JSX, type KeyboardEvent } from "react";
+import { useLocation } from "react-router";
 import QueryErrorState from "@components/QueryErrorState";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
+import { useNavTransition } from "@hooks/useNavTransition";
 import { useSearchAccounts } from "@features/csm-accounts/api/useSearchAccounts";
 import {
   resolveAccountTier,
   type SearchAccountsRequest,
 } from "@features/csm-accounts/types/csmAccounts";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
+import RefreshButton from "@components/RefreshButton";
 
 const DEFAULT_ROWS_PER_PAGE = 20;
 // Top option is the backend's max page limit; larger requests are rejected.
@@ -56,6 +60,11 @@ function formatDate(value?: string | null): string {
 }
 
 export default function CsmAccountsPage(): JSX.Element {
+  const navigate = useNavTransition();
+  const location = useLocation();
+  // Set by a dashboard widget's click-through, since this page has no
+  // dashboard context of its own.
+  const backState = location.state as { from?: string } | undefined;
   const [searchInput, setSearchInput] = useState("");
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
@@ -72,7 +81,8 @@ export default function CsmAccountsPage(): JSX.Element {
     };
   }, [debouncedSearch, page, rowsPerPage]);
 
-  const { data, isLoading, isFetching, isError, error } = useSearchAccounts(request);
+  const { data, isLoading, isFetching, isError, error, refetch, dataUpdatedAt } =
+    useSearchAccounts(request);
 
   const handleSearchChange = (e: ChangeEvent<HTMLInputElement>) => {
     setSearchInput(e.target.value);
@@ -89,9 +99,29 @@ export default function CsmAccountsPage(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <Typography variant="body2" color="text.secondary">
-        Search across account name and Salesforce ID (case-insensitive).
-      </Typography>
+      {backState?.from && (
+        <Button
+          variant="text"
+          size="small"
+          startIcon={<ArrowLeft size={16} />}
+          onClick={() => navigate(backState.from as string)}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          Back
+        </Button>
+      )}
+
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="body2" color="text.secondary">
+          Search across account name and Salesforce ID (case-insensitive).
+        </Typography>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label="Refresh accounts"
+        />
+      </Box>
 
       <TextField
         size="small"
@@ -148,20 +178,35 @@ export default function CsmAccountsPage(): JSX.Element {
               ) : (
                 accounts.map((a) => {
                   const tier = resolveAccountTier(a);
+                  const goToAccount = (): void =>
+                    navigate(`/customers/accounts/${a.id}`, {
+                      state: { from: `${location.pathname}${location.search}` },
+                    });
+                  const handleRowKeyDown = (e: KeyboardEvent<HTMLTableRowElement>): void => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      goToAccount();
+                    }
+                  };
                   return (
-                    <TableRow key={a.id} hover>
+                    <TableRow
+                      key={a.id}
+                      hover
+                      onClick={goToAccount}
+                      onKeyDown={handleRowKeyDown}
+                      tabIndex={0}
+                      aria-label={`View account ${a.name}`}
+                      sx={{
+                        cursor: "pointer",
+                        "&:focus-visible": {
+                          outline: "2px solid",
+                          outlineColor: "primary.main",
+                          outlineOffset: -2,
+                        },
+                      }}
+                    >
                       <TableCell>
-                        <Typography
-                          component={RouterLink}
-                          to={`/customers/accounts/${a.id}`}
-                          variant="body2"
-                          sx={(t) => ({
-                            textDecoration: "none",
-                            color: t.palette.primary.dark,
-                            ...t.applyStyles("dark", { color: t.palette.primary.main }),
-                            "&:hover": { textDecoration: "underline" },
-                          })}
-                        >
+                        <Typography variant="body2" noWrap>
                           {a.name}
                         </Typography>
                       </TableCell>

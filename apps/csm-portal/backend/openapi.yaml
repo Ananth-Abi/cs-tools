@@ -129,9 +129,9 @@ paths:
       summary: Update a support case.
       description: |
         Updates exactly one field of the case. Provide exactly one of: `state`, `severity`,
-        `workState`, `watchList`, `assigneeEmail`, `parentId`, `subject`, `description`,
-        `deploymentId`, `deployedProductId`, `relatedCaseId`, `autocloseHoldUntil`,
-        `bestCaseFixEta`, `mostLikelyFixEta`, or `worstCaseFixEta`.
+        `workState`, `watchList`, `assigneeEmail`, `parentId`, `acknowledge`, `subject`,
+        `description`, `deploymentId`, `deployedProductId`, `relatedCaseId`,
+        `autocloseHoldUntil`, `bestCaseFixEta`, `mostLikelyFixEta`, or `worstCaseFixEta`.
         `watchList`, `assigneeEmail`, `parentId`, and `autocloseHoldUntil` are supported only when
         the ServiceNow data source is active.
       operationId: patchCasesId
@@ -534,6 +534,68 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CaseCommentSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incidents/{id}/activities/search:
+    post:
+      summary: Search the activity trail of an incident.
+      description: >
+        Confirmed as a distinct endpoint from POST /cases/{id}/activities/search, built on
+        the same underlying activity-search mechanism. The request body is forwarded to
+        the integration service as-is and the response is returned verbatim. Set
+        includeFieldChanges to also include per-field value changes.
+      operationId: postIncidentsIdActivitiesSearch
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the incident.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        description: Incident activity search payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseActivitySearchPayload'
+        required: false
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseActivitySearchResponse'
         "400":
           description: BadRequest
           content:
@@ -974,8 +1036,10 @@ paths:
       summary: Search the role catalogue.
       description: >
         The platform's curated set of assignable role keys — the same values the user search
-        accepts in roleIds. The body is optional; omitting it returns the first page
-        unfiltered.
+        accepts in roleIds, from the same configured allow-list, so the dropdown and the
+        filter can never disagree. The list is deployment configuration resolved once at
+        startup and served from memory, so this endpoint makes no upstream call. The body
+        is optional; omitting it returns the first page unfiltered.
       operationId: postRolesSearch
       requestBody:
         description: Role search payload
@@ -1021,7 +1085,9 @@ paths:
       summary: Search the team registry.
       description: >
         A team's id is its registry key, which is stable across environments — unlike the
-        backing group's id. The body is optional.
+        backing group's id. The registry is deployment configuration resolved once at
+        startup, including each team's family and the UUID form of its backing group id,
+        and served from memory: this endpoint makes no upstream call. The body is optional.
       operationId: postTeamsSearch
       requestBody:
         description: Team search payload
@@ -1630,8 +1696,9 @@ paths:
       description: >
         Returns every dashboard registered in the config-driven pilot: its
         id, display name, and whether it is the default dashboard. This is a
-        registry loaded from the DASHBOARDS_CONFIG environment variable at
-        startup, not user-configurable at runtime.
+        registry loaded at startup from a directory of per-dashboard JSON
+        files (one file per dashboard, its filename irrelevant), held in
+        memory; not user-configurable at runtime.
       operationId: getDashboards
       responses:
         "200":
@@ -1671,8 +1738,9 @@ paths:
         endpoint (POST /{resourceType}s/search). The caller resolves each
         widget's own data by issuing that search itself; this endpoint does
         not read any resource data. This is a config-driven pilot: widget
-        templates are a registry loaded from the DASHBOARDS_CONFIG
-        environment variable at startup, not user-configurable at runtime.
+        templates are a registry loaded at startup from a directory of
+        per-dashboard JSON files, held in memory; not user-configurable at
+        runtime.
       operationId: getDashboardDetail
       parameters:
         - name: dashboardId
@@ -2293,6 +2361,55 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /call-requests/search:
+    post:
+      summary: Search call requests across all cases, filtered by assignee/state.
+      description: >
+        Returns a paginated list of call requests (ServiceNow data source only). Call
+        requests are inherently case-related; this endpoint provides independent search
+        and filtering capabilities across cases, distinct from
+        /cases/{id}/call-requests/search which is scoped to a single case. Forwards to
+        the entity service's /call-requests/search-all, which keeps its "-all" suffix
+        to stay distinct from that service's own case-scoped sibling path.
+      operationId: searchAllCallRequests
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchAllCallRequestsPayload'
+      responses:
+        "200":
+          description: Call requests matching the supplied filters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCallRequestsResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /cases/{caseId}/call-requests/{callRequestId}:
     patch:
       summary: Update a call request (ServiceNow data source only). Alias with caseId param name.
@@ -2543,27 +2660,106 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
 
   /tags/search:
-    get:
-      summary: Search existing free-text tags by label (ServiceNow data source only).
+    post:
+      summary: Search existing free-text tags by label.
       description: >
-        Forwards the q and limit query parameters to the integration service as-is and
-        returns the matching tags.
+        Forwards the request body to the integration service as-is and returns the
+        matching tags. Only supported when the backing data source provides tags.
       operationId: searchTags
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filters:
+                  type: object
+                  properties:
+                    searchQuery:
+                      type: string
+                      maxLength: 200
+                      description: >
+                        Free-text query matched partially and case-insensitively against
+                        tag labels. Omit or leave empty to return all known tags.
+                        A longer value is rejected upstream with a validation error.
+                limit:
+                  type: integer
+                  default: 20
+                  minimum: 0
+                  maximum: 100
+                  description: Maximum number of tags to return. Omit or 0 to use the default.
+      responses:
+        "200":
+          description: Matching tags.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tags]
+                properties:
+                  tags:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Tag'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    get:
+      summary: Search existing free-text tags by label (deprecated query-parameter form).
+      description: >
+        Deprecated: use `POST /tags/search` instead. This alias accepts the old
+        `q`/`limit` query parameters, translates them into the POST request body and
+        forwards that upstream, so the response is identical. It exists only to bridge
+        one release so this service and its callers can be deployed independently, and
+        is removed after that.
+      operationId: searchTagsByQuery
+      deprecated: true
       security:
         - bearerAuth: []
       parameters:
         - name: q
           in: query
           required: false
-          description: Free-text search query matched against tag labels.
           schema:
             type: string
+            maxLength: 200
+          description: >
+            Free-text query matched partially and case-insensitively against tag labels.
+            Equivalent to `filters.searchQuery` on the POST. Omit to return all known tags.
+            A longer value is rejected upstream with a validation error.
         - name: limit
           in: query
           required: false
-          description: Maximum number of tags to return.
           schema:
             type: integer
+            default: 20
+            minimum: 0
+            maximum: 100
+          description: Maximum number of tags to return. Equivalent to `limit` on the POST.
       responses:
         "200":
           description: Matching tags.
@@ -3980,6 +4176,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+    delete:
+      summary: >
+        Delete a time card (ServiceNow data source only). Only validates that
+        id is a well-formed UUID; the entity service (and, underneath it,
+        ServiceNow) enforces that the caller is the card's own submitter and
+        that it's still in the submitted state, the same trust model the
+        PATCH operation above uses.
+      operationId: deleteTimeCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the time card.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Time card deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteTimeCardResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Time card not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
 
   /incidents/search:
     post:
@@ -4656,13 +4907,19 @@ components:
         timeCard:
           $ref: '#/components/schemas/TimeCardView'
 
+    DeleteTimeCardResponse:
+      type: object
+      properties:
+        message:
+          type: string
+
     UpdateCaseRequest:
       type: object
       description: |
         Exactly one of `state`, `severity`, `workState`, `watchList`, `assigneeEmail`, `parentId`,
-        `subject`, `description`, `deploymentId`, `deployedProductId`, `relatedCaseId`,
-        `autocloseHoldUntil`, `bestCaseFixEta`, `mostLikelyFixEta`, or `worstCaseFixEta`
-        must be provided. `watchList`, `assigneeEmail`, `parentId`, and `autocloseHoldUntil` are
+        `acknowledge`, `subject`, `description`, `deploymentId`, `deployedProductId`,
+        `relatedCaseId`, `autocloseHoldUntil`, `bestCaseFixEta`, `mostLikelyFixEta`, or
+        `worstCaseFixEta` must be provided. `watchList`, `assigneeEmail`, `parentId`, and `autocloseHoldUntil` are
         supported only for the ServiceNow data source.
         `resolutionCode`, `cause`, and `closeNotes` are optional resolution fields that may only be
         provided alongside `state: closed` or `state: solution_proposed`.
@@ -4673,6 +4930,7 @@ components:
         - required: [watchList]
         - required: [assigneeEmail]
         - required: [parentId]
+        - required: [acknowledge]
         - required: [subject]
         - required: [description]
         - required: [deploymentId]
@@ -4705,6 +4963,17 @@ components:
           type: string
           format: email
           description: Email of the engineer to assign to this case (ServiceNow only).
+        acknowledge:
+          type: boolean
+          enum: [true]
+          description: |
+            Acknowledge the case as the calling engineer: a first-write-wins claim that
+            someone has seen it and picked it up, which is distinct from assignment.
+            Succeeds without changing anything if the case is already acknowledged, in
+            which case the response carries `alreadyAcknowledged: true`. Only `true` is
+            accepted; there is no way to remove an acknowledgement. Requires an elevated
+            support role, and is supported only by data sources that record
+            acknowledgement.
         resolutionCode:
           $ref: '#/components/schemas/CaseResolutionCode'
           description: Resolution code — only allowed when state is closed or solution_proposed.
@@ -4825,6 +5094,22 @@ components:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
+        number:
+          type: string
+          description: Human-readable case number. Returned only when the update acknowledged the case.
+        alreadyAcknowledged:
+          type: boolean
+          description: |
+            True when the case already had an acknowledger, so the request changed nothing
+            and `acknowledgedBy` names whoever claimed it first. Returned only when the
+            update set `acknowledge`.
+        acknowledgedBy:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/AssignedEngineerRef'
+          description: |
+            Engineer who now holds the acknowledgement, whether this request set it or
+            found it already set. Returned only when the update set `acknowledge`.
         resolutionCode:
           $ref: '#/components/schemas/CaseResolutionCode'
           nullable: true
@@ -5066,9 +5351,15 @@ components:
             - product
             - projectOnboardingStatus
             - projectType
-            - integrationCsTeam
+            - creTeam
+            - sreTeam
             - resolutionNotes
             - parentId
+            - taskSLABusinessElapsedPercent
+            - escalationLevel
+            - escalation
+            - number
+            - internalId
         op:
           type: string
           enum: [eq, in, notIn, isEmpty, isNotEmpty, gte, lte]
@@ -5093,8 +5384,12 @@ components:
 
         - **type** (in): case type, one of case/service_request/
           security_report_analysis/announcement/engagement.
-        - **state** (in): one of open/work_in_progress/waiting_on_wso2/
-          awaiting_info/reopened/solution_proposed/closed.
+        - **state** (in / notIn): one of open/work_in_progress/
+          waiting_on_wso2/awaiting_info/reopened/solution_proposed/closed. in
+          matches cases in any of the given states; notIn matches cases in
+          none of them. The two are independent and may be combined. notIn is
+          not supported inside an anyOf branch, and not supported by the
+          relational data source.
         - **severity** (in): one of catastrophic/critical/high/medium/low.
           Only applicable when a type filter includes case.
         - **engagementType** (in): one of migration/consultancy/
@@ -5130,16 +5425,42 @@ components:
         - **projectOnboardingStatus** (in): free-text SN choice labels for the
           parent project's onboarding status (e.g. "Completed",
           "Not-Applicable" -- not a closed enum at this layer).
-        - **projectType** (in): the parent project's type, as project-type
-          UUIDs.
-        - **integrationCsTeam** (in): the parent account's integration CS
-          team, as team UUIDs.
+        - **projectType** (in): the parent project's type, matched by the
+          project type's name (e.g. "Subscription").
+        - **creTeam** (in): the parent account's CRE (Customer Renewal &
+          Expansion) team, as team UUIDs.
+        - **sreTeam** (in): the parent account's SRE (Site Reliability
+          Engineering) team, as team UUIDs. Distinct from creTeam -- an
+          account can be assigned to both a CRE and an SRE team
+          independently.
         - **resolutionNotes** (isEmpty): values ignored; matches cases with
           empty resolution notes. isNotEmpty is not supported: false and
           omitted were always treated identically for this filter, so there
           is no distinct "resolution notes present" behavior to express.
         - **parentId** (eq): a single case UUID; matches child cases of that
           case (the hierarchical major-case/child-case relationship).
+        - **taskSLABusinessElapsedPercent** (gte / lte): a non-negative
+          integer. Matches cases with at least one Task SLA record whose
+          businessElapsedPercent falls within the given bound(s) (both bounds
+          may be supplied together to express a range, e.g. gte 75 + lte 100
+          for "at risk or breached"). Not capped at 100: a long-overdue,
+          never-resolved SLA's percentage keeps climbing well past it (values
+          in the tens of thousands are real, observed data), so 100 means
+          "breached", not "the maximum possible value". Only applied by the
+          ServiceNow data source (a Task SLA table join); filtering logic is
+          confined to the SN adapter.
+        - **escalationLevel** (in): one or more escalation level ids, "0"
+          (EL0, not escalated) through "5" (EL5, CEO). Matches cases whose
+          current escalation level is any of the given ids.
+        - **escalation** (isEmpty / isNotEmpty): values ignored; isEmpty
+          matches cases with no active escalation, isNotEmpty matches cases
+          with an active escalation.
+        - **number** (eq): a single case number (e.g. "CS0441174"); matches
+          exactly. Routed as a first-class filter rather than through the
+          free-text searchQuery scan.
+        - **internalId** (eq): a single WSO2 case id; matches exactly. Routed
+          as a first-class filter rather than through the free-text
+          searchQuery scan.
 
     CaseSearchFilters:
       type: object
@@ -5219,8 +5540,20 @@ components:
             - user
             - time_card
             - problem
+            - incident_task
             - product_vulnerability
-          description: Which resource's /search endpoint this widget's filters target
+            - call_request
+            - service_request
+            - security_report_analysis
+            - announcement
+            - engagement
+          description: >
+            Which resource's /search endpoint this widget's filters target.
+            service_request, security_report_analysis, announcement and
+            engagement are additional values of the case-search "type" field
+            (see Case's own type enum) exposed as their own widget
+            resourceType alongside case itself — all five route to the same
+            POST /cases/search.
         shape:
           type: string
           enum:
@@ -5230,39 +5563,71 @@ components:
             - bar
           description: >
             How the widget's data should be rendered once resolved. shapes
-            "pie" and "bar" both resolve one search per slices entry, the
-            same way "count" resolves its own single search (see slices
-            below) — they differ only in how the frontend renders the same
-            resolved data (wedges vs. bars), not in how it's fetched.
+            "pie" and "bar" resolve via either "slices" (one search per
+            entry) or "groupBy" (one server-side aggregation call) — see
+            both below — and differ from each other only in how the
+            frontend renders the same resolved data (wedges vs. bars), not
+            in how it's fetched.
         gridWidth:
           type: integer
           minimum: 1
           maximum: 12
           description: CSS grid columns out of 12 this widget should occupy
-        filters:
+        query:
           type: object
           additionalProperties: true
           description: >
-            Filter criteria for this widget, with any current-user
-            placeholder already substituted. Pass this directly as the
-            filters of that resourceType's own POST /{resourceType}s/search
-            request to resolve the widget's data. For shapes "pie"/"bar"
-            this is a shared base merged under every slices entry's own
-            filters (caller-side; slices entry keys win on conflict) rather
-            than queried on its own.
+            Search criteria for this widget, exactly as configured — any
+            "__current_user__"/"__current_team__" placeholder a filter value
+            carries is left unresolved for the caller to substitute
+            client-side before use. Pass this directly as the filters of
+            that resourceType's own POST /{resourceType}s/search request to
+            resolve the widget's data. For shapes "pie"/"bar" this is a
+            shared base merged under every slices entry's own query
+            (caller-side; slices entry keys win on conflict) rather than
+            queried on its own.
         groupBy:
-          type: string
-          description: Unused
+          type: object
+          description: >
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "slices" — a widget carries exactly one of the two (enforced at
+            dashboard-load time). Configures a single server-side
+            aggregation call instead of one search per literal slice: the
+            caller issues one POST /{resourceType}/group-by request (filters
+            = this widget's own query) and maps the response's groups/
+            othersCount into the same per-slice shape "slices" already
+            produces.
+          properties:
+            field:
+              type: string
+              description: >
+                Which field to group by. Each resourceType enforces its own
+                small allowlist server-side; an unsupported value is
+                rejected by the group-by call itself with a 400, not caught
+                here.
+            maxGroups:
+              type: integer
+              description: >
+                Top-N cutoff by count, descending; the remainder is summed
+                into one "Others" bucket. Omitted/zero defers to the
+                group-by endpoint's own default (12).
+            othersLabel:
+              type: string
+              description: >
+                Overrides the default "Others" label for the summed
+                remainder bucket.
+          required: [field]
         listLimit:
           type: integer
           description: Only meaningful for shape list; how many records to show
         slices:
           type: array
           description: >
-            Only meaningful for shapes "pie"/"bar": one search per entry,
-            each resolved via its own total, the same mechanism shape
-            "count" uses. Merge each entry's filters under this widget's
-            own filters (entry keys win on conflict) before searching.
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "groupBy": one search per entry, each resolved via its own
+            total, the same mechanism shape "count" uses. Merge each
+            entry's query under this widget's own query (entry keys win on
+            conflict) before searching.
           items:
             type: object
             properties:
@@ -5275,13 +5640,15 @@ components:
                   uses elsewhere in this system; not validated here, forwarded
                   verbatim. Falls back to a fixed rotation over the same
                   palette on the frontend if omitted.
-              filters:
+              query:
                 type: object
                 additionalProperties: true
                 description: >
-                  This slice's own criteria only, with any current-user
-                  placeholder already substituted — merge under the parent
-                  widget's own filters to resolve this slice's total.
+                  This slice's own criteria only, exactly as configured — any
+                  "__current_user__"/"__current_team__" placeholder a filter
+                  value carries is left unresolved for the caller to
+                  substitute client-side — merge under the parent widget's
+                  own query to resolve this slice's total.
         section:
           type: string
           description: >
@@ -5290,6 +5657,46 @@ components:
             value first appears among the dashboard's widgets. Widgets
             with no section (the common case) render in one untitled
             group, same as before this field existed.
+        columns:
+          type: array
+          description: >
+            Only meaningful for shape "list": an ordered set of columns the
+            frontend should render instead of that resourceType's own
+            hardcoded list renderer. Absent/empty renders exactly as before
+            this field existed (the existing hardcoded per-resourceType
+            renderer).
+          items:
+            type: object
+            properties:
+              path:
+                type: string
+                description: >
+                  Dot-separated path into one item of that resourceType's
+                  own /search response, reaching into nested objects to
+                  arbitrary depth (e.g. "project.key",
+                  "project.account.tier") — search responses embed related
+                  entities as nested JSON objects, not flat records. Not
+                  validated server-side; a path that resolves to nothing
+                  renders that cell empty.
+              label:
+                type: string
+                description: Column header text.
+              format:
+                type: string
+                description: >
+                  Rendering hint. Omitted (or "text") renders plain text;
+                  "date" formats a date/date-time value the same way the
+                  frontend's existing hardcoded list renderers already do.
+        sortBy:
+          type: object
+          additionalProperties: true
+          description: >
+            Only meaningful for shape "list": opaque sort criteria, forwarded
+            verbatim as the sortBy object of that resourceType's own POST
+            /{resourceType}s/search request — same passthrough philosophy as
+            query/filters. Not validated here; an unsupported field name for
+            that resourceType is surfaced by that resource's own /search
+            endpoint, not caught here.
 
     DashboardListItem:
       type: object
@@ -5299,9 +5706,41 @@ components:
           description: Static id of the dashboard
         displayName:
           type: string
+        type:
+          type: string
+          enum: [cre, sre, cs]
+          description: >
+            Who the dashboard is built for. This is the field automatic
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
+            `cre` and `sre` are team-scoped and always carry
+            isTeamBased true; `cs` is organisation-wide and always carries it
+            false — the loader rejects any other combination at startup.
+            Omitted only for a definition that predates the field, which is
+            possible solely via the deprecated single-variable configuration.
         isDefault:
           type: boolean
-          description: Whether this is the default dashboard to show first
+          description: >
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
+        defaultForTeamKeys:
+          type: array
+          items:
+            type: string
+          description: >
+            Team registry keys (not group ids) that should land a
+            signed-in user on this dashboard by default, regardless of its
+            own type/isDefault/isTeamBased — an identity override resolved
+            client-side against the signed-in user's own team key. Most
+            dashboards leave this empty and rely on type-based selection
+            instead; it exists for a dashboard built for one specific
+            team's own workflow rather than the type/family model.
         isTeamBased:
           type: boolean
           description: >
@@ -5318,9 +5757,29 @@ components:
           description: Static id of the dashboard
         displayName:
           type: string
+        type:
+          type: string
+          enum: [cre, sre, cs]
+          description: >
+            Who the dashboard is built for. This is the field automatic
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
+            `cre` and `sre` are team-scoped and always carry
+            isTeamBased true; `cs` is organisation-wide and always carries it
+            false — the loader rejects any other combination at startup.
+            Omitted only for a definition that predates the field, which is
+            possible solely via the deprecated single-variable configuration.
         isDefault:
           type: boolean
-          description: Whether this is the default dashboard to show first
+          description: >
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
         targetTeam:
           type: string
           description: >
@@ -5487,12 +5946,25 @@ components:
 
     DeployedProductRef:
       type: object
+      description: >-
+        A deployed product instance, together with the product catalogue entry it
+        was deployed from. The two are different records with different ids; they
+        often read alike because a catalogue name usually already embeds its
+        version. id and displayName are null when the case names a catalogue
+        product but no deployed instance of it.
       properties:
         id:
           type: string
           format: uuid
+          nullable: true
         displayName:
           type: string
+          nullable: true
+          description: Product name combined with version (e.g. "API Manager 4.3.0").
+        product:
+          nullable: true
+          $ref: '#/components/schemas/EntityRef'
+          description: Product catalogue entry this instance was deployed from.
 
     CaseView:
       type: object
@@ -5562,8 +6034,6 @@ components:
           nullable: true
           description: Timestamp when the case was closed. null if not yet closed.
         createdBy:
-          $ref: '#/components/schemas/UserRef'
-        createdByUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
@@ -5577,10 +6047,11 @@ components:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/DeployedProductRef'
-        product:
-          nullable: true
-          allOf:
-            - $ref: '#/components/schemas/EntityRef'
+          description: |
+            Deployed product instance named by the case, together with the product
+            catalogue entry it was deployed from. A case can name a catalogue product
+            without naming a deployed instance of it, in which case this object is still
+            returned with id and displayName null and product populated.
         catalog:
           nullable: true
           allOf:
@@ -5598,11 +6069,18 @@ components:
           allOf:
             - $ref: '#/components/schemas/EntityRef'
         assignedEngineer:
-          $ref: '#/components/schemas/AssignedEngineerRef'
-        assignedEngineerUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
+          description: Engineer assigned to the case, or null when unassigned.
+        acknowledgedBy:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/AssignedEngineerRef'
+          description: |
+            Engineer who acknowledged the case, or null if nobody has. Cleared by the
+            backing data source when the case's type or severity changes or it is
+            reopened, so a materially changed case has to be acknowledged again.
         parentCase:
           $ref: '#/components/schemas/CaseNumberRef'
         relatedCase:
@@ -5786,8 +6264,6 @@ components:
           nullable: true
           description: Timestamp when the case was closed. null if not yet closed.
         createdBy:
-          $ref: '#/components/schemas/UserIDEmailRef'
-        createdByUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
@@ -5806,11 +6282,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/EntityRef'
         assignedEngineer:
-          $ref: '#/components/schemas/AssignedEngineerRef'
-        assignedEngineerUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
+          description: Engineer assigned to the case, or null when unassigned.
         parentCase:
           $ref: '#/components/schemas/CaseNumberRef'
         relatedCase:
@@ -5876,9 +6351,15 @@ components:
           type: string
         family:
           type: string
+          enum: [cre-abt, cre, sre-abt, sre]
           description: >
-            Team family classification. May be empty: not every team is
-            classified into a family.
+            Team family classification. The `-abt` variants are account-based teams; the
+            bare variants classify a member of the same discipline who is not on an
+            account-based team. Omitted when the team is not classified into a family:
+            not every team is. This is the field a discipline-scoped team picker *can*
+            filter on: it is what would let an SRE-scoped dashboard offer only
+            `sre-abt` teams. Nothing does so yet. Today's picker renders every team
+            this endpoint returns, and the scoping is a follow-up.
 
     UserUpdatePayload:
       type: object
@@ -5984,13 +6465,28 @@ components:
           type: string
         family:
           type: string
-        groupId:
+          enum: [cre-abt, cre, sre-abt, sre]
+          description: >
+            Team family classification. The `-abt` variants are account-based teams; the
+            bare variants classify a member of the same discipline who is not on an
+            account-based team. Omitted when the team is not classified into a family:
+            not every team is. This is the field a discipline-scoped team picker filters
+            on via `SearchTeamsRequest.filters.family` — an SRE-scoped dashboard's picker
+            requests `sre-abt` and gets only those teams back.
+        creGroupId:
           type: string
           description: >
-            The backing group's id, suitable for the case search integrationCsTeamIds
-            filter. Present only when the deployment's team registry configured a
-            backing group id for this team; a team without one is still listed, just
-            not filter-scopable.
+            The backing CRE (Customer Renewal & Expansion) group's id, suitable for the
+            case search creTeamIds filter. Present only when the deployment's team
+            registry configured a backing CRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
+        sreGroupId:
+          type: string
+          description: >
+            The backing SRE (Site Reliability Engineering) group's id, suitable for the
+            case search sreTeamIds filter. Present only when the deployment's team
+            registry configured a backing SRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
 
     SearchTeamsRequest:
       type: object
@@ -6000,6 +6496,13 @@ components:
           properties:
             searchQuery:
               type: string
+            family:
+              type: string
+              enum: [cre-abt, cre, sre-abt, sre]
+              description: >
+                Restrict results to teams whose family exactly matches (case-insensitive).
+                A team with no family configured never matches. Used by a discipline-scoped
+                picker, e.g. a `cre`-type dashboard's team selector passes `cre-abt`.
         pagination:
           $ref: '#/components/schemas/UserPagination'
 
@@ -6038,6 +6541,15 @@ components:
           type: string
         family:
           type: string
+          enum: [cre-abt, cre, sre-abt, sre]
+          description: >
+            Team family classification. The `-abt` variants are account-based teams; the
+            bare variants classify a member of the same discipline who is not on an
+            account-based team. Omitted when the team is not classified into a family:
+            not every team is. This is the field a discipline-scoped team picker *can*
+            filter on: it is what would let an SRE-scoped dashboard offer only
+            `sre-abt` teams. Nothing does so yet. Today's picker renders every team
+            this endpoint returns, and the scoping is a follow-up.
 
     UserProjectAccess:
       type: object
@@ -6076,8 +6588,9 @@ components:
     SNUserDetail:
       type: object
       description: >
-        One user's full profile. The membership and project-access blocks are best-effort:
-        each is empty rather than absent when its upstream lookup fails.
+        One user's full profile. The membership, project-access, and externalAccount blocks
+        are best-effort: each is empty/absent rather than failing the whole request when its
+        upstream lookup fails.
       allOf:
         - $ref: '#/components/schemas/SNUser'
         - type: object
@@ -6095,6 +6608,27 @@ components:
               description: Present for external contacts only.
               items:
                 $ref: '#/components/schemas/UserProjectAccess'
+            externalAccount:
+              allOf:
+                - $ref: '#/components/schemas/ExternalAccountStatus'
+              description: >
+                SCIM "external" org existence/lock status. Present for external contacts only
+                (userType other than internal); absent when the SCIM lookup itself failed.
+
+    ExternalAccountStatus:
+      type: object
+      description: SCIM "external" org existence/lock status for one user.
+      required: [exists, locked]
+      properties:
+        exists:
+          type: boolean
+          description: Whether the user's account exists in the SCIM "external" org.
+        locked:
+          type: boolean
+          nullable: true
+          description: >
+            Whether the account is locked. Null when the account does not exist or the lock
+            state could not be determined.
 
     UserSearchFilters:
       type: object
@@ -6127,9 +6661,14 @@ components:
           description: Restrict to members of these groups. ServiceNow data source only.
         teamIds:
           type: array
+          maxItems: 50
           items:
             type: string
-          description: Restrict to members of these teams, by team key. ServiceNow data source only.
+          description: >
+            Restrict to members of these teams, by team key, as returned by POST
+            /teams/search. Each key is resolved to its group name from the startup-resolved
+            registry before the membership query runs; a key that is not in the registry is
+            a 400, not an empty result. ServiceNow data source only.
         userNames:
           type: array
           maxItems: 50
@@ -7314,8 +7853,6 @@ components:
         content:
           type: string
         createdBy:
-          type: string
-        createdByUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
@@ -7383,8 +7920,6 @@ components:
         type:
           type: string
         createdBy:
-          type: string
-        createdByUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
@@ -7565,8 +8100,6 @@ components:
           type: string
           nullable: true
         createdBy:
-          type: string
-        createdByUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
@@ -7790,6 +8323,12 @@ components:
               type: string
               format: date-time
               description: Filter change requests closed on or before this UTC datetime (optional)
+            number:
+              type: string
+              description: >-
+                A single change request number (e.g. "CHG0010001"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
         sortBy:
           type: object
           properties:
@@ -8399,6 +8938,54 @@ components:
                   default: 20
                   maximum: 100
 
+    SearchAllCallRequestsPayload:
+      type: object
+      additionalProperties: false
+      properties:
+        filters:
+          type: object
+          additionalProperties: false
+          properties:
+            assignedUserIds:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: Filter by the parent case's assigned user(s).
+            states:
+              type: array
+              items:
+                type: string
+                enum:
+                  - pending_on_customer
+                  - pending_on_wso2
+                  - scheduled
+                  - customer_rejected
+                  - wso2_rejected
+                  - canceled
+                  - notes_pending
+                  - concluded
+              description: Filter by one or more states.
+        sortBy:
+          type: object
+          additionalProperties: false
+          properties:
+            field:
+              type: string
+              enum: [createdOn, updatedOn, scheduleTime]
+              description: Field to sort by.
+            order:
+              type: string
+              enum: [asc, desc]
+              description: Sort direction.
+        pagination:
+          allOf:
+            - $ref: '#/components/schemas/Pagination'
+            - properties:
+                limit:
+                  default: 20
+                  maximum: 100
+
     CallRequestView:
       type: object
       properties:
@@ -8591,22 +9178,10 @@ components:
           format: date-time
           description: Timestamp when the message was created.
         createdBy:
-          type: object
-          description: Author of the message.
-          properties:
-            id:
-              type: string
-              description: User identifier (email).
-            firstName:
-              type: string
-            lastName:
-              type: string
-            fullName:
-              type: string
-        createdByUser:
           nullable: true
           allOf:
             - $ref: '#/components/schemas/UserReference'
+          description: Author of the message.
 
     ConversationMessagesResponse:
       type: object
@@ -8644,11 +9219,22 @@ components:
               type: array
               items:
                 type: string
-                enum: [ACTIVE, RESOLVED]
+                enum: [ACTIVE, RESOLVED, CONVERTED, ABANDONED, CLOSED]
+            number:
+              type: string
+              description: >-
+                A single conversation number (e.g. "CHAT0000012345"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
             searchQuery:
               type: string
             createdByMe:
               type: boolean
+            createdBy:
+              type: array
+              items:
+                type: string
+              description: Filter to conversations initiated by any of these email addresses.
         sortBy:
           type: object
           properties:
@@ -8691,7 +9277,7 @@ components:
         state:
           type: string
           nullable: true
-          enum: [ACTIVE, RESOLVED]
+          enum: [ACTIVE, RESOLVED, CONVERTED, ABANDONED, CLOSED]
         createdOn:
           type: string
         createdBy:
@@ -8965,6 +9551,12 @@ components:
               items:
                 type: string
                 format: uuid
+            number:
+              type: string
+              description: >-
+                A single incident number (e.g. "INC0010001"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
         sortBy:
           type: object
           properties:
@@ -9392,6 +9984,12 @@ components:
           properties:
             searchQuery:
               type: string
+            number:
+              type: string
+              description: >-
+                A single problem number (e.g. "PRB0010001"); matches exactly.
+                Routed as a first-class filter rather than through the
+                free-text searchQuery scan.
         pagination:
           allOf:
             - $ref: '#/components/schemas/Pagination'

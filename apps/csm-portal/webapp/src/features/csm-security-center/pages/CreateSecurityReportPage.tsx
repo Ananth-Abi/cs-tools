@@ -29,7 +29,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type JSX } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 
 import { BackendApiError } from "@api/backend/client";
 import Editor from "@components/rich-text-editor/Editor";
@@ -73,6 +73,13 @@ export default function CreateSecurityReportPage(): JSX.Element {
   // the searchable picker is shown.
   const [searchParams] = useSearchParams();
   const lockedProjectId = searchParams.get("projectId") ?? "";
+
+  // Set when opened from a project's page Create menu (state: { from:
+  // "/customers/projects/:id" }), so Back/Cancel return there instead of the
+  // hardcoded Security Center list, and the newly created report's own Back
+  // button (reading this same convention) returns there too.
+  const backState = useLocation().state as { from?: string } | undefined;
+  const backTarget = backState?.from ?? "/security-center";
 
   const [projectId, setProjectId] = useState(lockedProjectId);
   const [deploymentId, setDeploymentId] = useState("");
@@ -173,7 +180,9 @@ export default function CreateSecurityReportPage(): JSX.Element {
           `The security report was created, but ${failed} attachment${failed === 1 ? "" : "s"} failed to upload. You can add ${failed === 1 ? "it" : "them"} from the report page.`,
         );
       }
-      navigate(`/security-center/security-reports/${created.id}`);
+      navigate(`/security-center/security-reports/${created.id}`, {
+        state: { from: backTarget },
+      });
     } catch (err) {
       setSubmitting(false);
       // The backend surfaces real validation messages on 4xx; show them.
@@ -190,10 +199,10 @@ export default function CreateSecurityReportPage(): JSX.Element {
       <Button
         variant="text"
         startIcon={<ArrowLeft size={16} />}
-        onClick={() => navigate("/security-center")}
+        onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to Security Center
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: 2 }}>
         New security report
@@ -342,7 +351,7 @@ export default function CreateSecurityReportPage(): JSX.Element {
         </Grid>
 
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, mt: 2.5 }}>
-          <Button variant="outlined" onClick={() => navigate("/security-center")}>
+          <Button variant="outlined" onClick={() => navigate(backTarget)}>
             Cancel
           </Button>
           <Button

@@ -121,4 +121,37 @@ describe("stripLightModeInlineStyles", () => {
     const cyan = stripLightModeInlineStyles('<span style="color: #2fffff;">x</span>');
     expect(cyan).toContain("color: #2fffff");
   });
+
+  it("removes a light pastel background (e.g. a ServiceNow call-note highlight)", () => {
+    const out = stripLightModeInlineStyles(
+      '<div style="background-color: #bce4e8; padding: 0.01em 16px;">x</div>',
+    );
+    expect(out).not.toContain("background-color");
+    expect(out).toContain("padding: 0.01em 16px");
+  });
+
+  it("removes a mid-gray background whose contrast against light text is below WCAG AA", () => {
+    // #808080 (luminance ~0.216) contrasts with white text at ~3.95:1, below
+    // the 4.5:1 AA minimum for normal text — a fixed 0.55 luminance cutoff
+    // missed this; the contrast-derived threshold must catch it.
+    const out = stripLightModeInlineStyles(
+      '<div style="background-color: #808080;">x</div>',
+    );
+    expect(out).not.toContain("background-color");
+  });
+
+  it("still removes near-white backgrounds (no regression)", () => {
+    const hex = stripLightModeInlineStyles('<div style="background-color: #f4f4f4;">x</div>');
+    expect(hex).not.toContain("background-color");
+    const rgb = stripLightModeInlineStyles('<div style="background: rgb(250, 250, 250);">x</div>');
+    expect(rgb).not.toContain("rgb(250");
+  });
+
+  it("leaves a dark/saturated background alone", () => {
+    const out = stripLightModeInlineStyles(
+      '<div style="background-color: #1a1a1a; color: red;">x</div>',
+    );
+    expect(out).toContain("background-color: #1a1a1a");
+    expect(out).toContain("color: red");
+  });
 });

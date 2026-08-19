@@ -23,9 +23,11 @@
 //
 // The backend has no bulk (approve/reject a whole batch) endpoint, no
 // delegation, and no reports/aggregates endpoint — those features from the
-// earlier FE-first mock are not available here. Cards come back flat; any
-// visual grouping (by case or by engineer) is done client-side in
-// `TimeCardsTable`, not here — see `timeCardGrouping.ts`.
+// earlier FE-first mock are not available here. Bulk approve (see
+// `useBulkApproveCards` below) is a frontend-only approximation: N parallel
+// calls to the same single-card PATCH, not a real batch request. Cards come
+// back flat; any visual grouping (by case or by engineer) is done
+// client-side in `TimeCardsTable`, not here — see `timeCardGrouping.ts`.
 //
 
 import {
@@ -40,7 +42,7 @@ import { ApiQueryKeys, BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { resolveUserInfo } from "@utils/userClaims";
 import { useGetUsersMe } from "@features/settings/api/useGetUsersMe";
-import { useBackendApi, type BackendApi } from "@api/backend/client";
+import { BackendApiError, useBackendApi, type BackendApi } from "@api/backend/client";
 import type {
   BeSearchTimeCardsFilters,
   BeSearchTimeCardsPayload,
@@ -90,6 +92,12 @@ export function invalidateTimecards(queryClient: QueryClient): void {
   }
 }
 
+/** Wire `issueComplexity` values the entity-service is confirmed to return
+ * (see `IssueComplexity`) — anything else (an older/renamed value) maps to
+ * `undefined` rather than a bogus cast, since the edit form's `<select>`
+ * would otherwise silently show nothing selected for an unrecognized value. */
+const KNOWN_ISSUE_COMPLEXITIES: readonly string[] = ["N/A", "Low", "Medium", "High"];
+
 /**
  * Map the backend's `TimeCardView` to the portal's `CsmTimeCard`. `totalTime`
  * is already whole minutes on the wire (see `usePostTimeCard`'s note on why),
@@ -101,8 +109,20 @@ export function invalidateTimecards(queryClient: QueryClient): void {
  * read the same underlying value, so the fallback is a no-op in practice.
  * `approvedBy` / `rejectionReason` are mutually exclusive: only one of them is
  * ever populated (see {@link CsmTimeCard}).
+ *
+ * `breakdown`/`issueComplexity` are only set when the wire response actually
+ * carries the per-activity minute fields — confirmed live to be present on
+ * every real card, but a defensive per-field fallback (rather than assuming
+ * the whole group is always there) costs nothing and matches how the rest of
+ * this mapper already treats every other optional wire field.
  */
 export function mapTimeCard(v: BeTimeCardView): CsmTimeCard {
+  const hasBreakdown =
+    v.timeAnalyzing !== undefined ||
+    v.timeSettingUp !== undefined ||
+    v.timeReproducingDebugging !== undefined ||
+    v.timeProvidingSolution !== undefined ||
+    v.timePatching !== undefined;
   return {
     id: v.id,
     caseId: v.case?.id ?? "",
@@ -119,6 +139,20 @@ export function mapTimeCard(v: BeTimeCardView): CsmTimeCard {
     approvedByName: v.approvedBy?.name,
     rejectionReason: v.rejectionReason ?? undefined,
     approvers: v.approvers,
+    workLogComment: v.workLogComment ?? undefined,
+    breakdown: hasBreakdown
+      ? {
+          analysisDebugging: v.timeAnalyzing ?? 0,
+          reproduce: v.timeReproducingDebugging ?? 0,
+          settingUp: v.timeSettingUp ?? 0,
+          providingSolution: v.timeProvidingSolution ?? 0,
+          answering: v.timePatching ?? 0,
+        }
+      : undefined,
+    issueComplexity:
+      v.issueComplexity && KNOWN_ISSUE_COMPLEXITIES.includes(v.issueComplexity)
+        ? (v.issueComplexity as CsmTimeCard["issueComplexity"])
+        : undefined,
   };
 }
 
@@ -305,6 +339,71 @@ export function useDecideCard(): UseMutationResult<
       );
       return mapTimeCard(res.timeCard);
     },
+    onSuccess: () => invalidateTimecards(queryClient),
+  });
+}
+
+/** Outcome of {@link useBulkApproveCards}: which cards actually got approved
+ * versus which ones failed, each with its own reason — a bulk request is
+ * fanned out as N independent single-card PATCHes (see the module doc
+ * comment: the backend has no batch endpoint), so a partial result, not just
+ * all-or-nothing, is the normal case. E.g. another approver decides one of
+ * the selected cards first, or the caller turns out not to be an eligible
+ * approver for one specific card (see `useDecideCard`'s own note on this same
+ * 403 behavior). */
+export interface BulkApproveResult {
+  succeededIds: string[];
+  failed: { cardId: string; message: string }[];
+}
+
+/**
+ * Approve several cards at once. Fires one `PATCH /time-cards/{id}` per card
+ * in parallel (`Promise.allSettled`, never rejecting the mutation itself, so
+ * a failure on one card never stops the others from completing) and
+ * aggregates the outcome into {@link BulkApproveResult} for the caller to
+ * report. Approve only, not reject — a bulk reject would need a per-card
+ * reason (the backend requires a non-empty `leadComment` to reject, see
+ * `TimeCardReviewDialog`), which doesn't multiplex across an arbitrary
+ * selection the way a single "approved" state does.
+ */
+export function useBulkApproveCards(): UseMutationResult<
+  BulkApproveResult,
+  Error,
+  string[]
+> {
+  const api = useBackendApi();
+  const queryClient = useQueryClient();
+  return useMutation<BulkApproveResult, Error, string[]>({
+    mutationFn: async (cardIds): Promise<BulkApproveResult> => {
+      const payload: BeUpdateTimeCardPayload = { state: "approved" };
+      const outcomes = await Promise.allSettled(
+        cardIds.map((cardId) =>
+          api.patch<BeUpdateTimeCardPayload, BeTimeCardMutationResponse>(
+            `/time-cards/${encodeURIComponent(cardId)}`,
+            payload,
+          ),
+        ),
+      );
+      const result: BulkApproveResult = { succeededIds: [], failed: [] };
+      outcomes.forEach((outcome, i) => {
+        const cardId = cardIds[i];
+        if (outcome.status === "fulfilled") {
+          result.succeededIds.push(cardId);
+        } else {
+          const err = outcome.reason;
+          const message =
+            err instanceof BackendApiError && err.status < 500 && err.message
+              ? err.message
+              : "Could not approve this time card.";
+          result.failed.push({ cardId, message });
+        }
+      });
+      return result;
+    },
+    // Some cards may have been approved even when others in the same batch
+    // failed, so every view still needs a refresh regardless of `failed`'s
+    // length -- this only runs when mutationFn itself doesn't throw, which
+    // (per Promise.allSettled above) it never does.
     onSuccess: () => invalidateTimecards(queryClient),
   });
 }

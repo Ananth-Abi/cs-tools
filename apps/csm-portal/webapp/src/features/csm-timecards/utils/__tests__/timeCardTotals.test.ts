@@ -70,6 +70,24 @@ describe("timeCardTotals", () => {
       expect(errors.approver).toBeDefined();
     });
 
+    // Regression: a card's approvers list is optional, and on an edit the
+    // approver is read-only and never sent. Requiring it there made the form
+    // permanently invalid, which disabled Save and blocked the edit entirely.
+    it("does not require an approver when requireApprover is false", () => {
+      const errors = timeCardDraftErrors({
+        ...valid,
+        approverId: undefined,
+        requireApprover: false,
+      });
+      expect(errors.approver).toBeUndefined();
+      expect(errors).toEqual({});
+    });
+
+    it("still requires an approver by default", () => {
+      const errors = timeCardDraftErrors({ ...valid, approverId: undefined });
+      expect(errors.approver).toBeDefined();
+    });
+
     it("flags a work log comment over WORK_LOG_MAX", () => {
       const errors = timeCardDraftErrors({
         ...valid,

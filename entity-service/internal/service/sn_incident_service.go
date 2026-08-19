@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -85,6 +86,22 @@ type snIncidentFilters struct {
 	SearchQuery  string   `json:"searchQuery,omitempty"`
 	PriorityKeys []int    `json:"priorityKeys,omitempty"` // SN expects int keys
 	ParentIDs    []string `json:"parentIds,omitempty"`
+	// Number: see domain.SearchIncidentsFilters.Number doc comment. Exact
+	// match against ServiceNow's `number` column -- not part of the
+	// free-text SearchQuery scan.
+	Number string `json:"number,omitempty"`
+	// StateKeys: see domain.SearchIncidentsFilters.StateKeys doc comment.
+	StateKeys []int `json:"stateKeys,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+	// BusinessServiceIDs: business_service sys_ids (converted from UUIDs).
+	BusinessServiceIDs []string `json:"businessServiceIds,omitempty"`
+	// StartCreatedDate/EndCreatedDate: see domain.SearchIncidentsFilters
+	// Filters "createdOn" doc comment. Wire keys match case search's own
+	// startCreatedDate/endCreatedDate exactly (same UtcDateTimeString
+	// contract on the Ballerina/SN side).
+	StartCreatedDate string `json:"startCreatedDate,omitempty"`
+	EndCreatedDate   string `json:"endCreatedDate,omitempty"`
 }
 
 // snIncidentPriorityKeyMap maps domain IncidentPriority enums to SN numeric priority keys.
@@ -174,6 +191,9 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchIncidentsResponse{}, err
+	}
 	if req.SortBy.Field != "" && !validIncidentSortField[req.SortBy.Field] {
 		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "sortBy.field contains invalid value: " + string(req.SortBy.Field)}
 	}
@@ -187,6 +207,14 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	}
 	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
 		return domain.SearchIncidentsResponse{}, err
+	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.SearchIncidentsResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
@@ -207,9 +235,15 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 
 	payload := snIncidentSearchPayload{
 		Filters: snIncidentFilters{
-			SearchQuery:  req.Filters.SearchQuery,
-			PriorityKeys: priorityKeys,
-			ParentIDs:    uuidsToSysids(req.Filters.ParentIDs),
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
@@ -281,6 +315,92 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 		Limit:     req.Pagination.Limit,
 		Offset:    req.Pagination.Offset,
 	}, nil
+}
+
+// snIncidentGroupByPayload is the Choreo POST /incidents/group-by request body.
+type snIncidentGroupByPayload struct {
+	Filters   snIncidentFilters `json:"filters,omitempty"`
+	GroupBy   string            `json:"groupBy"`
+	MaxGroups int               `json:"maxGroups,omitempty"`
+}
+
+// validIncidentGroupByField is the allow-list for
+// GroupIncidentsByRequest.GroupBy, matching openapi.yaml's
+// GroupIncidentsByRequest.groupBy enum exactly.
+var validIncidentGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+	"businessService": true,
+}
+
+// GroupIncidentsBy implements IncidentService by calling the Choreo POST
+// /incidents/group-by endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into GroupByResponse.OthersCount. Filter parsing and validation
+// mirror SearchIncidents.
+func (s *snIncidentService) GroupIncidentsBy(ctx context.Context, req domain.GroupIncidentsByRequest) (domain.GroupByResponse, error) {
+	if req.GroupBy == "" {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validIncidentGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	for _, p := range req.Filters.Priorities {
+		if !validIncidentPriority[p] {
+			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "priorities contains invalid value: " + string(p)}
+		}
+	}
+	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	priorityKeys := make([]int, 0, len(req.Filters.Priorities))
+	for _, p := range req.Filters.Priorities {
+		priorityKeys = append(priorityKeys, snIncidentPriorityKeyMap[p])
+	}
+
+	payload := snIncidentGroupByPayload{
+		Filters: snIncidentFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/incidents/group-by", token, payload)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	var resp domain.GroupByResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.GroupByResponse{}, fmt.Errorf("sn incidents: parse group-by response: %w", err)
+	}
+	return resp, nil
 }
 
 // snIncidentCategoryKeyMap maps domain IncidentCategory enums to SN category string values.
@@ -1060,5 +1180,49 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 	return domain.UpdateIncidentResponse{
 		Message:  snResp.Message,
 		Incident: mapSNIncidentToView(snResp.Incident),
+	}, nil
+}
+
+// SearchIncidentActivities returns the activity feed for an incident. Confirmed by the
+// team as a real, distinct endpoint from the case one (both are built on the same
+// underlying activity-search mechanism), though this exact request/response shape has
+// not been exercised against a live response.
+func (s *snIncidentService) SearchIncidentActivities(ctx context.Context, req domain.SearchIncidentActivitiesRequest) (domain.SearchIncidentActivitiesResponse, error) {
+	if err := normalizePagination(&req.Pagination); err != nil {
+		return domain.SearchIncidentActivitiesResponse{}, err
+	}
+	if err := validateUUIDs("id", []string{req.IncidentID}); err != nil {
+		return domain.SearchIncidentActivitiesResponse{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snSearchActivitiesPayload{
+		Pagination:          snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
+		IncludeFieldChanges: req.IncludeFieldChanges,
+	}
+
+	raw, err := s.client.Post(ctx, "/incidents/"+uuidToSysid(req.IncidentID)+"/activities/search", token, payload)
+	if err != nil {
+		return domain.SearchIncidentActivitiesResponse{}, err
+	}
+
+	var snResp snSearchActivitiesResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.SearchIncidentActivitiesResponse{}, fmt.Errorf("sn search incident activities: parse response: %w", err)
+	}
+
+	activities, err := mapSNActivitiesToDomain(snResp.Activity)
+	if err != nil {
+		return domain.SearchIncidentActivitiesResponse{}, fmt.Errorf("sn search incident activities: %w", err)
+	}
+
+	total := snResp.TotalRecords
+	return domain.SearchIncidentActivitiesResponse{
+		Activity: activities,
+		Total:    total,
+		Limit:    req.Pagination.Limit,
+		Offset:   req.Pagination.Offset,
+		HasMore:  req.Pagination.Offset+len(activities) < total,
 	}, nil
 }

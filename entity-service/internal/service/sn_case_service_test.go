@@ -17,9 +17,13 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -256,6 +260,118 @@ func TestSNCaseService_GetCaseByID_MapsParentCaseType(t *testing.T) {
 		}
 		if cv.ParentCase.Type != nil {
 			t.Fatalf("expected parentCase.type=nil for unrecognised SN value, got %q", *cv.ParentCase.Type)
+		}
+	})
+}
+
+// TestSNCaseService_GetCaseByID_MapsRelatedCaseType pins that relatedCase carries
+// its record kind, exactly as parentCase does. The two references are the same
+// shape and either can point at something other than a case, so a consumer must
+// not be left guessing on one of them.
+func TestSNCaseService_GetCaseByID_MapsRelatedCaseType(t *testing.T) {
+	body := `{
+		"id": "` + testWLCaseSysid + `",
+		"internalId": "WSO2-001",
+		"number": "CS0001001",
+		"title": "Case subject",
+		"description": "Case description",
+		"createdOn": "2026-01-01 10:00:00",
+		"updatedOn": "2026-01-02 10:00:00",
+		"createdBy": "reporter@example.com",
+		"project": {"id": "` + testProjectSysid + `", "name": "Project A"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"relatedCase": {"id": "` + testParentCaseUUID + `", "number": "INC0012345", "type": "incident"}
+	}`
+
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	})
+	svc := NewServiceNowCaseService(client, nil)
+
+	cv, err := svc.GetCaseByID(contextWithUserIDToken("token"), sysidToUUID(testWLCaseSysid))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cv.RelatedCase == nil {
+		t.Fatalf("expected relatedCase to be populated")
+	}
+	if cv.RelatedCase.Type == nil || *cv.RelatedCase.Type != "incident" {
+		t.Fatalf("expected relatedCase.type=incident, got %+v", cv.RelatedCase.Type)
+	}
+	if cv.RelatedCase.Number != "INC0012345" {
+		t.Fatalf("expected relatedCase.number to pass through, got %q", cv.RelatedCase.Number)
+	}
+}
+
+// TestSNCaseService_GetCaseByID_NestsProductUnderDeployedProduct pins that the
+// product catalogue entry hangs off the deployed product, and that a case naming
+// a catalogue product with no deployed instance still returns it.
+func TestSNCaseService_GetCaseByID_NestsProductUnderDeployedProduct(t *testing.T) {
+	const (
+		dpSysid   = "32e4c5e732e4c5e732e4c5e732e4c5e7"
+		prodSysid = "4151bcd84151bcd84151bcd84151bcd8"
+	)
+
+	newBody := func(deployedProduct string) string {
+		return `{
+			"id": "` + testWLCaseSysid + `",
+			"internalId": "WSO2-001",
+			"number": "CS0001001",
+			"title": "Case subject",
+			"description": "Case description",
+			"createdOn": "2026-01-01 10:00:00",
+			"updatedOn": "2026-01-02 10:00:00",
+			"createdBy": "reporter@example.com",
+			"project": {"id": "` + testProjectSysid + `", "name": "Project A"},
+			"deployment": {"id": "", "name": ""},
+			"deployedProduct": ` + deployedProduct + `,
+			"product": {"id": "` + prodSysid + `", "name": "WSO2 API Manager 4.5.0"},
+			"state": {"id": 1, "label": "Open"}
+		}`
+	}
+
+	t.Run("both present", func(t *testing.T) {
+		client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(newBody(`{"id": "` + dpSysid + `", "name": "WSO2 API Manager", "version": "4.5.0"}`)))
+		})
+		cv, err := NewServiceNowCaseService(client, nil).GetCaseByID(contextWithUserIDToken("token"), sysidToUUID(testWLCaseSysid))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		dp := cv.DeployedProductDetails
+		if dp == nil || dp.ID == nil || *dp.ID != sysidToUUID(dpSysid) {
+			t.Fatalf("deployedProduct.id not mapped: %+v", dp)
+		}
+		if dp.DisplayName == nil || *dp.DisplayName != "WSO2 API Manager 4.5.0" {
+			t.Fatalf("deployedProduct.displayName not mapped: %+v", dp)
+		}
+		if dp.Product == nil || dp.Product.ID != sysidToUUID(prodSysid) || dp.Product.Name != "WSO2 API Manager 4.5.0" {
+			t.Fatalf("deployedProduct.product not mapped: %+v", dp.Product)
+		}
+	})
+
+	t.Run("product without a deployed product stays reachable", func(t *testing.T) {
+		client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(newBody(`{"id": "", "name": "", "version": ""}`)))
+		})
+		cv, err := NewServiceNowCaseService(client, nil).GetCaseByID(contextWithUserIDToken("token"), sysidToUUID(testWLCaseSysid))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		dp := cv.DeployedProductDetails
+		if dp == nil {
+			t.Fatal("deployedProduct is nil: the catalogue product would be unreachable")
+		}
+		if dp.ID != nil || dp.DisplayName != nil {
+			t.Errorf("deployedProduct id/displayName should be null with no deployed instance: %+v", dp)
+		}
+		if dp.Product == nil || dp.Product.ID != sysidToUUID(prodSysid) {
+			t.Fatalf("deployedProduct.product not mapped: %+v", dp.Product)
 		}
 	})
 }
@@ -942,6 +1058,49 @@ func TestSNCaseService_SearchCases_EmptyTypesFilterSendsNoTypeRestriction(t *tes
 	}
 }
 
+// TestSNCaseService_SearchCases_HostingCaseTypesTranslate verifies the three
+// SaaS/SRE-specific case types (hosting, hosting_query, hosting_task) are
+// accepted by search and translated to their own SN wire values, not
+// silently dropped by snCaseTypeMap the way they were before it carried
+// entries for them.
+func TestSNCaseService_SearchCases_HostingCaseTypesTranslate(t *testing.T) {
+	var gotBody struct {
+		Filters struct {
+			CaseTypes []string `json:"caseTypes"`
+		} `json:"filters"`
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "type", Op: "in", Values: []string{"hosting", "hosting_query", "hosting_task"}},
+			},
+		},
+	}
+	if _, err := svc.SearchCases(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"hosting", "hosting_query", "hosting_task"}
+	if len(gotBody.Filters.CaseTypes) != len(want) {
+		t.Fatalf("caseTypes = %v, want %v", gotBody.Filters.CaseTypes, want)
+	}
+	for i, w := range want {
+		if gotBody.Filters.CaseTypes[i] != w {
+			t.Fatalf("caseTypes[%d] = %q, want %q (hosting types must not be dropped)", i, gotBody.Filters.CaseTypes[i], w)
+		}
+	}
+}
+
 // TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload proves the
 // generic filters array (the new public contract) still produces the exact
 // same named-field Ballerina payload SearchCases has always sent, just fed by
@@ -968,6 +1127,7 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 				{Field: "assignedUserId", Op: "isEmpty"},
 				{Field: "resolutionNotes", Op: "isEmpty"},
 				{Field: "createdBy", Op: "eq", Values: []string{currentUserFilterPlaceholder}},
+				{Field: "projectType", Op: "in", Values: []string{"Subscription", "Free Trial"}},
 			},
 		},
 	}
@@ -994,6 +1154,353 @@ func TestSNCaseService_SearchCases_GenericFiltersTranslateToSNPayload(t *testing
 	}
 	if len(gotBody.Filters.CreatedBy) != 0 {
 		t.Fatalf("expected CreatedBy to stay empty for the current-user placeholder, got %v", gotBody.Filters.CreatedBy)
+	}
+	// projectType values are project-type NAMES passed through verbatim -- no
+	// UUID validation, no id conversion (mirrors the product filter).
+	if len(gotBody.Filters.ProjectTypeNames) != 2 ||
+		gotBody.Filters.ProjectTypeNames[0] != "Subscription" ||
+		gotBody.Filters.ProjectTypeNames[1] != "Free Trial" {
+		t.Fatalf("ProjectTypeNames = %v, want [Subscription, Free Trial] passed through unchanged", gotBody.Filters.ProjectTypeNames)
+	}
+}
+
+// TestSNCaseService_SearchCases_CreTeamAndSreTeamFiltersTranslateToSysidsOnTheirWireKeys
+// pins both team filters' wire form: creTeam (the renamed former
+// integrationCsTeam filter) must still travel under the wire key
+// "integrationCsTeamIds" -- the Ballerina/SN contract's key, unchanged by the
+// Go-side rename -- and the new sreTeam filter must travel under "sreTeamIds",
+// both as sysids converted from the UUIDs the filter DSL accepts.
+func TestSNCaseService_SearchCases_CreTeamAndSreTeamFiltersTranslateToSysidsOnTheirWireKeys(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	creUUID := sysidToUUID(testCreTeamSysid)
+	sreUUID := sysidToUUID(testSreTeamSysid)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "creTeam", Op: "in", Values: []string{creUUID}},
+				{Field: "sreTeam", Op: "in", Values: []string{sreUUID}},
+			},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope struct {
+		Filters map[string]json.RawMessage `json:"filters"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		t.Fatalf("decode request body: %v; raw: %s", err, rawBody)
+	}
+
+	gotCre, ok := envelope.Filters["integrationCsTeamIds"]
+	if !ok {
+		t.Fatalf("filters has no \"integrationCsTeamIds\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	if string(gotCre) != `["`+testCreTeamSysid+`"]` {
+		t.Fatalf("integrationCsTeamIds = %s, want [%q]", gotCre, testCreTeamSysid)
+	}
+
+	gotSre, ok := envelope.Filters["sreTeamIds"]
+	if !ok {
+		t.Fatalf("filters has no \"sreTeamIds\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	if string(gotSre) != `["`+testSreTeamSysid+`"]` {
+		t.Fatalf("sreTeamIds = %s, want [%q]", gotSre, testSreTeamSysid)
+	}
+
+	if _, ok := envelope.Filters["creTeamIds"]; ok {
+		t.Fatal("filters carries a \"creTeamIds\" key -- the wire key must stay integrationCsTeamIds")
+	}
+}
+
+// TestSNCaseService_SearchCases_ProjectTypeGoesOutAsNamesOnItsOwnKey pins the
+// projectType filter's wire form against the raw request body. The values are
+// readable project-type names and must travel untouched -- no id validation,
+// no id conversion -- under "projectTypes". They must not go out under the
+// retired id-based key: that one is declared as a fixed-width hex id array
+// upstream, so a name sent through it fails request validation outright.
+func TestSNCaseService_SearchCases_ProjectTypeGoesOutAsNamesOnItsOwnKey(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "projectType", Op: "in", Values: []string{"Subscription", "Free Trial"}},
+			},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope struct {
+		Filters map[string]json.RawMessage `json:"filters"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		t.Fatalf("decode request body: %v; raw: %s", err, rawBody)
+	}
+	got, ok := envelope.Filters["projectTypes"]
+	if !ok {
+		t.Fatalf("filters has no \"projectTypes\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	if string(got) != `["Subscription","Free Trial"]` {
+		t.Fatalf("projectTypes = %s, want the names passed through unchanged", got)
+	}
+	if _, ok := envelope.Filters["projectTypeIds"]; ok {
+		t.Fatal("filters still carries the retired id-based project-type key")
+	}
+}
+
+// TestSNCaseService_SearchCases_StateNotInTranslatesToExcludeStateKeys pins
+// both halves of the state notIn filter's wire form: the key name and the
+// value representation. Both matter because the backing data source drops a
+// filter key it does not recognize instead of rejecting it, so a wrong key --
+// or the right key carrying state names where numeric keys are expected --
+// would silently widen the result set rather than fail. The assertions run
+// against the raw request body, not the decoded struct, since decoding through
+// the same struct tags would agree with any name they happened to carry.
+func TestSNCaseService_SearchCases_StateNotInTranslatesToExcludeStateKeys(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"open"}},
+				{Field: "state", Op: "notIn", Values: []string{"awaiting_info", "solution_proposed", "closed"}},
+			},
+		},
+	}
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var envelope struct {
+		Filters map[string]json.RawMessage `json:"filters"`
+	}
+	if err := json.Unmarshal(rawBody, &envelope); err != nil {
+		t.Fatalf("decode request body: %v; raw: %s", err, rawBody)
+	}
+	got, ok := envelope.Filters["excludeStateKeys"]
+	if !ok {
+		t.Fatalf("filters has no \"excludeStateKeys\" key; keys sent: %v", filterKeys(envelope.Filters))
+	}
+	// awaiting_info=18, solution_proposed=6, closed=3 -- the same numeric keys
+	// the positive stateKeys list is built from.
+	if string(got) != "[18,6,3]" {
+		t.Fatalf("excludeStateKeys = %s, want [18,6,3] (numeric state keys, not names)", got)
+	}
+	// The positive list is unaffected: notIn must never be folded into it.
+	if stateKeys, ok := envelope.Filters["stateKeys"]; !ok || string(stateKeys) != "[1]" {
+		t.Fatalf("stateKeys = %s (present=%v), want [1]", stateKeys, ok)
+	}
+	// The pre-rename key must not appear at all.
+	if _, ok := envelope.Filters["excludeStates"]; ok {
+		t.Fatal("filters carries \"excludeStates\"; the wire key is \"excludeStateKeys\"")
+	}
+}
+
+// TestSNCaseService_SearchCases_StateNotInOmittedWhenUnused guards the
+// inertness of the filter: a request that does not ask for an exclusion must
+// send no exclusion key, so nothing changes for existing callers while the
+// downstream layers do not yet honor it.
+func TestSNCaseService_SearchCases_StateNotInOmittedWhenUnused(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bytes.Contains(rawBody, []byte("excludeStateKeys")) {
+		t.Fatalf("excludeStateKeys must be omitted when no notIn filter was given; body: %s", rawBody)
+	}
+}
+
+// TestSNCaseService_SearchCases_StateNotInRejectsUnknownValue guards against
+// an unrecognized state silently vanishing in the domain-to-key conversion,
+// which for an exclusion would widen the result set.
+func TestSNCaseService_SearchCases_StateNotInRejectsUnknownValue(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream must not be called for an invalid filter value")
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{{Field: "state", Op: "notIn", Values: []string{"not_a_state"}}},
+		},
+	}
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	_, err := svc.SearchCases(ctx, req)
+	if err == nil {
+		t.Fatal("expected a validation error for an unknown state (notIn) value")
+	}
+	if !strings.Contains(err.Error(), "not_a_state") {
+		t.Fatalf("error = %v, want it to name the offending value", err)
+	}
+}
+
+// filterKeys returns the keys of a decoded filters object, for test failure
+// messages.
+func filterKeys(m map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// TestSNCaseService_SearchCases_AnyOfKeepsSNOrGroupsWireFormat is the guard
+// against the single most dangerous regression this rename could cause. The
+// PUBLIC contract's cross-field-OR key was renamed filters.orGroups ->
+// filters.anyOf (and each branch became an object with its own filters
+// array), but the ServiceNow WIRE format must not move: CaseUtils' Script
+// Include reads "orGroups" and silently ignores JSON keys it does not
+// recognise, so a renamed wire key returns an UNFILTERED count with no error
+// anywhere. This test therefore asserts on the raw outgoing JSON -- not a
+// typed decode, which would happily re-map a renamed key -- that the body
+// still carries "orGroups", still does NOT carry "anyOf", and that each
+// branch is still a flat named-field object (no nested "filters" array).
+func TestSNCaseService_SearchCases_AnyOfKeepsSNOrGroupsWireFormat(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			Filters: []domain.CaseFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"open"}},
+			},
+			AnyOf: []domain.CaseFilterBranch{
+				{Filters: []domain.CaseFieldFilter{
+					{Field: "severity", Op: "in", Values: []string{"catastrophic"}},
+					{Field: "workState", Op: "in", Values: []string{"ongoing"}},
+				}},
+				{Filters: []domain.CaseFieldFilter{
+					{Field: "escalationLevel", Op: "in", Values: []string{"3"}},
+				}},
+			},
+		},
+	}
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		t.Fatalf("unmarshal raw request body: %v (body=%s)", err, rawBody)
+	}
+	filters, ok := body["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body has no filters object: %s", rawBody)
+	}
+	if _, bad := filters["anyOf"]; bad {
+		t.Fatalf(`SN payload must NOT carry the public-API key "anyOf": %s`, rawBody)
+	}
+	groups, ok := filters["orGroups"].([]any)
+	if !ok {
+		t.Fatalf(`SN payload lost the "orGroups" wire key (ServiceNow would silently return an unfiltered count): %s`, rawBody)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("orGroups length = %d, want 2: %s", len(groups), rawBody)
+	}
+
+	first, ok := groups[0].(map[string]any)
+	if !ok {
+		t.Fatalf("orGroups[0] is not an object: %s", rawBody)
+	}
+	if _, nested := first["filters"]; nested {
+		t.Fatalf(`orGroups[0] must stay a flat named-field object, not the public API's {"filters": [...]} branch shape: %s`, rawBody)
+	}
+	// severity "catastrophic" -> severityKeys, workState "in_progress" ->
+	// workStateKeys: the exact named-field branch shape CaseUtils reads.
+	if _, ok := first["severityKeys"].([]any); !ok {
+		t.Fatalf("orGroups[0].severityKeys missing: %s", rawBody)
+	}
+	if _, ok := first["workStateKeys"].([]any); !ok {
+		t.Fatalf("orGroups[0].workStateKeys missing: %s", rawBody)
+	}
+
+	second, ok := groups[1].(map[string]any)
+	if !ok {
+		t.Fatalf("orGroups[1] is not an object: %s", rawBody)
+	}
+	levels, ok := second["escalationLevel"].([]any)
+	if !ok || len(levels) != 1 || levels[0] != "3" {
+		t.Fatalf("orGroups[1].escalationLevel = %v, want [\"3\"]: %s", second["escalationLevel"], rawBody)
 	}
 }
 
@@ -1153,11 +1660,166 @@ func TestSNCaseService_SearchCases_PopulatesUpdatedOn(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_SearchCases_SetsIncludeExtendedFields proves SearchCases
+// always opts every outbound search request into the account/project-key/
+// fix-ETA fields on search rows -- the backing service only returns them when
+// this flag is explicitly set true, and defaults to leaving them off (the
+// customer-portal's own search calls never set it, so the flag is what keeps
+// this call additive rather than a shared-contract change).
+func TestSNCaseService_SearchCases_SetsIncludeExtendedFields(t *testing.T) {
+	var gotBody snCaseSearchPayload
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	if _, err := svc.SearchCases(contextWithUserIDToken("token"), domain.SearchCasesRequest{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !gotBody.IncludeExtendedFields {
+		t.Fatalf("expected includeExtendedFields to be sent as true on every search request")
+	}
+}
+
+// TestSNCaseService_SearchCases_MapsExtendedFieldsWhenPresent proves that when
+// the mocked SN response includes the account reference, project key, and the
+// three fix-ETA fields on a row, SearchCases maps every one of them through to
+// the returned SearchCaseView.
+func TestSNCaseService_SearchCases_MapsExtendedFieldsWhenPresent(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cases": []map[string]any{
+				{
+					"id":               "case-sys-id",
+					"internalId":       "INT-1",
+					"number":           "CS0001",
+					"title":            "t",
+					"description":      "d",
+					"createdOn":        "2026-01-01 00:00:00",
+					"createdBy":        "jane.doe@example.com",
+					"project":          map[string]any{"id": "proj-sys-id", "name": "Proj", "key": "TESTQUERYSUB"},
+					"deployment":       map[string]any{"id": "", "name": ""},
+					"deployedProduct":  map[string]any{"id": "", "name": "", "product": map[string]any{"id": "", "name": ""}},
+					"account":          map[string]any{"id": "acct-sys-id", "name": "Acme Corp", "type": "premium"},
+					"bestCaseFixEta":   "2026-04-15",
+					"mostLikelyFixEta": "2026-04-22",
+					"worstCaseFixEta":  "2026-04-29",
+				},
+			},
+			"total": 1, "offset": 0, "limit": 20,
+		})
+	})
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	resp, err := svc.SearchCases(ctx, domain.SearchCasesRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(resp.Cases))
+	}
+	got := resp.Cases[0]
+
+	if got.ProjectKey == nil || *got.ProjectKey != "TESTQUERYSUB" {
+		t.Fatalf("ProjectKey = %v, want \"TESTQUERYSUB\"", got.ProjectKey)
+	}
+	if got.AccountDetails == nil {
+		t.Fatalf("expected AccountDetails to be populated")
+	}
+	if got.AccountDetails.Name != "Acme Corp" || got.AccountDetails.Type != "premium" {
+		t.Fatalf("AccountDetails = %+v, want Name=Acme Corp Type=premium", got.AccountDetails)
+	}
+	if got.BestCaseFixEta == nil || *got.BestCaseFixEta != "2026-04-15" {
+		t.Fatalf("BestCaseFixEta = %v, want \"2026-04-15\"", got.BestCaseFixEta)
+	}
+	if got.MostLikelyFixEta == nil || *got.MostLikelyFixEta != "2026-04-22" {
+		t.Fatalf("MostLikelyFixEta = %v, want \"2026-04-22\"", got.MostLikelyFixEta)
+	}
+	if got.WorstCaseFixEta == nil || *got.WorstCaseFixEta != "2026-04-29" {
+		t.Fatalf("WorstCaseFixEta = %v, want \"2026-04-29\"", got.WorstCaseFixEta)
+	}
+}
+
+// TestSNCaseService_SearchCases_ExtendedFieldsAbsentDoNotPanic proves that
+// when a mocked SN response omits the account/project-key/fix-ETA fields
+// entirely (simulating the backing service ignoring includeExtendedFields, or
+// an older response shape), SearchCases does not panic or error -- the new
+// fields come through as nil, matching this file's existing nil-handling
+// convention for every other optional reference.
+func TestSNCaseService_SearchCases_ExtendedFieldsAbsentDoNotPanic(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cases": []map[string]any{
+				{
+					"id":              "case-sys-id",
+					"internalId":      "INT-1",
+					"number":          "CS0001",
+					"title":           "t",
+					"description":     "d",
+					"createdOn":       "2026-01-01 00:00:00",
+					"createdBy":       "jane.doe@example.com",
+					"project":         map[string]any{"id": "proj-sys-id", "name": "Proj"},
+					"deployment":      map[string]any{"id": "", "name": ""},
+					"deployedProduct": map[string]any{"id": "", "name": "", "product": map[string]any{"id": "", "name": ""}},
+				},
+			},
+			"total": 1, "offset": 0, "limit": 20,
+		})
+	})
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	resp, err := svc.SearchCases(ctx, domain.SearchCasesRequest{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.Cases) != 1 {
+		t.Fatalf("expected 1 case, got %d", len(resp.Cases))
+	}
+	got := resp.Cases[0]
+
+	if got.ProjectKey != nil {
+		t.Fatalf("ProjectKey = %v, want nil", got.ProjectKey)
+	}
+	if got.AccountDetails != nil {
+		t.Fatalf("AccountDetails = %v, want nil", got.AccountDetails)
+	}
+	if got.BestCaseFixEta != nil {
+		t.Fatalf("BestCaseFixEta = %v, want nil", got.BestCaseFixEta)
+	}
+	if got.MostLikelyFixEta != nil {
+		t.Fatalf("MostLikelyFixEta = %v, want nil", got.MostLikelyFixEta)
+	}
+	if got.WorstCaseFixEta != nil {
+		t.Fatalf("WorstCaseFixEta = %v, want nil", got.WorstCaseFixEta)
+	}
+}
+
+// TestSNCaseService_SearchTags_Success pins the upstream wire format: tag search is a POST
+// with the query nested under `filters.searchQuery`, not a GET with a `q` param. The body is
+// asserted as raw JSON on purpose — decoding it through a struct with the same tags would
+// agree with whatever key the payload happens to carry, which is how an earlier wire-format
+// bug got through.
 func TestSNCaseService_SearchTags_Success(t *testing.T) {
-	var gotQuery string
+	var gotMethod string
+	var gotBody map[string]any
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
-		gotQuery = r.URL.Query().Get("q")
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tags": []map[string]any{
 				{"id": testTagSysid, "label": "micro-gw", "color": "#f97316"},
@@ -1168,12 +1830,27 @@ func TestSNCaseService_SearchTags_Success(t *testing.T) {
 	client := newTestSNClient(t, mux)
 	svc := NewServiceNowCaseService(client, nil)
 
-	tags, err := svc.SearchTags(contextWithUserIDToken("token"), "micro", 0)
+	tags, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotQuery != "micro" {
-		t.Fatalf("q sent = %q, want micro", gotQuery)
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	filters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("body has no filters object: %#v", gotBody)
+	}
+	if filters["searchQuery"] != "micro" {
+		t.Fatalf("filters.searchQuery = %v, want micro", filters["searchQuery"])
+	}
+	if _, present := gotBody["q"]; present {
+		t.Fatalf("body must not carry the legacy q key: %#v", gotBody)
+	}
+	if _, present := gotBody["limit"]; present {
+		t.Fatalf("limit must be omitted when unset: %#v", gotBody)
 	}
 	if len(tags) != 1 {
 		t.Fatalf("expected 1 tag, got %d", len(tags))
@@ -1190,49 +1867,98 @@ func TestSNCaseService_SearchTags_Success(t *testing.T) {
 }
 
 func TestSNCaseService_SearchTags_ForwardsLimit(t *testing.T) {
-	var gotLimit string
+	var rawBody []byte
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
-		gotLimit = r.URL.Query().Get("limit")
+		rawBody, _ = io.ReadAll(r.Body)
 		_ = json.NewEncoder(w).Encode(map[string]any{"tags": []map[string]any{}})
 	})
 
 	client := newTestSNClient(t, mux)
 	svc := NewServiceNowCaseService(client, nil)
 
-	if _, err := svc.SearchTags(contextWithUserIDToken("token"), "micro", 5); err != nil {
+	if _, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+		Limit:   5,
+	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotLimit != "5" {
-		t.Fatalf("limit sent = %q, want 5", gotLimit)
+	if want := `{"filters":{"searchQuery":"micro"},"limit":5}`; strings.TrimSpace(string(rawBody)) != want {
+		t.Fatalf("raw body = %s, want %s", rawBody, want)
 	}
 }
 
 func TestSNCaseService_SearchTags_EmptyQuery(t *testing.T) {
+	var rawBody []byte
 	mux := http.NewServeMux()
 	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
-		if q := r.URL.Query().Get("q"); q != "" {
-			t.Fatalf("expected no q param, got %q", q)
-		}
+		rawBody, _ = io.ReadAll(r.Body)
 		_ = json.NewEncoder(w).Encode(map[string]any{"tags": []map[string]any{}})
 	})
 
 	client := newTestSNClient(t, mux)
 	svc := NewServiceNowCaseService(client, nil)
 
-	tags, err := svc.SearchTags(contextWithUserIDToken("token"), "", 0)
+	tags, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+	if want := `{"filters":{}}`; strings.TrimSpace(string(rawBody)) != want {
+		t.Fatalf("raw body = %s, want %s", rawBody, want)
 	}
 	if len(tags) != 0 {
 		t.Fatalf("expected 0 tags, got %d", len(tags))
 	}
 }
 
+// TestSNCaseService_SearchTags_NeverSendsCaseID guards the deliberate decision not to expose
+// the case-scoped variant upward: the upstream contract accepts filters.caseId, but nothing
+// above the entity service consumes it, so the entity service must never emit it.
+func TestSNCaseService_SearchTags_NeverSendsCaseID(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_ = json.NewEncoder(w).Encode(map[string]any{"tags": []map[string]any{}})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	if _, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	filters, _ := gotBody["filters"].(map[string]any)
+	if _, present := filters["caseId"]; present {
+		t.Fatalf("filters must not carry caseId: %#v", filters)
+	}
+}
+
+func TestSNCaseService_SearchTags_QueryTooLong(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
+		t.Error("upstream must not be called for an over-long query")
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	_, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: strings.Repeat("a", 201)},
+	})
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 func TestCaseService_SearchTags_ServiceUnavailable(t *testing.T) {
 	svc := &caseService{}
 
-	if _, err := svc.SearchTags(contextWithUserIDToken("token"), "micro", 0); err == nil {
+	if _, err := svc.SearchTags(contextWithUserIDToken("token"), domain.SearchTagsRequest{
+		Filters: domain.SearchTagsFilters{SearchQuery: "micro"},
+	}); err == nil {
 		t.Fatalf("expected error")
 	} else if _, ok := err.(*apierror.ServiceUnavailableError); !ok {
 		t.Fatalf("expected *apierror.ServiceUnavailableError, got %T: %v", err, err)
@@ -1240,8 +1966,9 @@ func TestCaseService_SearchTags_ServiceUnavailable(t *testing.T) {
 }
 
 // TestSNCaseService_GetCaseByID_MapsLinkedChangeRequests covers the reverse side of the
-// service-request <-> change-request link. Upstream sends the list under `changeRequests`
-// with 32-hex ids; the domain exposes it as `linkedChangeRequests` with canonical UUIDs.
+// service-request <-> change-request link. Upstream sends the list under `changeRequestsAll`
+// (unfiltered by change-request state, unlike the older `changeRequests` field) with 32-hex
+// ids; the domain exposes it as `linkedChangeRequests` with canonical UUIDs.
 //
 // The cardinality cases matter: a service request can have several change requests (one per
 // environment the change is promoted to), so a single-value mapping would look correct
@@ -1264,7 +1991,7 @@ func TestSNCaseService_GetCaseByID_MapsLinkedChangeRequests(t *testing.T) {
 			"deployment": {"id": "", "name": ""},
 			"deployedProduct": {"id": "", "name": "", "version": ""},
 			"state": {"id": 1, "label": "Open"},
-			"changeRequests": ` + changeRequests + `
+			"changeRequestsAll": ` + changeRequests + `
 		}`
 	}
 
@@ -1324,4 +2051,92 @@ func TestSNCaseService_GetCaseByID_MapsLinkedChangeRequests(t *testing.T) {
 			t.Fatalf("expected an empty upstream name to map to nil, got %q", *cv.LinkedChangeRequests[1].Name)
 		}
 	})
+}
+
+// caseDetailBody is a minimal, valid GET /cases/{id} response body for the given sysid,
+// used by the tags-population tests below where only the tags side-fetch is under test.
+func caseDetailBody(caseSysid string) string {
+	return `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-001",
+		"number": "CS0001001",
+		"title": "Case subject",
+		"description": "Case description",
+		"createdOn": "2026-01-01 10:00:00",
+		"project": {"id": "` + testProjectSysid + `", "name": "Project A"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"}
+	}`
+}
+
+// TestSNCaseService_GetCaseByID_PopulatesTags verifies GetCaseByID fetches the case's
+// current tags from the case-scoped GET /cases/{id}/tags resource and maps them onto
+// CaseView.Tags, the same way SearchTags/AddCaseTag map the shared snTag shape.
+func TestSNCaseService_GetCaseByID_PopulatesTags(t *testing.T) {
+	var gotTagsPath string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/"+testCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(caseDetailBody(testCaseSysid)))
+	})
+	mux.HandleFunc("/cases/"+testCaseSysid+"/tags", func(w http.ResponseWriter, r *http.Request) {
+		gotTagsPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tags": []map[string]any{
+				{"id": testTagSysid, "label": "micro-gw", "color": "#f97316"},
+			},
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	cv, err := svc.GetCaseByID(contextWithUserIDToken("token"), testCaseUUID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotTagsPath != "/cases/"+testCaseSysid+"/tags" {
+		t.Fatalf("tags endpoint not called, got path %q", gotTagsPath)
+	}
+	if len(cv.Tags) != 1 {
+		t.Fatalf("expected 1 tag, got %d: %+v", len(cv.Tags), cv.Tags)
+	}
+	if cv.Tags[0].ID != testTagUUID || cv.Tags[0].Label != "micro-gw" {
+		t.Fatalf("unexpected tag mapping: %+v", cv.Tags[0])
+	}
+	if cv.Tags[0].Color == nil || *cv.Tags[0].Color != "#f97316" {
+		t.Fatalf("tag.Color = %v, want #f97316", cv.Tags[0].Color)
+	}
+}
+
+// TestSNCaseService_GetCaseByID_TagsFetchFailureDoesNotFailRead verifies that a failing
+// tags lookup is soft-failed: the case detail read still succeeds (matching this file's
+// established soft-fail convention for supplementary side-fetches, e.g.
+// resolveUserGroups/resolveProjectAccess in sn_user_service.go), with CaseView.Tags left
+// nil rather than the whole GetCaseByID call returning an error.
+func TestSNCaseService_GetCaseByID_TagsFetchFailureDoesNotFailRead(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/"+testCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(caseDetailBody(testCaseSysid)))
+	})
+	mux.HandleFunc("/cases/"+testCaseSysid+"/tags", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"message": "internal error"}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	cv, err := svc.GetCaseByID(contextWithUserIDToken("token"), testCaseUUID)
+	if err != nil {
+		t.Fatalf("expected GetCaseByID to succeed despite the tags-lookup failure, got: %v", err)
+	}
+	if cv.Tags != nil {
+		t.Fatalf("expected Tags to stay nil on a fetch failure, got %+v", cv.Tags)
+	}
+	if cv.Number != "CS0001001" {
+		t.Fatalf("expected the rest of the case detail to still be populated, got %+v", cv)
+	}
 }

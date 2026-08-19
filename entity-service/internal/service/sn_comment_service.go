@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -78,7 +77,7 @@ func (s *snCommentSearchService) SearchComments(ctx context.Context, req domain.
 
 	comments := make([]domain.Comment, 0, len(snResp.Comments))
 	for _, c := range snResp.Comments {
-		createdAt, err := time.Parse(snCreatedOnLayout, c.CreatedOn)
+		createdAt, err := parseSNDateTime(ctx, "sn search comments", "createdOn", c.CreatedOn)
 		if err != nil {
 			slog.WarnContext(ctx, "sn search comments: skipping comment with unparsable createdOn",
 				"commentID", c.ID, "createdOn", c.CreatedOn, "error", err)
@@ -94,13 +93,7 @@ func (s *snCommentSearchService) SearchComments(ctx context.Context, req domain.
 			Content:     c.Content,
 			Type:        commentType,
 			CreatedOn:   createdAt,
-			CreatedBy: domain.CommentUserRef{
-				ID:        c.CreatedBy,
-				FirstName: c.CreatedByFirstName,
-				LastName:  c.CreatedByLastName,
-				FullName:  c.CreatedByFullName,
-			},
-			CreatedByUser: snUserReference(c.CreatedByUser, c.CreatedBy, c.CreatedByFullName),
+			CreatedBy:   snUserReference(c.CreatedByUser, c.CreatedBy, c.CreatedByFullName),
 		})
 	}
 
@@ -166,7 +159,7 @@ func (s *snCommentSearchService) CreateComment(ctx context.Context, req domain.C
 		return domain.CreateCommentResponse{}, fmt.Errorf("sn create comment: parse response: %w", err)
 	}
 
-	createdOn, err := time.Parse(snCreatedOnLayout, snResp.Comment.CreatedOn)
+	createdOn, err := parseSNDateTime(ctx, "sn create comment", "createdOn", snResp.Comment.CreatedOn)
 	if err != nil {
 		return domain.CreateCommentResponse{}, fmt.Errorf("sn create comment: parse createdOn %q: %w", snResp.Comment.CreatedOn, err)
 	}

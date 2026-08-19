@@ -1,6 +1,6 @@
 module github.com/wso2-open-operations/cs-tools/entity-service
 
-go 1.26.3
+go 1.26.6
 
 require (
 	github.com/jackc/pgx/v5 v5.9.2

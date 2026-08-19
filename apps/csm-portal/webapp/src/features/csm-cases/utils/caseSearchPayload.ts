@@ -18,10 +18,11 @@ import type { BackendApi } from "@api/backend/client";
 import {
   beStateFromUi,
   priorityFromSeverity,
-  severityFromPriority,
+  severityFromBe,
   uiStateFromBe,
 } from "@api/backend/mappers";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
+import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import type {
   BeCaseFieldFilter,
@@ -49,6 +50,7 @@ export function buildCaseSearchFilters(
   filters: CasesFilters,
   search: string,
   assignedUserIds: string[] | undefined,
+  options?: { forceFreeText?: boolean; alsoFreeText?: boolean },
 ): BeCaseSearchFilters {
   const fieldFilters: BeCaseFieldFilter[] = [];
   if (filters.severities.length > 0) {
@@ -68,7 +70,17 @@ export function buildCaseSearchFilters(
   if (filters.caseTypes.length > 0) {
     fieldFilters.push({ field: "type", op: "in", values: filters.caseTypes });
   }
-  if (filters.workStates.length > 0) {
+  // Work state can only be applied server-side when "work_in_progress" is
+  // the sole selected state — enforced here (not just in the filter bar's
+  // own onChange) so a stale workStates value reaching this builder any
+  // other way (a saved view, a pinned/dashboard URL, a future caller) can
+  // never silently narrow the results to just in-progress/ongoing-paused
+  // cases when other states are also selected.
+  if (
+    filters.workStates.length > 0 &&
+    filters.states.length === 1 &&
+    filters.states[0] === "work_in_progress"
+  ) {
     fieldFilters.push({
       field: "workState",
       op: "in",
@@ -99,9 +111,125 @@ export function buildCaseSearchFilters(
       values: filters.productNames,
     });
   }
+  if (filters.csTeams.length > 0) {
+    fieldFilters.push({
+      field: "creTeam",
+      op: "in",
+      values: filters.csTeams,
+    });
+  }
+  if (filters.sreTeams.length > 0) {
+    fieldFilters.push({
+      field: "sreTeam",
+      op: "in",
+      values: filters.sreTeams,
+    });
+  }
+  // `tags`/`excludeTags` both target the `tag` field but with different ops
+  // (`in`/`notIn`) — two independent entries, not a single one an op flag
+  // toggles, so both may be active at once (the backend ANDs the array).
+  if (filters.tags.length > 0) {
+    fieldFilters.push({ field: "tag", op: "in", values: filters.tags });
+  }
+  if (filters.excludeTags.length > 0) {
+    fieldFilters.push({ field: "tag", op: "notIn", values: filters.excludeTags });
+  }
+  if (filters.onboardingStatuses.length > 0) {
+    fieldFilters.push({
+      field: "projectOnboardingStatus",
+      op: "in",
+      values: filters.onboardingStatuses,
+    });
+  }
+  if (filters.slaElapsedPctGte !== null) {
+    fieldFilters.push({
+      field: "taskSLABusinessElapsedPercent",
+      op: "gte",
+      values: [String(filters.slaElapsedPctGte)],
+    });
+  }
+  if (filters.slaElapsedPctLte !== null) {
+    fieldFilters.push({
+      field: "taskSLABusinessElapsedPercent",
+      op: "lte",
+      values: [String(filters.slaElapsedPctLte)],
+    });
+  }
+  // Value-less predicate: `escalation isEmpty`/`isNotEmpty` carry no
+  // `values` at all — the op alone is the whole filter (see
+  // `case_filters.go`'s `escalation` case). Must still be emitted whenever
+  // `hasEscalation` is non-null, exactly the class of entry
+  // `writeWidgetPreviewHref` used to silently drop for having nothing in
+  // `values` to serialize.
+  if (filters.hasEscalation === true) {
+    fieldFilters.push({ field: "escalation", op: "isNotEmpty" });
+  } else if (filters.hasEscalation === false) {
+    fieldFilters.push({ field: "escalation", op: "isEmpty" });
+  }
+  if (filters.escalationLevels.length > 0) {
+    fieldFilters.push({
+      field: "escalationLevel",
+      op: "in",
+      values: filters.escalationLevels,
+    });
+  }
+  if (filters.projectTypes.length > 0) {
+    fieldFilters.push({
+      field: "projectType",
+      op: "in",
+      values: filters.projectTypes,
+    });
+  }
+  if (filters.createdOnGte !== null) {
+    fieldFilters.push({ field: "createdOn", op: "gte", values: [filters.createdOnGte] });
+  }
+  if (filters.createdOnLte !== null) {
+    fieldFilters.push({ field: "createdOn", op: "lte", values: [filters.createdOnLte] });
+  }
+  if (filters.updatedOnGte !== null) {
+    fieldFilters.push({ field: "updatedOn", op: "gte", values: [filters.updatedOnGte] });
+  }
+  if (filters.updatedOnLte !== null) {
+    fieldFilters.push({ field: "updatedOn", op: "lte", values: [filters.updatedOnLte] });
+  }
+  if (filters.closedOnGte !== null) {
+    fieldFilters.push({ field: "closedOn", op: "gte", values: [filters.closedOnGte] });
+  }
+  if (filters.closedOnLte !== null) {
+    fieldFilters.push({ field: "closedOn", op: "lte", values: [filters.closedOnLte] });
+  }
 
+  // A typed case number / WSO2 case id goes through as an exact-match field
+  // filter rather than the free-text `searchQuery` scan, mirroring the global
+  // quick-nav palette (see `classifyCaseQuery`, shared by both).
+  //
+  // `searchQuery` is a CONTAINS/OR scan across number, WSO2 id, short
+  // description AND description upstream — so searching an exact case number
+  // also matched every *other* case that merely mentions that number in its
+  // description, and those could outrank (or crowd out) the case actually
+  // being looked up. Reported as such: searching one case number surfaced a
+  // different case entirely. An indexed exact match also avoids that scan.
+  //
+  // `forceFreeText` opts back into the `searchQuery` scan even for a query
+  // that looks like an identifier — the cases list runs both legs in parallel
+  // and merges them (see `useGetCsmCases`), so that a case mentioning the
+  // number in its description is still findable, just below the exact hit.
+  //
+  // `alsoFreeText` keeps the exact filter *and* adds the scan. The backend ANDs
+  // `searchQuery` with the `filters` array (the quick-nav palette relies on the
+  // same thing to constrain a free-text search to a set of case types), so this
+  // resolves "how many exact hits the scan already covers" — which is what lets
+  // the merged total be computed exactly instead of guessed. See
+  // `useGetCsmCases`.
+  const scope =
+    search.length > 0 && !options?.forceFreeText ? classifyCaseQuery(search) : "text";
+  if (scope !== "text") {
+    fieldFilters.push({ field: scope, op: "eq", values: [search] });
+  }
+
+  const withFreeText = scope === "text" || !!options?.alsoFreeText;
   return {
-    ...(search.length > 0 && { searchQuery: search }),
+    ...(withFreeText && search.length > 0 && { searchQuery: search }),
     ...(fieldFilters.length > 0 && { filters: fieldFilters }),
   };
 }
@@ -174,7 +302,7 @@ export function mapCaseSearchViewToRow(
     projectId,
     projectName: c.project?.name ?? "-",
     product: c.deployedProduct?.name ?? c.product?.name ?? "-",
-    severity: severityFromPriority(c.severity),
+    severity: severityFromBe(c.severity),
     state: uiStateFromBe(c.state),
     caseType: c.type,
     workState: c.workState ?? null,

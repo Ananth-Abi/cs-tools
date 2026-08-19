@@ -52,7 +52,7 @@ function renderAt(initialEntry: string) {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/dashboard" element={<div>Dashboard landing</div>} />
-          <Route path="/dashboard/:previewSlug" element={<DashboardWidgetPreviewPage />} />
+          <Route path="/dashboard/preview/:previewSlug" element={<DashboardWidgetPreviewPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -65,7 +65,7 @@ describe("DashboardWidgetPreviewPage", () => {
   });
 
   it("prompts to open from a widget's View more link when the URL carries no widget params", () => {
-    renderAt("/dashboard/cases");
+    renderAt("/dashboard/preview/cases");
     expect(
       screen.getByText(/open this page from a dashboard widget/i),
     ).toBeInTheDocument();
@@ -105,18 +105,26 @@ describe("DashboardWidgetPreviewPage", () => {
 
     expect(screen.getByText("My Critical & High Cases")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { severities: ["critical"] },
-      pagination: { offset: 0, limit: 10 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { severities: ["critical"] },
+        pagination: { offset: 0, limit: 10 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
 
     // TablePagination's "next page" button.
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: { severities: ["critical"] },
-        pagination: { offset: 10, limit: 10 },
-      }),
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { severities: ["critical"] },
+          pagination: { offset: 10, limit: 10 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 
@@ -140,10 +148,14 @@ describe("DashboardWidgetPreviewPage", () => {
     );
 
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { assignedUserIds: [CURRENT_USER_ID] },
-      pagination: { offset: 0, limit: 10 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { assignedUserIds: [CURRENT_USER_ID] },
+        pagination: { offset: 0, limit: 10 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("merges a typed search term into the widget's own filters as searchQuery", async () => {
@@ -168,11 +180,97 @@ describe("DashboardWidgetPreviewPage", () => {
     fireEvent.change(screen.getByLabelText("Search"), { target: { value: "disk" } });
 
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: { severities: ["critical"], searchQuery: "disk" },
-        pagination: { offset: 0, limit: 10 },
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { severities: ["critical"], searchQuery: "disk" },
+          pagination: { offset: 0, limit: 10 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+  });
+
+  it("renders a visible summary of the active filter criteria (flat filter shape)", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
+      limit: 10,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "my_critical_open",
+        displayName: "My Critical & High Cases",
+        filters: { severities: ["critical", "high"] },
       }),
     );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    const group = screen.getByRole("group", { name: "Active filters" });
+    expect(group).toHaveTextContent("severities: critical, high");
+  });
+
+  it("renders a visible summary of the active filter criteria (case field/op/values DSL shape), including the resolved team filter", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
+      limit: 10,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "team_open_cases",
+        displayName: "Team Open Cases",
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            { field: "tag", op: "notIn", values: ["s_dip"] },
+            {
+              field: "creTeam",
+              op: "in",
+              values: ["22222222-2222-2222-2222-222222222222"],
+            },
+          ],
+        },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    const group = screen.getByRole("group", { name: "Active filters" });
+    expect(group).toHaveTextContent("state: open");
+    expect(group).toHaveTextContent("tag (notIn): s_dip");
+    expect(group).toHaveTextContent(
+      "creTeam: 22222222-2222-2222-2222-222222222222",
+    );
+  });
+
+  it("does not render an active-filters summary when the widget has no filters", async () => {
+    postMock.mockResolvedValue({
+      total: 1,
+      cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
+      limit: 10,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "my_critical_open",
+        displayName: "My Critical & High Cases",
+        filters: {},
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    expect(screen.queryByRole("group", { name: "Active filters" })).not.toBeInTheDocument();
   });
 
   it("returns to the dashboard when Back is clicked", () => {
