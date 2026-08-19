@@ -27,7 +27,7 @@ import (
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
 
-// snIncidentTasksResponse mirrors the Choreo POST /incident_tasks/search response.
+// snIncidentTasksResponse mirrors the Choreo POST /incident-tasks/search response.
 type snIncidentTasksResponse struct {
 	IncidentTasks []snIncidentTask `json:"incidentTasks"`
 	TotalRecords  int              `json:"totalRecords"`
@@ -60,7 +60,7 @@ type snIncidentTaskUserRef struct {
 	Name string `json:"name"`
 }
 
-// snIncidentTaskSearchPayload is the Choreo POST /incident_tasks/search request body.
+// snIncidentTaskSearchPayload is the Choreo POST /incident-tasks/search request body.
 type snIncidentTaskSearchPayload struct {
 	Filters    snIncidentTaskFilters `json:"filters,omitempty"`
 	Pagination snProjectPagination   `json:"pagination"`
@@ -119,7 +119,7 @@ func (s *snIncidentTaskService) SearchIncidentTasks(ctx context.Context, req dom
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
 	}
 
-	raw, err := s.client.Post(ctx, "/incident_tasks/search", token, payload)
+	raw, err := s.client.Post(ctx, "/incident-tasks/search", token, payload)
 	if err != nil {
 		return domain.SearchIncidentTasksResponse{}, err
 	}
@@ -142,7 +142,7 @@ func (s *snIncidentTaskService) SearchIncidentTasks(ctx context.Context, req dom
 	}, nil
 }
 
-// snIncidentTaskGroupByPayload is the Choreo POST /incident_tasks/group-by
+// snIncidentTaskGroupByPayload is the Choreo POST /incident-tasks/group-by
 // request body.
 type snIncidentTaskGroupByPayload struct {
 	Filters   snIncidentTaskFilters `json:"filters,omitempty"`
@@ -159,7 +159,7 @@ var validIncidentTaskGroupByField = map[string]bool{
 }
 
 // GroupIncidentTasksBy implements IncidentTaskService by calling the Choreo
-// POST /incident_tasks/group-by endpoint: a single server-side aggregation
+// POST /incident-tasks/group-by endpoint: a single server-side aggregation
 // over the requested field, capped to the top MaxGroups buckets with the
 // remainder folded into GroupByResponse.OthersCount. Filter parsing and
 // validation mirror SearchIncidentTasks.
@@ -195,7 +195,7 @@ func (s *snIncidentTaskService) GroupIncidentTasksBy(ctx context.Context, req do
 		MaxGroups: req.MaxGroups,
 	}
 
-	raw, err := s.client.Post(ctx, "/incident_tasks/group-by", token, payload)
+	raw, err := s.client.Post(ctx, "/incident-tasks/group-by", token, payload)
 	if err != nil {
 		return domain.GroupByResponse{}, err
 	}
@@ -241,7 +241,7 @@ func mapSNIncidentTaskToView(it snIncidentTask) domain.IncidentTask {
 	return view
 }
 
-// snIncidentTaskDetailResponse mirrors the Choreo GET /incident_tasks/{id} response.
+// snIncidentTaskDetailResponse mirrors the Choreo GET /incident-tasks/{id} response.
 type snIncidentTaskDetailResponse struct {
 	ID              string                 `json:"id"`
 	Number          *string                `json:"number"`
@@ -265,7 +265,7 @@ func (s *snIncidentTaskService) GetIncidentTask(ctx context.Context, id string) 
 		return domain.IncidentTaskDetail{}, err
 	}
 
-	raw, err := s.client.Get(ctx, "/incident_tasks/"+uuidToSysid(id), token)
+	raw, err := s.client.Get(ctx, "/incident-tasks/"+uuidToSysid(id), token)
 	if err != nil {
 		return domain.IncidentTaskDetail{}, err
 	}

@@ -24,7 +24,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/service"
 )
 
-// IncidentTaskHandler handles HTTP requests for the incident_tasks resource.
+// IncidentTaskHandler handles HTTP requests for the incident-tasks resource.
 // Search and get only -- there is no create/update path.
 type IncidentTaskHandler struct {
 	svc service.IncidentTaskService
