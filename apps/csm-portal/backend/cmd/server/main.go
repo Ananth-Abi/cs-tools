@@ -19,9 +19,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -446,38 +444,6 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
-}
-
-// newReplicaID returns a stable identifier for this process's Kafka
-// consumer group suffix (see the EVENT_HUB_BROKER block above), preferring
-// the container/pod hostname — in Kubernetes/Choreo this is the pod name by
-// default, requiring no extra deployment config — over a fresh random ID.
-// A random ID on every plain process restart would make Event Hub treat it
-// as a brand new, never-before-seen consumer group every time: NewConsumer
-// starts new groups at kafka.FirstOffset, so the restart would replay every
-// retained event and re-broadcast stale case_updated notifications to
-// whichever SSE clients happen to be connected. The hostname is only stable
-// within the same pod's lifetime, so an actual redeploy (new pod, new
-// hostname) still causes a one-time replay — an accepted, much rarer
-// tradeoff than replaying on every restart.
-//
-// Falls back to a random UUID v4 (deliberately duplicating
-// middleware.newCorrelationID's same crypto/rand-based approach rather than
-// exporting/sharing it — the two ids serve unrelated purposes and don't
-// need to be coupled by a shared helper) only if the hostname is
-// unavailable, which is rare outside unusual sandboxed environments.
-func newReplicaID() string {
-	if host, err := os.Hostname(); err == nil && host != "" {
-		return host
-	}
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		slog.Error("failed to generate replica id", "err", err)
-		os.Exit(1)
-	}
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // mustPort returns the value of the given environment variable (or def if
