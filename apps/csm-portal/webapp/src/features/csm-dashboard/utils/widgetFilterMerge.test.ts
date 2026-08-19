@@ -51,10 +51,13 @@ describe("mergeWidgetFilters", () => {
   // as JSON `null`, not `{}` -- BeDashboardWidget.query is legally absent
   // (see its own doc comment). Before this null-safety fix, `base.filters`
   // threw straight out of `DashboardWidgetTile`.
-  it("treats a null base the same as an empty object", () => {
-    const merged = mergeWidgetFilters(null, { filters: [{ field: "state", op: "in", values: ["open"] }] });
-
-    expect(merged).toEqual({ filters: [{ field: "state", op: "in", values: ["open"] }] });
+  it("treats a null or undefined base the same as an empty object", () => {
+    expect(mergeWidgetFilters(null, { filters: [{ field: "state", op: "in", values: ["open"] }] })).toEqual({
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+    });
+    expect(mergeWidgetFilters(undefined, { filters: [{ field: "state", op: "in", values: ["open"] }] })).toEqual({
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+    });
   });
 
   it("treats a null/undefined slice the same as an empty object", () => {
