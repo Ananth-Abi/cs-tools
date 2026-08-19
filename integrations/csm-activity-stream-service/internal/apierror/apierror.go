@@ -22,11 +22,14 @@ package apierror
 import "fmt"
 
 // Error is returned when an upstream service responds with a non-2xx status.
+// Deliberately carries no response body: this error's own Error() string ends
+// up in server-side logs (see handler.mapUpstreamErrorGeneric's callers), and
+// an upstream body can carry user data or other sensitive information that
+// has no business in logs.
 type Error struct {
 	StatusCode int
-	Body       string
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("upstream returned %d: %s", e.StatusCode, e.Body)
+	return fmt.Sprintf("upstream returned %d", e.StatusCode)
 }

@@ -136,12 +136,7 @@ func (c *CustomerEntityClient) do(ctx context.Context, method, path string, body
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		const maxErrBody = 256
-		excerpt := respBody
-		if len(excerpt) > maxErrBody {
-			excerpt = excerpt[:maxErrBody]
-		}
-		return nil, &apierror.Error{StatusCode: resp.StatusCode, Body: string(excerpt)}
+		return nil, &apierror.Error{StatusCode: resp.StatusCode}
 	}
 
 	return respBody, nil
