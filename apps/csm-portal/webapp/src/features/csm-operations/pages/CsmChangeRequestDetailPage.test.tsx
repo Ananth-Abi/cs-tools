@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { JSX } from "react";
@@ -27,6 +27,8 @@ import { BackendApiError } from "@api/backend/client";
 const navigateMock = vi.fn();
 const useGetChangeRequestMock = vi.fn();
 const patchMutateMock = vi.fn();
+const patchMutateAsyncMock = vi.fn<(input: unknown) => Promise<unknown>>();
+const postCommentMutateAsyncMock = vi.fn<(input: unknown) => Promise<unknown>>();
 const patchResetMock = vi.fn();
 const showErrorMock = vi.fn();
 const editChangeRequestDialogMock = vi.fn();
@@ -60,6 +62,7 @@ vi.mock("@features/csm-operations/api/useGetChangeRequest", () => ({
 vi.mock("@features/csm-operations/api/usePatchChangeRequest", () => ({
   usePatchChangeRequest: () => ({
     mutate: patchMutateMock,
+    mutateAsync: patchMutateAsyncMock,
     reset: patchResetMock,
     isPending: patchIsPending,
     isError: patchIsError,
@@ -79,7 +82,11 @@ vi.mock("@features/csm-operations/components/EditChangeRequestDialog", () => ({
 }));
 vi.mock("@features/csm-operations/api/useCsmChangeRequestComments", () => ({
   useGetCsmChangeRequestComments: () => ({ data: [] }),
-  usePostCsmChangeRequestComment: () => ({ isPending: false, mutate: vi.fn() }),
+  usePostCsmChangeRequestComment: () => ({
+    isPending: false,
+    mutate: vi.fn(),
+    mutateAsync: postCommentMutateAsyncMock,
+  }),
 }));
 vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
   useGetCsmCaseAttachments: () => ({ data: [] }),
@@ -128,6 +135,10 @@ beforeEach(() => {
   patchError = null;
   patchResetMock.mockClear();
   editChangeRequestDialogMock.mockClear();
+  patchMutateAsyncMock.mockReset();
+  patchMutateAsyncMock.mockResolvedValue({ id: "chg-1" });
+  postCommentMutateAsyncMock.mockReset();
+  postCommentMutateAsyncMock.mockResolvedValue({ id: "comment-1" });
 });
 
 /** Surfaces the router's current search string, for the `?tab=` sync tests
@@ -425,5 +436,192 @@ describe("CsmChangeRequestDetailPage — Edit dialog error wiring", () => {
     fireEvent.click(screen.getByRole("button", { name: /^edit$/i }));
     const [props] = editChangeRequestDialogMock.mock.calls.at(-1)!;
     expect(props.saveError).toBe("Could not update the change request.");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle transitions. `ChangeRequestActionBar` is exercised in isolation by
+// its own test; these cover this page's half of the contract — which patch
+// each target produces, and the comment-then-patch ordering the destructive
+// ones go through.
+// ---------------------------------------------------------------------------
+
+/** Open the action bar's overflow menu. */
+function openStateMenu(): void {
+  fireEvent.click(screen.getByRole("button", { name: /change state/i }));
+}
+
+describe("CsmChangeRequestDetailPage — direct (non-destructive) transitions", () => {
+  it("PATCHes { state: target } for a forward move that is not New -> Assess", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, state: "scheduled", legalNextStates: ["implement"] },
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /start implementation/i }));
+    expect(patchMutateMock).toHaveBeenCalledWith(
+      { id: "chg-1", patch: { state: "implement" } },
+      expect.objectContaining({ onError: expect.any(Function) }),
+    );
+  });
+
+  it("keeps the requestApproval flag for New -> Assess rather than sending state", () => {
+    mockQueryResult({ data: { ...BASE_CR, legalNextStates: ["assess"] } });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /request approval/i }));
+    const [{ patch }] = patchMutateMock.mock.calls[0];
+    expect(patch).toEqual({ requestApproval: true });
+  });
+
+  it("sends a state the backend added verbatim, with no frontend change", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, state: "review", legalNextStates: ["awaiting_vendor"] },
+    });
+    renderPage();
+    openStateMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: /^awaiting vendor$/i }));
+    expect(patchMutateMock).toHaveBeenCalledWith(
+      { id: "chg-1", patch: { state: "awaiting_vendor" } },
+      expect.anything(),
+    );
+  });
+
+  it("surfaces the backend's real 4xx rejection reason for a transition", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, state: "scheduled", legalNextStates: ["implement"] },
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /start implementation/i }));
+    const [, options] = patchMutateMock.mock.calls[0];
+    const err = new BackendApiError(409, "Change window has not opened yet");
+    options.onError(err);
+    expect(showErrorMock).toHaveBeenCalledWith("Change window has not opened yet", err);
+  });
+
+  it("falls back to a target-specific generic message for a 5xx", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, state: "scheduled", legalNextStates: ["implement"] },
+    });
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /start implementation/i }));
+    const [, options] = patchMutateMock.mock.calls[0];
+    const err = new BackendApiError(500, "internal error detail");
+    options.onError(err);
+    expect(showErrorMock).toHaveBeenCalledWith(
+      "Could not move this change request to Implement.",
+      err,
+    );
+  });
+});
+
+describe("CsmChangeRequestDetailPage — destructive transitions need a reason first", () => {
+  /** Render a CR that can be rolled back, and open the confirmation dialog. */
+  function openRollbackDialog(): void {
+    mockQueryResult({
+      data: { ...BASE_CR, state: "implement", legalNextStates: ["review", "rollback"] },
+    });
+    renderPage();
+    openStateMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: /roll back/i }));
+  }
+
+  function typeReason(text: string): void {
+    fireEvent.change(screen.getByLabelText(/reason/i), { target: { value: text } });
+  }
+
+  it("opens the confirmation dialog instead of patching immediately", () => {
+    openRollbackDialog();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(patchMutateMock).not.toHaveBeenCalled();
+    expect(patchMutateAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it("posts the reason as a comment BEFORE patching the state", async () => {
+    openRollbackDialog();
+    typeReason("Latency regression in production.");
+    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+
+    await waitFor(() => expect(patchMutateAsyncMock).toHaveBeenCalled());
+    expect(postCommentMutateAsyncMock).toHaveBeenCalledWith({
+      changeRequestId: "chg-1",
+      bodyHtml: "Latency regression in production.",
+      internal: true,
+    });
+    expect(patchMutateAsyncMock).toHaveBeenCalledWith({
+      id: "chg-1",
+      patch: { state: "rollback" },
+    });
+    // Ordering, not just co-occurrence: an unexplained rollback is worse than
+    // a failed one, so the comment must land first.
+    expect(
+      postCommentMutateAsyncMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(patchMutateAsyncMock.mock.invocationCallOrder[0]);
+  });
+
+  it("closes the dialog once both halves succeed", async () => {
+    openRollbackDialog();
+    typeReason("Latency regression in production.");
+    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("does NOT patch the state when the reason comment fails", async () => {
+    postCommentMutateAsyncMock.mockRejectedValueOnce(
+      new BackendApiError(403, "Comments are disabled on this change request"),
+    );
+    openRollbackDialog();
+    typeReason("Latency regression in production.");
+    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /comments are disabled on this change request/i,
+      ),
+    );
+    expect(patchMutateAsyncMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("tells the engineer the reason was recorded when only the state change failed", async () => {
+    patchMutateAsyncMock.mockRejectedValueOnce(
+      new BackendApiError(409, "Rollback is not permitted from this state"),
+    );
+    openRollbackDialog();
+    typeReason("Latency regression in production.");
+    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        /reason was recorded as a comment, but the state did not change/i,
+      ),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /rollback is not permitted from this state/i,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(/don't need to retype it/i);
+  });
+
+  it("retrying after a failed patch re-sends only the state change, never the comment twice", async () => {
+    patchMutateAsyncMock.mockRejectedValueOnce(new BackendApiError(409, "Rejected"));
+    openRollbackDialog();
+    typeReason("Latency regression in production.");
+    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    await waitFor(() => expect(patchMutateAsyncMock).toHaveBeenCalledTimes(2));
+    expect(postCommentMutateAsyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("routes the cancel transition through the same dialog", () => {
+    mockQueryResult({
+      data: { ...BASE_CR, state: "scheduled", legalNextStates: ["implement", "canceled"] },
+    });
+    renderPage();
+    openStateMenu();
+    fireEvent.click(screen.getByRole("menuitem", { name: /cancel change/i }));
+    expect(
+      screen.getByRole("heading", { name: /cancel this change request/i }),
+    ).toBeInTheDocument();
+    expect(patchMutateAsyncMock).not.toHaveBeenCalled();
   });
 });

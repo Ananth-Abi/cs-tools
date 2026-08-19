@@ -1967,9 +1967,10 @@ export interface BeChangeRequestDetail extends BeChangeRequestSearchView {
   /**
    * Backend-supplied legal transitions out of the CR's current state, mirroring
    * `nextStates` on a case (`CaseActionBar.tsx`) — render one action per entry
-   * rather than hardcoding a `state === 'new'` check. Intentionally narrow today:
-   * the only transition modeled so far is New -> Assess, so this is only ever
-   * `["assess"]` or `[]`.
+   * rather than hardcoding a `state === 'new'` check. Deliberately typed as an
+   * open `string[]`, not `BeChangeRequestState[]`: `ChangeRequestActionBar`
+   * renders an entry it has no curated config for via a generic fallback, so a
+   * transition added on the backend needs no frontend change to appear.
    */
   legalNextStates?: string[];
 }
@@ -2218,17 +2219,39 @@ export interface BeConfigurationItemSearchResponse {
 
 /**
  * `PATCH /change-requests/{id}` body (ServiceNow data source only). At least
- * one field is required by the BE (`minProperties: 1`). `plannedStartOn` is a
- * `YYYY-MM-DD HH:MM:SS` string. `requestApproval` is mutually exclusive with
- * the other fields here — it drives the New -> Assess transition (see
- * `legalNextStates` on {@link BeChangeRequestDetail}) rather than editing a value.
+ * one field is required by the BE (`minProperties: 1`). `plannedStartOn` and
+ * `plannedEndOn` are `YYYY-MM-DD HH:MM:SS` strings.
+ *
+ * `isCustomerApproved`, `isCustomerReviewed` and `requestApproval` are
+ * mutually exclusive with each other — at most one of the three may be set in
+ * a single patch.
+ *
+ * This is a subset of what the endpoint accepts, not the whole contract: only
+ * the fields the portal actually writes are modeled here. Add a field when a
+ * UI starts sending it, after checking it against the published contract.
  */
 export interface BePatchChangeRequestPayload {
   plannedStartOn?: string;
+  plannedEndOn?: string;
   isCustomerApproved?: boolean;
   isCustomerReviewed?: boolean;
   assignedTeamId?: string;
   requestApproval?: true;
+  /**
+   * Target lifecycle state, for a transition listed in the record's own
+   * `legalNextStates` (see {@link BeChangeRequestDetail}). Typed open rather
+   * than as `BeChangeRequestState` so a transition the backend adds can be
+   * driven straight from `legalNextStates` without a frontend change.
+   *
+   * The New -> Assess transition is the one exception: it goes through
+   * `requestApproval` instead, because that also kicks off the approval
+   * request, which setting `state` alone does not.
+   */
+  state?: string;
+  /** Backout plan. Long-form; stored and re-rendered as rich text. */
+  rollbackPlan?: string;
+  /** Test plan. Long-form; stored and re-rendered as rich text. */
+  testPlan?: string;
   /**
    * UUID of the service-request case this change request was raised from.
    * Only settable via PATCH — `POST /change-requests` does not accept it, so

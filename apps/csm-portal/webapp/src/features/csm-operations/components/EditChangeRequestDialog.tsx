@@ -27,6 +27,7 @@ import {
   FormControlLabel,
   FormHelperText,
   Switch,
+  TextField,
 } from "@wso2/oxygen-ui";
 import { useMemo, useState, type JSX } from "react";
 import { useSearchGroups } from "@api/useSearchGroups";
@@ -41,6 +42,7 @@ import {
   isPastDateTime,
   parseDateTimeLocal,
 } from "@utils/dateTime";
+import { stripHtmlTags } from "@utils/sanitizeHtml";
 
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 
@@ -77,10 +79,22 @@ function toBackendDateTime(local: string): string {
 }
 
 /**
- * Edit the change-request fields the BE allows updating: planned start, the
- * assignment group, and the customer approved / reviewed flags. Only changed
- * fields are sent, and the BE requires at least one, so Save is disabled
- * until something differs.
+ * The long-form plan fields come back as rich-text HTML but are edited here as
+ * plain multiline text, so the stored markup is stripped for the initial
+ * value. That is deliberately one-way: dirty-tracking compares against this
+ * stripped value, so an untouched field is never part of the patch and the
+ * stored markup survives. Editing one is an explicit rewrite of that field,
+ * and plain text is a valid value for it.
+ */
+function toPlainTextValue(raw?: string | null): string {
+  return raw ? stripHtmlTags(raw).trim() : "";
+}
+
+/**
+ * Edit the change-request fields the BE allows updating: the planned window,
+ * the assignment group, the customer approved / reviewed flags, and the
+ * rollback and test plans. Only changed fields are sent, and the BE requires
+ * at least one, so Save is disabled until something differs.
  */
 export default function EditChangeRequestDialog({
   cr,
@@ -93,30 +107,64 @@ export default function EditChangeRequestDialog({
     () => toDateTimeLocal(cr.plannedStartOn),
     [cr.plannedStartOn],
   );
+  const initialPlannedEnd = useMemo(
+    () => toDateTimeLocal(cr.plannedEndOn),
+    [cr.plannedEndOn],
+  );
+  const initialRollbackPlan = useMemo(
+    () => toPlainTextValue(cr.rollbackPlan),
+    [cr.rollbackPlan],
+  );
+  const initialTestPlan = useMemo(() => toPlainTextValue(cr.testPlan), [cr.testPlan]);
   const initialAssignedTeamId = cr.assignedTeam?.id ?? "";
   const [plannedStart, setPlannedStart] = useState(initialPlannedStart);
+  const [plannedEnd, setPlannedEnd] = useState(initialPlannedEnd);
   const [approved, setApproved] = useState(!!cr.hasCustomerApproved);
   const [reviewed, setReviewed] = useState(!!cr.hasCustomerReviewed);
   const [assignedTeamId, setAssignedTeamId] = useState(initialAssignedTeamId);
+  const [rollbackPlan, setRollbackPlan] = useState(initialRollbackPlan);
+  const [testPlan, setTestPlan] = useState(initialTestPlan);
+
+  // Client-side only, and only when both ends are set: the backing system
+  // does its own validation and this must not become the thing that blocks a
+  // legitimate save, so it surfaces inline rather than being enforced
+  // server-side.
+  const startDate = parseDateTimeLocal(plannedStart);
+  const endDate = parseDateTimeLocal(plannedEnd);
+  const plannedEndBeforeStart =
+    !!startDate && !!endDate && endDate.getTime() <= startDate.getTime();
 
   const patch = useMemo<BePatchChangeRequestPayload>(() => {
     const next: BePatchChangeRequestPayload = {};
     if (plannedStart !== initialPlannedStart && plannedStart) {
       next.plannedStartOn = toBackendDateTime(plannedStart);
     }
+    if (plannedEnd !== initialPlannedEnd && plannedEnd) {
+      next.plannedEndOn = toBackendDateTime(plannedEnd);
+    }
     if (approved !== !!cr.hasCustomerApproved) next.isCustomerApproved = approved;
     if (reviewed !== !!cr.hasCustomerReviewed) next.isCustomerReviewed = reviewed;
     if (assignedTeamId !== initialAssignedTeamId && assignedTeamId) {
       next.assignedTeamId = assignedTeamId;
     }
+    // Unlike the pickers above, an emptied plan field is a real edit the BE
+    // can accept, so "" is sent rather than skipped.
+    if (rollbackPlan !== initialRollbackPlan) next.rollbackPlan = rollbackPlan;
+    if (testPlan !== initialTestPlan) next.testPlan = testPlan;
     return next;
   }, [
     plannedStart,
     initialPlannedStart,
+    plannedEnd,
+    initialPlannedEnd,
     approved,
     reviewed,
     assignedTeamId,
     initialAssignedTeamId,
+    rollbackPlan,
+    initialRollbackPlan,
+    testPlan,
+    initialTestPlan,
     cr.hasCustomerApproved,
     cr.hasCustomerReviewed,
   ]);
@@ -125,7 +173,7 @@ export default function EditChangeRequestDialog({
   // Non-blocking: editing a CR's planned start to a past instant is unusual
   // but not forbidden (e.g. recording when it actually started), so this
   // only warns.
-  const plannedStartIsPast = isPastDateTime(parseDateTimeLocal(plannedStart));
+  const plannedStartIsPast = isPastDateTime(startDate);
 
   // The backend rejects a patch containing both isCustomerApproved and
   // isCustomerReviewed outright — they, and requestApproval, are mutually
@@ -139,7 +187,7 @@ export default function EditChangeRequestDialog({
   const reviewedLocked = approvedChanged;
 
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Edit change request</DialogTitle>
       <DialogContent dividers>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 0.5 }}>
@@ -151,7 +199,7 @@ export default function EditChangeRequestDialog({
           <LocalizationProvider dateAdapter={AdapterDateFns}>
             <DateTimePicker
               label="Planned start"
-              value={parseDateTimeLocal(plannedStart)}
+              value={startDate}
               onChange={(next) =>
                 setPlannedStart(
                   next instanceof Date && !Number.isNaN(next.getTime())
@@ -165,6 +213,28 @@ export default function EditChangeRequestDialog({
                   fullWidth: true,
                   helperText: plannedStartIsPast
                     ? "This date is in the past."
+                    : undefined,
+                },
+                field: { clearable: true },
+              }}
+            />
+            <DateTimePicker
+              label="Planned end"
+              value={endDate}
+              onChange={(next) =>
+                setPlannedEnd(
+                  next instanceof Date && !Number.isNaN(next.getTime())
+                    ? formatDateTimeLocal(next)
+                    : "",
+                )
+              }
+              slotProps={{
+                textField: {
+                  size: "small",
+                  fullWidth: true,
+                  error: plannedEndBeforeStart,
+                  helperText: plannedEndBeforeStart
+                    ? "Planned end must be after planned start."
                     : undefined,
                 },
                 field: { clearable: true },
@@ -229,6 +299,28 @@ export default function EditChangeRequestDialog({
             knownLabel={cr.assignedTeam?.name}
             helperText="Required before approval can be requested."
           />
+          <TextField
+            label="Rollback plan"
+            value={rollbackPlan}
+            onChange={(e) => setRollbackPlan(e.target.value)}
+            disabled={isSaving}
+            multiline
+            minRows={3}
+            fullWidth
+            size="small"
+            helperText="How this change is backed out if it goes wrong."
+          />
+          <TextField
+            label="Test plan"
+            value={testPlan}
+            onChange={(e) => setTestPlan(e.target.value)}
+            disabled={isSaving}
+            multiline
+            minRows={3}
+            fullWidth
+            size="small"
+            helperText="How the change is verified once implemented."
+          />
         </Box>
       </DialogContent>
       <DialogActions>
@@ -238,7 +330,7 @@ export default function EditChangeRequestDialog({
         <Button
           variant="contained"
           onClick={() => onSave(patch)}
-          disabled={isSaving || !hasChanges}
+          disabled={isSaving || !hasChanges || plannedEndBeforeStart}
         >
           {isSaving ? "Saving…" : "Save"}
         </Button>

@@ -153,3 +153,137 @@ describe("EditChangeRequestDialog — save error surfacing", () => {
     ).toHaveTextContent(/mutually exclusive/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fields added so the plan and schedule can actually be entered somewhere:
+// rollback plan, test plan, and planned end.
+// ---------------------------------------------------------------------------
+
+/** The "Rollback plan" textarea. */
+const rollbackPlanField = (): HTMLElement => screen.getByLabelText(/rollback plan/i);
+/** The "Test plan" textarea. */
+const testPlanField = (): HTMLElement => screen.getByLabelText(/test plan/i);
+
+describe("EditChangeRequestDialog — rollback and test plans", () => {
+  it("seeds each plan field from the stored value, with the stored markup stripped", () => {
+    renderDialog({
+      rollbackPlan: "<p>Restore the previous release.</p>",
+      testPlan: "<p>Smoke the gateway health endpoint.</p>",
+    });
+    expect(rollbackPlanField()).toHaveValue("Restore the previous release.");
+    expect(testPlanField()).toHaveValue("Smoke the gateway health endpoint.");
+  });
+
+  it("renders both fields empty when the change request has no plans yet", () => {
+    renderDialog();
+    expect(rollbackPlanField()).toHaveValue("");
+    expect(testPlanField()).toHaveValue("");
+  });
+
+  it("sends only the rollback plan when only that field was edited", () => {
+    const { onSave } = renderDialog();
+    fireEvent.change(rollbackPlanField(), {
+      target: { value: "Redeploy the previous image tag." },
+    });
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({
+      rollbackPlan: "Redeploy the previous image tag.",
+    });
+  });
+
+  it("sends only the test plan when only that field was edited", () => {
+    const { onSave } = renderDialog();
+    fireEvent.change(testPlanField(), { target: { value: "Run the regression suite." } });
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({ testPlan: "Run the regression suite." });
+  });
+
+  it("sends both plans, and nothing else, when both were edited", () => {
+    const { onSave } = renderDialog();
+    fireEvent.change(rollbackPlanField(), { target: { value: "Roll the image back." } });
+    fireEvent.change(testPlanField(), { target: { value: "Run the regression suite." } });
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({
+      rollbackPlan: "Roll the image back.",
+      testPlan: "Run the regression suite.",
+    });
+  });
+
+  it("keeps an untouched plan out of the patch even when the CR already has one stored", () => {
+    const { onSave } = renderDialog({
+      rollbackPlan: "<p>Restore the previous release.</p>",
+      testPlan: "<p>Smoke the gateway health endpoint.</p>",
+    });
+    fireEvent.click(approvedSwitch());
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
+  });
+
+  it("treats clearing a stored plan as a real edit and sends the empty value", () => {
+    const { onSave } = renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
+    fireEvent.change(rollbackPlanField(), { target: { value: "" } });
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({ rollbackPlan: "" });
+  });
+
+  it("leaves Save disabled until a plan is actually changed", () => {
+    renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
+    expect(saveButton()).toBeDisabled();
+  });
+});
+
+describe("EditChangeRequestDialog — planned end must be after planned start", () => {
+  it("renders a Planned end picker alongside Planned start", () => {
+    renderDialog();
+    // The MUI date-time picker renders a segmented group (day/month/year/…),
+    // so each picker matches `getByLabelText` several times over, and the
+    // outlined field renders its label twice (visible label plus the fieldset
+    // legend) — hence `getAllByText`.
+    expect(screen.getAllByText("Planned start").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Planned end").length).toBeGreaterThan(0);
+  });
+
+  it("flags an end that is before the start, and blocks the save", () => {
+    renderDialog({
+      plannedStartOn: "2026-03-01 10:00:00",
+      plannedEndOn: "2026-03-01 09:00:00",
+    });
+    // Make the form dirty so Save would otherwise be enabled — this proves the
+    // date check, not the dirty check, is what disables it.
+    fireEvent.click(approvedSwitch());
+    expect(
+      screen.getByText(/planned end must be after planned start/i),
+    ).toBeInTheDocument();
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it("flags an end equal to the start — a zero-length change window is not a window", () => {
+    renderDialog({
+      plannedStartOn: "2026-03-01 10:00:00",
+      plannedEndOn: "2026-03-01 10:00:00",
+    });
+    fireEvent.click(approvedSwitch());
+    expect(saveButton()).toBeDisabled();
+  });
+
+  it("accepts an end after the start", () => {
+    renderDialog({
+      plannedStartOn: "2026-03-01 10:00:00",
+      plannedEndOn: "2026-03-01 12:00:00",
+    });
+    fireEvent.click(approvedSwitch());
+    expect(
+      screen.queryByText(/planned end must be after planned start/i),
+    ).not.toBeInTheDocument();
+    expect(saveButton()).toBeEnabled();
+  });
+
+  it("does not flag anything when only one end of the window is set", () => {
+    renderDialog({ plannedStartOn: "2026-03-01 10:00:00" });
+    fireEvent.click(approvedSwitch());
+    expect(
+      screen.queryByText(/planned end must be after planned start/i),
+    ).not.toBeInTheDocument();
+    expect(saveButton()).toBeEnabled();
+  });
+});
