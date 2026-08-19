@@ -47,13 +47,15 @@ func validCreateIncidentRequest() domain.CreateIncidentRequest {
 	}
 }
 
-// TestSNIncidentService_CreateIncident_WatchListConvertedToSysids verifies that
-// every watchList UUID is converted to a ServiceNow sysid before it reaches the
-// outgoing payload, so SN resolves sys_user records instead of 404ing on a raw
-// platform UUID.
-func TestSNIncidentService_CreateIncident_WatchListConvertedToSysids(t *testing.T) {
+// TestSNIncidentService_CreateIncident_WatchListResolvedToEmails verifies that
+// every watchList UUID is resolved to the watcher's email address before it
+// reaches the outgoing payload: the backing service's incident-create payload
+// declares the watch list as emails, so forwarding ids -- raw or reformatted --
+// silently drops every watcher.
+func TestSNIncidentService_CreateIncident_WatchListResolvedToEmails(t *testing.T) {
 	var gotBody map[string]any
 	mux := http.NewServeMux()
+	mux.HandleFunc("/users/search", watchListUserSearchStub(t))
 	mux.HandleFunc("/incidents", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			t.Fatalf("expected POST, got %s", r.Method)
@@ -82,13 +84,13 @@ func TestSNIncidentService_CreateIncident_WatchListConvertedToSysids(t *testing.
 	if !ok {
 		t.Fatalf("expected watchList array in payload, got %+v", gotBody["watchList"])
 	}
-	want := []string{testIncidentWatcherSysid1, testIncidentWatcherSysid2}
+	want := []string{testWatcherEmail1, testWatcherEmail2}
 	if len(gotWatchList) != len(want) {
 		t.Fatalf("watchList length: got %d, want %d", len(gotWatchList), len(want))
 	}
 	for i, w := range want {
 		if gotWatchList[i] != w {
-			t.Fatalf("watchList[%d]: got %v, want %q (raw UUID must not be sent to SN)", i, gotWatchList[i], w)
+			t.Fatalf("watchList[%d]: got %v, want %q (an id must never be sent as a watcher)", i, gotWatchList[i], w)
 		}
 	}
 }
@@ -108,11 +110,14 @@ func TestSNIncidentService_CreateIncident_WatchList_InvalidUUID(t *testing.T) {
 	}
 }
 
-// TestSNIncidentService_UpdateIncident_WatchListConvertedToSysids mirrors the
-// create-path coverage above for the PATCH /incidents/{id} path.
-func TestSNIncidentService_UpdateIncident_WatchListConvertedToSysids(t *testing.T) {
+// TestSNIncidentService_UpdateIncident_WatchListResolvedToUserNames mirrors the
+// create-path coverage above for the PATCH /incidents/{id} path, which declares
+// its watch list as usernames rather than the emails its create counterpart
+// takes.
+func TestSNIncidentService_UpdateIncident_WatchListResolvedToUserNames(t *testing.T) {
 	var gotBody map[string]any
 	mux := http.NewServeMux()
+	mux.HandleFunc("/users/search", watchListUserSearchStub(t))
 	mux.HandleFunc("/incidents/"+testIncidentSysid, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPatch {
 			t.Fatalf("expected PATCH, got %s", r.Method)
@@ -143,13 +148,13 @@ func TestSNIncidentService_UpdateIncident_WatchListConvertedToSysids(t *testing.
 	if !ok {
 		t.Fatalf("expected watchList array in payload, got %+v", gotBody["watchList"])
 	}
-	want := []string{testIncidentWatcherSysid1, testIncidentWatcherSysid2}
+	want := []string{testWatcherUserName1, testWatcherUserName2}
 	if len(gotWatchList) != len(want) {
 		t.Fatalf("watchList length: got %d, want %d", len(gotWatchList), len(want))
 	}
 	for i, w := range want {
 		if gotWatchList[i] != w {
-			t.Fatalf("watchList[%d]: got %v, want %q (raw UUID must not be sent to SN)", i, gotWatchList[i], w)
+			t.Fatalf("watchList[%d]: got %v, want %q (an id must never be sent as a watcher)", i, gotWatchList[i], w)
 		}
 	}
 }
