@@ -265,15 +265,26 @@ test.describe("Announcements", () => {
         // A larger page shows up to however many exist — the expectation comes
         // from the list's own total rather than assuming there is more than one
         // page's worth.
+        //
+        // Raising the size can also take the pagination away: ListPagination
+        // renders nothing once `totalRecords <= rowsPerPage`. So the count comes
+        // from the range while there is one, and from the rows themselves once
+        // everything fits on a single page — waiting for a range that cannot
+        // appear would just time out.
         const larger = 25;
         await announcements.selectRowsPerPage(larger);
         await expect
           .poll(
             async () => {
               const current = await announcements.displayedRange();
-              return current ? current.to - current.from + 1 : null;
+              if (current) return current.to - current.from + 1;
+              return announcements.rows().count();
             },
-            { timeout: 30_000 },
+            {
+              message:
+                "the resized page should show every announcement it can fit",
+              timeout: 30_000,
+            },
           )
           .toBe(Math.min(larger, total));
 

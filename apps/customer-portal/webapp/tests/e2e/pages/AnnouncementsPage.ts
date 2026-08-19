@@ -251,9 +251,14 @@ export class AnnouncementsPage {
    * The range the pagination reports.
    *
    * Guarded on the control existing: `innerText` on a missing element waits for
-   * it and then throws, so without this the "not rendered" case — an empty list,
-   * or a total that fits on one page — would surface as a timeout rather than as
-   * the null a caller can skip on.
+   * it and then throws, so without this the "not rendered" case would surface as
+   * a timeout rather than as the null a caller can act on.
+   *
+   * Absent is a normal state, not only an empty-list one: ListPagination returns
+   * null whenever `totalRecords <= rowsPerPage`, so raising the page size can
+   * remove the control that was there a moment ago. A caller reading this after a
+   * resize has to treat null as "everything fits on one page" and count the rows
+   * instead.
    *
    * @returns from/to/total, or null when the range is not rendered.
    */
