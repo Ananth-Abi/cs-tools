@@ -256,6 +256,11 @@ export type ChatWebSocketPayload =
   | {
       type: "token_increase_request";
       accountId: string;
+      /**
+       * Readable customer name for the admin notification, which otherwise
+       * addresses the account by sys_id. Display only — the id stays the key.
+       */
+      accountName?: string;
       reason: string;
       limitType: "session" | "monthly";
     }
