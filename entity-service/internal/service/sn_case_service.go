@@ -2516,17 +2516,17 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 	}, nil
 }
 
-// snCaseGroupByPayload is the Choreo POST /cases/group-by request body.
-type snCaseGroupByPayload struct {
+// snCaseAggregatePayload is the Choreo POST /cases/aggregate request body.
+type snCaseAggregatePayload struct {
 	Filters   snCaseFilters `json:"filters,omitempty"`
 	GroupBy   string        `json:"groupBy"`
 	MaxGroups int           `json:"maxGroups,omitempty"`
 }
 
-// GroupCasesBy implements CaseService by calling the Choreo POST
-// /cases/group-by endpoint: a single server-side aggregation over the
+// AggregateCases implements CaseService by calling the Choreo POST
+// /cases/aggregate endpoint: a single server-side aggregation over the
 // requested field (e.g. account), capped to the top MaxGroups buckets with
-// the remainder folded into GroupByResponse.OthersCount. This is distinct
+// the remainder folded into AggregateResponse.OthersCount. This is distinct
 // from SearchCases' own GroupBy, which only supports small fixed-enum
 // fields and computes each bucket as a separate client-side search.
 //
@@ -2535,127 +2535,127 @@ type snCaseGroupByPayload struct {
 // range checks -- so a request that would be rejected by search is rejected
 // here too, rather than silently reaching ServiceNow with a narrower filter
 // set than the caller intended.
-func (s *snCaseService) GroupCasesBy(ctx context.Context, req domain.GroupCasesByRequest) (domain.GroupByResponse, error) {
+func (s *snCaseService) AggregateCases(ctx context.Context, req domain.AggregateCasesRequest) (domain.AggregateResponse, error) {
 	if req.GroupBy == "" {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
 	}
-	if !validCaseGroupByField[req.GroupBy] {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	if !validCaseAggregateField[req.GroupBy] {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(token)
 	parsed, err := ParseCaseFieldFilters(req.Filters.Filters, callerEmail, callerEmailErr, time.Now().UTC())
 	if err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 
 	orGroups, err := ParseCaseFieldFilterGroups(req.Filters.AnyOf)
 	if err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	parsed.OrGroups = orGroups
 
 	if parsed.ClosedEndDate != nil && parsed.ClosedStartDate != nil &&
 		parsed.ClosedEndDate.Before(*parsed.ClosedStartDate) {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "closedOn: lte value must not be before gte value"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "closedOn: lte value must not be before gte value"}
 	}
 	if parsed.ResolvedEndDate != nil && parsed.ResolvedStartDate != nil &&
 		parsed.ResolvedEndDate.Before(*parsed.ResolvedStartDate) {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "resolvedOn: lte value must not be before gte value"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "resolvedOn: lte value must not be before gte value"}
 	}
 	if parsed.EndCreatedDate != nil && parsed.StartCreatedDate != nil &&
 		parsed.EndCreatedDate.Before(*parsed.StartCreatedDate) {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
 	}
 	if parsed.EndUpdatedDate != nil && parsed.StartUpdatedDate != nil &&
 		parsed.EndUpdatedDate.Before(*parsed.StartUpdatedDate) {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "updatedOn: lte value must not be before gte value"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "updatedOn: lte value must not be before gte value"}
 	}
 	for _, ws := range parsed.WorkStates {
 		if ws != domain.CaseWorkStateOngoing && ws != domain.CaseWorkStatePaused {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "workState contains invalid value: " + string(ws)}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "workState contains invalid value: " + string(ws)}
 		}
 	}
 	if err := validateUUIDs("assignedUserId", parsed.AssignedUserIDs); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	if parsed.ParentID != nil {
 		if err := validateUUIDs("parentId", []string{*parsed.ParentID}); err != nil {
-			return domain.GroupByResponse{}, err
+			return domain.AggregateResponse{}, err
 		}
 	}
 	if err := validateUUIDs("creTeam", parsed.CreTeamIDs); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	if err := validateUUIDs("sreTeam", parsed.SreTeamIDs); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	if err := validateUUIDs("accountId", parsed.AccountIDs); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	for _, t := range parsed.Types {
 		if _, ok := snCaseTypeMap[t]; !ok {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "type contains invalid value: " + t}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "type contains invalid value: " + t}
 		}
 	}
 	for _, st := range parsed.States {
 		if !validCaseState[st] {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "state contains invalid value: " + string(st)}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "state contains invalid value: " + string(st)}
 		}
 	}
 	for _, st := range parsed.ExcludeStates {
 		if !validCaseState[st] {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "state (notIn) contains invalid value: " + string(st)}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "state (notIn) contains invalid value: " + string(st)}
 		}
 	}
 	for _, sv := range parsed.Severities {
 		if !validCaseSeverity[sv] {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "severity contains invalid value: " + string(sv)}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "severity contains invalid value: " + string(sv)}
 		}
 	}
 	for _, it := range parsed.IssueTypes {
 		if !validCaseIssueType[it] {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "issueType contains invalid value: " + string(it)}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "issueType contains invalid value: " + string(it)}
 		}
 	}
 	for _, et := range parsed.EngagementTypes {
 		if !validEngagementType[et] {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(et)}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(et)}
 		}
 	}
 	for _, lvl := range parsed.EscalationLevels {
 		if !validEscalationLevel[lvl] {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "escalationLevel contains invalid value: " + lvl}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "escalationLevel contains invalid value: " + lvl}
 		}
 	}
 	for i, group := range parsed.OrGroups {
 		if err := validateOrGroupEnums(i, group); err != nil {
-			return domain.GroupByResponse{}, err
+			return domain.AggregateResponse{}, err
 		}
 	}
 
 	snFilters := buildSNCaseFilters(parsed, req.Filters.SearchQuery)
 
-	payload := snCaseGroupByPayload{
+	payload := snCaseAggregatePayload{
 		Filters:   snFilters,
 		GroupBy:   req.GroupBy,
 		MaxGroups: req.MaxGroups,
 	}
 
-	raw, err := s.client.Post(ctx, "/cases/group-by", token, payload)
+	raw, err := s.client.Post(ctx, "/cases/aggregate", token, payload)
 	if err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 
-	var resp domain.GroupByResponse
+	var resp domain.AggregateResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return domain.GroupByResponse{}, fmt.Errorf("sn cases: parse group-by response: %w", err)
+		return domain.AggregateResponse{}, fmt.Errorf("sn cases: parse aggregate response: %w", err)
 	}
-	// "account" is the only ID-valued field in validCaseGroupByField; SN
+	// "account" is the only ID-valued field in validCaseAggregateField; SN
 	// returns its bucket keys as raw sys_ids, so convert them to this
 	// platform's UUIDs before returning. Every other allowed field (state,
 	// severity, type) is a plain enum and is left as-is.

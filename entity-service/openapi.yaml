@@ -825,7 +825,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /cases/group-by:
+  /cases/aggregate:
     post:
       summary: >-
         Server-side aggregation of cases by a single field (e.g. account, top
@@ -836,20 +836,20 @@ paths:
         searches), this drives a single aggregation query over an open-ended
         field such as account, capped to the top maxGroups buckets with the
         remainder folded into othersCount.
-      operationId: groupCasesBy
+      operationId: aggregateCases
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GroupCasesByRequest'
+              $ref: '#/components/schemas/AggregateCasesRequest'
       responses:
         "200":
           description: Aggregated case counts per value of groupBy.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupByResponse'
+                $ref: '#/components/schemas/AggregateResponse'
         "400":
           description: Bad request.
           content:
@@ -2251,25 +2251,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /change-requests/group-by:
+  /change-requests/aggregate:
     post:
       summary: >-
         Server-side aggregation of change requests by a single field
         (ServiceNow data source only).
-      operationId: groupChangeRequestsBy
+      operationId: aggregateChangeRequests
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GroupChangeRequestsByRequest'
+              $ref: '#/components/schemas/AggregateChangeRequestsRequest'
       responses:
         "200":
           description: Aggregated change request counts per value of groupBy.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupByResponse'
+                $ref: '#/components/schemas/AggregateResponse'
         "400":
           description: Bad request.
           content:
@@ -3036,25 +3036,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /incidents/group-by:
+  /incidents/aggregate:
     post:
       summary: >-
         Server-side aggregation of incidents by a single field (ServiceNow
         data source only).
-      operationId: groupIncidentsBy
+      operationId: aggregateIncidents
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GroupIncidentsByRequest'
+              $ref: '#/components/schemas/AggregateIncidentsRequest'
       responses:
         "200":
           description: Aggregated incident counts per value of groupBy.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupByResponse'
+                $ref: '#/components/schemas/AggregateResponse'
         "400":
           description: Bad request.
           content:
@@ -3146,25 +3146,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /problems/group-by:
+  /problems/aggregate:
     post:
       summary: >-
         Server-side aggregation of problems by a single field (ServiceNow
         data source only).
-      operationId: groupProblemsBy
+      operationId: aggregateProblems
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GroupProblemsByRequest'
+              $ref: '#/components/schemas/AggregateProblemsRequest'
       responses:
         "200":
           description: Aggregated problem counts per value of groupBy.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupByResponse'
+                $ref: '#/components/schemas/AggregateResponse'
         "400":
           description: Bad request.
           content:
@@ -3257,25 +3257,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /incident-tasks/group-by:
+  /incident-tasks/aggregate:
     post:
       summary: >-
         Server-side aggregation of incident tasks by a single field
         (ServiceNow data source only).
-      operationId: groupIncidentTasksBy
+      operationId: aggregateIncidentTasks
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GroupIncidentTasksByRequest'
+              $ref: '#/components/schemas/AggregateIncidentTasksRequest'
       responses:
         "200":
           description: Aggregated incident task counts per value of groupBy.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/GroupByResponse'
+                $ref: '#/components/schemas/AggregateResponse'
         "400":
           description: Bad request.
           content:
@@ -5356,7 +5356,7 @@ components:
             fan-out of per-value count queries against the ServiceNow data
             source; not supported by the Postgres data source.
 
-    GroupCasesByRequest:
+    AggregateCasesRequest:
       type: object
       required: [groupBy]
       properties:
@@ -5370,7 +5370,7 @@ components:
           type: integer
           description: >-
             Caps the response to the top maxGroups buckets by count; the
-            remainder is folded into GroupByResponse.othersCount. Optional; a
+            remainder is folded into AggregateResponse.othersCount. Optional; a
             default is applied when omitted.
 
     UserReference:
@@ -5869,12 +5869,12 @@ components:
           type: integer
           description: Number of matching cases in this group.
 
-    GroupByBucket:
+    AggregateBucket:
       type: object
       required: [key, label, count]
       description: >-
-        One aggregated bucket in a server-side group-by result. Shared by
-        every resource's dedicated group-by endpoint (cases, incidents,
+        One aggregated bucket in a server-side aggregate result. Shared by
+        every resource's dedicated aggregate endpoint (cases, incidents,
         problems, change requests, incident tasks).
       properties:
         key:
@@ -5889,17 +5889,17 @@ components:
           type: integer
           description: Number of matching records in this bucket.
 
-    GroupByResponse:
+    AggregateResponse:
       type: object
       required: [groups, othersCount, totalRecords]
       description: >-
-        The shared result shape for every resource's dedicated group-by
-        aggregation endpoint.
+        The shared result shape for every resource's dedicated aggregate
+        endpoint.
       properties:
         groups:
           type: array
           items:
-            $ref: '#/components/schemas/GroupByBucket'
+            $ref: '#/components/schemas/AggregateBucket'
           description: The top buckets by count, capped at the request's maxGroups.
         othersCount:
           type: integer
@@ -6374,7 +6374,7 @@ components:
               maximum: 50
               default: 20
 
-    GroupChangeRequestsByRequest:
+    AggregateChangeRequestsRequest:
       type: object
       required: [groupBy]
       properties:
@@ -6429,7 +6429,7 @@ components:
           type: integer
           description: >-
             Caps the response to the top maxGroups buckets by count; the
-            remainder is folded into GroupByResponse.othersCount. Optional; a
+            remainder is folded into AggregateResponse.othersCount. Optional; a
             default is applied when omitted.
 
     SearchChangeRequestView:
@@ -8444,7 +8444,7 @@ components:
         pagination:
           $ref: '#/components/schemas/Pagination'
 
-    GroupIncidentsByRequest:
+    AggregateIncidentsRequest:
       type: object
       required: [groupBy]
       properties:
@@ -8485,7 +8485,7 @@ components:
           type: integer
           description: >-
             Caps the response to the top maxGroups buckets by count; the
-            remainder is folded into GroupByResponse.othersCount. Optional; a
+            remainder is folded into AggregateResponse.othersCount. Optional; a
             default is applied when omitted.
 
     SearchIncidentView:
@@ -8951,7 +8951,7 @@ components:
         pagination:
           $ref: '#/components/schemas/Pagination'
 
-    GroupProblemsByRequest:
+    AggregateProblemsRequest:
       type: object
       required: [groupBy]
       properties:
@@ -8982,7 +8982,7 @@ components:
           type: integer
           description: >-
             Caps the response to the top maxGroups buckets by count; the
-            remainder is folded into GroupByResponse.othersCount. Optional; a
+            remainder is folded into AggregateResponse.othersCount. Optional; a
             default is applied when omitted.
 
     SearchProblemView:
@@ -9139,7 +9139,7 @@ components:
         pagination:
           $ref: '#/components/schemas/Pagination'
 
-    GroupIncidentTasksByRequest:
+    AggregateIncidentTasksRequest:
       type: object
       required: [groupBy]
       properties:
@@ -9170,7 +9170,7 @@ components:
           type: integer
           description: >-
             Caps the response to the top maxGroups buckets by count; the
-            remainder is folded into GroupByResponse.othersCount. Optional; a
+            remainder is folded into AggregateResponse.othersCount. Optional; a
             default is applied when omitted.
 
     IncidentTask:

@@ -317,55 +317,55 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	}, nil
 }
 
-// snIncidentGroupByPayload is the Choreo POST /incidents/group-by request body.
-type snIncidentGroupByPayload struct {
+// snIncidentAggregatePayload is the Choreo POST /incidents/aggregate request body.
+type snIncidentAggregatePayload struct {
 	Filters   snIncidentFilters `json:"filters,omitempty"`
 	GroupBy   string            `json:"groupBy"`
 	MaxGroups int               `json:"maxGroups,omitempty"`
 }
 
-// validIncidentGroupByField is the allow-list for
-// GroupIncidentsByRequest.GroupBy, matching openapi.yaml's
-// GroupIncidentsByRequest.groupBy enum exactly.
-var validIncidentGroupByField = map[string]bool{
+// validIncidentAggregateField is the allow-list for
+// AggregateIncidentsRequest.GroupBy, matching openapi.yaml's
+// AggregateIncidentsRequest.groupBy enum exactly.
+var validIncidentAggregateField = map[string]bool{
 	"state":           true,
 	"assignmentGroup": true,
 	"businessService": true,
 }
 
-// GroupIncidentsBy implements IncidentService by calling the Choreo POST
-// /incidents/group-by endpoint: a single server-side aggregation over the
+// AggregateIncidents implements IncidentService by calling the Choreo POST
+// /incidents/aggregate endpoint: a single server-side aggregation over the
 // requested field, capped to the top MaxGroups buckets with the remainder
-// folded into GroupByResponse.OthersCount. Filter parsing and validation
+// folded into AggregateResponse.OthersCount. Filter parsing and validation
 // mirror SearchIncidents.
-func (s *snIncidentService) GroupIncidentsBy(ctx context.Context, req domain.GroupIncidentsByRequest) (domain.GroupByResponse, error) {
+func (s *snIncidentService) AggregateIncidents(ctx context.Context, req domain.AggregateIncidentsRequest) (domain.AggregateResponse, error) {
 	if req.GroupBy == "" {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
 	}
-	if !validIncidentGroupByField[req.GroupBy] {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	if !validIncidentAggregateField[req.GroupBy] {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	if err := validateExactNumber("number", req.Filters.Number); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	for _, p := range req.Filters.Priorities {
 		if !validIncidentPriority[p] {
-			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "priorities contains invalid value: " + string(p)}
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "priorities contains invalid value: " + string(p)}
 		}
 	}
 	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
 	if err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
 		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
@@ -375,7 +375,7 @@ func (s *snIncidentService) GroupIncidentsBy(ctx context.Context, req domain.Gro
 		priorityKeys = append(priorityKeys, snIncidentPriorityKeyMap[p])
 	}
 
-	payload := snIncidentGroupByPayload{
+	payload := snIncidentAggregatePayload{
 		Filters: snIncidentFilters{
 			SearchQuery:        req.Filters.SearchQuery,
 			PriorityKeys:       priorityKeys,
@@ -391,14 +391,14 @@ func (s *snIncidentService) GroupIncidentsBy(ctx context.Context, req domain.Gro
 		MaxGroups: req.MaxGroups,
 	}
 
-	raw, err := s.client.Post(ctx, "/incidents/group-by", token, payload)
+	raw, err := s.client.Post(ctx, "/incidents/aggregate", token, payload)
 	if err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 
-	var resp domain.GroupByResponse
+	var resp domain.AggregateResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return domain.GroupByResponse{}, fmt.Errorf("sn incidents: parse group-by response: %w", err)
+		return domain.AggregateResponse{}, fmt.Errorf("sn incidents: parse aggregate response: %w", err)
 	}
 	return resp, nil
 }
