@@ -95,6 +95,11 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if h.hub == nil {
+		writeError(w, http.StatusServiceUnavailable, "Live updates are not available right now.")
+		return
+	}
+
 	// A caller with a valid token but no read access to this specific case
 	// must not learn even that it changed. Reuse the same upstream call
 	// GetCase itself uses — the caller's forwarded x-user-id-token is what
@@ -103,11 +108,6 @@ func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Requ
 	if _, err := h.entityClient.GetCase(r.Context(), caseID); err != nil {
 		slog.ErrorContext(r.Context(), "entity GetCase failed during stream authorization", "userID", user.UserID, "caseID", caseID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to open the case activity stream.")
-		return
-	}
-
-	if h.hub == nil {
-		writeError(w, http.StatusServiceUnavailable, "Live updates are not available right now.")
 		return
 	}
 
