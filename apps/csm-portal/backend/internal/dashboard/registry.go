@@ -255,7 +255,7 @@ func loadDir(dir string, sharedPresets map[string]map[string]any) ([]Dashboard, 
 	loaded := make([]sourced, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		raw, err := os.ReadFile(path) //nolint:gosec // path is deployment configuration, not user input
+		raw, err := os.ReadFile(path) // #nosec G304 -- path is deployment configuration, not user input
 		if err != nil {
 			return nil, fmt.Errorf("dashboard definitions: read %q: %w", path, err)
 		}
@@ -284,7 +284,7 @@ func LoadSharedPresets(path string) (map[string]map[string]any, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // path is deployment configuration, not user input
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is deployment configuration, not user input
 	if err != nil {
 		return nil, fmt.Errorf("dashboard filter presets: read %q: %w", path, err)
 	}
