@@ -19,17 +19,24 @@ import {
   Avatar,
   Box,
   Button,
+  IconButton,
   Paper,
   Stack,
+  Tooltip,
   Typography,
   alpha,
   useTheme,
 } from "@wso2/oxygen-ui";
-import { Bot, User } from "@wso2/oxygen-ui-icons-react";
+import { Bot, ThumbsDown, ThumbsUp, User } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { ChatSender } from "@features/support/types/conversations";
+import {
+  MAX_FEEDBACK_TAGS,
+  feedbackTagPrompt,
+  feedbackTagsFor,
+} from "@features/support/constants/feedbackTags";
 import {
   NOVERA_ANALYZING_PLACEHOLDER_TEXT,
   NOVERA_DISPLAY_NAME,
@@ -139,6 +146,9 @@ function MarkdownContent({ text }: { text: string }) {
  */
 export default function ChatMessageBubble({
   message,
+  onThumbsUp,
+  onThumbsDown,
+  onFeedbackTag,
   onRequestTokenIncrease,
 }: ChatMessageBubbleProps): JSX.Element {
   const isUser = message.sender === ChatSender.USER;
@@ -183,6 +193,37 @@ export default function ChatMessageBubble({
 
   /** Faded frame wraps analyzing, live thinking steps, and streamed tokens. */
   const showThinkingStreamFrame = hideFeedbackRow;
+
+  /**
+   * Show 👍/👎 on a completed assistant answer that carries a stable
+   * feedbackMessageId (from the WS `final` event). Never on user, error,
+   * streaming, or history messages that lack an id.
+   *
+   * Feedback is delivered over the chat socket, so it is only offered while
+   * that socket is open: the pages pass the handlers as undefined when
+   * disconnected, and the last clause below then hides the row. Hidden rather
+   * than disabled — a greyed-out thumb invites a click that cannot succeed.
+   */
+  const showFeedbackRow =
+    message.sender === ChatSender.BOT &&
+    !message.isError &&
+    !hideFeedbackRow &&
+    !!message.feedbackMessageId &&
+    (!!onThumbsUp || !!onThumbsDown);
+
+  /**
+   * Reason chips appear only once a rating exists, so giving the rating is never
+   * blocked by a second decision — the vote is the signal we most want, and it
+   * is already saved by the time these render. Gated on onFeedbackTag too, so
+   * they disappear with the thumbs when the socket closes.
+   */
+  const selectedTags = message.feedbackTags ?? [];
+  const showFeedbackTags =
+    showFeedbackRow && !!onFeedbackTag && !!message.feedbackRating;
+  const tagOptions = message.feedbackRating
+    ? feedbackTagsFor(message.feedbackRating)
+    : [];
+  const tagLimitReached = selectedTags.length >= MAX_FEEDBACK_TAGS;
 
   const streamBodyText = collapseStreamLineBreaks(displayText);
   const analyzingLeadText = "Novera is analyzing your request...";
@@ -425,6 +466,93 @@ export default function ChatMessageBubble({
               </Box>
             )}
           </Box>
+
+          {showFeedbackRow && (
+            <Stack
+              direction="row"
+              alignItems="center"
+              spacing={0.5}
+              sx={{ mt: 0.25, ml: -0.75 }}
+            >
+              <Tooltip title="Good response">
+                <IconButton
+                  size="small"
+                  aria-label="Good response"
+                  aria-pressed={message.feedbackRating === 1}
+                  onClick={() =>
+                    onThumbsUp?.(message.feedbackMessageId as string)
+                  }
+                  sx={{
+                    color:
+                      message.feedbackRating === 1
+                        ? "primary.main"
+                        : "text.secondary",
+                  }}
+                >
+                  <ThumbsUp size={16} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Bad response">
+                <IconButton
+                  size="small"
+                  aria-label="Bad response"
+                  aria-pressed={message.feedbackRating === -1}
+                  onClick={() =>
+                    onThumbsDown?.(message.feedbackMessageId as string)
+                  }
+                  sx={{
+                    color:
+                      message.feedbackRating === -1
+                        ? "error.main"
+                        : "text.secondary",
+                  }}
+                >
+                  <ThumbsDown size={16} />
+                </IconButton>
+              </Tooltip>
+            </Stack>
+          )}
+
+          {showFeedbackTags && (
+            <Box sx={{ mt: 0.5 }}>
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ display: "block", mb: 0.5 }}
+              >
+                {feedbackTagPrompt(message.feedbackRating as 1 | -1)}
+              </Typography>
+              <Stack direction="row" flexWrap="wrap" useFlexGap spacing={0.5}>
+                {tagOptions.map(({ slug, label }) => {
+                  const selected = selectedTags.includes(slug);
+                  return (
+                    <Button
+                      key={slug}
+                      size="small"
+                      variant={selected ? "contained" : "outlined"}
+                      color={message.feedbackRating === 1 ? "primary" : "error"}
+                      aria-pressed={selected}
+                      // Unselected chips go inert at the cap so the limit is
+                      // discoverable, rather than silently dropping the choice
+                      // server-side.
+                      disabled={!selected && tagLimitReached}
+                      onClick={() =>
+                        onFeedbackTag?.(message.feedbackMessageId as string, slug)
+                      }
+                      sx={{
+                        textTransform: "none",
+                        borderRadius: 4,
+                        py: 0.1,
+                        minWidth: 0,
+                      }}
+                    >
+                      {label}
+                    </Button>
+                  );
+                })}
+              </Stack>
+            </Box>
+          )}
 
           {showTokenRequestCta && (
             <Box sx={{ mt: 1 }}>
