@@ -68,7 +68,7 @@ interface DashboardWidgetTileProps {
    * one of the two (backend-enforced). */
   slices?: BeDashboardPieSlice[];
   /** Only meaningful for shape "pie"/"bar"; a single server-side
-   * `POST {resourceType}/group-by` call instead of one search per slice
+   * `POST {resourceType}/aggregate` call instead of one search per slice
    * (see `useWidgetGroupByData`). Mutually exclusive with `slices`. */
   groupBy?: BeDashboardGroupByConfig;
   /** Only meaningful for shape "list". When set (non-empty), this widget
