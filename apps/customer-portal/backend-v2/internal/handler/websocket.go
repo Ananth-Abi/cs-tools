@@ -367,6 +367,16 @@ func (h *WebSocketHandler) handleMessage(ctx context.Context, conn *websocket.Co
 	//   - persisting the "user query" makes no sense for a rating, which carries
 	//     no message at all.
 	//   - the resolved/auto-resolve bookkeeping likewise does not apply.
+	//
+	// Called synchronously, on purpose. It blocks the read loop for as long as
+	// the acknowledgement takes, which is bounded by sideChannelTimeout and in
+	// practice well under a second. Forwarding it in a goroutine instead would
+	// mean two writers on one *websocket.Conn — gorilla permits only one at a
+	// time for WriteMessage — so it would need a write mutex *and* coordination
+	// with HandleWebSocket's deferred conn.Close(), or the loop could close the
+	// connection underneath an in-flight write. That trades a bounded stall for
+	// a write-after-close race, and it would diverge from the Ballerina backend,
+	// whose onMessage also forwards these inline.
 	if msgType, _ := parsed["type"].(string); msgType == msgTypeFeedback || msgType == msgTypeTokenIncreaseRequest {
 		h.handleSideChannel(ctx, conn, user, projectID, msgType, parsed)
 		return
