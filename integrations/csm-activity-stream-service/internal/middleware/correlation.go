@@ -23,16 +23,25 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/entity"
 )
 
 const correlationIDHeader = "X-CSM-Correlation-ID"
 
+// correlationIDRe bounds an incoming X-CSM-Correlation-ID to the same shape
+// newCorrelationID generates. A caller-supplied header is otherwise
+// untrusted input that flows straight into log records, the response
+// header, and the outgoing entity-service request — accepting an arbitrary
+// value here would let a caller plant PII (an email, a JWT, ...) in every
+// log line for the request.
+var correlationIDRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
 type correlationIDKey struct{}
 
 // CorrelationID is an HTTP middleware that reads the X-CSM-Correlation-ID request
-// header or generates a UUID v4 if absent. The ID is:
+// header or generates a UUID v4 if absent or not a well-formed UUID. The ID is:
 //   - stored in the context for automatic inclusion in slog records
 //   - stored in the entity client context so it is forwarded on every outgoing
 //     entity-service request
@@ -41,7 +50,7 @@ type correlationIDKey struct{}
 func CorrelationID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(correlationIDHeader)
-		if id == "" {
+		if !correlationIDRe.MatchString(id) {
 			id = newCorrelationID()
 		}
 		w.Header().Set(correlationIDHeader, id)

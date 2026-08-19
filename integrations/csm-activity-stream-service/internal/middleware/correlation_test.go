@@ -49,7 +49,7 @@ func TestCorrelationID_GeneratesWhenAbsent(t *testing.T) {
 func TestCorrelationID_PreservesIncoming(t *testing.T) {
 	t.Parallel()
 
-	const incomingID = "caller-supplied-id-123"
+	const incomingID = "5b7c200d-0a64-4069-806b-3845b5d0fa7c"
 	var gotFromContext string
 	handler := middleware.CorrelationID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotFromContext = middleware.CorrelationIDFromContext(r.Context())
@@ -66,6 +66,32 @@ func TestCorrelationID_PreservesIncoming(t *testing.T) {
 	}
 	if gotFromContext != incomingID {
 		t.Errorf("CorrelationIDFromContext() = %q, want %q", gotFromContext, incomingID)
+	}
+}
+
+func TestCorrelationID_RejectsNonUUIDIncoming(t *testing.T) {
+	t.Parallel()
+
+	var gotFromContext string
+	handler := middleware.CorrelationID(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFromContext = middleware.CorrelationIDFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-CSM-Correlation-ID", "attacker@example.com")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+
+	echoed := w.Header().Get("X-CSM-Correlation-ID")
+	if echoed == "attacker@example.com" {
+		t.Fatal("non-UUID caller-supplied value was echoed back instead of replaced")
+	}
+	if echoed == "" {
+		t.Fatal("X-CSM-Correlation-ID response header is empty, want a generated ID")
+	}
+	if gotFromContext != echoed {
+		t.Errorf("CorrelationIDFromContext() = %q, want it to match the echoed header %q", gotFromContext, echoed)
 	}
 }
 
