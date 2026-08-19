@@ -150,7 +150,17 @@ func main() {
 	mainConsumerCount := envInt("MAIN_CONSUMER_COUNT", 1)
 	dlqConsumerCount := envInt("DLQ_CONSUMER_COUNT", 1)
 
-	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver)
+	// Temporary killswitch for the four case.* types' actual email delivery —
+	// unset/anything but "false" means real sending, matching this repo's own
+	// AUTH_TOKEN_VALIDATOR_ENABLED convention (apps/csm-portal/backend). When
+	// disabled, Dispatcher still resolves recipient links and logs what it
+	// would have sent — only the SendEmail call itself is skipped. Doesn't
+	// affect Google Chat/Twilio.
+	emailSendingEnabled := os.Getenv("EMAIL_SENDING_ENABLED") != "false"
+	if !emailSendingEnabled {
+		slog.Warn("EMAIL_SENDING_ENABLED=false; case.* emails will be logged, not sent")
+	}
+	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailSendingEnabled)
 
 	// The main consumer's OnExhausted: publish the exhausted record to the
 	// dead-letter topic instead of just logging and dropping it. The DLQ's
