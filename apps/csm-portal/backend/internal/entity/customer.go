@@ -206,6 +206,18 @@ func (c *CustomerEntityClient) GetProblem(ctx context.Context, id string) ([]byt
 	return c.do(ctx, http.MethodGet, fmt.Sprintf("/problems/%s", url.PathEscape(id)), nil)
 }
 
+// SearchIncidentTasks calls POST /incident-tasks/search on the entity service.
+// Response is returned as raw JSON; field filtering to the portal shape is deferred.
+func (c *CustomerEntityClient) SearchIncidentTasks(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incident-tasks/search", body)
+}
+
+// GetIncidentTask calls GET /incident-tasks/{id} on the entity service.
+// Response is returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) GetIncidentTask(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/incident-tasks/%s", url.PathEscape(id)), nil)
+}
+
 // PostDeployment calls POST /deployments on the entity service to create a new deployment.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) PostDeployment(ctx context.Context, body []byte) ([]byte, error) {

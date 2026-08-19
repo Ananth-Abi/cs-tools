@@ -631,7 +631,7 @@ export default function WidgetEditorDialog({
                 description={previewSnapshot.description}
                 resourceType={previewSnapshot.resourceType}
                 shape={previewSnapshot.shape}
-                filters={previewSnapshot.query}
+                filters={previewSnapshot.query ?? {}}
                 listLimit={previewSnapshot.listLimit}
                 slices={previewSnapshot.slices}
                 groupBy={previewSnapshot.groupBy}

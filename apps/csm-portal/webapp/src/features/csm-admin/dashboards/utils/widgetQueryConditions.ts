@@ -179,7 +179,7 @@ function isFilterOp(v: unknown): v is FilterConditionOp {
  * retype a row that came out empty. */
 export function filterConditionsFromQuery(
   resourceType: BeWidgetResourceType,
-  query: Record<string, unknown> | undefined,
+  query: Record<string, unknown> | null | undefined,
 ): FilterCondition[] {
   if (!query) return [];
 
