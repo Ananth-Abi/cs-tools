@@ -64,7 +64,18 @@ export default function MultiSelectField<T extends string>({
 
   const field = (
     <FormControl fullWidth size="small" disabled={disabled}>
-      <InputLabel id={`${id}-label`} shrink={hasValue}>
+      {/*
+       * oxygen-ui's own theme (MuiInputLabel styleOverrides) targets
+       * `.MuiFormControl-root:has(.MuiSelect-select) &:not(.MuiInputLabel-shrink)`
+       * and shifts an unshrunk label up by `top: -7px` — a compound
+       * `:has()`/`:not()` selector whose specificity beats a plain sx-emitted
+       * class, so a plain `sx={{ top: 0 }}` silently loses the cascade.
+       * `!important` is the only way to reliably win here. Without it, this
+       * field's empty-state label sits visibly higher than the async pickers
+       * (e.g. AsyncAssigneeMultiSelect's Autocomplete), which get no such
+       * adjustment.
+       */}
+      <InputLabel id={`${id}-label`} shrink={hasValue} sx={{ top: "0px !important" }}>
         {label}
       </InputLabel>
       <Select
