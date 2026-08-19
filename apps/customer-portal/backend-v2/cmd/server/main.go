@@ -24,8 +24,10 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -51,10 +53,10 @@ func main() {
 	// scopes differ.
 	oauth2ClientID := os.Getenv("OAUTH2_CLIENT_ID")
 	oauth2ClientSecret := os.Getenv("OAUTH2_CLIENT_SECRET")
-	oauth2TokenURL := os.Getenv("OAUTH2_TOKEN_URL")
+	oauth2TokenURL := optionalURL("OAUTH2_TOKEN_URL", "http", "https")
 
 	entityCfg := entity.Config{
-		BaseURL:      mustEnv("ENTITY_SERVICE_BASE_URL"),
+		BaseURL:      mustURL("ENTITY_SERVICE_BASE_URL", "http", "https"),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -63,7 +65,7 @@ func main() {
 	entityClient := entity.NewClient(entityCfg)
 
 	updatesCfg := updates.Config{
-		BaseURL:      mustEnv("UPDATES_BASE_URL"),
+		BaseURL:      mustURL("UPDATES_BASE_URL", "http", "https"),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -72,7 +74,7 @@ func main() {
 	updatesClient := updates.NewClient(updatesCfg)
 
 	scimCfg := scim.Config{
-		BaseURL:      mustEnv("SCIM_BASE_URL"),
+		BaseURL:      mustURL("SCIM_BASE_URL", "http", "https"),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -84,7 +86,7 @@ func main() {
 	// but authenticates as the same shared OAuth2 client-credentials app as
 	// entity/updates/scim above; only its base URLs differ.
 	aiChatAgentCfg := aichatagent.Config{
-		BaseURL:      mustEnv("AI_CHAT_AGENT_BASE_URL"),
+		BaseURL:      mustURL("AI_CHAT_AGENT_BASE_URL", "http", "https"),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -93,7 +95,7 @@ func main() {
 	aiChatAgentClient := aichatagent.NewClient(aiChatAgentCfg)
 
 	aiChatAgentWsCfg := aichatagent.WSConfig{
-		BaseURL:      mustEnv("AI_CHAT_AGENT_WS_BASE_URL"),
+		BaseURL:      mustURL("AI_CHAT_AGENT_WS_BASE_URL", "ws", "wss"),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -108,8 +110,8 @@ func main() {
 	// defaults to PRODUCT_CONSUMPTION_SUBSCRIPTION_URL when unset, for
 	// deployments where both happen to point at the same host.
 	productConsumptionCfg := productconsumption.Config{
-		SubscriptionBaseURL: mustEnv("PRODUCT_CONSUMPTION_SUBSCRIPTION_URL"),
-		TrackingBaseURL:     os.Getenv("PRODUCT_CONSUMPTION_TRACKING_BASE_URL"),
+		SubscriptionBaseURL: mustURL("PRODUCT_CONSUMPTION_SUBSCRIPTION_URL", "http", "https"),
+		TrackingBaseURL:     optionalURL("PRODUCT_CONSUMPTION_TRACKING_BASE_URL", "http", "https"),
 		TokenURL:            oauth2TokenURL,
 		ClientID:            oauth2ClientID,
 		ClientSecret:        oauth2ClientSecret,
@@ -121,7 +123,7 @@ func main() {
 	// separate microservice (not entity-service), authenticating as the same
 	// shared OAuth2 app.
 	registryCfg := registry.Config{
-		BaseURL:      mustEnv("REGISTRY_BASE_URL"),
+		BaseURL:      mustURL("REGISTRY_BASE_URL", "http", "https"),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -137,7 +139,7 @@ func main() {
 	// is a separate microservice (not entity-service, not SCIM),
 	// authenticating as the same shared OAuth2 app.
 	userManagementCfg := usermanagement.Config{
-		BaseURL:      mustEnv("USER_MANAGEMENT_BASE_URL"),
+		BaseURL:      mustURL("USER_MANAGEMENT_BASE_URL", "http", "https"),
 		TokenURL:     oauth2TokenURL,
 		ClientID:     oauth2ClientID,
 		ClientSecret: oauth2ClientSecret,
@@ -154,7 +156,7 @@ func main() {
 	adminRole := mustEnv("AUTH_ADMIN_ROLE")
 
 	authCfg := middleware.Config{
-		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
+		JWKSEndpoint:          mustURL("AUTH_JWKS_ENDPOINT", "http", "https"),
 		Issuer:                mustEnv("AUTH_ISSUER"),
 		Audiences:             splitComma(mustEnv("AUTH_AUDIENCE")),
 		ClockSkew:             5 * time.Second,
@@ -486,6 +488,123 @@ func dispatchDeploymentsProductsMetricsSearch(instances *handler.InstanceHandler
 		}
 		http.NotFound(w, r)
 	}
+}
+
+// sanitizeURLValue trims surrounding whitespace and strips a matched pair of
+// enclosing quotes from a URL taken from configuration.
+//
+// Both are real deployment failures, not hypotheticals: a value stored as
+// `"https://host/path"` (with literal quotes) or with a leading space never
+// parses as a URL at all — url.Parse stops recognising the scheme and reports
+// `first path segment in URL cannot contain colon`. That took down
+// POST /conversations/recommendations/search in staging with a 500 on every
+// call, and the value looked perfectly correct in the config UI.
+func sanitizeURLValue(v string) string {
+	v = strings.TrimSpace(v)
+	for len(v) >= 2 {
+		first, last := v[0], v[len(v)-1]
+		if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+			v = strings.TrimSpace(v[1 : len(v)-1])
+			continue
+		}
+		break
+	}
+	return v
+}
+
+// urlProblem classifies why a configured URL is unusable.
+//
+// Deliberately a code rather than a message built from the value: the reason is
+// logged, and interpolating anything derived from configuration into a log line
+// lets a newline in that value forge log entries (gosec G706). Each code maps to
+// a fixed string below, so nothing input-derived is ever logged.
+type urlProblem int
+
+const (
+	urlOK urlProblem = iota
+	urlUnparseable
+	urlNoScheme
+	urlBadScheme
+	urlNoHost
+)
+
+func (p urlProblem) String() string {
+	switch p {
+	case urlUnparseable:
+		return "not a valid URL (check for stray quotes or whitespace)"
+	case urlNoScheme:
+		return "missing a scheme, expected http:// or https:// (or ws://, wss:// for a WebSocket URL)"
+	case urlBadScheme:
+		return "scheme is not accepted for this setting"
+	case urlNoHost:
+		return "missing a host (check for a single slash after the scheme)"
+	default:
+		return "ok"
+	}
+}
+
+// checkURLValue reports why v is unusable as a base URL with one of schemes, or
+// urlOK if it is fine.
+func checkURLValue(v string, schemes ...string) urlProblem {
+	u, err := url.Parse(v)
+	if err != nil {
+		return urlUnparseable
+	}
+	if u.Scheme == "" {
+		return urlNoScheme
+	}
+	if !slices.Contains(schemes, u.Scheme) {
+		return urlBadScheme
+	}
+	if u.Host == "" {
+		return urlNoHost
+	}
+	return urlOK
+}
+
+// mustURL is mustEnv for a URL: it sanitizes the value, then validates it is
+// absolute with an accepted scheme and a host, exiting at startup if not.
+//
+// Validating here rather than at first use is deliberate. A URL that cannot be
+// parsed fails inside the HTTP client on every request, which surfaces as a 500
+// on one endpoint while the rest of the service looks healthy — the failure is
+// per-request and easily mistaken for an upstream problem. A misconfiguration
+// should stop the deployment instead, the same reasoning as the JWKS panic in
+// middleware.NewTokenValidator.
+func mustURL(key string, schemes ...string) string {
+	raw := os.Getenv(key)
+	v := sanitizeURLValue(raw)
+	if v == "" {
+		slog.Error("required environment variable is not set", "key", key)
+		os.Exit(1)
+	}
+	if v != raw {
+		// Worth a warning even though it now works: the stored value is still
+		// malformed and the next person to copy it hits the same thing.
+		slog.Warn("stripped surrounding quotes/whitespace from URL configuration", "key", key)
+	}
+	if problem := checkURLValue(v, schemes...); problem != urlOK {
+		slog.Error("environment variable is not a usable URL", "key", key, "reason", problem.String())
+		os.Exit(1)
+	}
+	return v
+}
+
+// optionalURL is mustURL for a value that may legitimately be unset.
+func optionalURL(key string, schemes ...string) string {
+	raw := os.Getenv(key)
+	v := sanitizeURLValue(raw)
+	if v == "" {
+		return ""
+	}
+	if v != raw {
+		slog.Warn("stripped surrounding quotes/whitespace from URL configuration", "key", key)
+	}
+	if problem := checkURLValue(v, schemes...); problem != urlOK {
+		slog.Error("environment variable is not a usable URL", "key", key, "reason", problem.String())
+		os.Exit(1)
+	}
+	return v
 }
 
 func mustEnv(key string) string {
