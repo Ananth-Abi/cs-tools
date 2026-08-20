@@ -20,9 +20,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/closure"
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/notify"
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/recipients"
 )
@@ -48,8 +50,9 @@ func TestProcessProject_NoEndDateIsNoOp(t *testing.T) {
 
 // TestProcessProject_InternalOnlyWindowSkipsCustomerContactLookup covers a
 // 90-day window: internal-only per the confirmed audience matrix. Only one
-// notify.Send should occur (internal), and no contact-search calls should
-// happen at all, since the customer side isn't consulted for this window.
+// notify.Send should occur, Recipients.Customer must stay nil, and no
+// contact-search calls should happen at all, since the customer side isn't
+// consulted for this window.
 func TestProcessProject_InternalOnlyWindowSkipsCustomerContactLookup(t *testing.T) {
 	reader := &mockEntityReader{
 		searchProjectContactsFn: func(ctx context.Context, projectID string, body []byte) ([]byte, error) {
@@ -76,8 +79,8 @@ func TestProcessProject_InternalOnlyWindowSkipsCustomerContactLookup(t *testing.
 	if len(ntf.sent) != 1 {
 		t.Fatalf("ntf.sent = %d, want 1", len(ntf.sent))
 	}
-	if ntf.sent[0].Kind != notify.KindInternal {
-		t.Errorf("notice.Kind = %v, want %v", ntf.sent[0].Kind, notify.KindInternal)
+	if ntf.sent[0].Recipients.Customer != nil {
+		t.Errorf("Recipients.Customer = %v, want nil for an internal-only window", ntf.sent[0].Recipients.Customer)
 	}
 
 	if len(updater.calls) != 1 {
@@ -137,8 +140,10 @@ func TestProcessProject_RecordsIgnoredWhenNotifierDoesNotDeliver(t *testing.T) {
 
 // TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact covers a
 // 7-day window: both internal and customer per the confirmed audience
-// matrix. A project contact with the business-contact role should receive
-// the customer notice, alongside the internal notice.
+// matrix. A project contact with the business-contact role should produce
+// TWO separate notices — internal (Customer nil) and customer-facing
+// (Customer populated) — since their subject/body genuinely differ, not one
+// notice bundling both.
 func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing.T) {
 	reader := &mockEntityReader{
 		searchProjectContactsFn: func(ctx context.Context, projectID string, body []byte) ([]byte, error) {
@@ -150,7 +155,7 @@ func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing
 
 	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
 	endDate := now.AddDate(0, 0, 6) // fires the 7-day window
-	proj := project{ID: "p1", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
+	proj := project{ID: "p1", Name: "Acme - Subscription", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
 
 	err := processProject(context.Background(), reader, updater, ntf, now, proj)
 	if err != nil {
@@ -158,28 +163,37 @@ func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing
 	}
 
 	if len(ntf.sent) != 2 {
-		t.Fatalf("ntf.sent = %d, want 2", len(ntf.sent))
+		t.Fatalf("ntf.sent = %d, want 2 (internal + customer)", len(ntf.sent))
 	}
-	var sawInternal, sawCustomer bool
-	for _, n := range ntf.sent {
-		switch n.Kind {
-		case notify.KindInternal:
-			sawInternal = true
-		case notify.KindCustomer:
-			sawCustomer = true
-			if n.Recipient != "bob@customer.example" {
-				t.Errorf("customer notice recipient = %q, want %q", n.Recipient, "bob@customer.example")
-			}
-			if n.ResolvedVia != recipients.ResolvedViaBusinessContact {
-				t.Errorf("customer notice ResolvedVia = %q, want %q", n.ResolvedVia, recipients.ResolvedViaBusinessContact)
-			}
-		}
+
+	internal, customer := ntf.sent[0], ntf.sent[1]
+
+	if internal.Recipients.Customer != nil {
+		t.Errorf("internal notice Recipients.Customer = %v, want nil", internal.Recipients.Customer)
 	}
-	if !sawInternal {
-		t.Error("expected an internal notice, got none")
+	// The fixture project has an account with no Name set, so the subject
+	// correctly omits the " of {AccountName}" clause entirely (regression
+	// coverage for the dangling "of " bug lives in TestInternalNoticeSubject).
+	const wantInternalSubject = "[ACP] 7 Days Reminder of Project for Acme - Subscription"
+	if internal.Subject != wantInternalSubject {
+		t.Errorf("internal Subject = %q, want %q", internal.Subject, wantInternalSubject)
 	}
-	if !sawCustomer {
-		t.Error("expected a customer notice, got none")
+
+	if customer.Recipients.Customer == nil {
+		t.Fatal("customer notice Recipients.Customer = nil, want populated")
+	}
+	if customer.Recipients.Customer.Email != "bob@customer.example" {
+		t.Errorf("customer Recipients.Customer.Email = %q, want %q", customer.Recipients.Customer.Email, "bob@customer.example")
+	}
+	const wantCustomerSubject = "Upcoming Project Suspension Notice - Acme - Subscription"
+	if customer.Subject != wantCustomerSubject {
+		t.Errorf("customer Subject = %q, want %q", customer.Subject, wantCustomerSubject)
+	}
+	if customer.ResolvedVia != recipients.ResolvedViaBusinessContact {
+		t.Errorf("ResolvedVia = %q, want %q", customer.ResolvedVia, recipients.ResolvedViaBusinessContact)
+	}
+	if strings.Contains(customer.Body, "Dear ") {
+		t.Errorf("customer notice Body has a greeting, want none:\n%s", customer.Body)
 	}
 
 	if len(updater.calls) != 1 {
@@ -187,18 +201,36 @@ func TestProcessProject_CustomerAudienceWindowNotifiesBusinessContact(t *testing
 	}
 }
 
-// TestProcessProject_CustomerAudienceWindowNudgesAMWhenNoContactFound covers
-// the three-tier fallback's last resort: no business contact, no primary
-// contact. The customer notice is replaced entirely by an AM-nudge email —
-// not sent in addition to a (nonexistent) customer notice.
-func TestProcessProject_CustomerAudienceWindowNudgesAMWhenNoContactFound(t *testing.T) {
-	reader := &mockEntityReader{}
+// TestProcessProject_CustomerAudienceWindowSendsNoBusinessContactNoticeWhenNoContactFound
+// covers the three-tier fallback's last resort: no business contact, no
+// primary contact. Both the internal notice (Customer nil — nothing
+// resolved) and a separate no-business-contact urgent notice — sent to all
+// three internal recipients (Account Owner, Renewal Manager, Technical
+// Owner), not the Account Owner alone — must be sent.
+func TestProcessProject_CustomerAudienceWindowSendsNoBusinessContactNoticeWhenNoContactFound(t *testing.T) {
+	reader := &mockEntityReader{
+		getAccountFn: func(ctx context.Context, id string) ([]byte, error) {
+			return []byte(`{
+				"accountManager": {"id": "am-1", "name": "Jordan Perera", "email": "jordan.perera@wso2.example"},
+				"renewalAccountManager": {"id": "ram-1", "name": "Sam Jayasuriya", "email": "sam.jayasuriya@wso2.example"},
+				"technicalOwner": {"id": "tech-1", "name": "Alex Fernando", "email": "alex.fernando@wso2.example"}
+			}`), nil
+		},
+	}
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
 	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
 	endDate := now.AddDate(0, 0, 6) // fires the 7-day window
-	proj := project{ID: "p1", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
+	startDate := now.AddDate(-1, 0, 0)
+	proj := project{
+		ID:         "p1",
+		Name:       "HFC Subscription - Subscription",
+		ProjectKey: "HFCSUBS",
+		Account:    &projectAccountRef{ID: "a1"},
+		StartDate:  &startDate,
+		EndDate:    &endDate,
+	}
 
 	err := processProject(context.Background(), reader, updater, ntf, now, proj)
 	if err != nil {
@@ -206,33 +238,46 @@ func TestProcessProject_CustomerAudienceWindowNudgesAMWhenNoContactFound(t *test
 	}
 
 	if len(ntf.sent) != 2 {
-		t.Fatalf("ntf.sent = %d, want 2", len(ntf.sent))
+		t.Fatalf("ntf.sent = %d, want 2 (internal + no-business-contact)", len(ntf.sent))
 	}
-	var sawInternal, sawNudge, sawCustomer bool
-	for _, n := range ntf.sent {
-		switch n.Kind {
-		case notify.KindInternal:
-			sawInternal = true
-			if n.ResolvedVia != "" {
-				t.Errorf("internal notice ResolvedVia = %q, want \"\" (internal never goes through the fallback chain)", n.ResolvedVia)
-			}
-		case notify.KindAMNudge:
-			sawNudge = true
-			if n.ResolvedVia != recipients.ResolvedViaNone {
-				t.Errorf("AM-nudge notice ResolvedVia = %q, want %q", n.ResolvedVia, recipients.ResolvedViaNone)
-			}
-		case notify.KindCustomer:
-			sawCustomer = true
+
+	internal, nudge := ntf.sent[0], ntf.sent[1]
+
+	if internal.Recipients.Customer != nil {
+		t.Errorf("internal Recipients.Customer = %v, want nil", internal.Recipients.Customer)
+	}
+	if internal.Recipients.AccountOwner.Email != "jordan.perera@wso2.example" {
+		t.Errorf("internal Recipients.AccountOwner.Email = %q, want %q", internal.Recipients.AccountOwner.Email, "jordan.perera@wso2.example")
+	}
+
+	const wantSubject = "[Urgent] [ACP] No Business Contacts Specified for Project HFC Subscription - Subscription"
+	if nudge.Subject != wantSubject {
+		t.Errorf("nudge Subject = %q, want %q", nudge.Subject, wantSubject)
+	}
+	if nudge.Recipients.AccountOwner.Email != "jordan.perera@wso2.example" {
+		t.Errorf("nudge Recipients.AccountOwner.Email = %q, want %q", nudge.Recipients.AccountOwner.Email, "jordan.perera@wso2.example")
+	}
+	if nudge.Recipients.RenewalManager.Email != "sam.jayasuriya@wso2.example" {
+		t.Errorf("nudge Recipients.RenewalManager.Email = %q, want %q", nudge.Recipients.RenewalManager.Email, "sam.jayasuriya@wso2.example")
+	}
+	if nudge.Recipients.TechnicalOwner.Email != "alex.fernando@wso2.example" {
+		t.Errorf("nudge Recipients.TechnicalOwner.Email = %q, want %q", nudge.Recipients.TechnicalOwner.Email, "alex.fernando@wso2.example")
+	}
+	if nudge.Recipients.Customer != nil {
+		t.Errorf("nudge Recipients.Customer = %v, want nil", nudge.Recipients.Customer)
+	}
+	if nudge.Body == "" {
+		t.Error("nudge Body is empty, want the no-business-contact template populated")
+	}
+	wantBodyContains := []string{
+		"Project Name: HFC Subscription - Subscription",
+		"Project Key: HFCSUBS",
+		"Account Owner: Jordan Perera",
+	}
+	for _, want := range wantBodyContains {
+		if !strings.Contains(nudge.Body, want) {
+			t.Errorf("nudge Body missing %q, got:\n%s", want, nudge.Body)
 		}
-	}
-	if !sawInternal {
-		t.Error("expected an internal notice, got none")
-	}
-	if !sawNudge {
-		t.Error("expected an AM-nudge notice, got none")
-	}
-	if sawCustomer {
-		t.Error("expected no customer notice when no contact resolved, got one")
 	}
 }
 
@@ -240,8 +285,9 @@ func TestProcessProject_CustomerAudienceWindowNudgesAMWhenNoContactFound(t *test
 // verifies that a project with no linked account never calls
 // SearchAccountContacts. Calling it anyway with an empty account ID would hit
 // SearchAccountContacts(ctx, "", ...), which fetchContacts must not do when
-// there's no account to search — it should fall through to the AM nudge
-// exactly as it does when a real account search simply returns no contacts.
+// there's no account to search — it should fall through to the
+// no-business-contact notice exactly as it does when a real account search
+// simply returns no contacts.
 func TestProcessProject_CustomerAudienceWindowSkipsAccountContactLookupWhenNoAccount(t *testing.T) {
 	reader := &mockEntityReader{
 		searchAccountContactsFn: func(ctx context.Context, accountID string, body []byte) ([]byte, error) {
@@ -262,27 +308,43 @@ func TestProcessProject_CustomerAudienceWindowSkipsAccountContactLookupWhenNoAcc
 	}
 
 	if len(ntf.sent) != 2 {
-		t.Fatalf("ntf.sent = %d, want 2", len(ntf.sent))
+		t.Fatalf("ntf.sent = %d, want 2 (reminder + no-business-contact)", len(ntf.sent))
 	}
-	var sawInternal, sawNudge, sawCustomer bool
-	for _, n := range ntf.sent {
-		switch n.Kind {
-		case notify.KindInternal:
-			sawInternal = true
-		case notify.KindAMNudge:
-			sawNudge = true
-		case notify.KindCustomer:
-			sawCustomer = true
-		}
+	if ntf.sent[0].Recipients.Customer != nil {
+		t.Errorf("reminder Recipients.Customer = %v, want nil (no account linked)", ntf.sent[0].Recipients.Customer)
 	}
-	if !sawInternal {
-		t.Error("expected an internal notice, got none")
+}
+
+// TestProcessProject_CustomerAudienceWindowFetchContactsFailureSendsNothing
+// is a regression test for PR #1440 (Sajith Ekanayake): a transient
+// fetchContacts failure must not leave the internal notice already sent
+// with no corresponding suspensionProcessState record — that combination
+// causes a duplicate internal-notice resend on the next sweep, since the
+// window still looks "not yet notified". Contact resolution must happen
+// before any notice sends for a customer-audience window, exactly as it
+// did before this diff, so a fetch failure here sends zero notices.
+func TestProcessProject_CustomerAudienceWindowFetchContactsFailureSendsNothing(t *testing.T) {
+	reader := &mockEntityReader{
+		searchProjectContactsFn: func(ctx context.Context, projectID string, body []byte) ([]byte, error) {
+			return nil, errors.New("transient network error")
+		},
 	}
-	if !sawNudge {
-		t.Error("expected an AM-nudge notice, got none")
+	updater := &mockProjectUpdater{}
+	ntf := &mockNotifier{}
+
+	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	endDate := now.AddDate(0, 0, 6) // fires the 7-day window (customer-audience)
+	proj := project{ID: "p1", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
+
+	err := processProject(context.Background(), reader, updater, ntf, now, proj)
+	if err == nil {
+		t.Fatal("processProject() error = nil, want non-nil")
 	}
-	if sawCustomer {
-		t.Error("expected no customer notice when no account is linked, got one")
+	if len(ntf.sent) != 0 {
+		t.Errorf("ntf.sent = %d, want 0 (internal notice must not send before contacts are resolved)", len(ntf.sent))
+	}
+	if len(updater.calls) != 0 {
+		t.Errorf("updater.calls = %d, want 0", len(updater.calls))
 	}
 }
 
@@ -335,7 +397,10 @@ func TestProcessProject_Day0SuccessfulNotifyThenSuspend(t *testing.T) {
 	}
 
 	if len(ntf.sent) != 2 {
-		t.Fatalf("ntf.sent = %d, want 2 (internal + customer)", len(ntf.sent))
+		t.Fatalf("ntf.sent = %d, want 2 (internal + customer, Customer resolved)", len(ntf.sent))
+	}
+	if !strings.Contains(ntf.sent[0].Subject, "Project Suspension Notice") {
+		t.Errorf("internal Subject = %q, want day-0 suspension wording", ntf.sent[0].Subject)
 	}
 
 	if len(updater.calls) != 2 {
@@ -529,13 +594,13 @@ func TestProcessProject_NothingDueIsNoOp(t *testing.T) {
 	}
 }
 
-// TestProcessProject_InternalNoticeUsesRealAccountManagerEmail is a
-// regression test using the real GetAccount response shape confirmed via
-// direct Postman testing against the dedicated test account (trimmed to the
-// field this component reads): a populated accountManager with a real email.
-// The internal notice's Recipient must be that email, and GetAccount must be
+// TestProcessProject_ReminderUsesRealAccountContacts is a regression test
+// using the real GetAccount response shape confirmed via direct Postman
+// testing against the dedicated test account: a populated accountManager,
+// technicalOwner, and renewalAccountManager, all with real emails. The
+// reminder notice's Recipients must carry all three, and GetAccount must be
 // called with the project's account ID.
-func TestProcessProject_InternalNoticeUsesRealAccountManagerEmail(t *testing.T) {
+func TestProcessProject_ReminderUsesRealAccountContacts(t *testing.T) {
 	const realGetAccountResponse = `{
 		"id": "f213fdd1-1b4b-a650-a002-c9d3604bcbac",
 		"name": "ACP Test Partner Account",
@@ -585,17 +650,24 @@ func TestProcessProject_InternalNoticeUsesRealAccountManagerEmail(t *testing.T) 
 	if len(ntf.sent) != 1 {
 		t.Fatalf("ntf.sent = %d, want 1", len(ntf.sent))
 	}
-	if got := ntf.sent[0].Recipient; got != "jordan.perera@wso2.example" {
-		t.Errorf("internal notice Recipient = %q, want %q", got, "jordan.perera@wso2.example")
+	got := ntf.sent[0].Recipients
+	if got.AccountOwner.Email != "jordan.perera@wso2.example" {
+		t.Errorf("AccountOwner.Email = %q, want %q", got.AccountOwner.Email, "jordan.perera@wso2.example")
+	}
+	if got.RenewalManager.Email != "sam.jayasuriya@wso2.example" {
+		t.Errorf("RenewalManager.Email = %q, want %q", got.RenewalManager.Email, "sam.jayasuriya@wso2.example")
+	}
+	if got.TechnicalOwner.Email != "alex.fernando@wso2.example" {
+		t.Errorf("TechnicalOwner.Email = %q, want %q", got.TechnicalOwner.Email, "alex.fernando@wso2.example")
 	}
 }
 
-// TestProcessProject_InternalNoticeHasEmptyRecipientWhenNoAccountManager
+// TestProcessProject_ReminderHasEmptyAccountOwnerEmailWhenNoAccountManager
 // covers the legitimate-absence case: an account with no accountManager
 // assigned at all (nested key entirely missing, not just empty). The
-// internal notice must still be sent, with an empty Recipient — this is not
-// an error, per recipients.AccountManagerEmail's contract.
-func TestProcessProject_InternalNoticeHasEmptyRecipientWhenNoAccountManager(t *testing.T) {
+// reminder notice must still be sent, with an empty AccountOwner.Email —
+// this is not an error, per recipients.AccountManagerEmail's contract.
+func TestProcessProject_ReminderHasEmptyAccountOwnerEmailWhenNoAccountManager(t *testing.T) {
 	reader := &mockEntityReader{
 		getAccountFn: func(ctx context.Context, id string) ([]byte, error) {
 			return []byte(`{"id": "a1", "name": "Some Account"}`), nil
@@ -615,84 +687,215 @@ func TestProcessProject_InternalNoticeHasEmptyRecipientWhenNoAccountManager(t *t
 	if len(ntf.sent) != 1 {
 		t.Fatalf("ntf.sent = %d, want 1", len(ntf.sent))
 	}
-	if got := ntf.sent[0].Recipient; got != "" {
-		t.Errorf("internal notice Recipient = %q, want \"\" (no account manager assigned)", got)
+	if got := ntf.sent[0].Recipients.AccountOwner.Email; got != "" {
+		t.Errorf("AccountOwner.Email = %q, want \"\" (no account manager assigned)", got)
 	}
 }
 
-// TestShouldSuppressInternalNotice covers the pure suppression predicate
-// directly. The "recipients differ" case isn't reachable through the wired
-// system today (the AM-nudge recipient is always sourced from the same
-// amEmail as the internal notice — there is no independent source for it),
-// but the predicate must still handle it correctly should that ever change.
-func TestShouldSuppressInternalNotice(t *testing.T) {
+// TestInternalNoticeSubject covers the always-[ACP]-prefixed internal
+// subject template directly, confirmed against real examples from Chamara:
+// every window (90 through 0) gets the prefix — it marks "internal
+// audience," not "90/60/30 window" specifically (an earlier version of this
+// logic had that backwards). Day-0 uses distinct "Project Suspension
+// Notice" wording; every other window uses "N Days Reminder".
+func TestInternalNoticeSubject(t *testing.T) {
 	tests := []struct {
-		name              string
-		internalRecipient string
-		nudgeRecipient    string
-		want              bool
+		name        string
+		window      closure.NoticeWindow
+		projectName string
+		accountName string
+		want        string
 	}{
 		{
-			name:              "same non-empty recipient: suppress",
-			internalRecipient: "am@wso2.example",
-			nudgeRecipient:    "am@wso2.example",
-			want:              true,
+			name:        "90-day window",
+			window:      90,
+			projectName: "TICKETNETWORK - Subscription",
+			accountName: "TicketNetwork",
+			want:        "[ACP] 90 Days Reminder of Project for TICKETNETWORK - Subscription of TicketNetwork",
 		},
 		{
-			name:              "different recipients: do not suppress",
-			internalRecipient: "am@wso2.example",
-			nudgeRecipient:    "other@wso2.example",
-			want:              false,
+			name:        "60-day window",
+			window:      60,
+			projectName: "P",
+			accountName: "A",
+			want:        "[ACP] 60 Days Reminder of Project for P of A",
 		},
 		{
-			name:              "both empty: do not suppress (not a real duplicate, and suppressing would hide debug visibility)",
-			internalRecipient: "",
-			nudgeRecipient:    "",
-			want:              false,
+			name:        "30-day window",
+			window:      30,
+			projectName: "P",
+			accountName: "A",
+			want:        "[ACP] 30 Days Reminder of Project for P of A",
+		},
+		{
+			name:        "15-day window is still [ACP]-prefixed",
+			window:      15,
+			projectName: "SSC ICT - Subscription",
+			accountName: "SSC-ICT",
+			want:        "[ACP] 15 Days Reminder of Project for SSC ICT - Subscription of SSC-ICT",
+		},
+		{
+			name:        "7-day window is still [ACP]-prefixed",
+			window:      7,
+			projectName: "APIM & Integration - Subscription",
+			accountName: "Department of Science & Technology (DOST)",
+			want:        "[ACP] 7 Days Reminder of Project for APIM & Integration - Subscription of Department of Science & Technology (DOST)",
+		},
+		{
+			name:        "day-0 uses suspension wording, not days-remaining",
+			window:      0,
+			projectName: "Kotak Insurance - Subscription",
+			accountName: "Kotak Life Insurance company Ltd",
+			want:        "[ACP] Project Suspension Notice of Kotak Insurance - Subscription of Kotak Life Insurance company Ltd",
+		},
+		{
+			// Regression test, PR #1440 review (Sajith Ekanayake): a
+			// project with no linked account previously produced a
+			// dangling "...of " with a trailing space and nothing after
+			// it, in a real outbound email subject.
+			name:        "no linked account: omits the dangling \" of \" clause entirely",
+			window:      90,
+			projectName: "Solo Project - Subscription",
+			accountName: "",
+			want:        "[ACP] 90 Days Reminder of Project for Solo Project - Subscription",
+		},
+		{
+			name:        "no linked account, day-0: omits the dangling \" of \" clause entirely",
+			window:      0,
+			projectName: "Solo Project - Subscription",
+			accountName: "",
+			want:        "[ACP] Project Suspension Notice of Solo Project - Subscription",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldSuppressInternalNotice(tt.internalRecipient, tt.nudgeRecipient); got != tt.want {
-				t.Errorf("shouldSuppressInternalNotice(%q, %q) = %v, want %v",
-					tt.internalRecipient, tt.nudgeRecipient, got, tt.want)
+			if got := internalNoticeSubject(tt.window, tt.projectName, tt.accountName); got != tt.want {
+				t.Errorf("internalNoticeSubject(%v, %q, %q) = %q, want %q", tt.window, tt.projectName, tt.accountName, got, tt.want)
 			}
 		})
 	}
 }
 
-// TestProcessProject_SuppressesInternalNoticeWhenNudgeGoesToSameRealRecipient
-// covers the real, reachable scenario: a customer-audience window, a
-// resolved (non-empty) real Account Manager email, and no business/primary
-// contact found. The Account Manager must receive exactly one notice
-// (am_nudge) — not both that and a separate internal notice about the same
-// window in the same run.
-func TestProcessProject_SuppressesInternalNoticeWhenNudgeGoesToSameRealRecipient(t *testing.T) {
-	reader := &mockEntityReader{
-		getAccountFn: func(ctx context.Context, id string) ([]byte, error) {
-			return []byte(`{"accountManager": {"id": "am-1", "name": "Jordan Perera", "email": "jordan.perera@wso2.example"}}`), nil
+// TestCustomerNoticeSubject covers the customer-facing subject template,
+// confirmed against real examples: never [ACP]-prefixed, never names the
+// account, future ("Upcoming") tense before day-0 and past tense at day-0.
+func TestCustomerNoticeSubject(t *testing.T) {
+	tests := []struct {
+		name        string
+		window      closure.NoticeWindow
+		projectName string
+		want        string
+	}{
+		{
+			name:        "15-day window",
+			window:      15,
+			projectName: "SSC ICT - Subscription",
+			want:        "Upcoming Project Suspension Notice - SSC ICT - Subscription",
+		},
+		{
+			name:        "7-day window",
+			window:      7,
+			projectName: "SSC ICT - Subscription",
+			want:        "Upcoming Project Suspension Notice - SSC ICT - Subscription",
+		},
+		{
+			name:        "day-0 uses past tense, no \"Upcoming\"",
+			window:      0,
+			projectName: "Kotak Insurance - Subscription",
+			want:        "Project Suspension Notice - Kotak Insurance - Subscription",
 		},
 	}
-	updater := &mockProjectUpdater{}
-	ntf := &mockNotifier{}
 
-	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
-	endDate := now.AddDate(0, 0, 6) // fires the 7-day (customer-audience) window
-	proj := project{ID: "p1", Account: &projectAccountRef{ID: "a1"}, EndDate: &endDate}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := customerNoticeSubject(tt.window, tt.projectName); got != tt.want {
+				t.Errorf("customerNoticeSubject(%v, %q) = %q, want %q", tt.window, tt.projectName, got, tt.want)
+			}
+		})
+	}
+}
 
-	err := processProject(context.Background(), reader, updater, ntf, now, proj)
-	if err != nil {
-		t.Fatalf("processProject() error = %v, want nil", err)
+// TestInternalNoticeBody covers the internal body templates directly,
+// confirmed verbatim against real examples: the greeting always names the
+// Account Manager (not whichever recipient happens to read their own copy),
+// and day-0 uses distinct "already suspended" wording asking for
+// reinstatement rather than renewal.
+func TestInternalNoticeBody(t *testing.T) {
+	startDate := time.Date(2024, 11, 10, 0, 0, 0, 0, time.UTC)
+	endDate := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+	proj := project{
+		Name:       "TICKETNETWORK - Subscription",
+		ProjectKey: "TICKETNETWORKPROD",
+		StartDate:  &startDate,
+		EndDate:    &endDate,
 	}
 
-	if len(ntf.sent) != 1 {
-		t.Fatalf("ntf.sent = %d, want 1 (only am_nudge; internal suppressed)", len(ntf.sent))
-	}
-	if ntf.sent[0].Kind != notify.KindAMNudge {
-		t.Errorf("Kind = %v, want %v", ntf.sent[0].Kind, notify.KindAMNudge)
-	}
-	if ntf.sent[0].Recipient != "jordan.perera@wso2.example" {
-		t.Errorf("Recipient = %q, want %q", ntf.sent[0].Recipient, "jordan.perera@wso2.example")
-	}
+	t.Run("day-count window", func(t *testing.T) {
+		got := internalNoticeBody(90, proj, "Lochana De Alwis")
+		wantContains := []string{
+			"Dear Lochana De Alwis",
+			"non renewed contract",
+			"Project Name: TICKETNETWORK - Subscription",
+			"Project Key: TICKETNETWORKPROD",
+			"Account Owner: Lochana De Alwis",
+			"Start Date: 2024-11-10",
+			"End Date: 2026-11-09",
+			"Best Regards,\nWSO2 Team",
+		}
+		for _, want := range wantContains {
+			if !strings.Contains(got, want) {
+				t.Errorf("body missing %q, got:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("day-0 window uses suspension wording", func(t *testing.T) {
+		got := internalNoticeBody(0, proj, "Rajat Mehta")
+		wantContains := []string{
+			"Dear Rajat Mehta",
+			"has been suspended",
+			"reinitiate the suspended support account",
+			"Account Owner: Rajat Mehta",
+		}
+		for _, want := range wantContains {
+			if !strings.Contains(got, want) {
+				t.Errorf("body missing %q, got:\n%s", want, got)
+			}
+		}
+		if strings.Contains(got, "non renewed contract. Please find") {
+			t.Errorf("day-0 body contains day-count wording, got:\n%s", got)
+		}
+	})
+}
+
+// TestCustomerNoticeBody covers the customer body templates directly:
+// future tense with US-formatted (01/02/2006) dates before day-0, past
+// tense at day-0, and no greeting in either case.
+func TestCustomerNoticeBody(t *testing.T) {
+	endDate := time.Date(2026, 8, 24, 0, 0, 0, 0, time.UTC)
+	proj := project{Name: "SSC ICT - Subscription", EndDate: &endDate}
+
+	t.Run("day-count window uses future tense and US date format", func(t *testing.T) {
+		got := customerNoticeBody(15, proj)
+		if strings.Contains(got, "Dear ") {
+			t.Errorf("body has a greeting, want none:\n%s", got)
+		}
+		wantContains := []string{
+			"will be suspended on 08/24/2026",
+			"on or before 08/24/2026",
+		}
+		for _, want := range wantContains {
+			if !strings.Contains(got, want) {
+				t.Errorf("body missing %q, got:\n%s", want, got)
+			}
+		}
+	})
+
+	t.Run("day-0 window uses past tense", func(t *testing.T) {
+		got := customerNoticeBody(0, proj)
+		if !strings.Contains(got, "was suspended 08/24/2026") {
+			t.Errorf("body missing past-tense suspension wording, got:\n%s", got)
+		}
+	})
 }

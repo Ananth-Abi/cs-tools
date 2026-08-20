@@ -44,6 +44,7 @@ const (
 	ResourceUser                 ResourceType = "user"
 	ResourceTimeCard             ResourceType = "time_card"
 	ResourceProblem              ResourceType = "problem"
+	ResourceIncidentTask         ResourceType = "incident_task"
 	ResourceProductVulnerability ResourceType = "product_vulnerability"
 	ResourceCallRequest          ResourceType = "call_request"
 	// ResourceServiceRequest, ResourceSecurityReportAnalysis,
@@ -69,9 +70,34 @@ type Shape string
 const (
 	ShapeCount Shape = "count" // single resolved number
 	ShapeList  Shape = "list"  // top-N matching records
-	ShapePie   Shape = "pie"   // one search per Slices entry, each resolved via its own total — see PieSlice
-	ShapeBar   Shape = "bar"   // same resolution as ShapePie (one search per Slices entry); differs only in how the frontend renders the resolved data
+	ShapePie   Shape = "pie"   // one search per Slices entry (or one server-side aggregation via GroupBy), each resolved via its own total — see PieSlice and GroupByConfig
+	ShapeBar   Shape = "bar"   // same resolution as ShapePie; differs only in how the frontend renders the resolved data
 )
+
+// GroupByConfig configures a Shape "pie"/"bar" widget to resolve via a single
+// server-side aggregation call instead of one search per literal Slices
+// entry -- the alternative for a resourceType/field with too many distinct
+// values to enumerate by hand (e.g. "cases grouped by account, top 12 +
+// Others"). A widget carries exactly one of Slices or GroupBy for pie/bar
+// (see the registry's own load-time validation); GroupBy is resolved
+// entirely client-side, same as Slices -- the frontend calls that
+// ResourceType's own new POST /{resourceType}/group-by endpoint once and
+// maps the response's groups/othersCount into the same per-slice shape
+// Slices already produces, so the renderer itself needs no per-shape branch.
+type GroupByConfig struct {
+	// Field is which field to group by. Each ResourceType enforces its own
+	// small allowlist server-side (see the corresponding SN Utils script
+	// include's group{X}By method) -- an unsupported value is rejected by
+	// that call with a 400, not caught here.
+	Field string `json:"field"`
+	// MaxGroups is the top-N cutoff by count, descending; the remainder is
+	// summed into one "Others" bucket. Omitted/zero defers to the backing
+	// group-by endpoint's own default (12).
+	MaxGroups int `json:"maxGroups,omitempty"`
+	// OthersLabel overrides the default "Others" label for the summed
+	// remainder bucket. Omitted uses "Others".
+	OthersLabel string `json:"othersLabel,omitempty"`
+}
 
 // PieSlice is one wedge of a Shape "pie" widget. The caller resolves its
 // value by issuing that widget's own ResourceType's /search with Query
@@ -161,9 +187,13 @@ type WidgetTemplate struct {
 	Shape        Shape          `json:"shape"`
 	GridWidth    int            `json:"gridWidth"` // 1-12, CSS grid columns out of 12
 	Query        map[string]any `json:"query"`
-	GroupBy      string         `json:"groupBy,omitempty"`   // unused
 	ListLimit    int            `json:"listLimit,omitempty"` // only meaningful for Shape list; how many records to show
-	Slices       []PieSlice     `json:"slices,omitempty"`    // only meaningful for Shape pie/bar; one search per slice
+	// Slices and GroupBy are the two mutually exclusive ways to configure a
+	// Shape pie/bar widget's data -- see GroupByConfig's doc comment. Exactly
+	// one must be set for pie/bar (enforced at directory-load time); both
+	// are meaningless for count/list.
+	Slices  []PieSlice     `json:"slices,omitempty"`
+	GroupBy *GroupByConfig `json:"groupBy,omitempty"`
 	// Section groups widgets sharing the same (non-empty) value under a
 	// titled sub-section within the dashboard, in the order that value
 	// first appears among the dashboard's widgets — e.g. a handful of
@@ -239,6 +269,19 @@ type Dashboard struct {
 	// assignedUserIds) is deliberately deferred to a later increment.
 	IsTeamBased bool             `json:"isTeamBased"`
 	Widgets     []WidgetTemplate `json:"widgets"`
+
+	// DefaultForTeamKeys lists team registry keys (BeTeam.id on the
+	// frontend, the values in this deployment's team registry -- not a
+	// group id) that should land a signed-in user on this dashboard by
+	// default, regardless of this dashboard's own IsDefault/IsTeamBased/
+	// Type -- an identity override resolved client-side against the
+	// signed-in user's own team.teamKey. Most dashboards should leave this
+	// empty and rely on Type-based selection instead (see Type's own doc
+	// comment); this exists for a dashboard that doesn't fit the
+	// type/family model at all -- e.g. a single-purpose specialist
+	// dashboard built for one specific team's own workflow rather than a
+	// team-scoped ABT dashboard.
+	DefaultForTeamKeys []string `json:"defaultForTeamKeys,omitempty"`
 
 	// FilterPresets is this dashboard's own map of presetKey -> literal
 	// filter fragment ({"field":...,"op":...,"values":...}), the

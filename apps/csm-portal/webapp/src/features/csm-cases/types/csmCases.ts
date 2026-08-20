@@ -268,6 +268,16 @@ export interface CaseLinkedItem {
   href?: string;
 }
 
+/**
+ * One answered catalog-item question on a service request. `value` is `""`
+ * when the question was asked and left blank — the UI renders that as an em
+ * dash so it stays distinguishable from a question that was never asked.
+ */
+export interface CaseRequestVariable {
+  name: string;
+  value: string;
+}
+
 export interface CaseTag {
   id: string;
   label: string;
@@ -531,6 +541,20 @@ export interface CsmCaseDetail extends CsmCaseRow {
     /** Subject, or `null` when the record has none — never `""`. */
     name: string | null;
   }[];
+  /**
+   * The catalog and catalog item a service request was raised against.
+   * Absent for every other case type.
+   */
+  catalog?: { id: string; name: string };
+  catalogItem?: { id: string; name: string };
+  /**
+   * The answers the requester gave to the catalog item's questions, in the
+   * backing data source's display order. Absent when the request carried no
+   * answers; an individual `value` of `""` means the question was asked and
+   * left blank, which is deliberately distinct from the question never being
+   * asked at all.
+   */
+  requestVariables?: CaseRequestVariable[];
   /**
    * Where the case sits in the backing data source's staged auto-closure
    * sequence (ServiceNow only). Read-only; `undefined`/`"DEFAULT"` means no

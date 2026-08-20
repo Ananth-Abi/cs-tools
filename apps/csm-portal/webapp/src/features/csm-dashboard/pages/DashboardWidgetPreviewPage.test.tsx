@@ -52,7 +52,7 @@ function renderAt(initialEntry: string) {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route path="/dashboard" element={<div>Dashboard landing</div>} />
-          <Route path="/dashboard/:previewSlug" element={<DashboardWidgetPreviewPage />} />
+          <Route path="/dashboard/preview/:previewSlug" element={<DashboardWidgetPreviewPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -65,7 +65,7 @@ describe("DashboardWidgetPreviewPage", () => {
   });
 
   it("prompts to open from a widget's View more link when the URL carries no widget params", () => {
-    renderAt("/dashboard/cases");
+    renderAt("/dashboard/preview/cases");
     expect(
       screen.getByText(/open this page from a dashboard widget/i),
     ).toBeInTheDocument();
@@ -105,18 +105,26 @@ describe("DashboardWidgetPreviewPage", () => {
 
     expect(screen.getByText("My Critical & High Cases")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { severities: ["critical"] },
-      pagination: { offset: 0, limit: 10 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { severities: ["critical"] },
+        pagination: { offset: 0, limit: 10 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
 
     // TablePagination's "next page" button.
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: { severities: ["critical"] },
-        pagination: { offset: 10, limit: 10 },
-      }),
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { severities: ["critical"] },
+          pagination: { offset: 10, limit: 10 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 
@@ -140,10 +148,14 @@ describe("DashboardWidgetPreviewPage", () => {
     );
 
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { assignedUserIds: [CURRENT_USER_ID] },
-      pagination: { offset: 0, limit: 10 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { assignedUserIds: [CURRENT_USER_ID] },
+        pagination: { offset: 0, limit: 10 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
   it("merges a typed search term into the widget's own filters as searchQuery", async () => {
@@ -168,10 +180,14 @@ describe("DashboardWidgetPreviewPage", () => {
     fireEvent.change(screen.getByLabelText("Search"), { target: { value: "disk" } });
 
     await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", {
-        filters: { severities: ["critical"], searchQuery: "disk" },
-        pagination: { offset: 0, limit: 10 },
-      }),
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/search",
+        {
+          filters: { severities: ["critical"], searchQuery: "disk" },
+          pagination: { offset: 0, limit: 10 },
+        },
+        { signal: expect.any(AbortSignal) },
+      ),
     );
   });
 
@@ -217,7 +233,7 @@ describe("DashboardWidgetPreviewPage", () => {
             { field: "state", op: "in", values: ["open"] },
             { field: "tag", op: "notIn", values: ["s_dip"] },
             {
-              field: "integrationCsTeam",
+              field: "creTeam",
               op: "in",
               values: ["22222222-2222-2222-2222-222222222222"],
             },
@@ -231,7 +247,7 @@ describe("DashboardWidgetPreviewPage", () => {
     expect(group).toHaveTextContent("state: open");
     expect(group).toHaveTextContent("tag (notIn): s_dip");
     expect(group).toHaveTextContent(
-      "integrationCsTeam: 22222222-2222-2222-2222-222222222222",
+      "creTeam: 22222222-2222-2222-2222-222222222222",
     );
   });
 

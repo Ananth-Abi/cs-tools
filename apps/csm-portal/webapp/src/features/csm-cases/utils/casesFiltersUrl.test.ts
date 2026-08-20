@@ -41,7 +41,10 @@ describe("readCasesFiltersFromUrl", () => {
       states: ["open", "work_in_progress", "closed"],
       caseTypes: ["case", "engagement"],
       assignees: ["alice@example.com", "@me"],
-      workStates: ["ongoing", "paused"],
+      // `work_in_progress` is one of three selected states here, not the
+      // sole one -- workStates can't apply server-side in that shape, so it
+      // parses back out as empty. See the exact-match tests below.
+      workStates: [],
       projects: ["apim"],
       productNames: ["API Manager", "Asgardeo"],
     });
@@ -74,6 +77,13 @@ describe("readCasesFiltersFromUrl", () => {
 
   it("drops work states when `work_in_progress` is not in the state filter", () => {
     const params = new URLSearchParams("states=open&workStates=ongoing,paused");
+    expect(readCasesFiltersFromUrl(params).workStates).toEqual([]);
+  });
+
+  it("drops work states when `work_in_progress` is selected alongside another state", () => {
+    const params = new URLSearchParams(
+      "states=work_in_progress,open&workStates=ongoing,paused",
+    );
     expect(readCasesFiltersFromUrl(params).workStates).toEqual([]);
   });
 

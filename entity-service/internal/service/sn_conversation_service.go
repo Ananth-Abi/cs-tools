@@ -20,6 +20,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -73,24 +75,35 @@ type snConversationFilters struct {
 	ProjectIDs  []string `json:"projectIds,omitempty"`
 	StateKeys   []int    `json:"stateKeys,omitempty"`
 	SearchQuery string   `json:"searchQuery,omitempty"`
+	Number      string   `json:"number,omitempty"`
 	CreatedByMe bool     `json:"createdByMe,omitempty"`
+	CreatedBy   []string `json:"createdBy,omitempty"`
 }
 
 // snConversationStateKeyMap maps domain ConversationState enums to SN numeric state keys.
 var snConversationStateKeyMap = map[domain.ConversationState]int{
-	domain.ConversationStateActive:   2,
-	domain.ConversationStateResolved: 3,
+	domain.ConversationStateActive:    2,
+	domain.ConversationStateResolved:  3,
+	domain.ConversationStateConverted: 4,
+	domain.ConversationStateAbandoned: 5,
+	domain.ConversationStateClosed:    6,
 }
 
 // snConversationStateLabelMap maps SN numeric state keys to domain enum strings.
 var snConversationStateLabelMap = map[int]string{
 	2: "ACTIVE",
 	3: "RESOLVED",
+	4: "CONVERTED",
+	5: "ABANDONED",
+	6: "CLOSED",
 }
 
 var validConversationState = map[domain.ConversationState]bool{
-	domain.ConversationStateActive:   true,
-	domain.ConversationStateResolved: true,
+	domain.ConversationStateActive:    true,
+	domain.ConversationStateResolved:  true,
+	domain.ConversationStateConverted: true,
+	domain.ConversationStateAbandoned: true,
+	domain.ConversationStateClosed:    true,
 }
 
 var validConversationSortField = map[domain.ConversationSortField]bool{
@@ -125,6 +138,40 @@ func normalizeConversationPagination(p *domain.Pagination) error {
 	return nil
 }
 
+// maxConversationCreatedByEntries and maxConversationCreatedByEntryLen bound the
+// initiator (createdBy) filter before it reaches the backing integration. Length
+// caps only, not email-format validation -- mirrors validateExactNumber's
+// deliberate "don't hardcode format assumptions this layer shouldn't own" style.
+const (
+	maxConversationCreatedByEntries  = 20
+	maxConversationCreatedByEntryLen = 254
+)
+
+// validateConversationCreatedBy checks an optional initiator-email filter list.
+func validateConversationCreatedBy(emails []string) error {
+	if len(emails) > maxConversationCreatedByEntries {
+		return &apierror.ValidationError{Msg: fmt.Sprintf("createdBy cannot contain more than %d entries", maxConversationCreatedByEntries)}
+	}
+	for _, e := range emails {
+		if utf8.RuneCountInString(e) > maxConversationCreatedByEntryLen {
+			return &apierror.ValidationError{Msg: fmt.Sprintf("createdBy entry %q exceeds %d characters", e, maxConversationCreatedByEntryLen)}
+		}
+	}
+	return nil
+}
+
+// conversationCreatedByRef builds a UserReference from the conversation payload's
+// single createdBy string. The upstream integration carries only one identity
+// field here (unlike case search, which supplies separate email and full-name
+// fields), so there is no full name to populate: the value is treated as an
+// email when it looks like one, otherwise as a display name.
+func conversationCreatedByRef(createdBy string) *domain.UserReference {
+	if strings.Contains(createdBy, "@") {
+		return domain.NewUserReference("", createdBy, "")
+	}
+	return domain.NewUserReference("", "", createdBy)
+}
+
 type snConversationService struct {
 	client *integrationservice.Client
 }
@@ -139,6 +186,12 @@ func (s *snConversationService) SearchConversations(ctx context.Context, req dom
 		return domain.SearchConversationsResponse{}, err
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.SearchConversationsResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchConversationsResponse{}, err
+	}
+	if err := validateConversationCreatedBy(req.Filters.CreatedBy); err != nil {
 		return domain.SearchConversationsResponse{}, err
 	}
 	if req.SortBy.Field != "" && !validConversationSortField[req.SortBy.Field] {
@@ -177,7 +230,9 @@ func (s *snConversationService) SearchConversations(ctx context.Context, req dom
 			ProjectIDs:  uuidsToSysids(req.Filters.ProjectIDs),
 			StateKeys:   stateKeys,
 			SearchQuery: req.Filters.SearchQuery,
+			Number:      stringPtrValue(req.Filters.Number),
 			CreatedByMe: req.Filters.CreatedByMe,
+			CreatedBy:   req.Filters.CreatedBy,
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
@@ -200,7 +255,7 @@ func (s *snConversationService) SearchConversations(ctx context.Context, req dom
 			InitialMessage: c.InitialMessage,
 			MessageCount:   c.MessageCount,
 			CreatedOn:      c.CreatedOn,
-			CreatedBy:      c.CreatedBy,
+			CreatedBy:      conversationCreatedByRef(c.CreatedBy),
 		}
 		if c.ID != nil && *c.ID != "" {
 			id := sysidToUUID(*c.ID)

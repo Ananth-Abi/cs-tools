@@ -284,6 +284,16 @@ export interface BeCaseAccountRef {
 }
 
 /**
+ * One answered catalog-item question on a service request, as returned inside
+ * `GET /cases/{id}`. Both fields are always present and non-null; `value` is
+ * `""` when the question was asked but left blank.
+ */
+export interface BeCaseVariableAnswer {
+  name: string;
+  value: string;
+}
+
+/**
  * `GET /cases/{id}` response — the rich CaseView. Unlike {@link BeCase} (the
  * flat create/legacy shape), it embeds the related entities as objects, so the
  * UI gets account / project / deployment / deployed-product / reporter names
@@ -344,6 +354,14 @@ export interface BeCaseView {
   /** SR catalog refs (managed-cloud); null for non-catalog cases. */
   catalog?: BeEntityRef | null;
   catalogItem?: BeEntityRef | null;
+  /**
+   * The answers the requester gave to the catalog item's questions, in the
+   * backing data source's display order. Omitted entirely (never `null`,
+   * never `[]`) when the case has no answers or is not a catalog request, so
+   * "omitted" and "asked but left blank" stay distinguishable: `value` is
+   * always a string and may be `""` for a question that was left blank.
+   */
+  variables?: BeCaseVariableAnswer[];
   /** Assigned team and linked chat conversation; null when not set. */
   assignedTeam?: BeEntityRef | null;
   conversation?: BeEntityRef | null;
@@ -594,15 +612,37 @@ export interface BeSearchCatalogsResponse {
 }
 
 /**
+ * One selectable option on a choice-type catalog-item variable. Note the
+ * asymmetry with {@link BeCatalogItemVariable.choices}: the array itself is
+ * omitted when the variable has no choices, but once present every option
+ * object carries all three keys, each of which may be `null`. An option whose
+ * `value` is `null` cannot be submitted and is skipped by the form.
+ */
+export interface BeCatalogItemVariableChoice {
+  /** Submitted value. `null` for a malformed option — not renderable. */
+  value: string | null;
+  /** Display label; falls back to `value` when `null`. */
+  text: string | null;
+  /** Display order within the choice list. */
+  order: number | null;
+}
+
+/**
  * A catalog-item variable (form field). The contract carries the question
- * text, display order, and a free-form `type` hint, but no choice/option list
- * or mandatory flag — so the portal renders every variable as a text field.
+ * text, display order, a free-form `type` hint and, for choice-type
+ * variables, the list of selectable options. There is still no mandatory
+ * flag, so the portal decides required-ness client-side.
  */
 export interface BeCatalogItemVariable {
   id: string;
   questionText?: string;
   order?: number;
   type?: string;
+  /**
+   * Selectable options for a choice-type variable. Omitted entirely (never
+   * `null`, never `[]`) on non-choice variables.
+   */
+  choices?: BeCatalogItemVariableChoice[];
 }
 
 /** `GET /catalogs/{catalogId}/items/{catalogItemId}/variables` response. */
@@ -664,7 +704,14 @@ export type BeCaseUpdatePayload =
   | (Omit<BeCaseUpdateNever, "workState"> & { workState: BeCaseWorkState })
   /** Email of the engineer to assign (ServiceNow only). */
   | (Omit<BeCaseUpdateNever, "assigneeEmail"> & { assigneeEmail: string })
-  /** Full replacement watch list as emails (ServiceNow only). */
+  /**
+   * Full replacement watch list, as platform user UUIDs — not a delta, and
+   * not emails: the backend resolves each id to whatever identifier the
+   * backing data source's own payload declares. Cannot be empty: the request
+   * shape can't distinguish an empty list from an absent field, so `[]` is
+   * rejected as an empty update (an incident's watch list *can* be cleared —
+   * see {@link BeUpdateIncidentPayload}).
+   */
   | (Omit<BeCaseUpdateNever, "watchList"> & { watchList: string[] })
   /**
    * UUID of another case, incident, change request, or problem to link this
@@ -806,7 +853,8 @@ export type BeCaseFieldFilterField =
   | "product"
   | "projectOnboardingStatus"
   | "projectType"
-  | "integrationCsTeam"
+  | "creTeam"
+  | "sreTeam"
   | "resolutionNotes"
   | "parentId"
   | "taskSLABusinessElapsedPercent"
@@ -1002,13 +1050,24 @@ export interface BeCommentSearchResponse extends BeSearchResponseBase {
 // Conversations (Novera chat sessions)
 // ---------------------------------------------------------------------------
 
-export type BeConversationState = "ACTIVE" | "RESOLVED";
+export type BeConversationState =
+  | "ACTIVE"
+  | "RESOLVED"
+  | "CONVERTED"
+  | "ABANDONED"
+  | "CLOSED";
 
 /**
  * A chat session as returned by `POST /conversations/search` — the ServiceNow
  * "conversation" record a case may originate from. `id`/`number`/`state` are
  * nullable on the wire (a conversation that never resolved to a real SN
  * record can have gaps); `case` is null for a chat that never became a case.
+ *
+ * `createdBy` carries the canonical {@link BeUserReference} shape, same as
+ * case `createdBy`. Known limitation specific to conversations: the upstream
+ * data only carries a single identity string for the initiator, so only ONE
+ * of `email`/`name` is usually populated (never both) — unlike cases, which
+ * usually have both. `null` when the initiator has no resolvable identity.
  */
 export interface BeConversationView {
   id: string | null;
@@ -1019,12 +1078,24 @@ export interface BeConversationView {
   case: BeEntityRef | null;
   state: BeConversationState | null;
   createdOn: string;
-  createdBy: string;
+  createdBy: BeUserReference | null;
 }
 
 export interface BeSearchConversationsFilters {
   projectIds?: string[];
   states?: BeConversationState[];
+  /** Free-text search across the conversation (matches the same fields the
+   * data source indexes for it — number, initiator, initial message). */
+  searchQuery?: string;
+  /** A single conversation number (e.g. "CHAT0000012345"), matched exactly —
+   * a first-class indexed filter rather than the free-text `searchQuery`
+   * scan. See `classifyConversationQuery`. */
+  number?: string;
+  /** When `true`, scopes results to conversations initiated by the
+   * signed-in user. */
+  createdByMe?: boolean;
+  /** Filter to conversations initiated by any of these email addresses. */
+  createdBy?: string[];
 }
 
 export interface BeSearchConversationsPayload {
@@ -1943,9 +2014,10 @@ export interface BeChangeRequestDetail extends BeChangeRequestSearchView {
   /**
    * Backend-supplied legal transitions out of the CR's current state, mirroring
    * `nextStates` on a case (`CaseActionBar.tsx`) — render one action per entry
-   * rather than hardcoding a `state === 'new'` check. Intentionally narrow today:
-   * the only transition modeled so far is New -> Assess, so this is only ever
-   * `["assess"]` or `[]`.
+   * rather than hardcoding a `state === 'new'` check. Deliberately typed as an
+   * open `string[]`, not `BeChangeRequestState[]`: `ChangeRequestActionBar`
+   * renders an entry it has no curated config for via a generic fallback, so a
+   * transition added on the backend needs no frontend change to appear.
    */
   legalNextStates?: string[];
 }
@@ -2106,14 +2178,20 @@ export interface BeTeam {
   id: string;
   name: string;
   family?: string;
-  /** The backing data source's assignment group id, reformatted as this
-   * platform's UUID — present only when the deployment's team registry has
-   * one configured for this team. This is the id an `integrationCsTeam`
+  /** The backing CRE (Customer Renewal & Expansion) group's id, reformatted
+   * as this platform's UUID — present only when the deployment's team
+   * registry has one configured for this team. This is the id a `creTeam`
    * case filter entry actually needs (see
    * `BE_CURRENT_USER_FILTER_PLACEHOLDER`-style team filter substitution in
    * `teamFilterPlaceholder.ts`) — never `id` above, which is just the
    * registry key. */
-  groupId?: string;
+  creGroupId?: string;
+  /** The backing SRE (Site Reliability Engineering) group's id, reformatted
+   * as this platform's UUID — present only when the deployment's team
+   * registry has one configured for this team. This is the id an `sreTeam`
+   * case filter entry actually needs — never `id` above, which is just the
+   * registry key. */
+  sreGroupId?: string;
 }
 
 export interface BeTeamSearchPayload {
@@ -2188,17 +2266,39 @@ export interface BeConfigurationItemSearchResponse {
 
 /**
  * `PATCH /change-requests/{id}` body (ServiceNow data source only). At least
- * one field is required by the BE (`minProperties: 1`). `plannedStartOn` is a
- * `YYYY-MM-DD HH:MM:SS` string. `requestApproval` is mutually exclusive with
- * the other fields here — it drives the New -> Assess transition (see
- * `legalNextStates` on {@link BeChangeRequestDetail}) rather than editing a value.
+ * one field is required by the BE (`minProperties: 1`). `plannedStartOn` and
+ * `plannedEndOn` are `YYYY-MM-DD HH:MM:SS` strings.
+ *
+ * `isCustomerApproved`, `isCustomerReviewed` and `requestApproval` are
+ * mutually exclusive with each other — at most one of the three may be set in
+ * a single patch.
+ *
+ * This is a subset of what the endpoint accepts, not the whole contract: only
+ * the fields the portal actually writes are modeled here. Add a field when a
+ * UI starts sending it, after checking it against the published contract.
  */
 export interface BePatchChangeRequestPayload {
   plannedStartOn?: string;
+  plannedEndOn?: string;
   isCustomerApproved?: boolean;
   isCustomerReviewed?: boolean;
   assignedTeamId?: string;
   requestApproval?: true;
+  /**
+   * Target lifecycle state, for a transition listed in the record's own
+   * `legalNextStates` (see {@link BeChangeRequestDetail}). Typed open rather
+   * than as `BeChangeRequestState` so a transition the backend adds can be
+   * driven straight from `legalNextStates` without a frontend change.
+   *
+   * The New -> Assess transition is the one exception: it goes through
+   * `requestApproval` instead, because that also kicks off the approval
+   * request, which setting `state` alone does not.
+   */
+  state?: string;
+  /** Backout plan. Long-form; stored and re-rendered as rich text. */
+  rollbackPlan?: string;
+  /** Test plan. Long-form; stored and re-rendered as rich text. */
+  testPlan?: string;
   /**
    * UUID of the service-request case this change request was raised from.
    * Only settable via PATCH — `POST /change-requests` does not accept it, so
@@ -2437,6 +2537,11 @@ export interface BeUpdateIncidentPayload {
   configurationItemId?: string | null;
   assignmentGroupId?: string | null;
   assignedEngineerId?: string | null;
+  /**
+   * Full replacement watch list, as platform user UUIDs — not a delta. An
+   * explicitly empty array is meaningful and clears the watch list; omitting
+   * the key leaves it unchanged.
+   */
   watchList?: string[];
   workNotes?: string | null;
   additionalComments?: string | null;
@@ -2596,6 +2701,41 @@ export interface BeProblemDetail {
   resolvedBy?: BeEntityRef | null;
   openedOn?: string | null;
   closedOn?: string | null;
+}
+
+/**
+ * List-item shape for `POST /incident-tasks/search`. No dedicated detail
+ * page exists for incident tasks in this app (unlike problem/incident), so
+ * there is no separate `BeIncidentTaskDetail` type yet — `description`,
+ * `priority`, `openedOn`, `closedOn` are on the backend's own
+ * `GET /incident-tasks/{id}` response but have no frontend consumer today.
+ * `stateLabel` is a pre-humanized display string the data source already
+ * resolves server-side — prefer it over trying to humanize `state` (a raw,
+ * data-source-specific integer with no stable domain enum here; see the
+ * `state` field's own doc comment).
+ */
+export interface BeIncidentTaskSearchView {
+  id?: string;
+  number?: string;
+  subject?: string;
+  /** Raw integer state value as a string, NOT a translated enum — the
+   * underlying state choice list is inconsistent across task subtypes, so
+   * there is no confirmed-complete, unambiguous domain enum to translate
+   * through. Use `stateLabel` for display. */
+  state?: string;
+  stateLabel?: string;
+  /** The parent incident this task belongs to. */
+  incident?: BeCaseNumberRef | null;
+  assignmentGroup?: BeEntityRef | null;
+  assignedTo?: BeEntityRef | null;
+}
+
+/** Note: mirrors the problem/change-request/incident search responses — no `hasMore`. */
+export interface BeIncidentTaskSearchResponse {
+  incidentTasks: BeIncidentTaskSearchView[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 /**
@@ -2835,6 +2975,10 @@ export interface BeTimeCardMutationResponse {
   timeCard: BeTimeCardView;
 }
 
+export interface BeDeleteTimeCardResponse {
+  message?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
@@ -2883,7 +3027,8 @@ export type BeWidgetResourceType =
   | "service_request"
   | "security_report_analysis"
   | "announcement"
-  | "engagement";
+  | "engagement"
+  | "incident_task";
 
 /**
  * How a widget's resolved data should be rendered. `pie` and `bar` both
@@ -2913,7 +3058,45 @@ export interface BeDashboardPieSlice {
   label: string;
   /** Falls back to a fixed rotation over the same palette if omitted. */
   color?: BeWidgetPaletteColor;
-  query: Record<string, unknown>;
+  /** `null` when a hand-authored dashboard config's slice omits its own
+   * `query` entirely — the backend's `PieSlice.Query` (a bare
+   * `map[string]any`) has no load-time requirement that a slice carry one,
+   * so it marshals to JSON `null` rather than `{}` when absent. Treat the
+   * same as an empty object: this slice contributes only the widget's own
+   * base `query` (see {@link BeDashboardWidget.query}). */
+  query: Record<string, unknown> | null;
+}
+
+/** Alternative to {@link BeDashboardPieSlice}[] for shapes "pie"/"bar":
+ * one server-side `POST /{resourceType}/aggregate` call instead of one
+ * `search` per hand-authored slice. Mutually exclusive with `slices` —
+ * the backend enforces exactly one of the two at config-load time. */
+export interface BeDashboardGroupByConfig {
+  /** The field to aggregate on — forwarded verbatim as that request's
+   * `groupBy` key. */
+  field: string;
+  /** Caps the number of returned buckets; anything beyond that rolls up
+   * into the response's `othersCount`. */
+  maxGroups?: number;
+  /** Label for the synthetic "everything else" bucket built from
+   * `othersCount`. Defaults to `"Others"` when omitted. */
+  othersLabel?: string;
+}
+
+/** One bucket of a `POST /{resourceType}/aggregate` response. */
+export interface BeGroupByBucket {
+  key: string;
+  label: string;
+  count: number;
+}
+
+/** Response shape of `POST /{resourceType}/aggregate`. `othersCount` covers
+ * every record outside the returned `groups` (capped by `maxGroups`);
+ * `totalRecords` is the grand total across `groups` plus `othersCount`. */
+export interface BeGroupByResponse {
+  groups: BeGroupByBucket[];
+  othersCount: number;
+  totalRecords: number;
 }
 
 /** Rendering hint for a {@link BeDashboardWidgetColumn}'s resolved value.
@@ -2965,13 +3148,23 @@ export interface BeDashboardWidget {
    * `query`. For shapes "pie"/"bar" this is a shared base merged under
    * every slice's own `query` (see {@link BeDashboardPieSlice}), rather
    * than queried on its own.
+   *
+   * `null` for a shape "pie"/"bar" widget that carries no top-level
+   * criteria of its own — a legitimate, backend-accepted config where every
+   * slice supplies its own complete `query` (the backend's own
+   * `WidgetTemplate.Query` requirement is only "slices OR groupBy OR
+   * query", never "query" unconditionally — see
+   * `apps/csm-portal/backend/internal/dashboard/registry.go`). Treat the
+   * same as an empty object.
    */
-  query: Record<string, unknown>;
-  /** Present on the wire; unused today — `slices` is what actually drives
-   * pie/bar grouping. */
-  groupBy?: string;
+  query: Record<string, unknown> | null;
+  /** Only meaningful for shapes "pie"/"bar": one server-side
+   * `POST /{resourceType}/aggregate` call instead of one `search` per
+   * slice. Mutually exclusive with `slices` — the backend enforces
+   * exactly one of the two for those shapes (never both, never neither). */
+  groupBy?: BeDashboardGroupByConfig;
   /** Only meaningful for shapes "pie"/"bar": one search per slice, each
-   * read via its own `total`. */
+   * read via its own `total`. Mutually exclusive with `groupBy`. */
   slices?: BeDashboardPieSlice[];
   /** Only meaningful for shape list; how many records to show. */
   listLimit?: number;
@@ -3019,6 +3212,14 @@ export interface BeDashboardListItem {
    * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`
    * in the webapp). */
   isTeamBased: boolean;
+  /** Team keys (the signed-in user's own `team.teamKey`) that should land
+   * on this dashboard outright as their default, regardless of this
+   * dashboard's own `isDefault`/`isTeamBased`/`type` — for specialist,
+   * non-team-based dashboards the `isDefault`+`isTeamBased`+`type` default
+   * mechanism can't reach (e.g. `onboarding-engineer` for
+   * `customer_onboarding`). Omitted where unused; see `CsmDashboardPage`'s
+   * module doc comment for how this tier fits into default selection. */
+  defaultForTeamKeys?: string[];
 }
 
 /**
@@ -3038,10 +3239,3 @@ export interface BeDashboard {
   widgets: BeDashboardWidget[];
 }
 
-/** One team from `POST /teams/search`. `id` is the registry team key,
- * stable across environments (unlike a group id). */
-export interface BeTeam {
-  id: string;
-  name: string;
-  family?: string;
-}

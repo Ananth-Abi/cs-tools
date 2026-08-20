@@ -96,9 +96,15 @@ export default function CsmCaseCreatePage(): JSX.Element {
   // carries over as editable starting values without a query-string round
   // trip or a full page load. See CsmCaseDetailPage.tsx's
   // `create_related_case` handler.
-  const relatedCaseState = useLocation().state as
-    | CreateRelatedCaseNavState
-    | undefined;
+  const location = useLocation();
+  const relatedCaseState = location.state as CreateRelatedCaseNavState | undefined;
+
+  // Set when opened from a project's page Create menu (`/cases/new?projectId=…
+  // `, state: { from: "/customers/projects/:id" }), so Back/Cancel return
+  // there instead of the hardcoded cases list, and the newly created case's
+  // own Back button (reading this same convention) returns there too.
+  const backState = location.state as { from?: string } | undefined;
+  const backTarget = backState?.from ?? "/cases";
 
   const lockedProjectId =
     searchParams.get("projectId") ?? relatedCaseState?.projectId ?? "";
@@ -264,7 +270,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
           `The case was created, but ${failed} attachment${failed === 1 ? "" : "s"} failed to upload. You can add ${failed === 1 ? "it" : "them"} from the case page.`,
         );
       }
-      navigate(`/cases/${created.id}`);
+      navigate(`/cases/${created.id}`, { state: { from: backTarget } });
     } catch (err) {
       setSubmitting(false);
       showError("Could not create the case. Please try again.", err);
@@ -276,10 +282,10 @@ export default function CsmCaseCreatePage(): JSX.Element {
       <Button
         variant="text"
         startIcon={<ArrowLeft size={16} />}
-        onClick={() => navigate("/cases")}
+        onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to cases
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: relatedCaseId ? 0.5 : 2 }}>
         New case
@@ -484,7 +490,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
         </Grid>
 
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, mt: 2.5 }}>
-          <Button variant="outlined" onClick={() => navigate("/cases")}>
+          <Button variant="outlined" onClick={() => navigate(backTarget)}>
             Cancel
           </Button>
           <Button

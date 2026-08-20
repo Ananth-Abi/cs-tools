@@ -15,84 +15,73 @@
 // under the License.
 
 import { Box, Tab, Tabs } from "@wso2/oxygen-ui";
-import { useState, type JSX } from "react";
+import { type JSX } from "react";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ConversationsTab from "@features/csm-projects/components/ConversationsTab";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
-type WorkItemSubTab =
-  | "cases"
-  | "serviceRequests"
-  | "securityReports"
-  | "engagements"
-  | "conversations";
+// Conversations (chat sessions) aren't a case type (`BeCaseType`) — they're a
+// different resource entirely, backed by their own search/list, not
+// `/cases/search` — so they stay a separate sub-tab rather than folding into
+// the flat issues list below. Everything that IS a case type (cases, service
+// requests, security reports, engagements, announcements) now renders as one
+// flat, unlocked-type list instead of one sub-tab per type.
+type WorkItemSubTab = "issues" | "conversations";
+
+const WORK_ITEM_SUB_TABS: readonly WorkItemSubTab[] = ["issues", "conversations"];
 
 interface WorkItemsTabProps {
   projectId: string;
 }
 
 /**
- * A project's work items, categorized into per-type sub-tabs rather than one
- * mixed list with a type filter — Cases / Service requests / Security reports
- * / Engagements each lock `CsmIssuesView` to their own case type (mirroring
- * the props each type's own standalone page already uses — `CsmCasesPage`,
- * `OperationsPage`, `CsmSecurityCenterPage`, `CsmEngagementsPage` — so a row's
- * severity column, detail route, and engagement-type filter all match what a
- * user sees on that type's dedicated page). Conversations is the project's
- * chat sessions (`ConversationsTab`), included here as its own sub-tab rather
- * than as a separate top-level project tab.
+ * A project's work items: a single flat list spanning every case type (Case /
+ * Service request / Security report / Engagement / Announcement), filtered by
+ * a "Work item type" multi-select rather than one sub-tab per type — matching
+ * `caseType.ts`'s `ALL_CASE_TYPES` (all 5; the backend already returns
+ * announcements for a project, so hiding that type here would be a silent
+ * regression). Detail links resolve per-row to each type's own detail page via
+ * `CasesList`'s `caseTypeDetailBasePath` fallback (no `detailBasePath` is
+ * passed here, unlike the old single-type sub-tabs, since a mixed list can't
+ * point every row at one fixed base path).
+ *
+ * `hideProjectFilter` is passed (this view is already locked to one project
+ * via `lockedFilters`) and `typeFilterLabel="Work item type"` renders in the
+ * project filter's old grid slot, since a project-scoped list has no use for
+ * its own project filter — see `CasesFilterBar`'s `typeFilterLabel` doc
+ * comment for why this reuses the existing "Case type" control (an actual
+ * closed `<Select multiple>` dropdown already, not an inline checkbox list)
+ * rather than introducing a new control.
+ *
+ * Conversations is the project's chat sessions (`ConversationsTab`), kept as
+ * its own sub-tab alongside the flat issues list rather than a third
+ * top-level project tab — it was already nested here before this revamp.
  */
 export default function WorkItemsTab({ projectId }: WorkItemsTabProps): JSX.Element {
-  const [subTab, setSubTab] = useState<WorkItemSubTab>("cases");
+  // Kept in the URL (`?subTab=`), not local state, alongside the parent
+  // page's own `?tab=` -- see CsmProjectDetailPage.tsx's `projectPath` -- so
+  // a create-flow round trip back to this project restores the exact sub-tab
+  // the engineer was on, not just the Work items tab in general.
+  const { activeTab: subTab, setActiveTab: setSubTab } = useQueryParamTabs<WorkItemSubTab>(
+    WORK_ITEM_SUB_TABS,
+    "issues",
+    { paramName: "subTab" },
+  );
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <Tabs value={subTab} onChange={(_, v) => setSubTab(v as WorkItemSubTab)}>
-        <Tab value="cases" label="Cases" />
-        <Tab value="serviceRequests" label="Service requests" />
-        <Tab value="securityReports" label="Security reports" />
-        <Tab value="engagements" label="Engagements" />
-        <Tab value="conversations" label="Conversations" />
+        <Tab value="issues" label="Work items" />
+        <Tab value="conversations" label="Chats" />
       </Tabs>
 
-      {subTab === "cases" && (
+      {subTab === "issues" && (
         <CsmIssuesView
-          entityNoun="cases"
-          lockedFilters={{ projects: [projectId], caseTypes: ["case"] }}
+          entityNoun="work items"
+          lockedFilters={{ projects: [projectId] }}
           hideProjectFilter
-          hideTypeFilter
-        />
-      )}
-
-      {subTab === "serviceRequests" && (
-        <CsmIssuesView
-          entityNoun="service requests"
-          lockedFilters={{ projects: [projectId], caseTypes: ["service_request"] }}
-          hideProjectFilter
-          hideTypeFilter
-          detailBasePath="/operations/service-requests"
-        />
-      )}
-
-      {subTab === "securityReports" && (
-        <CsmIssuesView
-          entityNoun="security reports"
-          lockedFilters={{ projects: [projectId], caseTypes: ["security_report_analysis"] }}
-          hideProjectFilter
-          hideTypeFilter
-          hideSeverityColumn
-          detailBasePath="/security-center/security-reports"
-        />
-      )}
-
-      {subTab === "engagements" && (
-        <CsmIssuesView
-          entityNoun="engagements"
-          lockedFilters={{ projects: [projectId], caseTypes: ["engagement"] }}
-          hideProjectFilter
-          hideTypeFilter
-          showEngagementTypeFilter
-          hideSeverityColumn
-          detailBasePath="/engagements"
+          typeFilterLabel="Work item type"
+          hideBackButton
         />
       )}
 

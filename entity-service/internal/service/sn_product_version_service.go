@@ -44,13 +44,13 @@ type snProductVersion struct {
 }
 
 // snProductVersionSearchPayload is the Choreo POST /products/{id}/versions/search request body.
+// The Choreo API's ProductVersionSearchPayload is a closed record with only a
+// "pagination" field -- no "filters" field exists on it. Do not add one back:
+// a struct-valued field survives `omitempty` (encoding/json never treats a
+// non-pointer struct as empty) and Ballerina rejects any unrecognized field on
+// a closed record at bind time, so a "filters" key here 400s every call.
 type snProductVersionSearchPayload struct {
-	Filters    snProductVersionFilters `json:"filters,omitempty"`
-	Pagination snProjectPagination     `json:"pagination"`
-}
-
-type snProductVersionFilters struct {
-	SearchQuery string `json:"searchQuery,omitempty"`
+	Pagination snProjectPagination `json:"pagination"`
 }
 
 type snProductVersionService struct {
@@ -76,7 +76,6 @@ func (s *snProductVersionService) SearchProductVersions(ctx context.Context, req
 	path := fmt.Sprintf("/products/%s/versions/search", productSysid)
 
 	payload := snProductVersionSearchPayload{
-		Filters:    snProductVersionFilters{SearchQuery: req.SearchQuery},
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
 	}
 

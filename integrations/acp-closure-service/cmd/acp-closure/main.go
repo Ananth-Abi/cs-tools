@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,9 +49,10 @@ func main() {
 
 	dryRun := envBool("DRY_RUN", true)
 	testProjectID := os.Getenv("TEST_PROJECT_ID")
+	excludedProjectIDs := parseExcludedProjectIDs(os.Getenv("EXCLUDED_PROJECT_IDS"))
 	runID := newRunID()
 
-	slog.Info("acp-closure-service starting", "runID", runID, "dryRun", dryRun, "testProjectID", testProjectID)
+	slog.Info("acp-closure-service starting", "runID", runID, "dryRun", dryRun, "testProjectID", testProjectID, "excludedProjectIDs", sortedKeys(excludedProjectIDs))
 
 	entityClient := entity.NewClient(entity.Config{
 		BaseURL:      mustEnv("CSM_INTEGRATION_BASE_URL"),
@@ -62,14 +64,14 @@ func main() {
 
 	var updater projectUpdater = entityClient
 	if dryRun {
-		updater = &sweep.DryRunProjectUpdater{Logger: slog.Default()}
+		updater = &sweep.DryRunProjectUpdater{}
 	}
 
 	notifier := &notify.LoggingNotifier{Logger: slog.Default()}
 
 	ctx := entity.WithCorrelationID(context.Background(), runID)
 
-	result, err := sweep.Run(ctx, entityClient, updater, notifier, time.Now(), testProjectID)
+	result, err := sweep.Run(ctx, entityClient, updater, notifier, time.Now(), testProjectID, excludedProjectIDs)
 	if err != nil {
 		slog.Error("acp-closure-service sweep failed", "runID", runID, "err", err)
 		os.Exit(1)
@@ -79,6 +81,7 @@ func main() {
 		"runID", runID,
 		"dryRun", dryRun,
 		"projectsEvaluated", result.ProjectsEvaluated,
+		"projectsExcluded", result.ProjectsExcluded,
 		"failureCount", len(result.Failures),
 	)
 	for _, f := range result.Failures {
@@ -123,6 +126,41 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return parsed
+}
+
+// parseExcludedProjectIDs parses EXCLUDED_PROJECT_IDS: a comma-separated
+// list of project IDs the sweep should skip entirely, never fetching or
+// evaluating them (backs sweep.Run's excludedProjectIDs parameter). Per
+// explicit design direction (PR #1440 discussion, Sajith Ekanayake): this
+// is meant for deliberate, verified business exclusions — expected to be
+// empty in production almost all the time, populated more often in
+// dev/staging to keep a known-broken project out of the way. Not a
+// substitute for fixing genuine data issues; a project put here produces
+// zero signal about whatever might actually be wrong with it. Each entry
+// is trimmed of surrounding whitespace; empty entries (from a stray comma,
+// or an entirely empty/unset value) are dropped rather than matching "".
+func parseExcludedProjectIDs(v string) map[string]bool {
+	ids := map[string]bool{}
+	for raw := range strings.SplitSeq(v, ",") {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			continue
+		}
+		ids[id] = true
+	}
+	return ids
+}
+
+// sortedKeys returns m's keys in sorted order, for stable, readable log
+// output — map iteration order is randomized in Go, which would make the
+// same EXCLUDED_PROJECT_IDS configuration log differently across runs.
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // loadDotEnv reads a .env file and sets any unset environment variables from

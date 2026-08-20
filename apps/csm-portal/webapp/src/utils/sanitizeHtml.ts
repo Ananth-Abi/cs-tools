@@ -235,3 +235,20 @@ export function stripHtmlTags(text: string): string {
   container.innerHTML = withoutTags;
   return container.textContent ?? "";
 }
+
+/**
+ * Escape the five HTML-significant characters so a plain-text string can be
+ * embedded in markup verbatim.
+ *
+ * Canonical implementation for the app; `components/rich-text-editor` re-exports
+ * this rather than keeping its own copy, and nothing should hand-roll a third.
+ */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+

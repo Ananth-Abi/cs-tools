@@ -46,6 +46,8 @@ session, ever, so that code path would be permanently dead here.
   extracts an email from an already-fetched `PersonRef`, treating "no AM
   assigned" and "AM assigned but no email" both as legitimate absence
   (`""`), not errors — many real accounts have incomplete role assignments.
+  `Contact` (`{Name, Email}`) is the resolved-recipient shape shared with
+  `notify.Recipients`.
 - `internal/suspensionstate` — translates between
   `suspensionProcessState`'s real wire shape (see below) and
   `closure.NoticeWindow`. `WithSubscriptionEndDateState` only ever touches
@@ -63,10 +65,10 @@ session, ever, so that code path would be permanently dead here.
   and acts on a single project.
 
 Each pure package has an I/O counterpart living in `sweep` (e.g.
-`resolveAccountManagerEmail` does the `GetAccount` call and DTO parsing,
-then hands parsed data to `recipients.AccountManagerEmail`). Keep new
-decision logic in the pure packages and I/O in `sweep` — this split is what
-makes the decision logic cheaply testable without mocks.
+`resolveAccountContacts` does the `GetAccount` call and DTO parsing, then
+hands parsed data to `recipients.AccountManagerEmail`). Keep new decision
+logic in the pure packages and I/O in `sweep` — this split is what makes the
+decision logic cheaply testable without mocks.
 
 ## Dry-run is an injection choice, not a branch
 
@@ -74,8 +76,9 @@ makes the decision logic cheaply testable without mocks.
 have exactly two side-effecting dependencies — `projectUpdater` (writes) and
 `notifier` (sends) — expressed as small interfaces. `main.go` decides which
 concrete implementation to inject based on `DRY_RUN`:
-`sweep.DryRunProjectUpdater` (logs, never calls `UpdateProject`) vs. the real
-`*entity.Client`. Reads (`SearchProjects`, `GetAccount`,
+`sweep.DryRunProjectUpdater` (silently no-ops, never calls `UpdateProject`
+— see the notice-content-redesign section below for why it deliberately
+doesn't log) vs. the real `*entity.Client`. Reads (`SearchProjects`, `GetAccount`,
 `SearchProjectContacts`, `SearchAccountContacts`) are never dry-run-gated —
 fetching and deciding has no write effect to protect against.
 
@@ -92,22 +95,123 @@ loop's `offset := 0` line. This is what backs safe testing against a single
 dedicated project without risk of touching every open project in an
 environment.
 
-## Notice audience matrix and the AM-notice suppression
+## EXCLUDED_PROJECT_IDS — deliberate exclusion, not a bug workaround
 
-Confirmed audience rule: 90/60/30-day windows are internal-only (Account
-Manager); 15/7/0-day windows are both internal and customer
-(`needsCustomerAudience` in `sweep.go`). The internal (Account Manager)
-notice is sent for **every** firing window unconditionally — except when the
-three-tier customer-contact fallback lands on `NeedsAMNudge` (no business
-contact, no primary contact) *and* the nudge email would reach the exact
-same recipient as the internal notice. In that case only the AM-nudge fires
-— the same Account Manager doesn't get two separate emails about the same
-window in the same run (`shouldSuppressInternalNotice`). Two empty
-recipients are deliberately **not** treated as a match — an unresolved AM
-email isn't a real duplicate-email risk, and suppressing would only hide
-debug visibility for no benefit. This was confirmed correct against real
-broad-sweep data (multiple real `am_nudge`/internal pairs collapsed to one
-notice; the empty-recipient exception correctly did not collapse).
+`Run`'s `excludedProjectIDs` parameter (backed by the `EXCLUDED_PROJECT_IDS`
+env var, comma-separated, parsed by `main.go`'s `parseExcludedProjectIDs`) is
+a set of project IDs the sweep skips entirely — not fetched in detail, not
+evaluated, not counted as a failure, just logged and counted in
+`Result.ProjectsExcluded`. This applies uniformly to both the broad sweep and
+the `TEST_PROJECT_ID`-scoped path: if the scoped `projectID` is itself
+excluded, `GetProject` is never called at all.
+
+This came out of a real production incident (a project returning `500` on
+both `GET` and `PATCH` — a genuine data problem on the entity-service side,
+confirmed by the fact that even a bare read failed, not just the write) and
+a design discussion with Sajith Ekanayake about how to handle it. The
+resulting agreement, worth preserving verbatim since it's easy to
+misapply this mechanism otherwise:
+
+- **This is for deliberate, verified business exclusions only** — a project
+  someone has actually decided should never go through ACP, for a real
+  business reason. It is explicitly **not** a workaround for data bugs like
+  the incident that prompted it. A project excluded here produces zero log
+  signal about whatever might actually be wrong with it — the opposite of
+  what you want when something is broken and needs fixing.
+- **Expected to be empty almost all the time in production.** It's fine —
+  expected, even — for this to hold real entries in dev/staging (e.g.
+  keeping a known-broken test project out of the way while iterating).
+- The real incident that prompted this discussion was **not** resolved by
+  adding the project to this list — it needed (and still needs, as of this
+  writing) an actual data-level fix from whoever owns `entity-service`. See
+  the "known discrepancies" pattern elsewhere in this file for the general
+  practice of escalating rather than silently working around upstream
+  problems.
+- **Visibility was the sticking point in the design discussion**: the
+  concern was "if we skip a project entirely, how do we know something's
+  still wrong with it, or that it's since been fixed?" The answer landed on:
+  every excluded project ID is logged (`"project excluded from evaluation"`)
+  each time the sweep would otherwise have touched it, and the full
+  configured list is logged once at startup (`"excludedProjectIDs"` on the
+  `"acp-closure-service starting"` line) — so the exclusion itself stays
+  visible in the logs even though the project's own data never gets
+  evaluated. This does *not* answer "is the underlying issue still there" —
+  that still requires someone to actually go check, same as before.
+
+## Notice audience matrix and content (redesigned per Chamara's direct request)
+
+Confirmed audience rule, unchanged: 90/60/30-day windows are internal-only;
+15/7/0-day windows are both internal and customer (`needsCustomerAudience`
+in `sweep.go`). Notice *shape* went through two redesigns superseding the
+original `Kind` internal/customer/am_nudge model — the second one, current
+as of this writing, is a materially different design from the first (a
+single consolidated `Notice` per window), because it turned out the
+internal and customer copies have genuinely different subject/body content,
+not just different recipients. Recorded here in detail so the reasoning
+isn't lost or re-litigated:
+
+- **Internal and customer notices are always two separate `Send` calls**
+  for a customer-audience window (15/7/0) — never one `Notice` bundling
+  both. The internal notice fires unconditionally for every window
+  (90/60/30/15/7/0); a second notice (customer, or the no-business-contact
+  nudge) fires only for 15/7/0.
+- **`Subject`** has no single template — four distinct ones
+  (`internalNoticeSubject`/`customerNoticeSubject` in `sweep.go`), confirmed
+  against multiple real examples from Chamara:
+  - Internal, day-count (90/60/30/15/7): `"[ACP] {N} Days Reminder of
+    Project for {ProjectName} of {AccountName}"`. The `[ACP]` prefix marks
+    "this is the internal-audience copy" and applies to **every** window,
+    including 15/7 — not just 90/60/30. (An earlier version of this logic
+    had that backwards; confirmed wrong directly against real examples
+    where a 15-day internal subject still carried `[ACP]`.)
+  - Internal, day-0: `"[ACP] Project Suspension Notice of {ProjectName} of
+    {AccountName}"` — no "days remaining" left to report once suspended.
+  - Customer, 15/7: `"Upcoming Project Suspension Notice - {ProjectName}"`
+    — never `[ACP]`-prefixed, never names the account.
+  - Customer, day-0: `"Project Suspension Notice - {ProjectName}"` — past
+    tense, no "Upcoming".
+  - No-business-contact (see below): `"[Urgent] [ACP] No Business Contacts
+    Specified for Project {ProjectName}"`.
+  `ProjectName` itself often already contains the word "Subscription"
+  (e.g. `"TICKETNETWORK - Subscription"`), which is why a literal internal
+  subject can visually resemble "...Subscription of TicketNetwork" without
+  "Subscription of" being separate template wording.
+- **Every notice has a real `Body` now** — not just the no-business-contact
+  one. Internal bodies (`internalNoticeBody`) open with a greeting that
+  **always names the Account Manager** (`"Dear {AccountManagerName}"`),
+  regardless of which of the three internal recipients is actually reading
+  their own copy — confirmed explicitly, not personalized per recipient —
+  and list `Project Name`/`Project Key`/`Account Owner`/`Start Date`/`End
+  Date` in `2006-01-02` date format. Customer bodies (`customerNoticeBody`)
+  have **no greeting at all** and use `01/02/2006` (US-style) dates embedded
+  in prose instead. Day-0 bodies (both internal and customer) use distinct
+  past-tense/"already suspended" wording instead of the day-count
+  reminder's future-tense "needs renewal" wording — see the four body
+  template constants in `sweep.go` for the exact confirmed text.
+- **The no-business-contact case** (three-tier customer-contact fallback
+  lands on `NeedsAMNudge`: no business contact, no primary contact) sends a
+  **second, separate** `Notice` alongside the internal notice — not instead
+  of it, and with no suppression logic collapsing the two. Recipients are
+  **all three** internal recipients (Account Owner, Renewal Manager,
+  Technical Owner) — confirmed explicitly; an earlier version sent this to
+  the Account Owner alone. Sending both notices (internal + nudge) is a
+  deliberate simplification the user confirmed rather than inventing a
+  suppression rule for this shape — revisit if it proves too noisy in
+  practice. (The original design's `shouldSuppressInternalNotice`, which
+  collapsed a same-recipient internal+nudge pair into one send, no longer
+  applies — there's no shared-recipient collision to worry about now that
+  internal and nudge always target the same three internal recipients by
+  design.)
+- **`DryRunProjectUpdater` intentionally logs nothing** (`dryrun.go`) — per
+  explicit user direction, the only log line that should exist for a dry
+  run is `notify.LoggingNotifier`'s `"notice"` line (the actual email
+  content: subject, body, recipients). A separate `"dry-run: would update
+  project"` line describing the raw PATCH body used to exist here and was
+  removed deliberately — it's noise once every window produces a real
+  notice log, and stays noise once real email sending (Sajith's team, still
+  pending) replaces `LoggingNotifier` as the thing this component
+  ultimately integrates with. Don't re-add logging to this type without
+  confirming that direction has changed.
 
 ## suspensionProcessState's real shape
 
@@ -160,6 +264,19 @@ wrong answer:
   `internal/sweep/types.go`'s `project.Account` has always expected the
   nested `{id, name}` shape; only the doc comment needed correcting once the
   broader `SearchProjects` gap closed.
+- **Project key field name.** `csm-integration-service`'s own `openapi.yaml`
+  documents this field as `projectKey` on the `Project` schema. The real,
+  live `GetProject` response actually names it `key` (confirmed directly by
+  the user via Postman against the dedicated test project — the response
+  had `"key": "APPSUB"`, no `projectKey` field at all). `internal/sweep/
+  types.go`'s `project.ProjectKey` was tagged `json:"projectKey"` for a
+  while as a result — silently, always empty on every real response, since
+  the tag never matched anything on the wire. Caught only because the
+  notice-content redesign started actually reading and logging the value;
+  before that, nothing exercised it. Now tagged `json:"key"`, confirmed
+  against the real response. If this ever gets "corrected" back to
+  `projectKey` by an openapi.yaml update, verify live behavior again before
+  copying it — don't just trust the spec.
 
 ## Open dependencies
 
@@ -188,8 +305,11 @@ wrong answer:
 - TDD throughout: red before green, one seam at a time. Seams under test:
   `closure.Decide`, `recipients.ResolveCustomerContact` /
   `AccountManagerEmail`, `suspensionstate.LastNoticeWindow` /
-  `WithSubscriptionEndDateState`, `sweep.processProject`, `sweep.Run`.
-  `main.go` and the two logging-only implementations
+  `WithSubscriptionEndDateState`, `sweep.processProject`, `sweep.Run`, and
+  the pure subject/body builders (`internalNoticeSubject`,
+  `customerNoticeSubject`, `internalNoticeBody`, `customerNoticeBody` in
+  `sweep.go`) tested directly rather than only through `processProject`.
+  `main.go` and the two logging/no-op implementations
   (`notify.LoggingNotifier`, `sweep.DryRunProjectUpdater`) are deliberately
   untested, matching this repo's convention that wiring-only code and
   behaviorless placeholders don't need dedicated tests.

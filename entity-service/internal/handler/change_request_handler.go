@@ -65,6 +65,21 @@ func (h *ChangeRequestHandler) SearchChangeRequests(w http.ResponseWriter, r *ht
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// AggregateChangeRequests handles POST /change-requests/aggregate.
+func (h *ChangeRequestHandler) AggregateChangeRequests(w http.ResponseWriter, r *http.Request) {
+	var req domain.AggregateChangeRequestsRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.AggregateChangeRequests(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // PatchChangeRequest handles PATCH /change-requests/{id}.
 func (h *ChangeRequestHandler) PatchChangeRequest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

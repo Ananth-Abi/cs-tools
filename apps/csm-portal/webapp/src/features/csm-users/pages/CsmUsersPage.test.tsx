@@ -336,6 +336,23 @@ describe("CsmUsersPage — role truncation and row navigation", () => {
     );
   });
 
+  it("shows 'Locked out' in the status column instead of 'Active', for a locked-out user even though they're active", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse({
+        users: [{ ...FEW_ROLES_USER, active: true, lockedOut: true }],
+        total: 1,
+        limit: 20,
+        offset: 0,
+      }),
+    );
+    renderPage("/admin/users");
+
+    await waitFor(() => expect(screen.getByText("John Smith")).toBeInTheDocument());
+    const row = screen.getByText("John Smith").closest("tr") as HTMLElement;
+    expect(within(row).getByText("Locked out")).toBeInTheDocument();
+    expect(within(row).queryByText("Active")).not.toBeInTheDocument();
+  });
+
   it("renders no Back button when it wasn't reached from a dashboard widget", () => {
     renderPage("/admin/users");
     expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();

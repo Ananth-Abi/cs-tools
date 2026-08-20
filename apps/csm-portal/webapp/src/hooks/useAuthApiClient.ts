@@ -22,6 +22,7 @@ import {
   AUTH_NOT_READY_ERROR_MESSAGE,
 } from "@constants/apiConstants";
 import { useLogger } from "@hooks/useLogger";
+import { trySilentSignInOnce } from "@hooks/silentSignIn";
 import { CORRELATION_ID_HEADER, newCorrelationId } from "@utils/correlationId";
 
 // Shared across every caller's hook instance. Each useAuthApiClient() call
@@ -29,12 +30,6 @@ import { CORRELATION_ID_HEADER, newCorrelationId } from "@utils/correlationId";
 // only ONE full sign-in redirect is triggered even when many concurrent calls
 // fail authentication at once.
 let signInInFlight = false;
-
-// Shared across every caller's hook instance for the same reason as
-// `signInInFlight`: many concurrent requests can discover a dead refresh
-// token at once, and they should all await the SAME hidden-iframe silent
-// sign-in attempt rather than each opening their own.
-let silentSignInInFlight: Promise<boolean> | null = null;
 
 // Only the Asgardeo "unauthenticated" code means the token was expired/missing
 // when the call ran (e.g. the refresh token itself has expired, so the SDK's
@@ -104,6 +99,20 @@ function markForcedSignIn(): void {
     // Best-effort only; if we can't record it, the guard simply can't help
     // this time — the redirect below still proceeds.
   }
+}
+
+// How long (and how often) to keep retrying the original request after
+// kicking off silent sign-in, instead of trusting only its own return
+// value — see the call site's comment for why. 700ms/8s matches the
+// observed real-world timing: a genuine token refresh becomes usable via
+// `getAccessToken()` within a few seconds, well inside this budget, while a
+// truly dead session still exhausts it before falling through to the
+// redirect below.
+const SILENT_RECOVERY_POLL_INTERVAL_MS = 700;
+const SILENT_RECOVERY_POLL_BUDGET_MS = 8_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // One attempt's outcome, classified so the retry chain below can treat "the
@@ -243,20 +252,14 @@ export function useAuthApiClient() {
   // dialog), try a silent, hidden-iframe re-authentication. If the user's IdP
   // session (SSO cookie) is still alive, this mints a fresh token without any
   // visible navigation; only a genuinely dead IdP session falls through to
-  // `redirectToSignIn`. Single-flighted for the same reason as sign-in above.
+  // `redirectToSignIn`. Single-flighted via the shared `trySilentSignInOnce`
+  // (not a locally-scoped guard) so this and AuthGuard's own route-mount
+  // silent-reauth check never run two independent, uncoordinated hidden-iframe
+  // attempts at once — see that module's comment for why that mattered.
   const trySilentSignIn = useCallback((): Promise<boolean> => {
-    if (!silentSignInInFlight) {
-      silentSignInInFlight = Promise.resolve(signInSilently())
-        .then((result) => Boolean(result))
-        .catch((error) => {
-          logger.debug("[auth] silent sign-in failed", error);
-          return false;
-        })
-        .finally(() => {
-          silentSignInInFlight = null;
-        });
-    }
-    return silentSignInInFlight;
+    return trySilentSignInOnce(signInSilently, (message) =>
+      logger.debug("[auth] silent sign-in failed", message),
+    );
   }, [signInSilently, logger]);
 
   const attemptFetch = useCallback(
@@ -340,7 +343,7 @@ export function useAuthApiClient() {
 
   return useCallback(
     async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
-      // Attempt 1 of 3. Only a recoverable outcome (thrown token-expiry, or a
+      // First attempt. Only a recoverable outcome (thrown token-expiry, or a
       // resolved genuine HTTP 401) continues the chain below; a success, a
       // non-401 error response, or a non-auth thrown error return/throw here.
       const first = await runAttempt(attemptFetch, input, options);
@@ -354,22 +357,45 @@ export function useAuthApiClient() {
       if (!retry.recoverable) return retry.response;
       let last = retry;
 
-      // Still unauthenticated (or still a genuine 401) after the retry.
-      // Try a silent re-auth first: if the IdP session is still alive this
-      // mints a fresh token with no visible navigation, so in-progress work
-      // survives.
-      if (await trySilentSignIn()) {
-        const afterSilentSignIn = await runAttempt(attemptFetch, input, options);
-        if (!afterSilentSignIn.recoverable) return afterSilentSignIn.response;
-        last = afterSilentSignIn;
-        // Silent sign-in reported success but the token still won't
-        // authenticate (e.g. a race with a session that expired a moment
-        // later, or a genuine 401 that re-auth can't fix at all) — fall
-        // through to the hard redirect below.
+      // Still unauthenticated (or still a genuine 401) after the retry. Try a
+      // silent re-auth: if the IdP session is still alive this mints a fresh
+      // token with no visible navigation. Its own returned promise is not
+      // trustworthy as the sole success signal, though — observed live
+      // against a real IdP, it can take upward of 10 seconds to settle, and
+      // can resolve false even though the underlying token was already
+      // refreshed successfully several seconds earlier (its own
+      // postMessage-based completion signal isn't reliably tied to the
+      // actual token refresh completing). Blocking solely on `await
+      // trySilentSignIn()` before ever retrying meant a real recovery could
+      // sit unused for 10+ seconds while every other in-flight call in the
+      // app had already picked up the fresh token, exclusively because this
+      // one specific promise hadn't settled yet.
+      //
+      // So: kick off silent sign-in, then poll the original request on a
+      // short interval instead of waiting on its return value — whichever
+      // recovers first (an early poll picking up the refreshed token, or
+      // silent sign-in itself reporting success) wins. Stop polling once
+      // silent sign-in has definitively reported failure and the poll
+      // budget is exhausted; a session that's still failing at that point is
+      // presumed genuinely dead and falls through to the hard redirect below.
+      let silentSignInSettled = false;
+      let silentSignInSucceeded = false;
+      void trySilentSignIn().then((ok) => {
+        silentSignInSettled = true;
+        silentSignInSucceeded = ok;
+      });
+
+      const pollDeadline = Date.now() + SILENT_RECOVERY_POLL_BUDGET_MS;
+      while (Date.now() < pollDeadline) {
+        await sleep(SILENT_RECOVERY_POLL_INTERVAL_MS);
+        const polled = await runAttempt(attemptFetch, input, options);
+        if (!polled.recoverable) return polled.response;
+        last = polled;
+        if (silentSignInSettled && !silentSignInSucceeded) break;
       }
 
-      // Attempt 3 of 3 exhausted with no recovery. Before bouncing the whole
-      // tab to a full sign-in redirect, guard against redirect-looping
+      // The poll budget is exhausted with no recovery. Before bouncing the
+      // whole tab to a full sign-in redirect, guard against redirect-looping
       // forever against an account whose 401 isn't actually fixable by
       // re-authenticating (a valid token, but e.g. a backend/upstream-data
       // problem on that account) — if we already forced a sign-in very

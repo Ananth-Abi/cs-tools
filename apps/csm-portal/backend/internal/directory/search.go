@@ -55,11 +55,16 @@ type TeamResult struct {
 	// picker (e.g. an SRE dashboard offering only sre-abt teams) requests it
 	// via the frontend's own dashboard-type -> family mapping.
 	Family string `json:"family,omitempty"`
-	// GroupID is the backing group's id in this platform's UUID form, suitable
-	// for the case-search integrationCsTeam filter. Omitted when the registry
-	// configured no backing group id for this team -- the team is still
-	// listed, just not filter-scopable.
-	GroupID string `json:"groupId,omitempty"`
+	// CreGroupID is the backing CRE (Customer Renewal & Expansion) group's id
+	// in this platform's UUID form, suitable for the case-search creTeam
+	// filter. Omitted when the registry configured no backing CRE group id
+	// for this team -- the team is still listed, just not filter-scopable.
+	CreGroupID string `json:"creGroupId,omitempty"`
+	// SreGroupID is the backing SRE (Site Reliability Engineering) group's id
+	// in this platform's UUID form, suitable for the case-search sreTeam
+	// filter. Omitted when the registry configured no backing SRE group id
+	// for this team -- the team is still listed, just not filter-scopable.
+	SreGroupID string `json:"sreGroupId,omitempty"`
 }
 
 // SearchTeamsResponse is the paginated result of a team search.

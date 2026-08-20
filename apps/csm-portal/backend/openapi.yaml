@@ -1690,6 +1690,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /cases/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of cases by a single field (e.g. account,
+        state, severity, type), top N + Others.
+      description: >-
+        Unlike CaseSearchPayload's own groupBy-shaped widget config (which
+        fans out one search per literal slice on the frontend), this drives a
+        single aggregation query, capped to the top maxGroups buckets with
+        the remainder folded into othersCount.
+      operationId: postCasesAggregate
+      requestBody:
+        description: Case aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated case counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /dashboards:
     get:
       summary: List available dashboards.
@@ -3129,6 +3191,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /change-requests/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of change requests by a single field (e.g.
+        state, assignmentGroup), top N + Others.
+      operationId: postChangeRequestsAggregate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeRequestAggregatePayload'
+      responses:
+        "200":
+          description: Aggregated change request counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /services/search:
     post:
       summary: Search IT services (ServiceNow data source only).
@@ -4176,6 +4294,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+    delete:
+      summary: >
+        Delete a time card (ServiceNow data source only). Only validates that
+        id is a well-formed UUID; the entity service (and, underneath it,
+        ServiceNow) enforces that the caller is the card's own submitter and
+        that it's still in the submitted state, the same trust model the
+        PATCH operation above uses.
+      operationId: deleteTimeCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the time card.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Time card deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteTimeCardResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Time card not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
 
   /incidents/search:
     post:
@@ -4209,6 +4382,63 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incidents/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of incidents by a single field (e.g. state,
+        assignmentGroup, businessService), top N + Others.
+      operationId: postIncidentsAggregate
+      requestBody:
+        description: Incident aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated incident counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
           content:
             application/json:
               schema:
@@ -4518,6 +4748,225 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /problems/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of problems by a single field (e.g. state,
+        assignmentGroup), top N + Others.
+      operationId: postProblemsAggregate
+      requestBody:
+        description: Problem aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProblemAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated problem counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incident-tasks/{id}:
+    get:
+      summary: Get a single incident task by ID (ServiceNow data source only).
+      operationId: getIncidentTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the incident task.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentTaskDetail'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incident-tasks/search:
+    post:
+      summary: Search incident tasks (ServiceNow data source only).
+      operationId: postIncidentTasksSearch
+      requestBody:
+        description: Incident task search payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentTaskSearchPayload'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentTaskSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incident-tasks/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of incident tasks by a single field (e.g.
+        state, assignmentGroup), top N + Others.
+      operationId: postIncidentTasksAggregate
+      requestBody:
+        description: Incident task aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentTaskAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated incident task counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
           content:
             application/json:
               schema:
@@ -4905,6 +5354,12 @@ components:
           type: string
         timeCard:
           $ref: '#/components/schemas/TimeCardView'
+
+    DeleteTimeCardResponse:
+      type: object
+      properties:
+        message:
+          type: string
 
     UpdateCaseRequest:
       type: object
@@ -5344,7 +5799,8 @@ components:
             - product
             - projectOnboardingStatus
             - projectType
-            - integrationCsTeam
+            - creTeam
+            - sreTeam
             - resolutionNotes
             - parentId
             - taskSLABusinessElapsedPercent
@@ -5419,8 +5875,12 @@ components:
           "Not-Applicable" -- not a closed enum at this layer).
         - **projectType** (in): the parent project's type, matched by the
           project type's name (e.g. "Subscription").
-        - **integrationCsTeam** (in): the parent account's integration CS
-          team, as team UUIDs.
+        - **creTeam** (in): the parent account's CRE (Customer Renewal &
+          Expansion) team, as team UUIDs.
+        - **sreTeam** (in): the parent account's SRE (Site Reliability
+          Engineering) team, as team UUIDs. Distinct from creTeam -- an
+          account can be assigned to both a CRE and an SRE team
+          independently.
         - **resolutionNotes** (isEmpty): values ignored; matches cases with
           empty resolution notes. isNotEmpty is not supported: false and
           omitted were always treated identically for this filter, so there
@@ -5504,6 +5964,62 @@ components:
         hasMore:
           type: boolean
 
+    CaseAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          $ref: '#/components/schemas/CaseSearchFilters'
+        groupBy:
+          type: string
+          enum: [account, state, severity, type]
+          description: The field to aggregate case counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
+
+    AggregateBucket:
+      type: object
+      description: >-
+        One aggregated bucket in a server-side aggregate result. Shared by
+        every resource's dedicated aggregate endpoint (cases, incidents,
+        problems, change requests, incident tasks).
+      properties:
+        key:
+          type: string
+          description: The backing data source's raw group value.
+        label:
+          type: string
+          description: >-
+            Human-readable display form of key; identical to key when the
+            grouped field has no separate label.
+        count:
+          type: integer
+          description: Number of matching records whose grouped field falls in this bucket.
+
+    AggregateResponse:
+      type: object
+      description: >-
+        The shared result shape for every resource's dedicated aggregate
+        endpoint (cases, incidents, problems, change requests, incident
+        tasks). groups holds the top buckets by count, capped at the
+        request's maxGroups when set; othersCount folds every bucket beyond
+        that cap into a single count. totalRecords is the total number of
+        records matching the request's filters, and always equals the sum
+        of groups' counts plus othersCount.
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/AggregateBucket'
+        othersCount:
+          type: integer
+        totalRecords:
+          type: integer
+
     DashboardWidget:
       type: object
       properties:
@@ -5528,6 +6044,7 @@ components:
             - user
             - time_card
             - problem
+            - incident_task
             - product_vulnerability
             - call_request
             - service_request
@@ -5550,10 +6067,11 @@ components:
             - bar
           description: >
             How the widget's data should be rendered once resolved. shapes
-            "pie" and "bar" both resolve one search per slices entry, the
-            same way "count" resolves its own single search (see slices
-            below) — they differ only in how the frontend renders the same
-            resolved data (wedges vs. bars), not in how it's fetched.
+            "pie" and "bar" resolve via either "slices" (one search per
+            entry) or "groupBy" (one server-side aggregation call) — see
+            both below — and differ from each other only in how the
+            frontend renders the same resolved data (wedges vs. bars), not
+            in how it's fetched.
         gridWidth:
           type: integer
           minimum: 1
@@ -5573,18 +6091,47 @@ components:
             (caller-side; slices entry keys win on conflict) rather than
             queried on its own.
         groupBy:
-          type: string
-          description: Unused
+          type: object
+          description: >
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "slices" — a widget carries exactly one of the two (enforced at
+            dashboard-load time). Configures a single server-side
+            aggregation call instead of one search per literal slice: the
+            caller issues one POST /{resourceType}/aggregate request (filters
+            = this widget's own query) and maps the response's groups/
+            othersCount into the same per-slice shape "slices" already
+            produces.
+          properties:
+            field:
+              type: string
+              description: >
+                Which field to group by. Each resourceType enforces its own
+                small allowlist server-side; an unsupported value is
+                rejected by the aggregate call itself with a 400, not caught
+                here.
+            maxGroups:
+              type: integer
+              description: >
+                Top-N cutoff by count, descending; the remainder is summed
+                into one "Others" bucket. Omitted/zero defers to the
+                aggregate endpoint's own default (12).
+            othersLabel:
+              type: string
+              description: >
+                Overrides the default "Others" label for the summed
+                remainder bucket.
+          required: [field]
         listLimit:
           type: integer
           description: Only meaningful for shape list; how many records to show
         slices:
           type: array
           description: >
-            Only meaningful for shapes "pie"/"bar": one search per entry,
-            each resolved via its own total, the same mechanism shape
-            "count" uses. Merge each entry's query under this widget's
-            own query (entry keys win on conflict) before searching.
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "groupBy": one search per entry, each resolved via its own
+            total, the same mechanism shape "count" uses. Merge each
+            entry's query under this widget's own query (entry keys win on
+            conflict) before searching.
           items:
             type: object
             properties:
@@ -5668,13 +6215,10 @@ components:
           enum: [cre, sre, cs]
           description: >
             Who the dashboard is built for. This is the field automatic
-            dashboard selection is intended to key off: a caller whose team
-            family is `cre-abt`/`cre` would land on the default `cre`
-            dashboard, `sre-abt`/`sre` on the default `sre` one, and a caller
-            with no team on the default `cs` one. That selection is NOT
-            implemented yet: the frontend still picks on isDefault plus
-            isTeamBased, and the loader correspondingly permits only one
-            isDefault dashboard in total.
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
             `cre` and `sre` are team-scoped and always carry
             isTeamBased true; `cs` is organisation-wide and always carries it
             false — the loader rejects any other combination at startup.
@@ -5683,9 +6227,24 @@ components:
         isDefault:
           type: boolean
           description: >
-            Whether this is the default dashboard to show first. At most one
-            dashboard in the registry may set it: the loader rejects a second
-            at startup, of any type, until selection becomes type-aware.
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
+        defaultForTeamKeys:
+          type: array
+          items:
+            type: string
+          description: >
+            Team registry keys (not group ids) that should land a
+            signed-in user on this dashboard by default, regardless of its
+            own type/isDefault/isTeamBased — an identity override resolved
+            client-side against the signed-in user's own team key. Most
+            dashboards leave this empty and rely on type-based selection
+            instead; it exists for a dashboard built for one specific
+            team's own workflow rather than the type/family model.
         isTeamBased:
           type: boolean
           description: >
@@ -5707,13 +6266,10 @@ components:
           enum: [cre, sre, cs]
           description: >
             Who the dashboard is built for. This is the field automatic
-            dashboard selection is intended to key off: a caller whose team
-            family is `cre-abt`/`cre` would land on the default `cre`
-            dashboard, `sre-abt`/`sre` on the default `sre` one, and a caller
-            with no team on the default `cs` one. That selection is NOT
-            implemented yet: the frontend still picks on isDefault plus
-            isTeamBased, and the loader correspondingly permits only one
-            isDefault dashboard in total.
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
             `cre` and `sre` are team-scoped and always carry
             isTeamBased true; `cs` is organisation-wide and always carries it
             false — the loader rejects any other combination at startup.
@@ -5722,9 +6278,12 @@ components:
         isDefault:
           type: boolean
           description: >
-            Whether this is the default dashboard to show first. At most one
-            dashboard in the registry may set it: the loader rejects a second
-            at startup, of any type, until selection becomes type-aware.
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
         targetTeam:
           type: string
           description: >
@@ -6418,13 +6977,20 @@ components:
             not every team is. This is the field a discipline-scoped team picker filters
             on via `SearchTeamsRequest.filters.family` — an SRE-scoped dashboard's picker
             requests `sre-abt` and gets only those teams back.
-        groupId:
+        creGroupId:
           type: string
           description: >
-            The backing group's id, suitable for the case search integrationCsTeamIds
-            filter. Present only when the deployment's team registry configured a
-            backing group id for this team; a team without one is still listed, just
-            not filter-scopable.
+            The backing CRE (Customer Renewal & Expansion) group's id, suitable for the
+            case search creTeamIds filter. Present only when the deployment's team
+            registry configured a backing CRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
+        sreGroupId:
+          type: string
+          description: >
+            The backing SRE (Site Reliability Engineering) group's id, suitable for the
+            case search sreTeamIds filter. Present only when the deployment's team
+            registry configured a backing SRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
 
     SearchTeamsRequest:
       type: object
@@ -8361,6 +8927,24 @@ components:
         offset:
           type: integer
 
+    ChangeRequestAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as ChangeRequestSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate change request counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
+
     ChangeRequestDetail:
       allOf:
         - $ref: '#/components/schemas/ChangeRequestSearchView'
@@ -8904,6 +9488,27 @@ components:
                   - notes_pending
                   - concluded
               description: Filter by one or more states.
+            caseStates:
+              type: array
+              items:
+                type: string
+                enum: [open, work_in_progress, waiting_on_wso2, awaiting_info, reopened, solution_proposed, closed]
+              description: Filter to call requests whose parent case is in one of these states.
+            excludeCaseStates:
+              type: array
+              items:
+                type: string
+                enum: [open, work_in_progress, waiting_on_wso2, awaiting_info, reopened, solution_proposed, closed]
+              description: >-
+                Filter to call requests whose parent case is NOT in any of these states.
+                Inverse of caseStates; the two are independent and either, both, or
+                neither may be supplied.
+            assignmentTeamIds:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: Filter by the parent case's assigned team(s).
         sortBy:
           type: object
           additionalProperties: false
@@ -9157,11 +9762,22 @@ components:
               type: array
               items:
                 type: string
-                enum: [ACTIVE, RESOLVED]
+                enum: [ACTIVE, RESOLVED, CONVERTED, ABANDONED, CLOSED]
+            number:
+              type: string
+              description: >-
+                A single conversation number (e.g. "CHAT0000012345"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
             searchQuery:
               type: string
             createdByMe:
               type: boolean
+            createdBy:
+              type: array
+              items:
+                type: string
+              description: Filter to conversations initiated by any of these email addresses.
         sortBy:
           type: object
           properties:
@@ -9204,7 +9820,7 @@ components:
         state:
           type: string
           nullable: true
-          enum: [ACTIVE, RESOLVED]
+          enum: [ACTIVE, RESOLVED, CONVERTED, ABANDONED, CLOSED]
         createdOn:
           type: string
         createdBy:
@@ -9515,6 +10131,24 @@ components:
           type: integer
         offset:
           type: integer
+
+    IncidentAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as IncidentSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup, businessService]
+          description: The field to aggregate incident counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
 
     GoogleChatAlertPayload:
       type: object
@@ -10062,3 +10696,123 @@ components:
             closedOn:
               type: string
               nullable: true
+
+    ProblemAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as ProblemSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate problem counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
+
+    IncidentTaskSearchPayload:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            searchQuery:
+              type: string
+            number:
+              type: string
+              description: >-
+                A single incident task number (e.g. "TASK0082453"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
+        pagination:
+          allOf:
+            - $ref: '#/components/schemas/Pagination'
+            - properties:
+                limit:
+                  default: 20
+                  maximum: 100
+
+    IncidentTask:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        number:
+          type: string
+          nullable: true
+        subject:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+          description: Raw passthrough state value from the backing data source.
+        stateLabel:
+          type: string
+          nullable: true
+        incident:
+          $ref: '#/components/schemas/CaseNumberRef'
+          nullable: true
+        assignmentGroup:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        assignedTo:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+
+    IncidentTaskSearchResponse:
+      type: object
+      properties:
+        incidentTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentTask'
+        total:
+          type: integer
+          description: Total number of matching incident tasks
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    IncidentTaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/IncidentTask'
+        - type: object
+          properties:
+            description:
+              type: string
+              nullable: true
+            priority:
+              type: string
+              nullable: true
+            openedOn:
+              type: string
+              nullable: true
+            closedOn:
+              type: string
+              nullable: true
+
+    IncidentTaskAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as IncidentTaskSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate incident task counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.

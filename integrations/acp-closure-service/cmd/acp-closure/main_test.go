@@ -16,7 +16,49 @@
 
 package main
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+// TestParseExcludedProjectIDs covers EXCLUDED_PROJECT_IDS parsing: a
+// comma-separated list of project IDs, trimmed of surrounding whitespace,
+// with empty entries dropped. An unset/empty value parses to an empty set
+// rather than a set containing "" — an empty string is never a real
+// project ID that should match anything.
+func TestParseExcludedProjectIDs(t *testing.T) {
+	tests := []struct {
+		name string
+		v    string
+		want map[string]bool
+	}{
+		{name: "empty value", v: "", want: map[string]bool{}},
+		{name: "single ID", v: "abc-123", want: map[string]bool{"abc-123": true}},
+		{
+			name: "multiple IDs",
+			v:    "abc-123,def-456,ghi-789",
+			want: map[string]bool{"abc-123": true, "def-456": true, "ghi-789": true},
+		},
+		{
+			name: "whitespace around IDs is trimmed",
+			v:    " abc-123 , def-456 ,ghi-789 ",
+			want: map[string]bool{"abc-123": true, "def-456": true, "ghi-789": true},
+		},
+		{
+			name: "empty entries from stray commas are dropped",
+			v:    "abc-123,,def-456,",
+			want: map[string]bool{"abc-123": true, "def-456": true},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseExcludedProjectIDs(tt.v)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("parseExcludedProjectIDs(%q) = %v, want %v", tt.v, got, tt.want)
+			}
+		})
+	}
+}
 
 // TestExitCode verifies the process reports failure to its caller (a
 // scheduled Choreo task) whenever any project failed during the sweep, and
