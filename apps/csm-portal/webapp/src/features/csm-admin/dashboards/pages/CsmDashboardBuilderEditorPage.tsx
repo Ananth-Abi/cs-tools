@@ -226,7 +226,12 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
     isError: filterPresetsFailed,
     refetch: refetchFilterPresets,
   } = useDashboardFilterPresets();
-  const { data: sharedSections } = useDashboardSharedSections();
+  const {
+    data: sharedSections,
+    isPending: sharedSectionsPending,
+    isError: sharedSectionsFailed,
+    refetch: refetchSharedSections,
+  } = useDashboardSharedSections();
 
   // Exporting without the preset catalogue can only LOSE something when the
   // draft came from a deployed dashboard: those widgets hold the API's
@@ -559,7 +564,39 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
           </Button>
         }
       >
-        {(sharedSections ?? []).length === 0 ? (
+        {/* Three distinct states, not two. Collapsing "still loading" and
+            "the request failed" into the same empty-list message told the
+            admin this deployment has no shared sections, which in both cases
+            is a claim we have no basis for -- and the one case where it IS
+            true looks identical, so there was no way to tell them apart.
+            The failure notice sits ALONGSIDE the list rather than replacing
+            it: whatever this dashboard already includes is still real and
+            still removable, it just cannot be added to until the catalogue
+            loads. */}
+        {sharedSectionsFailed && (
+          <Alert
+            severity="error"
+            sx={{ mb: 1.5 }}
+            action={
+              <Button
+                size="small"
+                color="inherit"
+                onClick={() => void refetchSharedSections()}
+              >
+                Retry
+              </Button>
+            }
+          >
+            Could not load the shared sections, so there is nothing new to
+            choose from right now. Anything this dashboard already includes is
+            unaffected.
+          </Alert>
+        )}
+        {sharedSectionsPending ? (
+          <Typography variant="body2" color="text.secondary">
+            Loading shared sections&hellip;
+          </Typography>
+        ) : !sharedSectionsFailed && (sharedSections ?? []).length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             This deployment has no shared sections yet. Design one under
             &ldquo;Shared presets &amp; sections&rdquo; on the dashboards list.
