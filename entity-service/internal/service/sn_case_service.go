@@ -1210,11 +1210,13 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 }
 
 type snUpdateCasePayload struct {
-	StateKey      *int     `json:"stateKey,omitempty"`
-	SeverityKey   *int     `json:"severityKey,omitempty"`
-	WorkStateKey  *int     `json:"workStateKey,omitempty"`
-	WatchList     []string `json:"watchList,omitempty"`
-	AssigneeEmail *string  `json:"assigneeEmail,omitempty"`
+	StateKey     *int `json:"stateKey,omitempty"`
+	SeverityKey  *int `json:"severityKey,omitempty"`
+	WorkStateKey *int `json:"workStateKey,omitempty"`
+	// WatchList replaces the whole list, so an explicitly empty list must still be
+	// sent to clear it rather than be omitted -- hence the pointer.
+	WatchList     *[]string `json:"watchList,omitempty"`
+	AssigneeEmail *string   `json:"assigneeEmail,omitempty"`
 	// Acknowledge claims the case for the calling engineer, first-write-wins. Only
 	// true is ever sent -- there is no unacknowledge -- and the backing service keeps
 	// it mutually exclusive with every other field in this payload.
@@ -1420,7 +1422,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.WorkState != nil {
 		exclusiveCount++
 	}
-	if len(req.WatchList) > 0 {
+	if req.WatchList != nil {
 		exclusiveCount++
 	}
 	if req.AssigneeEmail != nil {
@@ -1527,16 +1529,16 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		}
 		payload.WorkStateKey = &id
 	}
-	if len(req.WatchList) > 0 {
+	if req.WatchList != nil {
 		// As on create, the backing service's case-update payload declares the
-		// watch list as email addresses. Note this path cannot express "clear the
-		// watch list": UpdateCaseRequest.WatchList is a plain slice, so an
-		// explicitly empty list is indistinguishable from an absent one.
-		emails, err := watchListEmails(ctx, s.client, token, "watchList", req.WatchList)
+		// watch list as email addresses, and it replaces the whole list, so an
+		// explicitly empty list must still be sent to clear it rather than be
+		// skipped.
+		emails, err := watchListEmails(ctx, s.client, token, "watchList", *req.WatchList)
 		if err != nil {
 			return domain.UpdateCaseResponse{}, err
 		}
-		payload.WatchList = emails
+		payload.WatchList = &emails
 	}
 	if req.AssigneeEmail != nil {
 		payload.AssigneeEmail = req.AssigneeEmail

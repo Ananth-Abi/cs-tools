@@ -1621,14 +1621,19 @@ type SearchCasesResponse struct {
 // WatchList, AssigneeEmail, ParentID, RelatedCaseID, AutocloseHoldUntil, Subject, Description,
 // DeploymentID, DeployedProductID, BestCaseFixEta, MostLikelyFixEta, and WorstCaseFixEta
 // are only supported for the ServiceNow data source.
+// An explicitly empty WatchList clears the case's watch list and counts as a provided field.
 // ResolutionCode, Cause, and CloseNotes are optional resolution fields only allowed when
 // State is closed or solution_proposed.
 type UpdateCaseRequest struct {
-	ID             string              `json:"-"`
-	State          *CaseState          `json:"state"`
-	Severity       *CaseSeverity       `json:"severity"`
-	WorkState      *CaseWorkState      `json:"workState"`
-	WatchList      []string            `json:"watchList"`
+	ID        string         `json:"-"`
+	State     *CaseState     `json:"state"`
+	Severity  *CaseSeverity  `json:"severity"`
+	WorkState *CaseWorkState `json:"workState"`
+	// WatchList replaces the case's watch list wholesale with the given platform
+	// user UUIDs. It is a pointer so an absent field and an explicitly empty list
+	// are distinguishable: nil leaves the watch list untouched, while an empty
+	// list clears it.
+	WatchList      *[]string           `json:"watchList"`
 	AssigneeEmail  *string             `json:"assigneeEmail"`
 	ResolutionCode *CaseResolutionCode `json:"resolutionCode"`
 	Cause          *CaseCause          `json:"cause"`

@@ -134,12 +134,10 @@ describe("ChangeRequestActionBar — exactly one primary button", () => {
     expect(screen.queryByRole("button", { name: /change state/i })).not.toBeInTheDocument();
   });
 
-  it("never promotes a destructive target: with only rollback and cancel legal, there is no primary button", () => {
-    renderBar({ state: "implement", legalNextStates: ["rollback", "canceled"] });
-    expect(screen.queryByRole("button", { name: /roll back/i })).not.toBeInTheDocument();
+  it("never promotes a destructive target: with only cancel legal, there is no primary button", () => {
+    renderBar({ state: "implement", legalNextStates: ["canceled"] });
     expect(screen.queryByRole("button", { name: /cancel change/i })).not.toBeInTheDocument();
     openMenu();
-    expect(screen.getByRole("menuitem", { name: /roll back/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /cancel change/i })).toBeInTheDocument();
   });
 
@@ -177,11 +175,64 @@ describe("ChangeRequestActionBar — dispatch", () => {
   it("calls onAction with the target when a menu item is clicked, and closes the menu", () => {
     const { onAction } = renderBar({
       state: "implement",
-      legalNextStates: ["review", "rollback"],
+      legalNextStates: ["review", "canceled"],
     });
     openMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: /roll back/i }));
-    expect(onAction).toHaveBeenCalledWith("rollback");
+    fireEvent.click(screen.getByRole("menuitem", { name: /cancel change/i }));
+    expect(onAction).toHaveBeenCalledWith("canceled");
+  });
+});
+
+/**
+ * Neither state is human-enterable in the backing system, so the bar must not
+ * offer them however they arrive in `legalNextStates`. See
+ * `NEVER_OFFERED_TARGETS` for why the filter exists — these tests are what
+ * stops it being removed as dead code.
+ */
+describe("ChangeRequestActionBar — states the bar never offers", () => {
+  it("renders neither rollback nor customer approval, as a button or a menu item", () => {
+    renderBar({
+      state: "implement",
+      legalNextStates: ["review", "rollback", "customer_approval", "canceled"],
+    });
+    expect(screen.queryByRole("button", { name: /roll back/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /customer approval/i }),
+    ).not.toBeInTheDocument();
+    openMenu();
+    expect(screen.queryByRole("menuitem", { name: /roll back/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /customer approval/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still renders the other legal targets normally alongside them", () => {
+    renderBar({
+      state: "implement",
+      legalNextStates: ["review", "rollback", "customer_approval", "canceled"],
+    });
+    expect(screen.getByRole("button", { name: /mark implemented/i })).toBeInTheDocument();
+    openMenu();
+    expect(screen.getByRole("menuitem", { name: /cancel change/i })).toBeInTheDocument();
+  });
+
+  it("excludes them even when they would otherwise render through the generic fallback", () => {
+    // `customer_approval` has no curated action label, so without the
+    // exclusion it would still be renderable via `DEFAULT_TARGET_CONFIG`.
+    renderBar({ state: "assess", legalNextStates: ["customer_approval", "awaiting_vendor"] });
+    openMenu();
+    expect(screen.getByRole("menuitem", { name: /^awaiting vendor$/i })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: /customer approval/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders no bar at all when every legal target is excluded", () => {
+    const { container } = renderBar({
+      state: "implement",
+      legalNextStates: ["rollback", "customer_approval"],
+    });
+    expect(container).toBeEmptyDOMElement();
   });
 });
 

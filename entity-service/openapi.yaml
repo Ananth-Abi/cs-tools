@@ -4738,8 +4738,11 @@ components:
           type: array
           items:
             type: string
-            format: email
-          description: List of email addresses to set as the case watch list (ServiceNow only).
+            format: uuid
+          description: |
+            The full set of user identifiers to set as the case watch list, replacing
+            whatever is there (ServiceNow only). An empty array clears the watch list,
+            and counts as providing the field.
         assigneeEmail:
           type: string
           format: email
@@ -5110,7 +5113,8 @@ components:
           type: array
           items:
             type: string
-          description: Optional list of user IDs to notify.
+            format: uuid
+          description: Optional list of identifiers of the users to add to the case watch list.
 
     CreateCaseResponse:
       type: object
@@ -8658,6 +8662,8 @@ components:
           type: array
           items:
             type: string
+            format: uuid
+          description: Optional list of identifiers of the users to add to the incident watch list.
         additionalComments:
           type: string
           nullable: true
@@ -8920,6 +8926,10 @@ components:
           type: array
           items:
             type: string
+            format: uuid
+          description: |
+            The full set of user identifiers to set as the incident watch list, replacing
+            whatever is there. An empty array clears the watch list.
 
     UpdateIncidentResponse:
       type: object

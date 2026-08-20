@@ -88,6 +88,21 @@ const FORWARD_ORDER: readonly string[] = [
 /** Menu ordering: forward moves first, destructive off-ramps last. */
 const MENU_ORDER: readonly string[] = [...FORWARD_ORDER, "rollback", "canceled"];
 
+/**
+ * States this bar never offers, no matter what `legalNextStates` contains.
+ *
+ * Do not delete this filter because "the list doesn't include them anyway".
+ * Neither state is human-enterable in the backing system: of its 38 UI
+ * actions on the change-request table, none sets either one. Both are reached
+ * only by automation — rollback is written by the workflow that handles a
+ * rejected review, customer approval by the approval process itself. Setting
+ * either by hand from here would leave a record sitting in an approval state
+ * with no approver record behind it, which is an audit hole rather than a
+ * shortcut. The exclusion is deliberately unconditional so a future backend
+ * change that starts returning them cannot silently reopen it.
+ */
+const NEVER_OFFERED_TARGETS: readonly string[] = ["rollback", "customer_approval"];
+
 /** Sort key for a target: curated order first, uncurated states after. */
 function menuRank(target: string): number {
   const index = MENU_ORDER.indexOf(target);
@@ -147,8 +162,15 @@ export default function ChangeRequestActionBar({
 }: ChangeRequestActionBarProps): JSX.Element | null {
   const [stateMenuAnchor, setStateMenuAnchor] = useState<HTMLElement | null>(null);
 
+  // Single choke point for what is renderable: the exclusion below therefore
+  // covers the primary button, the overflow menu, and states rendered through
+  // `DEFAULT_TARGET_CONFIG` alike.
   const targets = Array.from(
-    new Set((cr.legalNextStates ?? []).filter((s) => !!s && s !== cr.state)),
+    new Set(
+      (cr.legalNextStates ?? []).filter(
+        (s) => !!s && s !== cr.state && !NEVER_OFFERED_TARGETS.includes(s),
+      ),
+    ),
   ).sort((a, b) => menuRank(a) - menuRank(b));
   if (targets.length === 0) return null;
 
