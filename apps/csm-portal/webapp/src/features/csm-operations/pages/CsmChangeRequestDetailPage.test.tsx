@@ -23,7 +23,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { BeChangeRequestDetail } from "@api/backend/types";
 import { BackendApiError } from "@api/backend/client";
-import { sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 
 const navigateMock = vi.fn();
 const useGetChangeRequestMock = vi.fn();
@@ -515,14 +514,14 @@ describe("CsmChangeRequestDetailPage — direct (non-destructive) transitions", 
 });
 
 describe("CsmChangeRequestDetailPage — destructive transitions need a reason first", () => {
-  /** Render a CR that can be rolled back, and open the confirmation dialog. */
-  function openRollbackDialog(): void {
+  /** Render a CR that can be canceled, and open the confirmation dialog. */
+  function openCancelDialog(): void {
     mockQueryResult({
-      data: { ...BASE_CR, state: "implement", legalNextStates: ["review", "rollback"] },
+      data: { ...BASE_CR, state: "implement", legalNextStates: ["review", "canceled"] },
     });
     renderPage();
     openStateMenu();
-    fireEvent.click(screen.getByRole("menuitem", { name: /roll back/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /cancel change/i }));
   }
 
   function typeReason(text: string): void {
@@ -530,39 +529,39 @@ describe("CsmChangeRequestDetailPage — destructive transitions need a reason f
   }
 
   it("opens the confirmation dialog instead of patching immediately", () => {
-    openRollbackDialog();
+    openCancelDialog();
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(patchMutateMock).not.toHaveBeenCalled();
     expect(patchMutateAsyncMock).not.toHaveBeenCalled();
   });
 
   it("posts the reason as a comment BEFORE patching the state", async () => {
-    openRollbackDialog();
+    openCancelDialog();
     typeReason("Latency regression in production.");
-    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel change$/i }));
 
     await waitFor(() => expect(patchMutateAsyncMock).toHaveBeenCalled());
     expect(postCommentMutateAsyncMock).toHaveBeenCalledWith({
       changeRequestId: "chg-1",
-      // The dialog collects plain text; the comment field is rich text.
-      bodyHtml: "<p>Latency regression in production.</p>",
+      // Posted verbatim: the backing store for these notes is plain text.
+      bodyHtml: "Latency regression in production.",
       internal: true,
     });
     expect(patchMutateAsyncMock).toHaveBeenCalledWith({
       id: "chg-1",
-      patch: { state: "rollback" },
+      patch: { state: "canceled" },
     });
-    // Ordering, not just co-occurrence: an unexplained rollback is worse than
-    // a failed one, so the comment must land first.
+    // Ordering, not just co-occurrence: an unexplained cancellation is worse
+    // than a failed one, so the comment must land first.
     expect(
       postCommentMutateAsyncMock.mock.invocationCallOrder[0],
     ).toBeLessThan(patchMutateAsyncMock.mock.invocationCallOrder[0]);
   });
 
   it("closes the dialog once both halves succeed", async () => {
-    openRollbackDialog();
+    openCancelDialog();
     typeReason("Latency regression in production.");
-    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel change$/i }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
@@ -570,9 +569,9 @@ describe("CsmChangeRequestDetailPage — destructive transitions need a reason f
     postCommentMutateAsyncMock.mockRejectedValueOnce(
       new BackendApiError(403, "Comments are disabled on this change request"),
     );
-    openRollbackDialog();
+    openCancelDialog();
     typeReason("Latency regression in production.");
-    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel change$/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
@@ -585,11 +584,11 @@ describe("CsmChangeRequestDetailPage — destructive transitions need a reason f
 
   it("tells the engineer the reason was recorded when only the state change failed", async () => {
     patchMutateAsyncMock.mockRejectedValueOnce(
-      new BackendApiError(409, "Rollback is not permitted from this state"),
+      new BackendApiError(409, "Cancellation is not permitted from this state"),
     );
-    openRollbackDialog();
+    openCancelDialog();
     typeReason("Latency regression in production.");
-    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel change$/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("alert")).toHaveTextContent(
@@ -597,44 +596,38 @@ describe("CsmChangeRequestDetailPage — destructive transitions need a reason f
       ),
     );
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /rollback is not permitted from this state/i,
+      /cancellation is not permitted from this state/i,
     );
     expect(screen.getByRole("alert")).toHaveTextContent(/don't need to retype it/i);
   });
 
   it("retrying after a failed patch re-sends only the state change, never the comment twice", async () => {
     patchMutateAsyncMock.mockRejectedValueOnce(new BackendApiError(409, "Rejected"));
-    openRollbackDialog();
+    openCancelDialog();
     typeReason("Latency regression in production.");
-    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel change$/i }));
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel change$/i }));
     await waitFor(() => expect(patchMutateAsyncMock).toHaveBeenCalledTimes(2));
     expect(postCommentMutateAsyncMock).toHaveBeenCalledTimes(1);
   });
 
-  it("escapes the reason and keeps its line breaks, so the audit note is not mangled", async () => {
-    const typed = "Latency < 50ms breached & customer impacted.\nRolled back by Jane Doe.";
-    openRollbackDialog();
+  it("posts the reason verbatim as plain text, with no markup added around it", async () => {
+    // The backing store for these notes is a plain-text field: production
+    // entries carry raw newlines and no escaped entities, so anything the
+    // portal wraps in markup shows up as literal tags at the source. What the
+    // engineer typed is what gets written, character for character.
+    const typed = "Latency < 50ms breached & customer impacted.\nCanceled by Jane Doe.";
+    openCancelDialog();
     typeReason(typed);
-    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^cancel change$/i }));
 
     await waitFor(() => expect(postCommentMutateAsyncMock).toHaveBeenCalled());
     const posted = postCommentMutateAsyncMock.mock.calls[0][0] as {
       bodyHtml: string;
     };
-    expect(posted.bodyHtml).toBe(
-      "<p>Latency &lt; 50ms breached &amp; customer impacted.<br />Rolled back by Jane Doe.</p>",
-    );
-    // The audit record has to survive both the escape and the render-side
-    // sanitizer with every character the engineer typed still in it.
-    const rendered = document.createElement("div");
-    rendered.innerHTML = sanitizeRichTextHtml(posted.bodyHtml).replace(
-      /<br\s*\/?>/gi,
-      "\n",
-    );
-    expect(rendered.textContent).toBe(typed);
+    expect(posted.bodyHtml).toBe(typed);
   });
 
   it("routes the cancel transition through the same dialog", () => {

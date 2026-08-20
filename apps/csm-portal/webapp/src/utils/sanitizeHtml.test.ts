@@ -19,7 +19,6 @@ import { describe, expect, it } from "vitest";
 import {
   escapeHtml,
   isBlankHtml,
-  plainTextToHtml,
   sanitizeDescriptionHtml,
   sanitizeRichTextHtml,
   stripLightModeInlineStyles,
@@ -168,53 +167,3 @@ describe("escapeHtml", () => {
   });
 });
 
-/**
- * Read a fragment of HTML back as the text a user would see, with `<br>`
- * counted as a line break. The inverse of `plainTextToHtml` for assertion
- * purposes only — production code has no reason to un-render stored markup.
- */
-function renderedTextOf(html: string): string {
-  const container = document.createElement("div");
-  container.innerHTML = html.replace(/<br\s*\/?>/gi, "\n");
-  return container.textContent ?? "";
-}
-
-describe("plainTextToHtml", () => {
-  it("wraps a single line in a paragraph", () => {
-    expect(plainTextToHtml("Superseded by a later change.")).toBe(
-      "<p>Superseded by a later change.</p>",
-    );
-  });
-
-  it("keeps line breaks as <br />", () => {
-    expect(plainTextToHtml("first\nsecond")).toBe("<p>first<br />second</p>");
-  });
-
-  it("escapes markup-significant characters so no text is dropped on render", () => {
-    expect(plainTextToHtml("latency < 5ms & rising")).toBe(
-      "<p>latency &lt; 5ms &amp; rising</p>",
-    );
-  });
-
-  it("normalizes CRLF so a pasted reason does not gain blank lines", () => {
-    expect(plainTextToHtml("first\r\nsecond")).toBe("<p>first<br />second</p>");
-  });
-
-  it("returns an empty string for blank input", () => {
-    expect(plainTextToHtml("   \n  ")).toBe("");
-  });
-
-  it("round-trips a reason containing <, & and a newline back to the typed text", () => {
-    const typed = "Rolled back: latency < 5ms & error rate spiked.\nOwner: Jane Doe";
-    expect(renderedTextOf(plainTextToHtml(typed))).toBe(typed);
-  });
-
-  it("survives the render-side sanitizer with the text and the break intact", () => {
-    const typed = "a < b & c\nsecond line";
-    const posted = plainTextToHtml(typed);
-    // Nothing is dropped on the way to the DOM. The sanitizer reserialises the
-    // void tag (`<br />` becomes `<br>`), which is why this compares the text
-    // it reads back as rather than the markup byte-for-byte.
-    expect(renderedTextOf(sanitizeRichTextHtml(posted))).toBe(typed);
-  });
-});

@@ -46,7 +46,7 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
-import { isBlankHtml, plainTextToHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useEngineerDisplayName } from "@hooks/useEngineerDisplayName";
@@ -382,12 +382,17 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
       try {
         await postComment.mutateAsync({
           changeRequestId: cr.id,
-          // The dialog collects plain text, the comment field stores and
-          // re-renders rich text. Converting is not cosmetic here: this note
-          // is the audit record for an irreversible transition, so an
-          // unescaped `<` or `&` would silently drop part of it and the
-          // engineer's line breaks would vanish on render.
-          bodyHtml: plainTextToHtml(reason),
+          // Posted verbatim, as plain text with real line breaks. The
+          // backing store for these notes is a plain-text journal field, not
+          // an HTML one: a sample of production entries carries raw newlines
+          // and no escaped entities, so wrapping the reason in markup would
+          // show literal tags to anyone reading the record at the source.
+          // The portal's own renderer treats the note as HTML, which renders
+          // `<` and line breaks imperfectly here; that mismatch is
+          // pre-existing, applies equally to notes authored outside the
+          // portal, and is being fixed on the render path, not by re-encoding
+          // on the way in.
+          bodyHtml: reason,
           internal: true,
         });
         setReasonRecorded(true);

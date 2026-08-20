@@ -252,21 +252,3 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, "&#039;");
 }
 
-/**
- * Convert plain text typed by a user into the rich-text HTML the comment and
- * long-text endpoints store and re-render.
- *
- * Both halves matter for anything that is an audit record. Without escaping, a
- * `<` or `&` the engineer typed is parsed as markup and part of the text is
- * silently dropped on render; without the `<br />`s, every line break they
- * typed disappears. The output survives the render-side sanitizer unchanged,
- * so what is stored is exactly what the engineer typed.
- *
- * Empty or whitespace-only input yields `""` rather than an empty paragraph,
- * so callers that treat blank as "nothing to post" keep working.
- */
-export function plainTextToHtml(text: string): string {
-  if (!text.trim()) return "";
-  const lines = text.replace(/\r\n?/g, "\n").split("\n").map(escapeHtml);
-  return `<p>${lines.join("<br />")}</p>`;
-}
