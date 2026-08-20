@@ -136,6 +136,16 @@ describe("CsmSideBar — active section on routes with no owning nav section", (
     renderAt("/people/user-1");
     expect(lastActiveItem()).toBe("operations");
   });
+
+  // Regression test: sessionStorage survives a reload, so a tab open across the
+  // deploy that fixed the above can still hold a dotted child id written by the
+  // older build. Reading it back must yield the owning section, not the stale
+  // child id, on the very first render.
+  it("normalises a dotted child id left in storage by an older build", () => {
+    sessionStorage.setItem(LAST_SECTION_KEY, "operations.incidents");
+    renderAt("/people/user-1");
+    expect(lastActiveItem()).toBe("operations");
+  });
 });
 
 describe("CsmSideBar — Operations/Security Center submenu", () => {
