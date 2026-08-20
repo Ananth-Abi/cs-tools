@@ -656,11 +656,15 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 			}
 		}
 	}
-	if err := validateUUIDs("watchList", req.WatchList); err != nil {
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	// The backing service's incident-create payload declares the watch list as
+	// email addresses, not user ids, so the incoming platform UUIDs are resolved
+	// to emails first.
+	watchList, err := watchListEmails(ctx, s.client, token, "watchList", req.WatchList)
+	if err != nil {
 		return domain.CreateIncidentResponse{}, err
 	}
-
-	token := middleware.UserIDTokenFromContext(ctx)
 
 	payload := snCreateIncidentPayload{
 		CallerID:           uuidToSysid(req.CallerID),
@@ -669,7 +673,7 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 		ImpactKey:          snIncidentImpactKeyMap[req.Impact],
 		UrgencyKey:         snIncidentUrgencyKeyMap[req.Urgency],
 		Subject:            req.Subject,
-		WatchList:          uuidsToSysids(req.WatchList),
+		WatchList:          watchList,
 		AdditionalComments: req.AdditionalComments,
 		WorkNotes:          req.WorkNotes,
 	}
@@ -1097,8 +1101,15 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 		WorkNotes:          req.WorkNotes,
 	}
 	if req.WatchList != nil {
-		v := uuidsToSysids(*req.WatchList)
-		payload.WatchList = &v
+		// The backing service's incident-update payload declares the watch list as
+		// usernames -- not emails as its create counterpart does, and not ids --
+		// and it replaces the whole list, so an explicitly empty list must still be
+		// sent to clear it rather than be skipped.
+		userNames, err := watchListUserNames(ctx, s.client, token, "watchList", *req.WatchList)
+		if err != nil {
+			return domain.UpdateIncidentResponse{}, err
+		}
+		payload.WatchList = &userNames
 	}
 	if req.Priority != nil {
 		v := snIncidentPriorityKeyMap[*req.Priority]

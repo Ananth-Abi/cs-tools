@@ -143,6 +143,72 @@ export function approvalStatusColor(status?: string | null): ChipColor {
   return APPROVAL_STATUS_COLOR[status.toUpperCase()] ?? "default";
 }
 
+// ---------------------------------------------------------------------------
+// Lifecycle transitions
+//
+// The backing system owns transition legality — a change request carries its
+// own `legalNextStates`, and nothing here re-derives or second-guesses it.
+// These maps only supply the *presentation* of a transition the record has
+// already declared legal.
+// ---------------------------------------------------------------------------
+
+/**
+ * Action-phrased label for a transition *into* a given state. Phrased as the
+ * action being taken ("Schedule", "Mark implemented"), not as the destination,
+ * because the state chip next to the action bar already names the state —
+ * same "no invented verbs for the state itself" convention as
+ * `IncidentActionBar`/`CaseActionBar`.
+ *
+ * Deliberately partial: `new`, `authorize` and `customer_approval` have no
+ * agreed action verb yet, and a state the backend adds later has none by
+ * definition. Both fall back to a sentence-cased version of the raw value via
+ * {@link changeRequestTransitionLabel}, so they still render and still work.
+ */
+const TRANSITION_LABEL: Record<string, string> = {
+  assess: "Request approval",
+  scheduled: "Schedule",
+  implement: "Start implementation",
+  review: "Mark implemented",
+  customer_review: "Send for customer review",
+  closed: "Close",
+  rollback: "Roll back",
+  canceled: "Cancel change",
+};
+
+/**
+ * Transitions that are destructive and effectively irreversible. These are
+ * never offered as a primary button, always render in the error colour, and
+ * require a stated reason before they fire.
+ */
+const DESTRUCTIVE_TRANSITIONS: readonly string[] = ["rollback", "canceled"];
+
+/** `customer_review` -> `Customer review`. */
+function sentenceCase(raw: string): string {
+  const words = raw.replace(/_/g, " ").trim();
+  if (!words) return raw;
+  return words.charAt(0).toUpperCase() + words.slice(1).toLowerCase();
+}
+
+/** The action-phrased label for a transition target, curated or generic. */
+export function changeRequestTransitionLabel(target: string): string {
+  return TRANSITION_LABEL[target] ?? sentenceCase(target);
+}
+
+/** True when this transition is destructive: menu-only, error-coloured. */
+export function isDestructiveChangeRequestTransition(target: string): boolean {
+  return DESTRUCTIVE_TRANSITIONS.includes(target);
+}
+
+/**
+ * True when moving to `target` must not happen without a stated reason. The
+ * reason is recorded as an ordinary comment on the change request *before*
+ * the state is patched — the PATCH contract has no reason or comment field of
+ * its own. See `ChangeRequestTransitionReasonDialog`.
+ */
+export function changeRequestTransitionRequiresReason(target: string): boolean {
+  return isDestructiveChangeRequestTransition(target);
+}
+
 export interface ChangeRequestFilters {
   search: string;
   states: BeChangeRequestState[];

@@ -5676,6 +5676,14 @@ components:
             type. This is a one-to-many relationship: promoting the same change
             through each environment produces one change request per environment,
             all pointing back at the same service request.
+        variables:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseVariable'
+          description: >-
+            Answers given to the catalog item's questions when the service request
+            was raised, in the backing data source's own order. Only service-request
+            cases carry them; absent for every other case type.
         resolvedOn:
           type: string
           format: date-time
@@ -6682,6 +6690,17 @@ components:
         offset:
           type: integer
 
+    CaseVariable:
+      type: object
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          description: The question as it was shown on the service-request form.
+        value:
+          type: string
+          description: The answer recorded against that question.
+
     CatalogItemVariable:
       type: object
       properties:
@@ -6697,6 +6716,31 @@ components:
         type:
           type: string
           description: Variable type (e.g. text, select).
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogVariableChoice'
+          description: >-
+            Selectable options for a choice-based variable, in the backing data
+            source's own order. Absent for free-text variable types, which are the
+            majority.
+
+    CatalogVariableChoice:
+      type: object
+      required: [value, text, order]
+      properties:
+        value:
+          type: string
+          nullable: true
+          description: The value a case create submits when this option is selected.
+        text:
+          type: string
+          nullable: true
+          description: The label shown to the user for this option.
+        order:
+          type: integer
+          nullable: true
+          description: Position of this option within the list.
 
     GetCatalogItemVariablesResponse:
       type: object

@@ -284,6 +284,16 @@ export interface BeCaseAccountRef {
 }
 
 /**
+ * One answered catalog-item question on a service request, as returned inside
+ * `GET /cases/{id}`. Both fields are always present and non-null; `value` is
+ * `""` when the question was asked but left blank.
+ */
+export interface BeCaseVariableAnswer {
+  name: string;
+  value: string;
+}
+
+/**
  * `GET /cases/{id}` response — the rich CaseView. Unlike {@link BeCase} (the
  * flat create/legacy shape), it embeds the related entities as objects, so the
  * UI gets account / project / deployment / deployed-product / reporter names
@@ -344,6 +354,14 @@ export interface BeCaseView {
   /** SR catalog refs (managed-cloud); null for non-catalog cases. */
   catalog?: BeEntityRef | null;
   catalogItem?: BeEntityRef | null;
+  /**
+   * The answers the requester gave to the catalog item's questions, in the
+   * backing data source's display order. Omitted entirely (never `null`,
+   * never `[]`) when the case has no answers or is not a catalog request, so
+   * "omitted" and "asked but left blank" stay distinguishable: `value` is
+   * always a string and may be `""` for a question that was left blank.
+   */
+  variables?: BeCaseVariableAnswer[];
   /** Assigned team and linked chat conversation; null when not set. */
   assignedTeam?: BeEntityRef | null;
   conversation?: BeEntityRef | null;
@@ -594,15 +612,37 @@ export interface BeSearchCatalogsResponse {
 }
 
 /**
+ * One selectable option on a choice-type catalog-item variable. Note the
+ * asymmetry with {@link BeCatalogItemVariable.choices}: the array itself is
+ * omitted when the variable has no choices, but once present every option
+ * object carries all three keys, each of which may be `null`. An option whose
+ * `value` is `null` cannot be submitted and is skipped by the form.
+ */
+export interface BeCatalogItemVariableChoice {
+  /** Submitted value. `null` for a malformed option — not renderable. */
+  value: string | null;
+  /** Display label; falls back to `value` when `null`. */
+  text: string | null;
+  /** Display order within the choice list. */
+  order: number | null;
+}
+
+/**
  * A catalog-item variable (form field). The contract carries the question
- * text, display order, and a free-form `type` hint, but no choice/option list
- * or mandatory flag — so the portal renders every variable as a text field.
+ * text, display order, a free-form `type` hint and, for choice-type
+ * variables, the list of selectable options. There is still no mandatory
+ * flag, so the portal decides required-ness client-side.
  */
 export interface BeCatalogItemVariable {
   id: string;
   questionText?: string;
   order?: number;
   type?: string;
+  /**
+   * Selectable options for a choice-type variable. Omitted entirely (never
+   * `null`, never `[]`) on non-choice variables.
+   */
+  choices?: BeCatalogItemVariableChoice[];
 }
 
 /** `GET /catalogs/{catalogId}/items/{catalogItemId}/variables` response. */
@@ -664,7 +704,14 @@ export type BeCaseUpdatePayload =
   | (Omit<BeCaseUpdateNever, "workState"> & { workState: BeCaseWorkState })
   /** Email of the engineer to assign (ServiceNow only). */
   | (Omit<BeCaseUpdateNever, "assigneeEmail"> & { assigneeEmail: string })
-  /** Full replacement watch list as emails (ServiceNow only). */
+  /**
+   * Full replacement watch list, as platform user UUIDs — not a delta, and
+   * not emails: the backend resolves each id to whatever identifier the
+   * backing data source's own payload declares. Cannot be empty: the request
+   * shape can't distinguish an empty list from an absent field, so `[]` is
+   * rejected as an empty update (an incident's watch list *can* be cleared —
+   * see {@link BeUpdateIncidentPayload}).
+   */
   | (Omit<BeCaseUpdateNever, "watchList"> & { watchList: string[] })
   /**
    * UUID of another case, incident, change request, or problem to link this
@@ -1967,9 +2014,10 @@ export interface BeChangeRequestDetail extends BeChangeRequestSearchView {
   /**
    * Backend-supplied legal transitions out of the CR's current state, mirroring
    * `nextStates` on a case (`CaseActionBar.tsx`) — render one action per entry
-   * rather than hardcoding a `state === 'new'` check. Intentionally narrow today:
-   * the only transition modeled so far is New -> Assess, so this is only ever
-   * `["assess"]` or `[]`.
+   * rather than hardcoding a `state === 'new'` check. Deliberately typed as an
+   * open `string[]`, not `BeChangeRequestState[]`: `ChangeRequestActionBar`
+   * renders an entry it has no curated config for via a generic fallback, so a
+   * transition added on the backend needs no frontend change to appear.
    */
   legalNextStates?: string[];
 }
@@ -2218,17 +2266,39 @@ export interface BeConfigurationItemSearchResponse {
 
 /**
  * `PATCH /change-requests/{id}` body (ServiceNow data source only). At least
- * one field is required by the BE (`minProperties: 1`). `plannedStartOn` is a
- * `YYYY-MM-DD HH:MM:SS` string. `requestApproval` is mutually exclusive with
- * the other fields here — it drives the New -> Assess transition (see
- * `legalNextStates` on {@link BeChangeRequestDetail}) rather than editing a value.
+ * one field is required by the BE (`minProperties: 1`). `plannedStartOn` and
+ * `plannedEndOn` are `YYYY-MM-DD HH:MM:SS` strings.
+ *
+ * `isCustomerApproved`, `isCustomerReviewed` and `requestApproval` are
+ * mutually exclusive with each other — at most one of the three may be set in
+ * a single patch.
+ *
+ * This is a subset of what the endpoint accepts, not the whole contract: only
+ * the fields the portal actually writes are modeled here. Add a field when a
+ * UI starts sending it, after checking it against the published contract.
  */
 export interface BePatchChangeRequestPayload {
   plannedStartOn?: string;
+  plannedEndOn?: string;
   isCustomerApproved?: boolean;
   isCustomerReviewed?: boolean;
   assignedTeamId?: string;
   requestApproval?: true;
+  /**
+   * Target lifecycle state, for a transition listed in the record's own
+   * `legalNextStates` (see {@link BeChangeRequestDetail}). Typed open rather
+   * than as `BeChangeRequestState` so a transition the backend adds can be
+   * driven straight from `legalNextStates` without a frontend change.
+   *
+   * The New -> Assess transition is the one exception: it goes through
+   * `requestApproval` instead, because that also kicks off the approval
+   * request, which setting `state` alone does not.
+   */
+  state?: string;
+  /** Backout plan. Long-form; stored and re-rendered as rich text. */
+  rollbackPlan?: string;
+  /** Test plan. Long-form; stored and re-rendered as rich text. */
+  testPlan?: string;
   /**
    * UUID of the service-request case this change request was raised from.
    * Only settable via PATCH — `POST /change-requests` does not accept it, so
@@ -2467,6 +2537,11 @@ export interface BeUpdateIncidentPayload {
   configurationItemId?: string | null;
   assignmentGroupId?: string | null;
   assignedEngineerId?: string | null;
+  /**
+   * Full replacement watch list, as platform user UUIDs — not a delta. An
+   * explicitly empty array is meaningful and clears the watch list; omitting
+   * the key leaves it unchanged.
+   */
   watchList?: string[];
   workNotes?: string | null;
   additionalComments?: string | null;

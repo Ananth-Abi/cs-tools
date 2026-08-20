@@ -22,7 +22,6 @@ import {
   Skeleton,
   Tab,
   Tabs,
-  Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
 import {
@@ -35,7 +34,6 @@ import {
   MessageSquarePlus,
   Paperclip,
   Pencil,
-  Send,
   X,
 } from "@wso2/oxygen-ui-icons-react";
 import {
@@ -59,12 +57,15 @@ import {
   useGetCsmChangeRequestComments,
   usePostCsmChangeRequestComment,
 } from "@features/csm-operations/api/useCsmChangeRequestComments";
+import ChangeRequestActionBar from "@features/csm-operations/components/ChangeRequestActionBar";
 import ChangeRequestApprovals from "@features/csm-operations/components/ChangeRequestApprovals";
+import ChangeRequestTransitionReasonDialog from "@features/csm-operations/components/ChangeRequestTransitionReasonDialog";
 import EditChangeRequestDialog from "@features/csm-operations/components/EditChangeRequestDialog";
 import EntityRefLink from "@features/csm-operations/components/EntityRefLink";
 import {
   buildCloneChangeRequestNavState,
   changeRequestCommentGateReason,
+  changeRequestTransitionRequiresReason,
   changeRequestImpactColor,
   changeRequestImpactLabel,
   changeRequestStateColor,
@@ -78,7 +79,7 @@ import {
   usePostCsmCaseAttachment,
   useDownloadCsmCaseAttachment,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
-import type { BeEntityRef } from "@api/backend/types";
+import type { BeEntityRef, BePatchChangeRequestPayload } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 import { useQueryParamTabs } from "@hooks/useSectionTabs";
@@ -94,6 +95,30 @@ function backendErrorMessage(err: unknown, fallback: string): string {
   return err instanceof BackendApiError && err.status < 500 && err.message
     ? err.message
     : fallback;
+}
+
+/**
+ * The patch that performs a transition into `target`.
+ *
+ * Every target goes through the generic `state` field except `assess`: the
+ * New -> Assess move has its own `requestApproval` flag, which additionally
+ * raises the approval request that setting `state` alone does not. Both are
+ * accepted on the same endpoint; `state` is not mutually exclusive with
+ * anything (only `isCustomerApproved`/`isCustomerReviewed`/`requestApproval`
+ * are, with each other), but a transition is always sent on its own anyway so
+ * a rejection can only ever be about the transition.
+ */
+function buildTransitionPatch(target: string): BePatchChangeRequestPayload {
+  return target === "assess" ? { requestApproval: true } : { state: target };
+}
+
+/**
+ * Fallback message for a failed transition, used only when the backend gave
+ * no usable 4xx reason of its own.
+ */
+function transitionFallbackMessage(target: string): string {
+  if (target === "assess") return "Could not request approval for this change request.";
+  return `Could not move this change request to ${changeRequestStateLabel(target)}.`;
 }
 
 function formatDateTime(value?: string | null): string {
@@ -210,6 +235,13 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   const postAttachment = usePostCsmCaseAttachment();
   const downloadAttachment = useDownloadCsmCaseAttachment();
   const [composerOpen, setComposerOpen] = useState(false);
+  // Destructive transition awaiting confirmation (`rollback`/`canceled`), the
+  // inline error for that attempt, and whether its reason comment already
+  // landed — the last one so a retry after a failed patch re-sends only the
+  // state change instead of duplicating the comment.
+  const [reasonTarget, setReasonTarget] = useState<string | null>(null);
+  const [reasonError, setReasonError] = useState<string | null>(null);
+  const [reasonRecorded, setReasonRecorded] = useState(false);
 
   const attachmentList = useMemo(() => attachments ?? [], [attachments]);
 
@@ -298,44 +330,95 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   }
 
   const cr = data;
-  // Data-driven, like CaseActionBar's nextStates handling: only "assess" is
-  // ever modeled today (New -> Assess), but this checks membership rather
-  // than hardcoding `cr.state === "new"` so a backend-added transition needs
-  // no FE change to show up. This is the state gate: the button renders at
-  // all only when the record's *current* state (as reflected by this list)
-  // legally transitions to "assess" — it is not offered from any other
-  // state. `usePatchChangeRequest` refetches this detail after every patch
-  // attempt, success or error, precisely so this list can't go stale after
-  // an ambiguous outcome (a write that commits upstream but is reported as
-  // a failure here) and re-offer an action that has already happened.
-  //
-  // The state machine alone isn't sufficient: the backing data source also
-  // enforces that an assigned team is set before this transition is allowed,
-  // so require `assignedTeam` too or the request round-trips and fails there.
-  // (A `plannedStartOn` requirement was proposed for this same gate, but the
-  // only confirmed rejection for this transition is the state-transition
-  // error below, and the contract for `requestApproval` documents only the
-  // state transition, not a planned-start dependency — so no gate is added
-  // for it here without stronger evidence.)
-  const stateAllowsRequestApproval = !!cr.legalNextStates?.includes("assess");
-  const requestApprovalBlockedReason = stateAllowsRequestApproval && !cr.assignedTeam
-    ? "Set an assigned team before requesting approval"
-    : null;
+  // A transition is in flight whenever either half of a destructive
+  // transition (the reason comment, then the patch) or a plain patch is
+  // running, so the bar stays disabled across both and a double-click can't
+  // fire two transitions.
+  const transitionPending = patchCr.isPending || postComment.isPending;
 
-  const requestApproval = (): void => {
+  /**
+   * Apply `target` to this change request. Destructive targets are diverted
+   * into the confirmation dialog first — see `confirmReasonTransition` for
+   * the comment-then-patch ordering they then follow.
+   */
+  const onTransition = (target: string): void => {
+    if (changeRequestTransitionRequiresReason(target)) {
+      setReasonError(null);
+      setReasonRecorded(false);
+      setReasonTarget(target);
+      return;
+    }
     patchCr.mutate(
-      { id: cr.id, patch: { requestApproval: true } },
+      { id: cr.id, patch: buildTransitionPatch(target) },
       {
         onError: (err) =>
-          showError(
-            backendErrorMessage(
-              err,
-              "Could not request approval for this change request.",
-            ),
-            err,
-          ),
+          showError(backendErrorMessage(err, transitionFallbackMessage(target)), err),
       },
     );
+  };
+
+  /**
+   * Confirmed destructive transition. The reason is recorded as an ordinary
+   * comment *before* the state changes, deliberately in that order: the PATCH
+   * contract carries no reason field, and a silent unexplained rollback or
+   * cancellation is worse than a failed one. So a failed comment aborts
+   * without touching the state.
+   *
+   * The reverse failure (comment recorded, patch rejected) is not rolled back
+   * — there is no comment-delete endpoint — so it reports exactly that, and
+   * `reasonRecorded` keeps the already-saved reason from being posted twice on
+   * a retry.
+   *
+   * Posted as an internal work note rather than a customer-visible comment:
+   * whether a rollback/cancellation reason should be shown to the customer
+   * hasn't been decided, and a work note is the choice that can't leak.
+   */
+  const confirmReasonTransition = async (reason: string): Promise<void> => {
+    const target = reasonTarget;
+    if (!target) return;
+    setReasonError(null);
+
+    if (!reasonRecorded) {
+      try {
+        await postComment.mutateAsync({
+          changeRequestId: cr.id,
+          // Posted verbatim, as plain text with real line breaks. The
+          // backing store for these notes is a plain-text journal field, not
+          // an HTML one: a sample of production entries carries raw newlines
+          // and no escaped entities, so wrapping the reason in markup would
+          // show literal tags to anyone reading the record at the source.
+          // The portal's own renderer treats the note as HTML, which renders
+          // `<` and line breaks imperfectly here; that mismatch is
+          // pre-existing, applies equally to notes authored outside the
+          // portal, and is being fixed on the render path, not by re-encoding
+          // on the way in.
+          bodyHtml: reason,
+          internal: true,
+        });
+        setReasonRecorded(true);
+      } catch (err) {
+        setReasonError(
+          backendErrorMessage(
+            err,
+            "Could not record the reason, so the state was left unchanged. Try again.",
+          ),
+        );
+        return;
+      }
+    }
+
+    try {
+      await patchCr.mutateAsync({ id: cr.id, patch: buildTransitionPatch(target) });
+      setReasonTarget(null);
+      setReasonRecorded(false);
+    } catch (err) {
+      setReasonError(
+        `Your reason was recorded as a comment, but the state did not change: ${backendErrorMessage(
+          err,
+          transitionFallbackMessage(target),
+        )} You don't need to retype it.`,
+      );
+    }
   };
 
   // Opens the create form pre-filled from this record, so promoting the same
@@ -373,65 +456,45 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
               label={`${changeRequestImpactLabel(cr.impact)} impact`}
             />
           )}
-          {stateAllowsRequestApproval && (
-            requestApprovalBlockedReason ? (
-              <Tooltip title={requestApprovalBlockedReason}>
-                <Box
-                  component="span"
-                  tabIndex={0}
-                  aria-label={`Request approval: ${requestApprovalBlockedReason}`}
-                  sx={{ ml: "auto", flexShrink: 0 }}
-                >
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    size="small"
-                    startIcon={<Send size={14} />}
-                    disabled
-                    sx={{ flexShrink: 0 }}
-                  >
-                    Request approval
-                  </Button>
-                </Box>
-              </Tooltip>
-            ) : (
-              <Button
-                variant="contained"
-                color="primary"
-                size="small"
-                startIcon={<Send size={14} />}
-                onClick={requestApproval}
-                loading={patchCr.isPending}
-                sx={{ ml: "auto", flexShrink: 0 }}
-              >
-                Request approval
-              </Button>
-            )
-          )}
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<CopyPlus size={14} />}
-            onClick={cloneChangeRequest}
-            sx={{ ml: stateAllowsRequestApproval ? 0 : "auto", flexShrink: 0 }}
-          >
-            Clone
-          </Button>
-          <Button
-            variant="outlined"
-            size="small"
-            startIcon={<Pencil size={14} />}
-            onClick={() => {
-              // Clear any error left over from a previous save (or from the
-              // Request approval button, which shares this mutation) so a
-              // stale rejection doesn't appear to belong to this edit.
-              patchCr.reset();
-              setEditOpen(true);
+          <Box
+            sx={{
+              ml: "auto",
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              flexShrink: 0,
             }}
-            sx={{ flexShrink: 0 }}
           >
-            Edit
-          </Button>
+            <ChangeRequestActionBar
+              cr={cr}
+              isPending={transitionPending}
+              onAction={onTransition}
+            />
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<CopyPlus size={14} />}
+              onClick={cloneChangeRequest}
+              sx={{ flexShrink: 0 }}
+            >
+              Clone
+            </Button>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<Pencil size={14} />}
+              onClick={() => {
+                // Clear any error left over from a previous save (or from a
+                // lifecycle transition, which shares this mutation) so a
+                // stale rejection doesn't appear to belong to this edit.
+                patchCr.reset();
+                setEditOpen(true);
+              }}
+              sx={{ flexShrink: 0 }}
+            >
+              Edit
+            </Button>
+          </Box>
         </Box>
         <Typography variant="body2" color="text.secondary" sx={{ fontFamily: "monospace" }}>
           {cr.number || cr.id}
@@ -644,6 +707,22 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
             onDownload={onDownloadAttachment}
           />
         </Card>
+      )}
+
+      {reasonTarget && (
+        <ChangeRequestTransitionReasonDialog
+          target={reasonTarget}
+          isSubmitting={transitionPending}
+          error={reasonError}
+          reasonRecorded={reasonRecorded}
+          onClose={() => {
+            if (transitionPending) return;
+            setReasonTarget(null);
+            setReasonError(null);
+            setReasonRecorded(false);
+          }}
+          onConfirm={(reason) => void confirmReasonTransition(reason)}
+        />
       )}
 
       {editOpen && (

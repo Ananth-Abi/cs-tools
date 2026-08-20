@@ -117,6 +117,7 @@ import {
   AttachmentsWidget,
   CustomerContextWidget,
   ProductContextWidget,
+  RequestDetailsWidget,
   TagsWidget,
   WatchersWidget,
 } from "@features/csm-cases/components/CaseDetailWidgets";
@@ -159,7 +160,6 @@ import { CASE_TYPE_LABEL } from "@features/csm-cases/utils/caseType";
 import type {
   CaseAttachment,
   CaseLifecycleAction,
-  CaseWatcher,
   CreateChangeRequestFromCaseNavState,
   CreateIncidentFromCaseNavState,
   CreateRelatedCaseNavState,
@@ -186,14 +186,6 @@ function MetaCell({
     </Box>
   );
 }
-
-// Watcher add/remove PATCHes resubmit the full watch list as an array of
-// emails (ServiceNow's watch_list only round-trips as `EmailString[]`), so a
-// watcher with no email on file can't be represented at all — see
-// onAddWatcher/onRemoveWatcher below.
-const EMAILLESS_WATCHER_ERROR =
-  "Can't update watchers: one or more current watchers has no email on file, " +
-  "so this list can't be safely resubmitted.";
 
 const LIFECYCLE_TOAST: Record<CaseLifecycleAction, string> = {
   start_work: "Started work on this case.",
@@ -1337,69 +1329,41 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [patchCase, showError],
   );
 
-  // Watchers are edited inline in the Watchers tab (see WatchersWidget); the
-  // backend has no add/remove-one endpoint, only a full-list-replace
-  // `PATCH /cases/{id}` (`watchList`), and that PATCH is an array of emails
-  // (ServiceNow's watch_list only round-trips as `EmailString[]`), so both add
-  // and remove compute the next full list from the currently loaded case.
-  // A watcher with no email on file can't be represented in that list at all —
-  // rather than silently dropping them from the watch list, block the mutation
-  // and surface it. ServiceNow only; the backend rejects it on another data
-  // source and the error surfaces via showError.
-  const onAddWatcher = useCallback(
-    (email: string) => {
-      if (!data) return;
-      if (data.watchers.some((w) => !w.email)) {
-        showError(EMAILLESS_WATCHER_ERROR);
-        return;
-      }
-      const current = data.watchers
-        .filter((w): w is CaseWatcher & { email: string } => !!w.email)
-        .map((w) => w.email);
-      if (current.some((e) => e.toLowerCase() === email.toLowerCase())) return;
+  // Watchers are edited inline in the Watchers tab. There is no
+  // add-one/remove-one endpoint: `PATCH /cases/{id}` takes the *whole*
+  // `watchList` as user UUIDs and replaces what is stored. WatchersWidget
+  // computes that replacement list (add and remove alike) and hands it over
+  // finished, so this page only forwards it — see WatchersWidget's doc
+  // comment for why the last watcher on a case can't be removed. Supported by
+  // one data source only; the backend rejects it on the others and the error
+  // surfaces via showError.
+  const onReplaceWatchers = useCallback(
+    (nextWatcherIds: string[], action: "add" | "remove") => {
       patchCase.mutate(
-        { watchList: [...current, email] },
+        { watchList: nextWatcherIds },
         {
           onSuccess: () =>
             setFeedback({
-              message: "Watcher added.",
+              message: action === "add" ? "Watcher added." : "Watcher removed.",
               severity: "success",
               sticky: false,
             }),
-          onError: (err) => showError("Could not add the watcher.", err),
+          onError: (err) => {
+            // The watch-list 400s name the offending value (an unknown or
+            // malformed user id), which is far more actionable than a generic
+            // string — same treatment as every other 4xx on this page.
+            const msg =
+              err instanceof BackendApiError && err.status < 500 && err.message
+                ? err.message
+                : action === "add"
+                  ? "Could not add the watcher."
+                  : "Could not remove the watcher.";
+            showError(msg, err);
+          },
         },
       );
     },
-    [data, patchCase, showError],
-  );
-
-  const onRemoveWatcher = useCallback(
-    (watcher: CaseWatcher) => {
-      if (!data || !watcher.email) return;
-      if (data.watchers.some((w) => !w.email && w.id !== watcher.id)) {
-        showError(EMAILLESS_WATCHER_ERROR);
-        return;
-      }
-      const next = data.watchers
-        .filter(
-          (w): w is CaseWatcher & { email: string } =>
-            !!w.email && w.email.toLowerCase() !== watcher.email?.toLowerCase(),
-        )
-        .map((w) => w.email);
-      patchCase.mutate(
-        { watchList: next },
-        {
-          onSuccess: () =>
-            setFeedback({
-              message: "Watcher removed.",
-              severity: "success",
-              sticky: false,
-            }),
-          onError: (err) => showError("Could not remove the watcher.", err),
-        },
-      );
-    },
-    [data, patchCase, showError],
+    [patchCase, showError],
   );
 
   const onSetAutocloseHold = useCallback(
@@ -2241,6 +2205,19 @@ export default function CsmCaseDetailPage(): JSX.Element {
               />
             </Card>
           )}
+          {/* Service-request-only: the catalog answers the requester filled
+              in. Reuses the page's single `isServiceRequest` signal (route +
+              loaded caseType) rather than adding a parallel one. Always
+              rendered for an SR — the widget itself shows the empty state, so
+              a request that captured no answers stays visible as a data
+              problem instead of silently vanishing. */}
+          {isServiceRequest && (
+            <RequestDetailsWidget
+              catalog={c.catalog}
+              catalogItem={c.catalogItem}
+              variables={c.requestVariables}
+            />
+          )}
           <CustomerContextWidget
             ctx={c.customerContext}
             project={caseProject}
@@ -2344,9 +2321,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
               linked record. Add/remove are inline here (no separate dialog);
               "Manage watchers…" in the action bar just jumps to this tab. */}
           <WatchersWidget
+            entityKind="case"
             watchers={c.watchers}
-            onAdd={onAddWatcher}
-            onRemove={onRemoveWatcher}
+            onReplace={onReplaceWatchers}
             isSaving={patchCase.isPending}
             onRefresh={() => void refetchCaseDetail()}
             isRefreshing={isFetchingCaseDetail}

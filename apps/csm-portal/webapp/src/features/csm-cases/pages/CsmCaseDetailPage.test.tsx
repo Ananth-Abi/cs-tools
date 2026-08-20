@@ -15,7 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import {
   MemoryRouter,
@@ -64,8 +64,9 @@ vi.mock("@hooks/useIdTokenClaims", () => ({
   }),
 }));
 
+const showErrorMock = vi.fn();
 vi.mock("@context/error-banner/ErrorBannerContext", () => ({
-  useErrorBanner: () => ({ showError: vi.fn() }),
+  useErrorBanner: () => ({ showError: showErrorMock }),
 }));
 vi.mock("@context/success-banner/SuccessBannerContext", () => ({
   useSuccessBanner: () => ({ showSuccess: vi.fn() }),
@@ -125,6 +126,9 @@ function buildCase(id: string): CsmCaseDetail {
   };
 }
 
+const WATCHER_ID = "00000000-0000-0000-0000-000000000001";
+const NEW_WATCHER_ID = "00000000-0000-0000-0000-000000000002";
+
 const useGetCsmCaseDetailMock = vi.fn();
 vi.mock("@features/csm-cases/api/useGetCsmCaseDetail", () => ({
   useGetCsmCaseDetail: (id: string | undefined) => useGetCsmCaseDetailMock(id),
@@ -139,9 +143,10 @@ useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
   dataUpdatedAt: 0,
 }));
 
+const patchCaseMutateMock = vi.fn();
 vi.mock("@features/csm-cases/api/usePatchCsmCase", () => ({
   usePatchCsmCase: () => ({
-    mutate: vi.fn(),
+    mutate: patchCaseMutateMock,
     mutateAsync: vi.fn(),
     isPending: false,
   }),
@@ -305,8 +310,35 @@ vi.mock("@features/csm-cases/components/CaseDetailWidgets", () => ({
   AttachmentsWidget: () => null,
   CustomerContextWidget: () => null,
   ProductContextWidget: () => null,
+  // Stubbed to a probe rather than `null`: the tests below assert only that
+  // the page mounts it for a service request and not for a plain case. The
+  // widget's own rendering is covered in CaseDetailWidgets.test.tsx.
+  RequestDetailsWidget: () => <div data-testid="request-details-widget" />,
   TagsWidget: () => null,
-  WatchersWidget: () => null,
+  // Probe, not `null`: the real widget computes the replacement watch list and
+  // enforces the per-record-type rules (covered in CaseDetailWidgets.test.tsx).
+  // Here it just hands the page a finished list so these tests can see what
+  // the page does with it.
+  WatchersWidget: ({
+    entityKind,
+    watchers,
+    onReplace,
+  }: {
+    entityKind: string;
+    watchers: Array<{ id: string; name: string }>;
+    onReplace?: (nextWatcherIds: string[], action: "add" | "remove") => void;
+  }) => (
+    <div data-testid="watchers-widget" data-entity-kind={entityKind}>
+      <button
+        type="button"
+        onClick={() =>
+          onReplace?.([...watchers.map((w) => w.id), NEW_WATCHER_ID], "add")
+        }
+      >
+        stub add watcher
+      </button>
+    </div>
+  ),
 }));
 vi.mock("@features/csm-cases/components/CallRequestsWidget", () => ({
   CallRequestsWidget: () => null,
@@ -364,6 +396,7 @@ vi.mock("@features/csm-timecards/components/LogTimeCardDialog", () => ({
 }));
 
 // Imported after the mocks above so the module picks them up.
+import { BackendApiError } from "@api/backend/client";
 import CsmCaseDetailPage from "@features/csm-cases/pages/CsmCaseDetailPage";
 
 // Renders the real route pathname, so the test can assert the router itself
@@ -739,5 +772,120 @@ describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () 
     expect(
       screen.queryByTestId("log-time-card-dialog-probe"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("CsmCaseDetailPage — Request details card", () => {
+  function mockCaseType(caseType?: string): void {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? { ...buildCase(id), caseType } : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+  }
+
+  afterEach(() => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? buildCase(id) : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+  });
+
+  it("renders the card in the Details tab of a service request", () => {
+    mockCaseType("service_request");
+
+    renderPageAt(
+      "/operations/service-requests/case-1?tab=details",
+      "/operations/service-requests/:caseId",
+    );
+
+    expect(screen.getByTestId("request-details-widget")).toBeInTheDocument();
+  });
+
+  it("does not render the card in the Details tab of a plain case", () => {
+    mockCaseType(undefined);
+
+    renderPageAt("/cases/case-1?tab=details");
+
+    expect(
+      screen.queryByTestId("request-details-widget"),
+    ).not.toBeInTheDocument();
+  });
+
+  // Not covered here: a service request opened through the generic
+  // /cases/:id route. The page's canonical-redirect gate bounces it to
+  // /operations/service-requests/:id behind a skeleton before any tab body
+  // renders, so `caseType`'s half of the signal can't be observed from that
+  // entry point. It is the same `isServiceRequest` value either way — the
+  // page computes it once (route || caseType) and this card reuses it.
+});
+
+describe("CsmCaseDetailPage — Watchers tab", () => {
+  function openWatchers(): void {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id
+        ? {
+            ...buildCase(id),
+            watchers: [
+              {
+                id: WATCHER_ID,
+                name: "Jane Doe",
+                email: "jane.doe@example.com",
+              },
+            ],
+          }
+        : undefined,
+      isLoading: false,
+      isError: false,
+    }));
+    renderPage();
+    fireEvent.click(screen.getByRole("tab", { name: /watchers/i }));
+  }
+
+  it("renders the watch list as a case's, so the last-watcher rule applies", () => {
+    openWatchers();
+    expect(screen.getByTestId("watchers-widget")).toHaveAttribute(
+      "data-entity-kind",
+      "case",
+    );
+  });
+
+  it("PATCHes the whole replacement list, keeping the watchers already on it", () => {
+    openWatchers();
+    fireEvent.click(screen.getByRole("button", { name: /stub add watcher/i }));
+
+    expect(patchCaseMutateMock).toHaveBeenCalledWith(
+      { watchList: [WATCHER_ID, NEW_WATCHER_ID] },
+      expect.anything(),
+    );
+  });
+
+  it("surfaces the backend's own message when the write is rejected, leaving the list untouched", () => {
+    openWatchers();
+    fireEvent.click(screen.getByRole("button", { name: /stub add watcher/i }));
+
+    const handlers = patchCaseMutateMock.mock.calls.at(-1)?.[1] as {
+      onError: (err: unknown) => void;
+    };
+    handlers.onError(
+      new BackendApiError(400, 'watchList contains invalid UUID: "not-a-uuid"'),
+    );
+
+    expect(showErrorMock).toHaveBeenCalledWith(
+      'watchList contains invalid UUID: "not-a-uuid"',
+      expect.anything(),
+    );
+    // No optimistic write happened, so nothing needs unwinding: the widget is
+    // still showing the server's list.
+    expect(screen.getByTestId("watchers-widget")).toBeInTheDocument();
   });
 });

@@ -72,6 +72,11 @@ type snCase struct {
 	RelatedCase           *snCaseRef                  `json:"relatedCase"`
 	Account               *snCaseAccount              `json:"account"`
 	LinkedServiceRequests []snLinkedServiceRequestRef `json:"linkedServiceRequests"`
+	// Variables carries the answers to the catalog item's questions on a service
+	// request, keyed as `variables` upstream. Present on the Choreo GET /cases/{id}
+	// response for service-request cases only; absent for every other case type, so
+	// this must tolerate absence.
+	Variables []snCaseVariableAnswer `json:"variables"`
 	// ChangeRequests carries the change requests raised from this case, keyed as
 	// `changeRequests` upstream. Only populated for service-request cases.
 	//
@@ -128,6 +133,14 @@ type snCase struct {
 	// request set includeExtendedFields — nil otherwise, so this must tolerate
 	// absence.
 	WorstCaseFixEta *string `json:"worstCaseFixEta"`
+}
+
+// snCaseVariableAnswer mirrors one answered catalog-item question on a service
+// request as the backing service returns it (CaseResponse.variables). Distinct
+// from snCaseVariable, which is the {id, value} shape a case create submits.
+type snCaseVariableAnswer struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // snWatchListUser mirrors the watch-list user shape ServiceNow/Ballerina returns on both
@@ -743,7 +756,14 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 	}
 
 	if len(req.WatchList) > 0 {
-		payload.WatchList = req.WatchList
+		// The backing service's case-create payload declares the watch list as
+		// email addresses, not user ids, so the incoming platform UUIDs are
+		// resolved to emails first.
+		emails, err := watchListEmails(ctx, s.client, token, "watchList", req.WatchList)
+		if err != nil {
+			return domain.CreateCaseResponse{}, err
+		}
+		payload.WatchList = emails
 	}
 	if req.RelatedCaseID != "" {
 		if err := validateUUIDs("relatedCaseId", []string{req.RelatedCaseID}); err != nil {
@@ -928,6 +948,15 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 			lcr = append(lcr, domain.LinkedChangeRequestRef{ID: sysidToUUID(r.ID), Number: r.Number, Name: name})
 		}
 		cv.LinkedChangeRequests = lcr
+	}
+	if len(c.Variables) > 0 {
+		vars := make([]domain.CaseVariable, 0, len(c.Variables))
+		for _, v := range c.Variables {
+			// Order is the backing data source's own question order; it carries
+			// meaning on the request form, so it is passed through untouched.
+			vars = append(vars, domain.CaseVariable{Name: v.Name, Value: v.Value})
+		}
+		cv.Variables = vars
 	}
 	if c.ResolutionCode != nil {
 		if rc, ok := snResolutionCodeByID[c.ResolutionCode.ID.String()]; ok {
@@ -1499,7 +1528,15 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		payload.WorkStateKey = &id
 	}
 	if len(req.WatchList) > 0 {
-		payload.WatchList = req.WatchList
+		// As on create, the backing service's case-update payload declares the
+		// watch list as email addresses. Note this path cannot express "clear the
+		// watch list": UpdateCaseRequest.WatchList is a plain slice, so an
+		// explicitly empty list is indistinguishable from an absent one.
+		emails, err := watchListEmails(ctx, s.client, token, "watchList", req.WatchList)
+		if err != nil {
+			return domain.UpdateCaseResponse{}, err
+		}
+		payload.WatchList = emails
 	}
 	if req.AssigneeEmail != nil {
 		payload.AssigneeEmail = req.AssigneeEmail

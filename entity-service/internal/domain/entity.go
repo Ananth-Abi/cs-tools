@@ -1219,8 +1219,13 @@ type CaseView struct {
 	DeployedProductDetails *DeployedProductRef `json:"deployedProduct"`
 	Catalog                *EntityRef          `json:"catalog"`
 	CatalogItem            *EntityRef          `json:"catalogItem"`
-	AssignedTeam           *EntityRef          `json:"assignedTeam"`
-	Conversation           *EntityRef          `json:"conversation"`
+	// Variables are the answers given to the catalog item's questions when the
+	// service request was raised, in the order the backing data source returns
+	// them. Only service-request cases carry them; the field is omitted
+	// entirely for every other case type.
+	Variables    []CaseVariable `json:"variables,omitempty"`
+	AssignedTeam *EntityRef     `json:"assignedTeam"`
+	Conversation *EntityRef     `json:"conversation"`
 	// AssignedEngineer is the canonical user reference for the assigned
 	// engineer. Its id is populated: the assignee's own id already arrives with
 	// the response, so no extra lookup is involved. Null when the case is
@@ -1745,6 +1750,15 @@ type UpdatedCase struct {
 	// request set it or found it already set. Present only when the update set
 	// acknowledge.
 	AcknowledgedBy *AssignedEngineerRef `json:"acknowledgedBy,omitempty"`
+}
+
+// CaseVariable is one answered question on a service request: Name is the
+// question as it was shown on the request form, Value the answer recorded
+// against it. Both are plain strings on the backing data source, which stores
+// every answer -- including numbers, dates and choice selections -- as text.
+type CaseVariable struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // WatchListUser is a compact user reference within the watch list.
@@ -2435,6 +2449,22 @@ type CatalogItemVariable struct {
 	QuestionText string `json:"questionText"`
 	Order        int    `json:"order"`
 	Type         string `json:"type"`
+	// Choices lists the selectable options for a choice-based variable, in the
+	// order the backing data source returns them. Most variables are free-text
+	// and carry none, so the field is omitted entirely rather than emitted as
+	// an empty list on every variable.
+	Choices []CatalogVariableChoice `json:"choices,omitempty"`
+}
+
+// CatalogVariableChoice is one selectable option on a choice-based catalog item
+// variable: Value is what a case create submits for it, Text the label shown to
+// the user, and Order its position in the list. All three are pointers because
+// the backing data source can genuinely leave any of them unset, and an absent
+// value must be null rather than "" or 0.
+type CatalogVariableChoice struct {
+	Value *string `json:"value"`
+	Text  *string `json:"text"`
+	Order *int    `json:"order"`
 }
 
 // GetCatalogItemVariablesResponse is the response for
