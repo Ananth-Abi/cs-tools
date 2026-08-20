@@ -62,6 +62,7 @@ const ACTION_LABEL: Record<CallRequestAgentAction, string> = {
 
 // Every column is left-aligned for a consistent scan line down the table.
 const HEADER_CELLS: string[] = [
+  "Preview",
   "Request",
   "State",
   "Duration",
@@ -72,7 +73,7 @@ const HEADER_CELLS: string[] = [
 ];
 
 const GRID =
-  "minmax(160px, 1.3fr) minmax(120px, 0.9fr) minmax(80px, 0.6fr) minmax(220px, 1.6fr) minmax(90px, 0.7fr) minmax(90px, 0.7fr) minmax(160px, 1.2fr)";
+  "minmax(56px, 0.4fr) minmax(160px, 1.3fr) minmax(120px, 0.9fr) minmax(80px, 0.6fr) minmax(220px, 1.6fr) minmax(90px, 0.7fr) minmax(90px, 0.7fr) minmax(140px, 1fr)";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -159,6 +160,20 @@ export function CallRequestsTable({
                 "&:last-of-type": { borderBottom: 0 },
               }}
             >
+              {/* Preview: view-detail eye icon, its own leading column so it
+                  reads as "inspect this row" rather than one of the row's
+                  actions. */}
+              <Box sx={{ justifySelf: "start" }}>
+                <IconButton
+                  size="small"
+                  aria-label="View details"
+                  data-testid={`call-request-view-${cr.id}`}
+                  onClick={() => setDetailTarget(cr)}
+                >
+                  <Eye size={16} />
+                </IconButton>
+              </Box>
+
               {/* Request: number + reason, with notes as a secondary line. */}
               <Box sx={{ minWidth: 0 }}>
                 {cr.number && (
@@ -246,18 +261,11 @@ export function CallRequestsTable({
                 {cr.updatedOn && <RelativeTime iso={cr.updatedOn} />}
               </Typography>
 
-              {/* Actions: view-detail eye icon plus any agent actions, with
-                  the assignee shown alongside once scheduled. */}
+              {/* Actions: any agent actions (schedule/reject/...), with the
+                  assignee shown alongside once scheduled. The view-detail
+                  eye icon has its own leading "Preview" column instead. */}
               <Box sx={{ minWidth: 0 }}>
                 <Box sx={{ display: "flex", gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-                  <IconButton
-                    size="small"
-                    aria-label="View details"
-                    data-testid={`call-request-view-${cr.id}`}
-                    onClick={() => setDetailTarget(cr)}
-                  >
-                    <Eye size={16} />
-                  </IconButton>
                   {actions.map((action, i) => (
                     <Tooltip
                       key={action}

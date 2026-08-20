@@ -144,18 +144,16 @@ export function buildCaseSearchFilters(
   if (filters.excludeTags.length > 0) {
     fieldFilters.push({ field: "tag", op: "notIn", values: filters.excludeTags });
   }
+  // No `notIn` counterpart here (unlike `tags`/`excludeTags`): the domain is
+  // the 4 fixed values in `onboardingStatus.ts`, so a dashboard widget's
+  // `projectOnboardingStatus notIn` filter is folded into this same `in`
+  // list as its complement at the translation boundary
+  // (`translateCaseDashboardFilters`), never carried through as a second op.
   if (filters.onboardingStatuses.length > 0) {
     fieldFilters.push({
       field: "projectOnboardingStatus",
       op: "in",
       values: filters.onboardingStatuses,
-    });
-  }
-  if (filters.excludeOnboardingStatuses.length > 0) {
-    fieldFilters.push({
-      field: "projectOnboardingStatus",
-      op: "notIn",
-      values: filters.excludeOnboardingStatuses,
     });
   }
   if (filters.slaElapsedPctGte !== null) {

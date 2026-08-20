@@ -92,6 +92,17 @@ function renderAt(path: string): ReturnType<typeof render> {
   );
 }
 
+function renderAtWithExpanded(
+  path: string,
+  expandedMenus: Record<string, boolean>,
+): ReturnType<typeof render> {
+  return render(
+    <MemoryRouter initialEntries={[path]}>
+      <CsmSideBar collapsed={false} expandedMenus={expandedMenus} />
+    </MemoryRouter>,
+  );
+}
+
 describe("CsmSideBar — active section on routes with no owning nav section", () => {
   beforeEach(() => {
     sidebarPropsSpy.mockClear();
@@ -216,6 +227,22 @@ describe("CsmSideBar — Operations/Security Center submenu", () => {
   it("does not force-expand Operations when a different section is active", () => {
     renderAt("/dashboard");
     expect(lastSidebarProps().expandedMenus?.operations).toBeFalsy();
+  });
+
+  // Regression: collapsing a submenu section while still on one of its own
+  // child pages used to be a no-op. `toggleMenu` correctly flipped
+  // `expandedMenus.operations` to `false`, but the auto-expand memo below
+  // re-derived it back to `true` on every render since `activeItem` still
+  // started with "operations." (the route hadn't changed) — the chevron
+  // click had no visible effect at all.
+  it("respects an explicit collapse even while one of the section's own children is still active", () => {
+    renderAtWithExpanded("/operations/incidents", { operations: false });
+    expect(lastSidebarProps().expandedMenus?.operations).toBe(false);
+  });
+
+  it("respects an explicit expand the same way, without needing the auto-expand fallback", () => {
+    renderAtWithExpanded("/operations/incidents", { operations: true });
+    expect(lastSidebarProps().expandedMenus?.operations).toBe(true);
   });
 
   it("navigates to the real path-segment route for a selected submenu child, not the legacy ?tab= href", () => {

@@ -40,6 +40,7 @@ import {
   writeCasesFiltersToUrl,
 } from "@features/csm-cases/utils/casesFiltersUrl";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
+import { ALL_ONBOARDING_STATUSES } from "@features/csm-cases/utils/onboardingStatus";
 import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
 import {
   DEFAULT_INCIDENT_FILTERS,
@@ -210,21 +211,28 @@ function caseFilterEntry(
  *
  * `tag`, `state`, and `projectOnboardingStatus` — the only 3 case-search
  * fields whose backend contract accepts `notIn` at all (`case_filters.go`'s
- * per-field op table) — each have their two ops mapped to two distinct
- * `CasesFilters` fields (`tags`/`excludeTags`, `states`/`excludeStates`,
- * `onboardingStatuses`/`excludeOnboardingStatuses`) via `caseFilterEntry`
- * matched on field *and* op together, never a single field read op-blind via
- * `caseFilterValues` plus an inferred op. A `notIn` widget filter on any of
- * these can then never silently decode as its own opposite (an inclusion of
- * exactly the values it meant to exclude) — which is exactly the bug once
- * reported against a live `projectOnboardingStatus notIn` widget click-through,
- * and the same bug the dashboard preview URL shipped once for `tag` (see
- * `casesFiltersUrl.ts`'s `writeCasesFiltersToUrl` doc comment for that full
- * story). Every other field this function reads is `in`-only per that same
- * op table, so reading it op-blind carries no equivalent risk. Likewise
- * `escalation`'s value-less `isEmpty`/`isNotEmpty` map to the explicit
- * tri-state `hasEscalation` (`false`/`true`), never silently defaulted when
- * absent (`undefined`, i.e. not touched in `out`).
+ * per-field op table) — are each matched on field *and* op together via
+ * `caseFilterEntry`, never read op-blind via `caseFilterValues` plus an
+ * inferred op. A `notIn` widget filter on any of these can then never
+ * silently decode as its own opposite (an inclusion of exactly the values it
+ * meant to exclude) — which is exactly the bug once reported against a live
+ * `projectOnboardingStatus notIn` widget click-through, and the same bug the
+ * dashboard preview URL shipped once for `tag` (see `casesFiltersUrl.ts`'s
+ * `writeCasesFiltersToUrl` doc comment for that full story). `tag`/`state`
+ * map their two ops to two distinct `CasesFilters` fields (`tags`/
+ * `excludeTags`, `states`/`excludeStates`). `projectOnboardingStatus` is the
+ * exception: its domain is the 4 fixed values in `onboardingStatus.ts`, so
+ * instead of a third `excludeOnboardingStatuses` field, a `notIn` filter is
+ * folded into `onboardingStatuses`' own complement (every known value except
+ * the excluded ones) — `notIn(X)` and `in(all-but-X)` are equivalent over a
+ * closed, fixed set, and this keeps the field (and its URL param) singular
+ * so the "Onboarding status" bar control can show/edit it as plain selected
+ * values without a second, exclude-flavored param to collide with. Every
+ * other field this function reads is `in`-only per that same op table, so
+ * reading it op-blind carries no equivalent risk. Likewise `escalation`'s
+ * value-less `isEmpty`/`isNotEmpty` map to the explicit tri-state
+ * `hasEscalation` (`false`/`true`), never silently defaulted when absent
+ * (`undefined`, i.e. not touched in `out`).
  */
 function translateCaseDashboardFilters(
   filters: Record<string, unknown>,
@@ -277,26 +285,38 @@ function translateCaseDashboardFilters(
   const excludeTags = caseFilterEntry(fieldFilters, "tag", "notIn")?.values;
   if (excludeTags && excludeTags.length > 0) out.excludeTags = excludeTags;
 
-  // `projectOnboardingStatus` in vs. notIn -> same in/notIn split as `state`
-  // and `tag` above (the third and last field the backend accepts `notIn`
-  // on). This is the field the click-through sign-flip bug was originally
-  // reported against: a widget's `notIn` was silently decoding as an
-  // inclusion of exactly the onboarding statuses it meant to exclude.
-  const onboardingStatuses = caseFilterEntry(
+  // `projectOnboardingStatus` in vs. notIn -> both fold into the single
+  // `onboardingStatuses` field (unlike `state`/`tag`, which each keep a
+  // separate exclude field) — its domain is the 4 fixed values in
+  // `onboardingStatus.ts`, so `notIn(X)` decodes to `in(all-but-X)`, its
+  // complement over that closed set, rather than a second field/URL param
+  // that could collide with (or be conflated with) this one. This is the
+  // field the click-through sign-flip bug was originally reported against:
+  // a widget's `notIn` was silently decoding as an inclusion of exactly the
+  // onboarding statuses it meant to exclude — reading it op-aware and
+  // complementing rather than passing the excluded values straight through
+  // is what keeps that bug from recurring.
+  const includedOnboardingStatuses = caseFilterEntry(
     fieldFilters,
     "projectOnboardingStatus",
     "in",
   )?.values;
-  if (onboardingStatuses && onboardingStatuses.length > 0) {
-    out.onboardingStatuses = onboardingStatuses;
-  }
-  const excludeOnboardingStatuses = caseFilterEntry(
+  const excludedOnboardingStatuses = caseFilterEntry(
     fieldFilters,
     "projectOnboardingStatus",
     "notIn",
   )?.values;
-  if (excludeOnboardingStatuses && excludeOnboardingStatuses.length > 0) {
-    out.excludeOnboardingStatuses = excludeOnboardingStatuses;
+  let onboardingStatuses = includedOnboardingStatuses;
+  if (excludedOnboardingStatuses && excludedOnboardingStatuses.length > 0) {
+    const complement: string[] = ALL_ONBOARDING_STATUSES.filter(
+      (v) => !excludedOnboardingStatuses.includes(v),
+    );
+    onboardingStatuses = onboardingStatuses
+      ? onboardingStatuses.filter((v) => complement.includes(v))
+      : complement;
+  }
+  if (onboardingStatuses && onboardingStatuses.length > 0) {
+    out.onboardingStatuses = onboardingStatuses;
   }
 
   const slaGte = caseFilterEntry(fieldFilters, "taskSLABusinessElapsedPercent", "gte")

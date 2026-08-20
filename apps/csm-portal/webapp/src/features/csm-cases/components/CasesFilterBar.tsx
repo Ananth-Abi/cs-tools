@@ -17,14 +17,12 @@
 import {
   Box,
   Button,
-  Checkbox,
   Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Divider,
-  FormControlLabel,
   Grid,
   IconButton,
   InputAdornment,
@@ -76,6 +74,10 @@ import {
   CASE_TYPE_LABEL,
 } from "@features/csm-cases/utils/caseType";
 import AsyncProjectMultiSelect from "@features/csm-cases/components/AsyncProjectMultiSelect";
+import {
+  ALL_ONBOARDING_STATUSES,
+  ONBOARDING_STATUS_LABEL,
+} from "@features/csm-cases/utils/onboardingStatus";
 import MultiSelectField from "@components/MultiSelectField";
 import AsyncAssigneeMultiSelect from "@features/csm-cases/components/AsyncAssigneeMultiSelect";
 import ProductNameMultiSelect from "@features/csm-cases/components/ProductNameMultiSelect";
@@ -123,13 +125,15 @@ export interface CasesFilters {
    * `tags` — a distinct field so `in` and `notIn` can never be conflated on
    * the round trip (see `casesFiltersUrl.ts`'s codec doc comment). */
   excludeTags: string[];
-  /** Project onboarding status values (`projectOnboardingStatus` op:in). */
+  /** Project onboarding status values (`projectOnboardingStatus` op:in).
+   * Unlike `states`/`tags`, this field has no `notIn` counterpart of its
+   * own: the domain is exactly the 4 fixed values in `ALL_ONBOARDING_STATUSES`
+   * (`onboardingStatus.ts`), so "not X" and "in every value except X" are
+   * equivalent, and `translateCaseDashboardFilters` (`widgetResourceConfig.ts`)
+   * folds a dashboard widget's `notIn` filter into this field's complement at
+   * the translation boundary rather than carrying a separate exclude field
+   * (and URL param) through the rest of the app. */
   onboardingStatuses: string[];
-  /** Project onboarding status values the case's project must NOT have
-   * (`projectOnboardingStatus` op:notIn). Not the inverse of
-   * `onboardingStatuses` — a distinct field so `in` and `notIn` can never be
-   * conflated on the round trip, same reasoning as `tags`/`excludeTags`. */
-  excludeOnboardingStatuses: string[];
   /** Inclusive lower bound on the case's active task's SLA business-elapsed
    * percent (`taskSLABusinessElapsedPercent` op:gte). `null` = unset. */
   slaElapsedPctGte: number | null;
@@ -224,12 +228,13 @@ const WORK_STATE_LABEL: Record<BeCaseWorkState, string> = {
 
 const ALL_SEVERITIES: Severity[] = ["S0", "S1", "S2", "S3", "S4"];
 
-// The one `projectOnboardingStatus` value every dashboard widget's `notIn`
-// actually excludes today (a project still being onboarded). A single
-// checkbox for this specific value -- same simple boolean-toggle pattern as
-// `IncidentsFilterBar`'s "SLA violated" checkbox -- rather than a full
-// multi-select picker for a field with no fixed, known choice list.
-const ONBOARDING_IN_PROGRESS = "In-Progress";
+// The fixed ServiceNow choice list for `projectOnboardingStatus`, shared with
+// `translateCaseDashboardFilters` (see `onboardingStatus.ts`).
+const ONBOARDING_STATUS_OPTIONS: { value: string; label: string }[] =
+  ALL_ONBOARDING_STATUSES.map((value) => ({
+    value,
+    label: ONBOARDING_STATUS_LABEL[value],
+  }));
 const PRIMARY_STATES: CaseState[] = [
   "open",
   "work_in_progress",
@@ -238,20 +243,6 @@ const PRIMARY_STATES: CaseState[] = [
   "waiting_on_wso2",
   "closed",
 ];
-
-/**
- * Turns a raw backend token (`snake_case`, `PascalCase`, or a mix — the
- * onboarding-status/escalation-level vocabularies aren't normalized to one
- * casing) into a readable label: `"in_progress"` / `"OnHold"` both become
- * `"In progress"` / `"On hold"`. Falls back to the raw token unchanged when
- * it's empty.
- */
-function humanizeToken(raw: string): string {
-  if (!raw) return raw;
-  const spaced = raw.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-  const lower = spaced.toLowerCase();
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
-}
 
 /** Formats a `createdOn`/`updatedOn`/`closedOn` bound for a chip label — a
  * locale date when parseable, the raw string otherwise (never throws on a
@@ -274,19 +265,19 @@ interface ActiveFilterChip {
 
 /**
  * Fields extended onto `CasesFilters` for lossless dashboard click-through
- * (onboarding status, SLA %, escalation, project type, the three date
- * ranges) get no dedicated bar control of their own — ten new fields would
- * overwhelm the bar, and most of them only ever get set by a widget
- * click-through, not hand-picked in the bar. They must still be visible and
- * individually removable, though, or a user landing on a dashboard-filtered
- * cases list has no way to see (or undo) *why* it's filtered — hence one
- * chip per active value here, shown regardless of whether the filter grid
- * itself is expanded. `sreTeams`/`tags`/`excludeTags`/`workStates` are
- * included here too: their bar controls were removed as clutter (they are
- * advanced, rarely hand-picked, and a better home for advanced filters is
- * still to be designed), so a chip is now the ONLY way a user can see or
- * clear them after arriving from a dashboard click-through. `csTeams` has
- * its own "Team" bar control (see the filter grid below) and is
+ * (SLA %, escalation, project type, the three date ranges) get no dedicated
+ * bar control of their own — that many new fields would overwhelm the bar,
+ * and most of them only ever get set by a widget click-through, not
+ * hand-picked in the bar. They must still be visible and individually
+ * removable, though, or a user landing on a dashboard-filtered cases list
+ * has no way to see (or undo) *why* it's filtered — hence one chip per
+ * active value here, shown regardless of whether the filter grid itself is
+ * expanded. `sreTeams`/`tags`/`excludeTags`/`workStates` are included here
+ * too: their bar controls were removed as clutter (they are advanced,
+ * rarely hand-picked, and a better home for advanced filters is still to be
+ * designed), so a chip is now the ONLY way a user can see or clear them
+ * after arriving from a dashboard click-through. `csTeams`/`onboardingStatuses`
+ * each have their own bar control (see the filter grid below) and are
  * deliberately NOT chipped here too — every other bar-controlled field
  * (`states`, `severities`, ...) shows its selection inside its own control,
  * not as a second, redundant chip.
@@ -350,33 +341,9 @@ function buildActiveFilterChips(
     });
   });
 
-  filters.onboardingStatuses.forEach((status) => {
-    chips.push({
-      key: `onboarding-${status}`,
-      label: `Onboarding: ${humanizeToken(status)}`,
-      onRemove: (f) => ({
-        ...f,
-        onboardingStatuses: f.onboardingStatuses.filter((s) => s !== status),
-      }),
-    });
-  });
-
-  // ONBOARDING_IN_PROGRESS has its own checkbox in the bar now (see the
-  // filter grid below) -- skip it here so it isn't shown twice. Any other
-  // excluded value (only reachable via a dashboard click-through, since the
-  // field has no fixed choice list) still gets a chip, same as before.
-  filters.excludeOnboardingStatuses
-    .filter((status) => status !== ONBOARDING_IN_PROGRESS)
-    .forEach((status) => {
-      chips.push({
-        key: `excludeOnboarding-${status}`,
-        label: `Excluding onboarding: ${humanizeToken(status)}`,
-        onRemove: (f) => ({
-          ...f,
-          excludeOnboardingStatuses: f.excludeOnboardingStatuses.filter((s) => s !== status),
-        }),
-      });
-    });
+  // `onboardingStatuses` has its own "Onboarding status" bar control now
+  // (see the filter grid below) -- not chipped here, same as
+  // `csTeams`/`productNames`/every other bar-controlled field.
 
   if (filters.slaElapsedPctGte !== null) {
     chips.push({
@@ -869,34 +836,13 @@ export default function CasesFilterBar({
                 onChange={(next) => onChange({ ...filters, productNames: next })}
               />
             </Grid>
-            <Grid
-              size={{ xs: 12, sm: 6, md: 4, lg: 2 }}
-              sx={{ display: "flex", alignItems: "center", height: 40 }}
-            >
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    id="cases-filter-exclude-onboarding-in-progress"
-                    size="small"
-                    checked={filters.excludeOnboardingStatuses.includes(ONBOARDING_IN_PROGRESS)}
-                    onChange={(e) =>
-                      onChange({
-                        ...filters,
-                        excludeOnboardingStatuses: e.target.checked
-                          ? [
-                              ...filters.excludeOnboardingStatuses.filter(
-                                (s) => s !== ONBOARDING_IN_PROGRESS,
-                              ),
-                              ONBOARDING_IN_PROGRESS,
-                            ]
-                          : filters.excludeOnboardingStatuses.filter(
-                              (s) => s !== ONBOARDING_IN_PROGRESS,
-                            ),
-                      })
-                    }
-                  />
-                }
-                label="Hide onboarding in progress"
+            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
+              <MultiSelectField
+                id="cases-filter-onboarding-status"
+                label="Onboarding status"
+                values={filters.onboardingStatuses}
+                options={ONBOARDING_STATUS_OPTIONS}
+                onChange={(next) => onChange({ ...filters, onboardingStatuses: next })}
               />
             </Grid>
           </Grid>

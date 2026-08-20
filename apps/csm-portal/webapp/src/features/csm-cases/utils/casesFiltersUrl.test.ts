@@ -169,29 +169,19 @@ describe("op-awareness (regression: the widgetPreviewUrl field~op bug)", () => {
     expect(round.excludeStates).toEqual(["closed"]);
   });
 
-  // Regression: reported live against a dashboard widget's
-  // `projectOnboardingStatus notIn ["In-Progress"]` -- the click-through
-  // showed an "Onboarding: In-progress" INCLUDE chip/filter, the exact
-  // opposite of the widget's own filter.
-  it("`onboardingStatuses` (op:in) and `excludeOnboardingStatuses` (op:notIn) never conflate on a round trip (the reported bug)", () => {
+  // `onboardingStatuses` has no `excludeOnboardingStatuses` counterpart --
+  // unlike `states`/`tags`, its domain is the 4 fixed values in
+  // `onboardingStatus.ts`, so a dashboard widget's `notIn` filter is folded
+  // into this same field's complement at the translation boundary
+  // (`translateCaseDashboardFilters`, see its own doc comment) rather than a
+  // second field/param this codec would need to keep distinct.
+  it("`onboardingStatuses` round-trips losslessly through the URL", () => {
     const filters: CasesFilters = {
       ...DEFAULT_CASES_FILTERS,
-      excludeOnboardingStatuses: ["In-Progress"],
+      onboardingStatuses: ["Not-Started", "Completed", "Not-Applicable"],
     };
     const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
-    expect(round.excludeOnboardingStatuses).toEqual(["In-Progress"]);
-    expect(round.onboardingStatuses).toEqual([]);
-  });
-
-  it("`onboardingStatuses` and `excludeOnboardingStatuses` survive together, independently, when both are set", () => {
-    const filters: CasesFilters = {
-      ...DEFAULT_CASES_FILTERS,
-      onboardingStatuses: ["completed"],
-      excludeOnboardingStatuses: ["In-Progress"],
-    };
-    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
-    expect(round.onboardingStatuses).toEqual(["completed"]);
-    expect(round.excludeOnboardingStatuses).toEqual(["In-Progress"]);
+    expect(round.onboardingStatuses).toEqual(["Not-Started", "Completed", "Not-Applicable"]);
   });
 
   it("a value-less op (`hasEscalation` / escalation isNotEmpty) survives rather than being dropped", () => {

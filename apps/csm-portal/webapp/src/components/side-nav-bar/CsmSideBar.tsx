@@ -150,18 +150,24 @@ export default function CsmSideBar({
     [navigate, onSelect],
   );
 
-  // A submenu section stays expanded whenever one of its own children is the
-  // active item, even on a fresh load before `onToggleExpand` has ever fired
-  // for it — `expandedMenus` alone can't do this since it starts empty every
-  // session. This intentionally overrides a manual collapse while that child
-  // is still the active page; collapsing only "sticks" once the user
-  // navigates elsewhere. That trade-off keeps the behaviour predictable
-  // (the section showing your current page is never hidden) rather than
-  // introducing separate "user closed this" state to track.
+  // A submenu section auto-expands the very first time one of its own
+  // children becomes the active item — e.g. a fresh load landing directly on
+  // a child route, before `onToggleExpand` has ever fired for that section —
+  // since `expandedMenus` alone can't do this (it starts empty every
+  // session). Only applied while the section has no explicit entry of its
+  // own (`undefined`): once the user has toggled it at all (`toggleMenu`
+  // always writes a real `true`/`false`), that choice wins even while one of
+  // its children is still the active page. Forcing `true` unconditionally
+  // here previously made collapsing a section impossible without first
+  // navigating off its active child page — clicking the chevron flipped
+  // `expandedMenus` correctly, but this memo immediately overwrote it back
+  // to `true` on the very next render since `activeItem` hadn't changed.
   const effectiveExpandedMenus = useMemo(() => {
     const dot = activeItem.indexOf(".");
     if (dot === -1) return expandedMenus;
-    return { ...expandedMenus, [activeItem.slice(0, dot)]: true };
+    const sectionId = activeItem.slice(0, dot);
+    if (expandedMenus?.[sectionId] !== undefined) return expandedMenus;
+    return { ...expandedMenus, [sectionId]: true };
   }, [expandedMenus, activeItem]);
 
   return (

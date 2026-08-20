@@ -122,3 +122,23 @@ describe("CsmIssuesView + real CasesFilterBar — work state clears fully from t
     expect(screen.getByTestId("search-probe").textContent).not.toContain("workStates");
   });
 });
+
+describe("CsmIssuesView + real CasesFilterBar — onboarding status clears fully from the URL", () => {
+  // Same root cause as the workStates regression above, found live:
+  // FILTER_PARAM_KEYS was missing "excludeStates" -- a leftover from when
+  // this control briefly stored its selection as an exclude-flavored field.
+  // The control now edits the real `onboardingStatuses` field directly
+  // (already covered by FILTER_PARAM_KEYS), so this exercises the same URL
+  // round trip via that field's own real bar control rather than a separate
+  // exclude one.
+  it("unchecking the only selected onboarding status clears it from the URL, not just in memory", () => {
+    renderAt("/cases?onboardingStatuses=Completed");
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Onboarding status" }));
+    fireEvent.click(screen.getByRole("option", { name: "Completed" }));
+
+    expect(screen.getByTestId("search-probe").textContent).not.toContain(
+      "onboardingStatuses",
+    );
+  });
+});

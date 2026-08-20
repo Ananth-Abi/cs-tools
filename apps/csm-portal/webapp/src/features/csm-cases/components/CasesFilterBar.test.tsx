@@ -78,13 +78,11 @@ describe("CasesFilterBar — active-filter chips for URL-only fields", () => {
       ...DEFAULT_CASES_FILTERS,
       slaElapsedPctGte: 80,
       hasEscalation: true,
-      onboardingStatuses: ["in_progress"],
       createdOnGte: "2026-07-27",
     });
 
     expect(screen.getByText("SLA ≥ 80%")).toBeInTheDocument();
     expect(screen.getByText("Escalated")).toBeInTheDocument();
-    expect(screen.getByText("Onboarding: In progress")).toBeInTheDocument();
     expect(screen.getByText(/Created after/)).toBeInTheDocument();
 
     // Removing the SLA chip clears only slaElapsedPctGte, nothing else.
@@ -98,7 +96,6 @@ describe("CasesFilterBar — active-filter chips for URL-only fields", () => {
       expect.objectContaining({
         slaElapsedPctGte: null,
         hasEscalation: true,
-        onboardingStatuses: ["in_progress"],
         createdOnGte: "2026-07-27",
       }),
     );
@@ -119,24 +116,6 @@ describe("CasesFilterBar — active-filter chips for URL-only fields", () => {
     expect(
       screen.getByText(`Created after ${expected}`),
     ).toBeInTheDocument();
-  });
-
-  it("clearing one onboarding-status chip removes only that value, keeping siblings", () => {
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      onboardingStatuses: ["in_progress", "OnHold"],
-    });
-
-    expect(screen.getByText("Onboarding: In progress")).toBeInTheDocument();
-    expect(screen.getByText("Onboarding: On hold")).toBeInTheDocument();
-
-    const chip = screen.getByText("Onboarding: In progress");
-    const deleteIcon = chip.parentElement?.querySelector("svg");
-    fireEvent.click(deleteIcon ?? chip);
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ onboardingStatuses: ["OnHold"] }),
-    );
   });
 
   it("both SLA bounds render and clear independently", () => {
@@ -201,38 +180,34 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
     expect(screen.queryByLabelText(/^Exclude tags$/)).not.toBeInTheDocument();
   });
 
-  // Regression: reported live against a dashboard widget's `state`/
-  // `projectOnboardingStatus notIn` click-through, which showed an INCLUDE
-  // chip (the exact opposite of the widget's own filter) because the
-  // exclusion had nowhere of its own to render. `excludeStates` has no bar
-  // control (same as `excludeTags`), so its chip is the only way to see or
-  // clear it. `excludeOnboardingStatuses` is the same for any value OTHER
-  // than "In-Progress" -- that one specific value gets its own checkbox
-  // (tested separately below).
-  it("renders distinct chips for excludeStates/excludeOnboardingStatuses, never conflated with their include counterparts", () => {
+  // Regression: reported live against a dashboard widget's `state notIn`
+  // click-through, which showed an INCLUDE chip (the exact opposite of the
+  // widget's own filter) because the exclusion had nowhere of its own to
+  // render. `excludeStates` has no bar control (same as `excludeTags`), so
+  // its chip is the only way to see or clear it. `onboardingStatuses` has
+  // its own "Onboarding status" bar control (tested separately below) and
+  // is deliberately NOT chipped, same as `csTeams`.
+  it("renders a distinct chip for excludeStates, never conflated with its include counterpart", () => {
     const { onChange } = renderBar({
       ...DEFAULT_CASES_FILTERS,
       states: ["open"],
       excludeStates: ["closed"],
-      onboardingStatuses: ["completed"],
-      excludeOnboardingStatuses: ["On-Hold"],
     });
 
     expect(screen.getByText("Excluding state: Closed")).toBeInTheDocument();
-    expect(screen.getByText("Onboarding: Completed")).toBeInTheDocument();
-    expect(screen.getByText("Excluding onboarding: On-hold")).toBeInTheDocument();
 
     fireEvent.click(
-      screen.getByText("Excluding onboarding: On-hold").closest(".MuiChip-root")!
+      screen.getByText("Excluding state: Closed").closest(".MuiChip-root")!
         .querySelector("svg")!,
     );
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        excludeOnboardingStatuses: [],
-        onboardingStatuses: ["completed"],
-        excludeStates: ["closed"],
-      }),
+      expect.objectContaining({ excludeStates: [] }),
     );
+  });
+
+  it("does not render a chip for onboardingStatuses — it has its own 'Onboarding status' bar control", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, onboardingStatuses: ["Completed"] });
+    expect(screen.queryByText(/^Onboarding:/)).not.toBeInTheDocument();
   });
 });
 
@@ -268,52 +243,49 @@ describe("CasesFilterBar — 'Team' control (replaces the removed 'Work state' o
   });
 });
 
-describe("CasesFilterBar — 'Hide onboarding in progress' checkbox", () => {
+describe("CasesFilterBar — 'Onboarding status' control", () => {
   beforeEach(() => {
     postMock.mockReset();
   });
 
-  it("is unchecked by default and checking it sets excludeOnboardingStatuses to exactly [\"In-Progress\"]", () => {
+  it("offers all 4 fixed projectOnboardingStatus choices", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Onboarding status" }));
+    expect(screen.getByRole("option", { name: "In progress" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Not started" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Completed" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Not applicable" })).toBeInTheDocument();
+  });
+
+  // The control edits the real `onboardingStatuses` (`in`) field directly —
+  // there is no separate exclude field/URL param for this control to write
+  // to. A dashboard widget's `projectOnboardingStatus notIn` filter is
+  // folded into this same field as its complement at the translation
+  // boundary (`translateCaseDashboardFilters`), specifically so this bar
+  // control's URL param never collides with a second, exclude-flavored one.
+  it("selecting a value sets onboardingStatuses to its raw backend token", () => {
     const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
-    const checkbox = screen.getByRole("checkbox", { name: /hide onboarding in progress/i });
-    expect(checkbox).not.toBeChecked();
 
-    fireEvent.click(checkbox);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Onboarding status" }));
+    fireEvent.click(screen.getByRole("option", { name: "In progress" }));
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeOnboardingStatuses: ["In-Progress"] }),
+      expect.objectContaining({ onboardingStatuses: ["In-Progress"] }),
     );
   });
 
-  it("is checked when excludeOnboardingStatuses already contains \"In-Progress\", and unchecking it clears just that value", () => {
+  it("adds to any value already set rather than replacing it", () => {
     const { onChange } = renderBar({
       ...DEFAULT_CASES_FILTERS,
-      excludeOnboardingStatuses: ["In-Progress"],
+      onboardingStatuses: ["Not-Applicable"],
     });
-    const checkbox = screen.getByRole("checkbox", { name: /hide onboarding in progress/i });
-    expect(checkbox).toBeChecked();
-    // The checkbox is the only representation of this value now -- no
-    // redundant chip alongside it.
-    expect(screen.queryByText(/Excluding onboarding/)).not.toBeInTheDocument();
 
-    fireEvent.click(checkbox);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Onboarding status" }));
+    fireEvent.click(screen.getByRole("option", { name: "In progress" }));
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeOnboardingStatuses: [] }),
-    );
-  });
-
-  it("checking it preserves any other excludeOnboardingStatuses value already set (e.g. from a dashboard click-through)", () => {
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      excludeOnboardingStatuses: ["On-Hold"],
-    });
-    const checkbox = screen.getByRole("checkbox", { name: /hide onboarding in progress/i });
-
-    fireEvent.click(checkbox);
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeOnboardingStatuses: ["On-Hold", "In-Progress"] }),
+      expect.objectContaining({ onboardingStatuses: ["Not-Applicable", "In-Progress"] }),
     );
   });
 });

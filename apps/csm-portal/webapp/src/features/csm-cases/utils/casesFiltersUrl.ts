@@ -42,7 +42,6 @@ export const DEFAULT_CASES_FILTERS: CasesFilters = {
   tags: [],
   excludeTags: [],
   onboardingStatuses: [],
-  excludeOnboardingStatuses: [],
   slaElapsedPctGte: null,
   slaElapsedPctLte: null,
   hasEscalation: null,
@@ -168,7 +167,6 @@ export function readCasesFiltersFromUrl(
     tags: parseFreeFormCsv(params.get("tags")),
     excludeTags: parseFreeFormCsv(params.get("excludeTags")),
     onboardingStatuses: parseFreeFormCsv(params.get("onboardingStatuses")),
-    excludeOnboardingStatuses: parseFreeFormCsv(params.get("excludeOnboardingStatuses")),
     slaElapsedPctGte: parseNonNegativeInt(params.get("slaPctGte")),
     slaElapsedPctLte: parseNonNegativeInt(params.get("slaPctLte")),
     hasEscalation: parseEscalationParam(params.get("escalation")),
@@ -199,14 +197,21 @@ export function readCasesFiltersFromUrl(
  * struct, not a generic opaque array, so every op that would otherwise
  * collide on one field name already gets its own dedicated field/param
  * instead —
- *   - `tags` (op:in) vs. `excludeTags` (op:notIn), `states` vs.
- *     `excludeStates`, and `onboardingStatuses` vs.
- *     `excludeOnboardingStatuses` — each an in/notIn pair as two arrays, not
- *     one array plus an op flag, so `in` and `notIn` can never be conflated
- *     on the round trip. These three are the only case-search fields whose
- *     backend contract accepts `notIn` at all (see `POST /cases/search`'s
- *     `caseFilterOpSet`/per-field op table) — every other field is `in`-only
- *     and has no exclude counterpart to conflate with in the first place;
+ *   - `tags` (op:in) vs. `excludeTags` (op:notIn), and `states` vs.
+ *     `excludeStates` — each an in/notIn pair as two arrays, not one array
+ *     plus an op flag, so `in` and `notIn` can never be conflated on the
+ *     round trip. `state`/`tag`/`projectOnboardingStatus` are the only 3
+ *     case-search fields whose backend contract accepts `notIn` at all (see
+ *     `POST /cases/search`'s `caseFilterOpSet`/per-field op table); every
+ *     other field is `in`-only and has no exclude counterpart to conflate
+ *     with in the first place. `projectOnboardingStatus` is the one
+ *     exception among those 3: its domain is the 4 fixed values in
+ *     `onboardingStatus.ts`, so `translateCaseDashboardFilters`
+ *     (`widgetResourceConfig.ts`) folds a `notIn` dashboard filter into
+ *     `onboardingStatuses`' own complement instead of carrying a second
+ *     `excludeOnboardingStatuses` field/param through the round trip — one
+ *     less param that could collide with (or be conflated with) the plain
+ *     `onboardingStatuses` one;
  *   - `slaElapsedPctGte`/`slaElapsedPctLte`, and the `createdOnGte/Lte`,
  *     `updatedOnGte/Lte`, `closedOnGte/Lte` date-range pairs — one param per
  *     bound, not a shared field with an op suffix;
@@ -240,9 +245,6 @@ export function writeCasesFiltersToUrl(f: CasesFilters): URLSearchParams {
   if (f.excludeTags.length) out.set("excludeTags", f.excludeTags.join(","));
   if (f.onboardingStatuses.length) {
     out.set("onboardingStatuses", f.onboardingStatuses.join(","));
-  }
-  if (f.excludeOnboardingStatuses.length) {
-    out.set("excludeOnboardingStatuses", f.excludeOnboardingStatuses.join(","));
   }
   if (f.slaElapsedPctGte !== null) out.set("slaPctGte", String(f.slaElapsedPctGte));
   if (f.slaElapsedPctLte !== null) out.set("slaPctLte", String(f.slaElapsedPctLte));
@@ -285,7 +287,6 @@ export function countActiveFilters(f: CasesFilters): number {
   if (f.tags.length) n += 1;
   if (f.excludeTags.length) n += 1;
   if (f.onboardingStatuses.length) n += 1;
-  if (f.excludeOnboardingStatuses.length) n += 1;
   if (f.slaElapsedPctGte !== null) n += 1;
   if (f.slaElapsedPctLte !== null) n += 1;
   if (f.hasEscalation !== null) n += 1;
