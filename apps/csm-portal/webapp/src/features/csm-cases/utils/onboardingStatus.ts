@@ -35,3 +35,22 @@ export const ONBOARDING_STATUS_LABEL: Record<string, string> = {
   Completed: "Completed",
   "Not-Applicable": "Not applicable",
 };
+
+/**
+ * A value no real case's `projectOnboardingStatus` ever has. Used by
+ * `translateCaseDashboardFilters` (`widgetResourceConfig.ts`) when a
+ * dashboard widget's `notIn` filter excludes every one of the 4 known
+ * values (or an `in`/`notIn` pair is disjoint) — the resulting complement is
+ * genuinely empty, meaning the widget's own filter can never match any
+ * case. `CasesFilters.onboardingStatuses` has no way to distinguish that
+ * from "unfiltered" (both are `[]` — the same convention every other array
+ * filter in this app uses, see `caseSearchPayload.ts`), and widening the
+ * type to carry that distinction everywhere (URL codec, search payload, the
+ * bar control) is a much larger change than this edge case warrants. Using
+ * this sentinel as the sole `in` value keeps the field's shape unchanged
+ * while still resolving to zero matching cases — the correct result for a
+ * filter that excludes everything — instead of silently falling back to
+ * "unfiltered" and showing every case, which is exactly the sign-flip bug
+ * this whole field's design exists to prevent.
+ */
+export const ONBOARDING_STATUS_NO_MATCH = "__no_onboarding_status_matches__";

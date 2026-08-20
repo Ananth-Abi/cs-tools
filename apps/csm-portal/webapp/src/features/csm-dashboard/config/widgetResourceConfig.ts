@@ -40,7 +40,10 @@ import {
   writeCasesFiltersToUrl,
 } from "@features/csm-cases/utils/casesFiltersUrl";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
-import { ALL_ONBOARDING_STATUSES } from "@features/csm-cases/utils/onboardingStatus";
+import {
+  ALL_ONBOARDING_STATUSES,
+  ONBOARDING_STATUS_NO_MATCH,
+} from "@features/csm-cases/utils/onboardingStatus";
 import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
 import {
   DEFAULT_INCIDENT_FILTERS,
@@ -307,6 +310,7 @@ function translateCaseDashboardFilters(
     "notIn",
   )?.values;
   let onboardingStatuses = includedOnboardingStatuses;
+  let excludedAllStatuses = false;
   if (excludedOnboardingStatuses && excludedOnboardingStatuses.length > 0) {
     const complement: string[] = ALL_ONBOARDING_STATUSES.filter(
       (v) => !excludedOnboardingStatuses.includes(v),
@@ -314,8 +318,17 @@ function translateCaseDashboardFilters(
     onboardingStatuses = onboardingStatuses
       ? onboardingStatuses.filter((v) => complement.includes(v))
       : complement;
+    excludedAllStatuses = onboardingStatuses.length === 0;
   }
-  if (onboardingStatuses && onboardingStatuses.length > 0) {
+  if (excludedAllStatuses) {
+    // `notIn` excluded every known value (or intersected down to none with
+    // an `in` list) -- the widget's own filter can never match any case.
+    // Falling through to the `length > 0` check below would drop
+    // `onboardingStatuses` entirely, which this app's convention reads as
+    // "unfiltered" and would show every case instead of none — the exact
+    // sign-flip bug this field exists to prevent. See `ONBOARDING_STATUS_NO_MATCH`.
+    out.onboardingStatuses = [ONBOARDING_STATUS_NO_MATCH];
+  } else if (onboardingStatuses && onboardingStatuses.length > 0) {
     out.onboardingStatuses = onboardingStatuses;
   }
 

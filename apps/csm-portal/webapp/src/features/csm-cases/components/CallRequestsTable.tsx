@@ -166,7 +166,7 @@ export function CallRequestsTable({
               <Box sx={{ justifySelf: "start" }}>
                 <IconButton
                   size="small"
-                  aria-label="View details"
+                  aria-label={`View details for ${cr.number || `call request ${cr.id}`}`}
                   data-testid={`call-request-view-${cr.id}`}
                   onClick={() => setDetailTarget(cr)}
                 >

@@ -237,6 +237,48 @@ describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
     expect(parsed.onboardingStatuses).toEqual(["Completed"]);
   });
 
+  // Regression (CodeRabbit): a `notIn` excluding every one of the 4 known
+  // values leaves the complement genuinely empty. The naive fix (`if
+  // (onboardingStatuses.length > 0) out.onboardingStatuses = ...`) would
+  // then leave the field unset entirely -- which this app's convention
+  // reads as "unfiltered" -- silently showing every case instead of the
+  // zero the widget's own filter actually calls for. The exact same
+  // sign-flip failure mode this field's whole design exists to prevent, just
+  // reached via the one degenerate input the complement conversion itself
+  // introduced.
+  it("projectOnboardingStatus notIn excluding all 4 known values resolves to a no-match filter, never an unfiltered one", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        {
+          field: "projectOnboardingStatus",
+          op: "notIn",
+          values: ["In-Progress", "Not-Started", "Completed", "Not-Applicable"],
+        },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    // Whatever the exact sentinel is, the field must be actively filtered
+    // (non-empty) and must not equal any real onboarding-status choice.
+    expect(parsed.onboardingStatuses.length).toBeGreaterThan(0);
+    expect(parsed.onboardingStatuses).not.toEqual(
+      expect.arrayContaining(["In-Progress", "Not-Started", "Completed", "Not-Applicable"]),
+    );
+  });
+
+  it("a disjoint projectOnboardingStatus in/notIn pair (in minus notIn's complement is empty) also resolves to a no-match filter", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "projectOnboardingStatus", op: "in", values: ["Completed"] },
+        { field: "projectOnboardingStatus", op: "notIn", values: ["Completed"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.onboardingStatuses.length).toBeGreaterThan(0);
+    expect(parsed.onboardingStatuses).not.toContain("Completed");
+  });
+
   it("hasEscalation:false (isEmpty) round-trips distinctly from isNotEmpty", () => {
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [{ field: "escalation", op: "isEmpty" }],
