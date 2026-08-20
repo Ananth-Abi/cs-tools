@@ -1379,7 +1379,17 @@ export interface BeProjectContact {
    * treating it as an error.
    */
   id?: string;
+  /**
+   * Empty when the row has no contact record linked — the name is only ever
+   * known from that record.
+   */
   name?: string;
+  /**
+   * The contact's address. Falls back to the address the row was invited
+   * under when no contact record is linked, so a row whose contact record was
+   * never created is still identifiable rather than carrying no name and no
+   * address at all.
+   */
   email?: string;
   registrationState?: string;
   notificationsEnabled?: boolean;
@@ -1391,8 +1401,12 @@ export interface BeProjectContact {
   customerContactPresent?: boolean;
   /**
    * Whether this row would actually grant its person visibility into this
-   * project's cases. Mirrors `customerContactPresent` directly — a row can
-   * be listed here without granting access.
+   * project's cases: a linked contact record AND the address the row was
+   * invited under matching that record's own address, compared
+   * case-insensitively. Deliberately not a restatement of
+   * `customerContactPresent` — a row invited under one address but linked to a
+   * contact whose own address differs is invisible to both people, and that
+   * does happen on genuine customer rows.
    */
   grantsCaseAccess?: boolean;
 }
