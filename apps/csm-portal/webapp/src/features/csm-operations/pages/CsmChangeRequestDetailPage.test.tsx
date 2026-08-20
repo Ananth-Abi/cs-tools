@@ -23,10 +23,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { BeChangeRequestDetail } from "@api/backend/types";
 import { BackendApiError } from "@api/backend/client";
-import {
-  sanitizeRichTextHtml,
-  stripHtmlTagsPreservingLineBreaks,
-} from "@utils/sanitizeHtml";
+import { sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 
 const navigateMock = vi.fn();
 const useGetChangeRequestMock = vi.fn();
@@ -632,9 +629,12 @@ describe("CsmChangeRequestDetailPage — destructive transitions need a reason f
     );
     // The audit record has to survive both the escape and the render-side
     // sanitizer with every character the engineer typed still in it.
-    expect(
-      stripHtmlTagsPreservingLineBreaks(sanitizeRichTextHtml(posted.bodyHtml)),
-    ).toBe(typed);
+    const rendered = document.createElement("div");
+    rendered.innerHTML = sanitizeRichTextHtml(posted.bodyHtml).replace(
+      /<br\s*\/?>/gi,
+      "\n",
+    );
+    expect(rendered.textContent).toBe(typed);
   });
 
   it("routes the cancel transition through the same dialog", () => {

@@ -27,9 +27,9 @@ import {
   FormControlLabel,
   FormHelperText,
   Switch,
-  TextField,
+  Typography,
 } from "@wso2/oxygen-ui";
-import { useMemo, useState, type JSX } from "react";
+import { useCallback, useMemo, useState, type JSX } from "react";
 import { useSearchGroups } from "@api/useSearchGroups";
 import type {
   BeChangeRequestDetail,
@@ -37,15 +37,13 @@ import type {
   BePatchChangeRequestPayload,
 } from "@api/backend/types";
 import AsyncEntitySelect from "@components/AsyncEntitySelect";
+import Editor from "@components/rich-text-editor/Editor";
 import {
   formatDateTimeLocal,
   isPastDateTime,
   parseDateTimeLocal,
 } from "@utils/dateTime";
-import {
-  plainTextToHtml,
-  stripHtmlTagsPreservingLineBreaks,
-} from "@utils/sanitizeHtml";
+import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 
@@ -81,21 +79,72 @@ function toBackendDateTime(local: string): string {
   return `${local.replace("T", " ")}:00`;
 }
 
+/** One long-form plan field, edited as rich text. */
+interface RichTextPlanField {
+  /** Frozen seed handed to the editor; never re-sent as the editor changes. */
+  initialHtml: string;
+  /** Current editor HTML. */
+  html: string;
+  onChange: (next: string) => void;
+  /** True once the user has actually changed the content. */
+  isDirty: boolean;
+  /** What to put in the patch: `""` for a cleared field, else the HTML. */
+  outgoing: string;
+}
+
 /**
- * The long-form plan fields come back as rich-text HTML but are edited here as
- * plain multiline text, so the stored markup is stripped for the initial
- * value. That is deliberately one-way: dirty-tracking compares against this
- * stripped value, so an untouched field is never part of the patch and the
- * stored markup survives. Editing one is an explicit rewrite of that field,
- * and plain text is a valid value for it.
+ * State for a plan field that is edited as rich text rather than plain text.
  *
- * Block boundaries have to survive the strip. A stored multi-paragraph plan
- * flattened to one run-on line is a value the user never typed, and because
- * dirty-tracking is a string compare against it, the flattened text is what a
- * later edit would write back over the stored content.
+ * Dirty-tracking is the whole difficulty here. The editor normalizes markup
+ * when it loads a stored value — `<p>A</p>` comes back out as
+ * `<p><span style="white-space: pre-wrap;">A</span></p>` — so comparing the
+ * editor's HTML against the stored HTML as strings marks every seeded field
+ * dirty before the user has touched anything, and the dialog would then patch
+ * fields nobody edited.
+ *
+ * So the baseline is the editor's *own* first emission rather than the stored
+ * string: whatever it produces from the seed is, by definition, the unedited
+ * state. Two cases, and they differ because the editor only emits on load when
+ * there is something to load:
+ *
+ * - Stored content is non-blank: the editor injects it and emits once before
+ *   any user input, so the first emission is the baseline.
+ * - Stored content is blank: nothing is injected and nothing is emitted, so
+ *   the first emission would be the user's own typing. Baseline is fixed to
+ *   "blank" up front instead, and dirtiness is `!isBlankHtml`.
+ *
+ * A cleared field goes out as `""`, not the editor's `<p><br></p>` — an empty
+ * paragraph reads as "the plan says nothing" rather than "there is no plan".
  */
-function toPlainTextValue(raw?: string | null): string {
-  return raw ? stripHtmlTagsPreservingLineBreaks(raw) : "";
+function useRichTextPlanField(storedHtml?: string | null): RichTextPlanField {
+  const stored = storedHtml ?? "";
+  // Frozen at mount: the editor treats its `value` as an initial value, and
+  // feeding the live HTML back in makes it re-seed itself mid-edit.
+  const [initialHtml] = useState(stored);
+  const [html, setHtml] = useState(stored);
+  // `null` means "waiting for the editor's first emission"; `""` means the
+  // baseline is known to be blank.
+  const [baseline, setBaseline] = useState<string | null>(
+    isBlankHtml(stored) ? "" : null,
+  );
+
+  const onChange = useCallback((next: string) => {
+    setBaseline((current) => (current === null ? next : current));
+    setHtml(next);
+  }, []);
+
+  const isDirty =
+    baseline === null
+      ? false
+      : baseline === ""
+        ? !isBlankHtml(html)
+        : html !== baseline;
+
+  // Sanitized on the way out, the same policy the detail page renders it back
+  // through, so nothing the editor emits can widen what ends up stored.
+  const outgoing = isBlankHtml(html) ? "" : sanitizeRichTextHtml(html);
+
+  return { initialHtml, html, onChange, isDirty, outgoing };
 }
 
 /**
@@ -119,19 +168,14 @@ export default function EditChangeRequestDialog({
     () => toDateTimeLocal(cr.plannedEndOn),
     [cr.plannedEndOn],
   );
-  const initialRollbackPlan = useMemo(
-    () => toPlainTextValue(cr.rollbackPlan),
-    [cr.rollbackPlan],
-  );
-  const initialTestPlan = useMemo(() => toPlainTextValue(cr.testPlan), [cr.testPlan]);
   const initialAssignedTeamId = cr.assignedTeam?.id ?? "";
   const [plannedStart, setPlannedStart] = useState(initialPlannedStart);
   const [plannedEnd, setPlannedEnd] = useState(initialPlannedEnd);
   const [approved, setApproved] = useState(!!cr.hasCustomerApproved);
   const [reviewed, setReviewed] = useState(!!cr.hasCustomerReviewed);
   const [assignedTeamId, setAssignedTeamId] = useState(initialAssignedTeamId);
-  const [rollbackPlan, setRollbackPlan] = useState(initialRollbackPlan);
-  const [testPlan, setTestPlan] = useState(initialTestPlan);
+  const rollbackPlan = useRichTextPlanField(cr.rollbackPlan);
+  const testPlan = useRichTextPlanField(cr.testPlan);
 
   // Client-side only, and only when both ends are set: the backing system
   // does its own validation and this must not become the thing that blocks a
@@ -156,23 +200,11 @@ export default function EditChangeRequestDialog({
       next.assignedTeamId = assignedTeamId;
     }
     // Unlike the pickers above, an emptied plan field is a real edit the BE
-    // can accept, so "" is sent rather than skipped.
-    //
-    // Two different representations, deliberately: the *comparison* is against
-    // the plain-text seed (so an untouched field never enters the patch, and
-    // the stored markup survives untouched), while the *outgoing* value is
-    // converted back to rich text. These fields are stored and re-rendered as
-    // HTML, so sending raw plain text would drop the engineer's line breaks
-    // and let a typed `<` or `&` mangle the rest of the plan. Never compare
-    // the converted HTML against the stored HTML — the stored markup is not
-    // reproducible from plain text, so every field would read as dirty.
-    //
-    // `plainTextToHtml` maps blank input to "", not `<p></p>`, so clearing a
-    // plan still sends the empty value the BE treats as "remove it".
-    if (rollbackPlan !== initialRollbackPlan) {
-      next.rollbackPlan = plainTextToHtml(rollbackPlan);
-    }
-    if (testPlan !== initialTestPlan) next.testPlan = plainTextToHtml(testPlan);
+    // can accept, so "" is sent rather than skipped. Both plans are rich text
+    // on both sides now — see `useRichTextPlanField` for why "changed" is not
+    // a comparison against the stored string.
+    if (rollbackPlan.isDirty) next.rollbackPlan = rollbackPlan.outgoing;
+    if (testPlan.isDirty) next.testPlan = testPlan.outgoing;
     return next;
   }, [
     plannedStart,
@@ -183,10 +215,10 @@ export default function EditChangeRequestDialog({
     reviewed,
     assignedTeamId,
     initialAssignedTeamId,
-    rollbackPlan,
-    initialRollbackPlan,
-    testPlan,
-    initialTestPlan,
+    rollbackPlan.isDirty,
+    rollbackPlan.outgoing,
+    testPlan.isDirty,
+    testPlan.outgoing,
     cr.hasCustomerApproved,
     cr.hasCustomerReviewed,
   ]);
@@ -207,6 +239,39 @@ export default function EditChangeRequestDialog({
   const reviewedChanged = reviewed !== !!cr.hasCustomerReviewed;
   const approvedLocked = reviewedChanged;
   const reviewedLocked = approvedChanged;
+
+  // Rich-text plan field. The editor takes no `id`/native label, so the
+  // visible label is a separate Typography tied to the control via
+  // role="group" + aria-labelledby, and the helper text is referenced by
+  // aria-describedby — same convention as the create page's Planning fields.
+  const renderPlanField = (
+    id: string,
+    label: string,
+    field: RichTextPlanField,
+    helperText: string,
+  ): JSX.Element => (
+    <Box>
+      <Typography
+        id={`${id}-label`}
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: "block", mb: 0.5 }}
+      >
+        {label}
+      </Typography>
+      <Box role="group" aria-labelledby={`${id}-label`} aria-describedby={`${id}-help`}>
+        <Editor
+          value={field.initialHtml}
+          onChange={field.onChange}
+          minHeight={100}
+          maxHeight={300}
+          toolbarVariant="full"
+          disabled={isSaving}
+        />
+      </Box>
+      <FormHelperText id={`${id}-help`}>{helperText}</FormHelperText>
+    </Box>
+  );
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
@@ -327,28 +392,18 @@ export default function EditChangeRequestDialog({
             knownLabel={cr.assignedTeam?.name}
             helperText="Required before approval can be requested."
           />
-          <TextField
-            label="Rollback plan"
-            value={rollbackPlan}
-            onChange={(e) => setRollbackPlan(e.target.value)}
-            disabled={isSaving}
-            multiline
-            minRows={3}
-            fullWidth
-            size="small"
-            helperText="How this change is backed out if it goes wrong."
-          />
-          <TextField
-            label="Test plan"
-            value={testPlan}
-            onChange={(e) => setTestPlan(e.target.value)}
-            disabled={isSaving}
-            multiline
-            minRows={3}
-            fullWidth
-            size="small"
-            helperText="How the change is verified once implemented."
-          />
+          {renderPlanField(
+            "cr-edit-rollback-plan",
+            "Rollback plan",
+            rollbackPlan,
+            "How this change is backed out if it goes wrong.",
+          )}
+          {renderPlanField(
+            "cr-edit-test-plan",
+            "Test plan",
+            testPlan,
+            "How the change is verified once implemented.",
+          )}
         </Box>
       </DialogContent>
       <DialogActions>

@@ -14,14 +14,11 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { BeChangeRequestDetail, BePatchChangeRequestPayload } from "@api/backend/types";
-import {
-  sanitizeRichTextHtml,
-  stripHtmlTagsPreservingLineBreaks,
-} from "@utils/sanitizeHtml";
+
 
 // The "Assignment group" picker goes through useSearchGroups, which hits the
 // backend client via react-query — stub it out (same approach as
@@ -30,6 +27,57 @@ const useSearchGroupsMock = vi.fn(() => ({ data: [], isFetching: false, isError:
 vi.mock("@api/useSearchGroups", () => ({
   useSearchGroups: (...args: unknown[]) => useSearchGroupsMock(...(args as [])),
 }));
+
+/**
+ * Stand-in for the rich-text editor: a textarea whose value is the HTML.
+ *
+ * It deliberately reproduces the two behaviours the dialog's dirty-tracking
+ * has to cope with, because a simpler stub would let the "untouched field
+ * stays out of the patch" tests pass for the wrong reason:
+ *
+ *  - it rewrites the markup it loads (the real editor wraps text in
+ *    `<span style="white-space: pre-wrap;">`), so the HTML coming out never
+ *    equals the stored HTML going in, and
+ *  - it emits that rewritten value once on mount — but only when there was
+ *    something to load, exactly as the real one does.
+ */
+const normalizeLikeEditor = (html: string): string =>
+  html.replace(
+    /<p>([\s\S]*?)<\/p>/g,
+    '<p><span style="white-space: pre-wrap;">$1</span></p>',
+  );
+
+vi.mock("@components/rich-text-editor/Editor", async () => {
+  const { useEffect, useRef, useState } = await import("react");
+  function EditorStub({
+    value,
+    onChange,
+    disabled,
+  }: {
+    value?: string;
+    onChange?: (html: string) => void;
+    disabled?: boolean;
+  }) {
+    const [html, setHtml] = useState(value ? normalizeLikeEditor(value) : "");
+    const seededRef = useRef(false);
+    useEffect(() => {
+      if (seededRef.current || !value?.trim()) return;
+      seededRef.current = true;
+      onChange?.(normalizeLikeEditor(value));
+    }, [value, onChange]);
+    return (
+      <textarea
+        value={html}
+        disabled={disabled}
+        onChange={(e) => {
+          setHtml(e.target.value);
+          onChange?.(e.target.value);
+        }}
+      />
+    );
+  }
+  return { default: EditorStub };
+});
 
 import EditChangeRequestDialog from "@features/csm-operations/components/EditChangeRequestDialog";
 
@@ -164,18 +212,29 @@ describe("EditChangeRequestDialog — save error surfacing", () => {
 // ---------------------------------------------------------------------------
 
 /** The "Rollback plan" textarea. */
-const rollbackPlanField = (): HTMLElement => screen.getByLabelText(/rollback plan/i);
+// The editor takes no native label, so each plan is reached through the
+// labelled group wrapping it — the same association assistive tech uses.
+const planEditor = (name: RegExp): HTMLElement =>
+  within(screen.getByRole("group", { name })).getByRole("textbox");
+
+const rollbackPlanField = (): HTMLElement => planEditor(/rollback plan/i);
 /** The "Test plan" textarea. */
-const testPlanField = (): HTMLElement => screen.getByLabelText(/test plan/i);
+const testPlanField = (): HTMLElement => planEditor(/test plan/i);
 
 describe("EditChangeRequestDialog — rollback and test plans", () => {
-  it("seeds each plan field from the stored value, with the stored markup stripped", () => {
+  it("seeds each plan field from the stored rich text, markup and all", () => {
     renderDialog({
       rollbackPlan: "<p>Restore the previous release.</p>",
       testPlan: "<p>Smoke the gateway health endpoint.</p>",
     });
-    expect(rollbackPlanField()).toHaveValue("Restore the previous release.");
-    expect(testPlanField()).toHaveValue("Smoke the gateway health endpoint.");
+    // Whatever the editor makes of the stored HTML, the stored content is
+    // what it was handed — no plain-text round trip in between.
+    expect(rollbackPlanField()).toHaveValue(
+      normalizeLikeEditor("<p>Restore the previous release.</p>"),
+    );
+    expect(testPlanField()).toHaveValue(
+      normalizeLikeEditor("<p>Smoke the gateway health endpoint.</p>"),
+    );
   });
 
   it("renders both fields empty when the change request has no plans yet", () => {
@@ -187,10 +246,9 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
   it("sends only the rollback plan when only that field was edited", () => {
     const { onSave } = renderDialog();
     fireEvent.change(rollbackPlanField(), {
-      target: { value: "Redeploy the previous image tag." },
+      target: { value: "<p>Redeploy the previous image tag.</p>" },
     });
     fireEvent.click(saveButton());
-    // Sent as rich text: the field stores and re-renders HTML.
     expect(onSave).toHaveBeenCalledWith({
       rollbackPlan: "<p>Redeploy the previous image tag.</p>",
     });
@@ -198,7 +256,9 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
 
   it("sends only the test plan when only that field was edited", () => {
     const { onSave } = renderDialog();
-    fireEvent.change(testPlanField(), { target: { value: "Run the regression suite." } });
+    fireEvent.change(testPlanField(), {
+      target: { value: "<p>Run the regression suite.</p>" },
+    });
     fireEvent.click(saveButton());
     expect(onSave).toHaveBeenCalledWith({
       testPlan: "<p>Run the regression suite.</p>",
@@ -207,8 +267,12 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
 
   it("sends both plans, and nothing else, when both were edited", () => {
     const { onSave } = renderDialog();
-    fireEvent.change(rollbackPlanField(), { target: { value: "Roll the image back." } });
-    fireEvent.change(testPlanField(), { target: { value: "Run the regression suite." } });
+    fireEvent.change(rollbackPlanField(), {
+      target: { value: "<p>Roll the image back.</p>" },
+    });
+    fireEvent.change(testPlanField(), {
+      target: { value: "<p>Run the regression suite.</p>" },
+    });
     fireEvent.click(saveButton());
     expect(onSave).toHaveBeenCalledWith({
       rollbackPlan: "<p>Roll the image back.</p>",
@@ -216,6 +280,10 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
     });
   });
 
+  // The load-time rewrite makes this the sharp edge of the whole dialog: the
+  // editor's HTML never equals the stored HTML, so a naive string compare
+  // against `cr.rollbackPlan` would mark both plans dirty on open and patch
+  // fields nobody touched.
   it("keeps an untouched plan out of the patch even when the CR already has one stored", () => {
     const { onSave } = renderDialog({
       rollbackPlan: "<p>Restore the previous release.</p>",
@@ -226,9 +294,23 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
     expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
   });
 
-  // An intentional clear must stay an empty string, not become an empty
-  // paragraph: `<p></p>` would read as "this plan says nothing" rather than
-  // "there is no plan".
+  it("keeps an untouched multi-paragraph plan out of the patch", () => {
+    const { onSave } = renderDialog({
+      rollbackPlan: "<p>Stop the rollout.</p><p>Redeploy the previous tag.</p>",
+    });
+    fireEvent.click(approvedSwitch());
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
+  });
+
+  it("leaves Save disabled on open when a plan is already stored", () => {
+    renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
+    expect(saveButton()).toBeDisabled();
+  });
+
+  // An intentional clear must stay an empty string, not become the editor's
+  // empty paragraph: `<p><br></p>` would read as "this plan says nothing"
+  // rather than "there is no plan".
   it("treats clearing a stored plan as a real edit and sends the empty value", () => {
     const { onSave } = renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
     fireEvent.change(rollbackPlanField(), { target: { value: "" } });
@@ -236,69 +318,49 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
     expect(onSave).toHaveBeenCalledWith({ rollbackPlan: "" });
   });
 
-  it("sends \"\" rather than an empty paragraph for a whitespace-only plan", () => {
+  it("sends \"\" rather than an empty paragraph when the editor is emptied", () => {
     const { onSave } = renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
-    fireEvent.change(rollbackPlanField(), { target: { value: "   \n  " } });
+    fireEvent.change(rollbackPlanField(), { target: { value: "<p><br></p>" } });
     fireEvent.click(saveButton());
     expect(onSave).toHaveBeenCalledWith({ rollbackPlan: "" });
   });
 
-  // The other half of the seeding fix: an edited plan is sent as rich text, so
-  // the line breaks the engineer typed survive the round trip and a typed `<`
-  // or `&` can't drop the rest of the plan when it is rendered back.
-  it("escapes and keeps the line breaks of an edited plan", () => {
-    const typed = "Stop the rollout if error rate < 1% & rising.\nRedeploy the previous tag.";
-    const { onSave } = renderDialog();
-    fireEvent.change(rollbackPlanField(), { target: { value: typed } });
-    fireEvent.click(saveButton());
-
-    const patch = onSave.mock.calls[0][0];
-    expect(patch.rollbackPlan).toBe(
-      "<p>Stop the rollout if error rate &lt; 1% &amp; rising.<br />Redeploy the previous tag.</p>",
-    );
-    // What is stored has to survive the render-side sanitizer and come back
-    // as exactly what was typed — this is the same value the dialog will
-    // re-seed from next time it opens.
-    expect(
-      stripHtmlTagsPreservingLineBreaks(sanitizeRichTextHtml(patch.rollbackPlan ?? "")),
-    ).toBe(typed);
-  });
-
-  it("leaves Save disabled until a plan is actually changed", () => {
-    renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
+  it("does not treat emptying an already-empty plan as an edit", () => {
+    renderDialog();
+    fireEvent.change(rollbackPlanField(), { target: { value: "<p><br></p>" } });
     expect(saveButton()).toBeDisabled();
   });
 
-  // Regression: the strip used to drop block boundaries, so a stored
-  // multi-paragraph plan was seeded into the field as one run-on line. Because
-  // dirty-tracking is a string compare against the seeded value, saving any
-  // unrelated field afterwards could write that flattened text back over the
-  // stored content.
-  it("keeps paragraph boundaries when seeding a multi-paragraph stored plan", () => {
-    renderDialog({
-      rollbackPlan: "<p>Stop the rollout.</p><p>Redeploy the previous tag.</p>",
-    });
-    expect(rollbackPlanField()).toHaveValue(
-      "Stop the rollout.\n\nRedeploy the previous tag.",
-    );
-  });
-
-  it("keeps <br> line breaks and list items on separate lines", () => {
-    renderDialog({
-      rollbackPlan: "line one<br />line two",
-      testPlan: "<ul><li>check health</li><li>check latency</li></ul>",
-    });
-    expect(rollbackPlanField()).toHaveValue("line one\nline two");
-    expect(testPlanField()).toHaveValue("check health\n\ncheck latency");
-  });
-
-  it("still keeps a multi-paragraph plan out of the patch when it was not edited", () => {
-    const { onSave } = renderDialog({
-      rollbackPlan: "<p>Stop the rollout.</p><p>Redeploy the previous tag.</p>",
-    });
-    fireEvent.click(approvedSwitch());
+  // The point of editing these as rich text: the markup the engineer applies
+  // is what gets stored, with no lossy conversion on either side.
+  it("keeps the markup of an edited plan intact, through the sanitizer", () => {
+    const authored =
+      "<p><strong>Stop</strong> the rollout.</p><ul><li>Redeploy the previous tag.</li></ul>";
+    const { onSave } = renderDialog();
+    fireEvent.change(rollbackPlanField(), { target: { value: authored } });
     fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
+    expect(onSave).toHaveBeenCalledWith({ rollbackPlan: authored });
+  });
+
+  it("keeps escaped entities escaped rather than letting them collapse into markup", () => {
+    const authored = "<p>Stop if error rate &lt; 1% &amp; rising.</p>";
+    const { onSave } = renderDialog();
+    fireEvent.change(rollbackPlanField(), { target: { value: authored } });
+    fireEvent.click(saveButton());
+
+    const patch = onSave.mock.calls[0][0];
+    const rendered = document.createElement("div");
+    rendered.innerHTML = patch.rollbackPlan ?? "";
+    expect(rendered.textContent).toBe("Stop if error rate < 1% & rising.");
+  });
+
+  it("strips anything the sanitizer would reject before it is stored", () => {
+    const { onSave } = renderDialog();
+    fireEvent.change(rollbackPlanField(), {
+      target: { value: "<p>Roll back.</p><script>steal()</script>" },
+    });
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({ rollbackPlan: "<p>Roll back.</p>" });
   });
 });
 

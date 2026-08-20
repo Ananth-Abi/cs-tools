@@ -22,8 +22,6 @@ import {
   plainTextToHtml,
   sanitizeDescriptionHtml,
   sanitizeRichTextHtml,
-  stripHtmlTags,
-  stripHtmlTagsPreservingLineBreaks,
   stripLightModeInlineStyles,
 } from "./sanitizeHtml";
 
@@ -160,45 +158,6 @@ describe("stripLightModeInlineStyles", () => {
   });
 });
 
-describe("stripHtmlTagsPreservingLineBreaks", () => {
-  it("keeps the boundary between two paragraphs (regression: used to collapse to 'AB')", () => {
-    expect(stripHtmlTags("<p>A</p><p>B</p>")).toBe("AB");
-    expect(stripHtmlTagsPreservingLineBreaks("<p>A</p><p>B</p>")).toBe("A\n\nB");
-  });
-
-  it("turns <br> into a single newline", () => {
-    expect(stripHtmlTagsPreservingLineBreaks("first<br />second")).toBe(
-      "first\nsecond",
-    );
-  });
-
-  it("keeps list items on separate lines", () => {
-    expect(
-      stripHtmlTagsPreservingLineBreaks("<ul><li>one</li><li>two</li></ul>"),
-    ).toBe("one\n\ntwo");
-  });
-
-  it("does not double up when the source HTML is itself newline-formatted", () => {
-    expect(
-      stripHtmlTagsPreservingLineBreaks("<p>A</p>\n  <p>B</p>\n"),
-    ).toBe("A\n\nB");
-  });
-
-  it("still strips markup and decodes entities like the single-line variant", () => {
-    expect(
-      stripHtmlTagsPreservingLineBreaks("<p>a &amp; b<script>x()</script></p>"),
-    ).toBe("a & b");
-  });
-
-  it("leaves plain text with comparison operators intact", () => {
-    expect(stripHtmlTagsPreservingLineBreaks("x < y > z")).toBe("x < y > z");
-  });
-
-  it("returns an empty string for markup with no visible text", () => {
-    expect(stripHtmlTagsPreservingLineBreaks("<p></p>")).toBe("");
-  });
-});
-
 describe("escapeHtml", () => {
   it("escapes the HTML-significant characters", () => {
     expect(escapeHtml(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#039;");
@@ -208,6 +167,17 @@ describe("escapeHtml", () => {
     expect(escapeHtml("a & <b>")).toBe("a &amp; &lt;b&gt;");
   });
 });
+
+/**
+ * Read a fragment of HTML back as the text a user would see, with `<br>`
+ * counted as a line break. The inverse of `plainTextToHtml` for assertion
+ * purposes only — production code has no reason to un-render stored markup.
+ */
+function renderedTextOf(html: string): string {
+  const container = document.createElement("div");
+  container.innerHTML = html.replace(/<br\s*\/?>/gi, "\n");
+  return container.textContent ?? "";
+}
 
 describe("plainTextToHtml", () => {
   it("wraps a single line in a paragraph", () => {
@@ -236,13 +206,15 @@ describe("plainTextToHtml", () => {
 
   it("round-trips a reason containing <, & and a newline back to the typed text", () => {
     const typed = "Rolled back: latency < 5ms & error rate spiked.\nOwner: Jane Doe";
-    const posted = plainTextToHtml(typed);
-    expect(stripHtmlTagsPreservingLineBreaks(posted)).toBe(typed);
+    expect(renderedTextOf(plainTextToHtml(typed))).toBe(typed);
   });
 
   it("survives the render-side sanitizer with the text and the break intact", () => {
     const typed = "a < b & c\nsecond line";
-    const rendered = sanitizeRichTextHtml(plainTextToHtml(typed));
-    expect(stripHtmlTagsPreservingLineBreaks(rendered)).toBe(typed);
+    const posted = plainTextToHtml(typed);
+    // Nothing is dropped on the way to the DOM. The sanitizer reserialises the
+    // void tag (`<br />` becomes `<br>`), which is why this compares the text
+    // it reads back as rather than the markup byte-for-byte.
+    expect(renderedTextOf(sanitizeRichTextHtml(posted))).toBe(typed);
   });
 });
