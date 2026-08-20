@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type JSX, useEffect, useState } from "react";
+import { type JSX, useEffect, useRef, useState } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 import { ProtectedRoute } from "@asgardeo/react-router";
 import { useLocation, useNavigate } from "react-router";
@@ -23,6 +23,73 @@ import { POST_LOGIN_REDIRECT_KEY } from "@layouts/postLoginRedirect";
 import { CurrentUserProvider } from "@context/current-user/CurrentUserContext";
 import { useLogger } from "@hooks/useLogger";
 import { trySilentSignInOnce } from "@hooks/silentSignIn";
+
+/**
+ * Starts sign-in for a signed-out visitor and renders the app shell while the
+ * browser navigates to the IdP.
+ *
+ * This is passed to `ProtectedRoute` as `fallback` rather than driving sign-in
+ * from its `onSignIn` prop. In `@asgardeo/react-router` 2.0.0 the `onSignIn`
+ * branch does not return: it invokes the handler and then falls straight
+ * through to an unconditional `throw new AsgardeoRuntimeError("ProtectedRoute
+ * misconfiguration.")`. Sign-in here is asynchronous (a silent attempt first,
+ * then the interactive redirect), so the throw always won the race and every
+ * signed-out visit — an expired session, a case deep link opened in a cold tab
+ * — hit the app error boundary before the redirect could start. Only the
+ * `fallback` and `redirectTo` branches return early, so `fallback` is the one
+ * place that can both start sign-in and keep the tree alive. Go back to
+ * `onSignIn` only once that upstream fall-through is fixed.
+ *
+ * The intended URL is saved first so the deep link survives the round-trip, and
+ * the ref guard keeps a re-render (or StrictMode's double-invoked effect) from
+ * firing a second authorize request.
+ *
+ * @returns {JSX.Element} The app shell, held until the IdP redirect lands.
+ */
+function SignInRedirect(): JSX.Element {
+  const { signIn, signInSilently } = useAsgardeo();
+  const location = useLocation();
+  const logger = useLogger();
+  const started = useRef(false);
+  // Only a sign-in that cannot even start belongs on the error boundary. It is
+  // stored and rethrown from render rather than thrown from the effect, which
+  // React would otherwise leave as an unhandled rejection.
+  const [fatal, setFatal] = useState<Error | null>(null);
+  if (fatal) throw fatal;
+
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+
+    const intended = location.pathname + location.search + location.hash;
+    if (intended !== "/") {
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, intended);
+    }
+
+    void (async () => {
+      const recovered = await trySilentSignInOnce(signInSilently, (message) =>
+        logger.debug("[auth] silent sign-in failed", message),
+      );
+      // A silent success flips `isSignedIn`, and ProtectedRoute swaps this
+      // fallback out for the real tree — nothing more to do here.
+      if (recovered) return;
+      try {
+        await signIn();
+      } catch (error) {
+        setFatal(error instanceof Error ? error : new Error(String(error)));
+      }
+    })();
+  }, [
+    signIn,
+    signInSilently,
+    logger,
+    location.pathname,
+    location.search,
+    location.hash,
+  ]);
+
+  return <AppLayout />;
+}
 
 /**
  * AuthGuard renders AppLayout (header/footer) so loading state is visible
@@ -40,10 +107,9 @@ import { trySilentSignInOnce } from "@hooks/silentSignIn";
  * @returns {JSX.Element} AppLayout or redirect to home.
  */
 export default function AuthGuard(): JSX.Element {
-  const { isSignedIn, signInSilently } = useAsgardeo();
+  const { isSignedIn } = useAsgardeo();
   const location = useLocation();
   const navigate = useNavigate();
-  const logger = useLogger();
 
   // Latches true the first time `isSignedIn` is observed true, and never
   // resets — see the render branch below for why. Set directly in the render
@@ -136,23 +202,7 @@ export default function AuthGuard(): JSX.Element {
   }
 
   return (
-    <ProtectedRoute
-      loader={<AppLayout />}
-      onSignIn={(defaultSignIn, signInOptions) => {
-        const intended =
-          location.pathname + location.search + location.hash;
-        if (intended !== "/") {
-          sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, intended);
-        }
-        trySilentSignInOnce(signInSilently, (message) =>
-          logger.debug("[auth] silent sign-in failed", message),
-        ).then((result) => {
-          if (!result) {
-            defaultSignIn(signInOptions);
-          }
-        });
-      }}
-    >
+    <ProtectedRoute loader={<AppLayout />} fallback={<SignInRedirect />}>
       <CurrentUserProvider>
         <AppLayout />
       </CurrentUserProvider>
