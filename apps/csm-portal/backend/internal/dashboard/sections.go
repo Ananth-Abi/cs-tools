@@ -120,7 +120,31 @@ func LoadSharedSections(path string) (map[string]SharedSection, error) {
 	if err := json.Unmarshal(raw, &sections); err != nil {
 		return nil, fmt.Errorf("dashboard sections: parse %q: %w", path, err)
 	}
+	// A document of literal `null` parses fine and leaves the map nil, which
+	// would then behave as "no sections configured" -- but the path WAS set, so
+	// this is a malformed file, not an absent one. Left alone it fails much
+	// later and in the wrong place: every includeSections reference reports
+	// "unknown section", pointing whoever reads the log at the dashboards
+	// rather than at the empty file that is actually wrong. An empty object is
+	// a different thing and stays legal: that really is "none configured".
+	if sections == nil {
+		return nil, fmt.Errorf("dashboard sections: %s: document is null; use {} for no sections, or remove DASHBOARD_SECTIONS_FILE", path)
+	}
 	for key, s := range sections {
+		// A key is looked up by its EXACT text, but expandIncludedSections
+		// trims the reference before looking it up (an include of " my-work"
+		// finds "my-work"). So a definition whose own key is not already
+		// trimmed can never be referenced by any include at all -- it would
+		// sit in the file looking configured and silently match nothing.
+		// Rejected here rather than normalized: silently trimming would make
+		// two keys that differ only in whitespace collide, and quietly picking
+		// a winner between them is worse than refusing the file.
+		if key != strings.TrimSpace(key) {
+			return nil, fmt.Errorf("dashboard sections: %s: section key %q has leading or trailing whitespace; an include is trimmed before lookup, so this key could never be referenced", path, key)
+		}
+		if key == "" {
+			return nil, fmt.Errorf("dashboard sections: %s: has an empty section key; the key is how a dashboard references the section", path)
+		}
 		if strings.TrimSpace(s.DisplayName) == "" {
 			return nil, fmt.Errorf("dashboard sections: %s: section %q has an empty \"displayName\"; it is the heading every widget in the section is grouped under", path, key)
 		}

@@ -17,6 +17,7 @@
 package dashboard
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -367,4 +368,74 @@ func TestLoadSharedSections_UnreadableFileIsFatal(t *testing.T) {
 	if _, err := LoadSharedSections(filepath.Join(t.TempDir(), "absent.json")); err == nil {
 		t.Fatal("LoadSharedSections returned no error for a missing file")
 	}
+}
+
+// TestLoadSharedSectionsRejectsUnreferenceableKeys covers the two ways a
+// sections file can look configured while being unusable: a null document, and
+// a key that no include could ever match.
+func TestLoadSharedSectionsRejectsUnreferenceableKeys(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "_sections.json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("writing sections file: %v", err)
+		}
+		return path
+	}
+
+	const oneGoodSection = `{"my-work":{"displayName":"My Work","widgets":[` +
+		`{"id":"w","displayName":"W","resourceType":"case","shape":"count","gridWidth":3,` +
+		`"query":{"filters":[{"field":"state","op":"in","values":["open"]}]}}]}}`
+
+	t.Run("a null document is rejected, not treated as no sections", func(t *testing.T) {
+		// The path WAS configured, so null is a malformed file. Treating it as
+		// "none configured" defers the failure to every includeSections
+		// reference, each blaming the dashboard instead of this file.
+		_, err := LoadSharedSections(write(t, `null`))
+		if err == nil {
+			t.Fatal("expected an error for a null sections document")
+		}
+		if !strings.Contains(err.Error(), "null") {
+			t.Errorf("error should name the problem: %v", err)
+		}
+	})
+
+	t.Run("an empty object stays legal", func(t *testing.T) {
+		got, err := LoadSharedSections(write(t, `{}`))
+		if err != nil {
+			t.Fatalf("an empty object is 'none configured', not an error: %v", err)
+		}
+		if len(got) != 0 {
+			t.Errorf("got %d sections, want 0", len(got))
+		}
+	})
+
+	t.Run("a whitespace-padded key is rejected", func(t *testing.T) {
+		// expandIncludedSections trims the include before lookup, so this key
+		// is unreachable by any reference.
+		_, err := LoadSharedSections(write(t, `{" my-work":{"displayName":"X","widgets":[]}}`))
+		if err == nil {
+			t.Fatal("expected an error for a whitespace-padded section key")
+		}
+		if !strings.Contains(err.Error(), "whitespace") {
+			t.Errorf("error should name the problem: %v", err)
+		}
+	})
+
+	t.Run("an empty key is rejected", func(t *testing.T) {
+		_, err := LoadSharedSections(write(t, `{"":{"displayName":"X","widgets":[]}}`))
+		if err == nil {
+			t.Fatal("expected an error for an empty section key")
+		}
+	})
+
+	t.Run("a canonical key still loads", func(t *testing.T) {
+		got, err := LoadSharedSections(write(t, oneGoodSection))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("got %d sections, want 1", len(got))
+		}
+	})
 }
