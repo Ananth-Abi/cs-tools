@@ -15,11 +15,17 @@
 // under the License.
 
 import {
+  AlertOctagon,
+  AlertTriangle,
   Briefcase,
+  Bug,
   Building2,
   ChartColumn,
   Clock,
+  ClipboardList,
   Cog,
+  FileWarning,
+  GitPullRequest,
   Headset,
   KeyRound,
   Megaphone,
@@ -114,6 +120,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=service_requests",
         tab: "service_requests",
         routes: ["/operations/service-requests"],
+        icon: ClipboardList,
       },
       {
         id: "operations.change-requests",
@@ -121,6 +128,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=change_requests",
         tab: "change_requests",
         routes: ["/operations/change-requests"],
+        icon: GitPullRequest,
       },
       {
         id: "operations.incidents",
@@ -128,6 +136,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=incidents",
         tab: "incidents",
         routes: ["/operations/incidents"],
+        icon: AlertTriangle,
       },
       {
         id: "operations.problems",
@@ -135,6 +144,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=problems",
         tab: "problems",
         routes: ["/operations/problems"],
+        icon: AlertOctagon,
       },
     ],
   },
@@ -156,6 +166,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/security-center?tab=security_reports",
         tab: "security_reports",
         routes: ["/security-center/reports"],
+        icon: FileWarning,
       },
       {
         id: "security-center.vulnerabilities",
@@ -163,6 +174,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/security-center?tab=vulnerabilities",
         tab: "vulnerabilities",
         routes: ["/security-center/vulnerabilities"],
+        icon: Bug,
       },
     ],
   },

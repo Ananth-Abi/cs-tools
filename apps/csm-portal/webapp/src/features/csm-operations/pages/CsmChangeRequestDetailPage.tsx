@@ -293,7 +293,7 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
       onClick={back}
       sx={{ alignSelf: "flex-start" }}
     >
-      Back to change requests
+      Back
     </Button>
   );
 

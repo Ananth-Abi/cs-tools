@@ -338,7 +338,7 @@ export default function CsmIncidentDetailPage(): JSX.Element {
       onClick={back}
       sx={{ alignSelf: "flex-start" }}
     >
-      Back to incidents
+      Back
     </Button>
   );
 

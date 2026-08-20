@@ -236,6 +236,11 @@ export default function CsmSideBar({
                     const childWip = featureState(child.id) === "wip";
                     return (
                       <Sidebar.Item id={child.id} key={child.id}>
+                        {child.icon && (
+                          <Sidebar.ItemIcon>
+                            <child.icon size={18} />
+                          </Sidebar.ItemIcon>
+                        )}
                         <Sidebar.ItemLabel>{child.label}</Sidebar.ItemLabel>
                         {childWip && (
                           <Sidebar.ItemBadge color="warning">WIP</Sidebar.ItemBadge>

@@ -169,6 +169,26 @@ describe("CsmSideBar — Operations/Security Center submenu", () => {
     expect(screen.getByText("Vulnerabilities")).toBeInTheDocument();
   });
 
+  // Regression test: a submenu child used to render its label only, with no
+  // icon at all -- unlike every top-level section and every admin.
+  // user-management tile, all of which carry one.
+  it("renders an icon for each Operations/Security Center submenu child, not just its label", () => {
+    const { container } = renderAt("/dashboard");
+    const childIds = [
+      "operations.service-requests",
+      "operations.change-requests",
+      "operations.incidents",
+      "operations.problems",
+      "security-center.reports",
+      "security-center.vulnerabilities",
+    ];
+    for (const id of childIds) {
+      const item = container.querySelector(`[data-item-id="${id}"]`);
+      expect(item).not.toBeNull();
+      expect(item?.querySelector("svg")).not.toBeNull();
+    }
+  });
+
   it("does not extend the submenu treatment to Customers/Settings — their children stay out of the rail", () => {
     renderAt("/dashboard");
     // Customers/Settings still switch tabs via their own in-page/route strip
