@@ -2524,6 +2524,14 @@ export default function CsmCaseDetailPage(): JSX.Element {
           currentType={c.caseType ?? "case"}
           currentSeverity={c.severity}
           hasAttachments={attachmentList.length > 0}
+          deployedProductId={c.productContext.deployedProductId}
+          onUploadAttachment={onUploadAttachment}
+          isUploadingAttachment={postAttachment.isPending}
+          uploadAttachmentError={
+            postAttachment.isError
+              ? (postAttachment.error?.message ?? "Could not upload the attachment.")
+              : undefined
+          }
           isSubmitting={patchCase.isPending}
           onClose={() => setChangeCaseTypeOpen(false)}
           onSubmit={onChangeCaseType}
