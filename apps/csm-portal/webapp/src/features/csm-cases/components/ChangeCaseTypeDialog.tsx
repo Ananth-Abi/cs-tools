@@ -300,7 +300,9 @@ export default function ChangeCaseTypeDialog({
             )}
 
             <FormControl fullWidth size="small" disabled>
-              <InputLabel id="transfer-current-watchers-label">Watchers</InputLabel>
+              <InputLabel id="transfer-current-watchers-label" shrink>
+                Watchers
+              </InputLabel>
               <Select
                 labelId="transfer-current-watchers-label"
                 label="Watchers"
@@ -322,7 +324,9 @@ export default function ChangeCaseTypeDialog({
             </FormControl>
 
             <FormControl fullWidth size="small" disabled>
-              <InputLabel id="transfer-current-tags-label">Tags</InputLabel>
+              <InputLabel id="transfer-current-tags-label" shrink>
+                Tags
+              </InputLabel>
               <Select
                 labelId="transfer-current-tags-label"
                 label="Tags"
