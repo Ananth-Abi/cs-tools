@@ -15,7 +15,7 @@
 // under the License.
 
 import { Box, Link, Sidebar, Tooltip, Typography } from "@wso2/oxygen-ui";
-import { useCallback, useEffect, useMemo, useRef, type JSX } from "react";
+import { useCallback, useEffect, useMemo, type JSX } from "react";
 import { Link as NavigateLink, useLocation } from "react-router";
 import {
   type CsmNavSection,
@@ -42,15 +42,24 @@ const COMPANY_NAME = "WSO2 LLC";
 const TERMS_OF_SERVICE_URL = "https://wso2.com/terms-of-use/";
 const PRIVACY_POLICY_URL = "https://wso2.com/privacy-policy/";
 
-// Persists the last resolved section across a full page reload — a fresh
-// mount's `useRef` default can't remember it otherwise. sessionStorage (not
+// Persists the last resolved section across a full page reload, and is the
+// single home for it — no in-component ref/state mirror, so nothing is read
+// out of a ref during render (react-hooks/refs). sessionStorage (not
 // localStorage) because this is transient nav context for the current tab,
 // not a durable preference like SIDEBAR_COLLAPSED_KEY.
 const LAST_SECTION_KEY = "csm.sidebar.lastSection";
 
 function getLastSectionId(): string {
   try {
-    return sessionStorage.getItem(LAST_SECTION_KEY) ?? "dashboard";
+    const stored = sessionStorage.getItem(LAST_SECTION_KEY);
+    if (!stored) return "dashboard";
+    // Normalise on read, not just on write. The fallback must be a *section*
+    // id, and an earlier build persisted a submenu child's dotted id verbatim
+    // (`operations.incidents`) -- sessionStorage survives a reload, so a tab
+    // that was open across that deploy can still hand one back. Reading
+    // defensively keeps the very first render correct no matter what wrote it.
+    const dot = stored.indexOf(".");
+    return dot === -1 ? stored : stored.slice(0, dot);
   } catch {
     return "dashboard";
   }
@@ -83,7 +92,7 @@ function isSubmenuSection(section: CsmNavSection): boolean {
   return Boolean(section.children?.length) && (section.children ?? []).every((child) => Boolean(child.tab));
 }
 
-function pickActiveId(pathname: string, lastSectionId: string): string {
+function pickActiveId(pathname: string): string {
   if (pathname === "/" || pathname === "") return "dashboard";
   // A submenu section's own child (e.g. `operations.incidents`) gets its own
   // rail entry, so highlight *that* rather than the section — this is what
@@ -95,7 +104,7 @@ function pickActiveId(pathname: string, lastSectionId: string): string {
   // section was last active instead of hard-jumping to Dashboard.
   const match = navNodeMatchForPath(pathname);
   if (match?.node.tab !== undefined) return match.node.id;
-  return navSectionForPath(pathname)?.id ?? lastSectionId;
+  return navSectionForPath(pathname)?.id ?? getLastSectionId();
 }
 
 export default function CsmSideBar({
@@ -106,10 +115,9 @@ export default function CsmSideBar({
 }: CsmSideBarProps): JSX.Element {
   const location = useLocation();
   const navigate = useNavTransition();
-  const lastSectionId = useRef(getLastSectionId());
-  const activeItem = pickActiveId(location.pathname, lastSectionId.current);
+  const activeItem = pickActiveId(location.pathname);
   useEffect(() => {
-    // `lastSectionId` is the fallback used for routes with no owning section
+    // The persisted id is the fallback used for routes with no owning section
     // (see `pickActiveId`'s doc comment) -- it must stay a *section* id.
     // `activeItem` can be a submenu child's own dotted id (e.g.
     // `operations.incidents`); persisting that verbatim meant navigating to
@@ -118,7 +126,6 @@ export default function CsmSideBar({
     const owningSectionId = activeItem.includes(".")
       ? activeItem.slice(0, activeItem.indexOf("."))
       : activeItem;
-    lastSectionId.current = owningSectionId;
     setLastSectionId(owningSectionId);
   }, [activeItem]);
 
