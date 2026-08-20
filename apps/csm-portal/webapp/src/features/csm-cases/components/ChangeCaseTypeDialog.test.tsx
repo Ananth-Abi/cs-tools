@@ -202,7 +202,7 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     expect(screen.getByRole("button", { name: /transfer to engagement/i })).toBeEnabled();
   });
 
-  it("leaves the transfer button disabled if engagement type was never picked", () => {
+  it("leaves Next disabled on the fields step if engagement type was never picked", () => {
     render(
       <ChangeCaseTypeDialog
         currentType="case"
@@ -214,8 +214,8 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
       />,
     );
     pickTargetAndAdvanceToFields(/^engagement$/i);
-    advanceToReview();
-    expect(screen.getByRole("button", { name: /transfer to engagement/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^next$/i })).toBeDisabled();
+    expect(screen.getByText(/required to continue/i)).toBeInTheDocument();
   });
 
   it("submits type and engagementType together", () => {
@@ -254,6 +254,8 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
       />,
     );
     pickTargetAndAdvanceToFields(/^engagement$/i);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /migration/i }));
     advanceToReview();
     expect(screen.getByText(/no longer applies/i)).toBeInTheDocument();
     expect(screen.getByText("Severity")).toBeInTheDocument();
@@ -374,26 +376,14 @@ describe("ChangeCaseTypeDialog — step 3: not-yet-supported targets", () => {
       />,
     );
     pickTargetAndAdvanceToFields(/service request/i);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /^catalog$/i }));
+    fireEvent.click(screen.getByRole("option", { name: /api manager support/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /catalog item/i }));
+    fireEvent.click(screen.getByRole("option", { name: /request environment scaling/i }));
     advanceToReview();
     expect(
       screen.getByRole("button", { name: /transfer to service request/i }),
     ).toBeDisabled();
-  });
-
-  it("warns on the review step when the target still needs an attachment", () => {
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments={false}
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/security report/i);
-    advanceToReview();
-    expect(screen.getByText(/still doesn.t have one/i)).toBeInTheDocument();
   });
 });
 
@@ -413,6 +403,7 @@ describe("ChangeCaseTypeDialog — step 2: security report analysis attachment u
     );
     pickTargetAndAdvanceToFields(/security report/i);
     expect(screen.getByRole("button", { name: /upload attachment/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^next$/i })).toBeDisabled();
   });
 
   it("uploads the picked file through onUploadAttachment", () => {
@@ -469,6 +460,7 @@ describe("ChangeCaseTypeDialog — step 2: security report analysis attachment u
     pickTargetAndAdvanceToFields(/security report/i);
     expect(screen.getByText(/already has an attachment/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /upload attachment/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^next$/i })).toBeEnabled();
   });
 });
 

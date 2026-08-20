@@ -45,7 +45,6 @@ import {
 } from "@features/csm-operations/utils/catalogVariables";
 import QueryErrorState from "@components/QueryErrorState";
 import {
-  ALWAYS_RETAINED_FIELDS,
   caseTypeTransferLabel,
   computeTransferPreview,
   SUPPORTED_TRANSFER_TARGETS,
@@ -161,6 +160,15 @@ export default function ChangeCaseTypeDialog({
   const noCatalogs =
     !!deployedProductId && catalogs.isSuccess && (catalogs.data?.length ?? 0) === 0;
 
+  const fieldsStepValid =
+    targetType === "engagement"
+      ? !engagementTypeMissing
+      : targetType === "security_report_analysis"
+        ? hasAttachments
+        : targetType === "service_request"
+          ? !!catalogId && !!catalogItemId && firstEmptyRequired === null
+          : true;
+
   const handleTargetChange = (next: BeCaseType): void => {
     setTargetType(next);
     setEngagementType("");
@@ -200,18 +208,6 @@ export default function ChangeCaseTypeDialog({
       {step === "pick" && (
         <>
           <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Typography variant="body2" color="text.secondary">
-              Currently{" "}
-              <Typography
-                component="span"
-                variant="body2"
-                sx={{ fontWeight: 600, color: "text.primary" }}
-              >
-                {caseTypeTransferLabel(currentType)}
-              </Typography>
-              . {ALWAYS_RETAINED_FIELDS.join(", ")} always carry over.
-            </Typography>
-
             <FormControl fullWidth size="small">
               <InputLabel id="transfer-target-type-label">Transfer to</InputLabel>
               <Select
@@ -219,6 +215,7 @@ export default function ChangeCaseTypeDialog({
                 label="Transfer to"
                 value={targetType}
                 onChange={(e) => handleTargetChange(e.target.value as BeCaseType)}
+                disabled={isSubmitting}
               >
                 {TRANSFERABLE_CASE_TYPES.map((t) => (
                   <MenuItem key={t} value={t} disabled={t === currentType}>
@@ -253,6 +250,7 @@ export default function ChangeCaseTypeDialog({
                   label="Engagement type"
                   value={engagementType}
                   onChange={(e) => setEngagementType(e.target.value as BeEngagementType)}
+                  disabled={isSubmitting}
                 >
                   {ENGAGEMENT_TYPES.map((et) => (
                     <MenuItem key={et.value} value={et.value}>
@@ -260,6 +258,9 @@ export default function ChangeCaseTypeDialog({
                     </MenuItem>
                   ))}
                 </Select>
+                {engagementTypeMissing && (
+                  <FormHelperText error>Required to continue.</FormHelperText>
+                )}
               </FormControl>
             )}
 
@@ -272,6 +273,7 @@ export default function ChangeCaseTypeDialog({
                     label="Severity (optional)"
                     value={severity}
                     onChange={(e) => setSeverity(e.target.value as Severity)}
+                    disabled={isSubmitting}
                   >
                     {SEVERITIES.map((s) => (
                       <MenuItem key={s} value={s}>
@@ -333,7 +335,7 @@ export default function ChangeCaseTypeDialog({
                       setCatalogItemId("");
                       setAnswers({});
                     }}
-                    disabled={!deployedProductId || catalogs.isLoading || noCatalogs}
+                    disabled={!deployedProductId || catalogs.isLoading || noCatalogs || isSubmitting}
                   >
                     {(catalogs.data ?? []).map((c) => (
                       <MenuItem key={c.id} value={c.id}>
@@ -364,7 +366,7 @@ export default function ChangeCaseTypeDialog({
                       setCatalogItemId(String(e.target.value));
                       setAnswers({});
                     }}
-                    disabled={!catalogId}
+                    disabled={!catalogId || isSubmitting}
                   >
                     {catalogItems.map((ci) => (
                       <MenuItem key={ci.id} value={ci.id}>
@@ -417,8 +419,14 @@ export default function ChangeCaseTypeDialog({
             )}
           </DialogContent>
           <DialogActions>
-            <Button onClick={() => setStep("pick")}>Back</Button>
-            <Button variant="contained" onClick={() => setStep("review")}>
+            <Button onClick={() => setStep("pick")} disabled={isSubmitting}>
+              Back
+            </Button>
+            <Button
+              variant="contained"
+              disabled={!fieldsStepValid || isSubmitting}
+              onClick={() => setStep("review")}
+            >
               Next
             </Button>
           </DialogActions>
@@ -450,13 +458,6 @@ export default function ChangeCaseTypeDialog({
                   </span>
                 ))}
                 .
-              </Typography>
-            )}
-
-            {preview.attachmentNeeded && (
-              <Typography variant="body2" color="warning.main">
-                {caseTypeTransferLabel(targetType)} requires at least one attachment, and this
-                case still doesn&rsquo;t have one — go back to add one.
               </Typography>
             )}
 
