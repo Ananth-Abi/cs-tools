@@ -25,6 +25,7 @@ import {
 } from "@wso2/oxygen-ui";
 import {
   AlertTriangle,
+  ArrowLeftRight,
   ArrowRight,
   CalendarClock,
   CheckCircle,
@@ -344,6 +345,13 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
       key: "edit_case_details",
       label: "Edit case details…",
       icon: <Pencil size={16} />,
+      disabled: caseClosed,
+      tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
+    },
+    {
+      key: "change_case_type",
+      label: "Change case type…",
+      icon: <ArrowLeftRight size={16} />,
       divider: true,
       disabled: caseClosed,
       tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,

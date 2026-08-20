@@ -254,6 +254,9 @@ vi.mock("@features/csm-cases/components/ResolutionDialog", () => ({
 vi.mock("@features/csm-cases/components/ChangeSeverityDialog", () => ({
   default: () => null,
 }));
+vi.mock("@features/csm-cases/components/ChangeCaseTypeDialog", () => ({
+  default: () => null,
+}));
 vi.mock("@features/csm-cases/components/SetAutocloseHoldDialog", () => ({
   default: () => null,
 }));

@@ -619,6 +619,8 @@ export interface BeGetCatalogItemVariablesResponse {
 interface BeCaseUpdateNever {
   state?: never;
   severity?: never;
+  type?: never;
+  engagementType?: never;
   workState?: never;
   assigneeEmail?: never;
   watchList?: never;
@@ -640,8 +642,9 @@ interface BeCaseUpdateNever {
 
 /**
  * Request body for `PATCH /cases/{id}` (mirrors the entity `UpdateCaseRequest`).
- * **Exactly one** of `state` / `severity` / `workState` / `assigneeEmail` /
- * `watchList` / `parentId` / `subject` / `description` / `deploymentId` /
+ * **Exactly one** of `state` / `severity` / `type` (+ `engagementType` when
+ * `type` is `"engagement"`) / `workState` / `assigneeEmail` / `watchList` /
+ * `parentId` / `subject` / `description` / `deploymentId` /
  * `deployedProductId` / `relatedCaseId` / `autocloseHoldUntil` / the combined
  * fix-ETA variant (below) is sent per call — the backend rejects zero or more
  * than one. Encoded as a discriminated union (each variant carries every
@@ -660,6 +663,24 @@ export type BeCaseUpdatePayload =
       closeNotes?: string;
     })
   | (Omit<BeCaseUpdateNever, "severity"> & { severity: BeCaseSeverity })
+  /**
+   * Case type transfer (digiops-cs#2818/#2852) — converts the case to another
+   * type. Only `case` and `engagement` are accepted by the backend today
+   * (`security_report_analysis`/`service_request` need creation-time-only
+   * fields the entity-service validator doesn't yet support on update). See
+   * `features/csm-cases/utils/caseTypeTransfer.ts` for the full 4-type UI
+   * proposal this is scoped down from.
+   */
+  | (Omit<BeCaseUpdateNever, "type"> & { type: "case" })
+  /** Case type transfer into `engagement` — `engagementType` is required
+   * alongside `type` in the same call, mirroring the create payload's own
+   * requirement for this type (same `BeEngagementType` string enum as
+   * {@link BeEngagementCreatePayload}, not a raw ServiceNow choice-list
+   * integer — that translation is a backend concern). */
+  | (Omit<BeCaseUpdateNever, "type" | "engagementType"> & {
+      type: "engagement";
+      engagementType: BeEngagementType;
+    })
   /** Work sub-state toggle (`ongoing` / `paused`) for an in-progress case. */
   | (Omit<BeCaseUpdateNever, "workState"> & { workState: BeCaseWorkState })
   /** Email of the engineer to assign (ServiceNow only). */

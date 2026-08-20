@@ -88,6 +88,10 @@ import CaseActionBar, {
 import AssignEngineerDialog from "@features/csm-cases/components/AssignEngineerDialog";
 import ResolutionDialog from "@features/csm-cases/components/ResolutionDialog";
 import ChangeSeverityDialog from "@features/csm-cases/components/ChangeSeverityDialog";
+import ChangeCaseTypeDialog, {
+  type CaseTypeTransferSubmission,
+} from "@features/csm-cases/components/ChangeCaseTypeDialog";
+import { caseTypeTransferLabel } from "@features/csm-cases/utils/caseTypeTransfer";
 import SetAutocloseHoldDialog from "@features/csm-cases/components/SetAutocloseHoldDialog";
 import EditCaseDetailsDialog, {
   type FieldSaveResult,
@@ -525,6 +529,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     targetState: BeCaseState;
   } | null>(null);
   const [severityOpen, setSeverityOpen] = useState(false);
+  const [changeCaseTypeOpen, setChangeCaseTypeOpen] = useState(false);
   const [logTimeOpen, setLogTimeOpen] = useState(false);
   // The card being edited, if any — mutually exclusive with logTimeOpen
   // (create); LogTimeCardDialog is rendered once for whichever is set.
@@ -570,6 +575,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setAssignOpen(false);
     setResolutionDialog(null);
     setSeverityOpen(false);
+    setChangeCaseTypeOpen(false);
     setLogTimeOpen(false);
     // Not just cosmetic: the edit dialog renders on editTimeCard alone, so a
     // card left open here would stay mounted against the new case and submit
@@ -983,6 +989,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
+      // Change case type opens the transfer dialog; the PATCH(es) happen in
+      // onChangeCaseType once a target type is confirmed.
+      if (action.secondary === "change_case_type") {
+        setChangeCaseTypeOpen(true);
+        return;
+      }
+
       // Hold auto-closure opens the date picker; the PATCH happens in
       // onSetAutocloseHold once a date is confirmed.
       if (action.secondary === "hold_auto_close") {
@@ -1268,6 +1281,47 @@ export default function CsmCaseDetailPage(): JSX.Element {
             });
           },
           onError: (err) => showError("Could not change the severity.", err),
+        },
+      );
+    },
+    [patchCase, showError],
+  );
+
+  // Changes the case's type (digiops-cs#2818). The type change itself is one
+  // PATCH ({type} alone, or {type, engagementType} together for a transfer
+  // into engagement — the backend requires them combined there). Severity is
+  // a separate, optional follow-up PATCH when transferring into `case`: it's
+  // a data-completeness extra, not required to complete the transfer (see
+  // caseTypeTransfer.ts), so its failure is reported but doesn't roll back
+  // or block the type change that already succeeded. The refetch that
+  // usePatchCsmCase triggers picks up the new caseType, which then trips the
+  // canonical-route redirect above (e.g. onto /engagements/:id) on its own —
+  // no manual navigation needed here.
+  const onChangeCaseType = useCallback(
+    (submission: CaseTypeTransferSubmission) => {
+      patchCase.mutate(
+        submission.targetType === "engagement"
+          ? { type: "engagement", engagementType: submission.engagementType! }
+          : { type: "case" },
+        {
+          onSuccess: () => {
+            if (submission.targetType === "case" && submission.severity) {
+              patchCase.mutate(
+                { severity: priorityFromSeverity(submission.severity) },
+                {
+                  onError: (err) =>
+                    showError("Case type changed, but could not set severity.", err),
+                },
+              );
+            }
+            setChangeCaseTypeOpen(false);
+            setFeedback({
+              message: `Case type changed to ${caseTypeTransferLabel(submission.targetType)}.`,
+              severity: "success",
+              sticky: true,
+            });
+          },
+          onError: (err) => showError("Could not change the case type.", err),
         },
       );
     },
@@ -2391,6 +2445,17 @@ export default function CsmCaseDetailPage(): JSX.Element {
           isChanging={patchCase.isPending}
           onClose={() => setSeverityOpen(false)}
           onChange={onChangeSeverity}
+        />
+      )}
+
+      {changeCaseTypeOpen && (
+        <ChangeCaseTypeDialog
+          currentType={c.caseType ?? "case"}
+          currentSeverity={c.severity}
+          hasAttachments={attachmentList.length > 0}
+          isSubmitting={patchCase.isPending}
+          onClose={() => setChangeCaseTypeOpen(false)}
+          onSubmit={onChangeCaseType}
         />
       )}
 
