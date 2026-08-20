@@ -45,6 +45,7 @@ import DashboardWidgetGrid from "@features/csm-dashboard/components/DashboardWid
 import SectionCard from "@features/csm-dashboard/components/SectionCard";
 import { WIDGET_GRID_SX } from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
 import WidgetEditorDialog from "@features/csm-admin/dashboards/components/WidgetEditorDialog";
+import { useDashboardFilterPresets } from "@features/csm-admin/dashboards/api/useDashboardSharedConfig";
 import { isDraftDrifted } from "@features/csm-admin/dashboards/utils/dashboardDrift";
 import {
   newDraftId,
@@ -210,6 +211,13 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
     };
   }, []);
 
+  // Fetched here, not in the widget dialog, and the dialog is not mounted
+  // until it has settled: the dialog seeds its filter rows in a useState
+  // initializer that needs the catalogue on the very first render (see
+  // WidgetEditorDialogProps.presets). Starting the query at page mount means
+  // it is long cached by the time an admin opens a widget.
+  const { data: filterPresets, isPending: filterPresetsPending } =
+    useDashboardFilterPresets();
   const [editingWidget, setEditingWidget] = useState<
     { widget: BeDashboardWidget | undefined; defaultSection?: string } | undefined
   >(undefined);
@@ -615,8 +623,9 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
         )}
       </SectionCard>
 
-      {editingWidget && (
+      {editingWidget && !filterPresetsPending && (
         <WidgetEditorDialog
+          presets={filterPresets}
           widget={editingWidget.widget}
           defaultSection={editingWidget.defaultSection}
           sectionSuggestions={sectionNames}

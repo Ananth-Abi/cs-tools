@@ -31,6 +31,7 @@ import {
 import { Eye, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type JSX } from "react";
 import type {
+  BeDashboardFilterPreset,
   BeDashboardPieSlice,
   BeDashboardWidget,
   BeDashboardWidgetColumn,
@@ -98,11 +99,19 @@ function draftsToColumns(drafts: ColumnDraft[]): BeDashboardWidgetColumn[] {
     }));
 }
 
-function slicesToDrafts(resourceType: BeWidgetResourceType, slices: BeDashboardPieSlice[] | undefined): SliceDraft[] {
+function slicesToDrafts(
+  resourceType: BeWidgetResourceType,
+  slices: BeDashboardPieSlice[] | undefined,
+  presets?: readonly BeDashboardFilterPreset[],
+): SliceDraft[] {
   return (slices ?? []).map((s) => ({
     label: s.label,
     color: s.color,
-    conditions: filterConditionsFromQuery(resourceType, s.query),
+    // Presets are expanded per-slice too (a slice carrying its own `filters`
+    // replaces the widget's whole array), so a slice's filters need the same
+    // collapse-back as the widget's own or a pie widget silently loses every
+    // preset reference its slices had.
+    conditions: filterConditionsFromQuery(resourceType, s.query, presets),
   }));
 }
 
@@ -117,6 +126,25 @@ function draftsToSlices(resourceType: BeWidgetResourceType, drafts: SliceDraft[]
 }
 
 interface WidgetEditorDialogProps {
+  /**
+   * The shared filter-preset catalogue, resolved by the PAGE before this
+   * dialog is mounted.
+   *
+   * It has to arrive as a prop rather than be fetched here: the filter rows
+   * are seeded in a `useState` initializer, which runs once on mount, and
+   * `filterConditionsFromQuery` needs the catalogue at that moment to show an
+   * already-expanded deployed filter as the preset it came from. Fetching it
+   * inside this component would seed the rows as literal predicates and then
+   * have to overwrite them from an effect — the cascading-render pattern
+   * `react-hooks/set-state-in-effect` (correctly) rejects. The page owns the
+   * query, and this dialog is mounted only once it has settled, so the
+   * initializer always sees the final value.
+   *
+   * `undefined` means the deployment has no presets (or the catalogue failed
+   * to load): rows then render as literal predicates, which is correct
+   * behaviour, just without the preset affordance.
+   */
+  presets?: readonly BeDashboardFilterPreset[];
   /** `undefined` when creating a brand-new widget. */
   widget: BeDashboardWidget | undefined;
   /** Pre-fills the section field for a brand-new widget created via a
@@ -159,6 +187,7 @@ interface WidgetEditorDialogProps {
  * parallel fetch/render logic of its own.
  */
 export default function WidgetEditorDialog({
+  presets,
   widget,
   defaultSection,
   sectionSuggestions,
@@ -194,11 +223,13 @@ export default function WidgetEditorDialog({
   // from its original group-by config doesn't save a stale one.
   const [existingGroupBy, setExistingGroupBy] = useState(widget?.groupBy);
   const [conditions, setConditions] = useState<FilterCondition[]>(() =>
-    filterConditionsFromQuery(widget?.resourceType ?? "case", widget?.query),
+    filterConditionsFromQuery(widget?.resourceType ?? "case", widget?.query, presets),
   );
   const [sliceDrafts, setSliceDrafts] = useState<SliceDraft[]>(() =>
-    slicesToDrafts(widget?.resourceType ?? "case", widget?.slices),
+    slicesToDrafts(widget?.resourceType ?? "case", widget?.slices, presets),
   );
+
+
   const [columnDrafts, setColumnDrafts] = useState<ColumnDraft[]>(() =>
     columnsToDrafts(widget?.columns),
   );
@@ -464,6 +495,7 @@ export default function WidgetEditorDialog({
             resourceType={resourceType}
             conditions={conditions}
             onChange={setConditions}
+            presets={presets}
           />
 
           {isListShape && (
@@ -623,6 +655,7 @@ export default function WidgetEditorDialog({
                     resourceType={resourceType}
                     conditions={slice.conditions}
                     onChange={(next) => updateSlice(index, { conditions: next })}
+                    presets={presets}
                   />
                 </Box>
               ))}

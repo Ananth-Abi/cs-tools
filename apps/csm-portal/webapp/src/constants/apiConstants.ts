@@ -111,6 +111,8 @@ export const ApiQueryKeys = {
   CSM_DASHBOARD_WIDGET_DATA: "csm-dashboard-widget-data",
   CSM_DASHBOARD_LIST: "csm-dashboard-list",
   CSM_DASHBOARD_DETAIL: "csm-dashboard-detail",
+  CSM_DASHBOARD_FILTER_PRESETS: "csm-dashboard-filter-presets",
+  CSM_DASHBOARD_SECTIONS: "csm-dashboard-sections",
   CSM_TEAMS: "csm-teams",
   CSM_CASE_DETAIL: "csm-case-detail",
   CSM_CASE_COMMENTS: "csm-case-comments",
