@@ -19,7 +19,13 @@ import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import ChangeCaseTypeDialog from "@features/csm-cases/components/ChangeCaseTypeDialog";
 
-describe("ChangeCaseTypeDialog — target selection", () => {
+/** Picks a target on step 1 and advances to the review step. */
+function pickTargetAndAdvance(name: RegExp): void {
+  fireEvent.click(screen.getByRole("radio", { name }));
+  fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
+}
+
+describe("ChangeCaseTypeDialog — step 1: pick target", () => {
   it("offers the other 3 transferable types, not the current one", () => {
     render(
       <ChangeCaseTypeDialog
@@ -31,14 +37,51 @@ describe("ChangeCaseTypeDialog — target selection", () => {
         onSubmit={() => {}}
       />,
     );
+    expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
     expect(screen.queryByRole("radio", { name: /^case$/i })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /security report/i })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /service request/i })).toBeInTheDocument();
   });
+
+  it("moves to step 2 on Next, without calling onSubmit", () => {
+    const onSubmit = vi.fn();
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    pickTargetAndAdvance(/^engagement$/i);
+    expect(screen.getByText(/step 2 of 2/i)).toBeInTheDocument();
+    expect(screen.getByText(/transferring to/i)).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("calls onClose without calling onSubmit", () => {
+    const onClose = vi.fn();
+    const onSubmit = vi.fn();
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        onClose={onClose}
+        onSubmit={onSubmit}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
+    expect(onClose).toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
 });
 
-describe("ChangeCaseTypeDialog — transfer into engagement", () => {
+describe("ChangeCaseTypeDialog — step 2: transfer into engagement", () => {
   it("requires engagement type before the transfer button enables", () => {
     render(
       <ChangeCaseTypeDialog
@@ -50,7 +93,7 @@ describe("ChangeCaseTypeDialog — transfer into engagement", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /^engagement$/i }));
+    pickTargetAndAdvance(/^engagement$/i);
     expect(screen.getByRole("button", { name: /transfer to engagement/i })).toBeDisabled();
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
@@ -70,7 +113,7 @@ describe("ChangeCaseTypeDialog — transfer into engagement", () => {
         onSubmit={onSubmit}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /^engagement$/i }));
+    pickTargetAndAdvance(/^engagement$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /migration/i }));
     fireEvent.click(screen.getByRole("button", { name: /transfer to engagement/i }));
@@ -92,14 +135,31 @@ describe("ChangeCaseTypeDialog — transfer into engagement", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /^engagement$/i }));
+    pickTargetAndAdvance(/^engagement$/i);
     expect(screen.getByText(/no longer applies/i)).toBeInTheDocument();
     expect(screen.getByText("Severity")).toBeInTheDocument();
     expect(screen.getByText("Issue type")).toBeInTheDocument();
   });
+
+  it("returns to step 1 on Back, keeping the picked target", () => {
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    pickTargetAndAdvance(/^engagement$/i);
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    expect(screen.getByText(/step 1 of 2/i)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeChecked();
+  });
 });
 
-describe("ChangeCaseTypeDialog — transfer into case", () => {
+describe("ChangeCaseTypeDialog — step 2: transfer into case", () => {
   it("allows transfer without picking a severity — it's optional", () => {
     const onSubmit = vi.fn();
     render(
@@ -112,7 +172,7 @@ describe("ChangeCaseTypeDialog — transfer into case", () => {
         onSubmit={onSubmit}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /^case$/i }));
+    pickTargetAndAdvance(/^case$/i);
     const confirmBtn = screen.getByRole("button", { name: /transfer to case/i });
     expect(confirmBtn).toBeEnabled();
     fireEvent.click(confirmBtn);
@@ -131,7 +191,7 @@ describe("ChangeCaseTypeDialog — transfer into case", () => {
         onSubmit={onSubmit}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /^case$/i }));
+    pickTargetAndAdvance(/^case$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /severity/i }));
     fireEvent.click(screen.getByRole("option", { name: /^s2/i }));
     fireEvent.click(screen.getByRole("button", { name: /transfer to case/i }));
@@ -139,7 +199,7 @@ describe("ChangeCaseTypeDialog — transfer into case", () => {
   });
 });
 
-describe("ChangeCaseTypeDialog — not-yet-supported targets", () => {
+describe("ChangeCaseTypeDialog — step 2: not-yet-supported targets", () => {
   it("keeps the transfer button disabled for security_report_analysis", () => {
     render(
       <ChangeCaseTypeDialog
@@ -151,7 +211,7 @@ describe("ChangeCaseTypeDialog — not-yet-supported targets", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /security report/i }));
+    pickTargetAndAdvance(/security report/i);
     expect(
       screen.getByRole("button", { name: /transfer to security report/i }),
     ).toBeDisabled();
@@ -168,7 +228,7 @@ describe("ChangeCaseTypeDialog — not-yet-supported targets", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /service request/i }));
+    pickTargetAndAdvance(/service request/i);
     expect(
       screen.getByRole("button", { name: /transfer to service request/i }),
     ).toBeDisabled();
@@ -185,27 +245,7 @@ describe("ChangeCaseTypeDialog — not-yet-supported targets", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByRole("radio", { name: /security report/i }));
+    pickTargetAndAdvance(/security report/i);
     expect(screen.getByText(/currently has none/i)).toBeInTheDocument();
-  });
-});
-
-describe("ChangeCaseTypeDialog — cancel", () => {
-  it("calls onClose without calling onSubmit", () => {
-    const onClose = vi.fn();
-    const onSubmit = vi.fn();
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        isSubmitting={false}
-        onClose={onClose}
-        onSubmit={onSubmit}
-      />,
-    );
-    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
-    expect(onClose).toHaveBeenCalled();
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 });
