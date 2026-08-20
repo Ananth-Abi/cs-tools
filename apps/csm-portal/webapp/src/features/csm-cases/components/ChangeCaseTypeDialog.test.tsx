@@ -19,11 +19,6 @@ import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import ChangeCaseTypeDialog from "@features/csm-cases/components/ChangeCaseTypeDialog";
 
-// Target-picker buttons are queried by data-testid rather than accessible
-// name: the confirm button's own label ("Transfer to Security report")
-// contains the target label as a substring, so a name-based query for e.g.
-// "security report" matches both and throws on ambiguity.
-
 describe("ChangeCaseTypeDialog — target selection", () => {
   it("offers the other 3 transferable types, not the current one", () => {
     render(
@@ -36,10 +31,10 @@ describe("ChangeCaseTypeDialog — target selection", () => {
         onSubmit={() => {}}
       />,
     );
-    expect(screen.queryByTestId("transfer-target-case")).not.toBeInTheDocument();
-    expect(screen.getByTestId("transfer-target-security_report_analysis")).toBeInTheDocument();
-    expect(screen.getByTestId("transfer-target-engagement")).toBeInTheDocument();
-    expect(screen.getByTestId("transfer-target-service_request")).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /^case$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /security report/i })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /service request/i })).toBeInTheDocument();
   });
 });
 
@@ -55,12 +50,12 @@ describe("ChangeCaseTypeDialog — transfer into engagement", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-engagement"));
-    expect(screen.getByTestId("transfer-confirm-button")).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /^engagement$/i }));
+    expect(screen.getByRole("button", { name: /transfer to engagement/i })).toBeDisabled();
 
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /consultancy/i }));
-    expect(screen.getByTestId("transfer-confirm-button")).toBeEnabled();
+    expect(screen.getByRole("button", { name: /transfer to engagement/i })).toBeEnabled();
   });
 
   it("submits type and engagementType together", () => {
@@ -75,10 +70,10 @@ describe("ChangeCaseTypeDialog — transfer into engagement", () => {
         onSubmit={onSubmit}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-engagement"));
+    fireEvent.click(screen.getByRole("radio", { name: /^engagement$/i }));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /migration/i }));
-    fireEvent.click(screen.getByTestId("transfer-confirm-button"));
+    fireEvent.click(screen.getByRole("button", { name: /transfer to engagement/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({
       targetType: "engagement",
@@ -86,7 +81,7 @@ describe("ChangeCaseTypeDialog — transfer into engagement", () => {
     });
   });
 
-  it("lists the source type's lost fields with a reason", () => {
+  it("lists the source type's lost fields", () => {
     render(
       <ChangeCaseTypeDialog
         currentType="case"
@@ -97,9 +92,10 @@ describe("ChangeCaseTypeDialog — transfer into engagement", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-engagement"));
-    expect(screen.getByText(/query cases are triaged/i)).toBeInTheDocument();
-    expect(screen.getByText(/only classifies plain support queries/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /^engagement$/i }));
+    expect(screen.getByText(/no longer applies/i)).toBeInTheDocument();
+    expect(screen.getByText("Severity")).toBeInTheDocument();
+    expect(screen.getByText("Issue type")).toBeInTheDocument();
   });
 });
 
@@ -116,8 +112,8 @@ describe("ChangeCaseTypeDialog — transfer into case", () => {
         onSubmit={onSubmit}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-case"));
-    const confirmBtn = screen.getByTestId("transfer-confirm-button");
+    fireEvent.click(screen.getByRole("radio", { name: /^case$/i }));
+    const confirmBtn = screen.getByRole("button", { name: /transfer to case/i });
     expect(confirmBtn).toBeEnabled();
     fireEvent.click(confirmBtn);
     expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: undefined });
@@ -135,10 +131,10 @@ describe("ChangeCaseTypeDialog — transfer into case", () => {
         onSubmit={onSubmit}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-case"));
+    fireEvent.click(screen.getByRole("radio", { name: /^case$/i }));
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /severity/i }));
     fireEvent.click(screen.getByRole("option", { name: /^s2/i }));
-    fireEvent.click(screen.getByTestId("transfer-confirm-button"));
+    fireEvent.click(screen.getByRole("button", { name: /transfer to case/i }));
     expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: "S2" });
   });
 });
@@ -155,8 +151,10 @@ describe("ChangeCaseTypeDialog — not-yet-supported targets", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-security_report_analysis"));
-    expect(screen.getByTestId("transfer-confirm-button")).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /security report/i }));
+    expect(
+      screen.getByRole("button", { name: /transfer to security report/i }),
+    ).toBeDisabled();
   });
 
   it("keeps the transfer button disabled for service_request", () => {
@@ -170,8 +168,10 @@ describe("ChangeCaseTypeDialog — not-yet-supported targets", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-service_request"));
-    expect(screen.getByTestId("transfer-confirm-button")).toBeDisabled();
+    fireEvent.click(screen.getByRole("radio", { name: /service request/i }));
+    expect(
+      screen.getByRole("button", { name: /transfer to service request/i }),
+    ).toBeDisabled();
   });
 
   it("warns when the target requires an attachment the case doesn't have", () => {
@@ -185,7 +185,7 @@ describe("ChangeCaseTypeDialog — not-yet-supported targets", () => {
         onSubmit={() => {}}
       />,
     );
-    fireEvent.click(screen.getByTestId("transfer-target-security_report_analysis"));
+    fireEvent.click(screen.getByRole("radio", { name: /security report/i }));
     expect(screen.getByText(/currently has none/i)).toBeInTheDocument();
   });
 });
