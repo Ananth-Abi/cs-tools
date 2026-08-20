@@ -67,6 +67,16 @@ export function buildCaseSearchFilters(
       values: filters.states.map(beStateFromUi),
     });
   }
+  // `states`/`excludeStates` both target the `state` field but with
+  // different ops (`in`/`notIn`) — two independent entries, same reasoning
+  // as `tags`/`excludeTags` below.
+  if (filters.excludeStates.length > 0) {
+    fieldFilters.push({
+      field: "state",
+      op: "notIn",
+      values: filters.excludeStates.map(beStateFromUi),
+    });
+  }
   if (filters.caseTypes.length > 0) {
     fieldFilters.push({ field: "type", op: "in", values: filters.caseTypes });
   }
@@ -134,6 +144,11 @@ export function buildCaseSearchFilters(
   if (filters.excludeTags.length > 0) {
     fieldFilters.push({ field: "tag", op: "notIn", values: filters.excludeTags });
   }
+  // No `notIn` counterpart here (unlike `tags`/`excludeTags`): the domain is
+  // the 4 fixed values in `onboardingStatus.ts`, so a dashboard widget's
+  // `projectOnboardingStatus notIn` filter is folded into this same `in`
+  // list as its complement at the translation boundary
+  // (`translateCaseDashboardFilters`), never carried through as a second op.
   if (filters.onboardingStatuses.length > 0) {
     fieldFilters.push({
       field: "projectOnboardingStatus",

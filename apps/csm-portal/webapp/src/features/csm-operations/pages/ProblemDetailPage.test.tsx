@@ -154,7 +154,7 @@ describe("ProblemDetailPage", () => {
     useLocationMock.mockReturnValue({ state: null });
     mockQueryResult({ data: BASE_PROBLEM });
     render(<ProblemDetailPage />);
-    screen.getByRole("button", { name: /back to problems/i }).click();
+    screen.getByRole("button", { name: "Back" }).click();
     expect(navigateMock).toHaveBeenCalledWith("/operations?tab=problems");
   });
 
@@ -162,7 +162,7 @@ describe("ProblemDetailPage", () => {
     useLocationMock.mockReturnValue({ state: { from: "/dashboard" } });
     mockQueryResult({ data: BASE_PROBLEM });
     render(<ProblemDetailPage />);
-    screen.getByRole("button", { name: /back to problems/i }).click();
+    screen.getByRole("button", { name: "Back" }).click();
     expect(navigateMock).toHaveBeenCalledWith("/dashboard");
   });
 
@@ -172,7 +172,7 @@ describe("ProblemDetailPage", () => {
     });
     mockQueryResult({ data: BASE_PROBLEM });
     render(<ProblemDetailPage />);
-    screen.getByRole("button", { name: /back to problems/i }).click();
+    screen.getByRole("button", { name: "Back" }).click();
     expect(navigateMock).toHaveBeenCalledWith("/operations?tab=problems&state=closed");
   });
 });

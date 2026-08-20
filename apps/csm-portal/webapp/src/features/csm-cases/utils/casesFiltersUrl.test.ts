@@ -151,6 +151,39 @@ describe("op-awareness (regression: the widgetPreviewUrl field~op bug)", () => {
     expect(round.excludeTags).toEqual(["s_dip"]);
   });
 
+  it("`states` (op:in) and `excludeStates` (op:notIn) never conflate on a round trip", () => {
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, excludeStates: ["closed"] };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.excludeStates).toEqual(["closed"]);
+    expect(round.states).toEqual([]);
+  });
+
+  it("`states` and `excludeStates` survive together, independently, when both are set", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: ["open", "work_in_progress"],
+      excludeStates: ["closed"],
+    };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.states).toEqual(["open", "work_in_progress"]);
+    expect(round.excludeStates).toEqual(["closed"]);
+  });
+
+  // `onboardingStatuses` has no `excludeOnboardingStatuses` counterpart --
+  // unlike `states`/`tags`, its domain is the 4 fixed values in
+  // `onboardingStatus.ts`, so a dashboard widget's `notIn` filter is folded
+  // into this same field's complement at the translation boundary
+  // (`translateCaseDashboardFilters`, see its own doc comment) rather than a
+  // second field/param this codec would need to keep distinct.
+  it("`onboardingStatuses` round-trips losslessly through the URL", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      onboardingStatuses: ["Not-Started", "Completed", "Not-Applicable"],
+    };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.onboardingStatuses).toEqual(["Not-Started", "Completed", "Not-Applicable"]);
+  });
+
   it("a value-less op (`hasEscalation` / escalation isNotEmpty) survives rather than being dropped", () => {
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, hasEscalation: true };
     const href = writeCasesFiltersToUrl(filters);

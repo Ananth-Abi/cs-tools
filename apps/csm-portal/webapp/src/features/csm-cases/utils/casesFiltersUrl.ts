@@ -30,6 +30,7 @@ export const DEFAULT_CASES_FILTERS: CasesFilters = {
   search: "",
   severities: [],
   states: [],
+  excludeStates: [],
   caseTypes: [],
   assignees: [],
   workStates: [],
@@ -154,6 +155,7 @@ export function readCasesFiltersFromUrl(
     search: params.get("search") ?? "",
     severities: parseCsv(params.get("severities"), VALID_SEVERITIES),
     states,
+    excludeStates: parseCsv(params.get("excludeStates"), VALID_STATES),
     caseTypes: parseCsv(params.get("types"), VALID_CASE_TYPES),
     assignees: parseFreeFormCsv(params.get("assignees")),
     workStates,
@@ -195,9 +197,21 @@ export function readCasesFiltersFromUrl(
  * struct, not a generic opaque array, so every op that would otherwise
  * collide on one field name already gets its own dedicated field/param
  * instead —
- *   - `tags` (op:in) vs. `excludeTags` (op:notIn) — two arrays, not one
- *     array plus an op flag, so `in` and `notIn` can never be conflated on
- *     the round trip;
+ *   - `tags` (op:in) vs. `excludeTags` (op:notIn), and `states` vs.
+ *     `excludeStates` — each an in/notIn pair as two arrays, not one array
+ *     plus an op flag, so `in` and `notIn` can never be conflated on the
+ *     round trip. `state`/`tag`/`projectOnboardingStatus` are the only 3
+ *     case-search fields whose backend contract accepts `notIn` at all (see
+ *     `POST /cases/search`'s `caseFilterOpSet`/per-field op table); every
+ *     other field is `in`-only and has no exclude counterpart to conflate
+ *     with in the first place. `projectOnboardingStatus` is the one
+ *     exception among those 3: its domain is the 4 fixed values in
+ *     `onboardingStatus.ts`, so `translateCaseDashboardFilters`
+ *     (`widgetResourceConfig.ts`) folds a `notIn` dashboard filter into
+ *     `onboardingStatuses`' own complement instead of carrying a second
+ *     `excludeOnboardingStatuses` field/param through the round trip — one
+ *     less param that could collide with (or be conflated with) the plain
+ *     `onboardingStatuses` one;
  *   - `slaElapsedPctGte`/`slaElapsedPctLte`, and the `createdOnGte/Lte`,
  *     `updatedOnGte/Lte`, `closedOnGte/Lte` date-range pairs — one param per
  *     bound, not a shared field with an op suffix;
@@ -218,6 +232,7 @@ export function writeCasesFiltersToUrl(f: CasesFilters): URLSearchParams {
   if (f.search) out.set("search", f.search);
   if (f.severities.length) out.set("severities", f.severities.join(","));
   if (f.states.length) out.set("states", f.states.join(","));
+  if (f.excludeStates.length) out.set("excludeStates", f.excludeStates.join(","));
   if (f.caseTypes.length) out.set("types", f.caseTypes.join(","));
   if (f.assignees.length) out.set("assignees", f.assignees.join(","));
   if (f.workStates.length) out.set("workStates", f.workStates.join(","));
@@ -260,6 +275,7 @@ export function countActiveFilters(f: CasesFilters): number {
   if (f.search.trim()) n += 1;
   if (f.severities.length) n += 1;
   if (f.states.length) n += 1;
+  if (f.excludeStates.length) n += 1;
   if (f.caseTypes.length) n += 1;
   if (f.assignees.length) n += 1;
   if (f.workStates.length) n += 1;

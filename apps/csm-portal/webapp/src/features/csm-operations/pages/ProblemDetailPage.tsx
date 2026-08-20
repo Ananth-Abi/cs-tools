@@ -131,7 +131,7 @@ export default function ProblemDetailPage(): JSX.Element {
       onClick={back}
       sx={{ alignSelf: "flex-start" }}
     >
-      Back to problems
+      Back
     </Button>
   );
 

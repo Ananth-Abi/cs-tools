@@ -173,6 +173,112 @@ describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
     expect(parsed.states).toEqual(["open", "work_in_progress"]);
   });
 
+  // Regression: reported live against `abt_overall_open_incident`'s
+  // `projectOnboardingStatus notIn ["In-Progress"]` -- the click-through
+  // landed on the Cases list with an "Onboarding: In-progress" INCLUDE chip
+  // (the exact opposite of the widget's own filter), because the values were
+  // read op-blind and dumped into the same field an `in` filter would use.
+  // `state` has the identical backend-supported notIn and was audited to
+  // have the same latent bug, fixed alongside onboarding status.
+  //
+  // Unlike `state`/`tag`, `projectOnboardingStatus` doesn't get its own
+  // second `exclude...` field: its domain is the 4 fixed values in
+  // `onboardingStatus.ts`, so `notIn(X)` decodes to `onboardingStatuses`
+  // holding `in`(every other known value) — the complement — rather than a
+  // separate field that could collide with (or be conflated with) the plain
+  // `onboardingStatuses` one the bar's own control edits.
+  it("projectOnboardingStatus notIn decodes to onboardingStatuses' complement, never an inclusion of the excluded value", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "projectOnboardingStatus", op: "notIn", values: ["In-Progress"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.onboardingStatuses.sort()).toEqual(
+      ["Not-Started", "Completed", "Not-Applicable"].sort(),
+    );
+  });
+
+  it("state notIn decodes to excludeStates, never states", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [{ field: "state", op: "notIn", values: ["closed"] }],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.excludeStates).toEqual(["closed"]);
+    expect(parsed.states).toEqual([]);
+  });
+
+  it("state in and state notIn survive together, independently, on the same widget", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "state", op: "in", values: ["open", "work_in_progress"] },
+        { field: "state", op: "notIn", values: ["closed"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.states).toEqual(["open", "work_in_progress"]);
+    expect(parsed.excludeStates).toEqual(["closed"]);
+  });
+
+  it("projectOnboardingStatus in and notIn on the same widget intersect into onboardingStatuses' complement", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "projectOnboardingStatus", op: "in", values: ["Completed"] },
+        { field: "projectOnboardingStatus", op: "notIn", values: ["In-Progress"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    // "Completed" is in the `in` list and isn't excluded, so it survives the
+    // intersection with the notIn complement.
+    expect(parsed.onboardingStatuses).toEqual(["Completed"]);
+  });
+
+  // Regression (CodeRabbit): a `notIn` excluding every one of the 4 known
+  // values leaves the complement genuinely empty. The naive fix (`if
+  // (onboardingStatuses.length > 0) out.onboardingStatuses = ...`) would
+  // then leave the field unset entirely -- which this app's convention
+  // reads as "unfiltered" -- silently showing every case instead of the
+  // zero the widget's own filter actually calls for. The exact same
+  // sign-flip failure mode this field's whole design exists to prevent, just
+  // reached via the one degenerate input the complement conversion itself
+  // introduced.
+  it("projectOnboardingStatus notIn excluding all 4 known values resolves to a no-match filter, never an unfiltered one", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        {
+          field: "projectOnboardingStatus",
+          op: "notIn",
+          values: ["In-Progress", "Not-Started", "Completed", "Not-Applicable"],
+        },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    // Whatever the exact sentinel is, the field must be actively filtered
+    // (non-empty) and must not equal any real onboarding-status choice.
+    expect(parsed.onboardingStatuses.length).toBeGreaterThan(0);
+    expect(parsed.onboardingStatuses).not.toEqual(
+      expect.arrayContaining(["In-Progress", "Not-Started", "Completed", "Not-Applicable"]),
+    );
+  });
+
+  it("a disjoint projectOnboardingStatus in/notIn pair (in minus notIn's complement is empty) also resolves to a no-match filter", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "projectOnboardingStatus", op: "in", values: ["Completed"] },
+        { field: "projectOnboardingStatus", op: "notIn", values: ["Completed"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.onboardingStatuses.length).toBeGreaterThan(0);
+    expect(parsed.onboardingStatuses).not.toContain("Completed");
+  });
+
   it("hasEscalation:false (isEmpty) round-trips distinctly from isNotEmpty", () => {
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [{ field: "escalation", op: "isEmpty" }],

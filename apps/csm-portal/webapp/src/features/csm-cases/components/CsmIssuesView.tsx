@@ -79,6 +79,7 @@ const FILTER_PARAM_KEYS = [
   "search",
   "severities",
   "states",
+  "excludeStates",
   "types",
   "assignees",
   "workStates",

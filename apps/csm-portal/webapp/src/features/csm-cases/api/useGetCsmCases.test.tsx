@@ -336,3 +336,43 @@ describe("useGetCsmCases — identifier search runs both legs in parallel", () =
     expect(filtersOfCall(0).searchQuery).toBeUndefined();
   });
 });
+
+describe("useGetCsmCases — queryKey covers every manually-toggleable filter", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockResolvedValue({ cases: [], total: 0, limit: 20, offset: 0 });
+  });
+
+  // Regression: `csTeams` (and, at the time, several other CasesFilters
+  // fields) reached the search payload via `buildCaseSearchFilters` but had
+  // no entry in the queryKey array below -- so picking a team from the bar's
+  // "Team" control changed `filters.csTeams` without changing the queryKey,
+  // and React Query treated it as the identical query and never refetched.
+  // Reported live: "when i select a team, no network call goes in the team
+  // filter."
+  it("refetches when only csTeams changes", async () => {
+    const { result, rerender } = renderHook(
+      ({ filters }) => useGetCsmCases(filters, 0, 20),
+      { wrapper, initialProps: { filters: DEFAULT_CASES_FILTERS } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(postMock).toHaveBeenCalledTimes(1);
+
+    rerender({ filters: { ...DEFAULT_CASES_FILTERS, csTeams: ["g-1"] } });
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+  });
+
+  it("refetches when only onboardingStatuses changes", async () => {
+    const { result, rerender } = renderHook(
+      ({ filters }) => useGetCsmCases(filters, 0, 20),
+      { wrapper, initialProps: { filters: DEFAULT_CASES_FILTERS } },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(postMock).toHaveBeenCalledTimes(1);
+
+    rerender({
+      filters: { ...DEFAULT_CASES_FILTERS, onboardingStatuses: ["In-Progress"] },
+    });
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+  });
+});

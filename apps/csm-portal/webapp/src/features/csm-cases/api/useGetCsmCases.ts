@@ -104,17 +104,38 @@ export function useGetCsmCases(
     // engineer emails (+ the `@me` sentinel); it's resolved to UUIDs in the
     // queryFn, but keying on the raw selection is enough since resolution is
     // deterministic. `currentUserEmail` is already in the key, covering `@me`.
+    // Every field of `CasesFilters` that reaches `buildCaseSearchFilters`
+    // below must appear here — one that doesn't (as `csTeams` didn't, until
+    // its own bar control made that visible) makes React Query treat a
+    // changed filter as the same query and skip the refetch entirely.
     queryKey: [
       ApiQueryKeys.CSM_CASES,
       search,
       [...filters.severities].sort(),
       [...filters.states].sort(),
+      [...filters.excludeStates].sort(),
       [...filters.caseTypes].sort(),
       [...filters.workStates].sort(),
       [...filters.assignees].sort(),
       [...filters.projects].sort(),
       [...filters.engagementTypes].sort(),
       [...filters.productNames].sort(),
+      [...filters.csTeams].sort(),
+      [...filters.sreTeams].sort(),
+      [...filters.tags].sort(),
+      [...filters.excludeTags].sort(),
+      [...filters.onboardingStatuses].sort(),
+      [...filters.escalationLevels].sort(),
+      [...filters.projectTypes].sort(),
+      filters.slaElapsedPctGte,
+      filters.slaElapsedPctLte,
+      filters.hasEscalation,
+      filters.createdOnGte,
+      filters.createdOnLte,
+      filters.updatedOnGte,
+      filters.updatedOnLte,
+      filters.closedOnGte,
+      filters.closedOnLte,
       currentUserEmail ?? "",
       wantsMe ? (currentUserId ?? "") : "",
       page,
