@@ -18,6 +18,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { BeChangeRequestDetail, BePatchChangeRequestPayload } from "@api/backend/types";
+import {
+  sanitizeRichTextHtml,
+  stripHtmlTagsPreservingLineBreaks,
+} from "@utils/sanitizeHtml";
 
 // The "Assignment group" picker goes through useSearchGroups, which hits the
 // backend client via react-query — stub it out (same approach as
@@ -186,8 +190,9 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
       target: { value: "Redeploy the previous image tag." },
     });
     fireEvent.click(saveButton());
+    // Sent as rich text: the field stores and re-renders HTML.
     expect(onSave).toHaveBeenCalledWith({
-      rollbackPlan: "Redeploy the previous image tag.",
+      rollbackPlan: "<p>Redeploy the previous image tag.</p>",
     });
   });
 
@@ -195,7 +200,9 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
     const { onSave } = renderDialog();
     fireEvent.change(testPlanField(), { target: { value: "Run the regression suite." } });
     fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ testPlan: "Run the regression suite." });
+    expect(onSave).toHaveBeenCalledWith({
+      testPlan: "<p>Run the regression suite.</p>",
+    });
   });
 
   it("sends both plans, and nothing else, when both were edited", () => {
@@ -204,8 +211,8 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
     fireEvent.change(testPlanField(), { target: { value: "Run the regression suite." } });
     fireEvent.click(saveButton());
     expect(onSave).toHaveBeenCalledWith({
-      rollbackPlan: "Roll the image back.",
-      testPlan: "Run the regression suite.",
+      rollbackPlan: "<p>Roll the image back.</p>",
+      testPlan: "<p>Run the regression suite.</p>",
     });
   });
 
@@ -219,11 +226,42 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
     expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
   });
 
+  // An intentional clear must stay an empty string, not become an empty
+  // paragraph: `<p></p>` would read as "this plan says nothing" rather than
+  // "there is no plan".
   it("treats clearing a stored plan as a real edit and sends the empty value", () => {
     const { onSave } = renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
     fireEvent.change(rollbackPlanField(), { target: { value: "" } });
     fireEvent.click(saveButton());
     expect(onSave).toHaveBeenCalledWith({ rollbackPlan: "" });
+  });
+
+  it("sends \"\" rather than an empty paragraph for a whitespace-only plan", () => {
+    const { onSave } = renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
+    fireEvent.change(rollbackPlanField(), { target: { value: "   \n  " } });
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({ rollbackPlan: "" });
+  });
+
+  // The other half of the seeding fix: an edited plan is sent as rich text, so
+  // the line breaks the engineer typed survive the round trip and a typed `<`
+  // or `&` can't drop the rest of the plan when it is rendered back.
+  it("escapes and keeps the line breaks of an edited plan", () => {
+    const typed = "Stop the rollout if error rate < 1% & rising.\nRedeploy the previous tag.";
+    const { onSave } = renderDialog();
+    fireEvent.change(rollbackPlanField(), { target: { value: typed } });
+    fireEvent.click(saveButton());
+
+    const patch = onSave.mock.calls[0][0];
+    expect(patch.rollbackPlan).toBe(
+      "<p>Stop the rollout if error rate &lt; 1% &amp; rising.<br />Redeploy the previous tag.</p>",
+    );
+    // What is stored has to survive the render-side sanitizer and come back
+    // as exactly what was typed — this is the same value the dialog will
+    // re-seed from next time it opens.
+    expect(
+      stripHtmlTagsPreservingLineBreaks(sanitizeRichTextHtml(patch.rollbackPlan ?? "")),
+    ).toBe(typed);
   });
 
   it("leaves Save disabled until a plan is actually changed", () => {

@@ -42,7 +42,10 @@ import {
   isPastDateTime,
   parseDateTimeLocal,
 } from "@utils/dateTime";
-import { stripHtmlTagsPreservingLineBreaks } from "@utils/sanitizeHtml";
+import {
+  plainTextToHtml,
+  stripHtmlTagsPreservingLineBreaks,
+} from "@utils/sanitizeHtml";
 
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 
@@ -154,8 +157,22 @@ export default function EditChangeRequestDialog({
     }
     // Unlike the pickers above, an emptied plan field is a real edit the BE
     // can accept, so "" is sent rather than skipped.
-    if (rollbackPlan !== initialRollbackPlan) next.rollbackPlan = rollbackPlan;
-    if (testPlan !== initialTestPlan) next.testPlan = testPlan;
+    //
+    // Two different representations, deliberately: the *comparison* is against
+    // the plain-text seed (so an untouched field never enters the patch, and
+    // the stored markup survives untouched), while the *outgoing* value is
+    // converted back to rich text. These fields are stored and re-rendered as
+    // HTML, so sending raw plain text would drop the engineer's line breaks
+    // and let a typed `<` or `&` mangle the rest of the plan. Never compare
+    // the converted HTML against the stored HTML — the stored markup is not
+    // reproducible from plain text, so every field would read as dirty.
+    //
+    // `plainTextToHtml` maps blank input to "", not `<p></p>`, so clearing a
+    // plan still sends the empty value the BE treats as "remove it".
+    if (rollbackPlan !== initialRollbackPlan) {
+      next.rollbackPlan = plainTextToHtml(rollbackPlan);
+    }
+    if (testPlan !== initialTestPlan) next.testPlan = plainTextToHtml(testPlan);
     return next;
   }, [
     plannedStart,
