@@ -439,3 +439,89 @@ func TestLoadSharedSectionsRejectsUnreferenceableKeys(t *testing.T) {
 		}
 	})
 }
+
+// TestValidateSharedSectionsRejectsUnreferencedBreakage proves a broken section
+// fails the load even when no dashboard includes it — the case that previously
+// slipped through to the catalogue and only surfaced when an author included it.
+func TestValidateSharedSectionsRejectsUnreferencedBreakage(t *testing.T) {
+	dir := t.TempDir()
+	presetsPath := filepath.Join(dir, "_presets.json")
+	sectionsPath := filepath.Join(dir, "_sections.json")
+	// One valid dashboard that references NOTHING, so the only way a section
+	// gets looked at is the catalogue-level validation under test.
+	dashPath := filepath.Join(dir, "d.json")
+
+	writeFile := func(t *testing.T, path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
+	writeFile(t, presetsPath, `{"activeCaseStates":{"field":"state","op":"in","values":["open"]}}`)
+	writeFile(t, dashPath, `{"id":"d","displayName":"D","type":"cs","isDefault":true,"widgets":[`+
+		`{"id":"w","displayName":"W","resourceType":"case","shape":"count","gridWidth":3,`+
+		`"query":{"filters":[{"field":"state","op":"in","values":["open"]}]}}]}`)
+
+	section := func(widget string) string {
+		return `{"orphan":{"displayName":"Orphan","widgets":[` + widget + `]}}`
+	}
+
+	t.Run("an unknown preset reference in an unincluded section is fatal", func(t *testing.T) {
+		writeFile(t, sectionsPath, section(
+			`{"id":"w1","displayName":"W1","resourceType":"case","shape":"count","gridWidth":3,`+
+				`"query":{"filters":[{"preset":"noSuchPreset"}]}}`))
+		_, err := NewDirRegistry(dir, false, presetsPath, sectionsPath)
+		if err == nil {
+			t.Fatal("expected the load to fail on the unreferenced section's bad preset")
+		}
+		if !strings.Contains(err.Error(), "orphan") {
+			t.Errorf("error should name the offending section: %v", err)
+		}
+	})
+
+	t.Run("a structurally invalid widget in an unincluded section is fatal", func(t *testing.T) {
+		// gridWidth 99 is out of the 1-12 column range.
+		writeFile(t, sectionsPath, section(
+			`{"id":"w1","displayName":"W1","resourceType":"case","shape":"count","gridWidth":99,`+
+				`"query":{"filters":[{"field":"state","op":"in","values":["open"]}]}}`))
+		_, err := NewDirRegistry(dir, false, presetsPath, sectionsPath)
+		if err == nil {
+			t.Fatal("expected the load to fail on the unreferenced section's bad widget")
+		}
+		if !strings.Contains(err.Error(), "orphan") {
+			t.Errorf("error should name the offending section: %v", err)
+		}
+	})
+
+	t.Run("a duplicate widget id within one section is fatal", func(t *testing.T) {
+		writeFile(t, sectionsPath, section(
+			`{"id":"dup","displayName":"A","resourceType":"case","shape":"count","gridWidth":3,`+
+				`"query":{"filters":[{"field":"state","op":"in","values":["open"]}]}},`+
+				`{"id":"dup","displayName":"B","resourceType":"case","shape":"count","gridWidth":3,`+
+				`"query":{"filters":[{"field":"state","op":"in","values":["open"]}]}}`))
+		if _, err := NewDirRegistry(dir, false, presetsPath, sectionsPath); err == nil {
+			t.Fatal("expected the load to fail on duplicate widget ids inside a section")
+		}
+	})
+
+	t.Run("a valid unincluded section loads, and keeps its preset reference authored", func(t *testing.T) {
+		writeFile(t, sectionsPath, section(
+			`{"id":"w1","displayName":"W1","resourceType":"case","shape":"count","gridWidth":3,`+
+				`"query":{"filters":[{"preset":"activeCaseStates"}]}}`))
+		reg, err := NewDirRegistry(dir, false, presetsPath, sectionsPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// The validation probe must not have mutated the catalogue: the
+		// builder edits the authored form, so the reference has to survive.
+		got := reg.SharedSections()["orphan"]
+		filters, ok := got.Widgets[0].Query["filters"].([]any)
+		if !ok || len(filters) != 1 {
+			t.Fatalf("query.filters missing: %#v", got.Widgets[0].Query)
+		}
+		entry, ok := filters[0].(map[string]any)
+		if !ok || entry["preset"] != "activeCaseStates" {
+			t.Errorf("validation expanded the catalogue's preset reference: %#v", filters[0])
+		}
+	})
+}

@@ -132,6 +132,11 @@ func NewDirRegistry(dir string, hotReload bool, presetsFile, sectionsFile string
 		if err != nil {
 			return nil, err
 		}
+		// Every section is proven usable here, not just the ones some
+		// dashboard happens to include -- see validateSharedSections.
+		if err := validateSharedSections(sharedSections, sharedPresets, sectionsFile); err != nil {
+			return nil, err
+		}
 		return loadDir(d, sharedPresets, sharedSections)
 	}
 	loadCatalogues := func() (map[string]map[string]any, map[string]SharedSection, error) {

@@ -63,8 +63,18 @@ import {
  * `seedSharedConfigDraft`).
  */
 export default function CsmDashboardSharedConfigPage(): JSX.Element {
-  const { data: deployedPresets, isPending: presetsPending } = useDashboardFilterPresets();
-  const { data: deployedSections, isPending: sectionsPending } = useDashboardSharedSections();
+  const {
+    data: deployedPresets,
+    isSuccess: presetsLoaded,
+    isError: presetsFailed,
+    refetch: refetchPresets,
+  } = useDashboardFilterPresets();
+  const {
+    data: deployedSections,
+    isSuccess: sectionsLoaded,
+    isError: sectionsFailed,
+    refetch: refetchSections,
+  } = useDashboardSharedSections();
   const draft = useSharedConfigDraft();
 
   const [tab, setTab] = useState<"presets" | "sections">("presets");
@@ -76,13 +86,19 @@ export default function CsmDashboardSharedConfigPage(): JSX.Element {
   >(undefined);
   const [copied, setCopied] = useState<"presets" | "sections" | undefined>(undefined);
 
-  const loading = presetsPending || sectionsPending;
+  // Both catalogues must have SUCCEEDED, not merely settled. Seeding is a
+  // one-shot, persisted decision (see the `seeded` flag), so seeding from a
+  // failed request would bake a half-empty draft in permanently: the flag
+  // says "already seeded", the retry never runs, and the deployed entries
+  // that failed to load can never be recovered without clearing storage.
+  const catalogueReady = presetsLoaded && sectionsLoaded;
+  const catalogueFailed = presetsFailed || sectionsFailed;
 
   // Fold the deployed catalogues in once, as a render-time side effect
   // guarded by the draft's own `seeded` flag rather than an effect: this
   // writes to localStorage and then re-reads through the storage event, so
   // there is no React state to cascade (and no set-state-in-effect).
-  if (!loading && !draft.seeded) {
+  if (catalogueReady && !draft.seeded) {
     seedSharedConfigDraft(
       (deployedPresets ?? []).map((p) => ({ name: p.name, filter: p.filter })),
       (deployedSections ?? []).map((s) => ({
@@ -108,7 +124,7 @@ export default function CsmDashboardSharedConfigPage(): JSX.Element {
     const payload =
       which === "presets"
         ? presetsFileFromDraft(draft.presets)
-        : sectionsFileFromDraft(draft.sections);
+        : sectionsFileFromDraft(draft.sections, draft.presets);
     try {
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
       setCopied(which);
@@ -119,7 +135,34 @@ export default function CsmDashboardSharedConfigPage(): JSX.Element {
     }
   };
 
-  if (loading) {
+  if (catalogueFailed) {
+    // Deliberately blocks the whole page rather than showing an empty
+    // designer: an empty designer here looks like "nothing is configured",
+    // and copying its JSON would hand a maintainer a file that deletes every
+    // deployed preset and section.
+    return (
+      <Alert
+        severity="error"
+        action={
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => {
+              void refetchPresets();
+              void refetchSections();
+            }}
+          >
+            Retry
+          </Button>
+        }
+      >
+        Could not load what is currently deployed, so this page cannot show you
+        an accurate starting point. Nothing has been changed.
+      </Alert>
+    );
+  }
+
+  if (!catalogueReady) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
         <CircularProgress />
@@ -325,7 +368,14 @@ export default function CsmDashboardSharedConfigPage(): JSX.Element {
       {editingSection && (
         <SectionEditorDialog
           section={editingSection.section}
-          presets={deployedPresets}
+          // The local draft's presets, not just the deployed ones: a preset
+          // authored on the Presets tab a moment ago is exactly what an author
+          // wants to reference from a section they are building now, and
+          // offering only deployed ones would make a newly designed preset
+          // unusable until someone deploys it. The draft already contains
+          // every deployed preset (it was seeded from them), so this is a
+          // superset, with local edits winning.
+          presets={draft.presets}
           takenNames={draft.sections
             .filter((_, i) => i !== editingSection.index)
             .map((s) => s.name)}

@@ -221,8 +221,11 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
   // initializer that needs the catalogue on the very first render (see
   // WidgetEditorDialogProps.presets). Starting the query at page mount means
   // it is long cached by the time an admin opens a widget.
-  const { data: filterPresets, isPending: filterPresetsPending } =
-    useDashboardFilterPresets();
+  const {
+    data: filterPresets,
+    isError: filterPresetsFailed,
+    refetch: refetchFilterPresets,
+  } = useDashboardFilterPresets();
   const { data: sharedSections } = useDashboardSharedSections();
   const [editingWidget, setEditingWidget] = useState<
     { widget: BeDashboardWidget | undefined; defaultSection?: string } | undefined
@@ -352,7 +355,7 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
   };
 
   const handleCopyJson = async (): Promise<void> => {
-    const deployable = deployableDashboardFromDraft(working);
+    const deployable = deployableDashboardFromDraft(working, filterPresets);
     try {
       await navigator.clipboard.writeText(JSON.stringify(deployable, null, 2));
       setCopyFeedback(true);
@@ -401,6 +404,32 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
         <Alert severity="info">
           Couldn't check this draft against what's currently deployed (GET /dashboards/{draftId}{" "}
           failed) — edits are still saved locally regardless.
+        </Alert>
+      )}
+
+      {filterPresetsFailed && (
+        // The widget editor stays shut while this is showing (see the
+        // editingWidget gate below). That is deliberate: without the preset
+        // catalogue, an existing widget's already-expanded filters cannot be
+        // recognised as the presets they came from, so opening the editor and
+        // saving would rewrite every shared reference on this dashboard as a
+        // literal -- silently, and with no way to tell afterwards. A shut
+        // editor with a reason beats a save that quietly strips references.
+        <Alert
+          severity="error"
+          action={
+            <Button
+              size="small"
+              color="inherit"
+              onClick={() => void refetchFilterPresets()}
+            >
+              Retry
+            </Button>
+          }
+        >
+          Could not load the shared filter presets, so widgets cannot be edited
+          safely right now — saving one would turn its shared preset references
+          into fixed copies. Everything else on this page still works.
         </Alert>
       )}
 
@@ -741,7 +770,13 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
         )}
       </SectionCard>
 
-      {editingWidget && !filterPresetsPending && (
+      {/* A NEW widget needs no catalogue: it has no server-expanded filters to
+          misread, and with no catalogue the editor simply offers no preset rows,
+          so nothing can be lost. Editing an EXISTING widget does need it —
+          without it, that widget's expanded filters would be re-saved as
+          literals and its shared references silently dropped. */}
+      {editingWidget &&
+        (editingWidget.widget === undefined || filterPresets !== undefined) && (
         <WidgetEditorDialog
           presets={filterPresets}
           widget={editingWidget.widget}

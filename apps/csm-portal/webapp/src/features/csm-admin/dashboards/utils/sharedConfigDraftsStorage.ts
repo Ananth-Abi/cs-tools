@@ -15,7 +15,12 @@
 // under the License.
 
 import { useEffect, useState } from "react";
-import type { BeDashboardWidget } from "@api/backend/types";
+import type { BeDashboardFilterPreset, BeDashboardWidget } from "@api/backend/types";
+import {
+  filterConditionsFromQuery,
+  queryFromFilterConditions,
+  usesCaseFieldFilterDsl,
+} from "@features/csm-admin/dashboards/utils/widgetQueryConditions";
 
 /**
  * Locally designed shared dashboard config: the filter presets and reusable
@@ -80,6 +85,33 @@ const EMPTY: SharedConfigDraft = {
   seeded: false,
 };
 
+/** A stored preset entry is only usable if it has a name and an object body —
+ * `Array.isArray` on the outer array says nothing about what is inside it, and
+ * a single `null` element is enough to throw on the first `p.name`. */
+function isPresetDraft(v: unknown): v is PresetDraft {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Partial<PresetDraft>;
+  return (
+    typeof o.name === "string" && !!o.filter && typeof o.filter === "object"
+  );
+}
+
+/** Same for a stored section. `widgets` is filtered element-wise too: a widget
+ * with no `widgetId` cannot be rendered in the list or written to the file. */
+function isSectionDraft(v: unknown): v is SectionDraft {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Partial<SectionDraft>;
+  return (
+    typeof o.name === "string" &&
+    typeof o.displayName === "string" &&
+    Array.isArray(o.widgets)
+  );
+}
+
+function isWidget(v: unknown): v is BeDashboardWidget {
+  return !!v && typeof v === "object" && typeof (v as BeDashboardWidget).widgetId === "string";
+}
+
 function read(): SharedConfigDraft {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -87,11 +119,16 @@ function read(): SharedConfigDraft {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return EMPTY;
     const o = parsed as Partial<SharedConfigDraft>;
-    // Every field defended individually: this is user-editable storage that
-    // can also have been written by an older version of this code.
+    // Every field defended individually, and every ENTRY within the two
+    // arrays as well: this is user-editable storage that may also have been
+    // written by an older version of this code. A malformed entry is dropped
+    // rather than thrown on — a designer that cannot open until the user
+    // finds and clears localStorage is worse than one missing a row.
     return {
-      presets: Array.isArray(o.presets) ? o.presets : [],
-      sections: Array.isArray(o.sections) ? o.sections : [],
+      presets: (Array.isArray(o.presets) ? o.presets : []).filter(isPresetDraft),
+      sections: (Array.isArray(o.sections) ? o.sections : [])
+        .filter(isSectionDraft)
+        .map((s) => ({ ...s, widgets: s.widgets.filter(isWidget) })),
       updatedAt: typeof o.updatedAt === "string" ? o.updatedAt : "",
       seeded: o.seeded === true,
     };
@@ -206,6 +243,7 @@ export function presetsFileFromDraft(
  */
 export function sectionsFileFromDraft(
   sections: readonly SectionDraft[],
+  presets?: readonly BeDashboardFilterPreset[],
 ): Record<string, { displayName: string; widgets: Record<string, unknown>[] }> {
   const out: Record<
     string,
@@ -215,7 +253,7 @@ export function sectionsFileFromDraft(
     if (s.name.trim().length === 0) continue;
     out[s.name] = {
       displayName: s.displayName,
-      widgets: s.widgets.map(widgetToDefinition),
+      widgets: s.widgets.map((w) => widgetToDefinition(collapsePresetReferences(w, presets))),
     };
   }
   return out;
@@ -230,6 +268,51 @@ export function sectionsFileFromDraft(
  * included widget's `section` with it, so carrying one here would be dead
  * config that silently disagrees with what actually renders.
  */
+/**
+ * Rewrites a widget's filters back to shared-preset references wherever a
+ * literal predicate matches a preset's body.
+ *
+ * This has to happen at EXPORT, not only in the widget editor. A draft opened
+ * from a deployed dashboard holds the API's already-expanded widgets, and only
+ * the widgets an admin actually opens and saves pass through the editor's
+ * collapse. Without this, every widget they did not happen to touch would be
+ * written out as literals and its shared references lost — the same silent
+ * stripping the editor's collapse exists to prevent, just via a different
+ * route. Doing it here covers every widget by construction.
+ *
+ * Slice queries get the same treatment: a slice carrying its own `filters`
+ * replaces the widget's array wholesale, so its references matter just as much.
+ *
+ * No catalogue means no rewriting, which is the honest fallback: emitting
+ * literals is correct, just less maintainable than a reference.
+ */
+function collapsePresetReferences(
+  widget: BeDashboardWidget,
+  presets: readonly BeDashboardFilterPreset[] | undefined,
+): BeDashboardWidget {
+  if (!presets || presets.length === 0) return widget;
+  if (!usesCaseFieldFilterDsl(widget.resourceType)) return widget;
+
+  const rewrite = (
+    query: Record<string, unknown> | null,
+  ): Record<string, unknown> | null => {
+    if (!query || !Array.isArray(query.filters)) return query;
+    const collapsed = queryFromFilterConditions(
+      widget.resourceType,
+      filterConditionsFromQuery(widget.resourceType, query, presets),
+    );
+    // Preserve any sibling keys the condition round-trip does not model
+    // (it only ever rewrites `filters`), so nothing else in the query is lost.
+    return { ...query, ...collapsed };
+  };
+
+  return {
+    ...widget,
+    query: rewrite(widget.query),
+    slices: widget.slices?.map((slice) => ({ ...slice, query: rewrite(slice.query) })),
+  };
+}
+
 export function widgetToDefinition(
   widget: BeDashboardWidget,
 ): Record<string, unknown> {
@@ -277,7 +360,7 @@ export function deployableDashboardFromDraft(draft: {
   targetTeam?: string;
   widgets: BeDashboardWidget[];
   includeSections?: unknown[];
-}): Record<string, unknown> {
+}, presets?: readonly BeDashboardFilterPreset[]): Record<string, unknown> {
   const out: Record<string, unknown> = {
     // A draft opened from a deployed dashboard keeps that dashboard's id, so
     // re-deploying replaces it instead of creating a second one.
@@ -293,6 +376,6 @@ export function deployableDashboardFromDraft(draft: {
   if ((draft.includeSections ?? []).length > 0) {
     out.includeSections = draft.includeSections;
   }
-  out.widgets = draft.widgets.map(widgetToDefinition);
+  out.widgets = draft.widgets.map((w) => widgetToDefinition(collapsePresetReferences(w, presets)));
   return out;
 }

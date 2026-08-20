@@ -229,3 +229,142 @@ describe("deployableDashboardFromDraft", () => {
     expect(out).not.toHaveProperty("updatedAt");
   });
 });
+
+describe("read() defends the contents of the persisted arrays", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("drops a null preset entry instead of throwing on it later", () => {
+    // Previously survived read() (Array.isArray passes) and then threw on
+    // `p.name` during seeding, leaving the designer unopenable until the
+    // user cleared localStorage by hand.
+    localStorage.setItem(
+      "csm.dashboardSharedConfigDraft",
+      JSON.stringify({ presets: [null, { name: "ok", filter: { a: 1 } }], sections: [] }),
+    );
+    const got = getSharedConfigDraft();
+    expect(got.presets).toEqual([{ name: "ok", filter: { a: 1 } }]);
+  });
+
+  it("drops a preset with no filter body", () => {
+    localStorage.setItem(
+      "csm.dashboardSharedConfigDraft",
+      JSON.stringify({ presets: [{ name: "bad" }], sections: [] }),
+    );
+    expect(getSharedConfigDraft().presets).toEqual([]);
+  });
+
+  it("drops a malformed section and malformed widgets inside a good one", () => {
+    localStorage.setItem(
+      "csm.dashboardSharedConfigDraft",
+      JSON.stringify({
+        presets: [],
+        sections: [
+          null,
+          { name: "no-widgets-array", displayName: "X" },
+          { name: "ok", displayName: "Ok", widgets: [null, { widgetId: "w" }] },
+        ],
+      }),
+    );
+    const got = getSharedConfigDraft();
+    expect(got.sections).toHaveLength(1);
+    expect(got.sections[0].name).toBe("ok");
+    expect(got.sections[0].widgets).toEqual([{ widgetId: "w" }]);
+  });
+
+  it("seeding still works over a draft that had malformed entries", () => {
+    localStorage.setItem(
+      "csm.dashboardSharedConfigDraft",
+      JSON.stringify({ presets: [null], sections: [null] }),
+    );
+    const got = seedSharedConfigDraft([{ name: "p", filter: {} }], []);
+    expect(got.presets).toEqual([{ name: "p", filter: {} }]);
+  });
+});
+
+describe("export-time preset collapse", () => {
+  const presets = [
+    {
+      name: "activeCaseStates",
+      filter: { field: "state", op: "in", values: ["open", "work_in_progress"] },
+    },
+  ];
+  const expanded = {
+    filters: [{ field: "state", op: "in", values: ["open", "work_in_progress"] }],
+  };
+
+  it("rewrites a literal filter back to its preset reference on export", () => {
+    // Covers the widget an admin never opened in the editor: the draft holds
+    // the API's expanded form, so without this the reference is lost purely
+    // because nobody happened to click that widget.
+    const out = deployableDashboardFromDraft(
+      {
+        id: "d",
+        displayName: "D",
+        isDefault: false,
+        isTeamBased: false,
+        widgets: [widget({ query: expanded })],
+      },
+      presets,
+    );
+    const widgets = out.widgets as Record<string, unknown>[];
+    expect(widgets[0].query).toEqual({ filters: [{ preset: "activeCaseStates" }] });
+  });
+
+  it("rewrites slice queries too", () => {
+    const out = deployableDashboardFromDraft(
+      {
+        id: "d",
+        displayName: "D",
+        isDefault: false,
+        isTeamBased: false,
+        widgets: [
+          widget({
+            shape: "pie",
+            query: null,
+            slices: [{ label: "A", query: expanded }],
+          }),
+        ],
+      },
+      presets,
+    );
+    const widgets = out.widgets as Record<string, unknown>[];
+    const slices = widgets[0].slices as { query: unknown }[];
+    expect(slices[0].query).toEqual({ filters: [{ preset: "activeCaseStates" }] });
+  });
+
+  it("leaves a filter no preset accounts for alone", () => {
+    const other = { filters: [{ field: "severity", op: "in", values: ["critical"] }] };
+    const out = deployableDashboardFromDraft(
+      {
+        id: "d",
+        displayName: "D",
+        isDefault: false,
+        isTeamBased: false,
+        widgets: [widget({ query: other })],
+      },
+      presets,
+    );
+    const widgets = out.widgets as Record<string, unknown>[];
+    expect(widgets[0].query).toEqual(other);
+  });
+
+  it("emits literals unchanged when there is no catalogue", () => {
+    const out = deployableDashboardFromDraft({
+      id: "d",
+      displayName: "D",
+      isDefault: false,
+      isTeamBased: false,
+      widgets: [widget({ query: expanded })],
+    });
+    const widgets = out.widgets as Record<string, unknown>[];
+    expect(widgets[0].query).toEqual(expanded);
+  });
+
+  it("collapses inside a designed section's widgets too", () => {
+    const out = sectionsFileFromDraft(
+      [{ name: "s", displayName: "S", widgets: [widget({ query: expanded })] }],
+      presets,
+    );
+    expect(out.s.widgets[0].query).toEqual({ filters: [{ preset: "activeCaseStates" }] });
+  });
+});

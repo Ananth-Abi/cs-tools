@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -153,6 +154,50 @@ func LoadSharedSections(path string) (map[string]SharedSection, error) {
 		}
 	}
 	return sections, nil
+}
+
+// validateSharedSections proves every section in the catalogue is usable
+// BEFORE anything can read it, whether or not a dashboard includes it.
+//
+// Without this, a section's widgets are only ever checked as a side effect of
+// being expanded into a dashboard: finalize resolves presets and validates
+// widgets after expansion, so a section nothing references is never looked at.
+// It is then served by GET /dashboards/sections as though it were fine, offered
+// in the builder as something to include, and fails only later — at the moment
+// some author includes it, blaming their dashboard for a fault that was in the
+// section file all along.
+//
+// Validation runs against a THROWAWAY deep copy put through the real pipeline
+// (resolveDashboardFilterPresets then validateWidgets) rather than a second set
+// of checks written out by hand here: a parallel implementation would drift from
+// the one that actually governs a loaded dashboard, and the whole point is that
+// a section passes exactly the checks its widgets will face once included. The
+// copy is discarded, so the catalogue keeps its authored form — unexpanded
+// {"preset": ...} references and all — which is what the builder edits.
+//
+// Sections are visited in sorted order so a file with more than one broken
+// section always reports the same one first.
+func validateSharedSections(sections map[string]SharedSection, presets map[string]map[string]any, path string) error {
+	names := make([]string, 0, len(sections))
+	for name := range sections {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		section := sections[name]
+		probe := Dashboard{ID: name, Widgets: make([]WidgetTemplate, 0, len(section.Widgets))}
+		for _, w := range section.Widgets {
+			probe.Widgets = append(probe.Widgets, copyWidget(w))
+		}
+		if err := resolveDashboardFilterPresets(&probe, presets, path); err != nil {
+			return fmt.Errorf("dashboard sections: %s: section %q would fail on include: %w", path, name, err)
+		}
+		if err := validateWidgets(probe, path); err != nil {
+			return fmt.Errorf("dashboard sections: %s: section %q would fail on include: %w", path, name, err)
+		}
+	}
+	return nil
 }
 
 // expandIncludedSections replaces d's "includeSections" references with the
