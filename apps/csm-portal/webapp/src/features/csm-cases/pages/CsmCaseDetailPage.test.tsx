@@ -15,13 +15,14 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@testing-library/jest-dom/vitest";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
+import type { BeCaseType } from "@api/backend/types";
 
 // `@api/backend/client` -> `useAuthApiClient` -> `@config/apiConfig`, which
 // throws at module load when `window.config` isn't set — not present under
@@ -72,7 +73,10 @@ vi.mock("@utils/useDarkMode", () => ({
 // Builds a minimal but valid CsmCaseDetail whose `id` tracks the currently
 // mutated case id, so the page gets past its loading/error gates (the
 // `isLoading`/`isError`/`!data` early returns) for whichever case is active.
-function buildCase(id: string): CsmCaseDetail {
+function buildCase(
+  id: string,
+  overrides?: { caseType?: BeCaseType; description?: string },
+): CsmCaseDetail {
   return {
     id,
     caseNumber: `CS-${id}`,
@@ -90,7 +94,8 @@ function buildCase(id: string): CsmCaseDetail {
     minutesToBreach: 120,
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
-    description: "<p>Sample description</p>",
+    description: overrides?.description ?? "<p>Sample description</p>",
+    caseType: overrides?.caseType,
     assignmentGroup: "Support Team",
     customerContext: {
       accountName: "Acme Corp",
@@ -121,15 +126,24 @@ const useGetCsmCaseDetailMock = vi.fn();
 vi.mock("@features/csm-cases/api/useGetCsmCaseDetail", () => ({
   useGetCsmCaseDetail: (id: string | undefined) => useGetCsmCaseDetailMock(id),
 }));
-useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
-  data: id ? buildCase(id) : undefined,
-  isLoading: false,
-  isError: false,
-  error: null,
-  refetch: vi.fn(),
-  isFetching: false,
-  dataUpdatedAt: 0,
-}));
+function defaultCaseDetailImpl(id: string | undefined): unknown {
+  return {
+    data: id ? buildCase(id) : undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+    isFetching: false,
+    dataUpdatedAt: 0,
+  };
+}
+useGetCsmCaseDetailMock.mockImplementation(defaultCaseDetailImpl);
+// Reset to the shared default after every test — a test that swaps in its own
+// implementation (e.g. to set caseType) must not leak that override into
+// whichever test runs next.
+afterEach(() => {
+  useGetCsmCaseDetailMock.mockImplementation(defaultCaseDetailImpl);
+});
 
 vi.mock("@features/csm-cases/api/usePatchCsmCase", () => ({
   usePatchCsmCase: () => ({
@@ -430,5 +444,76 @@ describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () 
     expect(
       screen.queryByTestId("log-time-card-dialog-probe"),
     ).not.toBeInTheDocument();
+  });
+});
+
+// Announcements have no composer and no real comment thread (see the
+// isAnnouncement gate in the page), so the case description never arrives as
+// the Activities feed's opening comment the way it does for every other case
+// type — it has to be rendered directly. digiops-cs#2800.
+function renderCaseDetailPage(
+  path: string,
+  routePattern: string,
+  caseType: BeCaseType | undefined,
+  description: string,
+): ReturnType<typeof render> {
+  useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+    data: id ? buildCase(id, { caseType, description }) : undefined,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+    isFetching: false,
+    dataUpdatedAt: 0,
+  }));
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route path={routePattern} element={<CsmCaseDetailPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("CsmCaseDetailPage — announcement description rendering", () => {
+  it("renders the case description below the activity timeline for an announcement", () => {
+    renderCaseDetailPage(
+      "/announcements/case-1",
+      "/announcements/:caseId",
+      "announcement",
+      "<p>Long advisory content</p>",
+    );
+
+    expect(screen.getByText("Long advisory content")).toBeInTheDocument();
+  });
+
+  it("does not render a standalone description card for a non-announcement case", () => {
+    // Regular cases already get their description via the comments feed's
+    // opening entry (CaseActivitiesFeed, stubbed to null here) — rendering it
+    // a second time here would duplicate it.
+    renderCaseDetailPage(
+      "/cases/case-1",
+      "/cases/:caseId",
+      "case",
+      "<p>Long advisory content</p>",
+    );
+
+    expect(screen.queryByText("Long advisory content")).not.toBeInTheDocument();
+  });
+
+  it("renders nothing when an announcement has a blank description", () => {
+    renderCaseDetailPage(
+      "/announcements/case-1",
+      "/announcements/:caseId",
+      "announcement",
+      "",
+    );
+
+    expect(screen.queryByText("Description")).not.toBeInTheDocument();
   });
 });

@@ -2085,6 +2085,37 @@ export default function CsmCaseDetailPage(): JSX.Element {
               </>
             )}
           </Card>
+
+          {/* Announcements have no composer and no real comment thread (see
+              the isAnnouncement gate above), so the case description never
+              arrives as the feed's opening comment the way it does for every
+              other case type (see the note near `safeComments`). Render it
+              directly below the timeline instead — the only place an
+              announcement's actual content is shown. digiops-cs#2800. */}
+          {isAnnouncement && !isBlankHtml(c.description) && (
+            <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
+              <Typography variant="subtitle2">Description</Typography>
+              <Box
+                sx={{
+                  typography: "body2",
+                  color: "text.primary",
+                  minWidth: 0,
+                  maxWidth: "100%",
+                  contain: "inline-size",
+                  overflowX: "auto",
+                  "& p": { mb: 0.5 },
+                  "& p:last-child": { mb: 0 },
+                }}
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeDescriptionHtml(
+                    isDarkMode
+                      ? stripLightModeInlineStyles(c.description)
+                      : c.description,
+                  ),
+                }}
+              />
+            </Card>
+          )}
         </Box>
       )}
 
