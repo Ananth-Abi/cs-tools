@@ -82,6 +82,25 @@ describe("IncidentsFilterBar", () => {
     expect(screen.getByRole("checkbox", { name: /sla violated/i })).toBeChecked();
   });
 
+  // Regression: this control used to be a raw FormControl/InputLabel/Select
+  // with no `shrink`/`notched` override, which read wrong against
+  // oxygen-ui's own theme (its `MuiInputLabel` styleOverrides shift an
+  // unshrunk label up by `top: -7px` for any Select-backed field) --
+  // reported live as looking broken compared to the Cases tab's filter bar,
+  // which already routes through the shared, fixed `MultiSelectField`. This
+  // exercises the swap functionally: selecting a priority still updates the
+  // filter correctly.
+  it("selecting a priority sets it on the filter object", () => {
+    const { onChange } = renderFilterBar();
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Priority" }));
+    fireEvent.click(screen.getByRole("option", { name: /critical/i }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ priorities: expect.arrayContaining([expect.any(String)]) }),
+    );
+  });
+
   it("surfaces the product filter's coverage caveat as visible helper text", () => {
     renderFilterBar();
     expect(
