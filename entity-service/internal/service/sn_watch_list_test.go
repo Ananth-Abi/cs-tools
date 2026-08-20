@@ -148,9 +148,10 @@ func TestSNCaseService_UpdateCase_WatchListResolvedToEmails(t *testing.T) {
 
 	svc := NewServiceNowCaseService(newTestSNClient(t, mux), nil)
 
+	watchList := []string{testIncidentWatcherUUID1, testIncidentWatcherUUID2}
 	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
 		ID:        sysidToUUID(testWLCaseSysid),
-		WatchList: []string{testIncidentWatcherUUID1, testIncidentWatcherUUID2},
+		WatchList: &watchList,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -202,6 +203,188 @@ func TestSNIncidentService_UpdateIncident_WatchListClearedByEmptyList(t *testing
 	}
 }
 
+// TestSNCaseService_UpdateCase_WatchListAbsentVsEmpty covers the three states the
+// case-update watch list can be in. UpdateCaseRequest.WatchList is a pointer so
+// "not mentioned" and "explicitly empty" stay distinguishable: only the former may
+// leave the field out of the outgoing payload, and only the latter clears the list.
+func TestSNCaseService_UpdateCase_WatchListAbsentVsEmpty(t *testing.T) {
+	emptyWatchList := []string{}
+	populatedWatchList := []string{testIncidentWatcherUUID1, testIncidentWatcherUUID2}
+	assignee := "jane.doe@example.com"
+
+	tests := []struct {
+		name           string
+		req            domain.UpdateCaseRequest
+		wantPresent    bool
+		wantWatchList  []string
+		wantUserLookup bool
+	}{
+		{
+			name: "absent watch list is not sent",
+			req: domain.UpdateCaseRequest{
+				ID:            sysidToUUID(testWLCaseSysid),
+				AssigneeEmail: &assignee,
+			},
+			wantPresent: false,
+		},
+		{
+			name: "explicitly empty watch list is sent as an empty list",
+			req: domain.UpdateCaseRequest{
+				ID:        sysidToUUID(testWLCaseSysid),
+				WatchList: &emptyWatchList,
+			},
+			wantPresent:   true,
+			wantWatchList: []string{},
+		},
+		{
+			name: "populated watch list still resolves to identities in order",
+			req: domain.UpdateCaseRequest{
+				ID:        sysidToUUID(testWLCaseSysid),
+				WatchList: &populatedWatchList,
+			},
+			wantPresent:    true,
+			wantWatchList:  []string{testWatcherEmail1, testWatcherEmail2},
+			wantUserLookup: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBody map[string]any
+			userLookupCalled := false
+			mux := http.NewServeMux()
+			mux.HandleFunc("/users/search", func(w http.ResponseWriter, r *http.Request) {
+				userLookupCalled = true
+				watchListUserSearchStub(t)(w, r)
+			})
+			mux.HandleFunc("/cases/"+testWLCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPatch {
+					t.Fatalf("expected PATCH, got %s", r.Method)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{
+					"message": "Case updated successfully",
+					"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-03 10:00:00", "updatedBy": "engineer@example.com"}
+				}`))
+			})
+
+			svc := NewServiceNowCaseService(newTestSNClient(t, mux), nil)
+			if _, err := svc.UpdateCase(contextWithUserIDToken("token"), tt.req); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			got, present := gotBody["watchList"]
+			if present != tt.wantPresent {
+				t.Fatalf("watchList present = %v, want %v (payload %+v)", present, tt.wantPresent, gotBody)
+			}
+			if tt.wantPresent {
+				list, ok := got.([]any)
+				if !ok {
+					t.Fatalf("watchList = %#v, want an array", got)
+				}
+				if len(list) != len(tt.wantWatchList) {
+					t.Fatalf("watchList length: got %d, want %d", len(list), len(tt.wantWatchList))
+				}
+				for i, w := range tt.wantWatchList {
+					if list[i] != w {
+						t.Fatalf("watchList[%d]: got %v, want %q", i, list[i], w)
+					}
+				}
+			}
+			if userLookupCalled != tt.wantUserLookup {
+				t.Fatalf("user lookup called = %v, want %v", userLookupCalled, tt.wantUserLookup)
+			}
+		})
+	}
+}
+
+// TestSNCaseService_UpdateCase_EmptyWatchListFieldAccounting verifies an explicitly
+// empty watch list participates in the request's field accounting exactly as a
+// populated one does: it satisfies the at-least-one-field rule on its own, and it
+// is still subject to the rule that keeps the exclusive fields out of any
+// combination.
+func TestSNCaseService_UpdateCase_EmptyWatchListFieldAccounting(t *testing.T) {
+	emptyWatchList := []string{}
+	populatedWatchList := []string{testIncidentWatcherUUID1}
+	assignee := "jane.doe@example.com"
+	relatedCase := testRelatedCaseUUID
+
+	tests := []struct {
+		name    string
+		req     domain.UpdateCaseRequest
+		wantErr bool
+	}{
+		{
+			name: "empty watch list alone satisfies the at-least-one-field rule",
+			req: domain.UpdateCaseRequest{
+				ID:        sysidToUUID(testWLCaseSysid),
+				WatchList: &emptyWatchList,
+			},
+		},
+		{
+			name: "empty watch list cannot be combined with another exclusive field",
+			req: domain.UpdateCaseRequest{
+				ID:            sysidToUUID(testWLCaseSysid),
+				WatchList:     &emptyWatchList,
+				AssigneeEmail: &assignee,
+			},
+			wantErr: true,
+		},
+		{
+			name: "empty watch list cannot be combined with a combinable field",
+			req: domain.UpdateCaseRequest{
+				ID:            sysidToUUID(testWLCaseSysid),
+				WatchList:     &emptyWatchList,
+				RelatedCaseID: &relatedCase,
+			},
+			wantErr: true,
+		},
+		{
+			name: "populated watch list is rejected in the same combination",
+			req: domain.UpdateCaseRequest{
+				ID:            sysidToUUID(testWLCaseSysid),
+				WatchList:     &populatedWatchList,
+				RelatedCaseID: &relatedCase,
+			},
+			wantErr: true,
+		},
+		{
+			name:    "no field at all is still rejected",
+			req:     domain.UpdateCaseRequest{ID: sysidToUUID(testWLCaseSysid)},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/users/search", watchListUserSearchStub(t))
+			mux.HandleFunc("/cases/"+testWLCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{
+					"message": "Case updated successfully",
+					"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-03 10:00:00", "updatedBy": "engineer@example.com"}
+				}`))
+			})
+
+			svc := NewServiceNowCaseService(newTestSNClient(t, mux), nil)
+			_, err := svc.UpdateCase(contextWithUserIDToken("token"), tt.req)
+			if tt.wantErr {
+				if _, ok := err.(*apierror.ValidationError); !ok {
+					t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 // TestWatchListResolution_UnknownUserID verifies that a well-formed id matching no
 // user is a validation error on every watch-list path, rather than a watcher that
 // vanishes from an otherwise successful write.
@@ -240,9 +423,10 @@ func TestWatchListResolution_UnknownUserID(t *testing.T) {
 		{
 			name: "case update",
 			call: func() error {
+				watchList := unknown
 				_, err := caseSvc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
 					ID:        sysidToUUID(testWLCaseSysid),
-					WatchList: unknown,
+					WatchList: &watchList,
 				})
 				return err
 			},
