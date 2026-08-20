@@ -19,38 +19,40 @@ import { act, render, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// `ProtectedRoute`'s real implementation polls `isSignedIn` on ~1s interval
-// and only calls `onSignIn` once it decides the user isn't authenticated —
-// that's exactly the race under test here (see AuthGuard.tsx), but it's not
-// something worth re-implementing under jsdom. Stub it down to "call
-// onSignIn immediately with a fake defaultSignIn, so the assertions below
-// are about AuthGuard's own onSignIn handler, not ProtectedRoute internals.
+// Mutable so individual tests can flip `isSignedIn` across rerenders to
+// simulate a token expiring mid-session, after an initial successful sign-in.
+// Declared above the `vi.mock` factories below, which close over it.
+const asgardeoState = { isSignedIn: false };
+
+// Stubbed down to the branch order of the real component: children once
+// signed in, otherwise the `fallback` element. Re-implementing its polling
+// under jsdom isn't worth it, and the assertions below are about AuthGuard's
+// own sign-in handling rather than ProtectedRoute internals.
+//
+// Because this stub never throws, it cannot catch the upstream
+// `@asgardeo/react-router` 2.0.0 fall-through that crashed every signed-out
+// visit — AuthGuard.protectedRoute.test.tsx runs the real component for that.
 // It also renders a marker so tests can assert whether ProtectedRoute (and
 // therefore its loader-swap behaviour) is even in the tree for a given render.
-const defaultSignInMock = vi.fn();
 const protectedRouteRenderCount = vi.fn();
 vi.mock("@asgardeo/react-router", () => ({
   ProtectedRoute: ({
-    onSignIn,
     children,
+    fallback,
+    loader,
   }: {
-    onSignIn?: (
-      defaultSignIn: (options?: Record<string, unknown>) => void,
-      signInOptions?: Record<string, unknown>,
-    ) => void;
     children?: React.ReactNode;
+    fallback?: React.ReactNode;
+    loader?: React.ReactNode;
   }) => {
     protectedRouteRenderCount();
-    onSignIn?.(defaultSignInMock, { some: "option" });
-    return children ?? null;
+    if (asgardeoState.isSignedIn) return children ?? null;
+    return fallback ?? loader ?? null;
   },
 }));
 
 const signInSilentlyMock = vi.fn();
 const signInMock = vi.fn();
-// Mutable so individual tests can flip `isSignedIn` across rerenders to
-// simulate a token expiring mid-session, after an initial successful sign-in.
-const asgardeoState = { isSignedIn: false };
 vi.mock("@asgardeo/react", () => ({
   useAsgardeo: () => ({
     isSignedIn: asgardeoState.isSignedIn,
@@ -82,11 +84,12 @@ function renderAuthGuard() {
   );
 }
 
-describe("AuthGuard onSignIn (before any successful sign-in)", () => {
+describe("AuthGuard sign-in fallback (before any successful sign-in)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
     asgardeoState.isSignedIn = false;
+    signInMock.mockResolvedValue(undefined);
   });
 
   it("attempts a silent re-auth first and does not force a full sign-in redirect when it succeeds", async () => {
@@ -97,7 +100,7 @@ describe("AuthGuard onSignIn (before any successful sign-in)", () => {
     });
 
     await waitFor(() => expect(signInSilentlyMock).toHaveBeenCalledTimes(1));
-    expect(defaultSignInMock).not.toHaveBeenCalled();
+    expect(signInMock).not.toHaveBeenCalled();
   });
 
   it("falls back to the full sign-in redirect when silent re-auth resolves falsy", async () => {
@@ -107,9 +110,7 @@ describe("AuthGuard onSignIn (before any successful sign-in)", () => {
       renderAuthGuard();
     });
 
-    await waitFor(() =>
-      expect(defaultSignInMock).toHaveBeenCalledWith({ some: "option" }),
-    );
+    await waitFor(() => expect(signInMock).toHaveBeenCalledTimes(1));
   });
 
   it("falls back to the full sign-in redirect when silent re-auth rejects", async () => {
@@ -119,12 +120,23 @@ describe("AuthGuard onSignIn (before any successful sign-in)", () => {
       renderAuthGuard();
     });
 
-    await waitFor(() =>
-      expect(defaultSignInMock).toHaveBeenCalledWith({ some: "option" }),
-    );
+    await waitFor(() => expect(signInMock).toHaveBeenCalledTimes(1));
     expect(loggerDebugMock).toHaveBeenCalledWith(
       "[auth] silent sign-in failed",
       "iframe blocked",
+    );
+  });
+
+  it("saves the intended deep link before redirecting to the IdP", async () => {
+    signInSilentlyMock.mockResolvedValue(false);
+
+    await act(async () => {
+      renderAuthGuard();
+    });
+
+    await waitFor(() => expect(signInMock).toHaveBeenCalledTimes(1));
+    expect(sessionStorage.getItem("post_login_redirect")).toBe(
+      "/some/protected/path",
     );
   });
 });
@@ -172,7 +184,6 @@ describe("AuthGuard after an initial successful sign-in (transient token-clock e
     expect(protectedRouteRenderCount).not.toHaveBeenCalled();
     expect(signInSilentlyMock).not.toHaveBeenCalled();
     expect(signInMock).not.toHaveBeenCalled();
-    expect(defaultSignInMock).not.toHaveBeenCalled();
   });
 
   it("resets the latch on an explicit sign-out (app:signing-out), falling back to ProtectedRoute instead of continuing to render stale protected content", async () => {
