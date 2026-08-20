@@ -46,7 +46,7 @@ import {
 } from "react";
 import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
-import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { isBlankHtml, plainTextToHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useEngineerDisplayName } from "@hooks/useEngineerDisplayName";
@@ -382,7 +382,12 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
       try {
         await postComment.mutateAsync({
           changeRequestId: cr.id,
-          bodyHtml: reason,
+          // The dialog collects plain text, the comment field stores and
+          // re-renders rich text. Converting is not cosmetic here: this note
+          // is the audit record for an irreversible transition, so an
+          // unescaped `<` or `&` would silently drop part of it and the
+          // engineer's line breaks would vanish on render.
+          bodyHtml: plainTextToHtml(reason),
           internal: true,
         });
         setReasonRecorded(true);

@@ -17,9 +17,13 @@
 import DOMPurify from "dompurify";
 import { describe, expect, it } from "vitest";
 import {
+  escapeHtml,
   isBlankHtml,
+  plainTextToHtml,
   sanitizeDescriptionHtml,
   sanitizeRichTextHtml,
+  stripHtmlTags,
+  stripHtmlTagsPreservingLineBreaks,
   stripLightModeInlineStyles,
 } from "./sanitizeHtml";
 
@@ -153,5 +157,92 @@ describe("stripLightModeInlineStyles", () => {
     );
     expect(out).toContain("background-color: #1a1a1a");
     expect(out).toContain("color: red");
+  });
+});
+
+describe("stripHtmlTagsPreservingLineBreaks", () => {
+  it("keeps the boundary between two paragraphs (regression: used to collapse to 'AB')", () => {
+    expect(stripHtmlTags("<p>A</p><p>B</p>")).toBe("AB");
+    expect(stripHtmlTagsPreservingLineBreaks("<p>A</p><p>B</p>")).toBe("A\n\nB");
+  });
+
+  it("turns <br> into a single newline", () => {
+    expect(stripHtmlTagsPreservingLineBreaks("first<br />second")).toBe(
+      "first\nsecond",
+    );
+  });
+
+  it("keeps list items on separate lines", () => {
+    expect(
+      stripHtmlTagsPreservingLineBreaks("<ul><li>one</li><li>two</li></ul>"),
+    ).toBe("one\n\ntwo");
+  });
+
+  it("does not double up when the source HTML is itself newline-formatted", () => {
+    expect(
+      stripHtmlTagsPreservingLineBreaks("<p>A</p>\n  <p>B</p>\n"),
+    ).toBe("A\n\nB");
+  });
+
+  it("still strips markup and decodes entities like the single-line variant", () => {
+    expect(
+      stripHtmlTagsPreservingLineBreaks("<p>a &amp; b<script>x()</script></p>"),
+    ).toBe("a & b");
+  });
+
+  it("leaves plain text with comparison operators intact", () => {
+    expect(stripHtmlTagsPreservingLineBreaks("x < y > z")).toBe("x < y > z");
+  });
+
+  it("returns an empty string for markup with no visible text", () => {
+    expect(stripHtmlTagsPreservingLineBreaks("<p></p>")).toBe("");
+  });
+});
+
+describe("escapeHtml", () => {
+  it("escapes the HTML-significant characters", () => {
+    expect(escapeHtml(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#039;");
+  });
+
+  it("escapes the ampersand first, so an escaped entity is not double-escaped wrongly", () => {
+    expect(escapeHtml("a & <b>")).toBe("a &amp; &lt;b&gt;");
+  });
+});
+
+describe("plainTextToHtml", () => {
+  it("wraps a single line in a paragraph", () => {
+    expect(plainTextToHtml("Superseded by a later change.")).toBe(
+      "<p>Superseded by a later change.</p>",
+    );
+  });
+
+  it("keeps line breaks as <br />", () => {
+    expect(plainTextToHtml("first\nsecond")).toBe("<p>first<br />second</p>");
+  });
+
+  it("escapes markup-significant characters so no text is dropped on render", () => {
+    expect(plainTextToHtml("latency < 5ms & rising")).toBe(
+      "<p>latency &lt; 5ms &amp; rising</p>",
+    );
+  });
+
+  it("normalizes CRLF so a pasted reason does not gain blank lines", () => {
+    expect(plainTextToHtml("first\r\nsecond")).toBe("<p>first<br />second</p>");
+  });
+
+  it("returns an empty string for blank input", () => {
+    expect(plainTextToHtml("   \n  ")).toBe("");
+  });
+
+  it("round-trips a reason containing <, & and a newline back to the typed text", () => {
+    const typed = "Rolled back: latency < 5ms & error rate spiked.\nOwner: Jane Doe";
+    const posted = plainTextToHtml(typed);
+    expect(stripHtmlTagsPreservingLineBreaks(posted)).toBe(typed);
+  });
+
+  it("survives the render-side sanitizer with the text and the break intact", () => {
+    const typed = "a < b & c\nsecond line";
+    const rendered = sanitizeRichTextHtml(plainTextToHtml(typed));
+    expect(stripHtmlTagsPreservingLineBreaks(rendered)).toBe(typed);
   });
 });

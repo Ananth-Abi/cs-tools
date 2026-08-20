@@ -230,6 +230,38 @@ describe("EditChangeRequestDialog — rollback and test plans", () => {
     renderDialog({ rollbackPlan: "<p>Restore the previous release.</p>" });
     expect(saveButton()).toBeDisabled();
   });
+
+  // Regression: the strip used to drop block boundaries, so a stored
+  // multi-paragraph plan was seeded into the field as one run-on line. Because
+  // dirty-tracking is a string compare against the seeded value, saving any
+  // unrelated field afterwards could write that flattened text back over the
+  // stored content.
+  it("keeps paragraph boundaries when seeding a multi-paragraph stored plan", () => {
+    renderDialog({
+      rollbackPlan: "<p>Stop the rollout.</p><p>Redeploy the previous tag.</p>",
+    });
+    expect(rollbackPlanField()).toHaveValue(
+      "Stop the rollout.\n\nRedeploy the previous tag.",
+    );
+  });
+
+  it("keeps <br> line breaks and list items on separate lines", () => {
+    renderDialog({
+      rollbackPlan: "line one<br />line two",
+      testPlan: "<ul><li>check health</li><li>check latency</li></ul>",
+    });
+    expect(rollbackPlanField()).toHaveValue("line one\nline two");
+    expect(testPlanField()).toHaveValue("check health\n\ncheck latency");
+  });
+
+  it("still keeps a multi-paragraph plan out of the patch when it was not edited", () => {
+    const { onSave } = renderDialog({
+      rollbackPlan: "<p>Stop the rollout.</p><p>Redeploy the previous tag.</p>",
+    });
+    fireEvent.click(approvedSwitch());
+    fireEvent.click(saveButton());
+    expect(onSave).toHaveBeenCalledWith({ isCustomerApproved: true });
+  });
 });
 
 describe("EditChangeRequestDialog — planned end must be after planned start", () => {
@@ -241,6 +273,18 @@ describe("EditChangeRequestDialog — planned end must be after planned start", 
     // legend) — hence `getAllByText`.
     expect(screen.getAllByText("Planned start").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Planned end").length).toBeGreaterThan(0);
+  });
+
+  // The patch payload cannot express "remove the planned date" (an omitted key
+  // means "leave it alone"), so a clear affordance would look like it worked
+  // and then save nothing. Removed from both pickers until the payload can
+  // express it.
+  it("offers no clear affordance on either picker", () => {
+    renderDialog({
+      plannedStartOn: "2026-03-01 10:00:00",
+      plannedEndOn: "2026-03-01 12:00:00",
+    });
+    expect(screen.queryByRole("button", { name: /clear/i })).not.toBeInTheDocument();
   });
 
   it("flags an end that is before the start, and blocks the save", () => {

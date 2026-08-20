@@ -72,15 +72,13 @@ export function htmlToPlainText(html: string): string {
 
 /**
  * Escapes HTML entities in a string.
+ *
+ * Re-exported from `@utils/sanitizeHtml`, which owns the single implementation
+ * — importing it from this module would otherwise pull the whole editor (and
+ * its editor-framework dependencies) into any bundle that only wanted to
+ * escape a string.
  */
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
+export { escapeHtml } from "@utils/sanitizeHtml";
 
 /**
  * Sanitizes a URL by allowing only safe protocols.

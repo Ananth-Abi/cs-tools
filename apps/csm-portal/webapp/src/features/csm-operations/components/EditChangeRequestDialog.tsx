@@ -42,7 +42,7 @@ import {
   isPastDateTime,
   parseDateTimeLocal,
 } from "@utils/dateTime";
-import { stripHtmlTags } from "@utils/sanitizeHtml";
+import { stripHtmlTagsPreservingLineBreaks } from "@utils/sanitizeHtml";
 
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 
@@ -85,9 +85,14 @@ function toBackendDateTime(local: string): string {
  * stripped value, so an untouched field is never part of the patch and the
  * stored markup survives. Editing one is an explicit rewrite of that field,
  * and plain text is a valid value for it.
+ *
+ * Block boundaries have to survive the strip. A stored multi-paragraph plan
+ * flattened to one run-on line is a value the user never typed, and because
+ * dirty-tracking is a string compare against it, the flattened text is what a
+ * later edit would write back over the stored content.
  */
 function toPlainTextValue(raw?: string | null): string {
-  return raw ? stripHtmlTags(raw).trim() : "";
+  return raw ? stripHtmlTagsPreservingLineBreaks(raw) : "";
 }
 
 /**
@@ -196,6 +201,14 @@ export default function EditChangeRequestDialog({
               {saveError}
             </Alert>
           )}
+          {/*
+            No `clearable` on either picker. The patch payload has no way to
+            express "remove the planned date" — `plannedStartOn`/`plannedEndOn`
+            are `string | undefined`, and an omitted key means "leave it
+            alone" — so a clear affordance would appear to work and then
+            silently save nothing. Widening the payload to express a null
+            clear is the fix if this is ever actually needed.
+          */}
           <LocalizationProvider dateAdapter={AdapterDateFns}>
             <DateTimePicker
               label="Planned start"
@@ -215,7 +228,6 @@ export default function EditChangeRequestDialog({
                     ? "This date is in the past."
                     : undefined,
                 },
-                field: { clearable: true },
               }}
             />
             <DateTimePicker
@@ -237,7 +249,6 @@ export default function EditChangeRequestDialog({
                     ? "Planned end must be after planned start."
                     : undefined,
                 },
-                field: { clearable: true },
               }}
             />
           </LocalizationProvider>

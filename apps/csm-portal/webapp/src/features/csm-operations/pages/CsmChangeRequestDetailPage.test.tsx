@@ -23,6 +23,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { BeChangeRequestDetail } from "@api/backend/types";
 import { BackendApiError } from "@api/backend/client";
+import {
+  sanitizeRichTextHtml,
+  stripHtmlTagsPreservingLineBreaks,
+} from "@utils/sanitizeHtml";
 
 const navigateMock = vi.fn();
 const useGetChangeRequestMock = vi.fn();
@@ -543,7 +547,8 @@ describe("CsmChangeRequestDetailPage — destructive transitions need a reason f
     await waitFor(() => expect(patchMutateAsyncMock).toHaveBeenCalled());
     expect(postCommentMutateAsyncMock).toHaveBeenCalledWith({
       changeRequestId: "chg-1",
-      bodyHtml: "Latency regression in production.",
+      // The dialog collects plain text; the comment field is rich text.
+      bodyHtml: "<p>Latency regression in production.</p>",
       internal: true,
     });
     expect(patchMutateAsyncMock).toHaveBeenCalledWith({
@@ -610,6 +615,26 @@ describe("CsmChangeRequestDetailPage — destructive transitions need a reason f
     fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
     await waitFor(() => expect(patchMutateAsyncMock).toHaveBeenCalledTimes(2));
     expect(postCommentMutateAsyncMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("escapes the reason and keeps its line breaks, so the audit note is not mangled", async () => {
+    const typed = "Latency < 50ms breached & customer impacted.\nRolled back by Jane Doe.";
+    openRollbackDialog();
+    typeReason(typed);
+    fireEvent.click(screen.getByRole("button", { name: /^roll back$/i }));
+
+    await waitFor(() => expect(postCommentMutateAsyncMock).toHaveBeenCalled());
+    const posted = postCommentMutateAsyncMock.mock.calls[0][0] as {
+      bodyHtml: string;
+    };
+    expect(posted.bodyHtml).toBe(
+      "<p>Latency &lt; 50ms breached &amp; customer impacted.<br />Rolled back by Jane Doe.</p>",
+    );
+    // The audit record has to survive both the escape and the render-side
+    // sanitizer with every character the engineer typed still in it.
+    expect(
+      stripHtmlTagsPreservingLineBreaks(sanitizeRichTextHtml(posted.bodyHtml)),
+    ).toBe(typed);
   });
 
   it("routes the cancel transition through the same dialog", () => {

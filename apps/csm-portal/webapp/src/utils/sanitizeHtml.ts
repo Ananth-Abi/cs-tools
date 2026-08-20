@@ -235,3 +235,75 @@ export function stripHtmlTags(text: string): string {
   container.innerHTML = withoutTags;
   return container.textContent ?? "";
 }
+
+// Tags whose close marks the end of a visible block of text. Used by
+// {@link stripHtmlTagsPreservingLineBreaks} to turn structure into newlines
+// before the markup is discarded.
+const BLOCK_LEVEL_TAGS =
+  "p|div|li|ul|ol|tr|table|h[1-6]|blockquote|pre|section|article|header|footer|figcaption|dd|dt|dl";
+
+/**
+ * Opt-in sibling of {@link stripHtmlTags} that preserves block boundaries:
+ * `<p>A</p><p>B</p>` comes back as `"A\n\nB"` rather than `"AB"`.
+ *
+ * Deliberately a separate function rather than a change to `stripHtmlTags`.
+ * That one feeds single-line labels (recent-view titles and subtitles, the
+ * pinned-tab rename value, a case subject), where an injected newline would
+ * be a regression: it would show up in an `<input>` value and in a one-line
+ * ellipsised label. Use this one only where the text is displayed or edited
+ * as multi-line content.
+ *
+ * The boundary markers are inserted into the raw string *before* stripping,
+ * which is safe because the result still goes through `stripHtmlTags` — i.e.
+ * DOMPurify with an empty tag allow-list — so nothing here can smuggle markup
+ * through. Whitespace around the inserted newlines is collapsed so source
+ * formatting (`</p>\n<p>`) doesn't double up, and runs of three or more
+ * newlines collapse to a single blank line.
+ */
+export function stripHtmlTagsPreservingLineBreaks(text: string): string {
+  const withBoundaries = text
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(new RegExp(`</(?:${BLOCK_LEVEL_TAGS})\\s*>`, "gi"), "\n\n");
+  return stripHtmlTags(withBoundaries)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Escape the five HTML-significant characters so a plain-text string can be
+ * embedded in markup verbatim.
+ *
+ * Canonical implementation for the app; `components/rich-text-editor` re-exports
+ * this rather than keeping its own copy, and nothing should hand-roll a third.
+ */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+/**
+ * Convert plain text typed by a user into the rich-text HTML the comment and
+ * long-text endpoints store and re-render.
+ *
+ * Both halves matter for anything that is an audit record. Without escaping, a
+ * `<` or `&` the engineer typed is parsed as markup and part of the text is
+ * silently dropped on render; without the `<br />`s, every line break they
+ * typed disappears. The output round-trips back through
+ * {@link stripHtmlTagsPreservingLineBreaks} with the text intact (that pair
+ * normalizes surrounding whitespace and collapses runs of three or more
+ * newlines to one blank line, so those are the only differences).
+ *
+ * Empty or whitespace-only input yields `""` rather than an empty paragraph,
+ * so callers that treat blank as "nothing to post" keep working.
+ */
+export function plainTextToHtml(text: string): string {
+  if (!text.trim()) return "";
+  const lines = text.replace(/\r\n?/g, "\n").split("\n").map(escapeHtml);
+  return `<p>${lines.join("<br />")}</p>`;
+}

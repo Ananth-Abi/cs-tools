@@ -14,6 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+import type { ComponentProps } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -21,7 +22,7 @@ import ChangeRequestTransitionReasonDialog from "@features/csm-operations/compon
 
 function renderDialog(
   props: Partial<
-    React.ComponentProps<typeof ChangeRequestTransitionReasonDialog>
+    ComponentProps<typeof ChangeRequestTransitionReasonDialog>
   > = {},
 ): {
   onConfirm: ReturnType<typeof vi.fn>;
