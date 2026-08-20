@@ -227,6 +227,17 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
     refetch: refetchFilterPresets,
   } = useDashboardFilterPresets();
   const { data: sharedSections } = useDashboardSharedSections();
+
+  // Exporting without the preset catalogue can only LOSE something when the
+  // draft came from a deployed dashboard: those widgets hold the API's
+  // already-expanded filters, and collapse-back needs the catalogue to turn
+  // them into references again. A draft that was authored here has its
+  // references stored as {"preset": ...} in the draft already (the editor
+  // wrote them that way), so its export is lossless with or without the
+  // catalogue — blocking that case would break the builder for no gain, the
+  // same reasoning the widget-editor gate uses.
+  const exportCouldLoseReferences =
+    working?.sourceDashboardId !== undefined && filterPresets === undefined;
   const [editingWidget, setEditingWidget] = useState<
     { widget: BeDashboardWidget | undefined; defaultSection?: string } | undefined
   >(undefined);
@@ -355,6 +366,10 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
   };
 
   const handleCopyJson = async (): Promise<void> => {
+    // Guarded here as well as on the button: a disabled button is a UI
+    // affordance, not an invariant, and this must not be reachable from
+    // anywhere else while the catalogue is missing.
+    if (exportCouldLoseReferences) return;
     const deployable = deployableDashboardFromDraft(working, filterPresets);
     try {
       await navigator.clipboard.writeText(JSON.stringify(deployable, null, 2));
@@ -385,8 +400,20 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
           <Typography variant="caption" color="text.secondary">
             {savedAt ? `Saved locally ${new Date(savedAt).toLocaleTimeString()}` : "Not saved yet"}
           </Typography>
-          <Tooltip title="Copy this dashboard's deployable JSON to the clipboard">
-            <Button size="small" variant="outlined" startIcon={<Copy size={14} />} onClick={() => void handleCopyJson()}>
+          <Tooltip
+            title={
+              exportCouldLoseReferences
+                ? "Unavailable while the shared filter presets cannot be loaded: exporting now would turn this dashboard's shared preset references into fixed copies."
+                : "Copy this dashboard's deployable JSON to the clipboard"
+            }
+          >
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<Copy size={14} />}
+              disabled={exportCouldLoseReferences}
+              onClick={() => void handleCopyJson()}
+            >
               {copyFeedback ? "Copied!" : "Copy as JSON"}
             </Button>
           </Tooltip>

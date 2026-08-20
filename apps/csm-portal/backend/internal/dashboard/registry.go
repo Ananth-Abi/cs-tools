@@ -132,12 +132,7 @@ func NewDirRegistry(dir string, hotReload bool, presetsFile, sectionsFile string
 		if err != nil {
 			return nil, err
 		}
-		// Every section is proven usable here, not just the ones some
-		// dashboard happens to include -- see validateSharedSections.
-		if err := validateSharedSections(sharedSections, sharedPresets, sectionsFile); err != nil {
-			return nil, err
-		}
-		return loadDir(d, sharedPresets, sharedSections)
+		return loadDirWithSections(d, sharedPresets, sharedSections, sectionsFile)
 	}
 	loadCatalogues := func() (map[string]map[string]any, map[string]SharedSection, error) {
 		presets, err := LoadSharedPresets(presetsFile)
@@ -375,6 +370,65 @@ func loadDir(dir string, sharedPresets map[string]map[string]any, sharedSections
 	}
 
 	return finalize(loaded, true, sharedPresets, sharedSections)
+}
+
+// loadDirWithSections is loadDir plus catalogue-level validation of every
+// shared section, including the ones no dashboard references.
+//
+// The validation has to happen HERE rather than beside LoadSharedSections,
+// because it needs the decoded dashboards: a section may legitimately
+// reference a preset that only a dashboard's own "filterPresets" defines, so
+// the set a section can resolve against is the union of the shared file and
+// every dashboard's local presets. See validateSharedSections.
+func loadDirWithSections(dir string, sharedPresets map[string]map[string]any, sharedSections map[string]SharedSection, sectionsSource string) ([]Dashboard, error) {
+	if len(sharedSections) > 0 {
+		resolvable, err := resolvablePresets(dir, sharedPresets)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateSharedSections(sharedSections, resolvable, sectionsSource); err != nil {
+			return nil, err
+		}
+	}
+	return loadDir(dir, sharedPresets, sharedSections)
+}
+
+// resolvablePresets is the shared presets plus every dashboard-local
+// "filterPresets" in dir, which together are what a section's preset
+// reference can resolve against once it is expanded into a dashboard.
+//
+// A name defined in more than one place collapses to one entry: this set is
+// only ever asked "does this name resolve anywhere", never "what does it
+// expand to", so which definition wins does not matter here -- that is
+// decided per dashboard by resolveDashboardFilterPresets.
+func resolvablePresets(dir string, sharedPresets map[string]map[string]any) (map[string]map[string]any, error) {
+	out := make(map[string]map[string]any, len(sharedPresets))
+	for k, v := range sharedPresets {
+		out[k] = v
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard definitions: read directory %q: %w", dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), definitionExt) ||
+			strings.HasPrefix(entry.Name(), "_") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		raw, err := os.ReadFile(path) //nolint:gosec // path is deployment configuration, not user input
+		if err != nil {
+			return nil, fmt.Errorf("dashboard definitions: read %q: %w", path, err)
+		}
+		var d Dashboard
+		if err := json.Unmarshal(raw, &d); err != nil {
+			return nil, fmt.Errorf("dashboard definitions: parse %q: %w", path, err)
+		}
+		for k, v := range d.FilterPresets {
+			out[k] = v
+		}
+	}
+	return out, nil
 }
 
 // LoadSharedPresets reads path (DASHBOARD_PRESETS_FILE — see

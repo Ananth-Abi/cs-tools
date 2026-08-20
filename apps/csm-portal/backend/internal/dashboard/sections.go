@@ -175,6 +175,16 @@ func LoadSharedSections(path string) (map[string]SharedSection, error) {
 // copy is discarded, so the catalogue keeps its authored form — unexpanded
 // {"preset": ...} references and all — which is what the builder edits.
 //
+// presets must be every preset a section could legitimately resolve against,
+// NOT just the shared ones. A dashboard may define its own "filterPresets",
+// section expansion runs before dashboard-local presets are merged in, and a
+// section's reference is therefore resolved against the union -- so validating
+// against the shared file alone would reject a section that works perfectly
+// well once included, and take the whole deploy down with it. Referencing a
+// dashboard-local preset from a shared section is still a bad idea (the
+// section only works for dashboards that happen to define it) but that is a
+// design smell, not something to fail a load over.
+//
 // Sections are visited in sorted order so a file with more than one broken
 // section always reports the same one first.
 func validateSharedSections(sections map[string]SharedSection, presets map[string]map[string]any, path string) error {

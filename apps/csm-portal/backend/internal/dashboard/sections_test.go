@@ -525,3 +525,51 @@ func TestValidateSharedSectionsRejectsUnreferencedBreakage(t *testing.T) {
 		}
 	})
 }
+
+// TestSharedSectionMayReferenceDashboardLocalPreset proves catalogue validation
+// resolves a section's preset reference against the UNION of the shared file
+// and every dashboard's own "filterPresets" — the set the reference actually
+// resolves against once the section is expanded. Validating against the shared
+// file alone rejected a section that works, and failed the whole load.
+func TestSharedSectionMayReferenceDashboardLocalPreset(t *testing.T) {
+	dir := t.TempDir()
+	presetsPath := filepath.Join(dir, "_presets.json")
+	sectionsPath := filepath.Join(dir, "_sections.json")
+	write := func(t *testing.T, path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
+	sectionWidget := func(presetName string) string {
+		return `{"orphan":{"displayName":"Orphan","widgets":[` +
+			`{"id":"w","displayName":"W","resourceType":"case","shape":"count","gridWidth":3,` +
+			`"query":{"filters":[{"preset":"` + presetName + `"}]}}]}}`
+	}
+
+	// The shared file is deliberately EMPTY of the preset the section wants;
+	// only the dashboard defines it, in its own filterPresets.
+	write(t, presetsPath, `{}`)
+	write(t, filepath.Join(dir, "d.json"), `{"id":"d","displayName":"D","type":"cs","isDefault":true,`+
+		`"filterPresets":{"localOnly":{"field":"state","op":"in","values":["open"]}},`+
+		`"widgets":[{"id":"dw","displayName":"DW","resourceType":"case","shape":"count","gridWidth":3,`+
+		`"query":{"filters":[{"preset":"localOnly"}]}}]}`)
+
+	t.Run("a dashboard-local preset satisfies a section reference", func(t *testing.T) {
+		write(t, sectionsPath, sectionWidget("localOnly"))
+		if _, err := NewDirRegistry(dir, false, presetsPath, sectionsPath); err != nil {
+			t.Fatalf("a section referencing a dashboard-local preset must load, got: %v", err)
+		}
+	})
+
+	t.Run("a name defined nowhere is still fatal", func(t *testing.T) {
+		write(t, sectionsPath, sectionWidget("definedNowhere"))
+		_, err := NewDirRegistry(dir, false, presetsPath, sectionsPath)
+		if err == nil {
+			t.Fatal("expected the load to fail on a preset defined in no file at all")
+		}
+		if !strings.Contains(err.Error(), "orphan") {
+			t.Errorf("error should still name the offending section: %v", err)
+		}
+	})
+}
