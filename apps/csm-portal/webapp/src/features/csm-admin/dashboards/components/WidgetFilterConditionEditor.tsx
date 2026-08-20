@@ -136,6 +136,14 @@ export default function WidgetFilterConditionEditor({
               value={condition.op}
               onChange={(e) => updateRow(index, { op: e.target.value as FilterConditionOp })}
               sx={{ minWidth: 160 }}
+              slotProps={{
+                // `condition.op` always holds a real value (no empty
+                // option), so the label is always shrunk -- see
+                // MultiSelectField.tsx's doc comment for why this override
+                // is needed at all against oxygen-ui's own theme.
+                inputLabel: { shrink: true, sx: { top: "0px !important" } },
+                select: { notched: true },
+              }}
             >
               {rowOps.map((op) => (
                 <MenuItem key={op} value={op}>

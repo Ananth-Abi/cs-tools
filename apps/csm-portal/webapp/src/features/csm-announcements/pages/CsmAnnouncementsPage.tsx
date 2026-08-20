@@ -17,15 +17,9 @@
 import {
   Box,
   Button,
-  Checkbox,
-  FormControl,
   IconButton,
   InputAdornment,
-  InputLabel,
   LinearProgress,
-  ListItemText,
-  MenuItem,
-  Select,
   Skeleton,
   Table,
   TableBody,
@@ -37,10 +31,10 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import type { SelectChangeEvent } from "@wso2/oxygen-ui";
 import { Search, X } from "@wso2/oxygen-ui-icons-react";
 import { useState, type ChangeEvent, type JSX } from "react";
 import { Link as RouterLink } from "react-router";
+import MultiSelectField from "@components/MultiSelectField";
 import QueryErrorState from "@components/QueryErrorState";
 import SemanticChip from "@components/SemanticChip";
 import AsyncProjectMultiSelect from "@features/csm-cases/components/AsyncProjectMultiSelect";
@@ -79,53 +73,6 @@ function formatDate(value?: string | null): string {
       month: "short",
       day: "numeric",
     }) ?? "—"
-  );
-}
-
-interface MultiSelectProps<T extends string> {
-  id: string;
-  label: string;
-  values: T[];
-  options: { value: T; label: string }[];
-  onChange: (next: T[]) => void;
-}
-
-/** Checkbox multi-select over a fixed enum (State). */
-function MultiSelect<T extends string>({
-  id,
-  label,
-  values,
-  options,
-  onChange,
-}: MultiSelectProps<T>): JSX.Element {
-  const handleChange = (event: SelectChangeEvent<string[]>): void => {
-    const val = event.target.value;
-    onChange((Array.isArray(val) ? val : [val]) as T[]);
-  };
-  return (
-    <FormControl fullWidth size="small">
-      <InputLabel id={`${id}-label`}>{label}</InputLabel>
-      <Select
-        multiple
-        labelId={`${id}-label`}
-        id={id}
-        value={values as unknown as string[]}
-        label={label}
-        onChange={handleChange}
-        renderValue={(selected) =>
-          (Array.isArray(selected) ? selected : [])
-            .map((v) => options.find((o) => o.value === v)?.label ?? v)
-            .join(", ")
-        }
-      >
-        {options.map((opt) => (
-          <MenuItem key={opt.value} value={opt.value} sx={{ py: 0.5 }}>
-            <Checkbox size="small" checked={values.includes(opt.value)} sx={{ mr: 1, p: 0.25 }} />
-            <ListItemText primary={opt.label} />
-          </MenuItem>
-        ))}
-      </Select>
-    </FormControl>
   );
 }
 
@@ -212,7 +159,7 @@ export default function CsmAnnouncementsPage(): JSX.Element {
           />
         </Box>
         <Box sx={{ flex: "1 1 160px", minWidth: 150 }}>
-          <MultiSelect
+          <MultiSelectField
             id="announcements-filter-state"
             label="State"
             values={filters.states}
