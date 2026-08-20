@@ -181,10 +181,13 @@ type UserGroupRef struct {
 //
 // Rows with no linked contact record make the project, and every case on it, silently
 // invisible to that user, so they are reported here with GrantsCaseAccess spelling out the
-// verdict instead of being dropped. GrantsCaseAccess mirrors ContactRecordPresent directly
-// -- deliberately not the stricter email-match rule the live access check enforces, since
-// that only diverges for integration/system accounts, which aren't the audience this
-// signals for.
+// verdict instead of being dropped. GrantsCaseAccess is the access rule applied per row:
+// ContactRecordPresent AND ContactEmail matching ContactRecordEmail, compared
+// case-insensitively. It is deliberately not a restatement of ContactRecordPresent -- a row
+// invited under one address but linked to a contact whose own address differs is invisible
+// to both people, and that does happen on genuine customer rows, not only on
+// integration/system accounts. Both halves of the comparison are fields on this struct, so
+// a false verdict can be explained from the row itself.
 type UserProjectAccess struct {
 	ProjectID   string `json:"projectId"`
 	ProjectName string `json:"projectName"`
@@ -2493,7 +2496,12 @@ type ProjectContact struct {
 	// empty id internally; on the wire both a nil and an absent id are omitted, so the
 	// published shape is unchanged.
 	ID                   *string  `json:"id,omitempty"`
-	Name                 string   `json:"name"`
+	// Name is empty when the row has no contact record linked -- the name is only ever
+	// known from that record.
+	Name string `json:"name"`
+	// Email falls back to the address the row was invited under when no contact record is
+	// linked, so a row whose contact record was never created stays identifiable instead
+	// of carrying no name and no address at all.
 	Email                string   `json:"email"`
 	RegistrationState    string   `json:"registrationState"`
 	NotificationsEnabled bool     `json:"notificationsEnabled"`
@@ -2502,10 +2510,12 @@ type ProjectContact struct {
 	// this project's cases" per row, not just "are they listed". CustomerContactPresent
 	// is whether a contact record is linked at all (false is the same fault ID==nil
 	// signals, restated as an explicit boolean rather than an absence a caller has to
-	// notice). GrantsCaseAccess mirrors it directly -- deliberately not the stricter
-	// invited-email-matches-account-email rule the portal's access check technically
-	// applies underneath, since that only ever diverges for integration/system accounts,
-	// not the real customers this signals for.
+	// notice). GrantsCaseAccess is the access rule the backing data source actually
+	// applies: a linked contact record AND the address the row was invited under matching
+	// that record's own address, compared case-insensitively. Deliberately not a
+	// restatement of CustomerContactPresent -- a row invited under one address but linked
+	// to a contact whose own address differs is invisible to both people, and that does
+	// happen on genuine customer rows, not only on integration/system accounts.
 	CustomerContactPresent bool `json:"customerContactPresent"`
 	GrantsCaseAccess       bool `json:"grantsCaseAccess"`
 }
