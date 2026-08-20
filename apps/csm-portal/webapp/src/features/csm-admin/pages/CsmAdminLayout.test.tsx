@@ -14,11 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location-probe">{location.pathname}</div>;
+}
 
 let mockRoles: string[] | undefined = ["admin"];
 
@@ -44,6 +49,15 @@ function renderLayout(initialEntry: string) {
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/admin" element={<CsmAdminLayout />}>
+          <Route
+            path="user-management"
+            element={
+              <>
+                <div>User management tiles</div>
+                <LocationProbe />
+              </>
+            }
+          />
           <Route path="user-management/users" element={<div>Users content</div>} />
           <Route path="user-management/roles" element={<div>Roles content</div>} />
           <Route path="user-management/groups" element={<div>Groups content</div>} />
@@ -59,13 +73,11 @@ function renderLayout(initialEntry: string) {
 describe("CsmAdminLayout — top-level tabs", () => {
   it("shows only User management and Dashboards at the top level, for an admin user", () => {
     mockRoles = ["admin"];
-    // Dashboards active, so the nested User management strip is absent —
-    // isolates the top-level strip's own two tabs from its sub-tabs.
     renderLayout("/admin/dashboards");
     expect(screen.getByRole("tab", { name: "User management" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Dashboards" })).toBeInTheDocument();
-    // The five directory pages are only reachable as User management's nested
-    // sub-tabs, never as top-level tabs.
+    // The five directory pages are only reachable as tiles on the User
+    // management landing page, never as top-level tabs.
     expect(screen.queryByRole("tab", { name: "Users" })).not.toBeInTheDocument();
   });
 
@@ -77,52 +89,50 @@ describe("CsmAdminLayout — top-level tabs", () => {
   });
 });
 
-describe("CsmAdminLayout — nested User management tabs", () => {
-  it("shows User management's five sub-tabs when it is the active top-level tab", () => {
+describe("CsmAdminLayout — back link to the User management tile grid", () => {
+  it("shows no back link on the landing route itself", () => {
     mockRoles = ["admin"];
-    renderLayout("/admin/user-management/users");
-    expect(screen.getByRole("tab", { name: "User management" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    for (const label of ["Users", "Roles", "Groups", "Teams", "Permissions"]) {
-      expect(screen.getByRole("tab", { name: label })).toBeInTheDocument();
-    }
+    renderLayout("/admin/user-management");
+    expect(screen.getByText("User management tiles")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /back to user management/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("marks the sub-tab matching the current route as active", () => {
+  it("shows a back link on each directory page reached via a tile, and it returns to the landing route", () => {
     mockRoles = ["admin"];
     renderLayout("/admin/user-management/roles");
-    expect(screen.getByRole("tab", { name: "Roles" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
     expect(screen.getByText("Roles content")).toBeInTheDocument();
+    const back = screen.getByRole("button", { name: /back to user management/i });
+
+    fireEvent.click(back);
+
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/admin/user-management");
+    expect(screen.getByText("User management tiles")).toBeInTheDocument();
+    expect(screen.queryByText("Roles content")).not.toBeInTheDocument();
   });
 
-  it("deep-links directly to a sub-page with both levels active and the right outlet rendered", () => {
-    mockRoles = ["admin"];
-    renderLayout("/admin/user-management/groups");
-    expect(screen.getByRole("tab", { name: "User management" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByRole("tab", { name: "Groups" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.getByText("Groups content")).toBeInTheDocument();
-  });
-
-  it("does not render the nested strip when Dashboards is the active top-level tab", () => {
+  it("does not show the back link when Dashboards is the active top-level tab", () => {
     mockRoles = ["admin"];
     renderLayout("/admin/dashboards");
-    expect(screen.getByRole("tab", { name: "Dashboards" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(screen.queryByRole("tab", { name: "Users" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "Roles" })).not.toBeInTheDocument();
     expect(screen.getByText("Dashboards content")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /back to user management/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  // Regression test: the back link used to render below the tab strip,
+  // inconsistent with every other page's Back button (always the first
+  // thing on the page, above the title). It must precede both the "Settings"
+  // heading and the tab strip in document order.
+  it("renders the back link above the Settings title and tab strip, not below them", () => {
+    mockRoles = ["admin"];
+    renderLayout("/admin/user-management/roles");
+    const back = screen.getByRole("button", { name: /back to user management/i });
+    const heading = screen.getByRole("heading", { name: "Settings" });
+    const tabStrip = screen.getByRole("tab", { name: "User management" });
+
+    expect(back.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(back.compareDocumentPosition(tabStrip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

@@ -39,7 +39,7 @@ func TestRun_SinglePageEvaluatesAllProjects(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "")
+	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "", nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -81,7 +81,7 @@ func TestRun_MultiPagePaginatesUntilHasMoreFalse(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "")
+	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "", nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -115,7 +115,7 @@ func TestRun_StopsWhenPageReturnsZeroProjects(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "")
+	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "", nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -157,7 +157,7 @@ func TestRun_BoundsIterationsByTotalWhenHasMoreNeverFalse(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "")
+	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), "", nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -193,7 +193,7 @@ func TestRun_OneProjectFailureDoesNotBlockTheRest(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	result, err := Run(context.Background(), reader, updater, ntf, now, "")
+	result, err := Run(context.Background(), reader, updater, ntf, now, "", nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -220,7 +220,7 @@ func TestRun_PageFetchFailureIsFatal(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	_, err := Run(context.Background(), reader, updater, ntf, time.Now(), "")
+	_, err := Run(context.Background(), reader, updater, ntf, time.Now(), "", nil)
 	if err == nil {
 		t.Fatal("Run() error = nil, want non-nil")
 	}
@@ -248,7 +248,7 @@ func TestRun_ScopedToProjectIDFetchesOnlyThatProject(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), testProjectID)
+	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), testProjectID, nil)
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
 	}
@@ -277,8 +277,86 @@ func TestRun_ScopedProjectFetchFailureIsFatal(t *testing.T) {
 	updater := &mockProjectUpdater{}
 	ntf := &mockNotifier{}
 
-	_, err := Run(context.Background(), reader, updater, ntf, time.Now(), "e3e87599-1bc7-6650-182c-0dc5604bcb68")
+	_, err := Run(context.Background(), reader, updater, ntf, time.Now(), "e3e87599-1bc7-6650-182c-0dc5604bcb68", nil)
 	if err == nil {
 		t.Fatal("Run() error = nil, want non-nil")
+	}
+}
+
+// TestRun_SkipsExcludedProjectsInBroadSweep verifies EXCLUDED_PROJECT_IDS:
+// a project whose ID is in excludedProjectIDs is skipped entirely in the
+// broad sweep — not evaluated, not counted in ProjectsEvaluated, no
+// processProject call at all — while the other projects in the same page
+// are unaffected.
+func TestRun_SkipsExcludedProjectsInBroadSweep(t *testing.T) {
+	now := time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)
+	firingEndDate := now.AddDate(0, 0, 89).Format(time.RFC3339) // fires the 90-day window
+
+	reader := &mockEntityReader{
+		searchProjectsFn: func(ctx context.Context, body []byte) ([]byte, error) {
+			// p2 (the excluded one) is given a firing end date and an
+			// invalid suspensionProcessState — if processProject ever
+			// actually ran on it, that would produce a real, visible
+			// failure. Its endDate being null instead would make
+			// processProject a silent no-op either way, so the
+			// zero-failures assertion below couldn't distinguish
+			// "never evaluated" from "evaluated but harmless" (PR #1482
+			// review, CodeRabbit).
+			return []byte(`{
+				"projects": [
+					{"id": "p1", "endDate": null},
+					{"id": "p2", "endDate": "` + firingEndDate + `", "suspensionProcessState": "not-an-object"},
+					{"id": "p3", "endDate": null}
+				],
+				"total": 3, "limit": 50, "offset": 0, "hasMore": false
+			}`), nil
+		},
+	}
+	updater := &mockProjectUpdater{}
+	ntf := &mockNotifier{}
+	excluded := map[string]bool{"p2": true}
+
+	result, err := Run(context.Background(), reader, updater, ntf, now, "", excluded)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if result.ProjectsEvaluated != 2 {
+		t.Errorf("ProjectsEvaluated = %d, want 2 (p2 excluded)", result.ProjectsEvaluated)
+	}
+	if result.ProjectsExcluded != 1 {
+		t.Errorf("ProjectsExcluded = %d, want 1", result.ProjectsExcluded)
+	}
+	if len(result.Failures) != 0 {
+		t.Errorf("Failures = %d, want 0", len(result.Failures))
+	}
+}
+
+// TestRun_ScopedToProjectIDSkipsExcludedProjectWithoutFetching verifies the
+// TEST_PROJECT_ID + EXCLUDED_PROJECT_IDS interaction: if the scoped
+// projectID is itself excluded, Run must not call GetProject at all — per
+// Sajith Ekanayake's explicit requirement, excluded projects must not even
+// have their details fetched, not just be skipped after fetching.
+func TestRun_ScopedToProjectIDSkipsExcludedProjectWithoutFetching(t *testing.T) {
+	const excludedID = "e3e87599-1bc7-6650-182c-0dc5604bcb68"
+
+	reader := &mockEntityReader{
+		getProjectFn: func(ctx context.Context, id string) ([]byte, error) {
+			t.Fatal("GetProject should not be called for an excluded projectID")
+			return nil, nil
+		},
+	}
+	updater := &mockProjectUpdater{}
+	ntf := &mockNotifier{}
+	excluded := map[string]bool{excludedID: true}
+
+	result, err := Run(context.Background(), reader, updater, ntf, time.Now(), excludedID, excluded)
+	if err != nil {
+		t.Fatalf("Run() error = %v, want nil", err)
+	}
+	if result.ProjectsEvaluated != 0 {
+		t.Errorf("ProjectsEvaluated = %d, want 0", result.ProjectsEvaluated)
+	}
+	if result.ProjectsExcluded != 1 {
+		t.Errorf("ProjectsExcluded = %d, want 1", result.ProjectsExcluded)
 	}
 }

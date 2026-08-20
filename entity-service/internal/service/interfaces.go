@@ -184,6 +184,11 @@ type CaseService interface {
 	// A ValidationError is returned for invalid input; any other error indicates an
 	// infrastructure failure.
 	SearchCases(ctx context.Context, req domain.SearchCasesRequest) (domain.SearchCasesResponse, error)
+	// AggregateCases returns server-side aggregated counts of cases per value of
+	// req.GroupBy (e.g. account), capped to the top req.MaxGroups buckets with
+	// the remainder folded into AggregateResponse.OthersCount. A ValidationError
+	// is returned for invalid input.
+	AggregateCases(ctx context.Context, req domain.AggregateCasesRequest) (domain.AggregateResponse, error)
 	// CreateCaseComment creates a new comment on the case identified by req.CaseID.
 	// A ValidationError is returned for invalid input or constraint violations.
 	CreateCaseComment(ctx context.Context, req domain.CreateCaseCommentRequest) (domain.CreateCaseCommentResponse, error)
@@ -280,6 +285,12 @@ type ChangeRequestService interface {
 	// project IDs, state keys, impact keys, date ranges, and search query.
 	SearchChangeRequests(ctx context.Context, req domain.SearchChangeRequestsRequest) (domain.SearchChangeRequestsResponse, error)
 
+	// AggregateChangeRequests returns server-side aggregated counts of change requests
+	// per value of req.GroupBy, capped to the top req.MaxGroups buckets with the
+	// remainder folded into AggregateResponse.OthersCount. A ValidationError is
+	// returned for invalid input.
+	AggregateChangeRequests(ctx context.Context, req domain.AggregateChangeRequestsRequest) (domain.AggregateResponse, error)
+
 	// GetChangeRequest returns the full detail of a single change request by its UUID.
 	GetChangeRequest(ctx context.Context, id string) (domain.ChangeRequest, error)
 
@@ -306,6 +317,13 @@ type TimeCardService interface {
 	// UpdateTimeCard edits an editable (submitted) time card, or transitions its
 	// state (approve/reject) when req.State is set. SN enforces authorization.
 	UpdateTimeCard(ctx context.Context, req domain.UpdateTimeCardRequest) (domain.TimeCardMutationResponse, error)
+	// DeleteTimeCard permanently deletes a time card. Matches UpdateTimeCard's
+	// trust model exactly: this only validates the ID's shape and forwards the
+	// caller's token to SN, which enforces that only the submitter may delete
+	// their own card, and only while it's still in the submitted state — see
+	// UpdateTimeCard's own doc comment for why that authorization isn't (and,
+	// consistent with every other write here, shouldn't be) duplicated in Go.
+	DeleteTimeCard(ctx context.Context, req domain.DeleteTimeCardRequest) (domain.DeleteTimeCardResponse, error)
 }
 
 // ConfigurationItemService defines the operations available on the configuration items entity.
@@ -401,6 +419,12 @@ type IncidentService interface {
 	// priority keys, and parent IDs. A ValidationError is returned for invalid input.
 	SearchIncidents(ctx context.Context, req domain.SearchIncidentsRequest) (domain.SearchIncidentsResponse, error)
 
+	// AggregateIncidents returns server-side aggregated counts of incidents per
+	// value of req.GroupBy, capped to the top req.MaxGroups buckets with the
+	// remainder folded into AggregateResponse.OthersCount. A ValidationError is
+	// returned for invalid input.
+	AggregateIncidents(ctx context.Context, req domain.AggregateIncidentsRequest) (domain.AggregateResponse, error)
+
 	// CreateIncident creates a new incident in ServiceNow.
 	// callerId, category, serviceId, impact, urgency, and subject are required.
 	CreateIncident(ctx context.Context, req domain.CreateIncidentRequest) (domain.CreateIncidentResponse, error)
@@ -424,6 +448,12 @@ type ProblemService interface {
 	// A ValidationError is returned for invalid input.
 	SearchProblems(ctx context.Context, req domain.SearchProblemsRequest) (domain.SearchProblemsResponse, error)
 
+	// AggregateProblems returns server-side aggregated counts of problems per
+	// value of req.GroupBy, capped to the top req.MaxGroups buckets with the
+	// remainder folded into AggregateResponse.OthersCount. A ValidationError is
+	// returned for invalid input.
+	AggregateProblems(ctx context.Context, req domain.AggregateProblemsRequest) (domain.AggregateResponse, error)
+
 	// GetProblem returns the full detail of a single problem by its UUID.
 	// A NotFoundError is returned if the problem does not exist.
 	GetProblem(ctx context.Context, id string) (domain.ProblemDetail, error)
@@ -431,6 +461,25 @@ type ProblemService interface {
 	// CreateProblem creates a new problem. Subject is required; OriginCaseID is optional.
 	// Supported by the ServiceNow data source only.
 	CreateProblem(ctx context.Context, req domain.CreateProblemRequest) (domain.ProblemDetail, error)
+}
+
+// IncidentTaskService defines the operations available on the incident_task entity.
+// Search and get only -- there is no create/update path.
+type IncidentTaskService interface {
+	// SearchIncidentTasks returns a paginated list of incident tasks filtered by
+	// optional search query and field filters. A ValidationError is returned for
+	// invalid input.
+	SearchIncidentTasks(ctx context.Context, req domain.SearchIncidentTasksRequest) (domain.SearchIncidentTasksResponse, error)
+
+	// AggregateIncidentTasks returns server-side aggregated counts of incident
+	// tasks per value of req.GroupBy, capped to the top req.MaxGroups buckets
+	// with the remainder folded into AggregateResponse.OthersCount. A
+	// ValidationError is returned for invalid input.
+	AggregateIncidentTasks(ctx context.Context, req domain.AggregateIncidentTasksRequest) (domain.AggregateResponse, error)
+
+	// GetIncidentTask returns the full detail of a single incident task by its UUID.
+	// A NotFoundError is returned if the incident task does not exist.
+	GetIncidentTask(ctx context.Context, id string) (domain.IncidentTaskDetail, error)
 }
 
 // ConversationService defines the operations available on the conversations entity.

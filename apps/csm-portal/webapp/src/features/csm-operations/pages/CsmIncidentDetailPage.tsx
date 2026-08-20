@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Card, Chip, Skeleton, Tab, Tabs, Tooltip, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Card, Chip, Skeleton, Tab, Tabs, Typography } from "@wso2/oxygen-ui";
 import {
   Activity,
   ArrowLeft,
@@ -24,7 +24,6 @@ import {
   MessageSquarePlus,
   Paperclip,
   Pencil,
-  Plus,
 } from "@wso2/oxygen-ui-icons-react";
 import {
   type JSX,
@@ -34,7 +33,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { useLocation, useParams } from "react-router";
+import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
@@ -60,7 +59,10 @@ import {
 } from "@features/csm-operations/utils/incidents";
 import CaseActivitiesFeed from "@features/csm-cases/components/CaseActivitiesFeed";
 import CsmCaseCommentInput from "@features/csm-cases/components/CsmCaseCommentInput";
-import { AttachmentsWidget } from "@features/csm-cases/components/CaseDetailWidgets";
+import {
+  AttachmentsWidget,
+  WatchersWidget,
+} from "@features/csm-cases/components/CaseDetailWidgets";
 import {
   useGetCsmCaseAttachments,
   usePostCsmCaseAttachment,
@@ -75,21 +77,10 @@ import type {
   BeUpdateIncidentPayload,
 } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
-const OPERATIONS_INCIDENTS_PATH = "/operations?tab=incidents";
-
-/**
- * `watchList` 404s ("The requested resource was not found!") on
- * `PATCH /incidents/{id}` for *any* id, in the correct UUID-array shape —
- * confirmed live (an anonymous service account, a real named user, and a
- * fresh retest during PR review all reproduce it identically), so it isn't a
- * bad-id or bad-payload-shape problem on our side. Until the upstream
- * (entity-service/ServiceNow) endpoint actually works, the Watchers tab shows
- * the current list read-only rather than exposing an add/remove action that
- * would always fail.
- */
-const WATCH_LIST_UNAVAILABLE_REASON =
-  "Editing the watch list isn't available yet — the upstream API for this is broken (always returns 404), independent of this portal.";
+const OPERATIONS_INCIDENTS_PATH = "/operations/incidents";
 
 /**
  * A single confirmed-live upstream limitation of `PATCH /incidents/{id}`
@@ -157,6 +148,7 @@ const TAB_DEFS: Array<{ id: IncidentTabId; label: string; icon: JSX.Element }> =
   { id: "watchers", label: "Watchers", icon: <Eye size={16} /> },
   { id: "attachments", label: "Attachments", icon: <Paperclip size={16} /> },
 ];
+const INCIDENT_TAB_IDS: readonly IncidentTabId[] = TAB_DEFS.map((t) => t.id);
 
 /**
  * Detail for a single incident (`GET /incidents/{id}`), tabbed to match
@@ -170,7 +162,7 @@ const TAB_DEFS: Array<{ id: IncidentTabId; label: string; icon: JSX.Element }> =
  * for the related, already-handled `additionalComments`/`workNotes` quirk).
  */
 export default function CsmIncidentDetailPage(): JSX.Element {
-  const { id } = useParams<{ id: string }>();
+  const id = useNormalizedIdParam("id");
   const navigate = useNavTransition();
   // Prefer the list URL the row link captured (if any) so "back" returns to
   // the exact view the engineer came from, falling back to the bare tab path
@@ -181,7 +173,12 @@ export default function CsmIncidentDetailPage(): JSX.Element {
   const { showError } = useErrorBanner();
   const patchIncident = usePatchIncident();
   const [editOpen, setEditOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<IncidentTabId>("activities");
+  // Kept in the URL (`?tab=`), not local state, so a shared/bookmarked link
+  // to a specific tab (e.g. Watchers) survives a refresh.
+  const { activeTab, setActiveTab } = useQueryParamTabs<IncidentTabId>(
+    INCIDENT_TAB_IDS,
+    "activities",
+  );
   const [resolutionTarget, setResolutionTarget] = useState<
     Extract<BeIncidentState, "RESOLVED" | "CLOSED"> | null
   >(null);
@@ -201,7 +198,18 @@ export default function CsmIncidentDetailPage(): JSX.Element {
   const [previewTarget, setPreviewTarget] = useState<CaseAttachment | null>(null);
 
   const attachmentList = useMemo(() => attachments ?? [], [attachments]);
-  const watchList = useMemo(() => data?.watchList ?? [], [data?.watchList]);
+  // The read model's entries already carry the platform user UUID the write
+  // side is keyed by, so the widget can compute a replacement list straight
+  // from what is on screen.
+  const watchList = useMemo(
+    () =>
+      (data?.watchList ?? []).map((w) => ({
+        id: w.id,
+        name: w.name || w.email,
+        email: w.email || undefined,
+      })),
+    [data?.watchList],
+  );
 
   const recordView = useRecordRecentView();
   useEffect(() => {
@@ -237,6 +245,36 @@ export default function CsmIncidentDetailPage(): JSX.Element {
       );
     },
     [downloadAttachment, showError],
+  );
+
+  /**
+   * Persist a new watch list. There is no add-one/remove-one endpoint:
+   * `PATCH /incidents/{id}` takes the whole `watchList` as user UUIDs and
+   * replaces what is stored, so `WatchersWidget` computes the full
+   * replacement list (for a removal as much as an addition) and this only
+   * forwards it. An explicitly empty list is meaningful here — it clears the
+   * watch list — which is why the widget allows removing an incident's last
+   * watcher.
+   */
+  const onReplaceWatchers = useCallback(
+    (nextWatcherIds: string[]) => {
+      if (!id) return;
+      patchIncident.mutate(
+        { id, patch: { watchList: nextWatcherIds } },
+        {
+          onError: (err) => {
+            // The watch-list 400s name the offending value (an unknown or
+            // malformed user id), which is worth surfacing verbatim.
+            const msg =
+              err instanceof BackendApiError && err.status < 500 && err.message
+                ? err.message
+                : "Could not update the watch list. Please try again.";
+            showError(msg, err);
+          },
+        },
+      );
+    },
+    [id, patchIncident, showError],
   );
 
   /**
@@ -624,38 +662,12 @@ export default function CsmIncidentDetailPage(): JSX.Element {
       )}
 
       {activeTab === "watchers" && (
-        <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
-          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <Typography variant="subtitle2">Watch list</Typography>
-            <Tooltip title={WATCH_LIST_UNAVAILABLE_REASON}>
-              {/* span wrapper: Tooltip needs a non-disabled child to attach its listeners to */}
-              <span>
-                <Button
-                  size="small"
-                  variant="text"
-                  startIcon={<Plus size={14} />}
-                  disabled
-                >
-                  Add watcher
-                </Button>
-              </span>
-            </Tooltip>
-          </Box>
-          {watchList.length > 0 ? (
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-              {watchList.map((w) => (
-                <Chip key={w.id} size="small" variant="outlined" label={w.name || w.email} />
-              ))}
-            </Box>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              No one is watching this incident.
-            </Typography>
-          )}
-          <Typography variant="caption" color="text.secondary">
-            {WATCH_LIST_UNAVAILABLE_REASON}
-          </Typography>
-        </Card>
+        <WatchersWidget
+          entityKind="incident"
+          watchers={watchList}
+          onReplace={onReplaceWatchers}
+          isSaving={patchIncident.isPending}
+        />
       )}
 
       {activeTab === "attachments" && (

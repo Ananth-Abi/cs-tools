@@ -167,6 +167,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		problemHandler = handler.NewProblemHandler(service.NewServiceNowProblemService(serviceNowIntegrationServiceClient))
 	}
 
+	var incidentTaskHandler *handler.IncidentTaskHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		incidentTaskHandler = handler.NewIncidentTaskHandler(service.NewServiceNowIncidentTaskService(serviceNowIntegrationServiceClient))
+	}
+
 	var conversationHandler *handler.ConversationHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		conversationHandler = handler.NewConversationHandler(service.NewServiceNowConversationService(serviceNowIntegrationServiceClient))
@@ -270,6 +275,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases", caseHandler.CreateCase)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
+	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
 	mux.HandleFunc("POST /attachments", caseHandler.CreateCaseAttachment)
@@ -299,6 +305,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	if changeRequestHandler != nil {
 		mux.HandleFunc("POST /change-requests", changeRequestHandler.CreateChangeRequest)
 		mux.HandleFunc("POST /change-requests/search", changeRequestHandler.SearchChangeRequests)
+		mux.HandleFunc("POST /change-requests/aggregate", changeRequestHandler.AggregateChangeRequests)
 		mux.HandleFunc("GET /change-requests/{id}", changeRequestHandler.GetChangeRequest)
 		mux.HandleFunc("PATCH /change-requests/{id}", changeRequestHandler.PatchChangeRequest)
 		mux.HandleFunc("GET /change-requests/{id}/approvals", changeRequestHandler.GetChangeRequestApprovals)
@@ -309,6 +316,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 		mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 		mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+		mux.HandleFunc("DELETE /time-cards/{id}", timeCardHandler.DeleteTimeCard)
 	}
 
 	if catalogHandler != nil {
@@ -360,13 +368,21 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("PATCH /incidents/{id}", incidentHandler.PatchIncident)
 		mux.HandleFunc("POST /incidents", incidentHandler.CreateIncident)
 		mux.HandleFunc("POST /incidents/search", incidentHandler.SearchIncidents)
+		mux.HandleFunc("POST /incidents/aggregate", incidentHandler.AggregateIncidents)
 		mux.HandleFunc("POST /incidents/{id}/activities/search", incidentHandler.SearchIncidentActivities)
 	}
 
 	if problemHandler != nil {
 		mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
 		mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
+		mux.HandleFunc("POST /problems/aggregate", problemHandler.AggregateProblems)
 		mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
+	}
+
+	if incidentTaskHandler != nil {
+		mux.HandleFunc("POST /incident-tasks/search", incidentTaskHandler.SearchIncidentTasks)
+		mux.HandleFunc("POST /incident-tasks/aggregate", incidentTaskHandler.AggregateIncidentTasks)
+		mux.HandleFunc("GET /incident-tasks/{id}", incidentTaskHandler.GetIncidentTask)
 	}
 
 	if conversationHandler != nil {

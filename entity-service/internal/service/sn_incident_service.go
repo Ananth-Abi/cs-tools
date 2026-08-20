@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -89,6 +90,18 @@ type snIncidentFilters struct {
 	// match against ServiceNow's `number` column -- not part of the
 	// free-text SearchQuery scan.
 	Number string `json:"number,omitempty"`
+	// StateKeys: see domain.SearchIncidentsFilters.StateKeys doc comment.
+	StateKeys []int `json:"stateKeys,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+	// BusinessServiceIDs: business_service sys_ids (converted from UUIDs).
+	BusinessServiceIDs []string `json:"businessServiceIds,omitempty"`
+	// StartCreatedDate/EndCreatedDate: see domain.SearchIncidentsFilters
+	// Filters "createdOn" doc comment. Wire keys match case search's own
+	// startCreatedDate/endCreatedDate exactly (same UtcDateTimeString
+	// contract on the Ballerina/SN side).
+	StartCreatedDate string `json:"startCreatedDate,omitempty"`
+	EndCreatedDate   string `json:"endCreatedDate,omitempty"`
 }
 
 // snIncidentPriorityKeyMap maps domain IncidentPriority enums to SN numeric priority keys.
@@ -195,6 +208,14 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.SearchIncidentsResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -214,10 +235,15 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 
 	payload := snIncidentSearchPayload{
 		Filters: snIncidentFilters{
-			SearchQuery:  req.Filters.SearchQuery,
-			PriorityKeys: priorityKeys,
-			ParentIDs:    uuidsToSysids(req.Filters.ParentIDs),
-			Number:       stringPtrValue(req.Filters.Number),
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
@@ -289,6 +315,101 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 		Limit:     req.Pagination.Limit,
 		Offset:    req.Pagination.Offset,
 	}, nil
+}
+
+// snIncidentAggregatePayload is the Choreo POST /incidents/aggregate request body.
+type snIncidentAggregatePayload struct {
+	Filters   snIncidentFilters `json:"filters,omitempty"`
+	GroupBy   string            `json:"groupBy"`
+	MaxGroups int               `json:"maxGroups,omitempty"`
+}
+
+// validIncidentAggregateField is the allow-list for
+// AggregateIncidentsRequest.GroupBy, matching openapi.yaml's
+// AggregateIncidentsRequest.groupBy enum exactly.
+var validIncidentAggregateField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+	"businessService": true,
+}
+
+// AggregateIncidents implements IncidentService by calling the Choreo POST
+// /incidents/aggregate endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into AggregateResponse.OthersCount. Filter parsing and validation
+// mirror SearchIncidents.
+func (s *snIncidentService) AggregateIncidents(ctx context.Context, req domain.AggregateIncidentsRequest) (domain.AggregateResponse, error) {
+	if req.GroupBy == "" {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validIncidentAggregateField[req.GroupBy] {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	for _, p := range req.Filters.Priorities {
+		if !validIncidentPriority[p] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "priorities contains invalid value: " + string(p)}
+		}
+	}
+	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	priorityKeys := make([]int, 0, len(req.Filters.Priorities))
+	for _, p := range req.Filters.Priorities {
+		priorityKeys = append(priorityKeys, snIncidentPriorityKeyMap[p])
+	}
+
+	payload := snIncidentAggregatePayload{
+		Filters: snIncidentFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/incidents/aggregate", token, payload)
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	var resp domain.AggregateResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.AggregateResponse{}, fmt.Errorf("sn incidents: parse aggregate response: %w", err)
+	}
+	// "assignmentGroup" and "businessService" are the only ID-valued fields
+	// in validIncidentAggregateField; SN returns their bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" || req.GroupBy == "businessService" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
+	return resp, nil
 }
 
 // snIncidentCategoryKeyMap maps domain IncidentCategory enums to SN category string values.
@@ -535,11 +656,15 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 			}
 		}
 	}
-	if err := validateUUIDs("watchList", req.WatchList); err != nil {
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	// The backing service's incident-create payload declares the watch list as
+	// email addresses, not user ids, so the incoming platform UUIDs are resolved
+	// to emails first.
+	watchList, err := watchListEmails(ctx, s.client, token, "watchList", req.WatchList)
+	if err != nil {
 		return domain.CreateIncidentResponse{}, err
 	}
-
-	token := middleware.UserIDTokenFromContext(ctx)
 
 	payload := snCreateIncidentPayload{
 		CallerID:           uuidToSysid(req.CallerID),
@@ -548,7 +673,7 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 		ImpactKey:          snIncidentImpactKeyMap[req.Impact],
 		UrgencyKey:         snIncidentUrgencyKeyMap[req.Urgency],
 		Subject:            req.Subject,
-		WatchList:          uuidsToSysids(req.WatchList),
+		WatchList:          watchList,
 		AdditionalComments: req.AdditionalComments,
 		WorkNotes:          req.WorkNotes,
 	}
@@ -976,8 +1101,15 @@ func (s *snIncidentService) UpdateIncident(ctx context.Context, req domain.Updat
 		WorkNotes:          req.WorkNotes,
 	}
 	if req.WatchList != nil {
-		v := uuidsToSysids(*req.WatchList)
-		payload.WatchList = &v
+		// The backing service's incident-update payload declares the watch list as
+		// usernames -- not emails as its create counterpart does, and not ids --
+		// and it replaces the whole list, so an explicitly empty list must still be
+		// sent to clear it rather than be skipped.
+		userNames, err := watchListUserNames(ctx, s.client, token, "watchList", *req.WatchList)
+		if err != nil {
+			return domain.UpdateIncidentResponse{}, err
+		}
+		payload.WatchList = &userNames
 	}
 	if req.Priority != nil {
 		v := snIncidentPriorityKeyMap[*req.Priority]

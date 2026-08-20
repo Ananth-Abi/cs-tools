@@ -16,9 +16,11 @@
 
 import { Box, Button, Card, Chip, IconButton, Skeleton, Tooltip, Typography, alpha, useTheme } from "@wso2/oxygen-ui";
 import { ArrowRight, Info } from "@wso2/oxygen-ui-icons-react";
-import type { JSX, KeyboardEvent, ReactNode } from "react";
+import { useRef, type JSX, type KeyboardEvent, type ReactNode } from "react";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router";
+import { useElementVisibleOnce } from "@hooks/useElementVisibleOnce";
 import type {
+  BeDashboardGroupByConfig,
   BeDashboardPieSlice,
   BeDashboardWidgetColumn,
   BeWidgetResourceType,
@@ -27,6 +29,7 @@ import type {
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
 import { useWidgetPieData, type PieSliceResult } from "@features/csm-dashboard/api/useWidgetPieData";
+import { useWidgetGroupByData } from "@features/csm-dashboard/api/useWidgetGroupByData";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
 import GenericColumnList from "@features/csm-dashboard/components/GenericColumnList";
@@ -61,8 +64,13 @@ interface DashboardWidgetTileProps {
   listLimit?: number;
   /** Only meaningful for shape "pie"/"bar"; one search per slice (see
    * `useWidgetPieData`). Empty/absent renders an empty chart rather than
-   * crashing. */
+   * crashing. Mutually exclusive with `groupBy` — a widget carries at most
+   * one of the two (backend-enforced). */
   slices?: BeDashboardPieSlice[];
+  /** Only meaningful for shape "pie"/"bar"; a single server-side
+   * `POST {resourceType}/aggregate` call instead of one search per slice
+   * (see `useWidgetGroupByData`). Mutually exclusive with `slices`. */
+  groupBy?: BeDashboardGroupByConfig;
   /** Only meaningful for shape "list". When set (non-empty), this widget
    * renders through the generic `GenericColumnList` (resolving each
    * column's dot-path against every response item) instead of
@@ -74,21 +82,29 @@ interface DashboardWidgetTileProps {
    * widget's own search request's `sortBy` (see `useWidgetData`) —
    * opaque, like `filters`. */
   sortBy?: Record<string, unknown>;
-  /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
-   * an array of every team's `groupId` in the current dashboard's family
-   * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL`),
-   * threaded down from `CsmDashboardPage` for resolving this widget's own
-   * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`)
-   * — never the team registry key. `undefined` for a non-team-based
-   * dashboard, or while the team isn't resolved yet (any `integrationCsTeam`
-   * filter entry carrying the placeholder is then dropped, not sent
-   * literally). */
-  selectedTeamGroupId?: string | string[];
+  /** The currently selected team's own `creGroupId` (see
+   * `BeTeam.creGroupId`), or an array of every team's `creGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected (see
+   * `ALL_TEAMS_SENTINEL`), threaded down from `CsmDashboardPage` for
+   * resolving this widget's own `__current_team__` filter placeholder for a
+   * `creTeam` filter entry (see `teamFilterPlaceholder.ts`) — never the
+   * team registry key. `undefined` for a non-team-based dashboard, or while
+   * the team isn't resolved yet (any `creTeam` filter entry carrying the
+   * placeholder is then dropped, not sent literally). */
+  selectedTeamCreGroupId?: string | string[];
+  /** The currently selected team's own `sreGroupId` (see
+   * `BeTeam.sreGroupId`), or an array of every team's `sreGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected — the
+   * `sreTeam`-filter counterpart of {@link selectedTeamCreGroupId}, resolved
+   * independently. `undefined` in the same cases `selectedTeamCreGroupId`
+   * is (any `sreTeam` filter entry carrying the placeholder is then
+   * dropped, not sent literally). */
+  selectedTeamSreGroupId?: string | string[];
   /** Human-readable label for the selected team (its own display `name`, or
    * the literal `"All ABTs"`) — used to resolve the `{{currentTeam}}` text
    * placeholder (see `widgetTextPlaceholder.ts`) inside `displayName`/
    * `description` before render. `undefined` in the same cases
-   * `selectedTeamGroupId` is (the token is then stripped rather than left
+   * `selectedTeamCreGroupId` is (the token is then stripped rather than left
    * literally visible). */
   selectedTeamLabel?: string;
 }
@@ -118,9 +134,11 @@ export default function DashboardWidgetTile({
   filters,
   listLimit,
   slices,
+  groupBy,
   columns,
   sortBy,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
 }: DashboardWidgetTileProps): JSX.Element {
   const theme = useTheme();
@@ -128,6 +146,15 @@ export default function DashboardWidgetTile({
   const location = useLocation();
   const { user } = useCurrentUser();
   const currentUserId = user?.id;
+  // Gates this tile's own data fetch (below) behind having actually
+  // scrolled into (or near — see the hook's rootMargin) the viewport at
+  // least once, rather than every widget on the dashboard firing its
+  // search the instant the page mounts. Attached to whichever top-level
+  // `Card` this component ends up returning (every branch below sets
+  // `ref={tileRef}`) — a given tile's shape never changes across its own
+  // lifetime, so exactly one of them ever mounts for a given instance.
+  const tileRef = useRef<HTMLDivElement>(null);
+  const isVisible = useElementVisibleOnce(tileRef);
   // Resolves every client-side filter placeholder a widget's own (opaque)
   // filters may carry — `__current_team__` (see `teamFilterPlaceholder.ts`),
   // `__current_user__` (see `currentUserFilterPlaceholder.ts`) and the
@@ -152,7 +179,9 @@ export default function DashboardWidgetTile({
   // list-page URL.
   const resolvePlaceholders = (f: Record<string, unknown>): Record<string, unknown> =>
     resolveCurrentUserPlaceholder(
-      resolveRelativeDateFilters(resolveTeamPlaceholder(f, selectedTeamGroupId)),
+      resolveRelativeDateFilters(
+        resolveTeamPlaceholder(f, selectedTeamCreGroupId, selectedTeamSreGroupId),
+      ),
       currentUserId,
     );
   // Carried on every count/pie/bar click-through below so the resource's own
@@ -179,19 +208,39 @@ export default function DashboardWidgetTile({
     shape,
     listLimit,
     0,
-    shape !== "pie" && shape !== "bar",
-    selectedTeamGroupId,
+    shape !== "pie" && shape !== "bar" && isVisible,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     sortBy,
     currentUserId,
   );
-  const pieData = useWidgetPieData(
+  const sliceData = useWidgetPieData(
     widgetId,
     resourceType,
     filters,
     shape === "pie" || shape === "bar" ? (slices ?? []) : [],
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     currentUserId,
+    isVisible,
   );
+  // groupBy is the alternative to slices for shapes "pie"/"bar" — mutually
+  // exclusive, backend-enforced (never both, never neither for those
+  // shapes). Both hooks are called unconditionally (rules of hooks; a
+  // widget's shape/config never changes across this component's lifetime)
+  // and only one of them ever actually fires a request, gated by its own
+  // `groupBy`/`slices` argument being empty/undefined.
+  const groupByData = useWidgetGroupByData(
+    widgetId,
+    resourceType,
+    filters,
+    shape === "pie" || shape === "bar" ? groupBy : undefined,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
+    currentUserId,
+    isVisible,
+  );
+  const pieData = groupBy ? groupByData : sliceData;
   // True while this widget carries a `__current_user__` filter and the
   // signed-in user's profile hasn't loaded yet. `useWidgetData`/
   // `useWidgetPieData` hold their requests in that window (see
@@ -200,7 +249,13 @@ export default function DashboardWidgetTile({
   // tile must present the wait as loading rather than paint the `0` a
   // deferred query's absent data would otherwise resolve to.
   const awaitingCurrentUser = currentUserId === undefined && hasCurrentUserPlaceholder(filters);
-  const isLoading = isWidgetDataLoading || awaitingCurrentUser;
+  // `!isVisible` (this tile hasn't scrolled into view yet, so its own fetch
+  // above never fired) reports as loading rather than as react-query's own
+  // `isLoading` for a disabled query — same rationale as useWidgetPieData's
+  // own `isLoading`. This is the count/list-shape tile's loading state;
+  // shape "pie"/"bar" reads `pieData.isLoading` instead, which already
+  // folds in the same `isVisible` gate via the `enabled` argument above.
+  const isLoading = isWidgetDataLoading || awaitingCurrentUser || !isVisible;
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   // Thousands separators for shape "count"'s big number -- used both in the
   // visible Typography and the tile's aria-label, so both stay in sync.
@@ -211,7 +266,7 @@ export default function DashboardWidgetTile({
     // compile-time-checked Go literal) — an unrecognized value must not
     // crash this tile's render (config.buildHref below would throw).
     return (
-      <Card variant="outlined" sx={{ p: 1.75 }}>
+      <Card ref={tileRef} variant="outlined" sx={{ p: 1.75 }}>
         <Typography variant="caption" color="text.secondary">
           {resolvedDisplayName}
         </Typography>
@@ -226,7 +281,10 @@ export default function DashboardWidgetTile({
   // all" link never carries a literal `__current_team__`/`__current_user__`
   // placeholder into the destination resource's own filters (see
   // `teamFilterPlaceholder.ts`/`currentUserFilterPlaceholder.ts`).
-  const href = config.buildHref(resolvePlaceholders(filters));
+  const href = config.buildHref(resolvePlaceholders(filters), {
+    widgetId,
+    displayName: resolvedDisplayName,
+  });
   const Icon = config.icon;
   const isListShape = shape === "list";
 
@@ -324,7 +382,7 @@ export default function DashboardWidgetTile({
     const ListRenderer = WIDGET_LIST_RENDERERS[resourceType];
     const total = data?.total ?? 0;
     return (
-      <Card variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
+      <Card ref={tileRef} variant="outlined" sx={{ position: "relative", p: 1.75, height: "100%" }}>
         {/* The rows below are capped at `listLimit` (see `useWidgetData`'s
             DEFAULT_LIST_LIMIT) — this badge next to the title is the only
             place the widget's own full count is visible, since "View more"
@@ -407,7 +465,10 @@ export default function DashboardWidgetTile({
     // (`pointerEvents: "auto"`) for the chart specifically, letting its own
     // click and keyboard handling work exactly as before.
     const ChartComponent = shape === "pie" ? DashboardPieChart : DashboardBarChart;
-    const tileHref = config.buildHref(resolvePlaceholders(filters));
+    const tileHref = config.buildHref(resolvePlaceholders(filters), {
+      widgetId,
+      displayName: resolvedDisplayName,
+    });
     const handleTileClick = (): void => {
       void navigate(tileHref, { state: dashboardReturnState });
     };
@@ -419,6 +480,7 @@ export default function DashboardWidgetTile({
     };
     return (
       <Card
+        ref={tileRef}
         variant="outlined"
         sx={{
           position: "relative",
@@ -467,12 +529,21 @@ export default function DashboardWidgetTile({
               total={pieData.total}
               isLoading={pieData.isLoading}
               isError={pieData.isError}
-              onSliceClick={(slice: PieSliceResult) =>
+              onSliceClick={(slice: PieSliceResult) => {
+                // See `PieSliceResult.navigable`'s own doc comment: a
+                // groupBy widget's synthetic "Others" bucket has no safe
+                // selector to navigate to, so it opts out of click-through
+                // entirely rather than falling through to the widget's own
+                // unscoped base result set.
+                if (slice.navigable === false) return;
                 navigate(
-                  config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query))),
+                  config.buildHref(resolvePlaceholders(mergeWidgetFilters(filters, slice.query)), {
+                    widgetId,
+                    displayName: resolvedDisplayName,
+                  }),
                   { state: dashboardReturnState },
-                )
-              }
+                );
+              }}
             />
           </Box>
         </Box>
@@ -537,6 +608,7 @@ export default function DashboardWidgetTile({
     // role="button" does. The anchor here is a background sibling instead;
     // see the pie/bar branch's comment for the pointer-events layering.
     <Card
+      ref={tileRef}
       variant="outlined"
       sx={{
         position: "relative",

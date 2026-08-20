@@ -18,6 +18,7 @@ import {
   Box,
   Button,
   Card,
+  CardActionArea,
   Chip,
   IconButton,
   Skeleton,
@@ -115,41 +116,42 @@ export default function CsmDashboardBuilderListPage(): JSX.Element {
           No dashboards are registered in this deployment yet.
         </Typography>
       ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+            gap: 2,
+          }}
+        >
           {(dashboards ?? []).map((d) => (
-            <Card
-              key={d.id}
-              variant="outlined"
-              sx={{
-                p: 2,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 2,
-              }}
-            >
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, minWidth: 0 }}>
-                <LayoutGrid size={18} />
-                <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body1" sx={{ fontWeight: 600 }} noWrap>
+            <Card key={d.id} variant="outlined">
+              <CardActionArea
+                onClick={() => navigate(`/admin/dashboards/${d.id}`)}
+                sx={{
+                  p: 3,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "flex-start",
+                  gap: 1.5,
+                  minHeight: 120,
+                }}
+              >
+                <LayoutGrid size={24} />
+                <Box sx={{ minWidth: 0, width: "100%" }}>
+                  <Typography variant="subtitle1" sx={{ fontWeight: 600 }} noWrap>
                     {d.displayName}
                   </Typography>
-                  <Typography variant="caption" color="text.secondary">
+                  <Typography variant="caption" color="text.secondary" noWrap>
                     {d.id}
                   </Typography>
                 </Box>
-                {d.isDefault && <Chip size="small" label="Default" />}
-                {d.isTeamBased && <Chip size="small" label="Team-based" variant="outlined" />}
-                {d.type && <Chip size="small" label={d.type.toUpperCase()} variant="outlined" />}
-                {draftIds.has(d.id) && <LocalDraftDriftChip dashboardId={d.id} />}
-              </Box>
-              <Button
-                variant="outlined"
-                size="small"
-                onClick={() => navigate(`/admin/dashboards/${d.id}`)}
-              >
-                Edit
-              </Button>
+                <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                  {d.isDefault && <Chip size="small" label="Default" />}
+                  {d.isTeamBased && <Chip size="small" label="Team-based" variant="outlined" />}
+                  {d.type && <Chip size="small" label={d.type.toUpperCase()} variant="outlined" />}
+                  {draftIds.has(d.id) && <LocalDraftDriftChip dashboardId={d.id} />}
+                </Box>
+              </CardActionArea>
             </Card>
           ))}
         </Box>
@@ -160,46 +162,49 @@ export default function CsmDashboardBuilderListPage(): JSX.Element {
           <Typography variant="subtitle2">
             Local drafts not yet deployed
           </Typography>
-          {orphanDrafts.map((d) => (
-            <Card
-              key={d.id}
-              variant="outlined"
-              sx={{
-                p: 2,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 2,
-              }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body1" sx={{ fontWeight: 600 }} noWrap>
-                  {d.displayName || "Untitled dashboard"}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  Saved locally {new Date(d.updatedAt).toLocaleString()}
-                </Typography>
-              </Box>
-              <Box sx={{ display: "flex", gap: 1 }}>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => navigate(`/admin/dashboards/${d.id}`)}
-                >
-                  Continue editing
-                </Button>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+              gap: 2,
+            }}
+          >
+            {orphanDrafts.map((d) => (
+              <Card key={d.id} variant="outlined" sx={{ position: "relative" }}>
                 <Tooltip title="Discard this local draft">
                   <IconButton
                     size="small"
                     aria-label={`Discard draft ${d.displayName || d.id}`}
                     onClick={() => handleDiscardDraft(d.id)}
+                    sx={{ position: "absolute", top: 4, right: 4, zIndex: 1 }}
                   >
                     <Trash2 size={16} />
                   </IconButton>
                 </Tooltip>
-              </Box>
-            </Card>
-          ))}
+                <CardActionArea
+                  onClick={() => navigate(`/admin/dashboards/${d.id}`)}
+                  sx={{
+                    p: 3,
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "flex-start",
+                    gap: 1.5,
+                    minHeight: 120,
+                  }}
+                >
+                  <LayoutGrid size={24} />
+                  <Box sx={{ minWidth: 0, width: "100%", pr: 3 }}>
+                    <Typography variant="subtitle1" sx={{ fontWeight: 600 }} noWrap>
+                      {d.displayName || "Untitled dashboard"}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Saved locally {new Date(d.updatedAt).toLocaleString()}
+                    </Typography>
+                  </Box>
+                </CardActionArea>
+              </Card>
+            ))}
+          </Box>
         </Box>
       )}
     </Box>

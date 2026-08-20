@@ -54,11 +54,33 @@ export default function MultiSelectField<T extends string>({
   disabled,
   disabledTooltip,
 }: MultiSelectFieldProps<T>): JSX.Element {
+  // Label sits centered in the box like a placeholder when nothing is
+  // selected, and shrinks into the outline notch once a value is chosen —
+  // matching the async pickers (e.g. AsyncAssigneeMultiSelect's Autocomplete)
+  // rather than MUI's focus-driven default, since a disabled field can never
+  // be focused and would otherwise be stuck looking different from its
+  // enabled, unselected siblings.
+  const hasValue = values.length > 0;
+
   const field = (
     <FormControl fullWidth size="small" disabled={disabled}>
-      <InputLabel id={`${id}-label`}>{label}</InputLabel>
+      {/*
+       * oxygen-ui's own theme (MuiInputLabel styleOverrides) targets
+       * `.MuiFormControl-root:has(.MuiSelect-select) &:not(.MuiInputLabel-shrink)`
+       * and shifts an unshrunk label up by `top: -7px` — a compound
+       * `:has()`/`:not()` selector whose specificity beats a plain sx-emitted
+       * class, so a plain `sx={{ top: 0 }}` silently loses the cascade.
+       * `!important` is the only way to reliably win here. Without it, this
+       * field's empty-state label sits visibly higher than the async pickers
+       * (e.g. AsyncAssigneeMultiSelect's Autocomplete), which get no such
+       * adjustment.
+       */}
+      <InputLabel id={`${id}-label`} shrink={hasValue} sx={{ top: "0px !important" }}>
+        {label}
+      </InputLabel>
       <Select
         multiple
+        notched={hasValue}
         labelId={`${id}-label`}
         id={id}
         value={values}

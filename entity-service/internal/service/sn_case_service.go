@@ -72,6 +72,11 @@ type snCase struct {
 	RelatedCase           *snCaseRef                  `json:"relatedCase"`
 	Account               *snCaseAccount              `json:"account"`
 	LinkedServiceRequests []snLinkedServiceRequestRef `json:"linkedServiceRequests"`
+	// Variables carries the answers to the catalog item's questions on a service
+	// request, keyed as `variables` upstream. Present on the Choreo GET /cases/{id}
+	// response for service-request cases only; absent for every other case type, so
+	// this must tolerate absence.
+	Variables []snCaseVariableAnswer `json:"variables"`
 	// ChangeRequests carries the change requests raised from this case, keyed as
 	// `changeRequests` upstream. Only populated for service-request cases.
 	//
@@ -128,6 +133,14 @@ type snCase struct {
 	// request set includeExtendedFields — nil otherwise, so this must tolerate
 	// absence.
 	WorstCaseFixEta *string `json:"worstCaseFixEta"`
+}
+
+// snCaseVariableAnswer mirrors one answered catalog-item question on a service
+// request as the backing service returns it (CaseResponse.variables). Distinct
+// from snCaseVariable, which is the {id, value} shape a case create submits.
+type snCaseVariableAnswer struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // snWatchListUser mirrors the watch-list user shape ServiceNow/Ballerina returns on both
@@ -236,6 +249,9 @@ var snCaseTypeMap = map[string]string{
 	"security_report_analysis": "security_report_analysis",
 	"announcement":             "announcement",
 	"engagement":               "engagement",
+	"hosting":                  "hosting",
+	"hosting_query":            "hosting_query",
+	"hosting_task":             "hosting_task",
 }
 
 // snCaseTypeSysidMap maps ServiceNow caseType sysids to domain case type values.
@@ -246,6 +262,9 @@ var snCaseTypeSysidMap = map[string]string{
 	"ab36479047ccf510a0a29cd3846d43ee": "security_report_analysis",
 	"3b8b43311b58f010cb6898aebd4bcb8f": "announcement",
 	"8f8fc2c41b0bd550d64e64a2604bcb38": "engagement",
+	"bfa1473c1bbcb410cb6898aebd4bcb52": "hosting",
+	"80810ff81bbcb410cb6898aebd4bcb3c": "hosting_query",
+	"f46103f81bbcb410cb6898aebd4bcb27": "hosting_task",
 }
 
 // snCaseTypeToDomain converts a SN caseType entity ref to the domain type string.
@@ -392,8 +411,9 @@ type snCaseFilters struct {
 	// InternalID: see domain.ParsedCaseFilters.InternalID doc comment. Exact
 	// match against ServiceNow's `u_wso2_case_id` column -- not part of the
 	// free-text SearchQuery scan.
-	InternalID                string   `json:"internalId,omitempty"`
-	ProjectOnboardingStatuses []string `json:"projectOnboardingStatuses,omitempty"`
+	InternalID                       string   `json:"internalId,omitempty"`
+	ProjectOnboardingStatuses        []string `json:"projectOnboardingStatuses,omitempty"`
+	ExcludeProjectOnboardingStatuses []string `json:"excludeProjectOnboardingStatuses,omitempty"`
 	// ProjectTypeNames carries project-type NAMES (e.g. "Subscription"), not
 	// sys_ids: CaseUtils.searchCases matches project.u_project_type.u_name.
 	// It goes out under its own key, "projectTypes", rather than reusing the
@@ -402,8 +422,14 @@ type snCaseFilters struct {
 	// rejected outright by request validation. "projectTypeIds" has no
 	// remaining producer or consumer on either portal and is being retired
 	// from the contract alongside this change.
-	ProjectTypeNames     []string `json:"projectTypes,omitempty"`
-	IntegrationCsTeamIDs []string `json:"integrationCsTeamIds,omitempty"`
+	ProjectTypeNames []string `json:"projectTypes,omitempty"`
+	// CreTeamIDs and SreTeamIDs go out under the wire keys the Ballerina/SN
+	// contract already uses (integrationCsTeamIds, sreTeamIds) -- only the Go
+	// domain naming changed, not the wire protocol.
+	CreTeamIDs []string `json:"integrationCsTeamIds,omitempty"`
+	SreTeamIDs []string `json:"sreTeamIds,omitempty"`
+	// AccountIDs: see domain.ParsedCaseFilters.AccountIDs doc comment.
+	AccountIDs           []string `json:"accountIds,omitempty"`
 	Unassigned           bool     `json:"unassigned,omitempty"`
 	ResolutionNotesEmpty bool     `json:"resolutionNotesEmpty,omitempty"`
 	// TaskSLAFilter: SN-side join on Task SLA table, filtering by businessElapsedPercent
@@ -730,7 +756,14 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 	}
 
 	if len(req.WatchList) > 0 {
-		payload.WatchList = req.WatchList
+		// The backing service's case-create payload declares the watch list as
+		// email addresses, not user ids, so the incoming platform UUIDs are
+		// resolved to emails first.
+		emails, err := watchListEmails(ctx, s.client, token, "watchList", req.WatchList)
+		if err != nil {
+			return domain.CreateCaseResponse{}, err
+		}
+		payload.WatchList = emails
 	}
 	if req.RelatedCaseID != "" {
 		if err := validateUUIDs("relatedCaseId", []string{req.RelatedCaseID}); err != nil {
@@ -915,6 +948,15 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 			lcr = append(lcr, domain.LinkedChangeRequestRef{ID: sysidToUUID(r.ID), Number: r.Number, Name: name})
 		}
 		cv.LinkedChangeRequests = lcr
+	}
+	if len(c.Variables) > 0 {
+		vars := make([]domain.CaseVariable, 0, len(c.Variables))
+		for _, v := range c.Variables {
+			// Order is the backing data source's own question order; it carries
+			// meaning on the request form, so it is passed through untouched.
+			vars = append(vars, domain.CaseVariable{Name: v.Name, Value: v.Value})
+		}
+		cv.Variables = vars
 	}
 	if c.ResolutionCode != nil {
 		if rc, ok := snResolutionCodeByID[c.ResolutionCode.ID.String()]; ok {
@@ -1168,11 +1210,13 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 }
 
 type snUpdateCasePayload struct {
-	StateKey      *int     `json:"stateKey,omitempty"`
-	SeverityKey   *int     `json:"severityKey,omitempty"`
-	WorkStateKey  *int     `json:"workStateKey,omitempty"`
-	WatchList     []string `json:"watchList,omitempty"`
-	AssigneeEmail *string  `json:"assigneeEmail,omitempty"`
+	StateKey     *int `json:"stateKey,omitempty"`
+	SeverityKey  *int `json:"severityKey,omitempty"`
+	WorkStateKey *int `json:"workStateKey,omitempty"`
+	// WatchList replaces the whole list, so an explicitly empty list must still be
+	// sent to clear it rather than be omitted -- hence the pointer.
+	WatchList     *[]string `json:"watchList,omitempty"`
+	AssigneeEmail *string   `json:"assigneeEmail,omitempty"`
 	// Acknowledge claims the case for the calling engineer, first-write-wins. Only
 	// true is ever sent -- there is no unacknowledge -- and the backing service keeps
 	// it mutually exclusive with every other field in this payload.
@@ -1378,7 +1422,7 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.WorkState != nil {
 		exclusiveCount++
 	}
-	if len(req.WatchList) > 0 {
+	if req.WatchList != nil {
 		exclusiveCount++
 	}
 	if req.AssigneeEmail != nil {
@@ -1485,8 +1529,16 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		}
 		payload.WorkStateKey = &id
 	}
-	if len(req.WatchList) > 0 {
-		payload.WatchList = req.WatchList
+	if req.WatchList != nil {
+		// As on create, the backing service's case-update payload declares the
+		// watch list as email addresses, and it replaces the whole list, so an
+		// explicitly empty list must still be sent to clear it rather than be
+		// skipped.
+		emails, err := watchListEmails(ctx, s.client, token, "watchList", *req.WatchList)
+		if err != nil {
+			return domain.UpdateCaseResponse{}, err
+		}
+		payload.WatchList = &emails
 	}
 	if req.AssigneeEmail != nil {
 		payload.AssigneeEmail = req.AssigneeEmail
@@ -2158,42 +2210,45 @@ func buildSNCaseFilters(parsed domain.ParsedCaseFilters, searchQuery string) snC
 	snCaseTypes := domainTypeKeysToSN(parsed.Types)
 
 	return snCaseFilters{
-		CaseTypes:                 snCaseTypes,
-		SearchQuery:               searchQuery,
-		ProjectIDs:                uuidsToSysids(parsed.ProjectIDs),
-		DeploymentIDs:             uuidsToSysids(parsed.DeploymentIDs),
-		StateKeys:                 domainStatesToSNIDs(parsed.States),
-		ExcludeStates:             domainStatesToSNIDs(parsed.ExcludeStates),
-		SeverityKeys:              domainSeveritiesToSNIDs(parsed.Severities),
-		IssueTypeKeys:             domainIssueTypesToSNIDs(parsed.IssueTypes),
-		EngagementTypeKeys:        domainEngagementTypesToSNIDs(parsed.EngagementTypes),
-		ClosedStartDate:           formatSNDateTimeUTC(parsed.ClosedStartDate),
-		ClosedEndDate:             formatSNDateTimeUTC(parsed.ClosedEndDate),
-		ResolvedStartDate:         formatSNDateTimeUTC(parsed.ResolvedStartDate),
-		ResolvedEndDate:           formatSNDateTimeUTC(parsed.ResolvedEndDate),
-		StartCreatedDate:          formatSNDateTimeUTC(parsed.StartCreatedDate),
-		EndCreatedDate:            formatSNDateTimeUTC(parsed.EndCreatedDate),
-		StartUpdatedDate:          formatSNDateTimeUTC(parsed.StartUpdatedDate),
-		EndUpdatedDate:            formatSNDateTimeUTC(parsed.EndUpdatedDate),
-		CreatedBy:                 parsed.CreatedBy,
-		CreatedByMe:               parsed.CreatedByMe,
-		WorkStateKeys:             domainWorkStatesToSNIDs(parsed.WorkStates),
-		AssignedUserIDs:           uuidsToSysids(parsed.AssignedUserIDs),
-		ProductNames:              parsed.ProductNames,
-		Tags:                      parsed.Tags,
-		ExcludeTags:               parsed.ExcludeTags,
-		ParentID:                  snParentIDFilter(parsed.ParentID),
-		Number:                    stringPtrValue(parsed.Number),
-		InternalID:                stringPtrValue(parsed.InternalID),
-		ProjectOnboardingStatuses: parsed.ProjectOnboardingStatuses,
-		ProjectTypeNames:          parsed.ProjectTypeNames,
-		IntegrationCsTeamIDs:      uuidsToSysids(parsed.IntegrationCsTeamIDs),
-		Unassigned:                parsed.Unassigned,
-		ResolutionNotesEmpty:      parsed.ResolutionNotesEmpty,
-		TaskSLAFilter:             buildSNTaskSLAFilter(parsed.TaskSLAFilter),
-		EscalationLevels:          parsed.EscalationLevels,
-		IsEscalated:               parsed.HasActiveEscalation,
-		OrGroups:                  buildSNCaseFilterGroups(parsed.OrGroups),
+		CaseTypes:                        snCaseTypes,
+		SearchQuery:                      searchQuery,
+		ProjectIDs:                       uuidsToSysids(parsed.ProjectIDs),
+		DeploymentIDs:                    uuidsToSysids(parsed.DeploymentIDs),
+		StateKeys:                        domainStatesToSNIDs(parsed.States),
+		ExcludeStates:                    domainStatesToSNIDs(parsed.ExcludeStates),
+		SeverityKeys:                     domainSeveritiesToSNIDs(parsed.Severities),
+		IssueTypeKeys:                    domainIssueTypesToSNIDs(parsed.IssueTypes),
+		EngagementTypeKeys:               domainEngagementTypesToSNIDs(parsed.EngagementTypes),
+		ClosedStartDate:                  formatSNDateTimeUTC(parsed.ClosedStartDate),
+		ClosedEndDate:                    formatSNDateTimeUTC(parsed.ClosedEndDate),
+		ResolvedStartDate:                formatSNDateTimeUTC(parsed.ResolvedStartDate),
+		ResolvedEndDate:                  formatSNDateTimeUTC(parsed.ResolvedEndDate),
+		StartCreatedDate:                 formatSNDateTimeUTC(parsed.StartCreatedDate),
+		EndCreatedDate:                   formatSNDateTimeUTC(parsed.EndCreatedDate),
+		StartUpdatedDate:                 formatSNDateTimeUTC(parsed.StartUpdatedDate),
+		EndUpdatedDate:                   formatSNDateTimeUTC(parsed.EndUpdatedDate),
+		CreatedBy:                        parsed.CreatedBy,
+		CreatedByMe:                      parsed.CreatedByMe,
+		WorkStateKeys:                    domainWorkStatesToSNIDs(parsed.WorkStates),
+		AssignedUserIDs:                  uuidsToSysids(parsed.AssignedUserIDs),
+		ProductNames:                     parsed.ProductNames,
+		Tags:                             parsed.Tags,
+		ExcludeTags:                      parsed.ExcludeTags,
+		ParentID:                         snParentIDFilter(parsed.ParentID),
+		Number:                           stringPtrValue(parsed.Number),
+		InternalID:                       stringPtrValue(parsed.InternalID),
+		ProjectOnboardingStatuses:        parsed.ProjectOnboardingStatuses,
+		ExcludeProjectOnboardingStatuses: parsed.ExcludeProjectOnboardingStatuses,
+		ProjectTypeNames:                 parsed.ProjectTypeNames,
+		CreTeamIDs:                       uuidsToSysids(parsed.CreTeamIDs),
+		SreTeamIDs:                       uuidsToSysids(parsed.SreTeamIDs),
+		AccountIDs:                       uuidsToSysids(parsed.AccountIDs),
+		Unassigned:                       parsed.Unassigned,
+		ResolutionNotesEmpty:             parsed.ResolutionNotesEmpty,
+		TaskSLAFilter:                    buildSNTaskSLAFilter(parsed.TaskSLAFilter),
+		EscalationLevels:                 parsed.EscalationLevels,
+		IsEscalated:                      parsed.HasActiveEscalation,
+		OrGroups:                         buildSNCaseFilterGroups(parsed.OrGroups),
 	}
 }
 
@@ -2251,8 +2306,14 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 		}
 	}
 	// projectType values are free-text project-type names (no UUID validation);
-	// integrationCsTeam values are still UUIDs.
-	if err := validateUUIDs("integrationCsTeam", req.Parsed.IntegrationCsTeamIDs); err != nil {
+	// creTeam/sreTeam values are still UUIDs.
+	if err := validateUUIDs("creTeam", req.Parsed.CreTeamIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
+	if err := validateUUIDs("sreTeam", req.Parsed.SreTeamIDs); err != nil {
+		return domain.SearchCasesResponse{}, err
+	}
+	if err := validateUUIDs("accountId", req.Parsed.AccountIDs); err != nil {
 		return domain.SearchCasesResponse{}, err
 	}
 
@@ -2492,6 +2553,157 @@ func (s *snCaseService) SearchCases(ctx context.Context, req domain.SearchCasesR
 		Limit:  req.Pagination.Limit,
 		Offset: req.Pagination.Offset,
 	}, nil
+}
+
+// snCaseAggregatePayload is the Choreo POST /cases/aggregate request body.
+type snCaseAggregatePayload struct {
+	Filters   snCaseFilters `json:"filters,omitempty"`
+	GroupBy   string        `json:"groupBy"`
+	MaxGroups int           `json:"maxGroups,omitempty"`
+}
+
+// AggregateCases implements CaseService by calling the Choreo POST
+// /cases/aggregate endpoint: a single server-side aggregation over the
+// requested field (e.g. account), capped to the top MaxGroups buckets with
+// the remainder folded into AggregateResponse.OthersCount. This is distinct
+// from SearchCases' own GroupBy, which only supports small fixed-enum
+// fields and computes each bucket as a separate client-side search.
+//
+// Filter parsing and validation mirror SearchCases exactly -- same
+// ParseCaseFieldFilters/ParseCaseFieldFilterGroups calls, same enum and
+// range checks -- so a request that would be rejected by search is rejected
+// here too, rather than silently reaching ServiceNow with a narrower filter
+// set than the caller intended.
+func (s *snCaseService) AggregateCases(ctx context.Context, req domain.AggregateCasesRequest) (domain.AggregateResponse, error) {
+	if req.GroupBy == "" {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validCaseAggregateField[req.GroupBy] {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+	callerEmail, callerEmailErr := resolveCaseFilterCallerEmail(token)
+	parsed, err := ParseCaseFieldFilters(req.Filters.Filters, callerEmail, callerEmailErr, time.Now().UTC())
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	orGroups, err := ParseCaseFieldFilterGroups(req.Filters.AnyOf)
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	parsed.OrGroups = orGroups
+
+	if parsed.ClosedEndDate != nil && parsed.ClosedStartDate != nil &&
+		parsed.ClosedEndDate.Before(*parsed.ClosedStartDate) {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "closedOn: lte value must not be before gte value"}
+	}
+	if parsed.ResolvedEndDate != nil && parsed.ResolvedStartDate != nil &&
+		parsed.ResolvedEndDate.Before(*parsed.ResolvedStartDate) {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "resolvedOn: lte value must not be before gte value"}
+	}
+	if parsed.EndCreatedDate != nil && parsed.StartCreatedDate != nil &&
+		parsed.EndCreatedDate.Before(*parsed.StartCreatedDate) {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
+	if parsed.EndUpdatedDate != nil && parsed.StartUpdatedDate != nil &&
+		parsed.EndUpdatedDate.Before(*parsed.StartUpdatedDate) {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "updatedOn: lte value must not be before gte value"}
+	}
+	for _, ws := range parsed.WorkStates {
+		if ws != domain.CaseWorkStateOngoing && ws != domain.CaseWorkStatePaused {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "workState contains invalid value: " + string(ws)}
+		}
+	}
+	if err := validateUUIDs("assignedUserId", parsed.AssignedUserIDs); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if parsed.ParentID != nil {
+		if err := validateUUIDs("parentId", []string{*parsed.ParentID}); err != nil {
+			return domain.AggregateResponse{}, err
+		}
+	}
+	if err := validateUUIDs("creTeam", parsed.CreTeamIDs); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if err := validateUUIDs("sreTeam", parsed.SreTeamIDs); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if err := validateUUIDs("accountId", parsed.AccountIDs); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	for _, t := range parsed.Types {
+		if _, ok := snCaseTypeMap[t]; !ok {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "type contains invalid value: " + t}
+		}
+	}
+	for _, st := range parsed.States {
+		if !validCaseState[st] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "state contains invalid value: " + string(st)}
+		}
+	}
+	for _, st := range parsed.ExcludeStates {
+		if !validCaseState[st] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "state (notIn) contains invalid value: " + string(st)}
+		}
+	}
+	for _, sv := range parsed.Severities {
+		if !validCaseSeverity[sv] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "severity contains invalid value: " + string(sv)}
+		}
+	}
+	for _, it := range parsed.IssueTypes {
+		if !validCaseIssueType[it] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "issueType contains invalid value: " + string(it)}
+		}
+	}
+	for _, et := range parsed.EngagementTypes {
+		if !validEngagementType[et] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(et)}
+		}
+	}
+	for _, lvl := range parsed.EscalationLevels {
+		if !validEscalationLevel[lvl] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "escalationLevel contains invalid value: " + lvl}
+		}
+	}
+	for i, group := range parsed.OrGroups {
+		if err := validateOrGroupEnums(i, group); err != nil {
+			return domain.AggregateResponse{}, err
+		}
+	}
+
+	snFilters := buildSNCaseFilters(parsed, req.Filters.SearchQuery)
+
+	payload := snCaseAggregatePayload{
+		Filters:   snFilters,
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/cases/aggregate", token, payload)
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	var resp domain.AggregateResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.AggregateResponse{}, fmt.Errorf("sn cases: parse aggregate response: %w", err)
+	}
+	// "account" is the only ID-valued field in validCaseAggregateField; SN
+	// returns its bucket keys as raw sys_ids, so convert them to this
+	// platform's UUIDs before returning. Every other allowed field (state,
+	// severity, type) is a plain enum and is left as-is.
+	if req.GroupBy == "account" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
+	return resp, nil
 }
 
 // searchCasesGroupCount returns the total matching-record count for one

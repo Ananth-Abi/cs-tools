@@ -18,9 +18,10 @@
 // Card-level React Query hooks (a case's cards, create, decide), backed by
 // the real csm-portal-backend endpoints:
 //
-//   POST  /time-cards/search   list for a case (server-side caseId filter)
-//   POST  /time-cards          create (already `submitted` — no draft step)
-//   PATCH /time-cards/{id}     accept/reject { state, leadComment }
+//   POST   /time-cards/search   list for a case (server-side caseId filter)
+//   POST   /time-cards          create (already `submitted` — no draft step)
+//   PATCH  /time-cards/{id}     accept/reject { state, leadComment }
+//   DELETE /time-cards/{id}     delete an own, still-submitted card
 //
 
 import {
@@ -34,6 +35,7 @@ import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import type {
   BeCreateTimeCardPayload,
+  BeDeleteTimeCardResponse,
   BeTimeCardMutationResponse,
   BeUpdateTimeCardPayload,
 } from "@api/backend/types";
@@ -169,6 +171,27 @@ export function useUpdateTimeCard(): UseMutationResult<
         payload,
       );
       return mapTimeCard(res.timeCard);
+    },
+    onSuccess: () => invalidateTimecards(queryClient),
+  });
+}
+
+/**
+ * Delete an already-submitted card the signed-in engineer owns — the fix for
+ * a submitted-by-accident or otherwise wrong entry, which previously had no
+ * way to be removed. Same trust model as {@link useUpdateTimeCard}: the
+ * backend only validates the ID's shape, ServiceNow enforces submitter-only
+ * + `submitted`-state-only. `cardActions` only ever offers this to the
+ * card's own owner while `submitted`, matching that same rule client-side.
+ */
+export function useDeleteTimeCard(): UseMutationResult<void, Error, string> {
+  const api = useBackendApi();
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (cardId): Promise<void> => {
+      await api.del<BeDeleteTimeCardResponse>(
+        `/time-cards/${encodeURIComponent(cardId)}`,
+      );
     },
     onSuccess: () => invalidateTimecards(queryClient),
   });

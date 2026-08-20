@@ -31,6 +31,10 @@ import type {
   SeverityOrUnset,
 } from "@features/csm-dashboard/types/abtDashboard";
 import { ALL_CASE_TYPES } from "@features/csm-cases/utils/caseType";
+import {
+  classifyCaseQuery,
+  type CaseQueryScope,
+} from "@features/csm-cases/utils/caseQueryScope";
 
 /** Don't fire a search until the user has typed something searchable. */
 export const QUICK_CASE_MIN_QUERY_LEN = 2;
@@ -38,39 +42,22 @@ export const QUICK_CASE_MIN_QUERY_LEN = 2;
 /** A small result page — the palette only shows the top few hits. */
 const QUICK_CASE_LIMIT = 8;
 
-/** A CS case number, e.g. "CS0441174" — always "CS" plus exactly 7 digits. */
-const CASE_NUMBER_RE = /^CS\d{7}$/;
-
 /**
- * A WSO2 case id, e.g. "SOMEID-4" — an alphanumeric project/product prefix, a
- * hyphen, then 1-4 digits. Deliberately looser than {@link CASE_NUMBER_RE}
- * (no fixed prefix), so it's checked second, after the case-number pattern
- * has already had first refusal.
+ * The scope a typed quick-search string resolves to. Alias of the shared
+ * {@link CaseQueryScope} — the classification now lives in
+ * `utils/caseQueryScope` so the cases list / Support-page search classifies
+ * a typed string exactly the same way this palette does.
  */
-const WSO2_CASE_ID_RE = /^[a-zA-Z0-9]+-\d{1,4}$/;
-
-/**
- * What kind of lookup a typed quick-search string should run as:
- * - `"number"` / `"internalId"`: an exact-match, first-class filter — the
- *   entity-service resolves these against an indexed column instead of the
- *   free-text `searchQuery` scan. Named to match the response field names
- *   (`BeCaseSearchView.number` / `.internalId`), not a UI-facing label.
- * - `"text"`: the existing free-text search across subject/description
- *   (and number/internalId, case-insensitively) — unchanged behavior.
- */
-export type QuickCaseSearchScope = "number" | "internalId" | "text";
+export type QuickCaseSearchScope = CaseQueryScope;
 
 /**
  * Classifies a typed (already-trimmed) quick-search string into the scope
- * {@link useQuickCaseSearch} should route it through. Order matters: a case
- * number is checked first since `CS\d{7}` is a strict subset of the looser
- * WSO2-case-id shape.
+ * {@link useQuickCaseSearch} should route it through.
+ *
+ * Thin alias over the shared {@link classifyCaseQuery}, kept as a named export
+ * because this is the name the palette and its tests already use.
  */
-export function classifyQuickCaseQuery(query: string): QuickCaseSearchScope {
-  if (CASE_NUMBER_RE.test(query)) return "number";
-  if (WSO2_CASE_ID_RE.test(query)) return "internalId";
-  return "text";
-}
+export const classifyQuickCaseQuery = classifyCaseQuery;
 
 /**
  * One hit from the global-search case lookup. Carries the UUID `id` (for the

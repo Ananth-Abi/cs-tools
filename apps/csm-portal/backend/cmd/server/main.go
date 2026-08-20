@@ -91,6 +91,7 @@ func main() {
 	taskHandler := handler.NewTaskHandler(customerEntityClient)
 	incidentHandler := handler.NewIncidentHandler(customerEntityClient)
 	problemHandler := handler.NewProblemHandler(customerEntityClient)
+	incidentTaskHandler := handler.NewIncidentTaskHandler(customerEntityClient)
 
 	// Google Chat is not yet configured for every deployment, so its spaces
 	// are read with os.Getenv (never mustEnv) — a missing or malformed value
@@ -157,6 +158,7 @@ func main() {
 	//nolint:staticcheck // SA1019: intentional one-release compatibility route; remove with the handler.
 	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
+	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)
 	mux.HandleFunc("GET /dashboards/{dashboardId}", dashboardHandler.GetDashboardDetail)
 	mux.HandleFunc("GET /updates/product-update-levels", updatesHandler.GetProductUpdateLevels)
@@ -189,6 +191,7 @@ func main() {
 	mux.HandleFunc("POST /change-requests/{id}/approvals/decision", changeRequestHandler.DecideChangeRequestApproval)
 	mux.HandleFunc("PATCH /change-requests/{id}", changeRequestHandler.PatchChangeRequest)
 	mux.HandleFunc("POST /change-requests/search", changeRequestHandler.SearchChangeRequests)
+	mux.HandleFunc("POST /change-requests/aggregate", changeRequestHandler.AggregateChangeRequests)
 	mux.HandleFunc("POST /services/search", itServiceHandler.SearchITServices)
 	mux.HandleFunc("POST /service-offerings/search", serviceOfferingHandler.SearchServiceOfferings)
 	mux.HandleFunc("POST /groups/search", groupHandler.SearchGroups)
@@ -196,6 +199,7 @@ func main() {
 	mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 	mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 	mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+	mux.HandleFunc("DELETE /time-cards/{id}", timeCardHandler.DeleteTimeCard)
 	mux.HandleFunc("POST /catalogs/search", catalogHandler.SearchCatalogs)
 	mux.HandleFunc("GET /catalogs/{catalogId}/items/{catalogItemId}/variables", catalogHandler.GetCatalogItemVariables)
 	mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
@@ -210,6 +214,7 @@ func main() {
 	mux.HandleFunc("POST /cases/{caseId}/tasks", taskHandler.CreateCaseTask)
 	mux.HandleFunc("PATCH /tasks/{id}", taskHandler.UpdateTask)
 	mux.HandleFunc("POST /incidents/search", incidentHandler.SearchIncidents)
+	mux.HandleFunc("POST /incidents/aggregate", incidentHandler.AggregateIncidents)
 	mux.HandleFunc("POST /incidents", incidentHandler.CreateIncident)
 	mux.HandleFunc("GET /incidents/{id}", incidentHandler.GetIncident)
 	mux.HandleFunc("PATCH /incidents/{id}", incidentHandler.PatchIncident)
@@ -221,6 +226,10 @@ func main() {
 	mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
 	mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
 	mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
+	mux.HandleFunc("POST /problems/aggregate", problemHandler.AggregateProblems)
+	mux.HandleFunc("GET /incident-tasks/{id}", incidentTaskHandler.GetIncidentTask)
+	mux.HandleFunc("POST /incident-tasks/search", incidentTaskHandler.SearchIncidentTasks)
+	mux.HandleFunc("POST /incident-tasks/aggregate", incidentTaskHandler.AggregateIncidentTasks)
 	// Called manually today; not yet wired into real incident/case creation.
 	mux.HandleFunc("POST /notifications/google-chat/alerts", notificationHandler.PostGoogleChatAlert)
 
@@ -346,13 +355,14 @@ func loadDashboards() *dashboard.Registry {
 // loadDirectory resolves the reference catalogues from environment
 // configuration, once, at startup:
 //
-//	CSM_TEAM_REGISTRY  the team registry as "teamKey|Display Name|FAMILY|groupId"
-//	                   rows separated by commas, where FAMILY is one of cre-abt,
-//	                   cre, sre-abt or sre (case insensitive) and FAMILY and
-//	                   groupId are both optional. Unset means no teams are
-//	                   configured; there is deliberately no default, because
-//	                   team names are organisation vocabulary that must not be
-//	                   committed here.
+//	CSM_TEAM_REGISTRY  the team registry as
+//	                   "teamKey|Display Name|FAMILY|creGroupId|sreGroupId" rows
+//	                   separated by commas, where FAMILY is one of cre-abt,
+//	                   cre, sre-abt or sre (case insensitive) and FAMILY,
+//	                   creGroupId, and sreGroupId are all optional. Unset means
+//	                   no teams are configured; there is deliberately no
+//	                   default, because team names are organisation vocabulary
+//	                   that must not be committed here.
 //	CSM_USER_ROLES     the assignable-role allow-list, comma separated. Unset
 //	                   falls back to the committed default list.
 //

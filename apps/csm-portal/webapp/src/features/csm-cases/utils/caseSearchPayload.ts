@@ -22,6 +22,7 @@ import {
   uiStateFromBe,
 } from "@api/backend/mappers";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
+import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import type {
   BeCaseFieldFilter,
@@ -49,6 +50,7 @@ export function buildCaseSearchFilters(
   filters: CasesFilters,
   search: string,
   assignedUserIds: string[] | undefined,
+  options?: { forceFreeText?: boolean; alsoFreeText?: boolean },
 ): BeCaseSearchFilters {
   const fieldFilters: BeCaseFieldFilter[] = [];
   if (filters.severities.length > 0) {
@@ -68,7 +70,17 @@ export function buildCaseSearchFilters(
   if (filters.caseTypes.length > 0) {
     fieldFilters.push({ field: "type", op: "in", values: filters.caseTypes });
   }
-  if (filters.workStates.length > 0) {
+  // Work state can only be applied server-side when "work_in_progress" is
+  // the sole selected state — enforced here (not just in the filter bar's
+  // own onChange) so a stale workStates value reaching this builder any
+  // other way (a saved view, a pinned/dashboard URL, a future caller) can
+  // never silently narrow the results to just in-progress/ongoing-paused
+  // cases when other states are also selected.
+  if (
+    filters.workStates.length > 0 &&
+    filters.states.length === 1 &&
+    filters.states[0] === "work_in_progress"
+  ) {
     fieldFilters.push({
       field: "workState",
       op: "in",
@@ -101,9 +113,16 @@ export function buildCaseSearchFilters(
   }
   if (filters.csTeams.length > 0) {
     fieldFilters.push({
-      field: "integrationCsTeam",
+      field: "creTeam",
       op: "in",
       values: filters.csTeams,
+    });
+  }
+  if (filters.sreTeams.length > 0) {
+    fieldFilters.push({
+      field: "sreTeam",
+      op: "in",
+      values: filters.sreTeams,
     });
   }
   // `tags`/`excludeTags` both target the `tag` field but with different ops
@@ -180,8 +199,37 @@ export function buildCaseSearchFilters(
     fieldFilters.push({ field: "closedOn", op: "lte", values: [filters.closedOnLte] });
   }
 
+  // A typed case number / WSO2 case id goes through as an exact-match field
+  // filter rather than the free-text `searchQuery` scan, mirroring the global
+  // quick-nav palette (see `classifyCaseQuery`, shared by both).
+  //
+  // `searchQuery` is a CONTAINS/OR scan across number, WSO2 id, short
+  // description AND description upstream — so searching an exact case number
+  // also matched every *other* case that merely mentions that number in its
+  // description, and those could outrank (or crowd out) the case actually
+  // being looked up. Reported as such: searching one case number surfaced a
+  // different case entirely. An indexed exact match also avoids that scan.
+  //
+  // `forceFreeText` opts back into the `searchQuery` scan even for a query
+  // that looks like an identifier — the cases list runs both legs in parallel
+  // and merges them (see `useGetCsmCases`), so that a case mentioning the
+  // number in its description is still findable, just below the exact hit.
+  //
+  // `alsoFreeText` keeps the exact filter *and* adds the scan. The backend ANDs
+  // `searchQuery` with the `filters` array (the quick-nav palette relies on the
+  // same thing to constrain a free-text search to a set of case types), so this
+  // resolves "how many exact hits the scan already covers" — which is what lets
+  // the merged total be computed exactly instead of guessed. See
+  // `useGetCsmCases`.
+  const scope =
+    search.length > 0 && !options?.forceFreeText ? classifyCaseQuery(search) : "text";
+  if (scope !== "text") {
+    fieldFilters.push({ field: scope, op: "eq", values: [search] });
+  }
+
+  const withFreeText = scope === "text" || !!options?.alsoFreeText;
   return {
-    ...(search.length > 0 && { searchQuery: search }),
+    ...(withFreeText && search.length > 0 && { searchQuery: search }),
     ...(fieldFilters.length > 0 && { filters: fieldFilters }),
   };
 }

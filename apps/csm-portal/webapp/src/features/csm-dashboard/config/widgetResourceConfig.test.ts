@@ -101,7 +101,7 @@ describe("WIDGET_RESOURCE_CONFIG.case.buildHref", () => {
 
 /**
  * Regression: the motivating bug for this whole feature. A widget filtering
- * `integrationCsTeam in [<team>]` + `tag notIn [s_dip]` + `state in [...]`
+ * `creTeam in [<team>]` + `tag notIn [s_dip]` + `state in [...]`
  * clicked through to `/cases?states=...` with the team and tag conditions
  * silently dropped — a tile reading 2 landed on a list of 30 (the org-wide
  * figure). Confirmed live three times before this fix. This suite proves the
@@ -110,10 +110,10 @@ describe("WIDGET_RESOURCE_CONFIG.case.buildHref", () => {
  * the right substring.
  */
 describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
-  it("carries integrationCsTeam, tag notIn, projectOnboardingStatus, escalation, escalationLevel, projectType, and SLA%/date ranges through to the href", () => {
+  it("carries creTeam, tag notIn, projectOnboardingStatus, escalation, escalationLevel, projectType, and SLA%/date ranges through to the href", () => {
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [
-        { field: "integrationCsTeam", op: "in", values: ["team-abt"] },
+        { field: "creTeam", op: "in", values: ["team-abt"] },
         { field: "tag", op: "notIn", values: ["s_dip"] },
         { field: "projectOnboardingStatus", op: "in", values: ["in_progress"] },
         { field: "escalation", op: "isNotEmpty" },
@@ -136,10 +136,32 @@ describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
     expect(parsed.createdOnGte).toBe("2026-01-01");
   });
 
+  it("carries sreTeam through to the href the same way creTeam does (CodeRabbit #3801153841/#3801153843)", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [{ field: "sreTeam", op: "in", values: ["team-sre-abt"] }],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.sreTeams).toEqual(["team-sre-abt"]);
+  });
+
+  it("creTeam and sreTeam survive together on the same widget, independently", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [
+        { field: "creTeam", op: "in", values: ["team-abt"] },
+        { field: "sreTeam", op: "in", values: ["team-sre-abt"] },
+      ],
+    });
+    const parsed = readCasesFiltersFromUrl(hrefParams(href));
+
+    expect(parsed.csTeams).toEqual(["team-abt"]);
+    expect(parsed.sreTeams).toEqual(["team-sre-abt"]);
+  });
+
   it("the org-wide-figure regression: team + tag-exclusion + state survive together, unchanged, end to end", () => {
     const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
       filters: [
-        { field: "integrationCsTeam", op: "in", values: ["team-abt"] },
+        { field: "creTeam", op: "in", values: ["team-abt"] },
         { field: "tag", op: "notIn", values: ["s_dip"] },
         { field: "state", op: "in", values: ["open", "work_in_progress"] },
       ],
@@ -179,7 +201,7 @@ describe("WIDGET_RESOURCE_CONFIG.case — previously-dropped fields", () => {
     // hrefs were byte-identical because `taskSLABusinessElapsedPercent` was
     // dropped entirely — see the cases-list-advanced-filters task record.
     const teamFilters = [
-      { field: "integrationCsTeam", op: "in", values: ["22222222-2222-2222-2222-222222222222"] },
+      { field: "creTeam", op: "in", values: ["22222222-2222-2222-2222-222222222222"] },
       { field: "state", op: "in", values: ["open", "work_in_progress", "waiting_on_wso2"] },
     ];
     const atRiskHref = WIDGET_RESOURCE_CONFIG.case.buildHref({
@@ -262,6 +284,24 @@ describe("WIDGET_RESOURCE_CONFIG — case-table resourceTypes beyond `case`", ()
         filters: [{ field: "state", op: "in", values: ["open"] }],
       }),
     ).toBe("/announcements");
+  });
+
+  // Regression test: incident_task has no dedicated list route of its own
+  // (only ever viewed as part of its parent incident), so its buildHref used
+  // to fall back to the plain, unfiltered incidents tab -- silently dropping
+  // this widget's own filters and landing the user on an unrelated result
+  // set. It must route through the generic dashboard-widget preview page
+  // instead, which is filter-aware, using the widgetId/displayName context
+  // DashboardWidgetTile passes at call time.
+  it("incident_task's buildHref routes to the widget preview page with widget context, not the unfiltered incidents tab", () => {
+    const href = WIDGET_RESOURCE_CONFIG.incident_task.buildHref(
+      { assignmentGroupIds: ["grp-1"] },
+      { widgetId: "widget-42", displayName: "My Incident Tasks" },
+    );
+    expect(href.startsWith("/dashboard/preview/incident-tasks?")).toBe(true);
+    const params = hrefParams(href);
+    expect(params.get("w")).toBe("widget-42");
+    expect(params.get("n")).toBe("My Incident Tasks");
   });
 
   it("each of the four has its own distinct icon from `case` and from each other", () => {

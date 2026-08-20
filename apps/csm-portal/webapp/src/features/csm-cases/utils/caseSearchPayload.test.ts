@@ -26,10 +26,24 @@ function filterOf(filters: CasesFilters, field: string) {
 }
 
 describe("buildCaseSearchFilters — new advanced-filter fields", () => {
-  it("emits integrationCsTeam op:in for csTeams", () => {
+  it("emits creTeam op:in for csTeams", () => {
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, csTeams: ["team-a"] };
-    expect(filterOf(filters, "integrationCsTeam")).toEqual([
-      { field: "integrationCsTeam", op: "in", values: ["team-a"] },
+    expect(filterOf(filters, "creTeam")).toEqual([
+      { field: "creTeam", op: "in", values: ["team-a"] },
+    ]);
+  });
+
+  it("emits sreTeam op:in for sreTeams, independently of creTeam", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      csTeams: ["team-a"],
+      sreTeams: ["team-sre-b"],
+    };
+    expect(filterOf(filters, "creTeam")).toEqual([
+      { field: "creTeam", op: "in", values: ["team-a"] },
+    ]);
+    expect(filterOf(filters, "sreTeam")).toEqual([
+      { field: "sreTeam", op: "in", values: ["team-sre-b"] },
     ]);
   });
 
@@ -133,5 +147,129 @@ describe("buildCaseSearchFilters — new advanced-filter fields", () => {
   it("emits nothing beyond the default filters when all new fields are unset", () => {
     const result = buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "", undefined);
     expect(result.filters).toBeUndefined();
+  });
+});
+
+// A typed case number / WSO2 case id must go through as an exact-match field
+// filter, not the free-text `searchQuery` scan. `searchQuery` is a CONTAINS/OR
+// scan that also covers the description upstream, so an exact case number
+// matched other cases merely *mentioning* it -- searching one case number
+// surfaced a different case entirely.
+describe("buildCaseSearchFilters — exact case-number / WSO2-id search", () => {
+  it("routes a CS case number to an exact `number` filter, not searchQuery", () => {
+    const result = buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "CS0346083", undefined);
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toEqual([
+      { field: "number", op: "eq", values: ["CS0346083"] },
+    ]);
+  });
+
+  it("routes a WSO2 case id to an exact `internalId` filter, not searchQuery", () => {
+    const result = buildCaseSearchFilters(
+      DEFAULT_CASES_FILTERS,
+      "AXACOLPATRIASUB-484",
+      undefined,
+    );
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toEqual([
+      { field: "internalId", op: "eq", values: ["AXACOLPATRIASUB-484"] },
+    ]);
+  });
+
+  it("still uses free-text searchQuery for anything that isn't an identifier", () => {
+    const result = buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "printer jam", undefined);
+
+    expect(result.searchQuery).toBe("printer jam");
+    expect(result.filters).toBeUndefined();
+  });
+
+  it("treats a partial/malformed case number as free text, so typing stays usable", () => {
+    // Mid-typing (6 digits) and an over-long 8-digit string are both free text.
+    expect(
+      buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "CS034608", undefined).searchQuery,
+    ).toBe("CS034608");
+    expect(
+      buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "CS03460834", undefined).searchQuery,
+    ).toBe("CS03460834");
+  });
+
+  it("combines the exact identifier filter with the other active filters", () => {
+    const result = buildCaseSearchFilters(
+      { ...DEFAULT_CASES_FILTERS, caseTypes: ["case"] },
+      "CS0346083",
+      undefined,
+    );
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toEqual([
+      { field: "type", op: "in", values: ["case"] },
+      { field: "number", op: "eq", values: ["CS0346083"] },
+    ]);
+  });
+
+  it("forceFreeText opts an identifier query back into the searchQuery scan", () => {
+    // The cases list runs this leg alongside the exact one (see useGetCsmCases),
+    // so a case that only *mentions* the number stays findable.
+    const result = buildCaseSearchFilters(
+      DEFAULT_CASES_FILTERS,
+      "CS0346083",
+      undefined,
+      { forceFreeText: true },
+    );
+
+    expect(result.searchQuery).toBe("CS0346083");
+    expect(result.filters).toBeUndefined();
+  });
+
+  it("emits no search filter at all for an empty query", () => {
+    const result = buildCaseSearchFilters(DEFAULT_CASES_FILTERS, "", undefined);
+
+    expect(result.searchQuery).toBeUndefined();
+    expect(result.filters).toBeUndefined();
+  });
+});
+
+describe("buildCaseSearchFilters — workState only applies when state is exactly work_in_progress", () => {
+  it("emits workState when work_in_progress is the sole selected state", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: ["work_in_progress"],
+      workStates: ["ongoing", "paused"],
+    };
+
+    expect(filterOf(filters, "workState")).toEqual([
+      { field: "workState", op: "in", values: ["ongoing", "paused"] },
+    ]);
+  });
+
+  // Regression guard: a stale `workStates` value reaching this builder any
+  // way other than the filter bar's own onChange (a saved view, a
+  // dashboard/pinned-view URL that predates the exact-match fix, a future
+  // caller) must never silently narrow results to just in-progress/paused
+  // cases once another state is also selected.
+  it("drops workState from the payload when another state is selected alongside work_in_progress", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: ["work_in_progress", "open"],
+      workStates: ["ongoing", "paused"],
+    };
+
+    expect(filterOf(filters, "workState")).toEqual([]);
+    // The state filter itself still applies normally.
+    expect(filterOf(filters, "state")).toEqual([
+      { field: "state", op: "in", values: ["work_in_progress", "open"] },
+    ]);
+  });
+
+  it("drops workState from the payload when no state is selected", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: [],
+      workStates: ["ongoing"],
+    };
+
+    expect(filterOf(filters, "workState")).toEqual([]);
   });
 });

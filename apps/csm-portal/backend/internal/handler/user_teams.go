@@ -20,6 +20,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 )
 
 // teamIDFilterLimit caps the teamIds filter. Each key expands to one group name
@@ -31,6 +34,12 @@ const teamIDFilterLimit = 50
 // roleIDFilterLimit caps the roleIds filter, matching what the entity service
 // enforced while it owned the role allow-list.
 const roleIDFilterLimit = 20
+
+// teamUUIDPattern matches this platform's canonical UUID text (lowercase or
+// uppercase hex, 8-4-4-4-12 hyphenated). A teamIds entry in this shape is
+// resolved against a team's backing group id rather than its registry key --
+// the same UUID form accounts.creTeam.id/sreTeam.id already expose elsewhere.
+var teamUUIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 // userTeamRef is a team the user is a member of, as GET /users/{id} exposes it.
 // ID is the registry team key, which is stable across environments -- unlike
@@ -109,9 +118,12 @@ func (h *UsersHandler) withUserTeams(raw []byte) ([]byte, error) {
 //   - roleIds is validated against the configured allow-list, which lives here
 //     now. An unknown role is a caller mistake, and letting it through would
 //     return a confidently empty page instead of an error.
-//   - teamIds is replaced by the group names those teams resolve to. The
-//     entity service filters membership by group name; only this layer knows
-//     which name a team key means.
+//   - teamIds is replaced by the group names those teams resolve to. Each
+//     entry may be either a registry teamKey or the platform UUID form of the
+//     team's backing group id (the same shape accounts.creTeam.id/sreTeam.id
+//     expose) -- both resolve to the same team. The entity service filters
+//     membership by group name; only this layer knows which name either id
+//     shape means.
 //
 // Every other field passes through untouched, and a body with no filters object
 // is returned byte-for-byte as it arrived. The returned error is caller-facing:
@@ -173,7 +185,15 @@ func (h *UsersHandler) resolveUserSearchFilters(body []byte) ([]byte, error) {
 			}
 		}
 		for _, key := range teamIDs {
-			team, ok := h.dir.TeamByKey(key)
+			var team directory.Team
+			var ok bool
+			if teamUUIDPattern.MatchString(key) {
+				// The platform UUID form of a team's backing group id -- the
+				// same shape accounts.creTeam.id/sreTeam.id already expose.
+				team, ok = h.dir.TeamByUUID(key)
+			} else {
+				team, ok = h.dir.TeamByKey(key)
+			}
 			if !ok {
 				return nil, fmt.Errorf("teamIds contains unknown team: %s", key)
 			}

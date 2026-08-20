@@ -17,6 +17,7 @@
 import DOMPurify from "dompurify";
 import { describe, expect, it } from "vitest";
 import {
+  escapeHtml,
   isBlankHtml,
   sanitizeDescriptionHtml,
   sanitizeRichTextHtml,
@@ -155,3 +156,14 @@ describe("stripLightModeInlineStyles", () => {
     expect(out).toContain("color: red");
   });
 });
+
+describe("escapeHtml", () => {
+  it("escapes the HTML-significant characters", () => {
+    expect(escapeHtml(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#039;");
+  });
+
+  it("escapes the ampersand first, so an escaped entity is not double-escaped wrongly", () => {
+    expect(escapeHtml("a & <b>")).toBe("a &amp; &lt;b&gt;");
+  });
+});
+

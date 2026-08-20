@@ -27,8 +27,9 @@ import {
   FormControlLabel,
   FormHelperText,
   Switch,
+  Typography,
 } from "@wso2/oxygen-ui";
-import { useMemo, useState, type JSX } from "react";
+import { useCallback, useMemo, useState, type JSX } from "react";
 import { useSearchGroups } from "@api/useSearchGroups";
 import type {
   BeChangeRequestDetail,
@@ -36,11 +37,13 @@ import type {
   BePatchChangeRequestPayload,
 } from "@api/backend/types";
 import AsyncEntitySelect from "@components/AsyncEntitySelect";
+import Editor from "@components/rich-text-editor/Editor";
 import {
   formatDateTimeLocal,
   isPastDateTime,
   parseDateTimeLocal,
 } from "@utils/dateTime";
+import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
 
 const { DateTimePicker, LocalizationProvider } = DatePickers;
 
@@ -76,11 +79,79 @@ function toBackendDateTime(local: string): string {
   return `${local.replace("T", " ")}:00`;
 }
 
+/** One long-form plan field, edited as rich text. */
+interface RichTextPlanField {
+  /** Frozen seed handed to the editor; never re-sent as the editor changes. */
+  initialHtml: string;
+  /** Current editor HTML. */
+  html: string;
+  onChange: (next: string) => void;
+  /** True once the user has actually changed the content. */
+  isDirty: boolean;
+  /** What to put in the patch: `""` for a cleared field, else the HTML. */
+  outgoing: string;
+}
+
 /**
- * Edit the change-request fields the BE allows updating: planned start, the
- * assignment group, and the customer approved / reviewed flags. Only changed
- * fields are sent, and the BE requires at least one, so Save is disabled
- * until something differs.
+ * State for a plan field that is edited as rich text rather than plain text.
+ *
+ * Dirty-tracking is the whole difficulty here. The editor normalizes markup
+ * when it loads a stored value — `<p>A</p>` comes back out as
+ * `<p><span style="white-space: pre-wrap;">A</span></p>` — so comparing the
+ * editor's HTML against the stored HTML as strings marks every seeded field
+ * dirty before the user has touched anything, and the dialog would then patch
+ * fields nobody edited.
+ *
+ * So the baseline is the editor's *own* first emission rather than the stored
+ * string: whatever it produces from the seed is, by definition, the unedited
+ * state. Two cases, and they differ because the editor only emits on load when
+ * there is something to load:
+ *
+ * - Stored content is non-blank: the editor injects it and emits once before
+ *   any user input, so the first emission is the baseline.
+ * - Stored content is blank: nothing is injected and nothing is emitted, so
+ *   the first emission would be the user's own typing. Baseline is fixed to
+ *   "blank" up front instead, and dirtiness is `!isBlankHtml`.
+ *
+ * A cleared field goes out as `""`, not the editor's `<p><br></p>` — an empty
+ * paragraph reads as "the plan says nothing" rather than "there is no plan".
+ */
+function useRichTextPlanField(storedHtml?: string | null): RichTextPlanField {
+  const stored = storedHtml ?? "";
+  // Frozen at mount: the editor treats its `value` as an initial value, and
+  // feeding the live HTML back in makes it re-seed itself mid-edit.
+  const [initialHtml] = useState(stored);
+  const [html, setHtml] = useState(stored);
+  // `null` means "waiting for the editor's first emission"; `""` means the
+  // baseline is known to be blank.
+  const [baseline, setBaseline] = useState<string | null>(
+    isBlankHtml(stored) ? "" : null,
+  );
+
+  const onChange = useCallback((next: string) => {
+    setBaseline((current) => (current === null ? next : current));
+    setHtml(next);
+  }, []);
+
+  const isDirty =
+    baseline === null
+      ? false
+      : baseline === ""
+        ? !isBlankHtml(html)
+        : html !== baseline;
+
+  // Sanitized on the way out, the same policy the detail page renders it back
+  // through, so nothing the editor emits can widen what ends up stored.
+  const outgoing = isBlankHtml(html) ? "" : sanitizeRichTextHtml(html);
+
+  return { initialHtml, html, onChange, isDirty, outgoing };
+}
+
+/**
+ * Edit the change-request fields the BE allows updating: the planned window,
+ * the assignment group, the customer approved / reviewed flags, and the
+ * rollback and test plans. Only changed fields are sent, and the BE requires
+ * at least one, so Save is disabled until something differs.
  */
 export default function EditChangeRequestDialog({
   cr,
@@ -93,30 +164,61 @@ export default function EditChangeRequestDialog({
     () => toDateTimeLocal(cr.plannedStartOn),
     [cr.plannedStartOn],
   );
+  const initialPlannedEnd = useMemo(
+    () => toDateTimeLocal(cr.plannedEndOn),
+    [cr.plannedEndOn],
+  );
   const initialAssignedTeamId = cr.assignedTeam?.id ?? "";
   const [plannedStart, setPlannedStart] = useState(initialPlannedStart);
+  const [plannedEnd, setPlannedEnd] = useState(initialPlannedEnd);
   const [approved, setApproved] = useState(!!cr.hasCustomerApproved);
   const [reviewed, setReviewed] = useState(!!cr.hasCustomerReviewed);
   const [assignedTeamId, setAssignedTeamId] = useState(initialAssignedTeamId);
+  const rollbackPlan = useRichTextPlanField(cr.rollbackPlan);
+  const testPlan = useRichTextPlanField(cr.testPlan);
+
+  // Client-side only, and only when both ends are set: the backing system
+  // does its own validation and this must not become the thing that blocks a
+  // legitimate save, so it surfaces inline rather than being enforced
+  // server-side.
+  const startDate = parseDateTimeLocal(plannedStart);
+  const endDate = parseDateTimeLocal(plannedEnd);
+  const plannedEndBeforeStart =
+    !!startDate && !!endDate && endDate.getTime() <= startDate.getTime();
 
   const patch = useMemo<BePatchChangeRequestPayload>(() => {
     const next: BePatchChangeRequestPayload = {};
     if (plannedStart !== initialPlannedStart && plannedStart) {
       next.plannedStartOn = toBackendDateTime(plannedStart);
     }
+    if (plannedEnd !== initialPlannedEnd && plannedEnd) {
+      next.plannedEndOn = toBackendDateTime(plannedEnd);
+    }
     if (approved !== !!cr.hasCustomerApproved) next.isCustomerApproved = approved;
     if (reviewed !== !!cr.hasCustomerReviewed) next.isCustomerReviewed = reviewed;
     if (assignedTeamId !== initialAssignedTeamId && assignedTeamId) {
       next.assignedTeamId = assignedTeamId;
     }
+    // Unlike the pickers above, an emptied plan field is a real edit the BE
+    // can accept, so "" is sent rather than skipped. Both plans are rich text
+    // on both sides now — see `useRichTextPlanField` for why "changed" is not
+    // a comparison against the stored string.
+    if (rollbackPlan.isDirty) next.rollbackPlan = rollbackPlan.outgoing;
+    if (testPlan.isDirty) next.testPlan = testPlan.outgoing;
     return next;
   }, [
     plannedStart,
     initialPlannedStart,
+    plannedEnd,
+    initialPlannedEnd,
     approved,
     reviewed,
     assignedTeamId,
     initialAssignedTeamId,
+    rollbackPlan.isDirty,
+    rollbackPlan.outgoing,
+    testPlan.isDirty,
+    testPlan.outgoing,
     cr.hasCustomerApproved,
     cr.hasCustomerReviewed,
   ]);
@@ -125,7 +227,7 @@ export default function EditChangeRequestDialog({
   // Non-blocking: editing a CR's planned start to a past instant is unusual
   // but not forbidden (e.g. recording when it actually started), so this
   // only warns.
-  const plannedStartIsPast = isPastDateTime(parseDateTimeLocal(plannedStart));
+  const plannedStartIsPast = isPastDateTime(startDate);
 
   // The backend rejects a patch containing both isCustomerApproved and
   // isCustomerReviewed outright — they, and requestApproval, are mutually
@@ -138,8 +240,41 @@ export default function EditChangeRequestDialog({
   const approvedLocked = reviewedChanged;
   const reviewedLocked = approvedChanged;
 
+  // Rich-text plan field. The editor takes no `id`/native label, so the
+  // visible label is a separate Typography tied to the control via
+  // role="group" + aria-labelledby, and the helper text is referenced by
+  // aria-describedby — same convention as the create page's Planning fields.
+  const renderPlanField = (
+    id: string,
+    label: string,
+    field: RichTextPlanField,
+    helperText: string,
+  ): JSX.Element => (
+    <Box>
+      <Typography
+        id={`${id}-label`}
+        variant="caption"
+        color="text.secondary"
+        sx={{ display: "block", mb: 0.5 }}
+      >
+        {label}
+      </Typography>
+      <Box role="group" aria-labelledby={`${id}-label`} aria-describedby={`${id}-help`}>
+        <Editor
+          value={field.initialHtml}
+          onChange={field.onChange}
+          minHeight={100}
+          maxHeight={300}
+          toolbarVariant="full"
+          disabled={isSaving}
+        />
+      </Box>
+      <FormHelperText id={`${id}-help`}>{helperText}</FormHelperText>
+    </Box>
+  );
+
   return (
-    <Dialog open onClose={onClose} maxWidth="xs" fullWidth>
+    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
       <DialogTitle>Edit change request</DialogTitle>
       <DialogContent dividers>
         <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 0.5 }}>
@@ -148,10 +283,18 @@ export default function EditChangeRequestDialog({
               {saveError}
             </Alert>
           )}
+          {/*
+            No `clearable` on either picker. The patch payload has no way to
+            express "remove the planned date" — `plannedStartOn`/`plannedEndOn`
+            are `string | undefined`, and an omitted key means "leave it
+            alone" — so a clear affordance would appear to work and then
+            silently save nothing. Widening the payload to express a null
+            clear is the fix if this is ever actually needed.
+          */}
           <LocalizationProvider dateAdapter={AdapterDateFns}>
             <DateTimePicker
               label="Planned start"
-              value={parseDateTimeLocal(plannedStart)}
+              value={startDate}
               onChange={(next) =>
                 setPlannedStart(
                   next instanceof Date && !Number.isNaN(next.getTime())
@@ -167,7 +310,27 @@ export default function EditChangeRequestDialog({
                     ? "This date is in the past."
                     : undefined,
                 },
-                field: { clearable: true },
+              }}
+            />
+            <DateTimePicker
+              label="Planned end"
+              value={endDate}
+              onChange={(next) =>
+                setPlannedEnd(
+                  next instanceof Date && !Number.isNaN(next.getTime())
+                    ? formatDateTimeLocal(next)
+                    : "",
+                )
+              }
+              slotProps={{
+                textField: {
+                  size: "small",
+                  fullWidth: true,
+                  error: plannedEndBeforeStart,
+                  helperText: plannedEndBeforeStart
+                    ? "Planned end must be after planned start."
+                    : undefined,
+                },
               }}
             />
           </LocalizationProvider>
@@ -229,6 +392,18 @@ export default function EditChangeRequestDialog({
             knownLabel={cr.assignedTeam?.name}
             helperText="Required before approval can be requested."
           />
+          {renderPlanField(
+            "cr-edit-rollback-plan",
+            "Rollback plan",
+            rollbackPlan,
+            "How this change is backed out if it goes wrong.",
+          )}
+          {renderPlanField(
+            "cr-edit-test-plan",
+            "Test plan",
+            testPlan,
+            "How the change is verified once implemented.",
+          )}
         </Box>
       </DialogContent>
       <DialogActions>
@@ -238,7 +413,7 @@ export default function EditChangeRequestDialog({
         <Button
           variant="contained"
           onClick={() => onSave(patch)}
-          disabled={isSaving || !hasChanges}
+          disabled={isSaving || !hasChanges || plannedEndBeforeStart}
         >
           {isSaving ? "Saving…" : "Save"}
         </Button>

@@ -89,13 +89,14 @@ const HEADER_CELLS_WITHOUT_SEVERITY: string[] = [
 // Subject gets the lion's share of the row; the ids sit in their own narrow
 // column so a long subject no longer has to share one cell with them.
 // The work-state chip (only present for WIP cases) stacks under the State chip
-// in the State column, so it doesn't need a column of its own. The trailing
-// `auto` track (unlabeled in the header, like the one before it for "Updated")
-// holds the per-row quick-preview action.
+// in the State column, so it doesn't need a column of its own. The leading
+// `auto` track (unlabeled in the header) holds the per-row quick-preview
+// action — kept at the left edge so it's reachable without hunting across
+// the row, with the preview drawer itself opening on the right.
 const GRID_WITH_SEVERITY =
-  "minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) auto auto minmax(110px, 1fr) auto auto";
+  "auto minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) auto auto minmax(110px, 1fr) auto";
 const GRID_WITHOUT_SEVERITY =
-  "minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) minmax(110px, 1fr) auto auto";
+  "auto minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) minmax(110px, 1fr) auto";
 
 export default function CasesList({
   cases,
@@ -146,6 +147,13 @@ export default function CasesList({
           borderColor: "divider",
         }}
       >
+        <Typography
+          variant="caption"
+          color="text.secondary"
+          sx={{ fontWeight: 600, textAlign: "left" }}
+        >
+          Preview
+        </Typography>
         {headerCells.map((label) => (
           <Typography
             key={label}
@@ -185,13 +193,6 @@ export default function CasesList({
             Updated
           </Typography>
         )}
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontWeight: 600, textAlign: "left" }}
-        >
-          Preview
-        </Typography>
       </Box>
 
       {/* Rows */}
@@ -261,6 +262,28 @@ export default function CasesList({
                 "&:last-of-type": { borderBottom: 0 },
               }}
             >
+              {/* Quick preview, at the row's left edge so it's the first
+                  thing reachable without hunting across the row; the drawer
+                  itself opens on the right. `stopPropagation` keeps the click
+                  from also bubbling up into the row's own onClick (which
+                  would open the full case instead of just previewing it).
+                  Clicking the eye for the row already being previewed closes
+                  it instead of re-opening the same preview. */}
+              <Tooltip title={`Quick preview ${rowLabel}`}>
+                <IconButton
+                  size="small"
+                  aria-label={`Quick preview ${rowLabel}`}
+                  aria-pressed={previewRow?.id === c.id}
+                  data-quick-preview-eye="true"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPreviewRow((prev) => (prev?.id === c.id ? null : c));
+                  }}
+                  sx={{ justifySelf: "center" }}
+                >
+                  <Eye size={16} />
+                </IconButton>
+              </Tooltip>
               {/* Case ids: WSO2 internal id on top, CS number beneath. Never
                   the UUID. "—" when the case has neither yet. This block is
                   the row's one real anchor — cmd/middle-click "open in new
@@ -370,22 +393,6 @@ export default function CasesList({
               <Typography variant="caption" color="text.secondary" noWrap>
                 <RelativeTime iso={c.updatedAt} />
               </Typography>
-              {/* Quick preview. `stopPropagation` keeps the click from also
-                  bubbling up into the row's own onClick (which would open the
-                  full case instead of just previewing it). */}
-              <Tooltip title={`Quick preview ${rowLabel}`}>
-                <IconButton
-                  size="small"
-                  aria-label={`Quick preview ${rowLabel}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPreviewRow(c);
-                  }}
-                  sx={{ justifySelf: "center" }}
-                >
-                  <Eye size={16} />
-                </IconButton>
-              </Tooltip>
             </Box>
           );
         })}

@@ -39,8 +39,19 @@ import {
   startDateLabel,
 } from "@features/csm-projects/utils/projectLifecycle";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
 type ProjectTabId = "overview" | "deployments" | "contacts" | "workItems";
+const PROJECT_TAB_IDS: readonly ProjectTabId[] = [
+  "overview",
+  "deployments",
+  "contacts",
+  "workItems",
+];
+// A sub-tab selection only means something under the project tab that owns
+// it (currently just Work items' own `?subTab=`) — see the `useQueryParamTabs`
+// call below.
+const PROJECT_TAB_CHANGE_CLEARS: readonly string[] = ["subTab"];
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -141,7 +152,18 @@ export default function CsmProjectDetailPage(): JSX.Element {
   const fromListState = location.state as { from?: string } | undefined;
   const resolvedBackPath = fromListState?.from ?? "/customers/projects";
   const { data, isLoading, isError } = useGetProject(id);
-  const [activeTab, setActiveTab] = useState<ProjectTabId>("overview");
+  // Kept in the URL (`?tab=`), not local state, so returning here after a
+  // create-flow round trip (see `projectPath` below) restores the tab the
+  // engineer was actually on, instead of always resetting to Overview. A
+  // sub-tab selection (e.g. Work items' own tab strip, `?subTab=`) only means
+  // something under the tab that owns it -- `clearParamsOnChange` drops it so
+  // switching away doesn't carry a stale sub-tab back in if this tab is
+  // revisited.
+  const { activeTab, setActiveTab } = useQueryParamTabs<ProjectTabId>(
+    PROJECT_TAB_IDS,
+    "overview",
+    { clearParamsOnChange: PROJECT_TAB_CHANGE_CLEARS },
+  );
   const [createMenuAnchor, setCreateMenuAnchor] = useState<HTMLElement | null>(
     null,
   );
@@ -179,6 +201,14 @@ export default function CsmProjectDetailPage(): JSX.Element {
   }
 
   const p = data;
+  // Handed to each "Create X" menu item below as router state, so that
+  // create page's own Back/Cancel -- and the entity it creates -- return
+  // here instead of their hardcoded top-level list (see CsmCaseCreatePage.tsx
+  // and its 3 siblings). Includes the current `?tab=`/`&subTab=` query string
+  // (not just the bare `/customers/projects/:id` path), so the round trip
+  // restores the exact tab -- Work items' own sub-tab included -- rather than
+  // resetting to Overview.
+  const projectPath = `${location.pathname}${location.search}`;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
@@ -221,7 +251,9 @@ export default function CsmProjectDetailPage(): JSX.Element {
           <MenuItem
             onClick={() => {
               setCreateMenuAnchor(null);
-              navigate(`/cases/new?projectId=${encodeURIComponent(p.id)}`);
+              navigate(`/cases/new?projectId=${encodeURIComponent(p.id)}`, {
+                state: { from: projectPath },
+              });
             }}
           >
             Create case
@@ -232,6 +264,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
                 setCreateMenuAnchor(null);
                 navigate(
                   `/operations/service-requests/new?projectId=${encodeURIComponent(p.id)}`,
+                  { state: { from: projectPath } },
                 );
               }}
             >
@@ -241,7 +274,9 @@ export default function CsmProjectDetailPage(): JSX.Element {
           <MenuItem
             onClick={() => {
               setCreateMenuAnchor(null);
-              navigate(`/engagements/new?projectId=${encodeURIComponent(p.id)}`);
+              navigate(`/engagements/new?projectId=${encodeURIComponent(p.id)}`, {
+                state: { from: projectPath },
+              });
             }}
           >
             Create engagement
@@ -251,6 +286,7 @@ export default function CsmProjectDetailPage(): JSX.Element {
               setCreateMenuAnchor(null);
               navigate(
                 `/security-center/reports/new?projectId=${encodeURIComponent(p.id)}`,
+                { state: { from: projectPath } },
               );
             }}
           >
