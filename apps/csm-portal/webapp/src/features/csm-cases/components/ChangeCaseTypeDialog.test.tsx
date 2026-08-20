@@ -86,7 +86,8 @@ afterEach(() => {
 
 /** Picks a target on step 1 ("pick") and advances to step 2 ("fields"). */
 function pickTargetAndAdvanceToFields(name: RegExp): void {
-  fireEvent.click(screen.getByRole("radio", { name }));
+  fireEvent.mouseDown(screen.getByRole("combobox", { name: /transfer to/i }));
+  fireEvent.click(screen.getByRole("option", { name }));
   fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
 }
 
@@ -97,7 +98,7 @@ function advanceToReview(): void {
 }
 
 describe("ChangeCaseTypeDialog — step 1: pick target", () => {
-  it("offers the other 3 transferable types, not the current one", () => {
+  it("offers all 4 types, with the current one disabled", () => {
     render(
       <ChangeCaseTypeDialog
         currentType="case"
@@ -109,10 +110,39 @@ describe("ChangeCaseTypeDialog — step 1: pick target", () => {
       />,
     );
     expect(screen.getByText(/step 1 of 3/i)).toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: /^case$/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /security report/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /service request/i })).toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /transfer to/i }));
+    expect(screen.getByRole("option", { name: /^case \(current type\)$/i })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("option", { name: /^security report$/i })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("option", { name: /^engagement$/i })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("option", { name: /^service request$/i })).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("never shows 'not yet available' anywhere in the flow", () => {
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/^service request$/i);
+    advanceToReview();
+    expect(screen.queryByText(/not yet available/i)).not.toBeInTheDocument();
   });
 
   it("moves to step 2 (fields) on Next, without calling onSubmit", () => {
@@ -244,7 +274,9 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     pickTargetAndAdvanceToFields(/^engagement$/i);
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     expect(screen.getByText(/step 1 of 3/i)).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeChecked();
+    expect(screen.getByRole("combobox", { name: /transfer to/i })).toHaveTextContent(
+      /^engagement$/i,
+    );
   });
 
   it("returns to step 2 on Back from review, keeping the filled field", () => {

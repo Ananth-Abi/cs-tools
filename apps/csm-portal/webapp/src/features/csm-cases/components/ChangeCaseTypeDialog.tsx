@@ -23,13 +23,10 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
-  FormControlLabel,
   FormHelperText,
   InputLabel,
   LinearProgress,
   MenuItem,
-  Radio,
-  RadioGroup,
   Select,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -101,14 +98,15 @@ interface ChangeCaseTypeDialogProps {
 
 /**
  * Transfer a case between Case, Engagement, Security Report Analysis, and
- * Service Request (digiops-cs#2818). Three steps: pick the target type, fill
- * in whatever it needs, then review what's retained/lost and confirm. Only
- * Case <-> Engagement submits today — SRA/Service Request are still offered
- * on step 1, and their own field step is fully previewable (SRA's attachment
- * uploader really uploads; Service Request's catalog picker is real), so the
- * whole proposal is explorable — but the confirm button on step 3 stays
- * disabled for them until entity-service's `caseType` validator
- * (digiops-cs#2852) accepts them as targets.
+ * Service Request (digiops-cs#2818). Three steps: pick the target type
+ * (a dropdown of all 4, with the case's current type shown but disabled),
+ * fill in whatever the target needs, then review what's retained/lost and
+ * confirm. Only Case <-> Engagement submits today — SRA/Service Request are
+ * still selectable and their own field step is fully previewable (SRA's
+ * attachment uploader really uploads; Service Request's catalog picker is
+ * real), so the whole proposal is explorable — but the confirm button on
+ * step 3 stays disabled for them until entity-service's `caseType`
+ * validator (digiops-cs#2852) accepts them as targets.
  */
 export default function ChangeCaseTypeDialog({
   currentType,
@@ -122,9 +120,10 @@ export default function ChangeCaseTypeDialog({
   onClose,
   onSubmit,
 }: ChangeCaseTypeDialogProps): JSX.Element {
-  const targets = TRANSFERABLE_CASE_TYPES.filter((t) => t !== currentType);
   const [step, setStep] = useState<Step>("pick");
-  const [targetType, setTargetType] = useState<BeCaseType>(targets[0]);
+  const [targetType, setTargetType] = useState<BeCaseType>(
+    TRANSFERABLE_CASE_TYPES.find((t) => t !== currentType) ?? TRANSFERABLE_CASE_TYPES[0],
+  );
   const [engagementType, setEngagementType] = useState<BeEngagementType | "">("");
   const [severity, setSeverity] = useState<Severity | "">(
     currentSeverity === "unset" ? "" : currentSeverity,
@@ -213,27 +212,21 @@ export default function ChangeCaseTypeDialog({
               . {ALWAYS_RETAINED_FIELDS.join(", ")} always carry over.
             </Typography>
 
-            <FormControl>
-              <RadioGroup
+            <FormControl fullWidth size="small">
+              <InputLabel id="transfer-target-type-label">Transfer to</InputLabel>
+              <Select
+                labelId="transfer-target-type-label"
+                label="Transfer to"
                 value={targetType}
                 onChange={(e) => handleTargetChange(e.target.value as BeCaseType)}
               >
-                {targets.map((t) => {
-                  const supported = SUPPORTED_TRANSFER_TARGETS.includes(t);
-                  return (
-                    <FormControlLabel
-                      key={t}
-                      value={t}
-                      control={<Radio size="small" />}
-                      label={
-                        supported
-                          ? caseTypeTransferLabel(t)
-                          : `${caseTypeTransferLabel(t)} (not yet available)`
-                      }
-                    />
-                  );
-                })}
-              </RadioGroup>
+                {TRANSFERABLE_CASE_TYPES.map((t) => (
+                  <MenuItem key={t} value={t} disabled={t === currentType}>
+                    {caseTypeTransferLabel(t)}
+                    {t === currentType ? " (current type)" : ""}
+                  </MenuItem>
+                ))}
+              </Select>
             </FormControl>
           </DialogContent>
           <DialogActions>
@@ -457,13 +450,6 @@ export default function ChangeCaseTypeDialog({
                   </span>
                 ))}
                 .
-              </Typography>
-            )}
-
-            {!isSupportedTarget && (
-              <Typography variant="body2" color="text.secondary" fontStyle="italic">
-                Transferring to {caseTypeTransferLabel(targetType)} isn&rsquo;t available yet —
-                the entity-service doesn&rsquo;t accept it as a transfer target.
               </Typography>
             )}
 
