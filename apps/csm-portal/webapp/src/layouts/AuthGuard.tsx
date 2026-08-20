@@ -20,9 +20,32 @@ import { ProtectedRoute } from "@asgardeo/react-router";
 import { useLocation, useNavigate } from "react-router";
 import AppLayout from "@layouts/AppLayout";
 import { POST_LOGIN_REDIRECT_KEY } from "@layouts/postLoginRedirect";
+import { isTopLevelWindow } from "@utils/isTopLevelWindow";
 import { CurrentUserProvider } from "@context/current-user/CurrentUserContext";
+import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import { useLogger } from "@hooks/useLogger";
 import { trySilentSignInOnce } from "@hooks/silentSignIn";
+
+/**
+ * The app shell with the routed page deliberately suppressed.
+ *
+ * `AppLayout` renders `children || <Outlet />`, so passing children keeps the
+ * chrome visible without mounting the route underneath. That matters before a
+ * session exists: pages reached this way call `useCurrentUser`, which throws
+ * outside `CurrentUserProvider` — a bare `<AppLayout />` here took down the
+ * whole tree on any deep link (`/cases/:id` among them) while auth was still
+ * resolving or the sign-in redirect was in flight. Suppressing the page also
+ * keeps it from firing authenticated requests that are certain to 401.
+ *
+ * @returns {JSX.Element} The app shell showing progress in the content region.
+ */
+function AuthPendingShell(): JSX.Element {
+  return (
+    <AppLayout>
+      <RouteSuspenseFallback />
+    </AppLayout>
+  );
+}
 
 /**
  * Starts sign-in for a signed-out visitor and renders the app shell while the
@@ -59,6 +82,11 @@ function SignInRedirect(): JSX.Element {
 
   useEffect(() => {
     if (started.current) return;
+    // The silent-re-auth iframe boots the whole app on this same origin and
+    // lands here too, signed out. Starting a sign-in from inside it would run a
+    // second, nested authorize round-trip that no one is waiting on, and clobber
+    // the real page's saved deep link. The SDK drives that frame; leave it be.
+    if (!isTopLevelWindow()) return;
     started.current = true;
 
     const intended = location.pathname + location.search + location.hash;
@@ -88,7 +116,7 @@ function SignInRedirect(): JSX.Element {
     location.hash,
   ]);
 
-  return <AppLayout />;
+  return <AuthPendingShell />;
 }
 
 /**
@@ -202,7 +230,7 @@ export default function AuthGuard(): JSX.Element {
   }
 
   return (
-    <ProtectedRoute loader={<AppLayout />} fallback={<SignInRedirect />}>
+    <ProtectedRoute loader={<AuthPendingShell />} fallback={<SignInRedirect />}>
       <CurrentUserProvider>
         <AppLayout />
       </CurrentUserProvider>

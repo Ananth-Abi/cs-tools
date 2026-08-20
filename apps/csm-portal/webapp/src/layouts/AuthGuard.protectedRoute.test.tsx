@@ -44,6 +44,11 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
   ),
 }));
 
+const isTopLevel = { value: true };
+vi.mock("@utils/isTopLevelWindow", () => ({
+  isTopLevelWindow: () => isTopLevel.value,
+}));
+
 vi.mock("@hooks/useLogger", () => ({
   useLogger: () => ({
     debug: vi.fn(),
@@ -69,6 +74,7 @@ describe("AuthGuard against the real ProtectedRoute", () => {
     sessionStorage.clear();
     authState.isSignedIn = false;
     authState.isLoading = false;
+    isTopLevel.value = true;
   });
 
   it("keeps the shell up and starts sign-in instead of crashing when signed out", async () => {
@@ -101,6 +107,23 @@ describe("AuthGuard against the real ProtectedRoute", () => {
 
     expect(screen.queryByTestId("current-user-provider")).not.toBeNull();
     expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it("starts no sign-in from the silent-re-auth iframe's own boot of the app", async () => {
+    // That iframe shares this origin (and so sessionStorage) with the real page:
+    // a nested authorize round-trip nobody awaits, and the real page's deep link
+    // overwritten with the iframe's URL.
+    isTopLevel.value = false;
+    sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, "/cases/the-real-one");
+
+    renderAt("/?error=login_required&state=instance_0_request_0");
+
+    await waitFor(() => expect(screen.queryByTestId("app-layout")).not.toBeNull());
+    expect(signIn).not.toHaveBeenCalled();
+    expect(signInSilently).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)).toBe(
+      "/cases/the-real-one",
+    );
   });
 
   it("shows the loader without starting sign-in while auth is resolving", () => {
