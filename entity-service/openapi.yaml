@@ -6686,6 +6686,7 @@ components:
 
     CaseVariable:
       type: object
+      required: [name, value]
       properties:
         name:
           type: string
@@ -6720,6 +6721,7 @@ components:
 
     CatalogVariableChoice:
       type: object
+      required: [value, text, order]
       properties:
         value:
           type: string
