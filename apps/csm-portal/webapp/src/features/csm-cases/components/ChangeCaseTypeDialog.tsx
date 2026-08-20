@@ -78,6 +78,14 @@ interface ChangeCaseTypeDialogProps {
   currentType: BeCaseType;
   currentSeverity: SeverityOrUnset;
   hasAttachments: boolean;
+  /** The case's own attributes that carry over unchanged regardless of
+   * target type — shown as disabled dropdowns on the fields step so the
+   * user sees what's staying the same alongside what still needs filling. */
+  currentProjectName?: string;
+  currentDeploymentName?: string;
+  currentProductName?: string;
+  currentWatchers?: { id: string; name: string }[];
+  currentTags?: { id: string; label: string }[];
   /** Scopes the Service Request preview's catalog picker — same product the
    * case is already linked to. Absent for a case with no deployed product,
    * in which case the catalog picker shows its own "select a product first"
@@ -111,6 +119,11 @@ export default function ChangeCaseTypeDialog({
   currentType,
   currentSeverity,
   hasAttachments,
+  currentProjectName = "—",
+  currentDeploymentName = "—",
+  currentProductName = "—",
+  currentWatchers = [],
+  currentTags = [],
   deployedProductId,
   onUploadAttachment,
   isUploadingAttachment,
@@ -238,6 +251,96 @@ export default function ChangeCaseTypeDialog({
       {step === "fields" && (
         <>
           <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Typography variant="body2" color="text.secondary">
+              Carrying over unchanged
+            </Typography>
+
+            <FormControl fullWidth size="small" disabled>
+              <InputLabel id="transfer-current-project-label">Project</InputLabel>
+              <Select
+                labelId="transfer-current-project-label"
+                label="Project"
+                value="current"
+              >
+                <MenuItem value="current">{currentProjectName}</MenuItem>
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth size="small" disabled>
+              <InputLabel id="transfer-current-deployment-label">Deployment</InputLabel>
+              <Select
+                labelId="transfer-current-deployment-label"
+                label="Deployment"
+                value="current"
+              >
+                <MenuItem value="current">{currentDeploymentName}</MenuItem>
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth size="small" disabled>
+              <InputLabel id="transfer-current-product-label">Product</InputLabel>
+              <Select labelId="transfer-current-product-label" label="Product" value="current">
+                <MenuItem value="current">{currentProductName}</MenuItem>
+              </Select>
+            </FormControl>
+
+            {currentSeverity !== "unset" && (
+              <FormControl fullWidth size="small" disabled>
+                <InputLabel id="transfer-current-severity-label">Severity</InputLabel>
+                <Select
+                  labelId="transfer-current-severity-label"
+                  label="Severity"
+                  value="current"
+                >
+                  <MenuItem value="current">
+                    {currentSeverity} · {SEVERITY_LABEL[currentSeverity]}
+                  </MenuItem>
+                </Select>
+              </FormControl>
+            )}
+
+            <FormControl fullWidth size="small" disabled>
+              <InputLabel id="transfer-current-watchers-label">Watchers</InputLabel>
+              <Select
+                labelId="transfer-current-watchers-label"
+                label="Watchers"
+                multiple
+                displayEmpty
+                value={currentWatchers.map((w) => w.id)}
+                renderValue={() =>
+                  currentWatchers.length > 0
+                    ? currentWatchers.map((w) => w.name).join(", ")
+                    : "None"
+                }
+              >
+                {currentWatchers.map((w) => (
+                  <MenuItem key={w.id} value={w.id}>
+                    {w.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <FormControl fullWidth size="small" disabled>
+              <InputLabel id="transfer-current-tags-label">Tags</InputLabel>
+              <Select
+                labelId="transfer-current-tags-label"
+                label="Tags"
+                multiple
+                displayEmpty
+                value={currentTags.map((t) => t.id)}
+                renderValue={() =>
+                  currentTags.length > 0 ? currentTags.map((t) => t.label).join(", ") : "None"
+                }
+              >
+                {currentTags.map((t) => (
+                  <MenuItem key={t.id} value={t.id}>
+                    {t.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
             <Typography variant="body2" color="text.secondary">
               What {caseTypeTransferLabel(targetType)} needs
             </Typography>

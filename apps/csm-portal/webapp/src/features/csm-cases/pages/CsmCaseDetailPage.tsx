@@ -2524,6 +2524,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
           currentType={c.caseType ?? "case"}
           currentSeverity={c.severity}
           hasAttachments={attachmentList.length > 0}
+          currentProjectName={c.projectName}
+          currentDeploymentName={c.productContext.deployment}
+          currentProductName={c.productContext.product}
+          currentWatchers={c.watchers}
+          currentTags={c.tags}
           deployedProductId={c.productContext.deployedProductId}
           onUploadAttachment={onUploadAttachment}
           isUploadingAttachment={postAttachment.isPending}

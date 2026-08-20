@@ -182,6 +182,77 @@ describe("ChangeCaseTypeDialog — step 1: pick target", () => {
   });
 });
 
+describe("ChangeCaseTypeDialog — step 2: retained attributes carry over disabled", () => {
+  it("shows the case's current project, deployment, product, severity, watchers, and tags as disabled dropdowns", () => {
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        currentProjectName="API Manager Rollout"
+        currentDeploymentName="Prod EU"
+        currentProductName="API Manager 4.3"
+        currentWatchers={[
+          { id: "u-1", name: "Alex Doe" },
+          { id: "u-2", name: "Sam Lee" },
+        ]}
+        currentTags={[{ id: "t-1", label: "billing" }]}
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/^engagement$/i);
+
+    expect(screen.getByText(/carrying over unchanged/i)).toBeInTheDocument();
+    expect(screen.getByText("API Manager Rollout")).toBeInTheDocument();
+    expect(screen.getByText("Prod EU")).toBeInTheDocument();
+    expect(screen.getByText("API Manager 4.3")).toBeInTheDocument();
+    expect(screen.getByText(/S2 · High/i)).toBeInTheDocument();
+    expect(screen.getByText("Alex Doe, Sam Lee")).toBeInTheDocument();
+    expect(screen.getByText("billing")).toBeInTheDocument();
+
+    expect(screen.getByRole("combobox", { name: /^project$/i })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: /^watchers$/i })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+
+  it("omits the retained severity dropdown when the case has no severity", () => {
+    render(
+      <ChangeCaseTypeDialog
+        currentType="engagement"
+        currentSeverity="unset"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/^case$/i);
+    expect(screen.queryByRole("combobox", { name: /^severity$/i })).not.toBeInTheDocument();
+  });
+
+  it("shows placeholder text when there are no watchers or tags", () => {
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/^engagement$/i);
+    expect(screen.getAllByText(/^none$/i)).toHaveLength(2);
+  });
+});
+
 describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () => {
   it("requires engagement type before the transfer button enables", () => {
     render(
