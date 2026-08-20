@@ -167,6 +167,11 @@ export default function CsmSideBar({
   return (
     <Sidebar
       collapsed={collapsed}
+      // Wider than Oxygen's own 250px default: a submenu child's label sits
+      // under extra left padding (depth-based indent) plus its icon, and at
+      // 250px the longest one ("Problem management") ran out of room and
+      // clipped.
+      width={280}
       activeItem={activeItem}
       expandedMenus={effectiveExpandedMenus}
       onSelect={handleSelect}
