@@ -184,11 +184,11 @@ type CaseService interface {
 	// A ValidationError is returned for invalid input; any other error indicates an
 	// infrastructure failure.
 	SearchCases(ctx context.Context, req domain.SearchCasesRequest) (domain.SearchCasesResponse, error)
-	// GroupCasesBy returns server-side aggregated counts of cases per value of
+	// AggregateCases returns server-side aggregated counts of cases per value of
 	// req.GroupBy (e.g. account), capped to the top req.MaxGroups buckets with
-	// the remainder folded into GroupByResponse.OthersCount. A ValidationError
+	// the remainder folded into AggregateResponse.OthersCount. A ValidationError
 	// is returned for invalid input.
-	GroupCasesBy(ctx context.Context, req domain.GroupCasesByRequest) (domain.GroupByResponse, error)
+	AggregateCases(ctx context.Context, req domain.AggregateCasesRequest) (domain.AggregateResponse, error)
 	// CreateCaseComment creates a new comment on the case identified by req.CaseID.
 	// A ValidationError is returned for invalid input or constraint violations.
 	CreateCaseComment(ctx context.Context, req domain.CreateCaseCommentRequest) (domain.CreateCaseCommentResponse, error)
@@ -285,11 +285,11 @@ type ChangeRequestService interface {
 	// project IDs, state keys, impact keys, date ranges, and search query.
 	SearchChangeRequests(ctx context.Context, req domain.SearchChangeRequestsRequest) (domain.SearchChangeRequestsResponse, error)
 
-	// GroupChangeRequestsBy returns server-side aggregated counts of change requests
+	// AggregateChangeRequests returns server-side aggregated counts of change requests
 	// per value of req.GroupBy, capped to the top req.MaxGroups buckets with the
-	// remainder folded into GroupByResponse.OthersCount. A ValidationError is
+	// remainder folded into AggregateResponse.OthersCount. A ValidationError is
 	// returned for invalid input.
-	GroupChangeRequestsBy(ctx context.Context, req domain.GroupChangeRequestsByRequest) (domain.GroupByResponse, error)
+	AggregateChangeRequests(ctx context.Context, req domain.AggregateChangeRequestsRequest) (domain.AggregateResponse, error)
 
 	// GetChangeRequest returns the full detail of a single change request by its UUID.
 	GetChangeRequest(ctx context.Context, id string) (domain.ChangeRequest, error)
@@ -419,11 +419,11 @@ type IncidentService interface {
 	// priority keys, and parent IDs. A ValidationError is returned for invalid input.
 	SearchIncidents(ctx context.Context, req domain.SearchIncidentsRequest) (domain.SearchIncidentsResponse, error)
 
-	// GroupIncidentsBy returns server-side aggregated counts of incidents per
+	// AggregateIncidents returns server-side aggregated counts of incidents per
 	// value of req.GroupBy, capped to the top req.MaxGroups buckets with the
-	// remainder folded into GroupByResponse.OthersCount. A ValidationError is
+	// remainder folded into AggregateResponse.OthersCount. A ValidationError is
 	// returned for invalid input.
-	GroupIncidentsBy(ctx context.Context, req domain.GroupIncidentsByRequest) (domain.GroupByResponse, error)
+	AggregateIncidents(ctx context.Context, req domain.AggregateIncidentsRequest) (domain.AggregateResponse, error)
 
 	// CreateIncident creates a new incident in ServiceNow.
 	// callerId, category, serviceId, impact, urgency, and subject are required.
@@ -448,11 +448,11 @@ type ProblemService interface {
 	// A ValidationError is returned for invalid input.
 	SearchProblems(ctx context.Context, req domain.SearchProblemsRequest) (domain.SearchProblemsResponse, error)
 
-	// GroupProblemsBy returns server-side aggregated counts of problems per
+	// AggregateProblems returns server-side aggregated counts of problems per
 	// value of req.GroupBy, capped to the top req.MaxGroups buckets with the
-	// remainder folded into GroupByResponse.OthersCount. A ValidationError is
+	// remainder folded into AggregateResponse.OthersCount. A ValidationError is
 	// returned for invalid input.
-	GroupProblemsBy(ctx context.Context, req domain.GroupProblemsByRequest) (domain.GroupByResponse, error)
+	AggregateProblems(ctx context.Context, req domain.AggregateProblemsRequest) (domain.AggregateResponse, error)
 
 	// GetProblem returns the full detail of a single problem by its UUID.
 	// A NotFoundError is returned if the problem does not exist.
@@ -471,11 +471,11 @@ type IncidentTaskService interface {
 	// invalid input.
 	SearchIncidentTasks(ctx context.Context, req domain.SearchIncidentTasksRequest) (domain.SearchIncidentTasksResponse, error)
 
-	// GroupIncidentTasksBy returns server-side aggregated counts of incident
+	// AggregateIncidentTasks returns server-side aggregated counts of incident
 	// tasks per value of req.GroupBy, capped to the top req.MaxGroups buckets
-	// with the remainder folded into GroupByResponse.OthersCount. A
+	// with the remainder folded into AggregateResponse.OthersCount. A
 	// ValidationError is returned for invalid input.
-	GroupIncidentTasksBy(ctx context.Context, req domain.GroupIncidentTasksByRequest) (domain.GroupByResponse, error)
+	AggregateIncidentTasks(ctx context.Context, req domain.AggregateIncidentTasksRequest) (domain.AggregateResponse, error)
 
 	// GetIncidentTask returns the full detail of a single incident task by its UUID.
 	// A NotFoundError is returned if the incident task does not exist.

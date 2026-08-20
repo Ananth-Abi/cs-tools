@@ -1176,7 +1176,7 @@ describe("DashboardWidgetTile", () => {
     expect(screen.getByText("slice:Others:4")).toBeInTheDocument();
     expect(postMock).toHaveBeenCalledTimes(1);
     expect(postMock).toHaveBeenCalledWith(
-      "/cases/group-by",
+      "/cases/aggregate",
       {
         filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
         groupBy: "severity",

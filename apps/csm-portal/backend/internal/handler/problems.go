@@ -32,6 +32,7 @@ import (
 // entityProblemClient abstracts the entity service problem operations used by ProblemHandler.
 type entityProblemClient interface {
 	SearchProblems(ctx context.Context, body []byte) ([]byte, error)
+	AggregateProblems(ctx context.Context, body []byte) ([]byte, error)
 	GetProblem(ctx context.Context, id string) ([]byte, error)
 	CreateProblem(ctx context.Context, body []byte) ([]byte, error)
 }
@@ -113,6 +114,46 @@ func (h *ProblemHandler) SearchProblems(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchProblems failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search problems.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// AggregateProblems handles POST /problems/aggregate.
+// Server-side aggregation of problems by a single field (e.g. state,
+// assignmentGroup), capped to the top maxGroups buckets with the remainder
+// folded into othersCount. The groupBy allowlist is validated upstream by
+// the entity service; this layer only forwards the request and passes the
+// response through as-is.
+func (h *ProblemHandler) AggregateProblems(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.AggregateProblems(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity AggregateProblems failed", "userID", user.UserID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to aggregate problems.")
 		return
 	}
 

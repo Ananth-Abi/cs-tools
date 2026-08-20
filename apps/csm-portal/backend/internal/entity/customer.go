@@ -35,6 +35,15 @@ func (c *CustomerEntityClient) SearchCases(ctx context.Context, body []byte) ([]
 	return c.do(ctx, http.MethodPost, "/cases/search", body)
 }
 
+// AggregateCases calls POST /cases/aggregate on the entity service: a
+// server-side aggregation of cases by a single field (e.g. account, state),
+// capped to the top maxGroups buckets with the remainder folded into
+// othersCount. Response is returned as raw JSON; typed response structs are
+// deferred.
+func (c *CustomerEntityClient) AggregateCases(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/cases/aggregate", body)
+}
+
 // GetCase calls GET /cases/{id} on the entity service.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) GetCase(ctx context.Context, caseID string) ([]byte, error) {
@@ -164,6 +173,15 @@ func (c *CustomerEntityClient) SearchIncidents(ctx context.Context, body []byte)
 	return c.do(ctx, http.MethodPost, "/incidents/search", body)
 }
 
+// AggregateIncidents calls POST /incidents/aggregate on the entity service: a
+// server-side aggregation of incidents by a single field (e.g. state,
+// assignmentGroup, businessService), capped to the top maxGroups buckets
+// with the remainder folded into othersCount. Response is returned as raw
+// JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) AggregateIncidents(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incidents/aggregate", body)
+}
+
 // CreateIncident calls POST /incidents on the entity service to create a new incident.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) CreateIncident(ctx context.Context, body []byte) ([]byte, error) {
@@ -194,6 +212,15 @@ func (c *CustomerEntityClient) SearchProblems(ctx context.Context, body []byte) 
 	return c.do(ctx, http.MethodPost, "/problems/search", body)
 }
 
+// AggregateProblems calls POST /problems/aggregate on the entity service: a
+// server-side aggregation of problems by a single field (e.g. state,
+// assignmentGroup), capped to the top maxGroups buckets with the remainder
+// folded into othersCount. Response is returned as raw JSON; typed response
+// structs are deferred.
+func (c *CustomerEntityClient) AggregateProblems(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/problems/aggregate", body)
+}
+
 // CreateProblem calls POST /problems on the entity service to create a new problem.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) CreateProblem(ctx context.Context, body []byte) ([]byte, error) {
@@ -210,6 +237,15 @@ func (c *CustomerEntityClient) GetProblem(ctx context.Context, id string) ([]byt
 // Response is returned as raw JSON; field filtering to the portal shape is deferred.
 func (c *CustomerEntityClient) SearchIncidentTasks(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/incident-tasks/search", body)
+}
+
+// AggregateIncidentTasks calls POST /incident-tasks/aggregate on the entity
+// service: a server-side aggregation of incident tasks by a single field
+// (e.g. state, assignmentGroup), capped to the top maxGroups buckets with
+// the remainder folded into othersCount. Response is returned as raw JSON;
+// typed response structs are deferred.
+func (c *CustomerEntityClient) AggregateIncidentTasks(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incident-tasks/aggregate", body)
 }
 
 // GetIncidentTask calls GET /incident-tasks/{id} on the entity service.
@@ -258,6 +294,15 @@ func (c *CustomerEntityClient) PatchDeployedProduct(ctx context.Context, deploye
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) SearchChangeRequests(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/change-requests/search", body)
+}
+
+// AggregateChangeRequests calls POST /change-requests/aggregate on the entity
+// service: a server-side aggregation of change requests by a single field
+// (e.g. state, assignmentGroup), capped to the top maxGroups buckets with
+// the remainder folded into othersCount. Response is returned as raw JSON;
+// typed response structs are deferred.
+func (c *CustomerEntityClient) AggregateChangeRequests(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/change-requests/aggregate", body)
 }
 
 // GetChangeRequest calls GET /change-requests/{id} on the entity service.

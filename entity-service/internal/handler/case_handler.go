@@ -184,13 +184,13 @@ func (h *CaseHandler) SearchCases(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// GroupCasesBy handles POST /cases/group-by.
-func (h *CaseHandler) GroupCasesBy(w http.ResponseWriter, r *http.Request) {
-	var req domain.GroupCasesByRequest
+// AggregateCases handles POST /cases/aggregate.
+func (h *CaseHandler) AggregateCases(w http.ResponseWriter, r *http.Request) {
+	var req domain.AggregateCasesRequest
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	resp, err := h.svc.GroupCasesBy(r.Context(), req)
+	resp, err := h.svc.AggregateCases(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

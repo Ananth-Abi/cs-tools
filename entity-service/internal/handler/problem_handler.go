@@ -50,13 +50,13 @@ func (h *ProblemHandler) SearchProblems(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// GroupProblemsBy handles POST /problems/group-by.
-func (h *ProblemHandler) GroupProblemsBy(w http.ResponseWriter, r *http.Request) {
-	var req domain.GroupProblemsByRequest
+// AggregateProblems handles POST /problems/aggregate.
+func (h *ProblemHandler) AggregateProblems(w http.ResponseWriter, r *http.Request) {
+	var req domain.AggregateProblemsRequest
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	resp, err := h.svc.GroupProblemsBy(r.Context(), req)
+	resp, err := h.svc.AggregateProblems(r.Context(), req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return

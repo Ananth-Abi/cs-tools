@@ -1690,6 +1690,68 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /cases/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of cases by a single field (e.g. account,
+        state, severity, type), top N + Others.
+      description: >-
+        Unlike CaseSearchPayload's own groupBy-shaped widget config (which
+        fans out one search per literal slice on the frontend), this drives a
+        single aggregation query, capped to the top maxGroups buckets with
+        the remainder folded into othersCount.
+      operationId: postCasesAggregate
+      requestBody:
+        description: Case aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated case counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /dashboards:
     get:
       summary: List available dashboards.
@@ -3129,6 +3191,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /change-requests/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of change requests by a single field (e.g.
+        state, assignmentGroup), top N + Others.
+      operationId: postChangeRequestsAggregate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeRequestAggregatePayload'
+      responses:
+        "200":
+          description: Aggregated change request counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /services/search:
     post:
       summary: Search IT services (ServiceNow data source only).
@@ -4281,6 +4399,63 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /incidents/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of incidents by a single field (e.g. state,
+        assignmentGroup, businessService), top N + Others.
+      operationId: postIncidentsAggregate
+      requestBody:
+        description: Incident aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated incident counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /incidents:
     post:
       summary: Create a new incident (ServiceNow data source only).
@@ -4573,6 +4748,225 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /problems/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of problems by a single field (e.g. state,
+        assignmentGroup), top N + Others.
+      operationId: postProblemsAggregate
+      requestBody:
+        description: Problem aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProblemAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated problem counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incident-tasks/{id}:
+    get:
+      summary: Get a single incident task by ID (ServiceNow data source only).
+      operationId: getIncidentTask
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the incident task.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentTaskDetail'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incident-tasks/search:
+    post:
+      summary: Search incident tasks (ServiceNow data source only).
+      operationId: postIncidentTasksSearch
+      requestBody:
+        description: Incident task search payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentTaskSearchPayload'
+        required: true
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IncidentTaskSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /incident-tasks/aggregate:
+    post:
+      summary: >-
+        Server-side aggregation of incident tasks by a single field (e.g.
+        state, assignmentGroup), top N + Others.
+      operationId: postIncidentTasksAggregate
+      requestBody:
+        description: Incident task aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IncidentTaskAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Aggregated incident task counts per value of groupBy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
           content:
             application/json:
               schema:
@@ -5570,6 +5964,62 @@ components:
         hasMore:
           type: boolean
 
+    CaseAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          $ref: '#/components/schemas/CaseSearchFilters'
+        groupBy:
+          type: string
+          enum: [account, state, severity, type]
+          description: The field to aggregate case counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
+
+    AggregateBucket:
+      type: object
+      description: >-
+        One aggregated bucket in a server-side aggregate result. Shared by
+        every resource's dedicated aggregate endpoint (cases, incidents,
+        problems, change requests, incident tasks).
+      properties:
+        key:
+          type: string
+          description: The backing data source's raw group value.
+        label:
+          type: string
+          description: >-
+            Human-readable display form of key; identical to key when the
+            grouped field has no separate label.
+        count:
+          type: integer
+          description: Number of matching records whose grouped field falls in this bucket.
+
+    AggregateResponse:
+      type: object
+      description: >-
+        The shared result shape for every resource's dedicated aggregate
+        endpoint (cases, incidents, problems, change requests, incident
+        tasks). groups holds the top buckets by count, capped at the
+        request's maxGroups when set; othersCount folds every bucket beyond
+        that cap into a single count. totalRecords is the total number of
+        records matching the request's filters, and always equals the sum
+        of groups' counts plus othersCount.
+      properties:
+        groups:
+          type: array
+          items:
+            $ref: '#/components/schemas/AggregateBucket'
+        othersCount:
+          type: integer
+        totalRecords:
+          type: integer
+
     DashboardWidget:
       type: object
       properties:
@@ -5647,7 +6097,7 @@ components:
             "slices" — a widget carries exactly one of the two (enforced at
             dashboard-load time). Configures a single server-side
             aggregation call instead of one search per literal slice: the
-            caller issues one POST /{resourceType}/group-by request (filters
+            caller issues one POST /{resourceType}/aggregate request (filters
             = this widget's own query) and maps the response's groups/
             othersCount into the same per-slice shape "slices" already
             produces.
@@ -5657,14 +6107,14 @@ components:
               description: >
                 Which field to group by. Each resourceType enforces its own
                 small allowlist server-side; an unsupported value is
-                rejected by the group-by call itself with a 400, not caught
+                rejected by the aggregate call itself with a 400, not caught
                 here.
             maxGroups:
               type: integer
               description: >
                 Top-N cutoff by count, descending; the remainder is summed
                 into one "Others" bucket. Omitted/zero defers to the
-                group-by endpoint's own default (12).
+                aggregate endpoint's own default (12).
             othersLabel:
               type: string
               description: >
@@ -8477,6 +8927,24 @@ components:
         offset:
           type: integer
 
+    ChangeRequestAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as ChangeRequestSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate change request counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
+
     ChangeRequestDetail:
       allOf:
         - $ref: '#/components/schemas/ChangeRequestSearchView'
@@ -9664,6 +10132,24 @@ components:
         offset:
           type: integer
 
+    IncidentAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as IncidentSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup, businessService]
+          description: The field to aggregate incident counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
+
     GoogleChatAlertPayload:
       type: object
       required: [product, title, shortDescription, caseId]
@@ -10210,3 +10696,123 @@ components:
             closedOn:
               type: string
               nullable: true
+
+    ProblemAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as ProblemSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate problem counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.
+
+    IncidentTaskSearchPayload:
+      type: object
+      properties:
+        filters:
+          type: object
+          properties:
+            searchQuery:
+              type: string
+            number:
+              type: string
+              description: >-
+                A single incident task number (e.g. "TASK0082453"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
+        pagination:
+          allOf:
+            - $ref: '#/components/schemas/Pagination'
+            - properties:
+                limit:
+                  default: 20
+                  maximum: 100
+
+    IncidentTask:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        number:
+          type: string
+          nullable: true
+        subject:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+          description: Raw passthrough state value from the backing data source.
+        stateLabel:
+          type: string
+          nullable: true
+        incident:
+          $ref: '#/components/schemas/CaseNumberRef'
+          nullable: true
+        assignmentGroup:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        assignedTo:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+
+    IncidentTaskSearchResponse:
+      type: object
+      properties:
+        incidentTasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/IncidentTask'
+        total:
+          type: integer
+          description: Total number of matching incident tasks
+        limit:
+          type: integer
+        offset:
+          type: integer
+
+    IncidentTaskDetail:
+      allOf:
+        - $ref: '#/components/schemas/IncidentTask'
+        - type: object
+          properties:
+            description:
+              type: string
+              nullable: true
+            priority:
+              type: string
+              nullable: true
+            openedOn:
+              type: string
+              nullable: true
+            closedOn:
+              type: string
+              nullable: true
+
+    IncidentTaskAggregatePayload:
+      type: object
+      required: [groupBy]
+      properties:
+        filters:
+          type: object
+          description: Same shape as IncidentTaskSearchPayload.filters.
+        groupBy:
+          type: string
+          enum: [state, assignmentGroup]
+          description: The field to aggregate incident task counts by.
+        maxGroups:
+          type: integer
+          description: >-
+            Caps the response to the top maxGroups buckets by count; the
+            remainder is folded into AggregateResponse.othersCount. Optional;
+            a default is applied when omitted.

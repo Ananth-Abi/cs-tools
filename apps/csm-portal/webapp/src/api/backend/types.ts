@@ -2993,7 +2993,7 @@ export interface BeDashboardPieSlice {
 }
 
 /** Alternative to {@link BeDashboardPieSlice}[] for shapes "pie"/"bar":
- * one server-side `POST /{resourceType}/group-by` call instead of one
+ * one server-side `POST /{resourceType}/aggregate` call instead of one
  * `search` per hand-authored slice. Mutually exclusive with `slices` —
  * the backend enforces exactly one of the two at config-load time. */
 export interface BeDashboardGroupByConfig {
@@ -3008,14 +3008,14 @@ export interface BeDashboardGroupByConfig {
   othersLabel?: string;
 }
 
-/** One bucket of a `POST /{resourceType}/group-by` response. */
+/** One bucket of a `POST /{resourceType}/aggregate` response. */
 export interface BeGroupByBucket {
   key: string;
   label: string;
   count: number;
 }
 
-/** Response shape of `POST /{resourceType}/group-by`. `othersCount` covers
+/** Response shape of `POST /{resourceType}/aggregate`. `othersCount` covers
  * every record outside the returned `groups` (capped by `maxGroups`);
  * `totalRecords` is the grand total across `groups` plus `othersCount`. */
 export interface BeGroupByResponse {
@@ -3084,7 +3084,7 @@ export interface BeDashboardWidget {
    */
   query: Record<string, unknown> | null;
   /** Only meaningful for shapes "pie"/"bar": one server-side
-   * `POST /{resourceType}/group-by` call instead of one `search` per
+   * `POST /{resourceType}/aggregate` call instead of one `search` per
    * slice. Mutually exclusive with `slices` — the backend enforces
    * exactly one of the two for those shapes (never both, never neither). */
   groupBy?: BeDashboardGroupByConfig;

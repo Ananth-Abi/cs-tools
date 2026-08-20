@@ -25,12 +25,12 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 )
 
-// TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse proves
-// GroupCasesBy posts to the dedicated /cases/group-by endpoint (not
+// TestSNCaseService_AggregateCases_CallsAggregateEndpointAndMapsResponse proves
+// AggregateCases posts to the dedicated /cases/aggregate endpoint (not
 // /cases/search), forwards groupBy/maxGroups alongside the parsed filter
-// payload, and maps the response into the shared domain.GroupByResponse
+// payload, and maps the response into the shared domain.AggregateResponse
 // shape untouched.
-func TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse(t *testing.T) {
+func TestSNCaseService_AggregateCases_CallsAggregateEndpointAndMapsResponse(t *testing.T) {
 	var gotBody struct {
 		Filters struct {
 			CaseTypes  []string `json:"caseTypes"`
@@ -42,7 +42,7 @@ func TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse(t *testi
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/cases/group-by", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/cases/aggregate", func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
@@ -55,17 +55,17 @@ func TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse(t *testi
 			"totalRecords": 22,
 		})
 	})
-	// A request that lands here instead means GroupCasesBy called the wrong
-	// endpoint (the plain search path) rather than the dedicated group-by one.
+	// A request that lands here instead means AggregateCases called the wrong
+	// endpoint (the plain search path) rather than the dedicated aggregate one.
 	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("GroupCasesBy must not call /cases/search")
+		t.Fatalf("AggregateCases must not call /cases/search")
 	})
 
 	client := newTestSNClient(t, mux)
 	svc := NewServiceNowCaseService(client, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
-	req := domain.GroupCasesByRequest{
+	req := domain.AggregateCasesRequest{
 		Filters: domain.SearchCasesFilters{
 			Filters: []domain.CaseFieldFilter{
 				{Field: "type", Op: "in", Values: []string{"case"}},
@@ -75,7 +75,7 @@ func TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse(t *testi
 		MaxGroups: 12,
 	}
 
-	resp, err := svc.GroupCasesBy(ctx, req)
+	resp, err := svc.AggregateCases(ctx, req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,8 +92,8 @@ func TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse(t *testi
 		t.Fatalf("caseTypes = %v, want [default_case] (filters must be parsed/forwarded exactly as search does)", gotBody.Filters.CaseTypes)
 	}
 
-	want := domain.GroupByResponse{
-		Groups: []domain.GroupByBucket{
+	want := domain.AggregateResponse{
+		Groups: []domain.AggregateBucket{
 			{Key: "acme", Label: "Acme Corp", Count: 12},
 			{Key: "globex", Label: "Globex Inc", Count: 7},
 		},
@@ -125,14 +125,14 @@ func TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse(t *testi
 	}
 }
 
-// TestSNCaseService_GroupCasesBy_RejectsBadFilterFieldAndCombo proves a
+// TestSNCaseService_AggregateCases_RejectsBadFilterFieldAndCombo proves a
 // filter-parse rejection from ParseCaseFieldFilters propagates through
-// GroupCasesBy exactly as it does through SearchCases, and that no request
+// AggregateCases exactly as it does through SearchCases, and that no request
 // reaches ServiceNow when that happens.
-func TestSNCaseService_GroupCasesBy_RejectsBadFilterFieldAndCombo(t *testing.T) {
+func TestSNCaseService_AggregateCases_RejectsBadFilterFieldAndCombo(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/cases/group-by", func(w http.ResponseWriter, r *http.Request) {
-		t.Fatalf("GroupCasesBy must not call ServiceNow when filter parsing fails")
+	mux.HandleFunc("/cases/aggregate", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("AggregateCases must not call ServiceNow when filter parsing fails")
 	})
 
 	client := newTestSNClient(t, mux)
@@ -140,34 +140,34 @@ func TestSNCaseService_GroupCasesBy_RejectsBadFilterFieldAndCombo(t *testing.T) 
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	t.Run("bad field name", func(t *testing.T) {
-		req := domain.GroupCasesByRequest{
+		req := domain.AggregateCasesRequest{
 			Filters: domain.SearchCasesFilters{
 				Filters: []domain.CaseFieldFilter{{Field: "bogusField", Op: "in", Values: []string{"x"}}},
 			},
 			GroupBy: "account",
 		}
-		_, err := svc.GroupCasesBy(ctx, req)
+		_, err := svc.AggregateCases(ctx, req)
 		if _, ok := err.(*apierror.ValidationError); !ok {
 			t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
 		}
 	})
 
 	t.Run("bad field+op combo", func(t *testing.T) {
-		req := domain.GroupCasesByRequest{
+		req := domain.AggregateCasesRequest{
 			Filters: domain.SearchCasesFilters{
 				Filters: []domain.CaseFieldFilter{{Field: "type", Op: "gte", Values: []string{"case"}}},
 			},
 			GroupBy: "account",
 		}
-		_, err := svc.GroupCasesBy(ctx, req)
+		_, err := svc.AggregateCases(ctx, req)
 		if _, ok := err.(*apierror.ValidationError); !ok {
 			t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
 		}
 	})
 
 	t.Run("missing groupBy", func(t *testing.T) {
-		req := domain.GroupCasesByRequest{}
-		_, err := svc.GroupCasesBy(ctx, req)
+		req := domain.AggregateCasesRequest{}
+		_, err := svc.AggregateCases(ctx, req)
 		if _, ok := err.(*apierror.ValidationError); !ok {
 			t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
 		}

@@ -32,6 +32,7 @@ import (
 // as the entity service's own IncidentTaskHandler.
 type entityIncidentTaskClient interface {
 	SearchIncidentTasks(ctx context.Context, body []byte) ([]byte, error)
+	AggregateIncidentTasks(ctx context.Context, body []byte) ([]byte, error)
 	GetIncidentTask(ctx context.Context, id string) ([]byte, error)
 }
 
@@ -75,6 +76,46 @@ func (h *IncidentTaskHandler) SearchIncidentTasks(w http.ResponseWriter, r *http
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchIncidentTasks failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to search incident tasks.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// AggregateIncidentTasks handles POST /incident-tasks/aggregate.
+// Server-side aggregation of incident tasks by a single field (e.g. state,
+// assignmentGroup), capped to the top maxGroups buckets with the remainder
+// folded into othersCount. The groupBy allowlist is validated upstream by
+// the entity service; this layer only forwards the request and passes the
+// response through as-is.
+func (h *IncidentTaskHandler) AggregateIncidentTasks(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.AggregateIncidentTasks(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity AggregateIncidentTasks failed", "userID", user.UserID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to aggregate incident tasks.")
 		return
 	}
 

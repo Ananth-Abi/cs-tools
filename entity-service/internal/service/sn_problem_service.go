@@ -159,47 +159,47 @@ func (s *snProblemService) SearchProblems(ctx context.Context, req domain.Search
 	}, nil
 }
 
-// snProblemGroupByPayload is the Choreo POST /problems/group-by request body.
-type snProblemGroupByPayload struct {
+// snProblemAggregatePayload is the Choreo POST /problems/aggregate request body.
+type snProblemAggregatePayload struct {
 	Filters   snProblemFilters `json:"filters,omitempty"`
 	GroupBy   string           `json:"groupBy"`
 	MaxGroups int              `json:"maxGroups,omitempty"`
 }
 
-// validProblemGroupByField is the allow-list for
-// GroupProblemsByRequest.GroupBy, matching openapi.yaml's
-// GroupProblemsByRequest.groupBy enum exactly.
-var validProblemGroupByField = map[string]bool{
+// validProblemAggregateField is the allow-list for
+// AggregateProblemsRequest.GroupBy, matching openapi.yaml's
+// AggregateProblemsRequest.groupBy enum exactly.
+var validProblemAggregateField = map[string]bool{
 	"state":           true,
 	"assignmentGroup": true,
 }
 
-// GroupProblemsBy implements ProblemService by calling the Choreo POST
-// /problems/group-by endpoint: a single server-side aggregation over the
+// AggregateProblems implements ProblemService by calling the Choreo POST
+// /problems/aggregate endpoint: a single server-side aggregation over the
 // requested field, capped to the top MaxGroups buckets with the remainder
-// folded into GroupByResponse.OthersCount. Filter parsing and validation
+// folded into AggregateResponse.OthersCount. Filter parsing and validation
 // mirror SearchProblems.
-func (s *snProblemService) GroupProblemsBy(ctx context.Context, req domain.GroupProblemsByRequest) (domain.GroupByResponse, error) {
+func (s *snProblemService) AggregateProblems(ctx context.Context, req domain.AggregateProblemsRequest) (domain.AggregateResponse, error) {
 	if req.GroupBy == "" {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
 	}
-	if !validProblemGroupByField[req.GroupBy] {
-		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	if !validProblemAggregateField[req.GroupBy] {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
 	}
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	if err := validateExactNumber("number", req.Filters.Number); err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 	parsedFilters, err := ParseProblemFieldFilters(req.Filters.Filters)
 	if err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
-	payload := snProblemGroupByPayload{
+	payload := snProblemAggregatePayload{
 		Filters: snProblemFilters{
 			SearchQuery:        req.Filters.SearchQuery,
 			Number:             stringPtrValue(req.Filters.Number),
@@ -210,14 +210,23 @@ func (s *snProblemService) GroupProblemsBy(ctx context.Context, req domain.Group
 		MaxGroups: req.MaxGroups,
 	}
 
-	raw, err := s.client.Post(ctx, "/problems/group-by", token, payload)
+	raw, err := s.client.Post(ctx, "/problems/aggregate", token, payload)
 	if err != nil {
-		return domain.GroupByResponse{}, err
+		return domain.AggregateResponse{}, err
 	}
 
-	var resp domain.GroupByResponse
+	var resp domain.AggregateResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return domain.GroupByResponse{}, fmt.Errorf("sn problems: parse group-by response: %w", err)
+		return domain.AggregateResponse{}, fmt.Errorf("sn problems: parse aggregate response: %w", err)
+	}
+	// "assignmentGroup" is the only ID-valued field in
+	// validProblemAggregateField; SN returns its bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
 	}
 	return resp, nil
 }

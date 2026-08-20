@@ -58,7 +58,7 @@ function bucketQuery(
 
 /**
  * Resolves a `shape: "pie"` widget's per-bucket values via a single
- * server-side `POST {resourceType}/group-by` call — the `groupBy`
+ * server-side `POST {resourceType}/aggregate` call — the `groupBy`
  * counterpart of `useWidgetPieData`'s per-slice `search` calls. The
  * widget's own base `query` is resolved through the exact same
  * placeholder pipeline `useWidgetPieData` applies per-slice

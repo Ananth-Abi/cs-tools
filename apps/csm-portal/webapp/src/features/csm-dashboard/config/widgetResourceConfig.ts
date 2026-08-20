@@ -418,7 +418,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
 > = {
   case: {
     searchEndpoint: "/cases/search",
-    groupByEndpoint: "/cases/group-by",
+    groupByEndpoint: "/cases/aggregate",
     itemsKey: "cases",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
@@ -437,12 +437,12 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   // `case`'s own primaryLabel/secondaryLabel/list renderer verbatim; only the
   // icon/color/click-through destination differ per type, mirroring
   // `CASE_TYPE_COLOR`'s own per-type palette in `caseType.ts`. Same reasoning
-  // extends `groupByEndpoint`: they share `/cases/group-by` with `case` too
+  // extends `groupByEndpoint`: they share `/cases/aggregate` with `case` too
   // (the implied `type` filter is just another entry in the resolved
   // `filters` posted to that endpoint, same as it is for `/cases/search`).
   service_request: {
     searchEndpoint: "/cases/search",
-    groupByEndpoint: "/cases/group-by",
+    groupByEndpoint: "/cases/aggregate",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -461,7 +461,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   security_report_analysis: {
     searchEndpoint: "/cases/search",
-    groupByEndpoint: "/cases/group-by",
+    groupByEndpoint: "/cases/aggregate",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -480,7 +480,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   announcement: {
     searchEndpoint: "/cases/search",
-    groupByEndpoint: "/cases/group-by",
+    groupByEndpoint: "/cases/aggregate",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -496,7 +496,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   engagement: {
     searchEndpoint: "/cases/search",
-    groupByEndpoint: "/cases/group-by",
+    groupByEndpoint: "/cases/aggregate",
     itemsKey: "cases",
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
@@ -508,7 +508,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   incident: {
     searchEndpoint: "/incidents/search",
-    groupByEndpoint: "/incidents/group-by",
+    groupByEndpoint: "/incidents/aggregate",
     itemsKey: "incidents",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: (item) => asString(item.priority),
@@ -528,7 +528,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   change_request: {
     searchEndpoint: "/change-requests/search",
-    groupByEndpoint: "/change-requests/group-by",
+    groupByEndpoint: "/change-requests/aggregate",
     itemsKey: "changeRequests",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
@@ -548,7 +548,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   },
   problem: {
     searchEndpoint: "/problems/search",
-    groupByEndpoint: "/problems/group-by",
+    groupByEndpoint: "/problems/aggregate",
     itemsKey: "problems",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
@@ -573,7 +573,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   // same fallback `call_request` uses for landing on its owning case.
   incident_task: {
     searchEndpoint: "/incident-tasks/search",
-    groupByEndpoint: "/incident-tasks/group-by",
+    groupByEndpoint: "/incident-tasks/aggregate",
     itemsKey: "incidentTasks",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: incidentTaskStateSecondaryLabel,
