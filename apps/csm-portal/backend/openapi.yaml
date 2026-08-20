@@ -1790,6 +1790,91 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /dashboards/filter-presets:
+    get:
+      summary: List the shared filter presets a dashboard definition may reference.
+      description: >
+        Returns the deployment's shared filter-preset catalogue: each preset's
+        name and the single filter predicate it stands for. A dashboard
+        definition references a preset by name instead of repeating the
+        predicate, and the registry expands every reference at load time, so a
+        dashboard returned by GET /dashboards/{dashboardId} never contains a
+        preset reference. This endpoint exists so an authoring tool can offer
+        the names that may be referenced, and show what each one means. A
+        deployment with no preset catalogue configured returns an empty array,
+        not an error.
+      operationId: getDashboardFilterPresets
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DashboardFilterPreset'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /dashboards/sections:
+    get:
+      summary: List the shared reusable sections a dashboard definition may include.
+      description: >
+        Returns the deployment's shared section catalogue: each section's name,
+        the heading its widgets are grouped under, and its widget run. A
+        dashboard definition pulls a section in by name rather than repeating
+        its widgets, and the registry expands every include at load time.
+        Unlike a dashboard's widgets, the widgets returned here are as
+        authored: filter-preset references are NOT expanded and no implied
+        type filter has been injected, because a section is not loaded through
+        a dashboard's own resolution pipeline on its own. They are therefore
+        for authoring, not for use as search criteria. A deployment with no
+        section catalogue configured returns an empty array, not an error.
+      operationId: getDashboardSections
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DashboardSharedSection'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /dashboards/{dashboardId}:
     get:
       summary: Get a dashboard's metadata and widget templates.
@@ -6300,6 +6385,61 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DashboardWidget'
+
+    DashboardFilterPreset:
+      type: object
+      description: >
+        One named, reusable filter predicate a dashboard definition may
+        reference instead of repeating it. Returned by
+        GET /dashboards/filter-presets for authoring purposes only — a
+        dashboard served by this API has every reference already expanded.
+      properties:
+        name:
+          type: string
+          description: >
+            The name a definition references this preset by. Unique within
+            the catalogue.
+        filter:
+          type: object
+          additionalProperties: true
+          description: >
+            The single filter predicate this preset stands for, verbatim as
+            authored: the same field/op/values object a widget's own
+            query.filters entries use.
+      required:
+        - name
+        - filter
+
+    DashboardSharedSection:
+      type: object
+      description: >
+        One named, reusable run of widgets a dashboard definition may pull in
+        by name instead of repeating them. Returned by GET /dashboards/sections
+        for authoring purposes only.
+      properties:
+        name:
+          type: string
+          description: >
+            The name a definition references this section by. Unique within
+            the catalogue.
+        displayName:
+          type: string
+          description: >
+            The heading every widget in this section is grouped under, unless
+            the referencing definition overrides it.
+        widgets:
+          type: array
+          description: >
+            The section's widget run, as AUTHORED: filter-preset references
+            are not expanded and no implied type filter has been injected.
+            Not usable directly as search criteria — see the endpoint
+            description.
+          items:
+            $ref: '#/components/schemas/DashboardWidget'
+      required:
+        - name
+        - displayName
+        - widgets
 
     Case:
       type: object

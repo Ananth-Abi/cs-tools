@@ -83,6 +83,23 @@ type Registry struct {
 	// times the registry actually touches the disk. nil for a static
 	// registry.
 	load func(dir string) ([]Dashboard, error)
+
+	// presets and sections are the shared catalogues the last successful
+	// load read, retained ONLY so the builder-facing endpoints can list
+	// what an author may reference (see FilterPresets/SharedSections).
+	// Nothing on the dashboard-serving path reads them: by the time a
+	// Dashboard reaches cached, every {"preset": ...} reference and every
+	// includeSections entry has already been expanded away.
+	presets  map[string]map[string]any
+	sections map[string]SharedSection
+
+	// loadCatalogues re-reads just the two shared files, for hot-reload
+	// mode. Deliberately separate from load rather than folded into it:
+	// load's signature is injected by tests that count disk reads, and the
+	// catalogue endpoints are not on the dashboard-serving path, so there
+	// is no reason to make every dashboard read carry this too. nil for a
+	// static registry.
+	loadCatalogues func() (map[string]map[string]any, map[string]SharedSection, error)
 }
 
 // NewStaticRegistry wraps an already-decoded set of dashboards. It never
@@ -117,12 +134,31 @@ func NewDirRegistry(dir string, hotReload bool, presetsFile, sectionsFile string
 		}
 		return loadDir(d, sharedPresets, sharedSections)
 	}
-	r := &Registry{dir: dir, hotReload: hotReload, load: load}
+	loadCatalogues := func() (map[string]map[string]any, map[string]SharedSection, error) {
+		presets, err := LoadSharedPresets(presetsFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		sections, err := LoadSharedSections(sectionsFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		return presets, sections, nil
+	}
+
+	r := &Registry{dir: dir, hotReload: hotReload, load: load, loadCatalogues: loadCatalogues}
 	dashboards, err := r.load(dir)
 	if err != nil {
 		return nil, err
 	}
+	// Cannot fail here: load has already parsed and validated both files.
+	presets, sections, err := r.loadCatalogues()
+	if err != nil {
+		return nil, err
+	}
 	r.cached = dashboards
+	r.presets = presets
+	r.sections = sections
 	return r, nil
 }
 
@@ -167,6 +203,60 @@ func (r *Registry) ByID(id string) (Dashboard, bool) {
 	return Dashboard{}, false
 }
 
+// FilterPresets returns the shared filter-preset catalogue the registry
+// loaded, keyed by preset name.
+//
+// This exists for the dashboard builder, which needs to offer an author the
+// presets they may reference by name. It is NOT used to serve a dashboard:
+// preset references are expanded at load time and erased, so nothing on that
+// path needs the catalogue.
+//
+// The returned map is the registry's own — callers must not mutate it. A
+// static registry (the deprecated DASHBOARDS_CONFIG path) has no catalogue
+// and returns nil, which callers must treat as "none configured" rather than
+// an error: a deployment with no presets file is legal.
+func (r *Registry) FilterPresets() map[string]map[string]any {
+	if r == nil {
+		return nil
+	}
+	r.refreshCatalogues()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.presets
+}
+
+// SharedSections returns the shared reusable-section catalogue the registry
+// loaded, keyed by section name. Same contract as FilterPresets.
+func (r *Registry) SharedSections() map[string]SharedSection {
+	if r == nil {
+		return nil
+	}
+	r.refreshCatalogues()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.sections
+}
+
+// refreshCatalogues re-reads the two shared files in hot-reload mode, with
+// the same "keep the last known-good set on failure" behaviour Dashboards
+// documents and for the same reason: an editor mid-save must not blank the
+// builder's picker.
+func (r *Registry) refreshCatalogues() {
+	if !r.hotReload || r.loadCatalogues == nil {
+		return
+	}
+	presets, sections, err := r.loadCatalogues()
+	if err != nil {
+		slog.Error("dashboard shared catalogues: hot reload failed; continuing to serve the last known-good catalogues",
+			"dir", r.dir, "err", err)
+		return
+	}
+	r.mu.Lock()
+	r.presets = presets
+	r.sections = sections
+	r.mu.Unlock()
+}
+
 // active is the registry the HTTP handlers serve from. It is installed once
 // during startup by cmd/server/main.go (and by tests). A nil active registry
 // serves no dashboards rather than panicking: GET /dashboards returns an
@@ -196,6 +286,12 @@ func All() []Dashboard { return Active().Dashboards() }
 
 // ByID looks a dashboard up by id in the active registry.
 func ByID(id string) (Dashboard, bool) { return Active().ByID(id) }
+
+// FilterPresets returns the active registry's shared filter-preset catalogue.
+func FilterPresets() map[string]map[string]any { return Active().FilterPresets() }
+
+// SharedSections returns the active registry's shared reusable-section catalogue.
+func SharedSections() map[string]SharedSection { return Active().SharedSections() }
 
 // LoadDir reads every *.json file in dir whose name does not start with "_"
 // as one dashboard definition. The filename is otherwise not significant in

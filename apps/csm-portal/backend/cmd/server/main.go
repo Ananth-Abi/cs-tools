@@ -160,6 +160,11 @@ func main() {
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)
+	// Registered before the {dashboardId} wildcard purely for readability —
+	// net/http's ServeMux resolves by specificity, not registration order,
+	// so these literal paths win over the wildcard regardless.
+	mux.HandleFunc("GET /dashboards/filter-presets", dashboardHandler.GetFilterPresets)
+	mux.HandleFunc("GET /dashboards/sections", dashboardHandler.GetSharedSections)
 	mux.HandleFunc("GET /dashboards/{dashboardId}", dashboardHandler.GetDashboardDetail)
 	mux.HandleFunc("GET /updates/product-update-levels", updatesHandler.GetProductUpdateLevels)
 	mux.HandleFunc("POST /updates/levels/search", updatesHandler.SearchUpdatesBetweenUpdateLevels)
