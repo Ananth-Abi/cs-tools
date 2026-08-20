@@ -45,13 +45,18 @@ import DashboardWidgetGrid from "@features/csm-dashboard/components/DashboardWid
 import SectionCard from "@features/csm-dashboard/components/SectionCard";
 import { WIDGET_GRID_SX } from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
 import WidgetEditorDialog from "@features/csm-admin/dashboards/components/WidgetEditorDialog";
-import { useDashboardFilterPresets } from "@features/csm-admin/dashboards/api/useDashboardSharedConfig";
+import {
+  useDashboardFilterPresets,
+  useDashboardSharedSections,
+} from "@features/csm-admin/dashboards/api/useDashboardSharedConfig";
+import { deployableDashboardFromDraft } from "@features/csm-admin/dashboards/utils/sharedConfigDraftsStorage";
 import { isDraftDrifted } from "@features/csm-admin/dashboards/utils/dashboardDrift";
 import {
   newDraftId,
   saveDashboardDraft,
   useDashboardDraft,
   type DashboardDraft,
+  type SectionInclude,
 } from "@features/csm-admin/dashboards/utils/dashboardDraftsStorage";
 
 const DASHBOARD_TYPES = ["cre", "sre", "cs"] as const;
@@ -218,6 +223,7 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
   // it is long cached by the time an admin opens a widget.
   const { data: filterPresets, isPending: filterPresetsPending } =
     useDashboardFilterPresets();
+  const { data: sharedSections } = useDashboardSharedSections();
   const [editingWidget, setEditingWidget] = useState<
     { widget: BeDashboardWidget | undefined; defaultSection?: string } | undefined
   >(undefined);
@@ -346,18 +352,7 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
   };
 
   const handleCopyJson = async (): Promise<void> => {
-    // Only the fields that actually mean something in the deployed
-    // registry's own JSON shape — `id`/`sourceDashboardId`/
-    // `emptySections`/`updatedAt` are this builder's own local bookkeeping
-    // and have no home there (see `DashboardDraft`'s own doc comment).
-    const deployable = {
-      displayName: working.displayName,
-      type: working.type,
-      isDefault: working.isDefault,
-      isTeamBased: working.isTeamBased,
-      targetTeam: working.targetTeam,
-      widgets: working.widgets,
-    };
+    const deployable = deployableDashboardFromDraft(working);
     try {
       await navigator.clipboard.writeText(JSON.stringify(deployable, null, 2));
       setCopyFeedback(true);
@@ -485,6 +480,129 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
             </FormControl>
           )}
         </Box>
+      </SectionCard>
+
+      <SectionCard
+        title="Shared sections"
+        action={
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Plus size={14} />}
+            disabled={(sharedSections ?? []).length === 0}
+            onClick={() =>
+              updateWorking({
+                includeSections: [
+                  ...(working.includeSections ?? []),
+                  { section: (sharedSections ?? [])[0]?.name ?? "", position: "start" },
+                ],
+              })
+            }
+          >
+            Include a section
+          </Button>
+        }
+      >
+        {(sharedSections ?? []).length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            This deployment has no shared sections yet. Design one under
+            &ldquo;Shared presets &amp; sections&rdquo; on the dashboards list.
+          </Typography>
+        ) : (working.includeSections ?? []).length === 0 ? (
+          <Typography variant="body2" color="text.secondary">
+            None. Including a shared section pulls its widgets in by reference,
+            so editing the section changes every dashboard that includes it.
+          </Typography>
+        ) : (
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
+            {(working.includeSections ?? []).map((include, index) => {
+              const patch = (next: Partial<SectionInclude>): void =>
+                updateWorking({
+                  includeSections: (working.includeSections ?? []).map((inc, i) =>
+                    i === index ? { ...inc, ...next } : inc,
+                  ),
+                });
+              return (
+                <Box
+                  key={index}
+                  sx={{ display: "flex", flexWrap: "wrap", gap: 1, alignItems: "flex-start" }}
+                >
+                  <TextField
+                    select
+                    size="small"
+                    label="Section"
+                    value={include.section}
+                    onChange={(e) => patch({ section: e.target.value })}
+                    sx={{ minWidth: 200 }}
+                    slotProps={{
+                      inputLabel: { shrink: true, sx: { top: "0px !important" } },
+                      select: { notched: true },
+                    }}
+                  >
+                    {(sharedSections ?? []).map((sec) => (
+                      <MenuItem key={sec.name} value={sec.name}>
+                        {sec.name}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField
+                    select
+                    size="small"
+                    label="Position"
+                    value={include.position ?? "start"}
+                    onChange={(e) =>
+                      patch({ position: e.target.value as "start" | "end" })
+                    }
+                    sx={{ minWidth: 140 }}
+                    slotProps={{
+                      inputLabel: { shrink: true, sx: { top: "0px !important" } },
+                      select: { notched: true },
+                    }}
+                  >
+                    <MenuItem value="start">Before own widgets</MenuItem>
+                    <MenuItem value="end">After own widgets</MenuItem>
+                  </TextField>
+                  <TextField
+                    size="small"
+                    label="Widget id prefix"
+                    value={include.idPrefix ?? ""}
+                    onChange={(e) => patch({ idPrefix: e.target.value || undefined })}
+                    helperText="Optional, e.g. ob_"
+                    sx={{ minWidth: 150 }}
+                  />
+                  <TextField
+                    size="small"
+                    label="Heading override"
+                    value={include.displayName ?? ""}
+                    onChange={(e) => patch({ displayName: e.target.value || undefined })}
+                    helperText="Optional"
+                    sx={{ minWidth: 170 }}
+                  />
+                  <Tooltip title="Stop including this section">
+                    <IconButton
+                      size="small"
+                      aria-label={`Remove included section ${include.section}`}
+                      onClick={() =>
+                        updateWorking({
+                          includeSections: (working.includeSections ?? []).filter(
+                            (_, i) => i !== index,
+                          ),
+                        })
+                      }
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+              );
+            })}
+            <Typography variant="caption" color="text.secondary">
+              Included widgets are not shown in the preview below: they are
+              resolved when the definition is loaded, from whatever the shared
+              section says at that moment.
+            </Typography>
+          </Box>
+        )}
       </SectionCard>
 
       <SectionCard

@@ -17,6 +17,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { BeDashboardWidget } from "@api/backend/types";
 import {
+  deployableDashboardFromDraft,
   getSharedConfigDraft,
   presetsFileFromDraft,
   saveSharedConfigDraft,
@@ -174,5 +175,57 @@ describe("sharedConfigDraftsStorage", () => {
     expect(got.presets).toEqual([]);
     expect(got.sections).toEqual([]);
     expect(got.seeded).toBe(false);
+  });
+});
+
+describe("deployableDashboardFromDraft", () => {
+  const draft = {
+    id: "draft-abc",
+    displayName: "My Dashboard",
+    type: "cs" as const,
+    isDefault: true,
+    isTeamBased: false,
+    widgets: [widget()],
+  };
+
+  it("emits an id, which the loader requires and the old export omitted", () => {
+    expect(deployableDashboardFromDraft(draft).id).toBe("draft-abc");
+  });
+
+  it("keeps the deployed dashboard's own id when the draft came from one", () => {
+    // Otherwise re-deploying an edit would create a SECOND dashboard rather
+    // than replacing the one being edited.
+    expect(
+      deployableDashboardFromDraft({ ...draft, sourceDashboardId: "abt-engineer" }).id,
+    ).toBe("abt-engineer");
+  });
+
+  it("renames each widget's widgetId to id", () => {
+    const out = deployableDashboardFromDraft(draft);
+    const widgets = out.widgets as Record<string, unknown>[];
+    expect(widgets[0].id).toBe("my_open");
+    expect(widgets[0].widgetId).toBeUndefined();
+  });
+
+  it("omits includeSections entirely when there are none", () => {
+    expect(deployableDashboardFromDraft(draft)).not.toHaveProperty("includeSections");
+  });
+
+  it("carries includeSections when present", () => {
+    const out = deployableDashboardFromDraft({
+      ...draft,
+      includeSections: [{ section: "my-work", position: "start" }],
+    });
+    expect(out.includeSections).toEqual([{ section: "my-work", position: "start" }]);
+  });
+
+  it("drops the builder's own bookkeeping fields", () => {
+    const out = deployableDashboardFromDraft({
+      ...draft,
+      sourceDashboardId: "abt-engineer",
+    });
+    expect(out).not.toHaveProperty("sourceDashboardId");
+    expect(out).not.toHaveProperty("emptySections");
+    expect(out).not.toHaveProperty("updatedAt");
   });
 });

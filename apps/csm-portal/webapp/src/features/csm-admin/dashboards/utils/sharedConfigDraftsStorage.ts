@@ -249,3 +249,50 @@ export function widgetToDefinition(
   if (widget.query) out.query = widget.query;
   return out;
 }
+
+/**
+ * One dashboard in deployable definition-file shape.
+ *
+ * Lives here rather than in the editor page because it is the same class of
+ * translation the two shared files need, and it shares `widgetToDefinition`
+ * with them: everything in this module turns builder state into the JSON a
+ * maintainer deploys.
+ *
+ * Two things this must get right, both of which the loader rejects outright
+ * if it does not:
+ *  - `id` is required. It is the dashboard's identity and is never derived
+ *    from the filename.
+ *  - a widget's key is `id`, not the `widgetId` the API returns.
+ *
+ * `sourceDashboardId`/`emptySections`/`updatedAt` are the builder's own
+ * bookkeeping and have no home in a definition.
+ */
+export function deployableDashboardFromDraft(draft: {
+  id: string;
+  sourceDashboardId?: string;
+  displayName: string;
+  type?: "cre" | "sre" | "cs";
+  isDefault: boolean;
+  isTeamBased: boolean;
+  targetTeam?: string;
+  widgets: BeDashboardWidget[];
+  includeSections?: unknown[];
+}): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    // A draft opened from a deployed dashboard keeps that dashboard's id, so
+    // re-deploying replaces it instead of creating a second one.
+    id: draft.sourceDashboardId ?? draft.id,
+    displayName: draft.displayName,
+    type: draft.type,
+    isDefault: draft.isDefault,
+    isTeamBased: draft.isTeamBased,
+    targetTeam: draft.targetTeam,
+  };
+  // Omitted entirely when empty rather than emitted as [], so a dashboard
+  // referencing nothing produces the same file it did before the feature.
+  if ((draft.includeSections ?? []).length > 0) {
+    out.includeSections = draft.includeSections;
+  }
+  out.widgets = draft.widgets.map(widgetToDefinition);
+  return out;
+}
