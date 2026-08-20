@@ -99,17 +99,23 @@ func NewStaticRegistry(dashboards []Dashboard) *Registry {
 // what happens on subsequent reads.
 //
 // presetsFile is the shared filter-preset file (see LoadSharedPresets and
-// DASHBOARD_PRESETS_FILE in cmd/server/main.go); "" means no shared presets
-// are configured, which is legal, same as an unset DASHBOARDS_DIR. It is
-// re-read on every load alongside dir, so hot-reload mode also picks up an
-// edited presets file without a restart.
-func NewDirRegistry(dir string, hotReload bool, presetsFile string) (*Registry, error) {
+// DASHBOARD_PRESETS_FILE in cmd/server/main.go) and sectionsFile the shared
+// section file (see LoadSharedSections and DASHBOARD_SECTIONS_FILE); "" for
+// either means none is configured, which is legal, same as an unset
+// DASHBOARDS_DIR. Both are re-read on every load alongside dir, so
+// hot-reload mode also picks up an edited presets or sections file without a
+// restart.
+func NewDirRegistry(dir string, hotReload bool, presetsFile, sectionsFile string) (*Registry, error) {
 	load := func(d string) ([]Dashboard, error) {
 		sharedPresets, err := LoadSharedPresets(presetsFile)
 		if err != nil {
 			return nil, err
 		}
-		return loadDir(d, sharedPresets)
+		sharedSections, err := LoadSharedSections(sectionsFile)
+		if err != nil {
+			return nil, err
+		}
+		return loadDir(d, sharedPresets, sharedSections)
 	}
 	r := &Registry{dir: dir, hotReload: hotReload, load: load}
 	dashboards, err := r.load(dir)
@@ -224,11 +230,12 @@ func ByID(id string) (Dashboard, bool) { return Active().ByID(id) }
 // whatever DASHBOARD_PRESETS_FILE resolves to, which may itself be an empty
 // map.
 func LoadDir(dir string) ([]Dashboard, error) {
-	return loadDir(dir, nil)
+	return loadDir(dir, nil, nil)
 }
 
-// loadDir is LoadDir's shared-presets-aware counterpart.
-func loadDir(dir string, sharedPresets map[string]map[string]any) ([]Dashboard, error) {
+// loadDir is LoadDir's shared-presets- and shared-sections-aware
+// counterpart.
+func loadDir(dir string, sharedPresets map[string]map[string]any, sharedSections map[string]SharedSection) ([]Dashboard, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, fmt.Errorf("dashboard definitions: read directory %q: %w", dir, err)
@@ -266,7 +273,7 @@ func loadDir(dir string, sharedPresets map[string]map[string]any) ([]Dashboard, 
 		loaded = append(loaded, sourced{dashboard: d, source: path})
 	}
 
-	return finalize(loaded, true, sharedPresets)
+	return finalize(loaded, true, sharedPresets, sharedSections)
 }
 
 // LoadSharedPresets reads path (DASHBOARD_PRESETS_FILE — see
@@ -299,16 +306,29 @@ func LoadSharedPresets(path string) (map[string]map[string]any, error) {
 }
 
 // finalize runs the shared post-decode pipeline over a decoded set:
-// deprecated-key migration first (so everything after sees the current
+// shared-section expansion first (so every later step sees one flat widget
+// list), then deprecated-key migration (so everything after sees the current
 // shape), then filter-preset expansion and implied-"type"-filter injection
 // (so validation and every caller downstream see fully literal, complete
 // filters), then cross-field validation. requireType is true for the
 // directory loader, where every definition is authored against the current
 // schema, and false for the deprecated DASHBOARDS_CONFIG path, whose
 // already-deployed values predate the type field entirely. sharedPresets is
-// the DASHBOARD_PRESETS_FILE set (see LoadSharedPresets); nil/empty is legal
-// and means no shared presets, same as an unset DASHBOARDS_DIR.
-func finalize(loaded []sourced, requireType bool, sharedPresets map[string]map[string]any) ([]Dashboard, error) {
+// the DASHBOARD_PRESETS_FILE set (see LoadSharedPresets) and sharedSections
+// the DASHBOARD_SECTIONS_FILE set (see LoadSharedSections); nil/empty is
+// legal for either and means none is configured, same as an unset
+// DASHBOARDS_DIR.
+func finalize(loaded []sourced, requireType bool, sharedPresets map[string]map[string]any, sharedSections map[string]SharedSection) ([]Dashboard, error) {
+	// Section expansion runs before everything else so that from here down
+	// an included widget is indistinguishable from an inline one -- key
+	// migration, preset resolution, type injection and validation all see
+	// one flat widget list and need no notion of where a widget came from.
+	for i := range loaded {
+		if err := expandIncludedSections(&loaded[i].dashboard, sharedSections, loaded[i].source); err != nil {
+			return nil, err
+		}
+	}
+
 	for i := range loaded {
 		migrateLegacyWidgetKeys(&loaded[i].dashboard, loaded[i].source)
 	}
