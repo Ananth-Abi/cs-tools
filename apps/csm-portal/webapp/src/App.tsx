@@ -266,6 +266,21 @@ function LegacyDetailRedirect({ to }: { to: string }): JSX.Element {
   return <Navigate to={`${target}${search}${hash}`} replace />;
 }
 
+/**
+ * Redirects a legacy Settings path (`/admin/users`, `/admin/roles`, ...) to
+ * its `/admin/user-management/*` home, forwarding whatever `location.state`
+ * the caller navigated here with. A bare `<Navigate to={...} replace />`
+ * (as `LegacyDetailRedirect` above uses) has no `state` prop bound to the
+ * incoming navigation — it would silently drop a dashboard widget's own
+ * `state: { from }` click-through on this exact hop, which is exactly the
+ * state `CsmAdminLayout`'s Back button (and `CsmUsersPage`'s own profile-page
+ * hand-off) depend on to work end to end.
+ */
+function LegacySettingsRedirect({ to }: { to: string }): JSX.Element {
+  const { state } = useLocation();
+  return <Navigate to={to} state={state} replace />;
+}
+
 export default function App(): JSX.Element {
   return (
     <LoaderProvider>
@@ -387,23 +402,23 @@ export default function App(): JSX.Element {
                       revert this block alone if unwanted. */}
                   <Route
                     path="admin/users"
-                    element={<Navigate to="/admin/user-management/users" replace />}
+                    element={<LegacySettingsRedirect to="/admin/user-management/users" />}
                   />
                   <Route
                     path="admin/roles"
-                    element={<Navigate to="/admin/user-management/roles" replace />}
+                    element={<LegacySettingsRedirect to="/admin/user-management/roles" />}
                   />
                   <Route
                     path="admin/groups"
-                    element={<Navigate to="/admin/user-management/groups" replace />}
+                    element={<LegacySettingsRedirect to="/admin/user-management/groups" />}
                   />
                   <Route
                     path="admin/teams"
-                    element={<Navigate to="/admin/user-management/teams" replace />}
+                    element={<LegacySettingsRedirect to="/admin/user-management/teams" />}
                   />
                   <Route
                     path="admin/permissions"
-                    element={<Navigate to="/admin/user-management/permissions" replace />}
+                    element={<LegacySettingsRedirect to="/admin/user-management/permissions" />}
                   />
 
                   {/* Role/group/team member lists, one level below the
