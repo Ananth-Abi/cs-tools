@@ -96,9 +96,10 @@ describe("IncidentsFilterBar", () => {
     fireEvent.mouseDown(screen.getByRole("combobox", { name: "Priority" }));
     fireEvent.click(screen.getByRole("option", { name: /critical/i }));
 
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ priorities: expect.arrayContaining([expect.any(String)]) }),
-    );
+    expect(onChange).toHaveBeenCalledWith({
+      ...DEFAULT_INCIDENT_FILTERS,
+      priorities: ["CRITICAL"],
+    });
   });
 
   it("surfaces the product filter's coverage caveat as visible helper text", () => {
