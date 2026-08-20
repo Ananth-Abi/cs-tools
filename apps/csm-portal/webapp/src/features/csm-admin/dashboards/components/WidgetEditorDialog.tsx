@@ -374,6 +374,13 @@ export default function WidgetEditorDialog({
               onChange={(e) => handleResourceTypeChange(e.target.value as BeWidgetResourceType)}
               size="small"
               sx={{ minWidth: 200 }}
+              slotProps={{
+                // `resourceType` always holds a real value (never ""), so
+                // the label is always shrunk -- see MultiSelectField.tsx's
+                // doc comment for why this override is needed at all.
+                inputLabel: { shrink: true, sx: { top: "0px !important" } },
+                select: { notched: true },
+              }}
             >
               {RESOURCE_TYPES.map((rt) => (
                 <MenuItem key={rt} value={rt}>
@@ -388,6 +395,12 @@ export default function WidgetEditorDialog({
               onChange={(e) => handleShapeChange(e.target.value as BeWidgetShape)}
               size="small"
               sx={{ minWidth: 160 }}
+              slotProps={{
+                // `shape` always holds a real value (never ""), so the
+                // label is always shrunk.
+                inputLabel: { shrink: true, sx: { top: "0px !important" } },
+                select: { notched: true },
+              }}
             >
               {SHAPES.map((s) => (
                 <MenuItem key={s} value={s}>
@@ -503,6 +516,13 @@ export default function WidgetEditorDialog({
                     }
                     size="small"
                     sx={{ minWidth: 140 }}
+                    slotProps={{
+                      inputLabel: {
+                        shrink: column.format !== "",
+                        sx: { top: "0px !important" },
+                      },
+                      select: { notched: column.format !== "" },
+                    }}
                   >
                     <MenuItem value="">Default (text)</MenuItem>
                     {COLUMN_FORMATS.map((f) => (
@@ -576,6 +596,13 @@ export default function WidgetEditorDialog({
                       }
                       size="small"
                       sx={{ minWidth: 160 }}
+                      slotProps={{
+                        inputLabel: {
+                          shrink: (slice.color ?? "") !== "",
+                          sx: { top: "0px !important" },
+                        },
+                        select: { notched: (slice.color ?? "") !== "" },
+                      }}
                     >
                       <MenuItem value="">Default rotation</MenuItem>
                       {PALETTE_COLORS.map((c) => (

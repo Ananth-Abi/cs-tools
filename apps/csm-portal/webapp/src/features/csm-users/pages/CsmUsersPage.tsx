@@ -192,10 +192,17 @@ export default function CsmUsersPage(): JSX.Element {
         />
 
         <FormControl size="small" sx={{ width: 200, flexShrink: 0 }}>
-          <InputLabel id="user-roles-label">Roles</InputLabel>
+          <InputLabel
+            id="user-roles-label"
+            shrink={filters.roleIds.length > 0}
+            sx={{ top: "0px !important" }}
+          >
+            Roles
+          </InputLabel>
           <Select
             labelId="user-roles-label"
             multiple
+            notched={filters.roleIds.length > 0}
             value={filters.roleIds}
             onChange={handleRoleChange}
             input={
@@ -263,10 +270,17 @@ export default function CsmUsersPage(): JSX.Element {
         </Box>
 
         <FormControl size="small" sx={{ width: 200, flexShrink: 0 }}>
-          <InputLabel id="user-teams-label">Teams</InputLabel>
+          <InputLabel
+            id="user-teams-label"
+            shrink={filters.teamIds.length > 0}
+            sx={{ top: "0px !important" }}
+          >
+            Teams
+          </InputLabel>
           <Select
             labelId="user-teams-label"
             multiple
+            notched={filters.teamIds.length > 0}
             value={filters.teamIds}
             onChange={handleTeamChange}
             input={
@@ -320,9 +334,16 @@ export default function CsmUsersPage(): JSX.Element {
         </FormControl>
 
         <FormControl size="small" sx={{ minWidth: 140 }}>
-          <InputLabel id="user-active-label">Status</InputLabel>
+          <InputLabel
+            id="user-active-label"
+            shrink={filters.active !== "all"}
+            sx={{ top: "0px !important" }}
+          >
+            Status
+          </InputLabel>
           <Select
             labelId="user-active-label"
+            notched={filters.active !== "all"}
             value={filters.active}
             onChange={handleActiveChange}
             input={<OutlinedInput label="Status" />}

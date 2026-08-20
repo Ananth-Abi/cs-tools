@@ -419,6 +419,13 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
             onChange={(e) => updateWorking({ type: (e.target.value || undefined) as DashboardDraft["type"] })}
             size="small"
             sx={{ minWidth: 160 }}
+            slotProps={{
+              inputLabel: {
+                shrink: (working.type ?? "") !== "",
+                sx: { top: "0px !important" },
+              },
+              select: { notched: (working.type ?? "") !== "" },
+            }}
           >
             <MenuItem value="">None</MenuItem>
             {DASHBOARD_TYPES.map((t) => (
