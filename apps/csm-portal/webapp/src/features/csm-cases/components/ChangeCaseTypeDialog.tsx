@@ -309,21 +309,6 @@ export default function ChangeCaseTypeDialog({
                   <MenuItem value="current">{currentProductName}</MenuItem>
                 </Select>
               </FormControl>
-
-              {currentSeverity !== "unset" && (
-                <FormControl fullWidth size="small" disabled>
-                  <InputLabel id="transfer-current-severity-label">Severity</InputLabel>
-                  <Select
-                    labelId="transfer-current-severity-label"
-                    label="Severity"
-                    value="current"
-                  >
-                    <MenuItem value="current">
-                      {currentSeverity} · {SEVERITY_LABEL[currentSeverity]}
-                    </MenuItem>
-                  </Select>
-                </FormControl>
-              )}
             </Box>
 
             <FormControl fullWidth size="small" disabled>

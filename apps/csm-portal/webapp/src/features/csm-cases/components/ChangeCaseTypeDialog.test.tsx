@@ -170,7 +170,7 @@ describe("ChangeCaseTypeDialog — step 1: pick target", () => {
 });
 
 describe("ChangeCaseTypeDialog — step 2: retained attributes carry over disabled", () => {
-  it("shows the case's current project, deployment, product, severity, watchers, and tags as disabled dropdowns", () => {
+  it("shows the case's current project, deployment, product, watchers, and tags as disabled dropdowns", () => {
     render(
       <ChangeCaseTypeDialog
         currentType="case"
@@ -195,7 +195,6 @@ describe("ChangeCaseTypeDialog — step 2: retained attributes carry over disabl
     expect(screen.getByText("API Manager Rollout")).toBeInTheDocument();
     expect(screen.getByText("Prod EU")).toBeInTheDocument();
     expect(screen.getByText("API Manager 4.3")).toBeInTheDocument();
-    expect(screen.getByText(/S2 · High/i)).toBeInTheDocument();
     expect(screen.getByText("Alex Doe, Sam Lee")).toBeInTheDocument();
     expect(screen.getByText("billing")).toBeInTheDocument();
 
@@ -209,19 +208,24 @@ describe("ChangeCaseTypeDialog — step 2: retained attributes carry over disabl
     );
   });
 
-  it("omits the retained severity dropdown when the case has no severity", () => {
+  it("never shows a retained Severity dropdown — severity is always lost when leaving case, never carried over", () => {
     render(
       <ChangeCaseTypeDialog
-        currentType="engagement"
-        currentSeverity="unset"
+        currentType="case"
+        currentSeverity="S2"
         hasAttachments
         isSubmitting={false}
         onClose={() => {}}
         onSubmit={() => {}}
       />,
     );
-    pickTargetAndAdvanceToFields(/^case$/i);
+    pickTargetAndAdvanceToFields(/^engagement$/i);
     expect(screen.queryByRole("combobox", { name: /^severity$/i })).not.toBeInTheDocument();
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /consultancy/i }));
+    advanceToReview();
+    expect(screen.getByText(/no longer applies/i)).toBeInTheDocument();
+    expect(screen.getByText("Severity")).toBeInTheDocument();
   });
 
   it("shows placeholder text when there are no watchers or tags", () => {
