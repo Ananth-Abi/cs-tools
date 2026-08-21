@@ -270,6 +270,21 @@ type Dashboard struct {
 	IsTeamBased bool             `json:"isTeamBased"`
 	Widgets     []WidgetTemplate `json:"widgets"`
 
+	// IncludeSections pulls in shared, reusable runs of widgets by name --
+	// a section like "My Work" authored once in DASHBOARD_SECTIONS_FILE and
+	// shared by every dashboard that needs it, instead of copy-pasted per
+	// dashboard. Each entry names a section and carries the per-dashboard
+	// adjustments (id prefix, heading override, extra scoping filters, and
+	// whether it leads or trails this dashboard's own widgets) that let one
+	// definition serve dashboards that are not identical -- see
+	// SectionInclude and expandIncludedSections.
+	//
+	// Expanded into literal Widgets once, at load time, before every other
+	// step of the pipeline, and cleared to nil afterwards: nothing
+	// downstream (validation, the handler, the frontend) ever sees a
+	// section reference, only the widgets it stood for.
+	IncludeSections []SectionInclude `json:"includeSections,omitempty"`
+
 	// DefaultForTeamKeys lists team registry keys (BeTeam.id on the
 	// frontend, the values in this deployment's team registry -- not a
 	// group id) that should land a signed-in user on this dashboard by
@@ -334,11 +349,14 @@ func ParseDashboardsConfig(raw string) ([]Dashboard, error) {
 	for i, d := range dashboards {
 		loaded = append(loaded, sourced{dashboard: d, source: fmt.Sprintf("DASHBOARDS_CONFIG[%d]", i)})
 	}
-	// The deprecated single-variable path has no directory and therefore no
-	// DASHBOARD_PRESETS_FILE of its own to read here — nil shared presets, so
-	// only a dashboard's own "filterPresets" (if any) can resolve a
-	// {"preset": ...} reference on this path.
-	return finalize(loaded, false, nil)
+	// The deprecated single-variable path has no directory and therefore
+	// neither a DASHBOARD_PRESETS_FILE nor a DASHBOARD_SECTIONS_FILE of its
+	// own to read here — nil shared presets, so only a dashboard's own
+	// "filterPresets" (if any) can resolve a {"preset": ...} reference on
+	// this path, and nil shared sections, so an "includeSections" reference
+	// on this path always fails loud with the unknown key named rather than
+	// expanding to nothing.
+	return finalize(loaded, false, nil, nil)
 }
 
 // migrateLegacyWidgetKeys upgrades one pre-rename dashboard definition in

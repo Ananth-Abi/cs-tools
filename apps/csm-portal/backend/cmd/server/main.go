@@ -160,6 +160,11 @@ func main() {
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)
+	// Registered before the {dashboardId} wildcard purely for readability —
+	// net/http's ServeMux resolves by specificity, not registration order,
+	// so these literal paths win over the wildcard regardless.
+	mux.HandleFunc("GET /dashboards/filter-presets", dashboardHandler.GetFilterPresets)
+	mux.HandleFunc("GET /dashboards/sections", dashboardHandler.GetSharedSections)
 	mux.HandleFunc("GET /dashboards/{dashboardId}", dashboardHandler.GetDashboardDetail)
 	mux.HandleFunc("GET /updates/product-update-levels", updatesHandler.GetProductUpdateLevels)
 	mux.HandleFunc("POST /updates/levels/search", updatesHandler.SearchUpdatesBetweenUpdateLevels)
@@ -307,6 +312,14 @@ func main() {
 //	                       to keep a presets file alongside. Unset is legal
 //	                       and means no shared presets, same as unset
 //	                       DASHBOARDS_DIR itself.
+//	DASHBOARD_SECTIONS_FILE a JSON file of sectionKey -> {"displayName",
+//	                       "widgets": [...]}, the shared, reusable widget
+//	                       sections a dashboard pulls in by name with
+//	                       "includeSections" so a section like "My Work" is
+//	                       authored once instead of copy-pasted per
+//	                       dashboard. Same scope rules as
+//	                       DASHBOARD_PRESETS_FILE: DASHBOARDS_DIR path only,
+//	                       unset is legal and means no shared sections.
 //
 // Neither DASHBOARDS_DIR nor DASHBOARDS_CONFIG set is legal and yields no
 // dashboards: a deployment that has not configured any must still start and
@@ -323,6 +336,7 @@ func loadDashboards() *dashboard.Registry {
 	}
 
 	presetsFile := strings.TrimSpace(os.Getenv("DASHBOARD_PRESETS_FILE"))
+	sectionsFile := strings.TrimSpace(os.Getenv("DASHBOARD_SECTIONS_FILE"))
 
 	// ParseBool rather than a "true" string compare: the latter silently reads
 	// 1, yes and on as OFF, and never reports a typo at all -- the operator
@@ -339,9 +353,9 @@ func loadDashboards() *dashboard.Registry {
 		}
 		hotReload = parsed
 	}
-	registry, err := dashboard.NewDirRegistry(dir, hotReload, presetsFile)
+	registry, err := dashboard.NewDirRegistry(dir, hotReload, presetsFile, sectionsFile)
 	if err != nil {
-		slog.Error("invalid dashboard definitions", "dir", dir, "presetsFile", presetsFile, "err", err)
+		slog.Error("invalid dashboard definitions", "dir", dir, "presetsFile", presetsFile, "sectionsFile", sectionsFile, "err", err)
 		os.Exit(1)
 	}
 	if hotReload {

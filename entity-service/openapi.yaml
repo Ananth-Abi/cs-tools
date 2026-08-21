@@ -3632,9 +3632,13 @@ components:
       description: >
         One project-contact row for a user, reported as stored rather than as filtered. A
         row with no linked contact record makes the project, and every case on it, silently
-        invisible to that user. grantsCaseAccess mirrors contactRecordPresent directly --
-        deliberately not the stricter email-match rule the live access check enforces, since
-        that only diverges for integration/system accounts.
+        invisible to that user. grantsCaseAccess is the access rule applied per row:
+        contactRecordPresent AND contactEmail matching contactRecordEmail, compared
+        case-insensitively. It is deliberately not a restatement of contactRecordPresent --
+        a row invited under one address but linked to a contact whose own address differs is
+        invisible to both people, and that does happen on genuine customer rows. Both halves
+        of the comparison are returned above, so a false verdict can be explained from the
+        row itself.
       required: [projectId, projectName, projectKey, contactEmail, contactRecordPresent, grantsCaseAccess]
       properties:
         projectId:
@@ -4169,7 +4173,10 @@ components:
           properties:
             searchQuery:
               type: string
-              description: Searches across contact name and email (case-insensitive).
+              description: >
+                Searches across the contact's name, the linked record's address, and the
+                address a row was invited under (case-insensitive) — so a row with no linked
+                contact record is findable by the address it is displayed under.
         pagination:
           $ref: '#/components/schemas/Pagination'
 
@@ -4185,8 +4192,16 @@ components:
             render the row unlinked rather than treating it as an error.
         name:
           type: string
+          nullable: true
+          description: >
+            Null when the row has no contact record linked — the name is only ever known
+            from that record.
         email:
           type: string
+          description: >
+            The contact's address. Falls back to the address the row was invited under when
+            no contact record is linked, so a row whose contact record was never created is
+            still identifiable rather than coming back with no name and no address at all.
         registrationState:
           type: string
         notificationsEnabled:
@@ -4204,8 +4219,11 @@ components:
           type: boolean
           description: >
             Whether this row would actually grant its person visibility into this project's
-            cases. Mirrors `customerContactPresent` directly — a row can be listed here without
-            granting access.
+            cases: a linked contact record AND the address the row was invited under matching
+            that record's own address, compared case-insensitively. Deliberately not a
+            restatement of `customerContactPresent` — a row invited under one address but
+            linked to a contact whose own address differs is invisible to both people, and
+            that does happen on genuine customer rows.
 
     SearchProjectContactsResponse:
       type: object

@@ -605,9 +605,15 @@ func (s *snProjectContactService) SearchProjectContacts(ctx context.Context, pro
 			id := sysidToUUID(*c.ID)
 			contactID = &id
 		}
+		// Name is only known when a contact record is linked; a blank upstream name
+		// stays nil rather than an empty string, matching the response-null contract.
+		var name *string
+		if c.Name != "" {
+			name = strPtr(c.Name)
+		}
 		contacts = append(contacts, domain.ProjectContact{
 			ID:                     contactID,
-			Name:                   c.Name,
+			Name:                   name,
 			Email:                  c.Email,
 			RegistrationState:      c.RegistrationState,
 			NotificationsEnabled:   c.NotificationsEnabled,

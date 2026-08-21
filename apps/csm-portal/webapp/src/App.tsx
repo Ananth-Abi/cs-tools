@@ -133,6 +133,9 @@ const CsmDashboardBuilderListPage = lazy(
 const CsmDashboardBuilderEditorPage = lazy(
   () => import("@features/csm-admin/dashboards/pages/CsmDashboardBuilderEditorPage"),
 );
+const CsmDashboardSharedConfigPage = lazy(
+  () => import("@features/csm-admin/dashboards/pages/CsmDashboardSharedConfigPage"),
+);
 const CsmCustomersLayout = lazy(
   () => import("@features/csm-customers/pages/CsmCustomersLayout"),
 );
@@ -390,6 +393,10 @@ export default function App(): JSX.Element {
                         only; there is no backend behind this feature. */}
                     <Route path="dashboards" element={<DashboardBuilderRouteGuard />}>
                       <Route index element={<CsmDashboardBuilderListPage />} />
+                      {/* Before the ":draftId" wildcard: "shared" is a
+                          literal segment, and react-router would otherwise
+                          match it as a draft id. */}
+                      <Route path="shared" element={<CsmDashboardSharedConfigPage />} />
                       <Route path="new" element={<CsmDashboardBuilderEditorPage />} />
                       <Route path=":draftId" element={<CsmDashboardBuilderEditorPage />} />
                     </Route>

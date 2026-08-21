@@ -1379,7 +1379,17 @@ export interface BeProjectContact {
    * treating it as an error.
    */
   id?: string;
+  /**
+   * Empty when the row has no contact record linked — the name is only ever
+   * known from that record.
+   */
   name?: string;
+  /**
+   * The contact's address. Falls back to the address the row was invited
+   * under when no contact record is linked, so a row whose contact record was
+   * never created is still identifiable rather than carrying no name and no
+   * address at all.
+   */
   email?: string;
   registrationState?: string;
   notificationsEnabled?: boolean;
@@ -1391,8 +1401,12 @@ export interface BeProjectContact {
   customerContactPresent?: boolean;
   /**
    * Whether this row would actually grant its person visibility into this
-   * project's cases. Mirrors `customerContactPresent` directly — a row can
-   * be listed here without granting access.
+   * project's cases: a linked contact record AND the address the row was
+   * invited under matching that record's own address, compared
+   * case-insensitively. Deliberately not a restatement of
+   * `customerContactPresent` — a row invited under one address but linked to a
+   * contact whose own address differs is invisible to both people, and that
+   * does happen on genuine customer rows.
    */
   grantsCaseAccess?: boolean;
 }
@@ -3227,6 +3241,48 @@ export interface BeDashboardListItem {
  * metadata plus every widget template registered for it. `widgets` is
  * always an array; every dashboard in the registry has at least one.
  */
+/**
+ * One entry of the deployment's shared filter-preset catalogue
+ * (`GET /dashboards/filter-presets`).
+ *
+ * A dashboard definition may reference a preset by name in place of a filter
+ * predicate, and the backend expands every reference when it loads the
+ * definition. A dashboard returned by `GET /dashboards/{id}` therefore never
+ * contains a preset reference — which is exactly why this endpoint exists:
+ * the dashboard builder cannot otherwise know a preset exists, or what it
+ * means.
+ */
+export interface BeDashboardFilterPreset {
+  /** The name a definition references this preset by; unique in the catalogue. */
+  name: string;
+  /** The single filter predicate this preset stands for, verbatim as
+   * authored — the same field/op/values shape a widget's own `query.filters`
+   * entries use (see {@link BeCaseFieldFilter}). Typed loosely because the
+   * backend forwards it without interpreting it. */
+  filter: Record<string, unknown>;
+}
+
+/**
+ * One entry of the deployment's shared reusable-section catalogue
+ * (`GET /dashboards/sections`).
+ *
+ * ⚠️ `widgets` here is the AUTHORED form, not the resolved form every other
+ * widget in this app carries: filter-preset references are NOT expanded and
+ * no implied `type` filter has been injected, because a section is never put
+ * through a dashboard's own load pipeline on its own. That is what the
+ * builder wants — it edits the authored form — but it means these `query`
+ * objects must never be handed to a `/search` endpoint as criteria.
+ */
+export interface BeDashboardSharedSection {
+  /** The name a definition includes this section by; unique in the catalogue. */
+  name: string;
+  /** The heading the section's widgets are grouped under, unless the
+   * including definition overrides it. */
+  displayName: string;
+  /** The section's widget run, as authored — see this type's own warning. */
+  widgets: BeDashboardWidget[];
+}
+
 export interface BeDashboard {
   id: string;
   displayName: string;
