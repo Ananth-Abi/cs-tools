@@ -659,6 +659,7 @@ export interface BeGetCatalogItemVariablesResponse {
 interface BeCaseUpdateNever {
   state?: never;
   severity?: never;
+  issueType?: never;
   type?: never;
   engagementType?: never;
   workState?: never;
@@ -682,14 +683,15 @@ interface BeCaseUpdateNever {
 
 /**
  * Request body for `PATCH /cases/{id}` (mirrors the entity `UpdateCaseRequest`).
- * **Exactly one** of `state` / `severity` / `type` (+ `engagementType` when
- * `type` is `"engagement"`) / `workState` / `assigneeEmail` / `watchList` /
- * `parentId` / `subject` / `description` / `deploymentId` /
- * `deployedProductId` / `relatedCaseId` / `autocloseHoldUntil` / the combined
- * fix-ETA variant (below) is sent per call — the backend rejects zero or more
- * than one. Encoded as a discriminated union (each variant carries every
- * other field as `never`, via {@link BeCaseUpdateNever}) so the
- * exactly-one-field contract is enforced at compile time, not just in docs.
+ * **Exactly one** of `state` / `severity` / `issueType` / `type` (+
+ * `engagementType` when `type` is `"engagement"`) / `workState` /
+ * `assigneeEmail` / `watchList` / `parentId` / `subject` / `description` /
+ * `deploymentId` / `deployedProductId` / `relatedCaseId` /
+ * `autocloseHoldUntil` / the combined fix-ETA variant (below) is sent per
+ * call — the backend rejects zero or more than one. Encoded as a
+ * discriminated union (each variant carries every other field as `never`,
+ * via {@link BeCaseUpdateNever}) so the exactly-one-field contract is
+ * enforced at compile time, not just in docs.
  * `assigneeEmail`, `watchList`, `parentId`, and `autocloseHoldUntil` are
  * supported **only** for the ServiceNow data source. `workState` is only
  * accepted while the case is `work_in_progress`.
@@ -703,6 +705,7 @@ export type BeCaseUpdatePayload =
       closeNotes?: string;
     })
   | (Omit<BeCaseUpdateNever, "severity"> & { severity: BeCaseSeverity })
+  | (Omit<BeCaseUpdateNever, "issueType"> & { issueType: BeCaseIssueType })
   /**
    * Case type transfer (digiops-cs#2818/#2852) — converts the case to another
    * type. Only `case` and `engagement` are accepted by the backend today
