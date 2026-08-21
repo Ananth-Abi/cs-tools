@@ -86,8 +86,7 @@ afterEach(() => {
 
 /** Picks a target on step 1 ("pick") and advances to step 2 ("fields"). */
 function pickTargetAndAdvanceToFields(name: RegExp): void {
-  fireEvent.mouseDown(screen.getByRole("combobox", { name: /transfer to/i }));
-  fireEvent.click(screen.getByRole("option", { name }));
+  fireEvent.click(screen.getByRole("radio", { name }));
   fireEvent.click(screen.getByRole("button", { name: /^next$/i }));
 }
 
@@ -110,23 +109,10 @@ describe("ChangeCaseTypeDialog — step 1: pick target", () => {
       />,
     );
     expect(screen.getByText(/step 1 of 3/i)).toBeInTheDocument();
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /transfer to/i }));
-    expect(screen.getByRole("option", { name: /^case \(current type\)$/i })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    expect(screen.getByRole("option", { name: /^security report$/i })).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    expect(screen.getByRole("option", { name: /^engagement$/i })).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-    expect(screen.getByRole("option", { name: /^service request$/i })).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(screen.getByRole("radio", { name: /^case \(current\)$/i })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /^security report$/i })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /^service request$/i })).toBeEnabled();
   });
 
   it("never shows 'not yet available' anywhere in the flow", () => {
@@ -347,9 +333,7 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     pickTargetAndAdvanceToFields(/^engagement$/i);
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     expect(screen.getByText(/step 1 of 3/i)).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: /transfer to/i })).toHaveTextContent(
-      /^engagement$/i,
-    );
+    expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeChecked();
   });
 
   it("returns to step 2 on Back from review, keeping the filled field", () => {

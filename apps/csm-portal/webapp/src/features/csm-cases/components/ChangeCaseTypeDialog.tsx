@@ -23,10 +23,13 @@ import {
   DialogContent,
   DialogTitle,
   FormControl,
+  FormControlLabel,
   FormHelperText,
   InputLabel,
   LinearProgress,
   MenuItem,
+  Radio,
+  RadioGroup,
   Select,
   Typography,
 } from "@wso2/oxygen-ui";
@@ -208,7 +211,7 @@ export default function ChangeCaseTypeDialog({
   };
 
   return (
-    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
           <span>Change case type</span>
@@ -221,22 +224,27 @@ export default function ChangeCaseTypeDialog({
       {step === "pick" && (
         <>
           <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <FormControl fullWidth size="small">
-              <InputLabel id="transfer-target-type-label">Transfer to</InputLabel>
-              <Select
-                labelId="transfer-target-type-label"
-                label="Transfer to"
+            <Typography variant="body2" color="text.secondary">
+              Transfer to
+            </Typography>
+            <FormControl fullWidth>
+              <RadioGroup
+                row
+                sx={{ flexWrap: "nowrap" }}
                 value={targetType}
                 onChange={(e) => handleTargetChange(e.target.value as BeCaseType)}
-                disabled={isSubmitting}
               >
                 {TRANSFERABLE_CASE_TYPES.map((t) => (
-                  <MenuItem key={t} value={t} disabled={t === currentType}>
-                    {caseTypeTransferLabel(t)}
-                    {t === currentType ? " (current type)" : ""}
-                  </MenuItem>
+                  <FormControlLabel
+                    key={t}
+                    value={t}
+                    disabled={t === currentType || isSubmitting}
+                    control={<Radio size="small" />}
+                    label={caseTypeTransferLabel(t) + (t === currentType ? " (current)" : "")}
+                    sx={{ whiteSpace: "nowrap" }}
+                  />
                 ))}
-              </Select>
+              </RadioGroup>
             </FormControl>
           </DialogContent>
           <DialogActions>
@@ -255,49 +263,57 @@ export default function ChangeCaseTypeDialog({
               Carrying over unchanged
             </Typography>
 
-            <FormControl fullWidth size="small" disabled>
-              <InputLabel id="transfer-current-project-label">Project</InputLabel>
-              <Select
-                labelId="transfer-current-project-label"
-                label="Project"
-                value="current"
-              >
-                <MenuItem value="current">{currentProjectName}</MenuItem>
-              </Select>
-            </FormControl>
-
-            <FormControl fullWidth size="small" disabled>
-              <InputLabel id="transfer-current-deployment-label">Deployment</InputLabel>
-              <Select
-                labelId="transfer-current-deployment-label"
-                label="Deployment"
-                value="current"
-              >
-                <MenuItem value="current">{currentDeploymentName}</MenuItem>
-              </Select>
-            </FormControl>
-
-            <FormControl fullWidth size="small" disabled>
-              <InputLabel id="transfer-current-product-label">Product</InputLabel>
-              <Select labelId="transfer-current-product-label" label="Product" value="current">
-                <MenuItem value="current">{currentProductName}</MenuItem>
-              </Select>
-            </FormControl>
-
-            {currentSeverity !== "unset" && (
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                gap: 2,
+              }}
+            >
               <FormControl fullWidth size="small" disabled>
-                <InputLabel id="transfer-current-severity-label">Severity</InputLabel>
+                <InputLabel id="transfer-current-project-label">Project</InputLabel>
                 <Select
-                  labelId="transfer-current-severity-label"
-                  label="Severity"
+                  labelId="transfer-current-project-label"
+                  label="Project"
                   value="current"
                 >
-                  <MenuItem value="current">
-                    {currentSeverity} · {SEVERITY_LABEL[currentSeverity]}
-                  </MenuItem>
+                  <MenuItem value="current">{currentProjectName}</MenuItem>
                 </Select>
               </FormControl>
-            )}
+
+              <FormControl fullWidth size="small" disabled>
+                <InputLabel id="transfer-current-deployment-label">Deployment</InputLabel>
+                <Select
+                  labelId="transfer-current-deployment-label"
+                  label="Deployment"
+                  value="current"
+                >
+                  <MenuItem value="current">{currentDeploymentName}</MenuItem>
+                </Select>
+              </FormControl>
+
+              <FormControl fullWidth size="small" disabled>
+                <InputLabel id="transfer-current-product-label">Product</InputLabel>
+                <Select labelId="transfer-current-product-label" label="Product" value="current">
+                  <MenuItem value="current">{currentProductName}</MenuItem>
+                </Select>
+              </FormControl>
+
+              {currentSeverity !== "unset" && (
+                <FormControl fullWidth size="small" disabled>
+                  <InputLabel id="transfer-current-severity-label">Severity</InputLabel>
+                  <Select
+                    labelId="transfer-current-severity-label"
+                    label="Severity"
+                    value="current"
+                  >
+                    <MenuItem value="current">
+                      {currentSeverity} · {SEVERITY_LABEL[currentSeverity]}
+                    </MenuItem>
+                  </Select>
+                </FormControl>
+              )}
+            </Box>
 
             <FormControl fullWidth size="small" disabled>
               <InputLabel id="transfer-current-watchers-label" shrink>
