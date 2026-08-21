@@ -157,6 +157,23 @@ export function useColumnPreferences({
     reconcile(loadPersisted(key), columns, defaultVisibleIds),
   );
 
+  // `key` starts wrong on first render for any caller whose `userKey` resolves
+  // asynchronously (e.g. `useCurrentUser()`/`useIdTokenClaims()` are both
+  // still `undefined` on mount, so `getColumnPreferencesUserKey` falls back
+  // to the shared "anonymous" bucket) and then changes once the real id
+  // lands. `useState`'s lazy initializer only runs once, so without this it
+  // keeps serving the state it loaded under the stale key forever. Re-derive
+  // `state` from `localStorage` whenever `key` actually changes, using
+  // React's "adjust state during render" pattern (tracked via a second piece
+  // of state, not a ref — refs must not be read/written during render)
+  // instead of an effect, so there's no extra commit where the table renders
+  // the wrong user's columns before catching up.
+  const [prevKey, setPrevKey] = useState(key);
+  if (prevKey !== key) {
+    setPrevKey(key);
+    setState(reconcile(loadPersisted(key), columns, defaultVisibleIds));
+  }
+
   const update = useCallback(
     (next: PersistedColumnState) => {
       setState(next);

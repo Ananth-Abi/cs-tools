@@ -178,6 +178,46 @@ describe("useColumnPreferences", () => {
     expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a", "b"]);
   });
 
+  it("re-reconciles against the new key when userKey changes after mount", () => {
+    // Mirrors the real call sites: on first render, the signed-in user's id
+    // hasn't resolved yet (useCurrentUser()/useIdTokenClaims() are both async),
+    // so the hook is first rendered with userKey "anonymous", then rerendered
+    // once the real id lands.
+    window.localStorage.setItem(
+      "csm:anonymous:test-view:columns",
+      JSON.stringify({ order: ["c", "a", "b"], visible: ["c"] }),
+    );
+    window.localStorage.setItem(
+      "csm:user-1:test-view:columns",
+      JSON.stringify({ order: ["b", "a", "c"], visible: ["b", "a"] }),
+    );
+
+    const base = { viewId: "test-view", columns: COLUMNS, defaultVisibleIds: ["a"] };
+    const { result, rerender } = renderHook(useColumnPreferences, {
+      initialProps: { ...base, userKey: "anonymous" },
+    });
+
+    // First render picks up the anonymous bucket, as expected.
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["c", "a", "b"]);
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["c"]);
+
+    // The real user id resolves a render or two later.
+    rerender({ ...base, userKey: "user-1" });
+
+    // The hook must now reflect user-1's saved layout, not the anonymous
+    // state it happened to start with.
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["b", "a", "c"]);
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["b", "a"]);
+
+    // And a subsequent toggle must save under user-1's key, not clobber it
+    // with the anonymous session's stale state.
+    act(() => result.current.toggleColumn("c"));
+    const saved = JSON.parse(
+      window.localStorage.getItem("csm:user-1:test-view:columns") ?? "null",
+    );
+    expect(saved.visible).toEqual(["b", "a", "c"]);
+  });
+
   it("falls back to defaults when the stored value is corrupt", () => {
     window.localStorage.setItem("csm:user-1:test-view:columns", "not json");
 
