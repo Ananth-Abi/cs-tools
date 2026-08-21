@@ -429,6 +429,89 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
     expect(tagEntry?.values).not.toContain("s_dip");
   });
 
+  // CodeRabbit finding: overwriting `tags` with the complement would
+  // silently drop a widget's own "must have one of these tags" requirement
+  // when it also excludes a tag. Intersecting instead preserves both.
+  it("intersects an existing tag-in list with the complement, rather than overwriting it, when a widget has both tag in and tag notIn", async () => {
+    mockPost({
+      tags: {
+        tags: [
+          { id: "t1", label: "s_dip" },
+          { id: "t2", label: "required-tag" },
+          { id: "t3", label: "other-tag" },
+        ],
+      },
+      cases: { cases: [], total: 0, limit: 10, offset: 0 },
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "in_and_notin_widget",
+        displayName: "In and NotIn Widget",
+        filters: {
+          filters: [
+            { field: "tag", op: "in", values: ["required-tag"] },
+            { field: "tag", op: "notIn", values: ["s_dip"] },
+          ],
+        },
+      }),
+    );
+
+    await waitFor(() => {
+      const lastCasesCall = postMock.mock.calls
+        .filter((c) => c[0] === "/cases/search")
+        .at(-1);
+      expect(lastCasesCall).toBeDefined();
+      expect(lastCasesCall?.[1]).toMatchObject({
+        filters: {
+          filters: expect.arrayContaining([
+            { field: "tag", op: "in", values: ["required-tag"] },
+          ]),
+        },
+      });
+    });
+  });
+
+  // CodeRabbit finding: silently dropping the exclusion on a catalog-fetch
+  // failure would broaden the search to every tag instead of failing safe.
+  it("falls back to the widget's raw excludeTags (still applied, just not shown as checked) when the tag catalog fails to load", async () => {
+    postMock.mockImplementation((url: string) => {
+      if (url === "/tags/search") return Promise.reject(new Error("network error"));
+      if (url === "/cases/search") {
+        return Promise.resolve({ cases: [], total: 0, limit: 10, offset: 0 });
+      }
+      return Promise.resolve({ teams: [] });
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "excl_tag_catalog_fails",
+        displayName: "Discussions on Going",
+        filters: { filters: [{ field: "tag", op: "notIn", values: ["s_dip"] }] },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByText(/couldn.t load the tag catalog/i)).toBeInTheDocument(),
+    );
+
+    await waitFor(() => {
+      const lastCasesCall = postMock.mock.calls
+        .filter((c) => c[0] === "/cases/search")
+        .at(-1);
+      expect(lastCasesCall).toBeDefined();
+      expect(lastCasesCall?.[1]).toMatchObject({
+        filters: {
+          filters: expect.arrayContaining([
+            { field: "tag", op: "notIn", values: ["s_dip"] },
+          ]),
+        },
+      });
+    });
+  });
+
   it("does not fetch the tag catalog at all when the widget has no tag exclusion", async () => {
     mockPost({ cases: { cases: [], total: 0, limit: 10, offset: 0 } });
 

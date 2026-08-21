@@ -187,7 +187,19 @@ interface CaseFamilyWidgetPreviewProps {
  * single multi-select. This is a deliberately approximate complement (the
  * catalog is "recently/commonly used tags", not literally every tag that
  * has ever existed), accepted as a known tradeoff rather than the exact
- * complement `onboardingStatuses` gets over its 4 fixed values.
+ * complement `onboardingStatuses` gets over its 4 fixed values — in
+ * particular, a case with no tags at all can't be represented as "one of
+ * the complement's tags" and is wrongly excluded by this approximation, a
+ * gap this deliberately doesn't try to work around (doing so would mean
+ * going back to a separate, non-dropdown representation of the exclusion,
+ * which is exactly what was asked against). Two narrower correctness gaps
+ * *are* worth guarding even within this approximation, though: a widget
+ * that also has its own `tag in [...]` gets that list intersected with the
+ * complement rather than overwritten (so the widget's "must have one of
+ * these tags" requirement survives alongside the exclusion), and a failed
+ * tag-catalog fetch falls back to the widget's raw, un-complemented
+ * `excludeTags` (still correctly scoped, just not shown as checked items)
+ * rather than silently dropping the exclusion and broadening the search.
  */
 function CaseFamilyWidgetPreview({
   displayName,
@@ -208,22 +220,36 @@ function CaseFamilyWidgetPreview({
     if (!needsTagComplement) {
       return { ...DEFAULT_CASES_FILTERS, ...rawTranslated };
     }
-    // Waiting on the catalog (or it failed) -- resolved below once
-    // `tagCatalog` lands; a failure falls through to no tags pre-selected
-    // (broader, not narrower, than the widget's own intent) rather than
-    // blocking the page forever.
     if (isCatalogFetching) return null;
+    if (isCatalogError || !tagCatalog) {
+      // The catalog failed to load -- fall back to the widget's own raw
+      // `excludeTags` rather than dropping it, so the search itself stays
+      // correctly scoped (just excluded, not narrowed to a wrong "in"
+      // list either) even though the "Tags" control has no way to *show*
+      // an exclusion as checked items.
+      return { ...DEFAULT_CASES_FILTERS, ...rawTranslated };
+    }
     const excluded = new Set(rawTranslated.excludeTags);
-    const complementTags = (tagCatalog ?? [])
+    const complementTags = tagCatalog
       .map((t) => t.label)
       .filter((label) => !excluded.has(label));
+    // A widget that also requires specific tags (`tag in [...]` alongside
+    // `tag notIn [...]`) must keep both conditions ANDed -- intersect with
+    // the complement rather than overwriting the required list outright,
+    // or the widget's own "must have one of these tags" requirement is
+    // silently lost.
+    const priorTags = rawTranslated.tags;
+    const tags =
+      priorTags && priorTags.length > 0
+        ? priorTags.filter((t) => complementTags.includes(t))
+        : complementTags;
     return {
       ...DEFAULT_CASES_FILTERS,
       ...rawTranslated,
-      tags: complementTags,
+      tags,
       excludeTags: [],
     };
-  }, [needsTagComplement, isCatalogFetching, tagCatalog, rawTranslated]);
+  }, [needsTagComplement, isCatalogFetching, isCatalogError, tagCatalog, rawTranslated]);
 
   const [casesFilters, setCasesFilters] = useState<CasesFilters | null>(null);
   // Seeds `casesFilters` from `initialCasesFilters` exactly once, as soon as
@@ -282,14 +308,15 @@ function CaseFamilyWidgetPreview({
       </Box>
       {isCatalogError && (
         <Typography variant="caption" color="text.secondary">
-          Couldn&rsquo;t load the tag catalog to reflect this widget&rsquo;s tag exclusion — no
-          tags are pre-selected below; pick them manually if needed.
+          Couldn&rsquo;t load the tag catalog — this widget&rsquo;s tag exclusion is still
+          applied to the results below, it just isn&rsquo;t shown as checked items in the Tags
+          control.
         </Typography>
       )}
       <CasesFilterBar
         filters={casesFilters}
         onChange={handleFiltersChange}
-        onReset={() => setCasesFilters(initialCasesFilters ?? DEFAULT_CASES_FILTERS)}
+        onReset={() => handleFiltersChange(initialCasesFilters ?? DEFAULT_CASES_FILTERS)}
         isFiltersOpen={isFiltersOpen}
         onFiltersToggle={() => setIsFiltersOpen((prev) => !prev)}
         availableAssigneeUsers={[]}
