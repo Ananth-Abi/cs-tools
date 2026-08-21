@@ -5364,7 +5364,7 @@ components:
     UpdateCaseRequest:
       type: object
       description: |
-        Exactly one of `state`, `severity`, `issueType`, `workState`, `watchList`, `assigneeEmail`, `parentId`,
+        Exactly one of `state`, `severity`, `workState`, `watchList`, `assigneeEmail`, `parentId`,
         `acknowledge`, `subject`, `description`, `deploymentId`, `deployedProductId`,
         `relatedCaseId`, `autocloseHoldUntil`, `bestCaseFixEta`, `mostLikelyFixEta`, or
         `worstCaseFixEta` must be provided. `watchList`, `assigneeEmail`, `parentId`, and `autocloseHoldUntil` are
@@ -5374,7 +5374,6 @@ components:
       oneOf:
         - required: [state]
         - required: [severity]
-        - required: [issueType]
         - required: [workState]
         - required: [watchList]
         - required: [assigneeEmail]
@@ -5398,10 +5397,6 @@ components:
           type: string
           enum: [catastrophic, critical, high, medium, low]
           description: The new severity of the case.
-        issueType:
-          type: string
-          enum: [error, partial_outage, performance_degradation, question, security_or_compliance, total_outage]
-          description: The new issue type of the case.
         workState:
           type: string
           enum: [ongoing, paused]
