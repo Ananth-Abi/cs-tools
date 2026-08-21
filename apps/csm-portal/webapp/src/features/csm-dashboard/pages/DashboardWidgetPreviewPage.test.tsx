@@ -68,6 +68,27 @@ function renderAt(initialEntry: string) {
   );
 }
 
+/** Same as {@link renderAt}, but also hands back the `QueryClient` so a
+ * test can force a real background refetch of a shared cache entry (e.g.
+ * `useSearchTags("", ...)`'s), the same way another mounted "Tags" control
+ * elsewhere in the app would once its own `staleTime` elapses. */
+function renderAtWithQueryClient(initialEntry: string) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const result = render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route path="/dashboard" element={<div>Dashboard landing</div>} />
+          <Route path="/dashboard/preview/:previewSlug" element={<DashboardWidgetPreviewPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return { ...result, queryClient };
+}
+
 /** Routes `postMock` by URL, since a case-family widget's preview page
  * fires up to three different POST endpoints at once: `/teams/search`
  * (`CasesFilterBar`'s "Team" control loads unconditionally on mount),
@@ -528,5 +549,91 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
       expect(postMock).toHaveBeenCalledWith("/cases/search", expect.anything()),
     );
     expect(postMock).not.toHaveBeenCalledWith("/tags/search", expect.anything());
+  });
+
+  // CodeRabbit finding: `useSearchTags("", ...)`'s cache entry is shared,
+  // by query key, with every other "Tags" control mounted anywhere in the
+  // app (e.g. the real one inside this very `CasesFilterBar`, or another
+  // preview page open in a different tab) -- once its own `staleTime`
+  // elapses, any of those refetches the exact same cache entry, which
+  // flips `isFetching` back to true here too, even though this page never
+  // asked for it. Reset must still restore the widget's own starting
+  // filters through that window, not fall back to `DEFAULT_CASES_FILTERS`
+  // just because the shared query happens to be mid-refetch at that exact
+  // moment.
+  it("Reset still restores the widget's own filters during a later background refetch of the shared tag-catalog query", async () => {
+    // The initial catalog fetch resolves normally; a *second* call (the
+    // simulated background refetch below) is held open on a promise this
+    // test controls, so `isFetching` on the shared query stays true for as
+    // long as needed instead of racing a click against a promise that
+    // resolves in the same microtask it was created in.
+    let tagsCallCount = 0;
+    let resolveSecondTagsCall: (value: unknown) => void = () => {};
+    postMock.mockImplementation((url: string) => {
+      if (url === "/tags/search") {
+        tagsCallCount += 1;
+        if (tagsCallCount === 1) {
+          return Promise.resolve({
+            tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }],
+          });
+        }
+        return new Promise((resolve) => {
+          resolveSecondTagsCall = resolve;
+        });
+      }
+      if (url === "/teams/search") return Promise.resolve({ teams: [] });
+      if (url === "/cases/search") {
+        return Promise.resolve({ cases: [], total: 0, limit: 10, offset: 0 });
+      }
+      return Promise.resolve({});
+    });
+
+    const { queryClient } = renderAtWithQueryClient(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "excl_tag_widget",
+        displayName: "Discussions on Going",
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            { field: "tag", op: "notIn", values: ["s_dip"] },
+          ],
+        },
+      }),
+    );
+
+    // Let the initial catalog fetch (and the /cases/search it feeds) settle
+    // to the widget's own resolved starting point.
+    await waitFor(() => {
+      const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
+      expect(lastCasesCall).toBeDefined();
+      expect(lastCasesCall?.[1]).toMatchObject({
+        filters: {
+          filters: expect.arrayContaining([{ field: "state", op: "in", values: ["open"] }]),
+        },
+      });
+    });
+
+    // Simulate another "Tags" control elsewhere refetching the exact same
+    // shared cache entry -- not an action this page itself takes. Held open
+    // by `resolveSecondTagsCall` above, so `isFetching` on
+    // `["csm-tags-search", ""]` stays true through the click below rather
+    // than flipping back before this test can observe it.
+    void queryClient.refetchQueries({ queryKey: ["csm-tags-search", ""] });
+    await waitFor(() => {
+      expect(queryClient.getQueryState(["csm-tags-search", ""])?.fetchStatus).toBe("fetching");
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /clear filters/i }));
+    resolveSecondTagsCall({ tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }] });
+
+    await waitFor(() => {
+      const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
+      expect(lastCasesCall?.[1]).toMatchObject({
+        filters: {
+          filters: expect.arrayContaining([{ field: "state", op: "in", values: ["open"] }]),
+        },
+      });
+    });
   });
 });

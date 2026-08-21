@@ -251,14 +251,29 @@ function CaseFamilyWidgetPreview({
     };
   }, [needsTagComplement, isCatalogFetching, isCatalogError, tagCatalog, rawTranslated]);
 
+  // `initialCasesFilters` is reactive, not actually "initial" -- it goes
+  // back to `null` whenever `isCatalogFetching` is true, including on a
+  // *later* background refetch of `useSearchTags("", ...)`'s cache entry
+  // (shared, by query key, with every other open "Tags" dropdown in the
+  // app, e.g. the real one inside `CasesFilterBar` below, once its own
+  // `staleTime` elapses). Freezing the first resolved value here, once,
+  // is what makes both the initial seed below and `onReset` immune to that
+  // later refetch -- without it, clicking Reset during that window would
+  // fall back to `DEFAULT_CASES_FILTERS` and silently drop every one of
+  // the widget's own starting filters, not just the tag complement.
+  const [resetBaseline, setResetBaseline] = useState<CasesFilters | null>(null);
+  if (resetBaseline === null && initialCasesFilters !== null) {
+    setResetBaseline(initialCasesFilters);
+  }
+
   const [casesFilters, setCasesFilters] = useState<CasesFilters | null>(null);
-  // Seeds `casesFilters` from `initialCasesFilters` exactly once, as soon as
-  // it resolves (immediately for a non-tag-complement widget; after the
+  // Seeds `casesFilters` from `resetBaseline` exactly once, as soon as it
+  // resolves (immediately for a non-tag-complement widget; after the
   // catalog fetch settles otherwise) -- never re-seeds afterward, so it
   // can't clobber an edit the viewer already made while the catalog was
   // still loading.
-  if (casesFilters === null && initialCasesFilters !== null) {
-    setCasesFilters(initialCasesFilters);
+  if (casesFilters === null && resetBaseline !== null) {
+    setCasesFilters(resetBaseline);
   }
 
   const [isFiltersOpen, setIsFiltersOpen] = useState(true);
@@ -316,7 +331,7 @@ function CaseFamilyWidgetPreview({
       <CasesFilterBar
         filters={casesFilters}
         onChange={handleFiltersChange}
-        onReset={() => handleFiltersChange(initialCasesFilters ?? DEFAULT_CASES_FILTERS)}
+        onReset={() => handleFiltersChange(resetBaseline ?? DEFAULT_CASES_FILTERS)}
         isFiltersOpen={isFiltersOpen}
         onFiltersToggle={() => setIsFiltersOpen((prev) => !prev)}
         availableAssigneeUsers={[]}
