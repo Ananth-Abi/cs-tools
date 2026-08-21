@@ -1038,9 +1038,7 @@ describe("CsmCaseDetailPage — change case type", () => {
     fireEvent.click(screen.getByRole("button", { name: /stub transfer to case with severity/i }));
 
     expect(patchCaseMutateMock).toHaveBeenCalledWith({ type: "case" }, expect.anything());
-    // The type PATCH's own onSuccess handler fires the follow-up severity
-    // PATCH — invoke it here the same way React Query would once the first
-    // call resolves.
+    // Simulate the type PATCH succeeding, which fires the severity follow-up.
     const typeCallHandlers = patchCaseMutateMock.mock.calls.find(
       ([payload]) => JSON.stringify(payload) === JSON.stringify({ type: "case" }),
     )?.[1] as { onSuccess: () => void };

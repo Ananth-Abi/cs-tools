@@ -330,11 +330,13 @@ export default function ChangeCaseTypeDialog({
                 multiple
                 displayEmpty
                 value={currentWatchers.map((w) => w.id)}
-                renderValue={() =>
-                  currentWatchers.length > 0
-                    ? currentWatchers.map((w) => w.name).join(", ")
-                    : "None"
-                }
+                renderValue={() => (
+                  <Box component="span" sx={{ display: "flex", alignItems: "center" }}>
+                    {currentWatchers.length > 0
+                      ? currentWatchers.map((w) => w.name).join(", ")
+                      : "None"}
+                  </Box>
+                )}
               >
                 {currentWatchers.map((w) => (
                   <MenuItem key={w.id} value={w.id}>
@@ -354,9 +356,13 @@ export default function ChangeCaseTypeDialog({
                 multiple
                 displayEmpty
                 value={currentTags.map((t) => t.id)}
-                renderValue={() =>
-                  currentTags.length > 0 ? currentTags.map((t) => t.label).join(", ") : "None"
-                }
+                renderValue={() => (
+                  <Box component="span" sx={{ display: "flex", alignItems: "center" }}>
+                    {currentTags.length > 0
+                      ? currentTags.map((t) => t.label).join(", ")
+                      : "None"}
+                  </Box>
+                )}
               >
                 {currentTags.map((t) => (
                   <MenuItem key={t.id} value={t.id}>
