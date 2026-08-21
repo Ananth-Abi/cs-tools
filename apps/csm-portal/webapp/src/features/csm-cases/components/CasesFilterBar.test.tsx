@@ -23,6 +23,7 @@ import CasesFilterBar, {
   type CasesFilters,
 } from "@features/csm-cases/components/CasesFilterBar";
 import { DEFAULT_CASES_FILTERS } from "@features/csm-cases/utils/casesFiltersUrl";
+import { useSearchTags } from "@features/csm-cases/api/useSearchTags";
 
 const postMock = vi.fn();
 
@@ -33,6 +34,30 @@ vi.mock("@api/backend/client", () => ({
 vi.mock("@config/apiConfig", () => ({
   apiConfig: { backendUrl: "https://example.test" },
 }));
+
+// Mocked directly (same approach as AddTagDialog.test.tsx) so tests don't
+// have to drive the real 300ms debounce in TagsMultiSelect.
+vi.mock("@features/csm-cases/api/useSearchTags", () => ({
+  useSearchTags: vi.fn(),
+}));
+const mockedUseSearchTags = vi.mocked(useSearchTags);
+function mockTagSearchResult(
+  overrides: Partial<ReturnType<typeof useSearchTags>>,
+): void {
+  mockedUseSearchTags.mockReturnValue({
+    data: [],
+    isFetching: false,
+    isError: false,
+    ...overrides,
+  } as unknown as ReturnType<typeof useSearchTags>);
+}
+// `TagsMultiSelect` (and its `useSearchTags` call) now renders unconditionally
+// as part of every `CasesFilterBar`, so every describe block below needs a
+// default mock return value -- set once here, at file scope, rather than
+// repeating it in each describe block's own `beforeEach`.
+beforeEach(() => {
+  mockTagSearchResult({});
+});
 
 function renderBar(
   filters: CasesFilters,
@@ -146,26 +171,32 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
 
 
   /**
-   * The tag bar controls (and, briefly, CS team's) were removed as clutter,
-   * so a chip is the ONLY way these filters are visible or clearable after a
-   * dashboard click-through. If these break, a user lands on a filtered
-   * list with no way to see or undo why. CS team has its own "Team" bar
-   * control again (see the describe block below) and is deliberately NOT
-   * chipped, to avoid showing the same selection twice.
+   * `tags` has its own "Tags" bar control now (tested separately below),
+   * same as CS team's "Team" control (see the describe block below) —
+   * deliberately NOT chipped, to avoid showing the same selection twice.
+   * `excludeTags` has no bar control of its own on this general filter bar
+   * — only ever set via a dashboard click-through (or, for a case-family
+   * widget's own preview page, seeded as `tags`' own complement before it
+   * ever reaches this component — see `CaseFamilyWidgetPreview` in
+   * `DashboardWidgetPreviewPage.tsx`) — so a chip is still the only way to
+   * see or clear it here.
    */
-  it("renders chips for tags/excludeTags now that their bar controls are gone", () => {
+  it("does not render a chip for tags — it has its own 'Tags' bar control", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["micro-gw"] });
+    expect(screen.queryByText(/^Tag: /)).not.toBeInTheDocument();
+  });
+
+  it("renders a chip for excludeTags, since it has no bar control of its own", () => {
     const { onChange } = renderBar({
       ...DEFAULT_CASES_FILTERS,
-      tags: ["micro-gw"],
       excludeTags: ["s_dip"],
     });
 
-    expect(screen.getByText("Tag: micro-gw")).toBeInTheDocument();
     expect(screen.getByText("Excluding tag: s_dip")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Excluding tag: s_dip").closest(".MuiChip-root")!.querySelector("svg")!);
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeTags: [], tags: ["micro-gw"] }),
+      expect.objectContaining({ excludeTags: [] }),
     );
   });
 
@@ -174,18 +205,12 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
     expect(screen.queryByText(/^CS team:/)).not.toBeInTheDocument();
   });
 
-  it("no longer renders the removed Tags / Exclude tags bar controls", () => {
-    renderBar({ ...DEFAULT_CASES_FILTERS });
-    expect(screen.queryByLabelText(/^Tags$/)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/^Exclude tags$/)).not.toBeInTheDocument();
-  });
-
   // Regression: reported live against a dashboard widget's `state notIn`
   // click-through, which showed an INCLUDE chip (the exact opposite of the
   // widget's own filter) because the exclusion had nowhere of its own to
-  // render. `excludeStates` has no bar control (same as `excludeTags`), so
-  // its chip is the only way to see or clear it. `onboardingStatuses` has
-  // its own "Onboarding status" bar control (tested separately below) and
+  // render. `excludeStates` has no bar control of its own, so its chip is
+  // the only way to see or clear it. `onboardingStatuses` has its own
+  // "Onboarding status" bar control (tested separately below) and
   // is deliberately NOT chipped, same as `csTeams`.
   it("renders a distinct chip for excludeStates, never conflated with its include counterpart", () => {
     const { onChange } = renderBar({
@@ -240,6 +265,62 @@ describe("CasesFilterBar — 'Team' control (replaces the removed 'Work state' o
     fireEvent.click(await screen.findByRole("option", { name: "ABT One" }));
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ csTeams: ["g-1"] }));
+  });
+});
+
+describe("CasesFilterBar — 'Tags' control (replaces the removed chip-only field)", () => {
+  it("renders matching tag suggestions from the search endpoint", () => {
+    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
+    renderBar({ ...DEFAULT_CASES_FILTERS });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
+    expect(screen.getByText("micro-gw")).toBeInTheDocument();
+  });
+
+  it("selecting a suggested tag adds it to the filter", () => {
+    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
+    fireEvent.click(screen.getByText("micro-gw"));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: ["micro-gw"] }),
+    );
+  });
+
+  // Tags are genuinely free-text (see TagsMultiSelect.tsx's doc comment) --
+  // typing one with no matching suggestion must still work, not just picking
+  // from the search results.
+  it("still accepts a free-typed tag with no matching suggestion", () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
+
+    const input = screen.getByRole("combobox", { name: "Tags" });
+    fireEvent.change(input, { target: { value: "brand-new-tag" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: ["brand-new-tag"] }),
+    );
+  });
+});
+
+// Regression: reported live — with every control the same width, a project
+// name of any real length ellipsized almost immediately, and the control sat
+// mid-row rather than having room to grow. Moved to the end of the grid and
+// widened.
+describe("CasesFilterBar — 'Project' control is last and wider than its siblings", () => {
+  it("renders after every other filter control in document order", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS });
+
+    const project = screen.getByRole("combobox", { name: "Project" });
+    const tags = screen.getByRole("combobox", { name: "Tags" });
+    const onboarding = screen.getByRole("combobox", { name: "Onboarding status" });
+
+    expect(project.compareDocumentPosition(tags) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(
+      project.compareDocumentPosition(onboarding) & Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
   });
 });
 

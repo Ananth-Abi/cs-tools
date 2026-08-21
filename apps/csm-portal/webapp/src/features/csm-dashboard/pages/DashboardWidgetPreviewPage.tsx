@@ -25,16 +25,46 @@ import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
 import RefreshButton from "@components/RefreshButton";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
-import { resourceTypeForPreviewSlug } from "@features/csm-dashboard/config/widgetResourceConfig";
+import {
+  resourceTypeForPreviewSlug,
+  translateCaseDashboardFilters,
+} from "@features/csm-dashboard/config/widgetResourceConfig";
 import {
   describeWidgetFilters,
   parseWidgetPreviewFilters,
   resolveCurrentUserSentinels,
 } from "@features/csm-dashboard/utils/widgetPreviewUrl";
+import CasesFilterBar, {
+  type CasesFilters,
+} from "@features/csm-cases/components/CasesFilterBar";
+import CasesList from "@features/csm-cases/components/CasesList";
+import { useGetCsmCases } from "@features/csm-cases/api/useGetCsmCases";
+import { useSearchTags } from "@features/csm-cases/api/useSearchTags";
+import { DEFAULT_CASES_FILTERS } from "@features/csm-cases/utils/casesFiltersUrl";
 
 const DEFAULT_ROWS_PER_PAGE = 10;
 const ROWS_PER_PAGE_OPTIONS = [10, 20, BE_MAX_PAGE_LIMIT];
 const SEARCH_DEBOUNCE_MS = 300;
+
+/**
+ * Every widget `resourceType` that ultimately queries `/cases/search` (see
+ * `WIDGET_RESOURCE_CONFIG` in `widgetResourceConfig.ts` — they all share the
+ * same response shape and the same `CaseWidgetList` renderer). Reported
+ * live: for these, a static "Filtered by:" chip summary read wrong next to
+ * every other list page in the app, which uses a real, editable filter bar
+ * — so this "View more" destination stays its own dedicated, bookmarkable
+ * route (that part was correct), but its filter UI is now the actual
+ * `CasesFilterBar` + `useGetCsmCases` + `CasesList`, the same trio the Cases
+ * tab itself uses, seeded from the widget's own filters via
+ * `translateCaseDashboardFilters` and then fully editable from there.
+ */
+const CASE_FAMILY_RESOURCE_TYPES = new Set<BeWidgetResourceType>([
+  "case",
+  "service_request",
+  "security_report_analysis",
+  "announcement",
+  "engagement",
+]);
 
 /**
  * "View more" landing for a dashboard `shape: "list"` widget tile — the same
@@ -110,6 +140,16 @@ export default function DashboardWidgetPreviewPage(): JSX.Element {
 
   const filters = resolveCurrentUserSentinels(rawFilters, user?.id);
 
+  if (CASE_FAMILY_RESOURCE_TYPES.has(resourceType)) {
+    return (
+      <CaseFamilyWidgetPreview
+        displayName={displayName}
+        filters={filters}
+        backButton={backButton}
+      />
+    );
+  }
+
   return (
     <DashboardWidgetPreviewContent
       widgetId={widgetId}
@@ -118,6 +158,206 @@ export default function DashboardWidgetPreviewPage(): JSX.Element {
       filters={filters}
       backButton={backButton}
     />
+  );
+}
+
+interface CaseFamilyWidgetPreviewProps {
+  displayName: string;
+  filters: Record<string, unknown>;
+  backButton: JSX.Element;
+}
+
+/**
+ * The case-family "View more" landing: a real, editable `CasesFilterBar`
+ * seeded from the widget's own filters (translated once via
+ * `translateCaseDashboardFilters`, the same function that already builds
+ * the tile's own click-through URL), feeding the actual `useGetCsmCases` +
+ * `CasesList` the Cases tab itself uses — not a read-only render of
+ * whatever the widget happened to be configured with.
+ *
+ * `CasesFilterBar` has exactly one "Tags" control, not a second "Exclude
+ * tags" one (a tag has no small, fixed universe of values, unlike
+ * `onboardingStatuses`, so a real, independent `excludeTags` field/control
+ * still exists everywhere else `CasesFilterBar` is used — the general Cases
+ * list included). Here specifically, though, a widget's own `tag notIn [X]`
+ * is seeded into that single "Tags" control as its complement over the
+ * currently-known tag catalog (every other tag currently on offer) rather
+ * than surfacing as a separate `excludeTags` value the control can't show —
+ * reported live as confusing next to a control explicitly asked to stay a
+ * single multi-select. This is a deliberately approximate complement (the
+ * catalog is "recently/commonly used tags", not literally every tag that
+ * has ever existed), accepted as a known tradeoff rather than the exact
+ * complement `onboardingStatuses` gets over its 4 fixed values — in
+ * particular, a case with no tags at all can't be represented as "one of
+ * the complement's tags" and is wrongly excluded by this approximation, a
+ * gap this deliberately doesn't try to work around (doing so would mean
+ * going back to a separate, non-dropdown representation of the exclusion,
+ * which is exactly what was asked against). Two narrower correctness gaps
+ * *are* worth guarding even within this approximation, though: a widget
+ * that also has its own `tag in [...]` gets that list intersected with the
+ * complement rather than overwritten (so the widget's "must have one of
+ * these tags" requirement survives alongside the exclusion), and a failed
+ * tag-catalog fetch falls back to the widget's raw, un-complemented
+ * `excludeTags` (still correctly scoped, just not shown as checked items)
+ * rather than silently dropping the exclusion and broadening the search.
+ */
+function CaseFamilyWidgetPreview({
+  displayName,
+  filters,
+  backButton,
+}: CaseFamilyWidgetPreviewProps): JSX.Element {
+  // Stable across this component's lifetime (a fresh "View more" click is a
+  // fresh mount) so the tag-complement effect below only ever fires once.
+  const [rawTranslated] = useState(() => translateCaseDashboardFilters(filters));
+  const needsTagComplement = rawTranslated.excludeTags?.length ? true : false;
+
+  // Only the complement path needs the catalog -- an ordinary `tags`/no-tag
+  // widget never issues this request at all.
+  const { data: tagCatalog, isFetching: isCatalogFetching, isError: isCatalogError } =
+    useSearchTags("", needsTagComplement);
+
+  const initialCasesFilters = useMemo<CasesFilters | null>(() => {
+    if (!needsTagComplement) {
+      return { ...DEFAULT_CASES_FILTERS, ...rawTranslated };
+    }
+    if (isCatalogFetching) return null;
+    if (isCatalogError || !tagCatalog) {
+      // The catalog failed to load -- fall back to the widget's own raw
+      // `excludeTags` rather than dropping it, so the search itself stays
+      // correctly scoped (just excluded, not narrowed to a wrong "in"
+      // list either) even though the "Tags" control has no way to *show*
+      // an exclusion as checked items.
+      return { ...DEFAULT_CASES_FILTERS, ...rawTranslated };
+    }
+    const excluded = new Set(rawTranslated.excludeTags);
+    const complementTags = tagCatalog
+      .map((t) => t.label)
+      .filter((label) => !excluded.has(label));
+    // A widget that also requires specific tags (`tag in [...]` alongside
+    // `tag notIn [...]`) must keep both conditions ANDed -- intersect with
+    // the complement rather than overwriting the required list outright,
+    // or the widget's own "must have one of these tags" requirement is
+    // silently lost.
+    const priorTags = rawTranslated.tags;
+    const tags =
+      priorTags && priorTags.length > 0
+        ? priorTags.filter((t) => complementTags.includes(t))
+        : complementTags;
+    return {
+      ...DEFAULT_CASES_FILTERS,
+      ...rawTranslated,
+      tags,
+      excludeTags: [],
+    };
+  }, [needsTagComplement, isCatalogFetching, isCatalogError, tagCatalog, rawTranslated]);
+
+  // `initialCasesFilters` is reactive, not actually "initial" -- it goes
+  // back to `null` whenever `isCatalogFetching` is true, including on a
+  // *later* background refetch of `useSearchTags("", ...)`'s cache entry
+  // (shared, by query key, with every other open "Tags" dropdown in the
+  // app, e.g. the real one inside `CasesFilterBar` below, once its own
+  // `staleTime` elapses). Freezing the first resolved value here, once,
+  // is what makes both the initial seed below and `onReset` immune to that
+  // later refetch -- without it, clicking Reset during that window would
+  // fall back to `DEFAULT_CASES_FILTERS` and silently drop every one of
+  // the widget's own starting filters, not just the tag complement.
+  const [resetBaseline, setResetBaseline] = useState<CasesFilters | null>(null);
+  if (resetBaseline === null && initialCasesFilters !== null) {
+    setResetBaseline(initialCasesFilters);
+  }
+
+  const [casesFilters, setCasesFilters] = useState<CasesFilters | null>(null);
+  // Seeds `casesFilters` from `resetBaseline` exactly once, as soon as it
+  // resolves (immediately for a non-tag-complement widget; after the
+  // catalog fetch settles otherwise) -- never re-seeds afterward, so it
+  // can't clobber an edit the viewer already made while the catalog was
+  // still loading.
+  if (casesFilters === null && resetBaseline !== null) {
+    setCasesFilters(resetBaseline);
+  }
+
+  const [isFiltersOpen, setIsFiltersOpen] = useState(true);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
+
+  const handleFiltersChange = (next: CasesFilters): void => {
+    setCasesFilters(next);
+    setPage(0);
+  };
+
+  const handleRowsPerPageChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    setRowsPerPage(parseInt(e.target.value, 10));
+    setPage(0);
+  };
+
+  const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useGetCsmCases(
+    casesFilters ?? DEFAULT_CASES_FILTERS,
+    page,
+    rowsPerPage,
+    casesFilters !== null,
+  );
+
+  if (casesFilters === null) {
+    return (
+      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {backButton}
+        <Typography variant="h5">{displayName}</Typography>
+        <Typography variant="body2" color="text.secondary">
+          Loading…
+        </Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {backButton}
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="h5">{displayName}</Typography>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label={`Refresh ${displayName}`}
+        />
+      </Box>
+      {isCatalogError && (
+        <Typography variant="caption" color="text.secondary">
+          Couldn&rsquo;t load the tag catalog — this widget&rsquo;s tag exclusion is still
+          applied to the results below, it just isn&rsquo;t shown as checked items in the Tags
+          control.
+        </Typography>
+      )}
+      <CasesFilterBar
+        filters={casesFilters}
+        onChange={handleFiltersChange}
+        onReset={() => handleFiltersChange(resetBaseline ?? DEFAULT_CASES_FILTERS)}
+        isFiltersOpen={isFiltersOpen}
+        onFiltersToggle={() => setIsFiltersOpen((prev) => !prev)}
+        availableAssigneeUsers={[]}
+        availableProjects={[]}
+      />
+      {isError ? (
+        <Typography variant="body2" color="text.secondary">
+          Could not load this widget.
+        </Typography>
+      ) : (
+        <>
+          <CasesList cases={data?.cases ?? []} isLoading={isLoading} skeletonCount={rowsPerPage} />
+          <TablePagination
+            component="div"
+            count={data?.total ?? 0}
+            page={page}
+            onPageChange={(_, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={handleRowsPerPageChange}
+            rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
+            showFirstButton
+            showLastButton
+          />
+        </>
+      )}
+    </Box>
   );
 }
 

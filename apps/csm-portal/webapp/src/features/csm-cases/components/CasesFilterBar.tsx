@@ -81,6 +81,7 @@ import {
 import MultiSelectField from "@components/MultiSelectField";
 import AsyncAssigneeMultiSelect from "@features/csm-cases/components/AsyncAssigneeMultiSelect";
 import ProductNameMultiSelect from "@features/csm-cases/components/ProductNameMultiSelect";
+import TagsMultiSelect from "@features/csm-cases/components/TagsMultiSelect";
 
 
 /**
@@ -272,15 +273,15 @@ interface ActiveFilterChip {
  * removable, though, or a user landing on a dashboard-filtered cases list
  * has no way to see (or undo) *why* it's filtered — hence one chip per
  * active value here, shown regardless of whether the filter grid itself is
- * expanded. `sreTeams`/`tags`/`excludeTags`/`workStates` are included here
- * too: their bar controls were removed as clutter (they are advanced,
- * rarely hand-picked, and a better home for advanced filters is still to be
+ * expanded. `sreTeams`/`excludeTags`/`workStates` are included here too:
+ * their bar controls were removed as clutter (they are advanced, rarely
+ * hand-picked, and a better home for advanced filters is still to be
  * designed), so a chip is now the ONLY way a user can see or clear them
- * after arriving from a dashboard click-through. `csTeams`/`onboardingStatuses`
- * each have their own bar control (see the filter grid below) and are
- * deliberately NOT chipped here too — every other bar-controlled field
- * (`states`, `severities`, ...) shows its selection inside its own control,
- * not as a second, redundant chip.
+ * after arriving from a dashboard click-through. `csTeams`/
+ * `onboardingStatuses`/`tags` each have their own bar control (see the
+ * filter grid below) and are deliberately NOT chipped here too — every
+ * other bar-controlled field (`states`, `severities`, ...) shows its
+ * selection inside its own control, not as a second, redundant chip.
  */
 function buildActiveFilterChips(
   filters: CasesFilters,
@@ -303,14 +304,13 @@ function buildActiveFilterChips(
     });
   });
 
-  filters.tags.forEach((tag) => {
-    chips.push({
-      key: `tag-${tag}`,
-      label: `Tag: ${tag}`,
-      onRemove: (f) => ({ ...f, tags: f.tags.filter((t) => t !== tag) }),
-    });
-  });
-
+  // `tags` has its own "Tags" bar control now (see the filter grid below)
+  // -- not chipped here, same as `csTeams`/`onboardingStatuses`.
+  // `excludeTags` has no bar control of its own on this general filter bar
+  // (only ever set via a dashboard click-through, or seeded as `tags`'
+  // own complement -- see `CaseFamilyWidgetPreview` in
+  // `DashboardWidgetPreviewPage.tsx` -- before it ever reaches this
+  // component), so its chip is still the only way to see or clear it here.
   filters.excludeTags.forEach((tag) => {
     chips.push({
       key: `excludeTag-${tag}`,
@@ -819,15 +819,6 @@ export default function CasesFilterBar({
                 nameSeed={assigneeNameSeed}
               />
             </Grid>
-            {!hideProjectFilter && (
-              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-                <AsyncProjectMultiSelect
-                  values={filters.projects}
-                  onChange={(next) => onChange({ ...filters, projects: next })}
-                  nameSeed={projectNameSeed}
-                />
-              </Grid>
-            )}
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
               {/* Product family filter; the selected names map straight to
                   `productNames` (SN matches product.name, all versions). */}
@@ -845,6 +836,29 @@ export default function CasesFilterBar({
                 onChange={(next) => onChange({ ...filters, onboardingStatuses: next })}
               />
             </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
+              <TagsMultiSelect
+                values={filters.tags}
+                onChange={(next) => onChange({ ...filters, tags: next })}
+              />
+            </Grid>
+            {!hideProjectFilter && (
+              // Last, and wider than every other control: selected project
+              // names render as one ellipsized line (see
+              // `AsyncProjectMultiSelect`'s `renderTags`), not a wrap, but at
+              // the same `lg: 2` width as everything else that single line
+              // was cramped enough to ellipsize almost immediately with more
+              // than one project picked. Moved to the end of the grid and
+              // widened so it has room to actually show a project name or two
+              // before truncating.
+              <Grid size={{ xs: 12, sm: 12, md: 6, lg: 4 }}>
+                <AsyncProjectMultiSelect
+                  values={filters.projects}
+                  onChange={(next) => onChange({ ...filters, projects: next })}
+                  nameSeed={projectNameSeed}
+                />
+              </Grid>
+            )}
           </Grid>
           {activeCount > 0 && (
             <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
