@@ -97,7 +97,7 @@ function advanceToReview(): void {
 }
 
 describe("ChangeCaseTypeDialog — step 1: pick target", () => {
-  it("offers all 4 types, with the current one disabled", () => {
+  it("offers only the other 3 types — the current type isn't a selectable option", () => {
     render(
       <ChangeCaseTypeDialog
         currentType="case"
@@ -109,10 +109,11 @@ describe("ChangeCaseTypeDialog — step 1: pick target", () => {
       />,
     );
     expect(screen.getByText(/step 1 of 3/i)).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /^case \(current\)$/i })).toBeDisabled();
+    expect(screen.queryByRole("radio", { name: /case/i })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /^security report$/i })).toBeEnabled();
     expect(screen.getByRole("radio", { name: /^engagement$/i })).toBeEnabled();
     expect(screen.getByRole("radio", { name: /^service request$/i })).toBeEnabled();
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
   });
 
   it("never shows 'not yet available' anywhere in the flow", () => {
@@ -396,6 +397,26 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
     advanceToReview();
     fireEvent.click(screen.getByRole("button", { name: /transfer to case/i }));
     expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: "S2" });
+  });
+
+  it("lets an issue type be picked but doesn't submit it — there's no update path for it yet", () => {
+    const onSubmit = vi.fn();
+    render(
+      <ChangeCaseTypeDialog
+        currentType="engagement"
+        currentSeverity="unset"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/^case$/i);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /issue type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^error$/i }));
+    advanceToReview();
+    fireEvent.click(screen.getByRole("button", { name: /transfer to case/i }));
+    expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: undefined });
   });
 });
 
