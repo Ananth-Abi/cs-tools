@@ -1356,7 +1356,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     (submission: CaseTypeTransferSubmission) => {
       patchCase.mutate(
         submission.targetType === "engagement"
-          ? { type: "engagement", engagementType: submission.engagementType! }
+          ? { type: "engagement", engagementType: submission.engagementType }
           : { type: "case" },
         {
           onSuccess: () => {

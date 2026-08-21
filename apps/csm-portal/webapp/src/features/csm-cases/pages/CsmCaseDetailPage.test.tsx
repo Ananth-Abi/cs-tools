@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import {
@@ -268,8 +268,16 @@ vi.mock("@features/csm-timecards/api/useTimeCards", () => ({
 vi.mock("@features/csm-cases/components/CsmCaseCommentInput", () => ({
   default: () => null,
 }));
+// Probe, not `null`: the change_case_type test below needs a way to open
+// ChangeCaseTypeDialog the same way a real user would (via the action bar's
+// menu). CaseActionBar's own rendering/gating is covered in
+// CaseActionBar.test.tsx.
 vi.mock("@features/csm-cases/components/CaseActionBar", () => ({
-  default: () => null,
+  default: ({ onAction }: { onAction: (action: { secondary: string }) => void }) => (
+    <button type="button" onClick={() => onAction({ secondary: "change_case_type" })}>
+      stub open change case type
+    </button>
+  ),
   canAcknowledge: () => false,
 }));
 vi.mock("@features/csm-cases/components/AssignEngineerDialog", () => ({
@@ -281,8 +289,34 @@ vi.mock("@features/csm-cases/components/ResolutionDialog", () => ({
 vi.mock("@features/csm-cases/components/ChangeSeverityDialog", () => ({
   default: () => null,
 }));
+// Probe, not `null`: the dialog's own three-step flow is covered in
+// ChangeCaseTypeDialog.test.tsx. Here it just hands the page a finished
+// submission so these tests can assert the resulting PATCH body(ies).
 vi.mock("@features/csm-cases/components/ChangeCaseTypeDialog", () => ({
-  default: () => null,
+  default: ({
+    onSubmit,
+  }: {
+    onSubmit: (
+      submission:
+        | { targetType: "engagement"; engagementType: string }
+        | { targetType: "case"; severity?: string },
+    ) => void;
+  }) => (
+    <>
+      <button
+        type="button"
+        onClick={() => onSubmit({ targetType: "engagement", engagementType: "migration" })}
+      >
+        stub transfer to engagement
+      </button>
+      <button
+        type="button"
+        onClick={() => onSubmit({ targetType: "case", severity: "S2" })}
+      >
+        stub transfer to case with severity
+      </button>
+    </>
+  ),
 }));
 vi.mock("@features/csm-cases/components/SetAutocloseHoldDialog", () => ({
   default: () => null,
@@ -983,5 +1017,38 @@ describe("CsmCaseDetailPage — Watchers tab", () => {
     // No optimistic write happened, so nothing needs unwinding: the widget is
     // still showing the server's list.
     expect(screen.getByTestId("watchers-widget")).toBeInTheDocument();
+  });
+});
+
+describe("CsmCaseDetailPage — change case type", () => {
+  it("PATCHes type and engagementType together for an engagement transfer", () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /stub open change case type/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stub transfer to engagement/i }));
+
+    expect(patchCaseMutateMock).toHaveBeenCalledWith(
+      { type: "engagement", engagementType: "migration" },
+      expect.anything(),
+    );
+  });
+
+  it("follows a case transfer with a separate severity PATCH, since the backend accepts only one field per call", () => {
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: /stub open change case type/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stub transfer to case with severity/i }));
+
+    expect(patchCaseMutateMock).toHaveBeenCalledWith({ type: "case" }, expect.anything());
+    // The type PATCH's own onSuccess handler fires the follow-up severity
+    // PATCH — invoke it here the same way React Query would once the first
+    // call resolves.
+    const typeCallHandlers = patchCaseMutateMock.mock.calls.find(
+      ([payload]) => JSON.stringify(payload) === JSON.stringify({ type: "case" }),
+    )?.[1] as { onSuccess: () => void };
+    act(() => typeCallHandlers.onSuccess());
+
+    expect(patchCaseMutateMock).toHaveBeenCalledWith(
+      { severity: "high" },
+      expect.anything(),
+    );
   });
 });

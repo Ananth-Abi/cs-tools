@@ -15,7 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import ChangeCaseTypeDialog from "@features/csm-cases/components/ChangeCaseTypeDialog";
 import { useSearchCatalogs } from "@features/csm-operations/api/useSearchCatalogs";
@@ -57,28 +57,24 @@ function asQueryResult(v: object): any {
   return v;
 }
 
-mockUseSearchCatalogs.mockReturnValue(
-  asQueryResult({
-    data: [
-      {
-        id: "cat-1",
-        name: "API Manager Support",
-        catalogItems: [{ id: "item-1", name: "Request environment scaling" }],
-      },
-    ],
-    isLoading: false,
-    isError: false,
-    isSuccess: true,
-  }),
-);
-mockUseCatalogItemVariables.mockReturnValue(
-  asQueryResult({ data: [], isLoading: false, isError: false }),
-);
-
-// A test that overrides useCatalogItemVariables with mockImplementation (to
-// vary the response by catalogItemId across a component's own re-renders —
-// see below) must not leak that override into whichever test runs next.
-afterEach(() => {
+// Reset before every test (not just after one that overrides via
+// mockImplementation) so both hooks start from a known default regardless of
+// what the previous test left behind.
+beforeEach(() => {
+  mockUseSearchCatalogs.mockReturnValue(
+    asQueryResult({
+      data: [
+        {
+          id: "cat-1",
+          name: "API Manager Support",
+          catalogItems: [{ id: "item-1", name: "Request environment scaling" }],
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      isSuccess: true,
+    }),
+  );
   mockUseCatalogItemVariables.mockReturnValue(
     asQueryResult({ data: [], isLoading: false, isError: false }),
   );

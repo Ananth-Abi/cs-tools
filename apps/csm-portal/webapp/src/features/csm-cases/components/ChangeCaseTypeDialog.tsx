@@ -77,14 +77,16 @@ type Step = "pick" | "fields" | "review";
 const STEP_NUMBER: Record<Step, number> = { pick: 1, fields: 2, review: 3 };
 
 /** What the dialog hands back to the caller on confirm. Only `case` and
- * `engagement` are real submit targets — see `SUPPORTED_TRANSFER_TARGETS`. */
-export interface CaseTypeTransferSubmission {
-  targetType: "case" | "engagement";
-  /** Required when `targetType` is `"engagement"`. */
-  engagementType?: BeEngagementType;
-  /** Optional data-completeness extra, only offered when `targetType` is `"case"`. */
-  severity?: Severity;
-}
+ * `engagement` are real submit targets — see `SUPPORTED_TRANSFER_TARGETS`.
+ * A discriminated union so `engagementType` is compiler-enforced for the
+ * `"engagement"` variant rather than relying on a runtime guard. */
+export type CaseTypeTransferSubmission =
+  | { targetType: "engagement"; engagementType: BeEngagementType }
+  | {
+      targetType: "case";
+      /** Optional data-completeness extra, only offered when `targetType` is `"case"`. */
+      severity?: Severity;
+    };
 
 interface ChangeCaseTypeDialogProps {
   currentType: BeCaseType;
@@ -222,7 +224,14 @@ export default function ChangeCaseTypeDialog({
   };
 
   return (
-    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
+    <Dialog
+      open
+      onClose={() => {
+        if (!isSubmitting) onClose();
+      }}
+      maxWidth="md"
+      fullWidth
+    >
       <DialogTitle>
         <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
           <span>Change case type</span>

@@ -25,7 +25,7 @@ import { CASE_TYPE_LABEL } from "@features/csm-cases/utils/caseType";
  * no create path and no reason a case would ever need to become or stop
  * being one.
  */
-export const TRANSFERABLE_CASE_TYPES: BeCaseType[] = [
+export const TRANSFERABLE_CASE_TYPES: readonly BeCaseType[] = [
   "case",
   "security_report_analysis",
   "engagement",
@@ -40,7 +40,7 @@ export const TRANSFERABLE_CASE_TYPES: BeCaseType[] = [
  * them (and, for service_request, ServiceNow's support for a mid-life
  * catalog-item assignment is confirmed).
  */
-export const SUPPORTED_TRANSFER_TARGETS: BeCaseType[] = ["case", "engagement"];
+export const SUPPORTED_TRANSFER_TARGETS: readonly BeCaseType[] = ["case", "engagement"];
 
 /** One field this type collects beyond the shared fields every case has. */
 export interface CaseTypeSpecificField {

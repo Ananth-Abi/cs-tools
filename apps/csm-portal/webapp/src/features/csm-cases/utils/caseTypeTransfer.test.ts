@@ -66,6 +66,15 @@ describe("computeTransferPreview", () => {
     const preview = computeTransferPreview("service_request", "case", true);
     expect(preview.catalogNeeded).toBe(false);
   });
+
+  it("falls back to no specific fields for a type with no TYPE_META entry (announcement)", () => {
+    // announcement is excluded from TRANSFERABLE_CASE_TYPES (no create/transfer
+    // path), so it has no TYPE_META entry — pins computeTransferPreview's
+    // `?? { specificFields: [] }` fallback rather than throwing or returning
+    // undefined.
+    expect(computeTransferPreview("announcement", "case", true).lostFields).toEqual([]);
+    expect(computeTransferPreview("case", "announcement", true).neededFields).toEqual([]);
+  });
 });
 
 describe("ALWAYS_RETAINED_FIELDS", () => {
