@@ -598,6 +598,230 @@ func TestSNCaseService_UpdateCase_NewSingleFieldVariants(t *testing.T) {
 	}
 }
 
+// --- UpdateCase: type transfer (digiops-cs#2818/#2852) ---
+
+func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
+	strPtr := func(s string) *string { return &s }
+	engagement := domain.EngagementTypeMigration
+	severity := domain.CaseSeverityHigh
+
+	tests := []struct {
+		name string
+		req  domain.UpdateCaseRequest
+	}{
+		{
+			name: "type contains an invalid value",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, Type: strPtr("hosting")},
+		},
+		{
+			name: "engagement without engagementType",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, Type: strPtr("engagement")},
+		},
+		{
+			name: "service_request without catalogId/catalogItemId",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, Type: strPtr("service_request")},
+		},
+		{
+			name: "engagementType supplied without type",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, EngagementType: &engagement},
+		},
+		{
+			name: "catalogId supplied without type",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, CatalogID: strPtr(testDeploymentUUID)},
+		},
+		{
+			name: "engagementType supplied with type \"case\"",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("case"), EngagementType: &engagement,
+			},
+		},
+		{
+			name: "type combined with severity",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("case"), Severity: &severity,
+			},
+		},
+	}
+
+	svc := NewServiceNowCaseService(nil, nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := svc.UpdateCase(contextWithUserIDToken("token"), tt.req)
+			if _, ok := err.(*apierror.ValidationError); !ok {
+				t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+func TestSNCaseService_UpdateCase_TypeTransfer_Case(t *testing.T) {
+	typ := "case"
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {
+				"id": "` + testWLCaseSysid + `",
+				"updatedOn": "2026-01-02 10:00:00",
+				"updatedBy": "engineer@example.com",
+				"type": {"id": "8d4b87bd1b18f010cb6898aebd4bcb59", "name": "Case"}
+			}
+		}`))
+	})
+
+	svc := NewServiceNowCaseService(client, nil)
+	resp, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID: testDeploymentUUID, Type: &typ,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got, ok := gotBody["type"]; !ok || got != "default_case" {
+		t.Fatalf("expected type %q, got %v (body: %+v)", "default_case", got, gotBody)
+	}
+	for _, field := range []string{"engagementType", "catalogId", "catalogItemId", "variables"} {
+		if _, ok := gotBody[field]; ok {
+			t.Fatalf("unexpected extra field %q present in a bare type: \"case\" payload: %+v", field, gotBody)
+		}
+	}
+	if resp.Case.Type != "case" {
+		t.Fatalf("expected echoed type \"case\", got %q", resp.Case.Type)
+	}
+}
+
+func TestSNCaseService_UpdateCase_TypeTransfer_Engagement(t *testing.T) {
+	typ := "engagement"
+	engagement := domain.EngagementTypeMigration
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
+		}`))
+	})
+
+	svc := NewServiceNowCaseService(client, nil)
+	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID: testDeploymentUUID, Type: &typ, EngagementType: &engagement,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := gotBody["type"]; got != "engagement" {
+		t.Fatalf("expected type \"engagement\", got %v", got)
+	}
+	if got, ok := gotBody["engagementType"]; !ok || !jsonEqual(got, float64(1)) {
+		t.Fatalf("expected engagementType 1 (migration), got %v (body: %+v)", got, gotBody)
+	}
+}
+
+func TestSNCaseService_UpdateCase_TypeTransfer_SecurityReportAnalysis(t *testing.T) {
+	typ := "security_report_analysis"
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
+		}`))
+	})
+
+	svc := NewServiceNowCaseService(client, nil)
+	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID: testDeploymentUUID, Type: &typ,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := gotBody["type"]; got != "security_report_analysis" {
+		t.Fatalf("expected type \"security_report_analysis\", got %v", got)
+	}
+}
+
+func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequest(t *testing.T) {
+	typ := "service_request"
+	catalogUUID := "44444444-4444-4444-4444-444444444444"
+	catalogItemUUID := "55555555-5555-5555-5555-555555555555"
+	variableUUID := "66666666-6666-6666-6666-666666666666"
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
+		}`))
+	})
+
+	svc := NewServiceNowCaseService(client, nil)
+	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID:            testDeploymentUUID,
+		Type:          &typ,
+		CatalogID:     &catalogUUID,
+		CatalogItemID: &catalogItemUUID,
+		Variables:     []domain.Variable{{ID: variableUUID, Value: "Scaling for a launch"}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := gotBody["type"]; got != "service_request" {
+		t.Fatalf("expected type \"service_request\", got %v", got)
+	}
+	if got, ok := gotBody["catalogId"]; !ok || got != uuidToSysid(catalogUUID) {
+		t.Fatalf("expected catalogId %q, got %v", uuidToSysid(catalogUUID), got)
+	}
+	if got, ok := gotBody["catalogItemId"]; !ok || got != uuidToSysid(catalogItemUUID) {
+		t.Fatalf("expected catalogItemId %q, got %v", uuidToSysid(catalogItemUUID), got)
+	}
+	vars, ok := gotBody["variables"].([]any)
+	if !ok || len(vars) != 1 {
+		t.Fatalf("expected 1 variable, got %+v", gotBody["variables"])
+	}
+}
+
+func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequest_VariablesOptional(t *testing.T) {
+	typ := "service_request"
+	catalogUUID := "44444444-4444-4444-4444-444444444444"
+	catalogItemUUID := "55555555-5555-5555-5555-555555555555"
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
+		}`))
+	})
+
+	svc := NewServiceNowCaseService(client, nil)
+	// A catalog item with no additional questions has nothing to answer --
+	// variables must be omittable, not required, for a transfer to succeed.
+	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID: testDeploymentUUID, Type: &typ, CatalogID: &catalogUUID, CatalogItemID: &catalogItemUUID,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := gotBody["variables"]; ok {
+		t.Fatalf("expected no variables field when none were supplied, got %+v", gotBody)
+	}
+}
+
 // jsonEqual compares two decoded-JSON values (bool/string/number) for equality.
 func jsonEqual(got, want any) bool {
 	switch w := want.(type) {
