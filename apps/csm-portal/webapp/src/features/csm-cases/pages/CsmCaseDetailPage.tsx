@@ -1369,15 +1369,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 },
               );
             }
-            if (submission.targetType === "case" && submission.issueType) {
-              patchCase.mutate(
-                { issueType: submission.issueType },
-                {
-                  onError: (err) =>
-                    showError("Case type changed, but could not set issue type.", err),
-                },
-              );
-            }
             setChangeCaseTypeOpen(false);
             setFeedback({
               message: `Case type changed to ${caseTypeTransferLabel(submission.targetType)}.`,

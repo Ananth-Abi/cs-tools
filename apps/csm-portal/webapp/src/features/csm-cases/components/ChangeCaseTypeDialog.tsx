@@ -84,8 +84,6 @@ export interface CaseTypeTransferSubmission {
   engagementType?: BeEngagementType;
   /** Optional data-completeness extra, only offered when `targetType` is `"case"`. */
   severity?: Severity;
-  /** Optional data-completeness extra, only offered when `targetType` is `"case"`. */
-  issueType?: BeCaseIssueType;
 }
 
 interface ChangeCaseTypeDialogProps {
@@ -219,11 +217,7 @@ export default function ChangeCaseTypeDialog({
     if (targetType === "engagement") {
       onSubmit({ targetType: "engagement", engagementType: engagementType as BeEngagementType });
     } else {
-      onSubmit({
-        targetType: "case",
-        severity: severity === "" ? undefined : severity,
-        issueType: issueType === "" ? undefined : issueType,
-      });
+      onSubmit({ targetType: "case", severity: severity === "" ? undefined : severity });
     }
   };
 
@@ -433,7 +427,9 @@ export default function ChangeCaseTypeDialog({
                   </FormControl>
                 </Box>
                 <Typography variant="caption" color="text.secondary">
-                  Neither is required to complete the transfer.
+                  Neither is required to complete the transfer. Issue type isn&rsquo;t saved yet
+                  though — there&rsquo;s no way to update it on an existing case today, only at
+                  creation, so a pick here previews the field without changing anything.
                 </Typography>
               </>
             )}

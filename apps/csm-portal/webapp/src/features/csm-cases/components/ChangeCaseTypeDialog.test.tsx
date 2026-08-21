@@ -403,7 +403,7 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
     expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: "S2" });
   });
 
-  it("includes the picked issue type when one is chosen", () => {
+  it("lets an issue type be picked but doesn't submit it — there's no update path for it yet", () => {
     const onSubmit = vi.fn();
     render(
       <ChangeCaseTypeDialog
@@ -420,11 +420,7 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
     fireEvent.click(screen.getByRole("option", { name: /^error$/i }));
     advanceToReview();
     fireEvent.click(screen.getByRole("button", { name: /transfer to case/i }));
-    expect(onSubmit).toHaveBeenCalledWith({
-      targetType: "case",
-      severity: undefined,
-      issueType: "error",
-    });
+    expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: undefined });
   });
 });
 
