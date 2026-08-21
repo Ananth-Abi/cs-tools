@@ -236,8 +236,13 @@ function caseFilterEntry(
  * value-less `isEmpty`/`isNotEmpty` map to the explicit tri-state
  * `hasEscalation` (`false`/`true`), never silently defaulted when absent
  * (`undefined`, i.e. not touched in `out`).
+ *
+ * Exported (not just used internally for `buildHref`) so
+ * `DashboardWidgetPreviewPage.tsx` can seed a real, editable `CasesFilterBar`
+ * from a case-family widget's own opaque filters, rather than only ever
+ * building a one-shot click-through URL from them.
  */
-function translateCaseDashboardFilters(
+export function translateCaseDashboardFilters(
   filters: Record<string, unknown>,
 ): Partial<CasesFilters> {
   const out: Partial<CasesFilters> = {};
