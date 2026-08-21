@@ -305,10 +305,6 @@ func (r *caseRepo) UpdateCase(ctx context.Context, req domain.UpdateCaseRequest)
 	if req.Severity != nil {
 		severity = string(*req.Severity)
 	}
-	issueType := ""
-	if req.IssueType != nil {
-		issueType = string(*req.IssueType)
-	}
 	workState := ""
 	if req.WorkState != nil {
 		workState = string(*req.WorkState)
@@ -317,7 +313,6 @@ func (r *caseRepo) UpdateCase(ctx context.Context, req domain.UpdateCaseRequest)
 		UPDATE cases
 		SET state      = CASE WHEN $2 <> '' THEN $2::case_state_enum ELSE state END,
 		    severity   = CASE WHEN $3 <> '' THEN $3::case_severity_enum ELSE severity END,
-		    issue_type = CASE WHEN $5 <> '' THEN $5::case_issue_type_enum ELSE issue_type END,
 		    work_state = CASE WHEN $4 <> '' THEN $4::case_work_state_enum ELSE work_state END,
 		    updated_at = NOW(),
 		    closed_at  = CASE WHEN $2 = 'closed' THEN NOW() WHEN $2 <> '' AND $2 <> 'closed' THEN NULL ELSE closed_at END
@@ -327,7 +322,7 @@ func (r *caseRepo) UpdateCase(ctx context.Context, req domain.UpdateCaseRequest)
 
 	var c domain.Case
 	var workStateRaw *string
-	err := r.db.QueryRow(ctx, query, req.ID, state, severity, workState, issueType).Scan(
+	err := r.db.QueryRow(ctx, query, req.ID, state, severity, workState).Scan(
 		&c.ID, &c.Number, &c.InternalID, &c.CreatedBy,
 		&c.ProjectID, &c.DeploymentID, &c.DeployedProductID,
 		&c.Subject, &c.Description, &c.Severity, &c.IssueType, &c.State, &workStateRaw,

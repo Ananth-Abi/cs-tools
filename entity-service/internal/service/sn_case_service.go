@@ -1212,7 +1212,6 @@ func (s *snCaseService) SearchCaseComments(ctx context.Context, req domain.Searc
 type snUpdateCasePayload struct {
 	StateKey     *int `json:"stateKey,omitempty"`
 	SeverityKey  *int `json:"severityKey,omitempty"`
-	IssueTypeKey *int `json:"issueTypeKey,omitempty"`
 	WorkStateKey *int `json:"workStateKey,omitempty"`
 	// WatchList replaces the whole list, so an explicitly empty list must still be
 	// sent to clear it rather than be omitted -- hence the pointer.
@@ -1362,13 +1361,12 @@ var snWorkStateIDMap = map[domain.CaseWorkState]int{
 type snUpdateCaseResponse struct {
 	Message string `json:"message"`
 	Case    struct {
-		ID        string           `json:"id"`
-		UpdatedOn string           `json:"updatedOn"`
-		UpdatedBy string           `json:"updatedBy"`
-		State     *snCaseState     `json:"state"`
-		Severity  *snCaseLabel     `json:"severity"`
-		IssueType *snCaseIssueType `json:"issueType"`
-		WorkState *snCaseLabel     `json:"workState"`
+		ID        string       `json:"id"`
+		UpdatedOn string       `json:"updatedOn"`
+		UpdatedBy string       `json:"updatedBy"`
+		State     *snCaseState `json:"state"`
+		Severity  *snCaseLabel `json:"severity"`
+		WorkState *snCaseLabel `json:"workState"`
 		WatchList []struct {
 			ID       string `json:"id"`
 			UserName string `json:"userName"`
@@ -1421,9 +1419,6 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.Severity != nil {
 		exclusiveCount++
 	}
-	if req.IssueType != nil {
-		exclusiveCount++
-	}
 	if req.WorkState != nil {
 		exclusiveCount++
 	}
@@ -1469,14 +1464,14 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.WorstCaseFixEta != nil {
 		combinableCount++
 	}
-	const fieldList = "state, severity, issueType, workState, watchList, assigneeEmail, parentId, acknowledge, " +
+	const fieldList = "state, severity, workState, watchList, assigneeEmail, parentId, acknowledge, " +
 		"relatedCaseId, autocloseHoldUntil, subject, description, deploymentId, deployedProductId, " +
 		"bestCaseFixEta, mostLikelyFixEta, or worstCaseFixEta"
 	if exclusiveCount == 0 && combinableCount == 0 {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "at least one of " + fieldList + " must be provided"}
 	}
 	if exclusiveCount > 1 || (exclusiveCount == 1 && combinableCount > 0) {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "state, severity, issueType, workState, watchList, assigneeEmail, parentId, and acknowledge cannot be combined with each other or with any other field in the same request"}
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "state, severity, workState, watchList, assigneeEmail, parentId, and acknowledge cannot be combined with each other or with any other field in the same request"}
 	}
 	if hasResolutionFields && req.State == nil {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "resolutionCode, cause, and closeNotes are only allowed when state is also provided"}
@@ -1523,16 +1518,6 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity " + string(*req.Severity) + " is not supported by ServiceNow"}
 		}
 		payload.SeverityKey = &id
-	}
-	if req.IssueType != nil {
-		if !validCaseIssueType[*req.IssueType] {
-			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType contains invalid value: " + string(*req.IssueType)}
-		}
-		id, ok := snIssueTypeID[*req.IssueType]
-		if !ok {
-			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType " + string(*req.IssueType) + " is not supported by ServiceNow"}
-		}
-		payload.IssueTypeKey = &id
 	}
 	if req.WorkState != nil {
 		if !validCaseWorkState[*req.WorkState] {
@@ -1679,9 +1664,6 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	}
 	if snResp.Case.Severity != nil {
 		resp.Case.Severity = snSeverityToSeverity(snResp.Case.Severity)
-	}
-	if snResp.Case.IssueType != nil {
-		resp.Case.IssueType = snIssueTypeToEnum(snResp.Case.IssueType)
 	}
 	resp.Case.WorkState = snWorkStateLabelToEnum(snResp.Case.WorkState)
 	if snResp.Case.AssignedTo != nil {

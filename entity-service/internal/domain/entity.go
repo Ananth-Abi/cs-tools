@@ -1628,7 +1628,6 @@ type UpdateCaseRequest struct {
 	ID        string         `json:"-"`
 	State     *CaseState     `json:"state"`
 	Severity  *CaseSeverity  `json:"severity"`
-	IssueType *CaseIssueType `json:"issueType"`
 	WorkState *CaseWorkState `json:"workState"`
 	// WatchList replaces the case's watch list wholesale with the given platform
 	// user UUIDs. It is a pointer so an absent field and an explicitly empty list
@@ -1719,7 +1718,6 @@ type UpdatedCase struct {
 	UpdatedBy  string               `json:"updatedBy,omitempty"`
 	State      CaseState            `json:"state,omitempty"`
 	Severity   CaseSeverity         `json:"severity,omitempty"`
-	IssueType  CaseIssueType        `json:"issueType,omitempty"`
 	WorkState  *CaseWorkState       `json:"workState"`
 	WatchList  []WatchListUser      `json:"watchList,omitempty"`
 	AssignedTo *AssignedEngineerRef `json:"assignedTo,omitempty"`
