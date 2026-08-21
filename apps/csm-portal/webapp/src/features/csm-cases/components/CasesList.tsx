@@ -43,6 +43,10 @@ import {
   caseTypeHasSeverity,
 } from "@features/csm-cases/utils/caseType";
 import { effectiveWorkState } from "@features/csm-cases/utils/caseWorkState";
+import {
+  CASE_OPTIONAL_COLUMNS,
+  type CaseOptionalColumnId,
+} from "@features/csm-cases/utils/caseListColumns";
 
 interface CasesListProps {
   cases: CsmCaseRow[];
@@ -57,8 +61,16 @@ interface CasesListProps {
   detailBasePath?: string;
   /** Hide the Severity column. Severity (S1-S4) is a support-case concept, so
    * non-case lists (service requests, engagements, security reports) hide it —
-   * the main case list keeps it. */
+   * the main case list keeps it. Ignored when `optionalColumns` is passed
+   * explicitly (that list is the sole source of truth for which optional
+   * columns render, and in what order). */
   hideSeverityColumn?: boolean;
+  /** Which optional columns to render, and in what order — driven by a
+   * caller's `useColumnPreferences` (e.g. `CsmIssuesView`'s "Customise
+   * columns" picker on the Engagements list). Omit to keep this list's
+   * long-standing fixed set, gated only by `hideSeverityColumn`, exactly as
+   * every other caller of `CasesList` already gets it. */
+  optionalColumns?: CaseOptionalColumnId[];
   /** Current sort order for the "Updated" column, when the caller wants it
    * sortable. Omit both `sortOrder` and `onSortOrderChange` for a plain
    * (non-interactive) header — the list is always server-sorted by
@@ -67,24 +79,47 @@ interface CasesListProps {
   onSortOrderChange?: (order: CasesSortOrder) => void;
 }
 
-// Every column is left-aligned for a consistent scan line down the table.
-// Type (case / service request / security report / ...) is gated by the same
-// flag as Severity: both are noise in a list already locked to one case type
-// (see `hideSeverityColumn`'s callers), useful in the mixed, general list.
-const HEADER_CELLS_WITH_SEVERITY: string[] = [
-  "Case ID",
-  "Subject",
-  "Product",
-  "Type",
-  "Severity",
-  "State",
-];
-const HEADER_CELLS_WITHOUT_SEVERITY: string[] = [
-  "Case ID",
-  "Subject",
-  "Product",
-  "State",
-];
+function renderOptionalCell(id: CaseOptionalColumnId, c: CsmCaseRow): JSX.Element {
+  switch (id) {
+    case "product":
+      return (
+        <Typography variant="body2" noWrap title={c.product || undefined}>
+          {c.product}
+        </Typography>
+      );
+    case "type":
+      return (
+        <Box sx={{ justifySelf: "start" }}>
+          {c.caseType ? (
+            <Chip
+              size="small"
+              variant="outlined"
+              color={CASE_TYPE_COLOR[c.caseType]}
+              label={CASE_TYPE_LABEL[c.caseType]}
+            />
+          ) : (
+            "—"
+          )}
+        </Box>
+      );
+    case "severity":
+      return (
+        <Box sx={{ justifySelf: "start" }}>
+          {caseTypeHasSeverity(c.caseType) ? (
+            <SeverityChip severity={c.severity} clickable />
+          ) : (
+            "—"
+          )}
+        </Box>
+      );
+    case "assignee":
+      return (
+        <Typography variant="body2" noWrap title={c.assignee || undefined}>
+          {c.assignee}
+        </Typography>
+      );
+  }
+}
 
 // Subject gets the lion's share of the row; the ids sit in their own narrow
 // column so a long subject no longer has to share one cell with them.
@@ -93,10 +128,9 @@ const HEADER_CELLS_WITHOUT_SEVERITY: string[] = [
 // `auto` track (unlabeled in the header) holds the per-row quick-preview
 // action — kept at the left edge so it's reachable without hunting across
 // the row, with the preview drawer itself opening on the right.
-const GRID_WITH_SEVERITY =
-  "auto minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) auto auto minmax(110px, 1fr) auto";
-const GRID_WITHOUT_SEVERITY =
-  "auto minmax(120px, 0.9fr) minmax(280px, 3fr) minmax(140px, 1fr) minmax(110px, 1fr) auto";
+const CASE_ID_TRACK = "minmax(120px, 0.9fr)";
+const SUBJECT_TRACK = "minmax(280px, 3fr)";
+const STATE_TRACK = "minmax(110px, 1fr)";
 
 export default function CasesList({
   cases,
@@ -104,6 +138,7 @@ export default function CasesList({
   skeletonCount = 6,
   detailBasePath,
   hideSeverityColumn = false,
+  optionalColumns,
   sortOrder,
   onSortOrderChange,
 }: CasesListProps): JSX.Element {
@@ -111,12 +146,27 @@ export default function CasesList({
   const location = useLocation();
   const navigate = useNavTransition();
   const [previewRow, setPreviewRow] = useState<CsmCaseRow | null>(null);
-  const headerCells = hideSeverityColumn
-    ? HEADER_CELLS_WITHOUT_SEVERITY
-    : HEADER_CELLS_WITH_SEVERITY;
-  const gridTemplateColumns = hideSeverityColumn
-    ? GRID_WITHOUT_SEVERITY
-    : GRID_WITH_SEVERITY;
+
+  // Legacy fixed sets, kept byte-for-byte identical to this list's original
+  // behavior for every caller that doesn't pass `optionalColumns` explicitly
+  // (dashboard widgets, mini tables, project work items, …).
+  const effectiveOptionalColumns: CaseOptionalColumnId[] =
+    optionalColumns ?? (hideSeverityColumn ? ["product"] : ["product", "type", "severity"]);
+
+  const headerCells = [
+    "Case ID",
+    "Subject",
+    ...effectiveOptionalColumns.map((id) => CASE_OPTIONAL_COLUMNS[id].label),
+    "State",
+  ];
+  const gridTemplateColumns = [
+    "auto",
+    CASE_ID_TRACK,
+    SUBJECT_TRACK,
+    ...effectiveOptionalColumns.map((id) => CASE_OPTIONAL_COLUMNS[id].track),
+    STATE_TRACK,
+    "auto",
+  ].join(" ");
 
   return (
     <Box
@@ -348,32 +398,11 @@ export default function CasesList({
                   {c.projectName}
                 </Typography>
               </Box>
-              <Typography variant="body2" noWrap title={c.product || undefined}>
-                {c.product}
-              </Typography>
-              {!hideSeverityColumn && (
-                <Box sx={{ justifySelf: "start" }}>
-                  {c.caseType ? (
-                    <Chip
-                      size="small"
-                      variant="outlined"
-                      color={CASE_TYPE_COLOR[c.caseType]}
-                      label={CASE_TYPE_LABEL[c.caseType]}
-                    />
-                  ) : (
-                    "—"
-                  )}
+              {effectiveOptionalColumns.map((id) => (
+                <Box key={id} sx={{ minWidth: 0 }}>
+                  {renderOptionalCell(id, c)}
                 </Box>
-              )}
-              {!hideSeverityColumn && (
-                <Box sx={{ justifySelf: "start" }}>
-                  {caseTypeHasSeverity(c.caseType) ? (
-                    <SeverityChip severity={c.severity} clickable />
-                  ) : (
-                    "—"
-                  )}
-                </Box>
-              )}
+              ))}
               {/* State chip, with the work-state chip stacked beneath it (the
                   latter only for WIP cases). */}
               <Box

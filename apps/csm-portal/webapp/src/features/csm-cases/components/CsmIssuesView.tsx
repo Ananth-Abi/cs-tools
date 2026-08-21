@@ -29,6 +29,11 @@ import {
 import { useLocation, useSearchParams } from "react-router";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
+import ColumnCustomizerButton from "@components/column-customizer/ColumnCustomizerButton";
+import {
+  getColumnPreferencesUserKey,
+  useColumnPreferences,
+} from "@hooks/useColumnPreferences";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { useNavTransition } from "@hooks/useNavTransition";
@@ -39,6 +44,10 @@ import CasesFilterBar, {
   type CasesFilters,
 } from "@features/csm-cases/components/CasesFilterBar";
 import CasesList from "@features/csm-cases/components/CasesList";
+import {
+  CASE_OPTIONAL_COLUMNS,
+  type CaseOptionalColumnId,
+} from "@features/csm-cases/utils/caseListColumns";
 import { useGetCsmCases } from "@features/csm-cases/api/useGetCsmCases";
 import {
   ASSIGNEE_FILTER_RESOLVED_EMPTY,
@@ -138,6 +147,19 @@ interface CsmIssuesViewProps {
    * same destination as the outer page's.
    */
   hideBackButton?: boolean;
+  /**
+   * Opt into the "Customise columns" control for this view's list (add,
+   * remove, and reorder the optional columns between Subject and State),
+   * persisted per user via `useColumnPreferences`. Off by default — enable
+   * per view deliberately rather than changing every `CsmIssuesView` caller
+   * (cases, service requests, security reports) at once. `columnsViewId`
+   * must be unique across enabled views (defaults to `entityNoun`).
+   */
+  enableColumnCustomization?: boolean;
+  /** Storage key suffix for this view's column layout. Defaults to
+   * `entityNoun`; override only if two enabled views would otherwise share
+   * an `entityNoun`. */
+  columnsViewId?: string;
 }
 
 /**
@@ -159,6 +181,8 @@ export default function CsmIssuesView({
   detailBasePath,
   hideSeverityColumn,
   hideBackButton,
+  enableColumnCustomization,
+  columnsViewId,
 }: CsmIssuesViewProps): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo<CasesFilters>(
@@ -270,6 +294,22 @@ export default function CsmIssuesView({
   const api = useBackendApi();
   const currentUserEmail = useIdTokenClaims()?.email;
   const currentUserId = useCurrentUser().user?.id;
+
+  // "Customise columns" — off unless a caller opts in (see `enableColumnCustomization`'s
+  // doc). Available optional columns mirror `CasesList`'s own legacy default set so a
+  // returning user who never opens the picker sees the exact same columns as before.
+  const availableOptionalColumns: CaseOptionalColumnId[] = hideSeverityColumn
+    ? ["product", "assignee"]
+    : ["product", "type", "severity", "assignee"];
+  const defaultVisibleOptionalColumns: CaseOptionalColumnId[] = hideSeverityColumn
+    ? ["product"]
+    : ["product", "type", "severity"];
+  const columnPrefs = useColumnPreferences({
+    viewId: `case-list:${columnsViewId ?? entityNoun}`,
+    userKey: getColumnPreferencesUserKey({ id: currentUserId, email: currentUserEmail }),
+    columns: availableOptionalColumns.map((id) => ({ id, label: CASE_OPTIONAL_COLUMNS[id].label })),
+    defaultVisibleIds: defaultVisibleOptionalColumns,
+  });
   const exportSearch = queryFilters.search.trim();
   const fetchCasesExportPage = useCallback(
     async (offset: number, limit: number) => {
@@ -448,6 +488,16 @@ export default function CsmIssuesView({
             fetchPage={fetchCasesExportPage}
             disabled={isError || total === 0}
           />
+          {enableColumnCustomization && (
+            <ColumnCustomizerButton
+              allColumns={columnPrefs.allColumns}
+              isVisible={columnPrefs.isVisible}
+              onToggle={columnPrefs.toggleColumn}
+              onMove={columnPrefs.moveColumn}
+              onReset={columnPrefs.resetToDefault}
+              label={`Customise ${entityNoun} columns`}
+            />
+          )}
           {actions}
         </Box>
       </Box>
@@ -473,6 +523,11 @@ export default function CsmIssuesView({
         skeletonCount={rowsPerPage}
         detailBasePath={detailBasePath}
         hideSeverityColumn={isServiceRequestOnly || hideSeverityColumn}
+        optionalColumns={
+          enableColumnCustomization
+            ? columnPrefs.visibleColumns.map((c) => c.id as CaseOptionalColumnId)
+            : undefined
+        }
         sortOrder={sortOrder}
         onSortOrderChange={handleSortOrderChange}
       />

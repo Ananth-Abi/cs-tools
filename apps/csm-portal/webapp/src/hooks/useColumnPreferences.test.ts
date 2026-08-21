@@ -1,0 +1,195 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import { act, renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  getColumnPreferencesUserKey,
+  useColumnPreferences,
+  type ColumnOption,
+} from "@hooks/useColumnPreferences";
+
+const COLUMNS: ColumnOption[] = [
+  { id: "a", label: "Column A" },
+  { id: "b", label: "Column B" },
+  { id: "c", label: "Column C" },
+];
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
+describe("getColumnPreferencesUserKey", () => {
+  it("prefers the platform user id", () => {
+    expect(getColumnPreferencesUserKey({ id: "u-1", email: "jane.doe@example.com" })).toBe("u-1");
+  });
+
+  it("falls back to email when id is missing", () => {
+    expect(getColumnPreferencesUserKey({ email: "jane.doe@example.com" })).toBe(
+      "jane.doe@example.com",
+    );
+  });
+
+  it("falls back to a shared anonymous bucket when neither is available", () => {
+    expect(getColumnPreferencesUserKey(undefined)).toBe("anonymous");
+    expect(getColumnPreferencesUserKey({})).toBe("anonymous");
+  });
+});
+
+describe("useColumnPreferences", () => {
+  it("starts with the default visible columns, in definition order", () => {
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a", "c"],
+      }),
+    );
+
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "b", "c"]);
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a", "c"]);
+    expect(result.current.isVisible("b")).toBe(false);
+  });
+
+  it("toggles a column on and off, and persists across a fresh hook instance", () => {
+    const args = {
+      viewId: "test-view",
+      userKey: "user-1",
+      columns: COLUMNS,
+      defaultVisibleIds: ["a"],
+    };
+    const { result, rerender } = renderHook(useColumnPreferences, { initialProps: args });
+
+    act(() => result.current.toggleColumn("b"));
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a", "b"]);
+
+    rerender(args);
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a", "b"]);
+
+    // A brand new hook instance for the same user + view picks up the saved state.
+    const { result: reloaded } = renderHook(() => useColumnPreferences(args));
+    expect(reloaded.current.visibleColumns.map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  it("refuses to hide the last visible column", () => {
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a"],
+      }),
+    );
+
+    act(() => result.current.toggleColumn("a"));
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a"]);
+  });
+
+  it("reorders columns with moveColumn, both visible and hidden together", () => {
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a", "b", "c"],
+      }),
+    );
+
+    act(() => result.current.moveColumn("c", "up"));
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "c", "b"]);
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a", "c", "b"]);
+
+    // No-ops past either end.
+    act(() => result.current.moveColumn("a", "up"));
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "c", "b"]);
+    act(() => result.current.moveColumn("b", "down"));
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("resets to the table's built-in default order and visibility", () => {
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a"],
+      }),
+    );
+
+    act(() => result.current.toggleColumn("b"));
+    act(() => result.current.moveColumn("c", "up"));
+    act(() => result.current.resetToDefault());
+
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "b", "c"]);
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a"]);
+  });
+
+  it("keys storage per user and per view, so neither leaks into the other", () => {
+    const base = { columns: COLUMNS, defaultVisibleIds: ["a"] };
+    const view1User1 = renderHook(() =>
+      useColumnPreferences({ ...base, viewId: "view-1", userKey: "user-1" }),
+    );
+    act(() => view1User1.result.current.toggleColumn("b"));
+
+    const view1User2 = renderHook(() =>
+      useColumnPreferences({ ...base, viewId: "view-1", userKey: "user-2" }),
+    );
+    expect(view1User2.result.current.visibleColumns.map((c) => c.id)).toEqual(["a"]);
+
+    const view2User1 = renderHook(() =>
+      useColumnPreferences({ ...base, viewId: "view-2", userKey: "user-1" }),
+    );
+    expect(view2User1.result.current.visibleColumns.map((c) => c.id)).toEqual(["a"]);
+  });
+
+  it("drops columns the table no longer defines and appends new ones the saved state predates", () => {
+    const key = "csm:user-1:test-view:columns";
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ order: ["a", "removed"], visible: ["a", "removed"] }),
+    );
+
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a", "b"],
+      }),
+    );
+
+    // "removed" is gone; "b" and "c" (unknown to the saved state) are appended.
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "b", "c"]);
+    // "b" is newly appended and its default says visible; "c" defaults hidden.
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a", "b"]);
+  });
+
+  it("falls back to defaults when the stored value is corrupt", () => {
+    window.localStorage.setItem("csm:user-1:test-view:columns", "not json");
+
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a"],
+      }),
+    );
+
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a"]);
+  });
+});

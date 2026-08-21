@@ -16,7 +16,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 vi.mock("@api/backend/client", () => ({
@@ -63,6 +63,10 @@ vi.mock("@components/RefreshButton", () => ({
 
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location-probe">{location.pathname}</div>;
@@ -104,5 +108,60 @@ describe("CsmIssuesView back navigation", () => {
   it("suppresses its own Back button when hideBackButton is set, even with a `from` state present", () => {
     renderAt({ from: "/dashboard" }, true);
     expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+  });
+});
+
+describe("CsmIssuesView column customization", () => {
+  function renderEngagementsLike() {
+    return render(
+      <MemoryRouter initialEntries={["/engagements"]}>
+        <CsmIssuesView
+          title="Engagements"
+          entityNoun="engagements"
+          hideSeverityColumn
+          enableColumnCustomization
+          columnsViewId="engagements"
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("is off by default (no picker rendered for a plain CsmIssuesView)", () => {
+    renderAt(null);
+    expect(
+      screen.queryByRole("button", { name: /Customise .* columns/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the picker and lists Product/Assignee (not Type/Severity) when hideSeverityColumn is set", () => {
+    renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+
+    expect(screen.getByText("Product")).toBeInTheDocument();
+    expect(screen.getByText("Assignee")).toBeInTheDocument();
+    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.queryByText("Severity")).not.toBeInTheDocument();
+  });
+
+  it("defaults Assignee to hidden so a returning user sees no change until they opt in", () => {
+    renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    // Product first (checked, default-visible), Assignee second (unchecked).
+    expect(checkboxes[0]).toBeChecked();
+    expect(checkboxes[1]).not.toBeChecked();
+  });
+
+  it("persists a toggled column across a remount for the same user + view", () => {
+    const { unmount } = renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+    fireEvent.click(screen.getByText("Assignee"));
+    unmount();
+
+    renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes[1]).toBeChecked();
   });
 });
