@@ -598,6 +598,90 @@ func TestSNCaseService_UpdateCase_NewSingleFieldVariants(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_UpdateCase_IssueType verifies issueType is validated,
+// mapped to the SN integer choice-list key (matching the create path's
+// snIssueTypeID map), sent as an exclusive single-field PATCH, and echoed
+// back from the response when present.
+func TestSNCaseService_UpdateCase_IssueType(t *testing.T) {
+	issueType := domain.CaseIssueTypeError
+
+	var gotBody map[string]any
+	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("expected PATCH, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"message": "Case updated successfully.",
+			"case": {
+				"id": "` + testWLCaseSysid + `",
+				"updatedOn": "2026-01-02 10:00:00",
+				"updatedBy": "engineer@example.com",
+				"issueType": {"id": 6, "label": "Error"}
+			}
+		}`))
+	})
+
+	svc := NewServiceNowCaseService(client, nil)
+	resp, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID:        testDeploymentUUID,
+		IssueType: &issueType,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, ok := gotBody["issueTypeKey"]
+	if !ok {
+		t.Fatalf("expected issueTypeKey to be present in %+v", gotBody)
+	}
+	if !jsonEqual(got, float64(6)) {
+		t.Fatalf("issueTypeKey: got %v, want 6", got)
+	}
+	for _, field := range []string{"stateKey", "severityKey", "workStateKey"} {
+		if _, ok := gotBody[field]; ok {
+			t.Fatalf("unexpected extra field %q present in single-field payload: %+v", field, gotBody)
+		}
+	}
+	if resp.Case.IssueType != domain.CaseIssueTypeError {
+		t.Fatalf("expected echoed issueType %q, got %q", domain.CaseIssueTypeError, resp.Case.IssueType)
+	}
+}
+
+// TestSNCaseService_UpdateCase_IssueType_RejectsInvalidValue verifies an
+// unrecognized issueType value fails validation before any request is sent.
+func TestSNCaseService_UpdateCase_IssueType_RejectsInvalidValue(t *testing.T) {
+	bogus := domain.CaseIssueType("not_a_real_type")
+	svc := NewServiceNowCaseService(nil, nil)
+	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID:        testDeploymentUUID,
+		IssueType: &bogus,
+	})
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNCaseService_UpdateCase_IssueType_CannotCombineWithSeverity verifies
+// issueType is in the same mutual-exclusivity group as severity/state, so a
+// request setting both is rejected rather than silently picking one.
+func TestSNCaseService_UpdateCase_IssueType_CannotCombineWithSeverity(t *testing.T) {
+	issueType := domain.CaseIssueTypeError
+	severity := domain.CaseSeverityHigh
+	svc := NewServiceNowCaseService(nil, nil)
+	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID:        testDeploymentUUID,
+		IssueType: &issueType,
+		Severity:  &severity,
+	})
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
 // jsonEqual compares two decoded-JSON values (bool/string/number) for equality.
 func jsonEqual(got, want any) bool {
 	switch w := want.(type) {

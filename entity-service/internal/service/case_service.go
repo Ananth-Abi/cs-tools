@@ -327,20 +327,26 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 	if req.Severity != nil {
 		fieldCount++
 	}
+	if req.IssueType != nil {
+		fieldCount++
+	}
 	if req.WorkState != nil {
 		fieldCount++
 	}
 	if fieldCount == 0 {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "exactly one of state, severity, or workState must be provided"}
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "exactly one of state, severity, issueType, or workState must be provided"}
 	}
 	if fieldCount > 1 {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "only one of state, severity, or workState may be provided per request"}
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "only one of state, severity, issueType, or workState may be provided per request"}
 	}
 	if req.State != nil && !validCaseState[*req.State] {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "state contains invalid value: " + string(*req.State)}
 	}
 	if req.Severity != nil && !validCaseSeverity[*req.Severity] {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity contains invalid value: " + string(*req.Severity)}
+	}
+	if req.IssueType != nil && !validCaseIssueType[*req.IssueType] {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType contains invalid value: " + string(*req.IssueType)}
 	}
 	if req.WorkState != nil && !validCaseWorkState[*req.WorkState] {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "workState contains invalid value: " + string(*req.WorkState)}
@@ -356,6 +362,7 @@ func (s *caseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReque
 			UpdatedOn: c.UpdatedOn,
 			State:     c.State,
 			Severity:  c.Severity,
+			IssueType: c.IssueType,
 			WorkState: c.WorkState,
 		},
 	}, nil
