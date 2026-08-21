@@ -115,9 +115,16 @@ export default function TagsMultiSelect({
         return (
           <li key={key} {...liProps} style={{ paddingTop: 2, paddingBottom: 2 }}>
             <Checkbox size="small" checked={selected} sx={{ mr: 1, p: 0.25 }} />
+            {/* A tag label often has no spaces to wrap at (e.g.
+                "Change-Tracking/Infrastructure") -- without
+                `overflowWrap`, a long one only breaks at a hyphen, then
+                overflows and gets clipped by the popup's own overflow
+                instead of wrapping onto a further line. */}
             <ListItemText
               primary={option}
-              slotProps={{ primary: { style: { fontSize: 13 } } }}
+              slotProps={{
+                primary: { style: { fontSize: 13, overflowWrap: "anywhere" } },
+              }}
             />
           </li>
         );
@@ -127,7 +134,7 @@ export default function TagsMultiSelect({
         const content = (
           <Box
             component="span"
-            sx={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            sx={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", pl: 1 }}
           >
             {displayText}
           </Box>
