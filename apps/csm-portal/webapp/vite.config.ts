@@ -121,6 +121,10 @@ const vitestConfig = defineVitestConfig({
           "@wso2/oxygen-ui-charts-react",
           "@mui/x-data-grid",
           "@asgardeo/browser",
+          // Inlined so `vi.mock("@asgardeo/react")` reaches ProtectedRoute's
+          // own import of the hook; without it the router package stays
+          // external and keeps the real `useAsgardeo`, which no test can steer.
+          "@asgardeo/react-router",
           "buffer",
         ],
       },

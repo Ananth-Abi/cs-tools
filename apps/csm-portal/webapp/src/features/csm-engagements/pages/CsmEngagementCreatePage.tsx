@@ -181,13 +181,20 @@ export default function CsmEngagementCreatePage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="engagement-deployment-label">Deployment</InputLabel>
+              <InputLabel
+                id="engagement-deployment-label"
+                shrink={deploymentId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Deployment
+              </InputLabel>
               <Select
                 labelId="engagement-deployment-label"
                 label="Deployment"
                 value={deploymentId}
                 onChange={(e) => onDeploymentChange(String(e.target.value))}
                 disabled={!projectId || deployments.isLoading}
+                notched={deploymentId !== ""}
               >
                 {(deployments.data ?? []).map((d) => (
                   <MenuItem key={d.id} value={d.id}>
@@ -207,13 +214,20 @@ export default function CsmEngagementCreatePage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="engagement-product-label">Deployed product</InputLabel>
+              <InputLabel
+                id="engagement-product-label"
+                shrink={deployedProductId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Deployed product
+              </InputLabel>
               <Select
                 labelId="engagement-product-label"
                 label="Deployed product"
                 value={deployedProductId}
                 onChange={(e) => setDeployedProductId(String(e.target.value))}
                 disabled={!deploymentId || deployedProducts.isLoading}
+                notched={deployedProductId !== ""}
               >
                 {(deployedProducts.data ?? []).map((dp) => (
                   <MenuItem key={dp.id} value={dp.id}>
@@ -233,12 +247,19 @@ export default function CsmEngagementCreatePage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="engagement-type-label">Engagement type</InputLabel>
+              <InputLabel
+                id="engagement-type-label"
+                shrink={engagementType !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Engagement type
+              </InputLabel>
               <Select
                 labelId="engagement-type-label"
                 label="Engagement type"
                 value={engagementType}
                 onChange={(e) => setEngagementType(e.target.value as BeEngagementType)}
+                notched={engagementType !== ""}
               >
                 {ENGAGEMENT_TYPES.map((et) => (
                   <MenuItem key={et.value} value={et.value}>

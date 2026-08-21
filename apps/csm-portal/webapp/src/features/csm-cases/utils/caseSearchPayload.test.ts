@@ -81,6 +81,41 @@ describe("buildCaseSearchFilters — new advanced-filter fields", () => {
     ]);
   });
 
+  it("emits state op:in and state op:notIn as two independent entries", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: ["open"],
+      excludeStates: ["closed"],
+    };
+    expect(filterOf(filters, "state")).toEqual([
+      { field: "state", op: "in", values: ["open"] },
+      { field: "state", op: "notIn", values: ["closed"] },
+    ]);
+  });
+
+  it("does NOT invert excludeStates into an `in` entry", () => {
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, excludeStates: ["closed"] };
+    const stateEntries = filterOf(filters, "state");
+    expect(stateEntries).toEqual([{ field: "state", op: "notIn", values: ["closed"] }]);
+    expect(stateEntries?.some((e) => e.op === "in")).toBe(false);
+  });
+
+  // Unlike `state`/`tag`, `projectOnboardingStatus` has no `excludeOnboarding
+  // Statuses` field/op:notIn entry of its own -- its domain is the 4 fixed
+  // values in `onboardingStatus.ts`, so a dashboard widget's `notIn` filter
+  // is folded into `onboardingStatuses`' own complement at the translation
+  // boundary (`translateCaseDashboardFilters`), and this builder only ever
+  // sees (and only ever emits) an `in` entry for it.
+  it("emits projectOnboardingStatus as a single op:in entry, never notIn", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      onboardingStatuses: ["Completed", "Not-Applicable"],
+    };
+    expect(filterOf(filters, "projectOnboardingStatus")).toEqual([
+      { field: "projectOnboardingStatus", op: "in", values: ["Completed", "Not-Applicable"] },
+    ]);
+  });
+
   it("emits taskSLABusinessElapsedPercent gte and lte as separate entries", () => {
     const filters: CasesFilters = {
       ...DEFAULT_CASES_FILTERS,

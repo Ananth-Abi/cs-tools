@@ -74,9 +74,14 @@ import {
   CASE_TYPE_LABEL,
 } from "@features/csm-cases/utils/caseType";
 import AsyncProjectMultiSelect from "@features/csm-cases/components/AsyncProjectMultiSelect";
+import {
+  ALL_ONBOARDING_STATUSES,
+  ONBOARDING_STATUS_LABEL,
+} from "@features/csm-cases/utils/onboardingStatus";
 import MultiSelectField from "@components/MultiSelectField";
 import AsyncAssigneeMultiSelect from "@features/csm-cases/components/AsyncAssigneeMultiSelect";
 import ProductNameMultiSelect from "@features/csm-cases/components/ProductNameMultiSelect";
+import TagsMultiSelect from "@features/csm-cases/components/TagsMultiSelect";
 
 
 /**
@@ -91,6 +96,12 @@ export interface CasesFilters {
   search: string;
   severities: Severity[];
   states: CaseState[];
+  /** States the case must NOT be in (`state` op:notIn). Not the inverse of
+   * `states` — a distinct field so `in` and `notIn` can never be conflated
+   * on the round trip, same reasoning as `tags`/`excludeTags`. No dedicated
+   * bar control (like `excludeTags`) — only ever set via a dashboard
+   * click-through, surfaced/removable as a chip. */
+  excludeStates: CaseState[];
   /** Case-type filter (BE `typeKeys`). Empty = all types. */
   caseTypes: BeCaseType[];
   /** Engineer emails (+ the `@me` sentinel) to filter by assigned engineer. */
@@ -115,7 +126,14 @@ export interface CasesFilters {
    * `tags` — a distinct field so `in` and `notIn` can never be conflated on
    * the round trip (see `casesFiltersUrl.ts`'s codec doc comment). */
   excludeTags: string[];
-  /** Project onboarding status values (`projectOnboardingStatus` op:in). */
+  /** Project onboarding status values (`projectOnboardingStatus` op:in).
+   * Unlike `states`/`tags`, this field has no `notIn` counterpart of its
+   * own: the domain is exactly the 4 fixed values in `ALL_ONBOARDING_STATUSES`
+   * (`onboardingStatus.ts`), so "not X" and "in every value except X" are
+   * equivalent, and `translateCaseDashboardFilters` (`widgetResourceConfig.ts`)
+   * folds a dashboard widget's `notIn` filter into this field's complement at
+   * the translation boundary rather than carrying a separate exclude field
+   * (and URL param) through the rest of the app. */
   onboardingStatuses: string[];
   /** Inclusive lower bound on the case's active task's SLA business-elapsed
    * percent (`taskSLABusinessElapsedPercent` op:gte). `null` = unset. */
@@ -202,13 +220,22 @@ const ENGAGEMENT_TYPE_LABEL: Record<BeEngagementType, string> = {
   onboarding: "Onboarding",
 };
 
-const ALL_WORK_STATES: BeCaseWorkState[] = ["ongoing", "paused"];
+// Work state has no bar control of its own (see `buildActiveFilterChips`'s
+// doc comment) -- this only labels its chip now.
 const WORK_STATE_LABEL: Record<BeCaseWorkState, string> = {
   ongoing: "Ongoing",
   paused: "Paused",
 };
 
 const ALL_SEVERITIES: Severity[] = ["S0", "S1", "S2", "S3", "S4"];
+
+// The fixed ServiceNow choice list for `projectOnboardingStatus`, shared with
+// `translateCaseDashboardFilters` (see `onboardingStatus.ts`).
+const ONBOARDING_STATUS_OPTIONS: { value: string; label: string }[] =
+  ALL_ONBOARDING_STATUSES.map((value) => ({
+    value,
+    label: ONBOARDING_STATUS_LABEL[value],
+  }));
 const PRIMARY_STATES: CaseState[] = [
   "open",
   "work_in_progress",
@@ -217,20 +244,6 @@ const PRIMARY_STATES: CaseState[] = [
   "waiting_on_wso2",
   "closed",
 ];
-
-/**
- * Turns a raw backend token (`snake_case`, `PascalCase`, or a mix — the
- * onboarding-status/escalation-level vocabularies aren't normalized to one
- * casing) into a readable label: `"in_progress"` / `"OnHold"` both become
- * `"In progress"` / `"On hold"`. Falls back to the raw token unchanged when
- * it's empty.
- */
-function humanizeToken(raw: string): string {
-  if (!raw) return raw;
-  const spaced = raw.replace(/_/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2");
-  const lower = spaced.toLowerCase();
-  return lower.charAt(0).toUpperCase() + lower.slice(1);
-}
 
 /** Formats a `createdOn`/`updatedOn`/`closedOn` bound for a chip label — a
  * locale date when parseable, the raw string otherwise (never throws on a
@@ -253,38 +266,35 @@ interface ActiveFilterChip {
 
 /**
  * Fields extended onto `CasesFilters` for lossless dashboard click-through
- * (onboarding status, SLA %, escalation, project type, the three date
- * ranges) get no dedicated bar control of their own — ten new fields would
- * overwhelm the bar, and most of them only ever get set by a widget
- * click-through, not hand-picked in the bar. They must still be visible and
- * individually removable, though, or a user landing on a dashboard-filtered
- * cases list has no way to see (or undo) *why* it's filtered — hence one
- * chip per active value here, shown regardless of whether the filter grid
- * itself is expanded. `csTeams`/`sreTeams`/`tags`/`excludeTags` are included
- * here too: their bar controls were removed as clutter (they are advanced,
- * rarely hand-picked, and a better home for advanced filters is still to be
+ * (SLA %, escalation, project type, the three date ranges) get no dedicated
+ * bar control of their own — that many new fields would overwhelm the bar,
+ * and most of them only ever get set by a widget click-through, not
+ * hand-picked in the bar. They must still be visible and individually
+ * removable, though, or a user landing on a dashboard-filtered cases list
+ * has no way to see (or undo) *why* it's filtered — hence one chip per
+ * active value here, shown regardless of whether the filter grid itself is
+ * expanded. `sreTeams`/`excludeTags`/`workStates` are included here too:
+ * their bar controls were removed as clutter (they are advanced, rarely
+ * hand-picked, and a better home for advanced filters is still to be
  * designed), so a chip is now the ONLY way a user can see or clear them
- * after arriving from a dashboard click-through.
+ * after arriving from a dashboard click-through. `csTeams`/
+ * `onboardingStatuses`/`tags` each have their own bar control (see the
+ * filter grid below) and are deliberately NOT chipped here too — every
+ * other bar-controlled field (`states`, `severities`, ...) shows its
+ * selection inside its own control, not as a second, redundant chip.
  */
 function buildActiveFilterChips(
   filters: CasesFilters,
   /** groupId -> team display name, so a team chip never shows a raw UUID.
    * Falls back to the id when the lookup has not resolved (or the team is
    * unknown) rather than hiding the chip — an unlabelled filter the user can
-   * still see and remove beats an invisible one. Covers both `creGroupId`
-   * and `sreGroupId` keys — a caller passing a merged map lets one lookup
-   * serve both `csTeams` and `sreTeams` chips. */
+   * still see and remove beats an invisible one. Only feeds the `sreTeams`
+   * chip now (`csTeams` has its own bar control), but still covers both
+   * `creGroupId` and `sreGroupId` keys since the caller passes one merged
+   * map either way. */
   teamLabels: Record<string, string> = {},
 ): ActiveFilterChip[] {
   const chips: ActiveFilterChip[] = [];
-
-  filters.csTeams.forEach((groupId) => {
-    chips.push({
-      key: `csTeam-${groupId}`,
-      label: `CS team: ${teamLabels[groupId] ?? groupId}`,
-      onRemove: (f) => ({ ...f, csTeams: f.csTeams.filter((t) => t !== groupId) }),
-    });
-  });
 
   filters.sreTeams.forEach((groupId) => {
     chips.push({
@@ -294,14 +304,13 @@ function buildActiveFilterChips(
     });
   });
 
-  filters.tags.forEach((tag) => {
-    chips.push({
-      key: `tag-${tag}`,
-      label: `Tag: ${tag}`,
-      onRemove: (f) => ({ ...f, tags: f.tags.filter((t) => t !== tag) }),
-    });
-  });
-
+  // `tags` has its own "Tags" bar control now (see the filter grid below)
+  // -- not chipped here, same as `csTeams`/`onboardingStatuses`.
+  // `excludeTags` has no bar control of its own on this general filter bar
+  // (only ever set via a dashboard click-through, or seeded as `tags`'
+  // own complement -- see `CaseFamilyWidgetPreview` in
+  // `DashboardWidgetPreviewPage.tsx` -- before it ever reaches this
+  // component), so its chip is still the only way to see or clear it here.
   filters.excludeTags.forEach((tag) => {
     chips.push({
       key: `excludeTag-${tag}`,
@@ -310,16 +319,31 @@ function buildActiveFilterChips(
     });
   });
 
-  filters.onboardingStatuses.forEach((status) => {
+  filters.excludeStates.forEach((state) => {
     chips.push({
-      key: `onboarding-${status}`,
-      label: `Onboarding: ${humanizeToken(status)}`,
+      key: `excludeState-${state}`,
+      label: `Excluding state: ${STATE_LABEL[state] ?? state}`,
       onRemove: (f) => ({
         ...f,
-        onboardingStatuses: f.onboardingStatuses.filter((s) => s !== status),
+        excludeStates: f.excludeStates.filter((s) => s !== state),
       }),
     });
   });
+
+  filters.workStates.forEach((workState) => {
+    chips.push({
+      key: `workState-${workState}`,
+      label: `Work state: ${WORK_STATE_LABEL[workState] ?? workState}`,
+      onRemove: (f) => ({
+        ...f,
+        workStates: f.workStates.filter((w) => w !== workState),
+      }),
+    });
+  });
+
+  // `onboardingStatuses` has its own "Onboarding status" bar control now
+  // (see the filter grid below) -- not chipped here, same as
+  // `csTeams`/`productNames`/every other bar-controlled field.
 
   if (filters.slaElapsedPctGte !== null) {
     chips.push({
@@ -413,11 +437,12 @@ export default function CasesFilterBar({
   const activeCount = countActiveFilters(filters);
   const hasActive = activeCount > 0;
 
-  // Only fetch the team registry when a CS-team or SRE-team filter is
-  // actually set -- it exists solely to label those chips, and the cases
-  // page should not pay for it on every load now that the team bar control
-  // is gone.
-  const { data: teams } = useTeams(filters.csTeams.length > 0 || filters.sreTeams.length > 0);
+  // Team is a fixed, small enough list to fetch in full (same endpoint/hook
+  // the team-based dashboards use -- see AbtDashboardHeader) rather than a
+  // type-to-search async picker, and doubles as the source for the "CS
+  // team" bar control below and the SRE-team chip label (SRE team has no
+  // bar control of its own -- see `buildActiveFilterChips`).
+  const { data: teams } = useTeams(true);
   const teamLabels = useMemo(() => {
     const labels: Record<string, string> = {};
     for (const t of teams ?? []) {
@@ -426,6 +451,16 @@ export default function CasesFilterBar({
     }
     return labels;
   }, [teams]);
+  // `creGroupId` (not the registry `id`) is what a `creTeam`/`csTeams` filter
+  // entry actually matches on; only teams with one configured are
+  // selectable here (an id-less team has nothing such a filter could hold).
+  const teamOptions = useMemo(
+    () =>
+      (teams ?? [])
+        .filter((t): t is typeof t & { creGroupId: string } => Boolean(t.creGroupId))
+        .map((t) => ({ value: t.creGroupId, label: t.name })),
+    [teams],
+  );
 
   const activeFilterChips = useMemo(
     () => buildActiveFilterChips(filters, teamLabels),
@@ -471,10 +506,6 @@ export default function CasesFilterBar({
   );
   const stateOptions = useMemo(
     () => PRIMARY_STATES.map((s) => ({ value: s, label: STATE_LABEL[s] })),
-    [],
-  );
-  const workStateOptions = useMemo(
-    () => ALL_WORK_STATES.map((s) => ({ value: s, label: WORK_STATE_LABEL[s] })),
     [],
   );
   const caseTypeOptions = useMemo(
@@ -739,24 +770,20 @@ export default function CasesFilterBar({
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-              {/* Only meaningful when `work_in_progress` is the sole selected
-                  state (ongoing/paused are sub-states of it); disabled
-                  otherwise, so the control can't add an inert/unusable
-                  filter when combined with other states. */}
+              {/* CS team the case's project is scoped to (`creTeam`). Options
+                  are `creGroupId`s (what the filter actually matches on);
+                  labels are team display names, never the raw group-id
+                  UUID. `workStates` has no bar control of its own now (it's
+                  a narrow, rarely hand-picked sub-filter of "state") -- it
+                  still round-trips losslessly via the URL/a saved view/a
+                  dashboard click-through, surfaced as a removable chip
+                  instead (see `buildActiveFilterChips`). */}
               <MultiSelectField
-                id="cases-filter-work-state"
-                label="Work state"
-                values={filters.workStates}
-                options={workStateOptions}
-                onChange={(next) => onChange({ ...filters, workStates: next })}
-                disabled={
-                  !(filters.states.length === 1 && filters.states[0] === "work_in_progress")
-                }
-                disabledTooltip={
-                  filters.states.length === 1 && filters.states[0] === "work_in_progress"
-                    ? undefined
-                    : `Select only the "${STATE_LABEL.work_in_progress}" state to filter by work state`
-                }
+                id="cases-filter-cs-team"
+                label="Team"
+                values={filters.csTeams}
+                options={teamOptions}
+                onChange={(next) => onChange({ ...filters, csTeams: next })}
               />
             </Grid>
             {showEngagementTypeFilter && (
@@ -792,15 +819,6 @@ export default function CasesFilterBar({
                 nameSeed={assigneeNameSeed}
               />
             </Grid>
-            {!hideProjectFilter && (
-              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-                <AsyncProjectMultiSelect
-                  values={filters.projects}
-                  onChange={(next) => onChange({ ...filters, projects: next })}
-                  nameSeed={projectNameSeed}
-                />
-              </Grid>
-            )}
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
               {/* Product family filter; the selected names map straight to
                   `productNames` (SN matches product.name, all versions). */}
@@ -809,6 +827,38 @@ export default function CasesFilterBar({
                 onChange={(next) => onChange({ ...filters, productNames: next })}
               />
             </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
+              <MultiSelectField
+                id="cases-filter-onboarding-status"
+                label="Onboarding status"
+                values={filters.onboardingStatuses}
+                options={ONBOARDING_STATUS_OPTIONS}
+                onChange={(next) => onChange({ ...filters, onboardingStatuses: next })}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
+              <TagsMultiSelect
+                values={filters.tags}
+                onChange={(next) => onChange({ ...filters, tags: next })}
+              />
+            </Grid>
+            {!hideProjectFilter && (
+              // Last, and wider than every other control: selected project
+              // names render as one ellipsized line (see
+              // `AsyncProjectMultiSelect`'s `renderTags`), not a wrap, but at
+              // the same `lg: 2` width as everything else that single line
+              // was cramped enough to ellipsize almost immediately with more
+              // than one project picked. Moved to the end of the grid and
+              // widened so it has room to actually show a project name or two
+              // before truncating.
+              <Grid size={{ xs: 12, sm: 12, md: 6, lg: 4 }}>
+                <AsyncProjectMultiSelect
+                  values={filters.projects}
+                  onChange={(next) => onChange({ ...filters, projects: next })}
+                  nameSeed={projectNameSeed}
+                />
+              </Grid>
+            )}
           </Grid>
           {activeCount > 0 && (
             <Box sx={{ display: "flex", justifyContent: "flex-end" }}>

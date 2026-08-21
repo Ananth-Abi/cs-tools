@@ -1771,6 +1771,12 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/DashboardListItem'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
         "401":
           description: Unauthorized
           content:
@@ -1779,6 +1785,121 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "403":
           description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /dashboards/filter-presets:
+    get:
+      summary: List the shared filter presets a dashboard definition may reference.
+      description: >
+        Returns the deployment's shared filter-preset catalogue: each preset's
+        name and the single filter predicate it stands for. A dashboard
+        definition references a preset by name instead of repeating the
+        predicate, and the registry expands every reference at load time, so a
+        dashboard returned by GET /dashboards/{dashboardId} never contains a
+        preset reference. This endpoint exists so an authoring tool can offer
+        the names that may be referenced, and show what each one means. A
+        deployment with no preset catalogue configured returns an empty array,
+        not an error.
+      operationId: getDashboardFilterPresets
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DashboardFilterPreset'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /dashboards/sections:
+    get:
+      summary: List the shared reusable sections a dashboard definition may include.
+      description: >
+        Returns the deployment's shared section catalogue: each section's name,
+        the heading its widgets are grouped under, and its widget run. A
+        dashboard definition pulls a section in by name rather than repeating
+        its widgets, and the registry expands every include at load time.
+        Unlike a dashboard's widgets, the widgets returned here are as
+        authored: filter-preset references are NOT expanded and no implied
+        type filter has been injected, because a section is not loaded through
+        a dashboard's own resolution pipeline on its own. They are therefore
+        for authoring, not for use as search criteria. A deployment with no
+        section catalogue configured returns an empty array, not an error.
+      operationId: getDashboardSections
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DashboardSharedSection'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
           content:
             application/json:
               schema:
@@ -6301,6 +6422,61 @@ components:
           items:
             $ref: '#/components/schemas/DashboardWidget'
 
+    DashboardFilterPreset:
+      type: object
+      description: >
+        One named, reusable filter predicate a dashboard definition may
+        reference instead of repeating it. Returned by
+        GET /dashboards/filter-presets for authoring purposes only — a
+        dashboard served by this API has every reference already expanded.
+      properties:
+        name:
+          type: string
+          description: >
+            The name a definition references this preset by. Unique within
+            the catalogue.
+        filter:
+          type: object
+          additionalProperties: true
+          description: >
+            The single filter predicate this preset stands for, verbatim as
+            authored: the same field/op/values object a widget's own
+            query.filters entries use.
+      required:
+        - name
+        - filter
+
+    DashboardSharedSection:
+      type: object
+      description: >
+        One named, reusable run of widgets a dashboard definition may pull in
+        by name instead of repeating them. Returned by GET /dashboards/sections
+        for authoring purposes only.
+      properties:
+        name:
+          type: string
+          description: >
+            The name a definition references this section by. Unique within
+            the catalogue.
+        displayName:
+          type: string
+          description: >
+            The heading every widget in this section is grouped under, unless
+            the referencing definition overrides it.
+        widgets:
+          type: array
+          description: >
+            The section's widget run, as AUTHORED: filter-preset references
+            are not expanded and no implied type filter has been injected.
+            Not usable directly as search criteria — see the endpoint
+            description.
+          items:
+            $ref: '#/components/schemas/DashboardWidget'
+      required:
+        - name
+        - displayName
+        - widgets
+
     Case:
       type: object
       properties:
@@ -7060,9 +7236,13 @@ components:
       description: >
         One project-contact row for a user, reported as stored rather than as filtered. A
         row with no linked contact record makes the project, and every case on it, silently
-        invisible to that user. grantsCaseAccess mirrors contactRecordPresent directly --
-        deliberately not the stricter email-match rule the live access check enforces, since
-        that only diverges for integration/system accounts.
+        invisible to that user. grantsCaseAccess is the access rule applied per row:
+        contactRecordPresent AND contactEmail matching contactRecordEmail, compared
+        case-insensitively. It is deliberately not a restatement of contactRecordPresent --
+        a row invited under one address but linked to a contact whose own address differs is
+        invisible to both people, and that does happen on genuine customer rows. Both halves
+        of the comparison are returned above, so a false verdict can be explained from the
+        row itself.
       required: [projectId, projectName, projectKey, contactEmail, contactRecordPresent, grantsCaseAccess]
       properties:
         projectId:
@@ -7607,7 +7787,10 @@ components:
           properties:
             searchQuery:
               type: string
-              description: Searches across contact name and email (case-insensitive)
+              description: >
+                Searches across the contact's name, the linked record's address, and the
+                address a row was invited under (case-insensitive) — so a row with no linked
+                contact record is findable by the address it is displayed under.
         pagination:
           allOf:
             - $ref: '#/components/schemas/Pagination'
@@ -7629,8 +7812,15 @@ components:
             render the row unlinked rather than treating it as an error.
         name:
           type: string
+          description: >
+            Empty when the row has no contact record linked — the name is only ever known
+            from that record.
         email:
           type: string
+          description: >
+            The contact's address. Falls back to the address the row was invited under when
+            no contact record is linked, so a row whose contact record was never created is
+            still identifiable rather than coming back with no name and no address at all.
         registrationState:
           type: string
         notificationsEnabled:
@@ -7648,8 +7838,11 @@ components:
           type: boolean
           description: >
             Whether this row would actually grant its person visibility into this project's
-            cases. Mirrors `customerContactPresent` directly — a row can be listed here without
-            granting access.
+            cases: a linked contact record AND the address the row was invited under matching
+            that record's own address, compared case-insensitively. Deliberately not a
+            restatement of `customerContactPresent` — a row invited under one address but
+            linked to a contact whose own address differs is invisible to both people, and
+            that does happen on genuine customer rows.
 
     ProjectContactSearchResponse:
       type: object

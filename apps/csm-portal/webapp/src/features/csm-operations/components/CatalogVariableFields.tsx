@@ -85,12 +85,15 @@ export default function CatalogVariableFields({
             return (
               <Grid key={v.id} size={{ xs: 12, sm: 6 }}>
                 <FormControl fullWidth size="small" required={required}>
-                  <InputLabel id={labelId}>{label}</InputLabel>
+                  <InputLabel id={labelId} shrink={value !== ""} sx={{ top: "0px !important" }}>
+                    {label}
+                  </InputLabel>
                   <Select
                     labelId={labelId}
                     label={label}
                     value={value}
                     onChange={(e) => onChange(v.id, String(e.target.value))}
+                    notched={value !== ""}
                   >
                     {choices.map((c) => (
                       // The submitted value is the option's `value`; `text`
@@ -110,12 +113,15 @@ export default function CatalogVariableFields({
             return (
               <Grid key={v.id} size={{ xs: 12, sm: 6 }}>
                 <FormControl fullWidth size="small" required>
-                  <InputLabel id={labelId}>{label}</InputLabel>
+                  <InputLabel id={labelId} shrink={value !== ""} sx={{ top: "0px !important" }}>
+                    {label}
+                  </InputLabel>
                   <Select
                     labelId={labelId}
                     label={label}
                     value={value}
                     onChange={(e) => onChange(v.id, String(e.target.value))}
+                    notched={value !== ""}
                   >
                     <MenuItem value="Yes">Yes</MenuItem>
                     <MenuItem value="No">No</MenuItem>

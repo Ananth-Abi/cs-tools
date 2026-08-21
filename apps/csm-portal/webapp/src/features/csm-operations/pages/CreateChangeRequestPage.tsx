@@ -228,7 +228,8 @@ export default function CreateChangeRequestPage(): JSX.Element {
   //     originating service request (and its project, for scoping the
   //     picker's search) so the "Originating service request" field below
   //     starts pre-selected rather than blank.
-  const locationState = useLocation().state as
+  const location = useLocation();
+  const locationState = location.state as
     | CloneChangeRequestNavState
     | CreateChangeRequestFromCaseNavState
     | undefined;
@@ -236,6 +237,14 @@ export default function CreateChangeRequestPage(): JSX.Element {
     locationState && !("caseId" in locationState) ? locationState : undefined;
   const fromCaseState =
     locationState && "caseId" in locationState ? locationState : undefined;
+
+  // Set when opened from a list/detail page's own "Create change request"
+  // action with `state: { from: ... }` (same convention as the 4 case-type
+  // create pages), so Back/Cancel return there instead of the hardcoded
+  // change-requests tab, and the newly created change request's own Back
+  // button (reading this same convention) returns there too.
+  const backState = location.state as { from?: string } | undefined;
+  const backTarget = backState?.from ?? OPERATIONS_CHANGE_REQUESTS_PATH;
 
   // Slice on seed as well as on change: a source record at or beyond the cap
   // would otherwise load untrimmed, show a negative characters-left count, and
@@ -354,18 +363,25 @@ export default function CreateChangeRequestPage(): JSX.Element {
         // still leaves a valid, created change request — navigate there
         // regardless, but surface the link failure rather than hiding it.
         if (!caseId) {
-          navigate(`/operations/change-requests/${createdId}`);
+          navigate(`/operations/change-requests/${createdId}`, {
+            state: { from: backTarget },
+          });
           return;
         }
         patchChangeRequest.mutate(
           { id: createdId, patch: { caseId } },
           {
-            onSuccess: () => navigate(`/operations/change-requests/${createdId}`),
+            onSuccess: () =>
+              navigate(`/operations/change-requests/${createdId}`, {
+                state: { from: backTarget },
+              }),
             onError: () => {
               showError(
                 "The change request was created, but linking it to the originating service request failed. The change request itself is unaffected; the link is not set.",
               );
-              navigate(`/operations/change-requests/${createdId}`);
+              navigate(`/operations/change-requests/${createdId}`, {
+                state: { from: backTarget },
+              });
             },
           },
         );
@@ -457,10 +473,10 @@ export default function CreateChangeRequestPage(): JSX.Element {
       <Button
         variant="text"
         startIcon={<ArrowLeft size={16} />}
-        onClick={() => navigate(OPERATIONS_CHANGE_REQUESTS_PATH)}
+        onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to operations
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: 2 }}>
         New change request
@@ -749,10 +765,7 @@ export default function CreateChangeRequestPage(): JSX.Element {
         </Box>
 
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, mt: 2.5 }}>
-          <Button
-            variant="outlined"
-            onClick={() => navigate(OPERATIONS_CHANGE_REQUESTS_PATH)}
-          >
+          <Button variant="outlined" onClick={() => navigate(backTarget)}>
             Cancel
           </Button>
           <Button

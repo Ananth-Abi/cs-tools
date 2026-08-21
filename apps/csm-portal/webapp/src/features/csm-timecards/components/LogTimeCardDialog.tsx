@@ -450,6 +450,14 @@ export default function LogTimeCardDialog({
               value={issueComplexity}
               onChange={(e) => setIssueComplexity(e.target.value as IssueComplexity)}
               sx={{ maxWidth: { sm: 220 }, minWidth: 160 }}
+              slotProps={{
+                // `issueComplexity` always holds a real value (no empty
+                // option), so the label is always shrunk -- see
+                // MultiSelectField.tsx's doc comment for why this override
+                // is needed at all against oxygen-ui's own theme.
+                inputLabel: { shrink: true, sx: { top: "0px !important" } },
+                select: { notched: true },
+              }}
             >
               {ISSUE_COMPLEXITY_OPTIONS.map((o) => (
                 <MenuItem key={o} value={o}>

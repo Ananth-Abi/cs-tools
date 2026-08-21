@@ -240,13 +240,20 @@ export default function CreateSecurityReportPage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="sra-deployment-label">Deployment</InputLabel>
+              <InputLabel
+                id="sra-deployment-label"
+                shrink={deploymentId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Deployment
+              </InputLabel>
               <Select
                 labelId="sra-deployment-label"
                 label="Deployment"
                 value={deploymentId}
                 onChange={(e) => onDeploymentChange(String(e.target.value))}
                 disabled={!projectId || deployments.isLoading}
+                notched={deploymentId !== ""}
               >
                 {(deployments.data ?? []).map((d) => (
                   <MenuItem key={d.id} value={d.id}>
@@ -266,13 +273,20 @@ export default function CreateSecurityReportPage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="sra-product-label">Deployed product</InputLabel>
+              <InputLabel
+                id="sra-product-label"
+                shrink={deployedProductId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Deployed product
+              </InputLabel>
               <Select
                 labelId="sra-product-label"
                 label="Deployed product"
                 value={deployedProductId}
                 onChange={(e) => onDeployedProductChange(String(e.target.value))}
                 disabled={!deploymentId || deployedProducts.isLoading}
+                notched={deployedProductId !== ""}
               >
                 {(deployedProducts.data ?? []).map((dp) => (
                   <MenuItem key={dp.id} value={dp.id}>

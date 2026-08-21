@@ -306,13 +306,20 @@ export default function CreateServiceRequestPage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="sr-deployment-label">Deployment</InputLabel>
+              <InputLabel
+                id="sr-deployment-label"
+                shrink={deploymentId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Deployment
+              </InputLabel>
               <Select
                 labelId="sr-deployment-label"
                 label="Deployment"
                 value={deploymentId}
                 onChange={(e) => onDeploymentChange(String(e.target.value))}
                 disabled={!projectId || deployments.isLoading}
+                notched={deploymentId !== ""}
               >
                 {(deployments.data ?? []).map((d) => (
                   <MenuItem key={d.id} value={d.id}>
@@ -334,13 +341,20 @@ export default function CreateServiceRequestPage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="sr-product-label">Deployed product</InputLabel>
+              <InputLabel
+                id="sr-product-label"
+                shrink={deployedProductId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Deployed product
+              </InputLabel>
               <Select
                 labelId="sr-product-label"
                 label="Deployed product"
                 value={deployedProductId}
                 onChange={(e) => onDeployedProductChange(String(e.target.value))}
                 disabled={!deploymentId || deployedProducts.isLoading}
+                notched={deployedProductId !== ""}
               >
                 {(deployedProducts.data ?? []).map((dp) => (
                   <MenuItem key={dp.id} value={dp.id}>
@@ -362,13 +376,20 @@ export default function CreateServiceRequestPage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 6 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="sr-catalog-label">Catalog</InputLabel>
+              <InputLabel
+                id="sr-catalog-label"
+                shrink={catalogId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Catalog
+              </InputLabel>
               <Select
                 labelId="sr-catalog-label"
                 label="Catalog"
                 value={catalogId}
                 onChange={(e) => onCatalogChange(String(e.target.value))}
                 disabled={!deployedProductId || catalogs.isLoading || noCatalogs}
+                notched={catalogId !== ""}
               >
                 {(catalogs.data ?? []).map((c) => (
                   <MenuItem key={c.id} value={c.id}>
@@ -392,13 +413,20 @@ export default function CreateServiceRequestPage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 6 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="sr-catalog-item-label">Catalog item</InputLabel>
+              <InputLabel
+                id="sr-catalog-item-label"
+                shrink={catalogItemId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Catalog item
+              </InputLabel>
               <Select
                 labelId="sr-catalog-item-label"
                 label="Catalog item"
                 value={catalogItemId}
                 onChange={(e) => onCatalogItemChange(String(e.target.value))}
                 disabled={!catalogId}
+                notched={catalogItemId !== ""}
               >
                 {catalogItems.map((ci) => (
                   <MenuItem key={ci.id} value={ci.id}>

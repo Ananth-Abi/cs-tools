@@ -24,7 +24,7 @@ import {
   Select,
   Tooltip,
 } from "@wso2/oxygen-ui";
-import type { JSX } from "react";
+import { useRef, useState, type JSX } from "react";
 
 export interface MultiSelectFieldProps<T extends string> {
   id: string;
@@ -62,8 +62,26 @@ export default function MultiSelectField<T extends string>({
   // enabled, unselected siblings.
   const hasValue = values.length > 0;
 
+  // MUI's Select already pins the popup's `min-width` to the field's own
+  // rendered width, but never caps its `max-width` -- a long option label
+  // (e.g. a team name) otherwise stretches the popup far past the field it
+  // dropped down from, wider than every other filter's popup. Measuring the
+  // field's own width on open and pinning the popup to exactly that (not
+  // just a generic cap) is what makes it match, whatever width this
+  // particular instance happens to render at in its own grid slot; long
+  // labels wrap onto a second line instead of widening the popup.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [menuWidth, setMenuWidth] = useState<number>();
+
+  const handleOpen = (): void => {
+    const width = rootRef.current?.getBoundingClientRect().width;
+    if (width) setMenuWidth(width);
+    setOpen(true);
+  };
+
   const field = (
-    <FormControl fullWidth size="small" disabled={disabled}>
+    <FormControl ref={rootRef} fullWidth size="small" disabled={disabled}>
       {/*
        * oxygen-ui's own theme (MuiInputLabel styleOverrides) targets
        * `.MuiFormControl-root:has(.MuiSelect-select) &:not(.MuiInputLabel-shrink)`
@@ -85,6 +103,17 @@ export default function MultiSelectField<T extends string>({
         id={id}
         value={values}
         label={label}
+        open={open}
+        onOpen={handleOpen}
+        onClose={() => setOpen(false)}
+        MenuProps={{
+          slotProps: {
+            // Falls back to a generic cap for the one frame before a width
+            // is ever measured (and in a non-layout environment like jsdom,
+            // where `getBoundingClientRect` always reports 0).
+            paper: { sx: menuWidth ? { width: menuWidth } : { maxWidth: 280 } },
+          },
+        }}
         onChange={(event) => {
           const val = event.target.value;
           onChange(Array.isArray(val) ? (val as T[]) : []);
@@ -114,15 +143,28 @@ export default function MultiSelectField<T extends string>({
         }}
       >
         {options.map((option) => (
-          <MenuItem key={option.value} value={option.value} sx={{ py: 0.5 }}>
+          // MUI's `MenuItem` sets `white-space: nowrap` by default (it
+          // expects a single-line label) — with the popup now pinned to
+          // the field's own width (see `menuWidth` above), a label longer
+          // than that width needs to wrap onto a second line instead of
+          // just getting clipped at the edge. `alignItems: "flex-start"`
+          // keeps the checkbox pinned to the first line's height instead
+          // of centering against the item's full two-line height.
+          <MenuItem
+            key={option.value}
+            value={option.value}
+            sx={{ py: 0.5, alignItems: "flex-start", whiteSpace: "normal" }}
+          >
             <Checkbox
               size="small"
               checked={values.includes(option.value)}
-              sx={{ mr: 1, p: 0.25 }}
+              sx={{ mr: 1, p: 0.25, mt: "1px" }}
             />
             <ListItemText
               primary={option.label}
-              slotProps={{ primary: { style: { fontSize: 13 } } }}
+              slotProps={{
+                primary: { style: { fontSize: 13, whiteSpace: "normal", wordBreak: "break-word" } },
+              }}
             />
           </MenuItem>
         ))}
