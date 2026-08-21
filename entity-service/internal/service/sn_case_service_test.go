@@ -655,6 +655,16 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 				ID: testDeploymentUUID, Type: strPtr("case"), Severity: &severity,
 			},
 		},
+		{
+			// A bare product/publicTicket with no fix-ETA date has nowhere to
+			// go -- addPublicComment's own handling only runs when
+			// addPublicComment itself is set, so without this rejection the
+			// field would otherwise be silently dropped rather than erroring.
+			name: "type combined with a bare product (no fix-ETA date, no addPublicComment)",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("case"), Product: strPtr("API Manager"),
+			},
+		},
 	}
 
 	svc := NewServiceNowCaseService(nil, nil)

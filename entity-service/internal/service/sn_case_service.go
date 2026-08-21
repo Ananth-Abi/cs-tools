@@ -1479,6 +1479,21 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.WorstCaseFixEta != nil {
 		combinableCount++
 	}
+	// AddPublicComment/Product/PublicTicket are meaningful only alongside the
+	// fix-ETA trio above (see the addPublicComment handling below), so they
+	// belong in the same combinable bucket -- otherwise `type` (or any other
+	// exclusive field) plus a bare `product`/`publicTicket` with no fix-ETA
+	// date would pass this gate and then be silently dropped later, never
+	// validated or forwarded.
+	if req.AddPublicComment != nil {
+		combinableCount++
+	}
+	if req.Product != nil {
+		combinableCount++
+	}
+	if req.PublicTicket != nil {
+		combinableCount++
+	}
 	const fieldList = "state, severity, workState, watchList, assigneeEmail, parentId, acknowledge, type, " +
 		"relatedCaseId, autocloseHoldUntil, subject, description, deploymentId, deployedProductId, " +
 		"bestCaseFixEta, mostLikelyFixEta, or worstCaseFixEta"
