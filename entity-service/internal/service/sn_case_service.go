@@ -1213,17 +1213,6 @@ type snUpdateCasePayload struct {
 	StateKey     *int `json:"stateKey,omitempty"`
 	SeverityKey  *int `json:"severityKey,omitempty"`
 	WorkStateKey *int `json:"workStateKey,omitempty"`
-	// Type transfers the case to another type (digiops-cs#2818/#2852) --
-	// same string values as the create payload's own Type field (see
-	// snCaseTypeMap). EngagementType (int key, only meaningful with
-	// Type "engagement") and CatalogID/CatalogItemID/Variables (only
-	// meaningful with Type "service_request") are its companions, mirroring
-	// snCreateCasePayload's own field set for those two type-specific shapes.
-	Type           *string          `json:"type,omitempty"`
-	EngagementType *int             `json:"engagementType,omitempty"`
-	CatalogID      *string          `json:"catalogId,omitempty"`
-	CatalogItemID  *string          `json:"catalogItemId,omitempty"`
-	Variables      []snCaseVariable `json:"variables,omitempty"`
 	// WatchList replaces the whole list, so an explicitly empty list must still be
 	// sent to clear it rather than be omitted -- hence the pointer.
 	WatchList     *[]string `json:"watchList,omitempty"`
@@ -1372,13 +1361,12 @@ var snWorkStateIDMap = map[domain.CaseWorkState]int{
 type snUpdateCaseResponse struct {
 	Message string `json:"message"`
 	Case    struct {
-		ID        string           `json:"id"`
-		UpdatedOn string           `json:"updatedOn"`
-		UpdatedBy string           `json:"updatedBy"`
-		State     *snCaseState     `json:"state"`
-		Severity  *snCaseLabel     `json:"severity"`
-		Type      *snCaseEntityRef `json:"type"`
-		WorkState *snCaseLabel     `json:"workState"`
+		ID        string       `json:"id"`
+		UpdatedOn string       `json:"updatedOn"`
+		UpdatedBy string       `json:"updatedBy"`
+		State     *snCaseState `json:"state"`
+		Severity  *snCaseLabel `json:"severity"`
+		WorkState *snCaseLabel `json:"workState"`
 		WatchList []struct {
 			ID       string `json:"id"`
 			UserName string `json:"userName"`
@@ -1446,9 +1434,6 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.Acknowledge != nil {
 		exclusiveCount++
 	}
-	if req.Type != nil {
-		exclusiveCount++
-	}
 	// combinableCount covers plain field writes with no cross-field side
 	// effects -- SN now accepts any subset of these together in one PATCH.
 	combinableCount := 0
@@ -1479,20 +1464,17 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.WorstCaseFixEta != nil {
 		combinableCount++
 	}
-	const fieldList = "state, severity, workState, watchList, assigneeEmail, parentId, acknowledge, type, " +
+	const fieldList = "state, severity, workState, watchList, assigneeEmail, parentId, acknowledge, " +
 		"relatedCaseId, autocloseHoldUntil, subject, description, deploymentId, deployedProductId, " +
 		"bestCaseFixEta, mostLikelyFixEta, or worstCaseFixEta"
 	if exclusiveCount == 0 && combinableCount == 0 {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "at least one of " + fieldList + " must be provided"}
 	}
 	if exclusiveCount > 1 || (exclusiveCount == 1 && combinableCount > 0) {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "state, severity, workState, watchList, assigneeEmail, parentId, acknowledge, and type cannot be combined with each other or with any other field in the same request"}
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "state, severity, workState, watchList, assigneeEmail, parentId, and acknowledge cannot be combined with each other or with any other field in the same request"}
 	}
 	if hasResolutionFields && req.State == nil {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "resolutionCode, cause, and closeNotes are only allowed when state is also provided"}
-	}
-	if req.Type == nil && (req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0) {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType, catalogId, catalogItemId, and variables are only allowed when type is also provided"}
 	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
@@ -1536,55 +1518,6 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity " + string(*req.Severity) + " is not supported by ServiceNow"}
 		}
 		payload.SeverityKey = &id
-	}
-	if req.Type != nil {
-		if !validCaseType[*req.Type] {
-			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "type contains invalid value: " + *req.Type}
-		}
-		snType, ok := snCaseTypeMap[*req.Type]
-		if !ok {
-			return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "type " + *req.Type + " is not supported by ServiceNow"}
-		}
-		payload.Type = &snType
-		switch *req.Type {
-		case "engagement":
-			if req.EngagementType == nil {
-				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is required when type is \"engagement\""}
-			}
-			if !validEngagementType[*req.EngagementType] {
-				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(*req.EngagementType)}
-			}
-			id := snEngagementTypeIDMap[*req.EngagementType]
-			payload.EngagementType = &id
-		case "service_request":
-			if req.CatalogID == nil || req.CatalogItemID == nil {
-				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "catalogId and catalogItemId are required when type is \"service_request\""}
-			}
-			if err := validateUUIDs("catalogId", []string{*req.CatalogID}); err != nil {
-				return domain.UpdateCaseResponse{}, err
-			}
-			if err := validateUUIDs("catalogItemId", []string{*req.CatalogItemID}); err != nil {
-				return domain.UpdateCaseResponse{}, err
-			}
-			catalogSysid := uuidToSysid(*req.CatalogID)
-			catalogItemSysid := uuidToSysid(*req.CatalogItemID)
-			payload.CatalogID = &catalogSysid
-			payload.CatalogItemID = &catalogItemSysid
-			if len(req.Variables) > 0 {
-				vars := make([]snCaseVariable, 0, len(req.Variables))
-				for i, v := range req.Variables {
-					if err := validateUUIDs(fmt.Sprintf("variables[%d].id", i), []string{v.ID}); err != nil {
-						return domain.UpdateCaseResponse{}, err
-					}
-					vars = append(vars, snCaseVariable{ID: uuidToSysid(v.ID), Value: v.Value})
-				}
-				payload.Variables = vars
-			}
-		default:
-			if req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
-				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\"; catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
-			}
-		}
 	}
 	if req.WorkState != nil {
 		if !validCaseWorkState[*req.WorkState] {
@@ -1731,11 +1664,6 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	}
 	if snResp.Case.Severity != nil {
 		resp.Case.Severity = snSeverityToSeverity(snResp.Case.Severity)
-	}
-	if snResp.Case.Type != nil {
-		if t := snCaseTypeToDomain(snResp.Case.Type); t != nil {
-			resp.Case.Type = *t
-		}
 	}
 	resp.Case.WorkState = snWorkStateLabelToEnum(snResp.Case.WorkState)
 	if snResp.Case.AssignedTo != nil {
