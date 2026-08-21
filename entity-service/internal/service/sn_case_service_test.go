@@ -636,6 +636,20 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 			},
 		},
 		{
+			name: "catalogId supplied with type \"engagement\"",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("engagement"), EngagementType: &engagement,
+				CatalogID: strPtr(testDeploymentUUID),
+			},
+		},
+		{
+			name: "engagementType supplied with type \"service_request\"",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("service_request"), EngagementType: &engagement,
+				CatalogID: strPtr(testDeploymentUUID), CatalogItemID: strPtr(testDeploymentUUID),
+			},
+		},
+		{
 			name: "type combined with severity",
 			req: domain.UpdateCaseRequest{
 				ID: testDeploymentUUID, Type: strPtr("case"), Severity: &severity,
@@ -789,6 +803,16 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequest(t *testing.T) {
 	vars, ok := gotBody["variables"].([]any)
 	if !ok || len(vars) != 1 {
 		t.Fatalf("expected 1 variable, got %+v", gotBody["variables"])
+	}
+	v, ok := vars[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected variables[0] to be an object, got %+v", vars[0])
+	}
+	if got := v["id"]; got != uuidToSysid(variableUUID) {
+		t.Fatalf("expected variables[0].id %q, got %v", uuidToSysid(variableUUID), got)
+	}
+	if got := v["value"]; got != "Scaling for a launch" {
+		t.Fatalf("expected variables[0].value %q, got %v", "Scaling for a launch", got)
 	}
 }
 

@@ -1551,6 +1551,9 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			if req.EngagementType == nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is required when type is \"engagement\""}
 			}
+			if req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
+			}
 			if !validEngagementType[*req.EngagementType] {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(*req.EngagementType)}
 			}
@@ -1559,6 +1562,9 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		case "service_request":
 			if req.CatalogID == nil || req.CatalogItemID == nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "catalogId and catalogItemId are required when type is \"service_request\""}
+			}
+			if req.EngagementType != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\""}
 			}
 			if err := validateUUIDs("catalogId", []string{*req.CatalogID}); err != nil {
 				return domain.UpdateCaseResponse{}, err
