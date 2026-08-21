@@ -35,6 +35,8 @@ export default function CsmCasesPage(): JSX.Element {
       // out here (and the type filter is hidden since it's fixed to `case`).
       lockedFilters={{ caseTypes: ["case"] }}
       hideTypeFilter
+      enableColumnCustomization
+      columnsViewId="cases"
       actions={
         <Button
           variant="contained"

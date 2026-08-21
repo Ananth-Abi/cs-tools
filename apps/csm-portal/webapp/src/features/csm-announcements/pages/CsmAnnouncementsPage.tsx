@@ -62,8 +62,17 @@ import RefreshButton from "@components/RefreshButton";
 const DEFAULT_ROWS_PER_PAGE = 20;
 const ROWS_PER_PAGE_OPTIONS = [10, 20, 50];
 
+// Every field `CsmAnnouncementRow` carries is offered as a column below
+// except `id` (a raw UUID, never human-facing). Fields on the underlying
+// case search view that never made it into `CsmAnnouncementRow` at all —
+// `severity` (announcements carry no severity, see `AnnouncementFilters`'s
+// doc), `issueType`, `deployment`/`deployedProduct`/`product`, and
+// `assignedEngineer` — aren't meaningful for an announcement (a broadcast,
+// not a worked case with an owner or an affected deployment), so there was
+// nothing there worth adding as a column either.
 type AnnouncementColumnId =
   | "number"
+  | "wso2CaseId"
   | "subject"
   | "project"
   | "state"
@@ -73,6 +82,7 @@ type AnnouncementColumnId =
 
 const ANNOUNCEMENT_COLUMNS: { id: AnnouncementColumnId; label: string }[] = [
   { id: "number", label: "Number" },
+  { id: "wso2CaseId", label: "Reference" },
   { id: "subject", label: "Subject" },
   { id: "project", label: "Project" },
   { id: "state", label: "State" },
@@ -120,6 +130,8 @@ function renderAnnouncementCell(id: AnnouncementColumnId, a: CsmAnnouncementRow)
   switch (id) {
     case "number":
       return a.number || "—";
+    case "wso2CaseId":
+      return a.wso2CaseId || "—";
     case "subject":
       return (
         <Typography

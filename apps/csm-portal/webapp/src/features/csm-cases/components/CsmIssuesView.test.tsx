@@ -112,12 +112,16 @@ describe("CsmIssuesView back navigation", () => {
 });
 
 describe("CsmIssuesView column customization", () => {
+  // Mirrors the real `CsmEngagementsPage`: locked to one case type (so Type
+  // is offered but not default-visible — see `isLockedToSingleType`'s doc in
+  // `CsmIssuesView`) and severity hidden (Engagements has no severity concept).
   function renderEngagementsLike() {
     return render(
       <MemoryRouter initialEntries={["/engagements"]}>
         <CsmIssuesView
           title="Engagements"
           entityNoun="engagements"
+          lockedFilters={{ caseTypes: ["engagement"] }}
           hideSeverityColumn
           enableColumnCustomization
           columnsViewId="engagements"
@@ -133,24 +137,31 @@ describe("CsmIssuesView column customization", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the picker and lists Product/Assignee (not Type/Severity) when hideSeverityColumn is set", () => {
+  it("renders the picker and lists Product/Type/Assignee/Customer/Created (not Severity) when hideSeverityColumn is set", () => {
     renderEngagementsLike();
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
 
     expect(screen.getByText("Product")).toBeInTheDocument();
+    expect(screen.getByText("Type")).toBeInTheDocument();
     expect(screen.getByText("Assignee")).toBeInTheDocument();
-    expect(screen.queryByText("Type")).not.toBeInTheDocument();
+    expect(screen.getByText("Customer")).toBeInTheDocument();
+    expect(screen.getByText("Created")).toBeInTheDocument();
     expect(screen.queryByText("Severity")).not.toBeInTheDocument();
   });
 
-  it("defaults Assignee to hidden so a returning user sees no change until they opt in", () => {
+  it("defaults every optional column but Product to hidden, since the view is locked to one case type, so a returning user sees no change until they opt in", () => {
     renderEngagementsLike();
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
 
+    // Order mirrors `CASE_OPTIONAL_COLUMNS`: Product, Type, Assignee, Customer, Created
+    // (Severity is excluded entirely here via hideSeverityColumn).
     const checkboxes = screen.getAllByRole("checkbox");
-    // Product first (checked, default-visible), Assignee second (unchecked).
-    expect(checkboxes[0]).toBeChecked();
-    expect(checkboxes[1]).not.toBeChecked();
+    expect(checkboxes).toHaveLength(5);
+    expect(checkboxes[0]).toBeChecked(); // Product — the one default-visible column
+    expect(checkboxes[1]).not.toBeChecked(); // Type
+    expect(checkboxes[2]).not.toBeChecked(); // Assignee
+    expect(checkboxes[3]).not.toBeChecked(); // Customer
+    expect(checkboxes[4]).not.toBeChecked(); // Created
   });
 
   it("persists a toggled column across a remount for the same user + view", () => {
@@ -162,6 +173,6 @@ describe("CsmIssuesView column customization", () => {
     renderEngagementsLike();
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
     const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes[1]).toBeChecked();
+    expect(checkboxes[2]).toBeChecked(); // Assignee, toggled on above
   });
 });

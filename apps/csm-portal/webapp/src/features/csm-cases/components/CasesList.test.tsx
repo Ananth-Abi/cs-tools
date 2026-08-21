@@ -265,3 +265,48 @@ describe("CasesList quick preview", () => {
     expect(screen.getByRole("link", { name: "View full details" })).toBeInTheDocument();
   });
 });
+
+describe("CasesList optional columns", () => {
+  it("renders the widened optional column set (customer, created) when passed explicitly", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={
+            <CasesList
+              cases={[CASE]}
+              isLoading={false}
+              optionalColumns={["customer", "createdAt"]}
+            />
+          }
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    expect(screen.getByText("Customer")).toBeInTheDocument();
+    expect(screen.getByText("Created")).toBeInTheDocument();
+    expect(screen.getByText("Acme Corp")).toBeInTheDocument();
+    // Neither of the legacy fixed-set columns is asked for here.
+    expect(screen.queryByText("Product")).not.toBeInTheDocument();
+    expect(screen.queryByText("Assignee")).not.toBeInTheDocument();
+  });
+
+  it("keeps rendering the legacy fixed optional set when optionalColumns is omitted", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    expect(screen.getByText("Product")).toBeInTheDocument();
+    expect(screen.queryByText("Customer")).not.toBeInTheDocument();
+    expect(screen.queryByText("Created")).not.toBeInTheDocument();
+  });
+});

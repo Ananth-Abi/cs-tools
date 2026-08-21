@@ -21,8 +21,35 @@
  * optional: they carry the row's identity, its own sort control, or (Case ID)
  * the row's real anchor link, so removing them would break navigation/sort
  * rather than just decluttering.
+ *
+ * Fields on `CsmCaseRow` deliberately left off this list, and why:
+ * - `id`, `accountId`, `projectId` — raw UUIDs, never human-facing.
+ * - `wso2CaseId` / `caseNumber` — already rendered together in the fixed
+ *   Case ID column; a separate column would just repeat it.
+ * - `projectName` — already rendered under Subject on every row (see
+ *   `CasesList`), regardless of which optional columns are on; adding it here
+ *   too would show the same value twice.
+ * - `state` / `updatedAt` — fixed columns (State, Updated).
+ * - `workState` — only meaningful for `work_in_progress` cases, and already
+ *   rendered stacked under the State chip for exactly those rows; a standalone
+ *   column would be blank for everything else.
+ * - `assigneeIsMe`, `hasSla` — booleans that drive other UI (assignee-filter
+ *   defaults, the SLA clock's "unknown" fallback), not stand-alone facts worth
+ *   a column of their own.
+ * - `slaClockType`, `minutesToBreach` — no existing list-row formatter/chip to
+ *   reuse, and `hasSla`'s own doc comment says the backend doesn't have real
+ *   SLA data for every row yet (LIVE rows deliberately report `hasSla: false`
+ *   rather than a misleading countdown) — a column built on that today would
+ *   show "unknown" for rows that do have a real SLA and could reasonably be
+ *   revisited once SLA data is reliably populated across all sources.
  */
-export type CaseOptionalColumnId = "product" | "type" | "severity" | "assignee";
+export type CaseOptionalColumnId =
+  | "product"
+  | "type"
+  | "severity"
+  | "assignee"
+  | "customer"
+  | "createdAt";
 
 export const CASE_OPTIONAL_COLUMNS: Record<
   CaseOptionalColumnId,
@@ -32,4 +59,6 @@ export const CASE_OPTIONAL_COLUMNS: Record<
   type: { label: "Type", track: "auto" },
   severity: { label: "Severity", track: "auto" },
   assignee: { label: "Assignee", track: "minmax(140px, 1fr)" },
+  customer: { label: "Customer", track: "minmax(140px, 1fr)" },
+  createdAt: { label: "Created", track: "minmax(100px, 0.7fr)" },
 };

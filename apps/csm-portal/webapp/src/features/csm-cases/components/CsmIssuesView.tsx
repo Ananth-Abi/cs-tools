@@ -296,14 +296,31 @@ export default function CsmIssuesView({
   const currentUserId = useCurrentUser().user?.id;
 
   // "Customise columns" — off unless a caller opts in (see `enableColumnCustomization`'s
-  // doc). Available optional columns mirror `CasesList`'s own legacy default set so a
-  // returning user who never opens the picker sees the exact same columns as before.
-  const availableOptionalColumns: CaseOptionalColumnId[] = hideSeverityColumn
-    ? ["product", "assignee"]
-    : ["product", "type", "severity", "assignee"];
-  const defaultVisibleOptionalColumns: CaseOptionalColumnId[] = hideSeverityColumn
-    ? ["product"]
-    : ["product", "type", "severity"];
+  // doc). `showSeverityColumn` mirrors the exact gate `CasesList` itself is given below
+  // (`isServiceRequestOnly || hideSeverityColumn`) so the picker can never offer a
+  // Severity column that would just render "—" for every row (service requests have no
+  // severity concept at all).
+  const showSeverityColumn = !(isServiceRequestOnly || hideSeverityColumn);
+  // Every current caller of this view locks the case type via `lockedFilters` (Case, SR,
+  // SRA, Engagements each fix `caseTypes` to one value) — the Type column would then show
+  // the same chip on every row, so it's still offered (a legacy row that predates type
+  // tagging renders "—" there, which is a genuine signal) but left off by default. An
+  // unlocked, multi-type view (none exists among today's callers) would want it on by
+  // default, hence the `isLockedToSingleType` check rather than hard-coding this off.
+  const isLockedToSingleType = lockedFilters?.caseTypes?.length === 1;
+  const availableOptionalColumns: CaseOptionalColumnId[] = [
+    "product",
+    "type",
+    ...(showSeverityColumn ? (["severity"] as const) : []),
+    "assignee",
+    "customer",
+    "createdAt",
+  ];
+  const defaultVisibleOptionalColumns: CaseOptionalColumnId[] = [
+    "product",
+    ...(isLockedToSingleType ? [] : (["type"] as const)),
+    ...(showSeverityColumn ? (["severity"] as const) : []),
+  ];
   const columnPrefs = useColumnPreferences({
     viewId: `case-list:${columnsViewId ?? entityNoun}`,
     userKey: getColumnPreferencesUserKey({ id: currentUserId, email: currentUserEmail }),

@@ -118,6 +118,18 @@ function renderOptionalCell(id: CaseOptionalColumnId, c: CsmCaseRow): JSX.Elemen
           {c.assignee}
         </Typography>
       );
+    case "customer":
+      return (
+        <Typography variant="body2" noWrap title={c.customer || undefined}>
+          {c.customer}
+        </Typography>
+      );
+    case "createdAt":
+      return (
+        <Typography variant="caption" color="text.secondary" noWrap>
+          <RelativeTime iso={c.createdAt} />
+        </Typography>
+      );
   }
 }
 

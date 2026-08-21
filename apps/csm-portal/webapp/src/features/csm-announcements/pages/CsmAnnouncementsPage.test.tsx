@@ -58,8 +58,8 @@ vi.mock("@hooks/useIdTokenClaims", () => ({
 }));
 
 const mockedUseSearch = vi.mocked(useSearchAnnouncements);
-// Number, Subject, Project, State, Created by, Created, Updated.
-const ANNOUNCEMENT_COLUMN_COUNT = 7;
+// Number, Reference, Subject, Project, State, Created by, Created, Updated.
+const ANNOUNCEMENT_COLUMN_COUNT = 8;
 
 /** `CsmAnnouncementsPage` renders a `RouterLink` per row, so every render
  * here needs router context. */
@@ -169,17 +169,40 @@ describe("CsmAnnouncementsPage — customise columns", () => {
     render(<CsmAnnouncementsPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "Customise announcements columns" }));
-    // Column order is Number, Subject, Project, State, Created by, Created,
-    // Updated — "Created" is the 6th checkbox, the one available-but-hidden
-    // column (see DEFAULT_ANNOUNCEMENT_COLUMN_IDS).
+    // Column order is Number, Reference, Subject, Project, State, Created by,
+    // Created, Updated — "Created" is the 7th checkbox, one of the two
+    // available-but-hidden columns (see DEFAULT_ANNOUNCEMENT_COLUMN_IDS).
     const checkboxes = screen.getAllByRole("checkbox");
-    fireEvent.click(checkboxes[5]);
+    fireEvent.click(checkboxes[6]);
 
     // The open popover marks the rest of the page `aria-hidden` (MUI's Modal
     // machinery) — `hidden: true` looks past that to the table underneath.
     expect(
       screen.getByRole("columnheader", { name: "Created", hidden: true }),
     ).toBeInTheDocument();
+  });
+
+  it("adds the Reference column when checked in the picker, and it renders the row's wso2CaseId", () => {
+    mockResult({
+      data: {
+        announcements: [{ ...ROW, wso2CaseId: "ACMESUB-42" }],
+        total: 1,
+        limit: 20,
+        offset: 0,
+        hasMore: false,
+      },
+    });
+    render(<CsmAnnouncementsPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Customise announcements columns" }));
+    // "Reference" is the 2nd checkbox — see the column order comment above.
+    const checkboxes = screen.getAllByRole("checkbox");
+    fireEvent.click(checkboxes[1]);
+
+    expect(
+      screen.getByRole("columnheader", { name: "Reference", hidden: true }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ACMESUB-42")).toBeInTheDocument();
   });
 
   it("never lets every column be unchecked", () => {
