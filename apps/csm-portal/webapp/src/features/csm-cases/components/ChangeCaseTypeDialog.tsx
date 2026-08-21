@@ -222,7 +222,7 @@ export default function ChangeCaseTypeDialog({
   };
 
   return (
-    <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>
         <Box sx={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
           <span>Change case type</span>
@@ -469,62 +469,72 @@ export default function ChangeCaseTypeDialog({
 
             {targetType === "service_request" && (
               <>
-                <FormControl fullWidth size="small" required>
-                  <InputLabel id="transfer-catalog-label">Catalog</InputLabel>
-                  <Select
-                    labelId="transfer-catalog-label"
-                    label="Catalog"
-                    value={catalogId}
-                    onChange={(e) => {
-                      setCatalogId(String(e.target.value));
-                      setCatalogItemId("");
-                      setAnswers({});
-                    }}
-                    disabled={!deployedProductId || catalogs.isLoading || noCatalogs || isSubmitting}
-                  >
-                    {(catalogs.data ?? []).map((c) => (
-                      <MenuItem key={c.id} value={c.id}>
-                        {c.name ?? c.id}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {!deployedProductId ? (
-                    <FormHelperText>This case has no deployed product on file.</FormHelperText>
-                  ) : catalogs.isError ? (
-                    <FormHelperText error>Failed to load catalogs.</FormHelperText>
-                  ) : catalogs.isLoading ? (
-                    <FormHelperText>Loading catalogs…</FormHelperText>
-                  ) : noCatalogs ? (
-                    <FormHelperText>
-                      No service catalogs are available for this product.
-                    </FormHelperText>
-                  ) : null}
-                </FormControl>
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                    gap: 2,
+                  }}
+                >
+                  <FormControl fullWidth size="small" required>
+                    <InputLabel id="transfer-catalog-label">Catalog</InputLabel>
+                    <Select
+                      labelId="transfer-catalog-label"
+                      label="Catalog"
+                      value={catalogId}
+                      onChange={(e) => {
+                        setCatalogId(String(e.target.value));
+                        setCatalogItemId("");
+                        setAnswers({});
+                      }}
+                      disabled={
+                        !deployedProductId || catalogs.isLoading || noCatalogs || isSubmitting
+                      }
+                    >
+                      {(catalogs.data ?? []).map((c) => (
+                        <MenuItem key={c.id} value={c.id}>
+                          {c.name ?? c.id}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    {!deployedProductId ? (
+                      <FormHelperText>This case has no deployed product on file.</FormHelperText>
+                    ) : catalogs.isError ? (
+                      <FormHelperText error>Failed to load catalogs.</FormHelperText>
+                    ) : catalogs.isLoading ? (
+                      <FormHelperText>Loading catalogs…</FormHelperText>
+                    ) : noCatalogs ? (
+                      <FormHelperText>
+                        No service catalogs are available for this product.
+                      </FormHelperText>
+                    ) : null}
+                  </FormControl>
 
-                <FormControl fullWidth size="small" required>
-                  <InputLabel id="transfer-catalog-item-label">Catalog item</InputLabel>
-                  <Select
-                    labelId="transfer-catalog-item-label"
-                    label="Catalog item"
-                    value={catalogItemId}
-                    onChange={(e) => {
-                      setCatalogItemId(String(e.target.value));
-                      setAnswers({});
-                    }}
-                    disabled={!catalogId || isSubmitting}
-                  >
-                    {catalogItems.map((ci) => (
-                      <MenuItem key={ci.id} value={ci.id}>
-                        {ci.name ?? ci.id}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  {!catalogId ? (
-                    <FormHelperText>Select a catalog first</FormHelperText>
-                  ) : catalogItems.length === 0 ? (
-                    <FormHelperText>No items found in this catalog.</FormHelperText>
-                  ) : null}
-                </FormControl>
+                  <FormControl fullWidth size="small" required>
+                    <InputLabel id="transfer-catalog-item-label">Catalog item</InputLabel>
+                    <Select
+                      labelId="transfer-catalog-item-label"
+                      label="Catalog item"
+                      value={catalogItemId}
+                      onChange={(e) => {
+                        setCatalogItemId(String(e.target.value));
+                        setAnswers({});
+                      }}
+                      disabled={!catalogId || isSubmitting}
+                    >
+                      {catalogItems.map((ci) => (
+                        <MenuItem key={ci.id} value={ci.id}>
+                          {ci.name ?? ci.id}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                    {!catalogId ? (
+                      <FormHelperText>Select a catalog first</FormHelperText>
+                    ) : catalogItems.length === 0 ? (
+                      <FormHelperText>No items found in this catalog.</FormHelperText>
+                    ) : null}
+                  </FormControl>
+                </Box>
 
                 {catalogItemId &&
                   (variables.isLoading ? (
