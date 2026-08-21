@@ -2496,9 +2496,9 @@ type ProjectContact struct {
 	// empty id internally; on the wire both a nil and an absent id are omitted, so the
 	// published shape is unchanged.
 	ID                   *string  `json:"id,omitempty"`
-	// Name is empty when the row has no contact record linked -- the name is only ever
+	// Name is nil when the row has no contact record linked -- the name is only ever
 	// known from that record.
-	Name string `json:"name"`
+	Name *string `json:"name"`
 	// Email falls back to the address the row was invited under when no contact record is
 	// linked, so a row whose contact record was never created stays identifiable instead
 	// of carrying no name and no address at all.

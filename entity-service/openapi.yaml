@@ -4192,8 +4192,9 @@ components:
             render the row unlinked rather than treating it as an error.
         name:
           type: string
+          nullable: true
           description: >
-            Empty when the row has no contact record linked — the name is only ever known
+            Null when the row has no contact record linked — the name is only ever known
             from that record.
         email:
           type: string
