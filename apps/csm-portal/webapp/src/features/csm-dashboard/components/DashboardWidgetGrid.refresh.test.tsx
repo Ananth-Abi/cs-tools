@@ -122,4 +122,28 @@ describe("DashboardWidgetGrid section refresh 'Last refreshed' hint", () => {
     await waitFor(() => expect(screen.getByText(/Last refreshed/)).toBeInTheDocument());
     expect(screen.getByText(/Last refreshed\s+just now/)).toBeInTheDocument();
   });
+
+  it("keeps the section refresh button and its 'Last refreshed' label in the DOM (hover/focus-reveal is opacity-only, not display:none) and reachable by keyboard", async () => {
+    // jsdom does not compute CSS (:hover/:focus-within styling isn't
+    // something Testing Library can assert on directly) — what IS
+    // assertable here is that the control is structurally present and
+    // still focusable/clickable at all times, rather than being removed
+    // from the DOM (or the tab order) until hovered.
+    renderGrid();
+
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh My Section" });
+    // Present and focusable (and thus clickable) even though it's visually
+    // hidden by default via opacity, not display:none.
+    refreshButton.focus();
+    expect(refreshButton).toHaveFocus();
+
+    fireEvent.click(refreshButton);
+    await waitFor(() => expect(screen.getByText(/Last refreshed/)).toBeInTheDocument());
+
+    // The label sits in the DOM right alongside the button once it exists,
+    // both governed by the same hover/focus-within reveal wrapper.
+    expect(screen.getByText(/Last refreshed\s+just now/)).toBeInTheDocument();
+  });
 });
