@@ -27,6 +27,7 @@ import "@testing-library/jest-dom/vitest";
 import CsmAnnouncementsPage from "@features/csm-announcements/pages/CsmAnnouncementsPage";
 import { useSearchAnnouncements } from "@features/csm-announcements/api/useSearchAnnouncements";
 import type { CsmAnnouncementRow } from "@features/csm-announcements/types/csmAnnouncements";
+import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 
 // The backend client reads runtime config (`CSM_PORTAL_BACKEND_BASE_URL`) at
 // module load, which isn't present under vitest. QueryErrorState imports
@@ -180,6 +181,13 @@ describe("CsmAnnouncementsPage — customise columns", () => {
     expect(
       screen.getByRole("columnheader", { name: "Created", hidden: true }),
     ).toBeInTheDocument();
+    // Same format the component's own formatDate() uses for createdAt/updatedAt.
+    const expectedCreatedAt = formatBackendTimestampForDisplay(ROW.createdAt, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+    expect(screen.getByText(expectedCreatedAt!)).toBeInTheDocument();
   });
 
   it("adds the Reference column when checked in the picker, and it renders the row's wso2CaseId", () => {

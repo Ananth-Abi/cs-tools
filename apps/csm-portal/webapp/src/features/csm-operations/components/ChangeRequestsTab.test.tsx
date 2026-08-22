@@ -180,6 +180,14 @@ describe("ChangeRequestsTab — customise columns", () => {
       }
     }
 
-    expect(screen.getAllByRole("columnheader", { hidden: true }).length).toBeGreaterThan(0);
+    // The invariant under test: the hook refuses to let the last visible
+    // optional column be unchecked. Fixed columns (Number/Subject/State/
+    // Updated) always render a header regardless, so assert the checkbox
+    // state directly rather than counting headers.
+    const remainingChecked = screen
+      .getAllByRole("checkbox")
+      .filter((checkbox) => (checkbox as HTMLInputElement).checked);
+    expect(remainingChecked.length).toBe(1);
+    expect(remainingChecked[0]).toBeDisabled();
   });
 });

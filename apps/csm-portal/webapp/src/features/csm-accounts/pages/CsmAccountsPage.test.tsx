@@ -126,6 +126,7 @@ describe("CsmAccountsPage — customise columns", () => {
     expect(
       screen.getByRole("columnheader", { name: "Account manager", hidden: true }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
   });
 
   it("never lets every column be unchecked", () => {

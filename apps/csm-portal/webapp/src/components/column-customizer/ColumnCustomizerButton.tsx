@@ -20,9 +20,10 @@ import {
   Checkbox,
   Divider,
   IconButton,
+  List,
+  ListItem,
+  ListItemButton,
   ListItemText,
-  MenuItem,
-  MenuList,
   Popover,
   Tooltip,
   Typography,
@@ -87,37 +88,41 @@ export default function ColumnCustomizerButton({
           >
             Columns
           </Typography>
-          <MenuList dense aria-label={label} sx={{ maxHeight: 320, overflowY: "auto" }}>
+          <List
+            dense
+            disablePadding
+            aria-label={label}
+            sx={{ maxHeight: 320, overflowY: "auto" }}
+          >
             {allColumns.map((column, index) => {
               const checked = isVisible(column.id);
               const disableUncheck = checked && visibleCount <= 1;
               return (
-                <MenuItem
-                  key={column.id}
-                  disableRipple
-                  onClick={() => !disableUncheck && onToggle(column.id)}
-                  sx={{ py: 0.25 }}
-                >
+                <ListItem key={column.id} disableGutters sx={{ px: 2, py: 0.25 }}>
                   <Checkbox
                     size="small"
                     checked={checked}
                     disabled={disableUncheck}
-                    tabIndex={-1}
+                    onChange={() => !disableUncheck && onToggle(column.id)}
                     sx={{ mr: 1, p: 0.25 }}
                   />
-                  <ListItemText
-                    primary={column.label}
-                    slotProps={{ primary: { style: { fontSize: 13 } } }}
-                  />
+                  <ListItemButton
+                    disableRipple
+                    disabled={disableUncheck}
+                    onClick={() => !disableUncheck && onToggle(column.id)}
+                    sx={{ py: 0, px: 0, borderRadius: 1 }}
+                  >
+                    <ListItemText
+                      primary={column.label}
+                      slotProps={{ primary: { style: { fontSize: 13 } } }}
+                    />
+                  </ListItemButton>
                   <Box sx={{ display: "flex", ml: 1 }}>
                     <IconButton
                       size="small"
                       aria-label={`Move ${column.label} up`}
                       disabled={index === 0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onMove(column.id, "up");
-                      }}
+                      onClick={() => onMove(column.id, "up")}
                       sx={{ p: 0.25 }}
                     >
                       <ChevronUp size={14} />
@@ -126,19 +131,16 @@ export default function ColumnCustomizerButton({
                       size="small"
                       aria-label={`Move ${column.label} down`}
                       disabled={index === allColumns.length - 1}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onMove(column.id, "down");
-                      }}
+                      onClick={() => onMove(column.id, "down")}
                       sx={{ p: 0.25 }}
                     >
                       <ChevronDown size={14} />
                     </IconButton>
                   </Box>
-                </MenuItem>
+                </ListItem>
               );
             })}
-          </MenuList>
+          </List>
           <Divider sx={{ my: 0.5 }} />
           <Box sx={{ px: 1.5 }}>
             <Button size="small" variant="text" onClick={onReset} sx={{ textTransform: "none" }}>

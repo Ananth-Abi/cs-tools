@@ -123,12 +123,16 @@ function reconcile(
   if (!persisted) {
     return { order: columns.map((c) => c.id), visible: [...defaultVisibleIds] };
   }
-  const order = persisted.order.filter((id) => knownIds.has(id));
+  // A hand-edited or otherwise corrupted `localStorage` value can contain
+  // duplicate ids (e.g. `order: ["a", "a", "b"]`) — dedupe alongside the
+  // known-id filter so a duplicate never survives into `allColumns`/
+  // `visibleColumns`, where every consumer uses the id as a React list key.
+  const order = [...new Set(persisted.order.filter((id) => knownIds.has(id)))];
   const orderedIds = new Set(order);
   columns.forEach((c) => {
     if (!orderedIds.has(c.id)) order.push(c.id);
   });
-  const visible = persisted.visible.filter((id) => knownIds.has(id));
+  const visible = [...new Set(persisted.visible.filter((id) => knownIds.has(id)))];
   const visibleIds = new Set(visible);
   columns.forEach((c) => {
     if (!orderedIds.has(c.id) && defaultVisibleIds.includes(c.id) && !visibleIds.has(c.id)) {

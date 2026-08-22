@@ -218,6 +218,30 @@ describe("useColumnPreferences", () => {
     expect(saved.visible).toEqual(["b", "a", "c"]);
   });
 
+  it("dedupes duplicate ids in a persisted order/visible array on reconcile", () => {
+    // A hand-edited (or otherwise corrupted) localStorage value with a
+    // duplicate id — every consumer keys off `allColumns`/`visibleColumns`
+    // ids (e.g. `TableCell key={id}`), so a surviving duplicate is a React
+    // duplicate-key rendering bug, not just untidy data.
+    const key = "csm:user-1:test-view:columns";
+    window.localStorage.setItem(
+      key,
+      JSON.stringify({ order: ["a", "a", "b", "c"], visible: ["a", "a", "c"] }),
+    );
+
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a", "b"],
+      }),
+    );
+
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "b", "c"]);
+    expect(result.current.visibleColumns.map((c) => c.id)).toEqual(["a", "c"]);
+  });
+
   it("falls back to defaults when the stored value is corrupt", () => {
     window.localStorage.setItem("csm:user-1:test-view:columns", "not json");
 
