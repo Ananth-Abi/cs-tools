@@ -16,9 +16,70 @@
 
 import { Box, Button, Tooltip } from "@wso2/oxygen-ui";
 import { Check, Link2 } from "@wso2/oxygen-ui-icons-react";
-import { useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
 import { formatAbsoluteForUser } from "@utils/dateTime";
+
+/** How often mounted relative-time displays refresh themselves. Coarser than
+ * a second-level ticker since the display granularity is minutes, but tight
+ * enough that "1m ago" turning into "2m ago" feels prompt. */
+const TICK_INTERVAL_MS = 20_000;
+
+type TickListener = () => void;
+
+/** Module-level subscriber set backing a single shared `setInterval`, so a
+ * page with many relative timestamps mounted at once (e.g. a `CasesList`
+ * table, or a long comment thread) re-renders off one timer instead of one
+ * per instance. */
+const tickListeners = new Set<TickListener>();
+let tickIntervalId: ReturnType<typeof setInterval> | null = null;
+
+function ensureTicking(): void {
+  if (tickIntervalId !== null) return;
+  tickIntervalId = setInterval(() => {
+    tickListeners.forEach((listener) => listener());
+  }, TICK_INTERVAL_MS);
+}
+
+function stopTickingIfIdle(): void {
+  if (tickListeners.size === 0 && tickIntervalId !== null) {
+    clearInterval(tickIntervalId);
+    tickIntervalId = null;
+  }
+}
+
+/**
+ * Subscribes the calling component to the shared tick and returns the
+ * timestamp (ms) as of the last tick, so it re-renders — and recomputes
+ * whatever it derives from "now" — on the same cadence as every other
+ * `RelativeTime` on the page. Used by {@link RelativeTime} itself, and by
+ * the two "Last refreshed …" labels (`CaseSlaTable`, `RefreshButton`) that
+ * format a relative string outside this component.
+ *
+ * Deliberately returns the timestamp itself, not an opaque counter: this
+ * webapp runs the React Compiler, which auto-memoizes calls like
+ * `formatRelativeTime(iso)` against the reactive values they visibly read.
+ * A counter that's merely in scope wouldn't be picked up as a dependency —
+ * the caller must pass this value in as the explicit `now` argument (see
+ * `formatRelativeTime`'s second parameter) for the compiler to know the
+ * result needs recomputing on every tick.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- hook is colocated with the shared ticker it manages, and reused by the two other relative-time call sites (fast-refresh DX only)
+export function useRelativeTimeTick(): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const listener = (): void => setNow(Date.now());
+    tickListeners.add(listener);
+    ensureTicking();
+    return () => {
+      tickListeners.delete(listener);
+      stopTickingIfIdle();
+    };
+  }, []);
+
+  return now;
+}
 
 interface RelativeTimeProps {
   /** Backend timestamp string (assumed UTC if no zone is present). */
@@ -88,7 +149,10 @@ export default function RelativeTime({
   href,
   className,
 }: RelativeTimeProps): JSX.Element {
-  const relative = formatRelativeTime(iso);
+  // Subscribed only to trigger a re-render on each tick; the recomputed
+  // relative string below always reads a fresh `Date.now()` internally.
+  const now = useRelativeTimeTick();
+  const relative = formatRelativeTime(iso, now);
   const absolute = formatAbsoluteForUser(iso) ?? "Unknown time";
 
   const inner = href ? (

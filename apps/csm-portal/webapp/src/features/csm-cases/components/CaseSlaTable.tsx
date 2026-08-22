@@ -34,6 +34,7 @@ import { Clock, RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
+import { useRelativeTimeTick } from "@components/RelativeTime";
 import { useGetCsmCaseSlas } from "@features/csm-cases/api/useGetCsmCaseSlas";
 import type { CaseSla } from "@features/csm-cases/types/csmCases";
 
@@ -94,6 +95,12 @@ interface CaseSlaTableProps {
 export function CaseSlaTable({ caseId }: CaseSlaTableProps): JSX.Element {
   const { data, isLoading, isError, isFetching, dataUpdatedAt, refetch } =
     useGetCsmCaseSlas(caseId);
+  // Re-render on the shared tick so "Last refreshed …" keeps advancing
+  // without requiring another fetch or unrelated state change. `now` is
+  // passed explicitly into `formatRelativeTime` below (rather than relying
+  // on its internal `Date.now()` default) so the React Compiler's
+  // auto-memoization sees the tick as a dependency and recomputes the label.
+  const now = useRelativeTimeTick();
 
   const slas = data?.slas ?? [];
   const count = data?.count ?? slas.length;
@@ -121,7 +128,8 @@ export function CaseSlaTable({ caseId }: CaseSlaTableProps): JSX.Element {
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
           {dataUpdatedAt ? (
             <Typography variant="caption" color="text.secondary">
-              Last refreshed {formatRelativeTime(new Date(dataUpdatedAt).toISOString())}
+              Last refreshed{" "}
+              {formatRelativeTime(new Date(dataUpdatedAt).toISOString(), now)}
             </Typography>
           ) : null}
           <IconButton

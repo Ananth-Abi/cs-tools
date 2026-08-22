@@ -18,6 +18,7 @@ import { Box, IconButton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
 import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
+import { useRelativeTimeTick } from "@components/RelativeTime";
 
 interface RefreshButtonProps {
   /** Re-runs the underlying query. Wire to the react-query `refetch`. */
@@ -41,12 +42,19 @@ export default function RefreshButton({
   updatedAt,
   label,
 }: RefreshButtonProps): JSX.Element {
+  // Re-render on the shared tick so "Last refreshed …" keeps advancing
+  // without requiring another fetch or unrelated state change. `now` is
+  // passed explicitly into `formatRelativeTime` below (rather than relying
+  // on its internal `Date.now()` default) so the React Compiler's
+  // auto-memoization sees the tick as a dependency and recomputes the label.
+  const now = useRelativeTimeTick();
+
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
       {updatedAt ? (
         <Typography variant="caption" color="text.secondary">
           Last refreshed{" "}
-          {formatRelativeTime(new Date(updatedAt).toISOString())}
+          {formatRelativeTime(new Date(updatedAt).toISOString(), now)}
         </Typography>
       ) : null}
       <Tooltip title={label}>

@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import RelativeTime from "@components/RelativeTime";
@@ -97,5 +97,29 @@ describe("RelativeTime", () => {
       name: /copy link to this entry/i,
     });
     expect(() => fireEvent.click(button)).not.toThrow();
+  });
+
+  it("updates the displayed relative text on its own, without a re-render trigger from the parent", () => {
+    vi.useFakeTimers();
+    try {
+      const start = new Date("2026-08-22T10:00:00.000Z");
+      vi.setSystemTime(start);
+      const fixedIso = new Date(start.getTime() - 60_000).toISOString(); // "1m ago"
+
+      render(<RelativeTime iso={fixedIso} />);
+      expect(screen.getByText("1m ago")).toBeInTheDocument();
+
+      // Advance the clock by 6 minutes' worth of ticks with no parent
+      // re-render and no user interaction — only the internal timer fires.
+      // `advanceTimersByTime` also advances the fake system clock itself, so
+      // this alone moves both "now" and the interval forward together.
+      act(() => {
+        vi.advanceTimersByTime(6 * 60_000);
+      });
+
+      expect(screen.getByText("7m ago")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
