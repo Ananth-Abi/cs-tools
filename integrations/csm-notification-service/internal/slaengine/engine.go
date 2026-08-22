@@ -152,6 +152,21 @@ func tierTime(startedAt time.Time, d time.Duration, tier string) time.Time {
 // place and retries on the next tick instead of silently losing it (the
 // entity-service write already happened and is itself idempotent, so
 // re-attempting it on a retry is harmless).
+//
+// KNOWN LIMITATION: DueMembers doesn't claim a member before returning it.
+// RunTicker starts exactly one Tick loop per process (independent of
+// SLA_CONSUMER_COUNT, which only controls how many eventbus.Consumer
+// instances call Handle), so a single-replica deployment is unaffected —
+// but if this service is ever run as more than one replica against the
+// same Redis instance, each replica's own RunTicker loop can read and act
+// on the same due member in the same window, each publishing its own
+// events.TypeSLATierReached for that tier before either removes the wake
+// entry, producing duplicate tier-reached events for one crossing
+// (SetTierReachedIfUnset itself stays correct; only the count of published
+// events is affected). Closing this needs an atomic claim (e.g. a Redis
+// lease with a TTL, released on failure so a crashed replica doesn't strand
+// it) before Tick acts on a member — a real addition, not a quick fix, so
+// it's flagged here rather than built speculatively.
 func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 	members, err := e.wake.DueMembers(ctx, now)
 	if err != nil {
