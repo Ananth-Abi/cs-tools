@@ -329,8 +329,14 @@ describe("shouldRetryWidgetFetch", () => {
     expect(shouldRetryWidgetFetch(1, badGateway)).toBe(false);
   });
 
-  it("does not retry a dropped-from-queue error from a team switch", () => {
-    expect(shouldRetryWidgetFetch(0, new WidgetFetchQueueDroppedError())).toBe(false);
+  it("retries once (but not twice) a dropped-from-queue error from a team switch", () => {
+    // A widget whose `filters` don't reference the selected team keeps the
+    // same `queryKey` across a team switch, so nothing else would ever
+    // naturally re-trigger a query left stuck by a queue drop — one retry
+    // is required to unstick it (see the function's own doc comment), but
+    // still capped at exactly one so a flip-flopping team can't loop.
+    expect(shouldRetryWidgetFetch(0, new WidgetFetchQueueDroppedError())).toBe(true);
+    expect(shouldRetryWidgetFetch(1, new WidgetFetchQueueDroppedError())).toBe(false);
   });
 
   it("does not retry an ordinary failure (e.g. a 400/404/500), same as before this task's retry policy existed", () => {

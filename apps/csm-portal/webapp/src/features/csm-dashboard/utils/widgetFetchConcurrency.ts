@@ -264,14 +264,23 @@ export async function withWidgetFetchSlot<T>(
  */
 export function shouldRetryWidgetFetch(failureCount: number, error: Error): boolean {
   if (failureCount >= 1) return false;
-  // A queue-drop means the selected team changed while this fetch was
-  // still waiting for a slot — the widget tile that queued it has already
-  // moved its own `queryKey` to the new team, so nobody observes this
-  // query anymore. Retrying would just re-enter the queue for a result
-  // nothing reads, and could loop if the team flips back and forth
-  // rapidly. Checked before the AbortError/502/503 cases below since it's
-  // its own distinct, non-retryable failure mode.
-  if (error instanceof WidgetFetchQueueDroppedError) return false;
+  // A queue-drop means the selected team changed while this fetch was still
+  // waiting for a slot. The queue-drop's `teamKey` mismatch is keyed off the
+  // PAGE-level selected team, not off whether this particular widget's own
+  // `filters` actually reference `__current_team__` — so a widget whose
+  // filters don't reference the team keeps the exact same `queryKey` across
+  // the switch, and nothing else would ever naturally re-trigger it
+  // (react-query only auto-refetches on a `queryKey` change). Without a
+  // retry here, that widget is left stuck in a permanent error state until
+  // something unrelated forces a full remount. Allowing exactly one retry
+  // (still capped by `failureCount >= 1` above, so a rapidly flip-flopping
+  // team can't loop) is safe: by the time the retry's `queryFn` actually
+  // executes, react-query has re-synced the query's active `queryFn` to
+  // whatever the most recent render passed in, so the retry re-enters
+  // `withWidgetFetchSlot` with whatever `teamKey` is CURRENT by then, not a
+  // stale one — and for the widgets this matters for (queryKey unchanged
+  // across the switch), a slot is free immediately and it succeeds.
+  if (error instanceof WidgetFetchQueueDroppedError) return true;
   if (error?.name === "AbortError") return true;
   const errorWithStatus = error as Error & {
     response?: { status?: number };
