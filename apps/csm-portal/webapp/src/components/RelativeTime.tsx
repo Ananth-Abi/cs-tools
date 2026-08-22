@@ -16,7 +16,7 @@
 
 import { Box, Button, Tooltip } from "@wso2/oxygen-ui";
 import { Check, Link2 } from "@wso2/oxygen-ui-icons-react";
-import { useEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type JSX } from "react";
 import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
 import { formatAbsoluteForUser, parseBackendTimestamp } from "@utils/dateTime";
 
@@ -136,9 +136,47 @@ export function useRelativeTimeTick(trackedMs?: number | null): number {
   const [now, setNow] = useState(() => Date.now());
   const keyRef = useRef<object>({});
 
+  // Corrects `now` the instant `trackedMs` changes to an actual tracked
+  // value, via `useLayoutEffect` rather than the registration `useEffect`
+  // below — layout effects flush synchronously before the browser paints,
+  // so this `setNow` lands before anything is visible to the user, with no
+  // separate committed frame showing the stale value in between. Without
+  // this, a component whose `now` state went stale while mounted (nothing
+  // tracked, or its previous tracked timestamp hadn't ticked yet) would
+  // compare a freshly-set `trackedMs` (e.g. "right now" from a refresh
+  // click) against that stale `now`, producing a transient negative diff
+  // ("Xm from now") until the next scheduled tick self-corrects it.
+  //
+  // Gated the same way the registration effect below is (nothing to do
+  // when `trackedMs` is absent) — an earlier version of this ran
+  // unconditionally on every `trackedMs` change including "became
+  // untracked," which set state (and forced an extra render) on every
+  // mount even for a component with nothing tracked at all. That extra
+  // render happened to run before `useElementVisibleOnce`'s own mount
+  // effect (see that hook's `[ref.current]` dependency) captured a stable
+  // `ref.current`, so it re-observed a second time — caught by
+  // `DashboardWidgetGrid.realisticViewport.test.tsx` asserting exactly one
+  // `IntersectionObserver` instance per widget, not this task's own
+  // authored test.
+  //
+  // React's own docs describe adjusting state synchronously during the
+  // render body itself for this exact "correct state when a prop changes"
+  // shape (https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes),
+  // which would avoid this hook needing an effect for the correction at
+  // all — but this app runs the React Compiler with its purity rule
+  // enforced (`react-hooks/purity`), which rejects `Date.now()` (impure)
+  // called from a render body outright, so that specific shape isn't
+  // available here; a layout effect is the closest equivalent this
+  // codebase's lint config allows.
+  useLayoutEffect(() => {
+    if (trackedMs == null || !Number.isFinite(trackedMs)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs `now` to the external shared-scheduler registry the instant this instance's tracked timestamp changes, so it's never rendered against a stale `now` left over from before this timestamp existed; see this effect's own comment above for why it's a layout effect specifically
+    setNow(Date.now());
+  }, [trackedMs]);
+
   useEffect(() => {
     const key = keyRef.current;
-    if (!trackedMs || !Number.isFinite(trackedMs)) {
+    if (trackedMs == null || !Number.isFinite(trackedMs)) {
       registrations.delete(key);
       reschedule();
       return;
@@ -148,17 +186,6 @@ export function useRelativeTimeTick(trackedMs?: number | null): number {
       listener: () => setNow(Date.now()),
     });
     reschedule();
-    // Registering (or re-registering on a `trackedMs` change) only sets up
-    // a FUTURE timer via `reschedule()` above — it doesn't itself refresh
-    // `now`. Without this, a component whose `now` state went stale while
-    // mounted (nothing tracked, or its previous tracked timestamp hadn't
-    // ticked yet) would compare a freshly-set `trackedMs` (e.g. "right now"
-    // from a refresh click) against that stale `now`, producing a
-    // transient negative diff ("Xm from now") until the next scheduled
-    // tick self-corrects it. Refresh immediately so a new registration is
-    // never rendered against a stale `now`.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs `now` to the external shared-scheduler registry the instant this instance (re)registers a timestamp, so it's never rendered against a stale `now` left over from before this timestamp existed
-    setNow(Date.now());
     return () => {
       registrations.delete(key);
       reschedule();
