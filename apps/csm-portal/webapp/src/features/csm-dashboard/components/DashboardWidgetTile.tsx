@@ -724,8 +724,8 @@ export default function DashboardWidgetTile({
         <Box
           sx={{
             position: "absolute",
-            top: 8,
-            right: resolvedDescription ? 40 : 8,
+            top: 4,
+            right: resolvedDescription ? 36 : 4,
             pointerEvents: "auto",
           }}
         >
