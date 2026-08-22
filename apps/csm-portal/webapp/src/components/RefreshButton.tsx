@@ -17,6 +17,7 @@
 import { Box, IconButton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
+import { useState } from "react";
 import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
 import { useRelativeTimeTick } from "@components/RelativeTime";
 
@@ -50,9 +51,19 @@ export default function RefreshButton({
   // as a dependency and recomputes the label.
   const now = useRelativeTimeTick(updatedAt);
 
+  // The "Last refreshed" hint only appears after the user has manually
+  // clicked this control at least once — not from the page's initial data
+  // load, which also sets `updatedAt`.
+  const [hasManuallyRefreshed, setHasManuallyRefreshed] = useState(false);
+
+  const handleRefreshClick = (): void => {
+    setHasManuallyRefreshed(true);
+    onRefresh();
+  };
+
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-      {updatedAt ? (
+      {hasManuallyRefreshed && updatedAt ? (
         <Typography variant="caption" color="text.secondary">
           Last refreshed{" "}
           {formatRelativeTime(new Date(updatedAt).toISOString(), now)}
@@ -63,7 +74,7 @@ export default function RefreshButton({
         <span>
           <IconButton
             size="small"
-            onClick={onRefresh}
+            onClick={handleRefreshClick}
             disabled={isFetching}
             aria-label={label}
           >

@@ -32,6 +32,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Clock, RefreshCw } from "@wso2/oxygen-ui-icons-react";
 import type { JSX } from "react";
+import { useState } from "react";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
 import { useRelativeTimeTick } from "@components/RelativeTime";
@@ -103,6 +104,16 @@ export function CaseSlaTable({ caseId }: CaseSlaTableProps): JSX.Element {
   // as a dependency and recomputes the label.
   const now = useRelativeTimeTick(dataUpdatedAt);
 
+  // The "Last refreshed" hint only appears after the user has manually
+  // clicked refresh at least once — not from the tab's initial data load,
+  // which also sets `dataUpdatedAt`.
+  const [hasManuallyRefreshed, setHasManuallyRefreshed] = useState(false);
+
+  const handleRefreshClick = (): void => {
+    setHasManuallyRefreshed(true);
+    void refetch();
+  };
+
   const slas = data?.slas ?? [];
   const count = data?.count ?? slas.length;
   const isTruncated = !isLoading && !isError && slas.length < count;
@@ -127,7 +138,7 @@ export function CaseSlaTable({ caseId }: CaseSlaTableProps): JSX.Element {
           )}
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          {dataUpdatedAt ? (
+          {hasManuallyRefreshed && dataUpdatedAt ? (
             <Typography variant="caption" color="text.secondary">
               Last refreshed{" "}
               {formatRelativeTime(new Date(dataUpdatedAt).toISOString(), now)}
@@ -135,7 +146,7 @@ export function CaseSlaTable({ caseId }: CaseSlaTableProps): JSX.Element {
           ) : null}
           <IconButton
             size="small"
-            onClick={() => void refetch()}
+            onClick={handleRefreshClick}
             disabled={isFetching}
             aria-label="Refresh SLAs"
           >
@@ -168,7 +179,7 @@ export function CaseSlaTable({ caseId }: CaseSlaTableProps): JSX.Element {
             size="small"
             variant="outlined"
             startIcon={<RefreshCw size={14} />}
-            onClick={() => void refetch()}
+            onClick={handleRefreshClick}
             sx={{ textTransform: "none" }}
           >
             Retry
