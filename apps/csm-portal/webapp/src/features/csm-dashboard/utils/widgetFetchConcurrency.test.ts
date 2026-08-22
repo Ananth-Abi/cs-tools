@@ -307,44 +307,54 @@ describe("shouldRetryWidgetFetch", () => {
     name: "AbortError",
   });
 
-  it("retries once on this module's own timeout abort", () => {
+  it("retries once on this module's own timeout abort, regardless of isTeamIndependent", () => {
     // react-query calls its `retry` predicate with `failureCount` starting
     // at 0 on the FIRST failure (verified directly against
     // @tanstack/query-core's retryer.ts — NOT 1, which is the mistake this
-    // test guards against reintroducing).
-    expect(shouldRetryWidgetFetch(0, abortError)).toBe(true);
+    // test guards against reintroducing). The timeout branch doesn't care
+    // about team-scoping at all — only the queue-drop branch does.
+    expect(shouldRetryWidgetFetch(0, abortError, true)).toBe(true);
+    expect(shouldRetryWidgetFetch(0, abortError, false)).toBe(true);
   });
 
   it("does not retry a second time once the retry itself has also failed", () => {
-    expect(shouldRetryWidgetFetch(1, abortError)).toBe(false);
+    expect(shouldRetryWidgetFetch(1, abortError, true)).toBe(false);
   });
 
-  it("retries once on a 502/503 from the backend, same as the app's own global default", () => {
+  it("retries once on a 502/503 from the backend, same as the app's own global default, regardless of isTeamIndependent", () => {
     const badGateway = Object.assign(new Error("Bad Gateway"), { status: 502 });
     const serviceUnavailable = Object.assign(new Error("Service Unavailable"), {
       response: { status: 503 },
     });
-    expect(shouldRetryWidgetFetch(0, badGateway)).toBe(true);
-    expect(shouldRetryWidgetFetch(0, serviceUnavailable)).toBe(true);
-    expect(shouldRetryWidgetFetch(1, badGateway)).toBe(false);
+    expect(shouldRetryWidgetFetch(0, badGateway, true)).toBe(true);
+    expect(shouldRetryWidgetFetch(0, serviceUnavailable, false)).toBe(true);
+    expect(shouldRetryWidgetFetch(1, badGateway, true)).toBe(false);
   });
 
-  it("retries once (but not twice) a dropped-from-queue error from a team switch", () => {
+  it("retries once (but not twice) a dropped-from-queue error for a team-independent widget", () => {
     // A widget whose `filters` don't reference the selected team keeps the
     // same `queryKey` across a team switch, so nothing else would ever
     // naturally re-trigger a query left stuck by a queue drop — one retry
     // is required to unstick it (see the function's own doc comment), but
     // still capped at exactly one so a flip-flopping team can't loop.
-    expect(shouldRetryWidgetFetch(0, new WidgetFetchQueueDroppedError())).toBe(true);
-    expect(shouldRetryWidgetFetch(1, new WidgetFetchQueueDroppedError())).toBe(false);
+    expect(shouldRetryWidgetFetch(0, new WidgetFetchQueueDroppedError(), true)).toBe(true);
+    expect(shouldRetryWidgetFetch(1, new WidgetFetchQueueDroppedError(), true)).toBe(false);
+  });
+
+  it("does not retry a dropped-from-queue error for a team-specific widget", () => {
+    // A widget whose `filters` DO reference the selected team already got a
+    // brand-new `queryKey` from the switch itself (see
+    // `resolveTeamPlaceholder`) — retrying the dropped fetch would just
+    // re-populate a cache entry for a `queryKey` nobody reads anymore.
+    expect(shouldRetryWidgetFetch(0, new WidgetFetchQueueDroppedError(), false)).toBe(false);
   });
 
   it("does not retry an ordinary failure (e.g. a 400/404/500), same as before this task's retry policy existed", () => {
     const notFound = Object.assign(new Error("Not Found"), { status: 404 });
     const serverError = Object.assign(new Error("Internal Server Error"), { status: 500 });
     const genericFailure = new Error("Unsupported widget resourceType: bogus");
-    expect(shouldRetryWidgetFetch(0, notFound)).toBe(false);
-    expect(shouldRetryWidgetFetch(0, serverError)).toBe(false);
-    expect(shouldRetryWidgetFetch(0, genericFailure)).toBe(false);
+    expect(shouldRetryWidgetFetch(0, notFound, true)).toBe(false);
+    expect(shouldRetryWidgetFetch(0, serverError, true)).toBe(false);
+    expect(shouldRetryWidgetFetch(0, genericFailure, true)).toBe(false);
   });
 });

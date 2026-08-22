@@ -101,11 +101,15 @@ let currentTeamKey: string | null = null;
  * Thrown to a queued (not-yet-started) widget fetch whose `teamKey` no
  * longer matches {@link currentTeamKey} — i.e. the selected ABT team
  * switched while this fetch was still waiting for a slot. Distinguished
- * from an ordinary failure so `shouldRetryWidgetFetch` can refuse to
- * retry it (re-entering the queue for a query nobody observes anymore,
- * since the widget tile has already moved its `queryKey` to the new
- * team, would be pure waste) and so a caller that wants to tell "queue
- * drop" apart from "the request itself failed" can `instanceof` it.
+ * from an ordinary failure so `shouldRetryWidgetFetch` can decide whether
+ * retrying it is worth anything: for a team-SPECIFIC widget (whose filters
+ * reference `__current_team__`), the switch already moved its `queryKey`
+ * to the new team, so re-entering the queue for the dropped fetch would be
+ * pure waste — a query nobody observes anymore. For a team-INDEPENDENT
+ * widget, the `queryKey` didn't change, so a retry is the only thing that
+ * un-sticks it (see `shouldRetryWidgetFetch`'s own doc comment for the
+ * full reasoning). Also lets a caller that wants to tell "queue drop"
+ * apart from "the request itself failed" `instanceof` it.
  */
 export class WidgetFetchQueueDroppedError extends Error {
   constructor() {
@@ -261,26 +265,47 @@ export async function withWidgetFetchSlot<T>(
  * (`>= 2`, matching the global default's own threshold — copied from it
  * without re-deriving this) silently allowed a 2nd retry — caught in this
  * task's own verification, not by inspection alone.
+ *
+ * `isTeamIndependent` — whether THIS query's own filters (see
+ * `hasTeamPlaceholder` in `teamFilterPlaceholder.ts`) reference
+ * `__current_team__` — decides whether a queue-drop is worth retrying at
+ * all (see the `WidgetFetchQueueDroppedError` branch below); it plays no
+ * part in the timeout/502/503 branches, which retry unconditionally
+ * regardless of a widget's own team-scoping.
  */
-export function shouldRetryWidgetFetch(failureCount: number, error: Error): boolean {
+export function shouldRetryWidgetFetch(
+  failureCount: number,
+  error: Error,
+  isTeamIndependent: boolean,
+): boolean {
   if (failureCount >= 1) return false;
   // A queue-drop means the selected team changed while this fetch was still
   // waiting for a slot. The queue-drop's `teamKey` mismatch is keyed off the
   // PAGE-level selected team, not off whether this particular widget's own
-  // `filters` actually reference `__current_team__` — so a widget whose
-  // filters don't reference the team keeps the exact same `queryKey` across
-  // the switch, and nothing else would ever naturally re-trigger it
-  // (react-query only auto-refetches on a `queryKey` change). Without a
-  // retry here, that widget is left stuck in a permanent error state until
-  // something unrelated forces a full remount. Allowing exactly one retry
-  // (still capped by `failureCount >= 1` above, so a rapidly flip-flopping
-  // team can't loop) is safe: by the time the retry's `queryFn` actually
-  // executes, react-query has re-synced the query's active `queryFn` to
-  // whatever the most recent render passed in, so the retry re-enters
-  // `withWidgetFetchSlot` with whatever `teamKey` is CURRENT by then, not a
-  // stale one — and for the widgets this matters for (queryKey unchanged
-  // across the switch), a slot is free immediately and it succeeds.
-  if (error instanceof WidgetFetchQueueDroppedError) return true;
+  // `filters` actually reference `__current_team__` — so a TEAM-INDEPENDENT
+  // widget (whose filters don't reference the team) keeps the exact same
+  // `queryKey` across the switch, and nothing else would ever naturally
+  // re-trigger it (react-query only auto-refetches on a `queryKey` change).
+  // Without a retry here, that widget is left stuck in a permanent error
+  // state until something unrelated forces a full remount. Allowing exactly
+  // one retry (still capped by `failureCount >= 1` above, so a rapidly
+  // flip-flopping team can't loop) is safe: by the time the retry's
+  // `queryFn` actually executes, react-query has re-synced the query's
+  // active `queryFn` to whatever the most recent render passed in, so the
+  // retry re-enters `withWidgetFetchSlot` with whatever `teamKey` is CURRENT
+  // by then, not a stale one — and since this query's `queryKey` never
+  // changed, a slot is free immediately and it succeeds.
+  //
+  // A TEAM-SPECIFIC widget (filters DO reference `__current_team__`) is the
+  // opposite case: the team switch already gave it a brand-new resolved
+  // `queryKey` (see `resolveTeamPlaceholder`), so react-query mounts a fresh
+  // query for the new team regardless of what happens to the old, dropped
+  // one — retrying the dropped fetch would just re-populate a cache entry
+  // for a `queryKey` nobody reads anymore. Refusing to retry here isn't a
+  // regression from the team-independent case above; it's the correct
+  // no-op, since the widget's own re-render already did the work a retry
+  // would have tried to do.
+  if (error instanceof WidgetFetchQueueDroppedError) return isTeamIndependent;
   if (error?.name === "AbortError") return true;
   const errorWithStatus = error as Error & {
     response?: { status?: number };
