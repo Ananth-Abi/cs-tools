@@ -31,12 +31,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/dispatch"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/recipientlinks"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/slaengine"
 )
 
 func main() {
@@ -217,6 +219,52 @@ func main() {
 	mainConsumers := startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter)
 	dlqConsumers := startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil)
 
+	// The SLA timer engine is optional per deployment, gated on REDIS_ADDR
+	// being set — unset means this engine neither consumes sla.clock.register
+	// nor ticks, matching the "unset means don't run" convention used
+	// elsewhere in this repo's own services for an optional capability (e.g.
+	// apps/csm-portal/backend's EVENT_HUB_BROKER gate). Local Redis for now;
+	// pointing REDIS_ADDR at Azure Cache for Redis later needs no code change
+	// (same wire protocol), just its connection details here.
+	var redisClient *redis.Client
+	var slaProducer *eventbus.Producer
+	var slaConsumers []*eventbus.Consumer
+	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
+		redisClient = redis.NewClient(&redis.Options{Addr: redisAddr, Password: os.Getenv("REDIS_PASSWORD")})
+
+		// slaengine.EntityClient talks to the exact same entity-service as
+		// customerEntityClient above — not a different backend — so it
+		// reuses that same CUSTOMER_ENTITY_BASE_URL/CUSTOMER_ENTITY_SCOPES
+		// pair (and the same shared OAuth2 app) rather than a redundant
+		// SLA-specific one. It's still a separate client/type from
+		// customerEntityClient, since internal/entity.CustomerEntityClient
+		// deliberately implements only POST /users/search (see its own doc
+		// comment) — not because the two point at different servers.
+		slaEntityClient := slaengine.NewEntityClient(slaengine.EntityConfig{
+			BaseURL:      mustEnv("CUSTOMER_ENTITY_BASE_URL"),
+			TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
+			ClientID:     os.Getenv("OAUTH2_CLIENT_ID"),
+			ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
+			Scopes:       splitComma(os.Getenv("CUSTOMER_ENTITY_SCOPES")),
+		})
+
+		// Reuses eventBusCfg's topic (the same one dispatcher's main consumer
+		// reads) rather than a dedicated one — no new Azure Event Hub topic
+		// needs provisioning for this feature; splitting sla.tier_reached
+		// onto its own topic is a later call once a real consumer of it
+		// exists.
+		slaProducer = eventbus.NewProducer(eventBusCfg)
+
+		slaEngine := slaengine.NewEngine(slaEntityClient, slaengine.NewWakeIndex(redisClient), slaProducer)
+
+		slaConsumerGroup := envOrDefault("SLA_CONSUMER_GROUP", "csm-notification-service-sla")
+		slaConsumerCount := envInt("SLA_CONSUMER_COUNT", 1)
+		slaConsumers = startConsumers(ctx, "sla", eventBusCfg, slaConsumerGroup, slaConsumerCount, slaEngine.Handle, toDeadLetter)
+
+		tickInterval := envDuration("SLA_TICK_INTERVAL", 15*time.Second)
+		go slaEngine.RunTicker(ctx, tickInterval)
+	}
+
 	<-ctx.Done()
 	stop()
 
@@ -225,6 +273,17 @@ func main() {
 	}
 	for _, c := range dlqConsumers {
 		c.Close()
+	}
+	for _, c := range slaConsumers {
+		c.Close()
+	}
+	if slaProducer != nil {
+		slaProducer.Close()
+	}
+	if redisClient != nil {
+		if err := redisClient.Close(); err != nil {
+			slog.Error("failed to close redis client", "err", err)
+		}
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -297,6 +356,23 @@ func envInt(key string, def int) int {
 		return def
 	}
 	return n
+}
+
+// envDuration returns the given environment variable parsed with
+// time.ParseDuration (e.g. "15s", "2m"), or def if unset or malformed — used
+// for SLA_TICK_INTERVAL, where an invalid value should fall back rather than
+// fail startup, matching envInt's own default-on-malformed behavior.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		slog.Warn("environment variable is not a valid duration; using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return d
 }
 
 // mustPort returns the value of the given environment variable (or def if

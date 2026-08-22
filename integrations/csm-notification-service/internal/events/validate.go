@@ -127,6 +127,33 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 			p.IncidentLink == "" || !e164Pattern.MatchString(p.CallTo) {
 			return fmt.Errorf("events: missing required field for %s", t)
 		}
+	case TypeSLAClockRegister:
+		var p SLAClockRegisterPayload
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if p.CaseID == "" || len(p.Durations) == 0 {
+			return fmt.Errorf("events: missing required field for %s", t)
+		}
+		for clockType, dur := range p.Durations {
+			if clockType == "" || dur == "" {
+				return fmt.Errorf("events: %s durations must have non-empty clock types and values", t)
+			}
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
+		}
+	case TypeSLATierReached:
+		var p SLATierReachedPayload
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if p.CaseID == "" || p.ClockType == "" || p.Tier == "" {
+			return fmt.Errorf("events: missing required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
+		}
 	default:
 		return fmt.Errorf("events: unknown event type %q", t)
 	}

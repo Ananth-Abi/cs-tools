@@ -138,6 +138,20 @@ Required — a record that exhausts the main consumer's retries is published her
 | `EVENT_HUB_DLQ_CONSUMER_GROUP` | Consumer group ID the DLQ consumer's instances join. Optional — defaults to `csm-notification-service-dlq` |
 | `DLQ_CONSUMER_COUNT` | How many concurrent consumer instances to run for `EVENT_HUB_DLQ_TOPIC`. Optional — defaults to `1`; same partition-count guidance as `MAIN_CONSUMER_COUNT` |
 
+### SLA timer engine
+
+Optional, gated on `REDIS_ADDR` — unset means `internal/slaengine` neither consumes `sla.clock.register` nor ticks. Ported from a standalone POC: registers a per-case SLA clock (durable state on entity-service's new `sla_clocks` table) when it sees a `sla.clock.register` event, tracks 50%/75%/100% elapsed via a Redis wake index, and publishes `sla.tier_reached` when a ticker finds a due entry. Local Redis for now; pointing `REDIS_ADDR` at Azure Cache for Redis later needs no code change (same wire protocol), just its connection details here.
+
+| Variable | Description |
+|---|---|
+| `REDIS_ADDR` | Redis address, e.g. `localhost:6379`. Unset disables this whole engine |
+| `REDIS_PASSWORD` | Optional — empty for a local Redis with no auth |
+
+This engine's own narrow `sla_clocks` client talks to the same entity-service as `CUSTOMER_ENTITY_BASE_URL`/`CUSTOMER_ENTITY_SCOPES` (see [Customer entity service](#customer-entity-service) above) — not a different backend — so it reuses those same two variables (required once `REDIS_ADDR` is set) rather than a redundant `SLA_ENTITY_*` pair.
+| `SLA_CONSUMER_GROUP` | Consumer group ID this engine's own consumer instances join — independent from `EVENT_HUB_CONSUMER_GROUP`/`EVENT_HUB_DLQ_CONSUMER_GROUP`. Optional — defaults to `csm-notification-service-sla` |
+| `SLA_CONSUMER_COUNT` | How many concurrent consumer instances to run. Optional — defaults to `1` |
+| `SLA_TICK_INTERVAL` | How often the ticker scans the Redis wake index for due tiers. Optional — defaults to `15s` |
+
 ### Server
 
 | Variable | Description |
@@ -173,8 +187,12 @@ csm-notification-service/
 │   │   ├── config.go            # Config + SASL/PLAIN setup + PartitionCount, shared by producer/consumer
 │   │   ├── producer.go          # Producer — publish a record, wait for ack
 │   │   └── consumer.go          # Consumer — consumer-group poll loop, retry, OnExhausted, commit
-│   └── dispatch/
-│       └── dispatch.go          # Dispatcher.Handle — envelope → validate → resolve links → group → template → EmailClient
+│   ├── dispatch/
+│   │   └── dispatch.go          # Dispatcher.Handle — envelope → validate → resolve links → group → template → EmailClient
+│   └── slaengine/
+│       ├── client.go            # EntityClient — narrow HTTP client for entity-service's sla_clocks endpoints
+│       ├── redis.go             # WakeIndex — the Redis ZSET scheduling index
+│       └── engine.go            # Engine.Handle (register clocks) + Engine.Tick/RunTicker (fire due tiers)
 ├── .env                         # Local config (git-ignored)
 └── go.mod
 ```

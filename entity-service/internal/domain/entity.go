@@ -4988,3 +4988,70 @@ type SearchEventPublishFailuresResponse struct {
 	Offset   int                   `json:"offset"`
 	HasMore  bool                  `json:"hasMore"`
 }
+
+// SLAClock is the durable record of one SLA timer running against a case —
+// e.g. a "response" or "resolution" clock started when the case was created
+// (or last had its severity change reset it), due at a fixed point, with up
+// to three tier-crossing timestamps recorded as an SLA timer engine (see
+// integrations/csm-notification-service's internal/slaengine) observes 50%,
+// 75%, and 100% of the duration elapse. ClockType is a caller-defined string,
+// not a fixed enum here — which clock types exist, and what duration each
+// gets, is a policy decision made entirely by whatever publishes the
+// triggering sla.clock.register event; this service only stores the result.
+//
+// Like EventPublishFailure, this has no ServiceNow equivalent and is always
+// backed by Postgres regardless of DATA_SOURCE (see internal/db/postgres.go)
+// — CaseID is a plain string, not a foreign key to a local cases row, since a
+// ServiceNow-backed case has none.
+type SLAClock struct {
+	CaseID    string    `json:"caseId"`
+	ClockType string    `json:"clockType"`
+	StartedAt time.Time `json:"startedAt"`
+	DueAt     time.Time `json:"dueAt"`
+	// PausedAt is currently never set by any endpoint below — the column and
+	// this field exist so a future pause/resume feature has somewhere to
+	// land, and so SLATimerEngine's tier-scan can already skip a paused
+	// clock once one exists, without a schema change at that point.
+	PausedAt     *time.Time `json:"pausedAt,omitempty"`
+	Reached50At  *time.Time `json:"reached50At,omitempty"`
+	Reached75At  *time.Time `json:"reached75At,omitempty"`
+	Reached100At *time.Time `json:"reached100At,omitempty"`
+}
+
+// RegisterSLAClockRequest is the request body for
+// POST /cases/{caseId}/sla-clocks. CaseID is injected from the path, not
+// supplied in the body. Registering a clock that already exists for this
+// (caseId, clockType) pair resets it from scratch — started_at/due_at are
+// overwritten and paused_at/reached_*_at are all cleared — mirroring the
+// rule that a severity change (or any other reason to re-baseline a clock)
+// wipes and rebuilds it rather than adjusting it in place.
+type RegisterSLAClockRequest struct {
+	CaseID    string    `json:"-"`
+	ClockType string    `json:"clockType"`
+	StartedAt time.Time `json:"startedAt"`
+	DueAt     time.Time `json:"dueAt"`
+}
+
+// SLATierStatus is the value of SetSLAClockTierRequest.Status.
+// SLATierStatusReached is the only valid value today — modeled as an enum
+// rather than a bare boolean or an action verb in the URL so a future
+// status (e.g. a manual override) can be added without a breaking change
+// to this request's shape.
+type SLATierStatus string
+
+const SLATierStatusReached SLATierStatus = "reached"
+
+// SetSLAClockTierRequest is the request body for
+// PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}.
+type SetSLAClockTierRequest struct {
+	Status SLATierStatus `json:"status"`
+}
+
+// SetSLAClockTierReachedResponse is the response body for
+// PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}.
+// ReachedAt is the timestamp now stored for that tier — either just written
+// by this call, or the pre-existing value if the tier was already reached
+// (the operation is idempotent; see the repository's SetTierReachedIfUnset).
+type SetSLAClockTierReachedResponse struct {
+	ReachedAt time.Time `json:"reachedAt"`
+}

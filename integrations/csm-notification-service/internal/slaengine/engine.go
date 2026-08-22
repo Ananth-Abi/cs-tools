@@ -1,0 +1,242 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package slaengine
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
+)
+
+// entityClock abstracts EntityClient for testability.
+type entityClock interface {
+	RegisterClock(ctx context.Context, caseID, clockType string, startedAt, dueAt time.Time) error
+	GetClock(ctx context.Context, caseID, clockType string) (Clock, error)
+	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (time.Time, error)
+}
+
+// wakeIndex abstracts WakeIndex for testability.
+type wakeIndex interface {
+	AddWake(ctx context.Context, member string, at time.Time) error
+	RemoveWake(ctx context.Context, member string) error
+	DueMembers(ctx context.Context, now time.Time) ([]string, error)
+}
+
+// eventPublisher abstracts eventbus.Producer for testability.
+type eventPublisher interface {
+	Publish(ctx context.Context, key, value []byte) error
+}
+
+// tiers is the fixed set of elapsed-duration percentages this engine tracks
+// per clock — 50%, 75%, 100% of the way from startedAt to dueAt. Not
+// configurable: a real per-severity policy (see events.SLAClockRegisterPayload's
+// doc comment) could one day vary durations, but the three checkpoints
+// within a clock are a fixed part of this engine's own design, ported as-is
+// from the POC.
+var tiers = []string{"50", "75", "100"}
+
+// Engine is the SLA timer engine: Handle registers clocks (the consumer
+// side, wired into its own eventbus.Consumer — see cmd/server/main.go),
+// RunTicker/Tick scan the wake index and publish tier-crossing events.
+type Engine struct {
+	entity entityClock
+	wake   wakeIndex
+	pub    eventPublisher
+}
+
+// NewEngine constructs an Engine.
+func NewEngine(entity *EntityClient, wake *WakeIndex, pub *eventbus.Producer) *Engine {
+	return &Engine{entity: entity, wake: wake, pub: pub}
+}
+
+// Handle implements eventbus.Handle for the SLA engine's own consumer group.
+// It shares a topic with events unrelated to this engine (case.*,
+// incident.created, and its own sla.tier_reached output) — anything other
+// than events.TypeSLAClockRegister is silently ignored, not an error,
+// mirroring dispatch.Dispatcher.Handle's own no-op case for these two new
+// types (see dispatch.go).
+func (e *Engine) Handle(ctx context.Context, record eventbus.Record) error {
+	var env events.Envelope
+	if err := json.Unmarshal(record.Value, &env); err != nil {
+		return fmt.Errorf("slaengine: decode envelope: %w", err)
+	}
+	if env.Type != events.TypeSLAClockRegister {
+		return nil
+	}
+	if err := events.Validate(env.EntityID, env.Type, env.Payload); err != nil {
+		return fmt.Errorf("slaengine: invalid payload: %w", err)
+	}
+
+	var p events.SLAClockRegisterPayload
+	if err := json.Unmarshal(env.Payload, &p); err != nil {
+		return fmt.Errorf("slaengine: decode sla.clock.register payload: %w", err)
+	}
+	return e.registerClocks(ctx, p.CaseID, p.Durations)
+}
+
+// registerClocks (re)creates every named clock and its 50/75/100% wake
+// entries — used for both first registration and a re-registration that
+// wipes and rebuilds a clock from scratch (entity-service's RegisterClock
+// endpoint always resets on conflict — see its own doc comment). An
+// individual clockType with an unparsable duration is logged and skipped
+// rather than failing the whole record — a typo in one clock type shouldn't
+// prevent the others in the same event from registering.
+func (e *Engine) registerClocks(ctx context.Context, caseID string, durations map[string]string) error {
+	var errs []error
+	for clockType, durStr := range durations {
+		d, err := time.ParseDuration(durStr)
+		if err != nil {
+			slog.ErrorContext(ctx, "slaengine: invalid sla clock duration, skipping", "caseId", caseID, "clockType", clockType, "duration", durStr, "err", err)
+			continue
+		}
+
+		startedAt := time.Now()
+		dueAt := startedAt.Add(d)
+		if err := e.entity.RegisterClock(ctx, caseID, clockType, startedAt, dueAt); err != nil {
+			errs = append(errs, fmt.Errorf("register clock %s/%s: %w", caseID, clockType, err))
+			continue
+		}
+
+		for _, tier := range tiers {
+			at := tierTime(startedAt, d, tier)
+			member := wakeMember(caseID, clockType, tier)
+			if err := e.wake.AddWake(ctx, member, at); err != nil {
+				errs = append(errs, fmt.Errorf("add wake entry %s: %w", member, err))
+			}
+		}
+		slog.InfoContext(ctx, "slaengine: registered sla clock", "caseId", caseID, "clockType", clockType, "dueAt", dueAt.Format(time.RFC3339))
+	}
+	return errors.Join(errs...)
+}
+
+// tierTime returns the instant tier is reached, given a clock that started
+// at startedAt and runs for duration d.
+func tierTime(startedAt time.Time, d time.Duration, tier string) time.Time {
+	switch tier {
+	case "50":
+		return startedAt.Add(d / 2)
+	case "75":
+		return startedAt.Add(d * 3 / 4)
+	default: // "100"
+		return startedAt.Add(d)
+	}
+}
+
+// Tick scans the wake index for members due at or before now, and for each:
+// checks the clock isn't paused, records the tier reached (idempotently),
+// publishes events.TypeSLATierReached, and only then removes the wake
+// entry — in that order, so a publish failure leaves the wake entry in
+// place and retries on the next tick instead of silently losing it (the
+// entity-service write already happened and is itself idempotent, so
+// re-attempting it on a retry is harmless).
+func (e *Engine) Tick(ctx context.Context, now time.Time) error {
+	members, err := e.wake.DueMembers(ctx, now)
+	if err != nil {
+		return fmt.Errorf("slaengine: scan due members: %w", err)
+	}
+
+	var errs []error
+	for _, member := range members {
+		if err := e.processDueMember(ctx, member); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (e *Engine) processDueMember(ctx context.Context, member string) error {
+	caseID, clockType, tier, ok := parseWakeMember(member)
+	if !ok {
+		slog.ErrorContext(ctx, "slaengine: malformed wake member, dropping", "member", member)
+		return e.wake.RemoveWake(ctx, member)
+	}
+
+	clock, err := e.entity.GetClock(ctx, caseID, clockType)
+	if err != nil {
+		return fmt.Errorf("get clock %s/%s: %w", caseID, clockType, err)
+	}
+	if clock.PausedAt != nil {
+		slog.InfoContext(ctx, "slaengine: clock is paused, dropping wake entry", "caseId", caseID, "clockType", clockType)
+		return e.wake.RemoveWake(ctx, member)
+	}
+
+	reachedAt, err := e.entity.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
+	if err != nil {
+		return fmt.Errorf("set tier reached %s/%s/%s: %w", caseID, clockType, tier, err)
+	}
+
+	envelope := events.Envelope{
+		Type:     events.TypeSLATierReached,
+		EntityID: caseID,
+	}
+	payload, err := json.Marshal(events.SLATierReachedPayload{CaseID: caseID, ClockType: clockType, Tier: tier})
+	if err != nil {
+		return fmt.Errorf("encode sla.tier_reached payload: %w", err)
+	}
+	envelope.Payload = payload
+	body, err := json.Marshal(envelope)
+	if err != nil {
+		return fmt.Errorf("encode sla.tier_reached envelope: %w", err)
+	}
+
+	if err := e.pub.Publish(ctx, []byte(caseID), body); err != nil {
+		return fmt.Errorf("publish sla.tier_reached %s/%s/%s: %w", caseID, clockType, tier, err)
+	}
+
+	if err := e.wake.RemoveWake(ctx, member); err != nil {
+		return fmt.Errorf("remove wake entry %s after successful publish (at reachedAt %s): %w", member, reachedAt.Format(time.RFC3339), err)
+	}
+	slog.InfoContext(ctx, "slaengine: sla tier reached", "caseId", caseID, "clockType", clockType, "tier", tier)
+	return nil
+}
+
+// RunTicker calls Tick every interval until ctx is done. Run from its own
+// goroutine (see cmd/server/main.go); a failed Tick is logged, not fatal —
+// the next tick gets another chance at whatever was due.
+func (e *Engine) RunTicker(ctx context.Context, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := e.Tick(ctx, time.Now()); err != nil {
+				slog.ErrorContext(ctx, "slaengine: tick failed", "err", err)
+			}
+		}
+	}
+}
+
+func wakeMember(caseID, clockType, tier string) string {
+	return caseID + "|" + clockType + "|" + tier
+}
+
+func parseWakeMember(member string) (caseID, clockType, tier string, ok bool) {
+	parts := strings.Split(member, "|")
+	if len(parts) != 3 {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
+}

@@ -514,3 +514,28 @@ func TestDispatcher_Handle_IncidentCreated_BothFail(t *testing.T) {
 		t.Errorf("error = %q, want it to mention both underlying failures", err.Error())
 	}
 }
+
+// TestDispatcher_Handle_IgnoresSLAEventTypes verifies that
+// sla.clock.register/sla.tier_reached records — consumed by
+// internal/slaengine's own consumer group, which shares this topic — are a
+// silent no-op here, not an error. Erroring would burn this consumer's
+// retries and dead-letter an event that was never broken.
+func TestDispatcher_Handle_IgnoresSLAEventTypes(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{}
+	call := &mockCallSender{}
+	d := newTestDispatcher(mock, chat, call)
+
+	records := []string{
+		`{"type":"sla.clock.register","entityId":"CASE-1","payload":{"caseId":"CASE-1","durations":{"response":"2h"}}}`,
+		`{"type":"sla.tier_reached","entityId":"CASE-1","payload":{"caseId":"CASE-1","clockType":"response","tier":"50"}}`,
+	}
+	for _, r := range records {
+		if err := d.Handle(context.Background(), eventbus.Record{Value: []byte(r)}); err != nil {
+			t.Errorf("Handle(%s) error = %v, want nil", r, err)
+		}
+	}
+	if len(mock.calls) != 0 || len(chat.calls) != 0 || len(call.calls) != 0 {
+		t.Errorf("expected no notification sent, got email=%d chat=%d call=%d", len(mock.calls), len(chat.calls), len(call.calls))
+	}
+}

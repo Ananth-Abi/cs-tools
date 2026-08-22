@@ -43,6 +43,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	eventPublishFailureRepo := repository.NewEventPublishFailureRepository(db)
 	eventPublishFailureHandler := handler.NewEventPublishFailureHandler(service.NewEventPublishFailureService(eventPublishFailureRepo))
 
+	// sla_clocks has no ServiceNow equivalent either — same reasoning as
+	// event_publish_failures above.
+	slaClockRepo := repository.NewSLAClockRepository(db)
+	slaClockHandler := handler.NewSLAClockHandler(service.NewSLAClockService(slaClockRepo))
+
 	accountRepo := repository.NewAccountRepository(db)
 	accountHandler := handler.NewAccountHandler(service.NewAccountService(accountRepo))
 
@@ -260,6 +265,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("POST /event-publish-failures", eventPublishFailureHandler.CreateEventPublishFailure)
 	mux.HandleFunc("POST /event-publish-failures/search", eventPublishFailureHandler.SearchEventPublishFailures)
 	mux.HandleFunc("POST /event-publish-failures/{id}/resolve", eventPublishFailureHandler.ResolveEventPublishFailure)
+	mux.HandleFunc("POST /cases/{caseId}/sla-clocks", slaClockHandler.RegisterSLAClock)
+	mux.HandleFunc("GET /cases/{caseId}/sla-clocks/{clockType}", slaClockHandler.GetSLAClock)
+	mux.HandleFunc("PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}", slaClockHandler.SetSLAClockTierReached)
 
 	if snUserHandler != nil {
 		mux.HandleFunc("GET /users/{id}", snUserHandler.GetUser)

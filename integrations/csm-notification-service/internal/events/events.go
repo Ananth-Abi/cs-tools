@@ -45,12 +45,23 @@ const (
 	TypeStatusChanged   Type = "case.status_changed"
 	TypeCaseAssigned    Type = "case.assigned"
 	TypeIncidentCreated Type = "incident.created"
+
+	// TypeSLAClockRegister and TypeSLATierReached belong to internal/slaengine,
+	// not internal/dispatch — see SLAClockRegisterPayload/SLATierReachedPayload
+	// below. Neither is an email trigger (no Recipients), so dispatch.Handle's
+	// switch has no case for them; they're declared here anyway since this is
+	// the one place every event Type this service touches is registered.
+	TypeSLAClockRegister Type = "sla.clock.register"
+	TypeSLATierReached   Type = "sla.tier_reached"
 )
 
 // KnownTypes lists every Type this service accepts, in the order they're
 // checked — used both for request validation and for generating docs/errors
 // that enumerate valid values.
-var KnownTypes = []Type{TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeIncidentCreated}
+var KnownTypes = []Type{
+	TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeIncidentCreated,
+	TypeSLAClockRegister, TypeSLATierReached,
+}
 
 // Envelope is the wire shape of every record on the event bus: Payload's
 // shape depends on Type (see the Type constants' matching Payload struct
@@ -162,4 +173,32 @@ type IncidentCreatedPayload struct {
 	// CallTo is the on-call phone number (E.164, e.g. "+14155552671") the
 	// voice call is placed to.
 	CallTo string `json:"callTo"`
+}
+
+// SLAClockRegisterPayload is TypeSLAClockRegister's payload — the trigger
+// internal/slaengine.Handle reacts to by registering an SLA clock per entry
+// in Durations via entity-service's POST /cases/{caseId}/sla-clocks. Each
+// Durations value is a Go duration string (e.g. "2h"), added to the
+// publish-time "now" to compute the clock's due time — the exact durations
+// to use per clock type is a policy decision this service has no way to
+// make itself (no SLA duration policy exists in entity-service either, as of
+// this event type's introduction); it's the caller's responsibility to
+// derive them (e.g. from case severity) and supply them directly, mirroring
+// how the SLA timer engine POC this was ported from treated durations as a
+// caller-supplied stand-in for that not-yet-decided policy. CaseID must
+// match the envelope's EntityID, same requirement as the case.* types.
+type SLAClockRegisterPayload struct {
+	CaseID    string            `json:"caseId"`
+	Durations map[string]string `json:"durations"`
+}
+
+// SLATierReachedPayload is TypeSLATierReached's payload — published by
+// internal/slaengine.Tick when a clock's wake index shows a tier (50, 75, or
+// 100) has been crossed. Nothing in this service consumes it yet; it exists
+// for whatever future notification (e.g. a breach-warning email) or other
+// system reacts to it.
+type SLATierReachedPayload struct {
+	CaseID    string `json:"caseId"`
+	ClockType string `json:"clockType"`
+	Tier      string `json:"tier"`
 }

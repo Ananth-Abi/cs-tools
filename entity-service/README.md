@@ -28,7 +28,8 @@ entity-service/
 │   ├── service/
 │   │   ├── interfaces.go        # CaseRepository and CaseService interfaces
 │   │   ├── entity_service.go    # Business logic — pagination, validation
-│   │   └── event_publisher_service.go # EventPublisherService.Publish — builds the envelope, publishes it, records a failure if Event Hub doesn't ack (not yet wired into main.go — no caller)
+│   │   ├── event_publisher_service.go # EventPublisherService.Publish — builds the envelope, publishes it, records a failure if Event Hub doesn't ack (not yet wired into main.go — no caller)
+│   │   └── sla_clock_service.go # SLAClockService — register/get/mark-tier-reached for a case's SLA clocks
 │   ├── repository/
 │   │   ├── entity_repo.go       # SQL queries against the "case" table
 │   │   └── tx.go                # Transaction helper
@@ -140,6 +141,21 @@ calls `Publish`.
 | `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` (optional) |
 | `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string — must be namespace-scoped (no `EntityPath`), not scoped to a single Event Hub (optional) |
 | `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (optional) |
+
+### SLA clocks
+
+`sla_clocks` (migration `000011`) durably tracks per-case SLA timers — `caseId`/`clockType`,
+`startedAt`/`dueAt`, and up to three tier-crossing timestamps (`reached50At`/`reached75At`/`reached100At`).
+Has no ServiceNow equivalent — always backed by Postgres regardless of `DATA_SOURCE`, same as
+`event_publish_failures`. `clockType` is a caller-defined string, not a fixed enum: which clock types
+exist and what duration each gets is a policy decision made entirely by whatever publishes the
+triggering event — this service only stores the result, it does not compute durations from case
+severity or anything else.
+
+Consumed by `csm-notification-service`'s SLA timer engine (`internal/slaengine`), which registers a
+clock on `POST /cases/{caseId}/sla-clocks`, reads it back via `GET /cases/{caseId}/sla-clocks/{clockType}`
+to check `pausedAt` before firing a tier, and records a crossed tier idempotently via
+`PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}` with `{"status": "reached"}`.
 
 ## Security Scanning
 
