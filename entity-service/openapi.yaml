@@ -124,6 +124,143 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /cases/{caseId}/sla-clocks:
+    post:
+      summary: >-
+        Register (or reset) an SLA clock for a case. Registering a clock that
+        already exists for this case/clockType resets it from scratch —
+        startedAt/dueAt are overwritten and any paused/reached-tier state is
+        cleared. Has no ServiceNow equivalent — always backed by Postgres.
+      operationId: registerSLAClock
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterSLAClockRequest'
+      responses:
+        "201":
+          description: Clock registered successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SLAClock'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /cases/{caseId}/sla-clocks/{clockType}:
+    get:
+      summary: Get one SLA clock for a case.
+      operationId: getSLAClock
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: clockType
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The requested clock.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SLAClock'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such clock has been registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}:
+    patch:
+      summary: >-
+        Mark a tier (50, 75, or 100) reached for a clock, if it isn't
+        already. Idempotent — returns the pre-existing reached timestamp if
+        the tier was already marked.
+      operationId: setSLAClockTierReached
+      parameters:
+        - name: caseId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: clockType
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: tier
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: ["50", "75", "100"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetSLAClockTierRequest'
+      responses:
+        "200":
+          description: Tier marked reached (or already was).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetSLAClockTierReachedResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such clock has been registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /users/me:
     get:
       summary: Get the profile of the currently authenticated user.
@@ -12511,6 +12648,74 @@ components:
           $ref: '#/components/schemas/Pagination'
         filters:
           $ref: '#/components/schemas/SearchEventPublishFailuresFilters'
+
+    SLAClock:
+      description: >
+        A durable SLA timer running against a case. clockType is
+        caller-defined, not a fixed enum — which clock types exist and what
+        duration each gets is a policy decision made entirely by whatever
+        publishes the triggering sla.clock.register event; this service only
+        stores the result. Has no ServiceNow equivalent — always backed by
+        Postgres.
+      type: object
+      properties:
+        caseId:
+          type: string
+        clockType:
+          type: string
+        startedOn:
+          type: string
+          format: date-time
+        dueOn:
+          type: string
+          format: date-time
+        pausedOn:
+          type: string
+          format: date-time
+          nullable: true
+        reached50On:
+          type: string
+          format: date-time
+          nullable: true
+        reached75On:
+          type: string
+          format: date-time
+          nullable: true
+        reached100On:
+          type: string
+          format: date-time
+          nullable: true
+
+    RegisterSLAClockRequest:
+      type: object
+      required: [clockType, startedAt, dueAt]
+      additionalProperties: false
+      properties:
+        clockType:
+          type: string
+        startedAt:
+          type: string
+          format: date-time
+        dueAt:
+          type: string
+          format: date-time
+
+    SetSLAClockTierRequest:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: ["reached"]
+          description: The only valid value today — a placeholder for a future status without a breaking change to this request's shape.
+
+    SetSLAClockTierReachedResponse:
+      type: object
+      properties:
+        reachedOn:
+          type: string
+          format: date-time
 
     SearchEventPublishFailuresResponse:
       type: object

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"time"
 )
 
 // emailPattern is a deliberately loose "does this look like an email
@@ -34,6 +35,12 @@ var emailPattern = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
 // e164Pattern matches E.164 phone numbers (e.g. "+14155552671") — a leading
 // "+", a non-zero first digit, then up to 14 more digits.
 var e164Pattern = regexp.MustCompile(`^\+[1-9]\d{1,14}$`)
+
+// validSLATier mirrors slaengine's own fixed set of tiers — 50%, 75%, 100%
+// elapsed. Kept here, not imported from slaengine, since this package is
+// the schema/validation layer both slaengine and dispatch depend on, not
+// the other way around.
+var validSLATier = map[string]bool{"50": true, "75": true, "100": true}
 
 // validRecipients reports whether every entry in recipients looks like an
 // email address, and there's at least one. A single malformed entry fails
@@ -126,6 +133,44 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if p.Product == "" || p.Title == "" || p.ShortDescription == "" ||
 			p.IncidentLink == "" || !e164Pattern.MatchString(p.CallTo) {
 			return fmt.Errorf("events: missing required field for %s", t)
+		}
+	case TypeSLAClockRegister:
+		var p SLAClockRegisterPayload
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if p.CaseID == "" || len(p.Durations) == 0 {
+			return fmt.Errorf("events: missing required field for %s", t)
+		}
+		for clockType, dur := range p.Durations {
+			if clockType == "" || dur == "" {
+				return fmt.Errorf("events: %s durations must have non-empty clock types and values", t)
+			}
+			// A duration time.ParseDuration can't parse would otherwise only
+			// surface deep inside slaengine's own registration loop, which
+			// logs and skips that one clockType rather than failing the
+			// whole record — for a payload whose durations are ALL
+			// unparsable, that means the record is silently marked handled
+			// with no clock ever registered and no retry/DLQ visibility.
+			// Rejecting it here instead makes it retried and dead-lettered
+			// like any other malformed record.
+			if d, err := time.ParseDuration(dur); err != nil || d <= 0 {
+				return fmt.Errorf("events: %s duration %q for clock type %q is not a valid positive duration", t, dur, clockType)
+			}
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
+		}
+	case TypeSLATierReached:
+		var p SLATierReachedPayload
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if p.CaseID == "" || p.ClockType == "" || !validSLATier[p.Tier] {
+			return fmt.Errorf("events: missing or invalid required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
 		}
 	default:
 		return fmt.Errorf("events: unknown event type %q", t)

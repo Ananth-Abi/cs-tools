@@ -162,6 +162,14 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 		return d.handleCaseAssigned(ctx, env.Payload)
 	case events.TypeIncidentCreated:
 		return d.handleIncidentCreated(ctx, record, env.Payload)
+	case events.TypeSLAClockRegister, events.TypeSLATierReached:
+		// internal/slaengine's own consumer group (a different group ID, so
+		// it gets its own full copy of this same topic) is what reacts to
+		// these — nothing for the notification dispatcher to do. Returning
+		// nil (not an error) is required here: erroring would burn this
+		// consumer's retries and dead-letter an event that was never broken,
+		// just not this consumer's concern.
+		return nil
 	default:
 		return fmt.Errorf("dispatch: unknown event type %q", env.Type)
 	}

@@ -69,6 +69,39 @@ constructing it (gated on `EVENT_HUB_BROKER`, mirroring
 calling `Publish` from whichever service methods create/update cases,
 comments, and incidents.
 
+## SLA clocks
+
+`sla_clocks` (migration `000011`, `internal/domain/entity.go`'s `SLAClock`,
+`internal/repository/sla_clock_repo.go`, `internal/service/sla_clock_service.go`)
+is durable per-case SLA timer state — `caseId`/`clockType`, `startedAt`/`dueAt`,
+and up to three tier-crossing timestamps. Like `event_publish_failures`, it has
+no ServiceNow equivalent and is always backed by Postgres regardless of
+`DATA_SOURCE`, so `caseId` is a plain string, not a foreign key — a
+ServiceNow-backed case has no local `cases` row to reference.
+
+`clockType` is deliberately **not** a fixed enum: this service has no SLA
+duration policy (no priority field on a case, nothing mapping severity to a
+duration) — which clock types exist, and how long each runs, is entirely up to
+whatever publishes the event that triggers registration. Registering a clock
+that already exists for a `(caseId, clockType)` pair resets it from scratch
+(`RegisterSLAClock`) rather than adjusting it in place.
+
+Exposed at `POST /cases/{caseId}/sla-clocks` (register/reset),
+`GET /cases/{caseId}/sla-clocks/{clockType}` (read one), and
+`PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}` with body
+`{"status": "reached"}` (`domain.SLATierStatus` — the only valid value today,
+modeled as an enum rather than a bare boolean so a future status doesn't
+need a breaking change) to mark a `50`/`75`/`100` tier reached, idempotently
+— a second call for an already-reached tier returns the original timestamp,
+not an error. The sole caller today is `csm-notification-service`'s SLA timer engine
+(`internal/slaengine`), which owns the actual scheduling (a Redis wake index
+and ticker) — this service only stores the result of that scheduling, it does
+not compute or track wake times itself.
+
+No `case_service.go`/`sn_case_service.go` method calls any of this yet — case
+creation/update do not register a clock. Wiring that in requires deciding the
+SLA duration policy first (see above), which is out of scope here.
+
 ## Adding a new entity
 
 Follow these steps in order:

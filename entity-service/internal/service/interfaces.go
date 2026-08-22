@@ -102,6 +102,24 @@ type EventPublisherService interface {
 	Close()
 }
 
+// SLAClockService defines the operations available on the sla_clocks
+// entity — see domain.SLAClock's doc comment for what it's for.
+type SLAClockService interface {
+	// RegisterSLAClock (re)creates the clock for req.CaseID/req.ClockType. A
+	// ValidationError is returned if caseId, clockType is missing, or dueAt
+	// is not after startedAt.
+	RegisterSLAClock(ctx context.Context, req domain.RegisterSLAClockRequest) (domain.SLAClock, error)
+	// GetSLAClock returns the clock for caseID/clockType. A NotFoundError is
+	// returned if no such clock has been registered.
+	GetSLAClock(ctx context.Context, caseID, clockType string) (domain.SLAClock, error)
+	// SetSLAClockTierReached marks tier ("50"/"75"/"100") reached for
+	// caseID/clockType if it isn't already (req.Status must be
+	// domain.SLATierStatusReached), and returns the (possibly pre-existing)
+	// reached timestamp. A ValidationError is returned for an unrecognized
+	// tier or status; a NotFoundError if no such clock has been registered.
+	SetSLAClockTierReached(ctx context.Context, caseID, clockType, tier string, req domain.SetSLAClockTierRequest) (domain.SetSLAClockTierReachedResponse, error)
+}
+
 // SNAccountService defines the account operations backed by the ServiceNow data source.
 type SNAccountService interface {
 	// SearchAccounts returns a paginated list of ServiceNow accounts matching the
