@@ -17,6 +17,11 @@
 /**
  * How many widget data-fetch requests (`useWidgetData` / `useWidgetPieData`)
  * may be in flight at once, across the whole app, not just one dashboard.
+ * (The cap itself stays app-wide and team-agnostic; only the FIFO *queue*
+ * is team-aware — see `withWidgetFetchSlot`'s own `teamKey` parameter and
+ * {@link WidgetFetchQueueDroppedError} for why switching the selected ABT
+ * team drops the old team's still-queued entries instead of making the
+ * new team's widgets wait behind them.)
  *
  * A dashboard with N widgets previously fired N `/…/search` calls to
  * `customer-entity-service` essentially simultaneously on mount (one per
@@ -72,17 +77,84 @@ export const WIDGET_FETCH_CONCURRENCY_LIMIT = 1;
 export let WIDGET_FETCH_TIMEOUT_MS = 10_000;
 
 let activeCount = 0;
-const waiters: Array<() => void> = [];
 
-function acquireWidgetFetchSlot(): Promise<void> {
+interface Waiter {
+  teamKey: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
+const waiters: Waiter[] = [];
+
+/**
+ * The team (or team-family) whose widgets most recently called into this
+ * queue — `null` until the first call. Used purely to detect a CHANGE: the
+ * whole app shares one queue (see {@link WIDGET_FETCH_CONCURRENCY_LIMIT}'s
+ * own doc comment on why it's module-level, not per-dashboard), so a
+ * change here means "the selected ABT team switched," and every entry
+ * still queued for the OLD key is abandoned — see
+ * {@link WidgetFetchQueueDroppedError}.
+ */
+let currentTeamKey: string | null = null;
+
+/**
+ * Thrown to a queued (not-yet-started) widget fetch whose `teamKey` no
+ * longer matches {@link currentTeamKey} — i.e. the selected ABT team
+ * switched while this fetch was still waiting for a slot. Distinguished
+ * from an ordinary failure so `shouldRetryWidgetFetch` can refuse to
+ * retry it (re-entering the queue for a query nobody observes anymore,
+ * since the widget tile has already moved its `queryKey` to the new
+ * team, would be pure waste) and so a caller that wants to tell "queue
+ * drop" apart from "the request itself failed" can `instanceof` it.
+ */
+export class WidgetFetchQueueDroppedError extends Error {
+  constructor() {
+    super("Widget fetch dropped from the queue: the selected team changed.");
+    this.name = "WidgetFetchQueueDroppedError";
+  }
+}
+
+/**
+ * Rejects and removes every currently queued (not active) waiter whose own
+ * `teamKey` doesn't match `newTeamKey` — called once per actual team
+ * change, from whichever widget's fetch call happens to run first after
+ * the switch (see `acquireWidgetFetchSlot`). The one fetch that may
+ * already be ACTIVE (at most one, given
+ * {@link WIDGET_FETCH_CONCURRENCY_LIMIT} = 1) is untouched here: it's left
+ * to finish naturally rather than force-aborted, per the explicit
+ * "abandon the queue, don't cancel what's in flight" shape this was built
+ * to.
+ */
+function dropWaitersForOldTeam(newTeamKey: string): void {
+  for (let i = waiters.length - 1; i >= 0; i -= 1) {
+    if (waiters[i].teamKey !== newTeamKey) {
+      const [dropped] = waiters.splice(i, 1);
+      dropped.reject(new WidgetFetchQueueDroppedError());
+    }
+  }
+}
+
+function acquireWidgetFetchSlot(teamKey: string): Promise<void> {
+  // A change in team is detected relative to the value already stored, so
+  // it must be checked (and `currentTeamKey` updated) BEFORE this call's
+  // own acquire/queue logic below — otherwise this very call could see
+  // itself as "the team that changed" and drop its own place in line.
+  if (currentTeamKey !== teamKey) {
+    currentTeamKey = teamKey;
+    dropWaitersForOldTeam(teamKey);
+  }
   if (activeCount < WIDGET_FETCH_CONCURRENCY_LIMIT) {
     activeCount += 1;
     return Promise.resolve();
   }
-  return new Promise<void>((resolve) => {
-    waiters.push(() => {
-      activeCount += 1;
-      resolve();
+  return new Promise<void>((resolve, reject) => {
+    waiters.push({
+      teamKey,
+      resolve: () => {
+        activeCount += 1;
+        resolve();
+      },
+      reject,
     });
   });
 }
@@ -90,7 +162,7 @@ function acquireWidgetFetchSlot(): Promise<void> {
 function releaseWidgetFetchSlot(): void {
   activeCount = Math.max(0, activeCount - 1);
   const next = waiters.shift();
-  if (next) next();
+  if (next) next.resolve();
 }
 
 /**
@@ -116,11 +188,23 @@ function releaseWidgetFetchSlot(): void {
  * A hand-rolled FIFO semaphore rather than a dependency (`p-limit` etc.) —
  * neither is already in `package.json`, and the mechanism this needs is a
  * dozen lines.
+ *
+ * `teamKey` scopes the FIFO *drop* behavior, not the concurrency cap
+ * itself (the cap stays app-wide — see {@link WIDGET_FETCH_CONCURRENCY_LIMIT}):
+ * when a call arrives with a `teamKey` different from whichever key the
+ * queue last saw, every OTHER entry still queued (not yet started) under
+ * the old key is rejected with {@link WidgetFetchQueueDroppedError} and
+ * removed, so a switch of the selected ABT team doesn't leave the new
+ * team's widgets waiting behind the old team's full remaining backlog.
+ * Pass a stable, derived key (e.g. a serialization of the selected team's
+ * group ids) — a dashboard with no team concept can pass any constant
+ * value, since a key that never changes never drops anything.
  */
 export async function withWidgetFetchSlot<T>(
   fn: (signal: AbortSignal) => Promise<T>,
+  teamKey: string,
 ): Promise<T> {
-  await acquireWidgetFetchSlot();
+  await acquireWidgetFetchSlot(teamKey);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort();
@@ -180,6 +264,14 @@ export async function withWidgetFetchSlot<T>(
  */
 export function shouldRetryWidgetFetch(failureCount: number, error: Error): boolean {
   if (failureCount >= 1) return false;
+  // A queue-drop means the selected team changed while this fetch was
+  // still waiting for a slot — the widget tile that queued it has already
+  // moved its own `queryKey` to the new team, so nobody observes this
+  // query anymore. Retrying would just re-enter the queue for a result
+  // nothing reads, and could loop if the team flips back and forth
+  // rapidly. Checked before the AbortError/502/503 cases below since it's
+  // its own distinct, non-retryable failure mode.
+  if (error instanceof WidgetFetchQueueDroppedError) return false;
   if (error?.name === "AbortError") return true;
   const errorWithStatus = error as Error & {
     response?: { status?: number };
@@ -204,6 +296,7 @@ export function shouldRetryWidgetFetch(failureCount: number, error: Error): bool
 export function __resetWidgetFetchConcurrencyForTests(): void {
   activeCount = 0;
   waiters.length = 0;
+  currentTeamKey = null;
 }
 
 /**

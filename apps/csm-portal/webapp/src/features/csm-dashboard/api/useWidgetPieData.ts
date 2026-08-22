@@ -114,6 +114,8 @@ export function useWidgetPieData(
   // "loading" to react-query, and a pie/bar tile must not paint an empty
   // chart while it is really still waiting on identity.
   const awaitingCurrentUser = resolvedSliceFilters.some(hasCurrentUserPlaceholder);
+  // See useWidgetData's own comment — same derivation, same reasoning.
+  const teamKey = JSON.stringify([selectedTeamCreGroupId, selectedTeamSreGroupId]);
 
   const queries = useQueries({
     queries: slices.map((_slice, index) => {
@@ -147,7 +149,7 @@ export function useWidgetPieData(
               { signal },
             );
             return typeof res.total === "number" ? res.total : 0;
-          });
+          }, teamKey);
         },
         enabled: enabled && !awaitingCurrentUser,
         // Same per-query retry override as useWidgetData, same reasoning

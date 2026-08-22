@@ -111,6 +111,14 @@ export function useWidgetData(
   // records. Hold the request instead; the query re-enables itself on the
   // render after `/users/me` resolves.
   const awaitingCurrentUser = hasCurrentUserPlaceholder(resolvedFilters);
+  // Derived, not threaded down as its own prop: a stable serialization of
+  // both team-group-id params already reaching this hook, so
+  // `withWidgetFetchSlot` can drop this widget's queued fetch when the
+  // selected team changes out from under it (see
+  // widgetFetchConcurrency.ts's own `teamKey` doc). Constant for a
+  // non-team-based dashboard (both undefined) — never drops anything
+  // there.
+  const teamKey = JSON.stringify([selectedTeamCreGroupId, selectedTeamSreGroupId]);
 
   return useQuery<WidgetData, Error>({
     queryKey: [
@@ -162,7 +170,7 @@ export function useWidgetData(
           ? (rawItems as Record<string, unknown>[])
           : [];
         return { total, items };
-      });
+      }, teamKey);
     },
     // Explicit per-query retry (not inherited from AppWithConfig's global
     // default) so a widget whose fetch timed out gets one retry — see

@@ -94,6 +94,8 @@ export function useWidgetGroupByData(
   // signed-in user's profile hasn't landed yet, so the query holds rather
   // than searching unscoped.
   const awaitingCurrentUser = hasCurrentUserPlaceholder(resolvedFilters);
+  // See useWidgetData's own comment — same derivation, same reasoning.
+  const teamKey = JSON.stringify([selectedTeamCreGroupId, selectedTeamSreGroupId]);
 
   const query = useQuery({
     queryKey: [
@@ -127,7 +129,7 @@ export function useWidgetGroupByData(
           },
           { signal },
         );
-      });
+      }, teamKey);
     },
     enabled: enabled && !!groupBy && !awaitingCurrentUser,
     // Same per-query retry override as useWidgetPieData's own slice
