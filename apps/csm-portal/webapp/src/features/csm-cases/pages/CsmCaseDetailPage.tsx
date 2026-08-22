@@ -141,6 +141,7 @@ import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
   isBlankHtml,
+  isDescriptionEchoedInComment,
   sanitizeDescriptionHtml,
   stripHtmlTags,
   stripLightModeInlineStyles,
@@ -1597,6 +1598,23 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [comments, chatMessages],
   );
 
+  // The origin comment — the earliest comment on the case, sorted rather
+  // than assumed to already be `comments[0]`. Cases created by customers
+  // consistently echo the description as this comment (often with a wrapper
+  // like a signature); cases created by internal automation frequently don't
+  // — sometimes there's no first comment at all. `descriptionEchoed` below
+  // decides whether the description still needs its own card.
+  const originComment = useMemo(() => {
+    if (!comments || comments.length === 0) return undefined;
+    return [...comments].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    )[0];
+  }, [comments]);
+  const descriptionEchoedInOriginComment = isDescriptionEchoedInComment(
+    data?.description ?? "",
+    originComment?.bodyHtml,
+  );
+
   const onUploadAttachment = useCallback(
     (file: File) => {
       if (!caseId) return;
@@ -1751,11 +1769,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const closeBlockedReason = hasOpenTask
     ? "This case has an open task. Closing may be rejected until it's resolved or closed."
     : undefined;
-  // The case description is already returned by `comments/search` as the
-  // opening comment, so the stream renders it directly — no synthetic entry is
-  // injected (that duplicated the first comment). The linked chat transcript
-  // (if any) is appended; the feed sorts chronologically, so the chat — being
-  // oldest — sinks below the case comments in the default newest-first view.
+  // The case description usually arrives as the opening comment too, so the
+  // stream renders that directly rather than injecting a synthetic entry —
+  // but not always (see `descriptionEchoedInOriginComment` above): the
+  // Details tab below carries a fallback card for whenever it doesn't. The
+  // linked chat transcript (if any) is appended; the feed sorts
+  // chronologically, so the chat — being oldest — sinks below the case
+  // comments in the default newest-first view.
   const safeComments = mergedComments;
 
   return (
@@ -2251,18 +2271,19 @@ export default function CsmCaseDetailPage(): JSX.Element {
               </MetaCell>
             </Box>
           </Card>
-          {/* The case description is not passively re-displayed here — it
+          {/* The case description usually doesn't need its own card — it
               already renders as the opening entry in the Activities tab's
-              feed (see the note near `safeComments` above). Editing it is
+              feed (see the note near `safeComments` above), and editing it is
               still available via the action bar's "Edit case details…" item
-              (EditCaseDetailsDialog), which is the only place the description
-              is shown for editing.
+              (EditCaseDetailsDialog).
 
-              Exception: if comments/search failed, safeComments is empty and
-              the description never renders anywhere — fall back to a
-              read-only card here so the description isn't invisible whenever
-              the activity feed is unavailable. */}
-          {isCommentsError && !isBlankHtml(c.description) && (
+              But that's only true when the origin comment actually
+              reproduces the description. It often doesn't for cases created
+              by internal automation — sometimes there's no origin comment at
+              all — so `descriptionEchoedInOriginComment` (content-based, not
+              just "did comments/search error") decides here rather than
+              assuming the feed already covered it. */}
+          {!isBlankHtml(c.description) && !descriptionEchoedInOriginComment && (
             <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
               <Typography variant="subtitle2">Description</Typography>
               <Box

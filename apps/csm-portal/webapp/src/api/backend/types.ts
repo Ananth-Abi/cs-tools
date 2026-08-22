@@ -552,6 +552,7 @@ export interface BeEngagementCreatePayload {
   subject: string;
   description: string;
   engagementType: BeEngagementType;
+  engagementPaymentType: BeEngagementPaymentType;
 }
 
 /**
@@ -851,6 +852,9 @@ export type BeEngagementType =
   | "new_feature_improvement"
   | "follow_up"
   | "onboarding";
+
+/** Whether an engagement is billed to the customer or delivered free of charge. */
+export type BeEngagementPaymentType = "paid" | "foc";
 
 /**
  * `field` enum accepted by {@link BeCaseFieldFilter}. Mirrors the

@@ -169,16 +169,27 @@ vi.mock("@features/csm-cases/api/usePatchCsmCase", () => ({
 vi.mock("@features/csm-cases/api/useFindMyOngoingCases", () => ({
   useFindMyOngoingCases: () => vi.fn(),
 }));
+const useGetCsmCaseCommentsMock = vi.fn();
 vi.mock("@features/csm-cases/api/useCsmCaseComments", () => ({
-  useGetCsmCaseComments: () => ({
+  useGetCsmCaseComments: (id: string | undefined) =>
+    useGetCsmCaseCommentsMock(id),
+  usePostCsmCaseComment: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+function defaultCommentsImpl(): unknown {
+  return {
     data: [],
     isLoading: false,
     isError: false,
     refetch: vi.fn(),
     isFetching: false,
-  }),
-  usePostCsmCaseComment: () => ({ mutateAsync: vi.fn(), isPending: false }),
-}));
+  };
+}
+useGetCsmCaseCommentsMock.mockImplementation(defaultCommentsImpl);
+// Same reset reasoning as useGetCsmCaseDetailMock above — a test that swaps
+// in its own comments list must not leak it into the next test.
+afterEach(() => {
+  useGetCsmCaseCommentsMock.mockImplementation(defaultCommentsImpl);
+});
 vi.mock("@features/csm-cases/api/useCsmConversationMessages", () => ({
   useGetCsmConversationMessages: () => ({
     data: undefined,
@@ -879,10 +890,11 @@ describe("CsmCaseDetailPage — announcement description rendering", () => {
     ).toBeTruthy();
   });
 
-  it("does not render a standalone description card for a non-announcement case", () => {
-    // Regular cases already get their description via the comments feed's
-    // opening entry (CaseActivitiesFeed, stubbed to null here) — rendering it
-    // a second time here would duplicate it.
+  it("does not render the announcement-only description card for a non-announcement case", () => {
+    // This card is gated on isAnnouncement specifically — a plain case never
+    // gets it here regardless of the Details-tab dedupe fallback (covered in
+    // its own describe block below), since it stays on the default
+    // Activities tab in this render.
     renderCaseDetailPage(
       "/cases/case-1",
       "/cases/:caseId",
@@ -902,6 +914,122 @@ describe("CsmCaseDetailPage — announcement description rendering", () => {
     );
 
     expect(screen.queryByText("Description")).not.toBeInTheDocument();
+  });
+});
+
+describe("CsmCaseDetailPage — Details tab description fallback card", () => {
+  function mockComments(
+    comments: Array<{ id: string; bodyHtml: string; createdAt: string }>,
+  ): void {
+    useGetCsmCaseCommentsMock.mockImplementation(() => ({
+      data: comments.map((c) => ({
+        id: c.id,
+        caseId: "case-1",
+        authorName: "Jane Doe",
+        authorRole: "customer",
+        bodyHtml: c.bodyHtml,
+        createdAt: c.createdAt,
+      })),
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+      isFetching: false,
+    }));
+  }
+
+  it("shows the description card when there is no origin comment at all", () => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? buildCase(id, { description: "<p>Sample description</p>" }) : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+    mockComments([]);
+
+    renderPageAt("/cases/case-1?tab=details");
+
+    expect(screen.getByText("Sample description")).toBeInTheDocument();
+  });
+
+  it("shows the description card when the origin comment doesn't reproduce the description", () => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? buildCase(id, { description: "<p>Sample description</p>" }) : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+    mockComments([
+      {
+        id: "comment-1",
+        bodyHtml: "<p>Unrelated internal note added by automation</p>",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+
+    renderPageAt("/cases/case-1?tab=details");
+
+    expect(screen.getByText("Sample description")).toBeInTheDocument();
+  });
+
+  it("hides the description card when the origin comment reproduces the description", () => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? buildCase(id, { description: "<p>Sample description</p>" }) : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+    mockComments([
+      {
+        id: "comment-1",
+        // Real-world echoes often carry extra wrapper text (e.g. a
+        // signature) around the description — the check tolerates that.
+        bodyHtml: "<p>Hi team,</p><p>Sample description</p><p>Thanks</p>",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+
+    renderPageAt("/cases/case-1?tab=details");
+
+    expect(screen.queryByText("Sample description")).not.toBeInTheDocument();
+  });
+
+  it("picks the earliest comment by createdAt as the origin comment, not array order", () => {
+    useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
+      data: id ? buildCase(id, { description: "<p>Sample description</p>" }) : undefined,
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      isFetching: false,
+      dataUpdatedAt: 0,
+    }));
+    // Later comment listed first, earliest (matching) comment listed second —
+    // the fallback must still find the earliest one and hide the card.
+    mockComments([
+      {
+        id: "comment-2",
+        bodyHtml: "<p>A later, unrelated follow-up</p>",
+        createdAt: "2026-01-02T00:00:00Z",
+      },
+      {
+        id: "comment-1",
+        bodyHtml: "<p>Sample description</p>",
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    ]);
+
+    renderPageAt("/cases/case-1?tab=details");
+
+    expect(screen.queryByText("Sample description")).not.toBeInTheDocument();
   });
 });
 

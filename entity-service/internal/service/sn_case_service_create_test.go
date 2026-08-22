@@ -49,6 +49,22 @@ func TestSNCaseService_CreateCase_EngagementValidation(t *testing.T) {
 			r.Subject = "Migration planning"
 			r.Description = "Plan the migration"
 			r.EngagementType = "not_a_real_type"
+			r.EngagementPaymentType = domain.EngagementPaymentTypePaid
+			return r
+		}()},
+		{name: "missing engagementPaymentType", req: func() domain.CreateCaseRequest {
+			r := baseReq
+			r.Subject = "Migration planning"
+			r.Description = "Plan the migration"
+			r.EngagementType = domain.EngagementTypeMigration
+			return r
+		}()},
+		{name: "invalid engagementPaymentType", req: func() domain.CreateCaseRequest {
+			r := baseReq
+			r.Subject = "Migration planning"
+			r.Description = "Plan the migration"
+			r.EngagementType = domain.EngagementTypeMigration
+			r.EngagementPaymentType = "not_a_real_payment_type"
 			return r
 		}()},
 	}
@@ -88,13 +104,14 @@ func TestSNCaseService_CreateCase_Engagement(t *testing.T) {
 
 	svc := NewServiceNowCaseService(client, nil)
 	req := domain.CreateCaseRequest{
-		Type:              "engagement",
-		ProjectID:         testProjectUUID,
-		DeploymentID:      testDeploymentUUID,
-		DeployedProductID: testDeployedProdID,
-		Subject:           "Migration planning",
-		Description:       "Plan the migration",
-		EngagementType:    domain.EngagementTypeMigration,
+		Type:                  "engagement",
+		ProjectID:             testProjectUUID,
+		DeploymentID:          testDeploymentUUID,
+		DeployedProductID:     testDeployedProdID,
+		Subject:               "Migration planning",
+		Description:           "Plan the migration",
+		EngagementType:        domain.EngagementTypeMigration,
+		EngagementPaymentType: domain.EngagementPaymentTypeFOC,
 	}
 
 	resp, err := svc.CreateCase(contextWithUserIDToken("token"), req)
@@ -113,6 +130,9 @@ func TestSNCaseService_CreateCase_Engagement(t *testing.T) {
 	}
 	if gotBody["engagementType"] != float64(1) {
 		t.Fatalf("payload engagementType: got %v, want 1", gotBody["engagementType"])
+	}
+	if gotBody["engagementPaymentType"] != float64(2) {
+		t.Fatalf("payload engagementPaymentType: got %v, want 2", gotBody["engagementPaymentType"])
 	}
 	if gotBody["type"] != "engagement" {
 		t.Fatalf("payload type: got %v, want %q", gotBody["type"], "engagement")

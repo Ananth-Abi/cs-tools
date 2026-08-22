@@ -519,6 +519,13 @@ var snEngagementTypeIDMap = map[domain.EngagementType]int{
 	domain.EngagementTypeOnboarding:            5,
 }
 
+// snEngagementPaymentTypeIDMap maps domain EngagementPaymentType enums to SN numeric
+// engagement-payment-type IDs.
+var snEngagementPaymentTypeIDMap = map[domain.EngagementPaymentType]int{
+	domain.EngagementPaymentTypePaid: 1,
+	domain.EngagementPaymentTypeFOC:  2,
+}
+
 func domainStatesToSNIDs(states []domain.CaseState) []int {
 	ids := make([]int, 0, len(states))
 	for _, s := range states {
@@ -645,22 +652,23 @@ var snIssueTypeID = map[domain.CaseIssueType]int{
 }
 
 type snCreateCasePayload struct {
-	Type              string             `json:"type"`
-	ProjectID         string             `json:"projectId"`
-	DeploymentID      string             `json:"deploymentId"`
-	DeployedProductID string             `json:"deployedProductId"`
-	Title             string             `json:"title,omitempty"`
-	Description       string             `json:"description,omitempty"`
-	SeverityKey       int                `json:"severityKey,omitempty"`
-	IssueTypeKey      int                `json:"issueTypeKey,omitempty"`
-	EngagementType    int                `json:"engagementType,omitempty"`
-	CatalogID         string             `json:"catalogId,omitempty"`
-	CatalogItemID     string             `json:"catalogItemId,omitempty"`
-	Variables         []snCaseVariable   `json:"variables,omitempty"`
-	RelatedCaseID     string             `json:"relatedCaseId,omitempty"`
-	ConversationID    string             `json:"conversationId,omitempty"`
-	WatchList         []string           `json:"watchList,omitempty"`
-	Attachments       []snCaseAttachment `json:"attachments,omitempty"`
+	Type                  string             `json:"type"`
+	ProjectID             string             `json:"projectId"`
+	DeploymentID          string             `json:"deploymentId"`
+	DeployedProductID     string             `json:"deployedProductId"`
+	Title                 string             `json:"title,omitempty"`
+	Description           string             `json:"description,omitempty"`
+	SeverityKey           int                `json:"severityKey,omitempty"`
+	IssueTypeKey          int                `json:"issueTypeKey,omitempty"`
+	EngagementType        int                `json:"engagementType,omitempty"`
+	EngagementPaymentType int                `json:"engagementPaymentType,omitempty"`
+	CatalogID             string             `json:"catalogId,omitempty"`
+	CatalogItemID         string             `json:"catalogItemId,omitempty"`
+	Variables             []snCaseVariable   `json:"variables,omitempty"`
+	RelatedCaseID         string             `json:"relatedCaseId,omitempty"`
+	ConversationID        string             `json:"conversationId,omitempty"`
+	WatchList             []string           `json:"watchList,omitempty"`
+	Attachments           []snCaseAttachment `json:"attachments,omitempty"`
 }
 
 type snCaseVariable struct {
@@ -753,6 +761,7 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 		payload.Title = req.Subject
 		payload.Description = req.Description
 		payload.EngagementType = snEngagementTypeIDMap[req.EngagementType]
+		payload.EngagementPaymentType = snEngagementPaymentTypeIDMap[req.EngagementPaymentType]
 	}
 
 	if len(req.WatchList) > 0 {

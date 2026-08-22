@@ -109,14 +109,15 @@ func TestSNCaseService_CreateCase_WatchListResolvedToEmails(t *testing.T) {
 	svc := NewServiceNowCaseService(newTestSNClient(t, mux), nil)
 
 	req := domain.CreateCaseRequest{
-		Type:              "engagement",
-		ProjectID:         testProjectUUID,
-		DeploymentID:      testDeploymentUUID,
-		DeployedProductID: testDeployedProdID,
-		Subject:           "Migration planning",
-		Description:       "Plan the migration",
-		EngagementType:    domain.EngagementTypeMigration,
-		WatchList:         []string{testIncidentWatcherUUID1, testIncidentWatcherUUID2},
+		Type:                  "engagement",
+		ProjectID:             testProjectUUID,
+		DeploymentID:          testDeploymentUUID,
+		DeployedProductID:     testDeployedProdID,
+		Subject:               "Migration planning",
+		Description:           "Plan the migration",
+		EngagementType:        domain.EngagementTypeMigration,
+		EngagementPaymentType: domain.EngagementPaymentTypePaid,
+		WatchList:             []string{testIncidentWatcherUUID1, testIncidentWatcherUUID2},
 	}
 
 	if _, err := svc.CreateCase(contextWithUserIDToken("token"), req); err != nil {
@@ -408,14 +409,15 @@ func TestWatchListResolution_UnknownUserID(t *testing.T) {
 			name: "case create",
 			call: func() error {
 				_, err := caseSvc.CreateCase(contextWithUserIDToken("token"), domain.CreateCaseRequest{
-					Type:              "engagement",
-					ProjectID:         testProjectUUID,
-					DeploymentID:      testDeploymentUUID,
-					DeployedProductID: testDeployedProdID,
-					Subject:           "Migration planning",
-					Description:       "Plan the migration",
-					EngagementType:    domain.EngagementTypeMigration,
-					WatchList:         unknown,
+					Type:                  "engagement",
+					ProjectID:             testProjectUUID,
+					DeploymentID:          testDeploymentUUID,
+					DeployedProductID:     testDeployedProdID,
+					Subject:               "Migration planning",
+					Description:           "Plan the migration",
+					EngagementType:        domain.EngagementTypeMigration,
+					EngagementPaymentType: domain.EngagementPaymentTypePaid,
+					WatchList:             unknown,
 				})
 				return err
 			},
