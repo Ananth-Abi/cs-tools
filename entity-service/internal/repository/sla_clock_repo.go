@@ -65,8 +65,8 @@ const slaClockColumns = `case_id, clock_type, started_at, due_at, paused_at, rea
 func scanSLAClock(row pgx.Row) (domain.SLAClock, error) {
 	var c domain.SLAClock
 	if err := row.Scan(
-		&c.CaseID, &c.ClockType, &c.StartedAt, &c.DueAt,
-		&c.PausedAt, &c.Reached50At, &c.Reached75At, &c.Reached100At,
+		&c.CaseID, &c.ClockType, &c.StartedOn, &c.DueOn,
+		&c.PausedOn, &c.Reached50On, &c.Reached75On, &c.Reached100On,
 	); err != nil {
 		return domain.SLAClock{}, err
 	}

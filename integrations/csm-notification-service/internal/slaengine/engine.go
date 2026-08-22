@@ -98,10 +98,12 @@ func (e *Engine) Handle(ctx context.Context, record eventbus.Record) error {
 // registerClocks (re)creates every named clock and its 50/75/100% wake
 // entries — used for both first registration and a re-registration that
 // wipes and rebuilds a clock from scratch (entity-service's RegisterClock
-// endpoint always resets on conflict — see its own doc comment). An
-// individual clockType with an unparsable duration is logged and skipped
-// rather than failing the whole record — a typo in one clock type shouldn't
-// prevent the others in the same event from registering.
+// endpoint always resets on conflict — see its own doc comment). By the time
+// Handle calls this, events.Validate has already rejected the whole record
+// if any duration in it failed to parse (mirroring this package's own
+// validRecipients: one bad entry fails the whole event, not just that one
+// clock) — the time.ParseDuration re-check below is defensive belt-and-
+// suspenders, not a reachable path through Handle's own call chain.
 func (e *Engine) registerClocks(ctx context.Context, caseID string, durations map[string]string) error {
 	var errs []error
 	for clockType, durStr := range durations {
@@ -176,7 +178,7 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 	if err != nil {
 		return fmt.Errorf("get clock %s/%s: %w", caseID, clockType, err)
 	}
-	if clock.PausedAt != nil {
+	if clock.PausedOn != nil {
 		slog.InfoContext(ctx, "slaengine: clock is paused, dropping wake entry", "caseId", caseID, "clockType", clockType)
 		return e.wake.RemoveWake(ctx, member)
 	}

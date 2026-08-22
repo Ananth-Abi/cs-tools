@@ -240,11 +240,20 @@ func main() {
 		// customerEntityClient, since internal/entity.CustomerEntityClient
 		// deliberately implements only POST /users/search (see its own doc
 		// comment) — not because the two point at different servers.
+		//
+		// Unlike customerEntityClient's own construction above (which reads
+		// the OAuth2 triple with plain os.Getenv, since that feature only
+		// warns-and-degrades on a missing config), mustEnv is used for all
+		// four values here: once REDIS_ADDR opts into this engine, every one
+		// of them is required for it to do anything at all — a missing
+		// credential would otherwise silently fail every entity-service call
+		// this engine makes, with each sla.clock.register record retried and
+		// dead-lettered for a reason invisible from the DLQ topic alone.
 		slaEntityClient := slaengine.NewEntityClient(slaengine.EntityConfig{
 			BaseURL:      mustEnv("CUSTOMER_ENTITY_BASE_URL"),
-			TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
-			ClientID:     os.Getenv("OAUTH2_CLIENT_ID"),
-			ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
+			TokenURL:     mustEnv("OAUTH2_TOKEN_URL"),
+			ClientID:     mustEnv("OAUTH2_CLIENT_ID"),
+			ClientSecret: mustEnv("OAUTH2_CLIENT_SECRET"),
 			Scopes:       splitComma(os.Getenv("CUSTOMER_ENTITY_SCOPES")),
 		})
 
@@ -368,8 +377,11 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	d, err := time.ParseDuration(v)
-	if err != nil {
-		slog.Warn("environment variable is not a valid duration; using default", "key", key, "value", v, "default", def)
+	if err != nil || d <= 0 {
+		// time.ParseDuration accepts "0s" and negative strings without
+		// erroring — both would later panic time.NewTicker (its duration
+		// must be > 0), so they're treated the same as a parse failure here.
+		slog.Warn("environment variable is not a valid positive duration; using default", "key", key, "value", v, "default", def)
 		return def
 	}
 	return d

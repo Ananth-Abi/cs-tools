@@ -93,5 +93,5 @@ func (s *slaClockService) SetSLAClockTierReached(ctx context.Context, caseID, cl
 	if err != nil {
 		return domain.SetSLAClockTierReachedResponse{}, err
 	}
-	return domain.SetSLAClockTierReachedResponse{ReachedAt: reachedAt}, nil
+	return domain.SetSLAClockTierReachedResponse{ReachedOn: reachedAt}, nil
 }

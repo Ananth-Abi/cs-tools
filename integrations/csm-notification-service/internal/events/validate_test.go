@@ -86,8 +86,12 @@ func TestValidate_RequiresFields(t *testing.T) {
 		"sla.clock.register empty clock type":         {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{"":"2h"}}`},
 		"sla.clock.register empty duration":           {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{"response":""}}`},
 		"sla.clock.register caseId/entityId mismatch": {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-2","durations":{"response":"2h"}}`},
+		"sla.clock.register unparsable duration":      {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{"response":"not-a-duration"}}`},
+		"sla.clock.register zero duration":            {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{"response":"0s"}}`},
+		"sla.clock.register negative duration":        {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{"response":"-2h"}}`},
 		"sla.tier_reached missing clockType":          {"CASE-1", TypeSLATierReached, `{"caseId":"CASE-1","tier":"50"}`},
 		"sla.tier_reached missing tier":               {"CASE-1", TypeSLATierReached, `{"caseId":"CASE-1","clockType":"response"}`},
+		"sla.tier_reached invalid tier":               {"CASE-1", TypeSLATierReached, `{"caseId":"CASE-1","clockType":"response","tier":"60"}`},
 		"sla.tier_reached caseId/entityId mismatch":   {"CASE-1", TypeSLATierReached, `{"caseId":"CASE-2","clockType":"response","tier":"50"}`},
 	}
 	for name, c := range cases {

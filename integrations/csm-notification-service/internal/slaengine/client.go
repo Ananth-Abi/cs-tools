@@ -114,7 +114,7 @@ func (c *EntityClient) do(ctx context.Context, method, path string, body []byte)
 	if err != nil {
 		return nil, fmt.Errorf("slaengine: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -128,11 +128,13 @@ func (c *EntityClient) do(ctx context.Context, method, path string, body []byte)
 }
 
 // Clock is the subset of entity-service's SLAClock response this engine
-// needs: PausedAt is checked by Tick before firing a tier (see engine.go);
+// needs: PausedOn is checked by Tick before firing a tier (see engine.go);
 // nothing here reads the reached_*_at fields since SetTierReachedIfUnset's
-// own response already reports what's needed after a write.
+// own response already reports what's needed after a write. Field name
+// matches entity-service's own response naming (timestamps use the "On"
+// suffix there, not "At").
 type Clock struct {
-	PausedAt *time.Time `json:"pausedAt"`
+	PausedOn *time.Time `json:"pausedOn"`
 }
 
 // RegisterClock calls POST /cases/{caseId}/sla-clocks.
@@ -180,10 +182,10 @@ func (c *EntityClient) SetTierReachedIfUnset(ctx context.Context, caseID, clockT
 		return time.Time{}, err
 	}
 	var parsed struct {
-		ReachedAt time.Time `json:"reachedAt"`
+		ReachedOn time.Time `json:"reachedOn"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return time.Time{}, fmt.Errorf("slaengine: decode SetTierReachedIfUnset response: %w", err)
 	}
-	return parsed.ReachedAt, nil
+	return parsed.ReachedOn, nil
 }

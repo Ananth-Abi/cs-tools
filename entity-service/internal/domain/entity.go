@@ -5006,16 +5006,17 @@ type SearchEventPublishFailuresResponse struct {
 type SLAClock struct {
 	CaseID    string    `json:"caseId"`
 	ClockType string    `json:"clockType"`
-	StartedAt time.Time `json:"startedAt"`
-	DueAt     time.Time `json:"dueAt"`
-	// PausedAt is currently never set by any endpoint below — the column and
+	StartedOn time.Time `json:"startedOn"`
+	DueOn     time.Time `json:"dueOn"`
+	// PausedOn is currently never set by any endpoint below — the column and
 	// this field exist so a future pause/resume feature has somewhere to
 	// land, and so SLATimerEngine's tier-scan can already skip a paused
-	// clock once one exists, without a schema change at that point.
-	PausedAt     *time.Time `json:"pausedAt,omitempty"`
-	Reached50At  *time.Time `json:"reached50At,omitempty"`
-	Reached75At  *time.Time `json:"reached75At,omitempty"`
-	Reached100At *time.Time `json:"reached100At,omitempty"`
+	// clock once one exists, without a schema change at that point. No
+	// omitempty: absent must serialize as JSON null, not be omitted.
+	PausedOn     *time.Time `json:"pausedOn"`
+	Reached50On  *time.Time `json:"reached50On"`
+	Reached75On  *time.Time `json:"reached75On"`
+	Reached100On *time.Time `json:"reached100On"`
 }
 
 // RegisterSLAClockRequest is the request body for
@@ -5049,9 +5050,9 @@ type SetSLAClockTierRequest struct {
 
 // SetSLAClockTierReachedResponse is the response body for
 // PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}.
-// ReachedAt is the timestamp now stored for that tier — either just written
+// ReachedOn is the timestamp now stored for that tier — either just written
 // by this call, or the pre-existing value if the tier was already reached
 // (the operation is idempotent; see the repository's SetTierReachedIfUnset).
 type SetSLAClockTierReachedResponse struct {
-	ReachedAt time.Time `json:"reachedAt"`
+	ReachedOn time.Time `json:"reachedOn"`
 }

@@ -12663,25 +12663,25 @@ components:
           type: string
         clockType:
           type: string
-        startedAt:
+        startedOn:
           type: string
           format: date-time
-        dueAt:
+        dueOn:
           type: string
           format: date-time
-        pausedAt:
-          type: string
-          format: date-time
-          nullable: true
-        reached50At:
+        pausedOn:
           type: string
           format: date-time
           nullable: true
-        reached75At:
+        reached50On:
           type: string
           format: date-time
           nullable: true
-        reached100At:
+        reached75On:
+          type: string
+          format: date-time
+          nullable: true
+        reached100On:
           type: string
           format: date-time
           nullable: true
@@ -12689,6 +12689,7 @@ components:
     RegisterSLAClockRequest:
       type: object
       required: [clockType, startedAt, dueAt]
+      additionalProperties: false
       properties:
         clockType:
           type: string
@@ -12702,6 +12703,7 @@ components:
     SetSLAClockTierRequest:
       type: object
       required: [status]
+      additionalProperties: false
       properties:
         status:
           type: string
@@ -12711,7 +12713,7 @@ components:
     SetSLAClockTierReachedResponse:
       type: object
       properties:
-        reachedAt:
+        reachedOn:
           type: string
           format: date-time
 

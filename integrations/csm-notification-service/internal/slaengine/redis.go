@@ -18,7 +18,6 @@ package slaengine
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -27,8 +26,8 @@ import (
 // wakeKey is the single Redis sorted-set key this engine uses as its
 // scheduling index: member = "<caseId>|<clockType>|<tier>", score = the Unix
 // timestamp that member becomes due at. One key for the whole engine (not
-// one per case) — ZRANGEBYSCORE below scans the whole set in one round trip
-// per tick regardless of how many clocks are registered.
+// one per case) — the ZRANGE ... BYSCORE query below scans the whole set in
+// one round trip per tick regardless of how many clocks are registered.
 const wakeKey = "sla:wake"
 
 // WakeIndex wraps the Redis ZSET operations this engine needs — a direct
@@ -64,9 +63,13 @@ func (w *WakeIndex) RemoveWake(ctx context.Context, member string) error {
 }
 
 // DueMembers returns every member whose score (epoch seconds) is <= now.
+// Uses ZRangeArgs (ByScore) rather than the deprecated ZRangeByScore —
+// same query, current API.
 func (w *WakeIndex) DueMembers(ctx context.Context, now time.Time) ([]string, error) {
-	return w.rdb.ZRangeByScore(ctx, wakeKey, &redis.ZRangeBy{
-		Min: "0",
-		Max: strconv.FormatInt(now.Unix(), 10),
+	return w.rdb.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:     wakeKey,
+		Start:   0,
+		Stop:    now.Unix(),
+		ByScore: true,
 	}).Result()
 }

@@ -45,7 +45,7 @@ type fakeSLAClockRepo struct {
 
 func (f *fakeSLAClockRepo) Register(_ context.Context, req domain.RegisterSLAClockRequest) (domain.SLAClock, error) {
 	f.gotRegisterReq = req
-	return domain.SLAClock{CaseID: req.CaseID, ClockType: req.ClockType, StartedAt: req.StartedAt, DueAt: req.DueAt}, nil
+	return domain.SLAClock{CaseID: req.CaseID, ClockType: req.ClockType, StartedOn: req.StartedAt, DueOn: req.DueAt}, nil
 }
 
 func (f *fakeSLAClockRepo) Get(_ context.Context, caseID, clockType string) (domain.SLAClock, error) {
@@ -182,8 +182,8 @@ func TestSLAClockService_SetSLAClockTierReached_AcceptsKnownTiers(t *testing.T) 
 			if repo.gotTier != tier {
 				t.Fatalf("expected tier %q forwarded, got %q", tier, repo.gotTier)
 			}
-			if !resp.ReachedAt.Equal(reached) {
-				t.Fatalf("expected reached timestamp returned unchanged, got %v want %v", resp.ReachedAt, reached)
+			if !resp.ReachedOn.Equal(reached) {
+				t.Fatalf("expected reached timestamp returned unchanged, got %v want %v", resp.ReachedOn, reached)
 			}
 		})
 	}

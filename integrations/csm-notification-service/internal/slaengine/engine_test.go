@@ -161,17 +161,22 @@ func TestEngine_Handle_RegistersClockAndSeedsWakeEntries(t *testing.T) {
 	}
 }
 
-func TestEngine_Handle_SkipsInvalidDurationButRegistersOthers(t *testing.T) {
+// TestEngine_Handle_RejectsWholeRecordOnOneInvalidDuration verifies that a
+// mix of one valid and one unparsable duration fails events.Validate before
+// registerClocks ever runs — mirroring internal/events' own validRecipients
+// philosophy (one bad entry fails the whole event, dead-lettered for
+// visibility, rather than silently registering a subset).
+func TestEngine_Handle_RejectsWholeRecordOnOneInvalidDuration(t *testing.T) {
 	entity := &fakeEntityClock{}
 	wake := &fakeWakeIndex{}
 	e := newTestEngine(entity, wake, &fakePublisher{})
 
 	record := eventbus.Record{Value: []byte(`{"type":"sla.clock.register","entityId":"CASE-1","payload":{"caseId":"CASE-1","durations":{"response":"not-a-duration","resolution":"4h"}}}`)}
-	if err := e.Handle(context.Background(), record); err != nil {
-		t.Fatalf("Handle() error = %v, want nil (an invalid duration is skipped, not fatal)", err)
+	if err := e.Handle(context.Background(), record); err == nil {
+		t.Fatal("Handle() error = nil, want the whole record rejected for its one invalid duration")
 	}
-	if len(entity.registerCalls) != 1 || entity.registerCalls[0].clockType != "resolution" {
-		t.Errorf("expected only the valid clockType registered, got %+v", entity.registerCalls)
+	if len(entity.registerCalls) != 0 {
+		t.Errorf("expected no clock registered when the record as a whole was rejected, got %+v", entity.registerCalls)
 	}
 }
 
@@ -231,7 +236,7 @@ func TestEngine_Tick_FiresDueMemberAndPublishes(t *testing.T) {
 
 func TestEngine_Tick_SkipsPausedClock(t *testing.T) {
 	pausedAt := time.Now()
-	entity := &fakeEntityClock{getClockFn: func(string, string) (Clock, error) { return Clock{PausedAt: &pausedAt}, nil }}
+	entity := &fakeEntityClock{getClockFn: func(string, string) (Clock, error) { return Clock{PausedOn: &pausedAt}, nil }}
 	wake := &fakeWakeIndex{due: []string{"CASE-1|response|50"}}
 	pub := &fakePublisher{}
 	e := newTestEngine(entity, wake, pub)

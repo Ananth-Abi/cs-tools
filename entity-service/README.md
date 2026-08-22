@@ -154,7 +154,7 @@ severity or anything else.
 
 Consumed by `csm-notification-service`'s SLA timer engine (`internal/slaengine`), which registers a
 clock on `POST /cases/{caseId}/sla-clocks`, reads it back via `GET /cases/{caseId}/sla-clocks/{clockType}`
-to check `pausedAt` before firing a tier, and records a crossed tier idempotently via
+to check `pausedOn` before firing a tier, and records a crossed tier idempotently via
 `PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}` with `{"status": "reached"}`.
 
 ## Security Scanning

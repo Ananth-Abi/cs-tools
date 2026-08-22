@@ -144,10 +144,12 @@ Optional, gated on `REDIS_ADDR` — unset means `internal/slaengine` neither con
 
 | Variable | Description |
 |---|---|
+This engine's own narrow `sla_clocks` client talks to the same entity-service as `CUSTOMER_ENTITY_BASE_URL`/`CUSTOMER_ENTITY_SCOPES` (see [Customer entity service](#customer-entity-service) above) — not a different backend — so it reuses those same two variables, plus the shared `OAUTH2_*` credentials (all required once `REDIS_ADDR` is set), rather than a redundant `SLA_ENTITY_*` pair.
+
+| Variable | Description |
+|---|---|
 | `REDIS_ADDR` | Redis address, e.g. `localhost:6379`. Unset disables this whole engine |
 | `REDIS_PASSWORD` | Optional — empty for a local Redis with no auth |
-
-This engine's own narrow `sla_clocks` client talks to the same entity-service as `CUSTOMER_ENTITY_BASE_URL`/`CUSTOMER_ENTITY_SCOPES` (see [Customer entity service](#customer-entity-service) above) — not a different backend — so it reuses those same two variables (required once `REDIS_ADDR` is set) rather than a redundant `SLA_ENTITY_*` pair.
 | `SLA_CONSUMER_GROUP` | Consumer group ID this engine's own consumer instances join — independent from `EVENT_HUB_CONSUMER_GROUP`/`EVENT_HUB_DLQ_CONSUMER_GROUP`. Optional — defaults to `csm-notification-service-sla` |
 | `SLA_CONSUMER_COUNT` | How many concurrent consumer instances to run. Optional — defaults to `1` |
 | `SLA_TICK_INTERVAL` | How often the ticker scans the Redis wake index for due tiers. Optional — defaults to `15s` |
