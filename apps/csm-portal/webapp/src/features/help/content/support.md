@@ -1,0 +1,86 @@
+# Support
+
+Support (`/cases`) is the cases list and case detail view, where most engineers spend most
+of their day. This topic covers finding cases, saving filter combinations you use often, and
+working a case once you're on its detail page.
+
+## Finding cases
+
+The search box at the top of the list matches on case number, subject, customer, project, or
+assignee. Next to it, **Filters** expands a grid of additional controls:
+
+- **Severity**: S0 (Catastrophic) through S4 (Low / Query). S0 is reserved for Managed Cloud
+  projects.
+- **State**: Open, Work in progress, Solution proposed, Awaiting info, Waiting on WSO2,
+  Closed. The state chip's color tells you whose move it is: blue for active states on us
+  (Open, Work in progress), amber for an elevated on-us state (Waiting on WSO2), grey for
+  waiting on the customer (Solution proposed, Awaiting info), green for Closed.
+- **Team**, **Case type**, **Assignee** (search the engineer directory, or pick "Me"),
+  **Product**, **Onboarding status**, **Tags**, and **Project**.
+
+When a case list arrives already filtered, for example after clicking into a dashboard
+widget, any filter that doesn't have its own control in the grid (an excluded state, a tag
+exclusion, an SLA-percent bound, an escalation filter, and so on) still shows up as a removable
+chip above the grid, so you can always see why the list is filtered and undo it with one click.
+
+Once any filter is active, the **Filters** button turns into **Clear filters (N)**, showing
+how many are active and clearing all of them in one click.
+
+## Saved filter views
+
+The **Saved views** button next to search lets you save the filters you currently have set as
+a named view, and reapply it later without rebuilding it by hand, useful for something you
+check every day, like "my open S1/S2."
+
+A few things worth knowing:
+
+- **Saved views live in your browser only.** They're stored in this browser's local storage,
+  not on the server; they don't sync across devices, and a teammate can't see or share your
+  saved views. Switching browsers or clearing site data loses them.
+- You can save up to 50 views. Saving with a name that matches an existing view (case-
+  insensitively) overwrites it rather than creating a duplicate.
+- The menu also lists a fixed set of **Suggested** views (S0/S1 active, Awaiting info, Open
+  (unstarted)) that are always available; they aren't something you saved, and they can't be
+  deleted.
+- Whichever view's filters exactly match what's currently applied is checked in the menu.
+- Delete a saved view with the trash icon next to it in the menu; suggested views don't have
+  one.
+
+## Case detail
+
+Opening a case shows its full detail: overview fields, the comment/activity timeline,
+attachments, and any linked service requests.
+
+**Linked service requests** appear in their own widget on the case, listing each linked
+request's number, name, state, and current assignee. Clicking a row navigates to that
+request's own case page (with a "back" link that returns you here). If a case is closed, the
+**Create service request** action is disabled: closed cases are read-only.
+
+## Comments
+
+The comment composer at the bottom of the timeline sends either a public reply visible to the
+customer, or an **internal note**:
+
+- Toggle **Internal note** (the lock icon) to write a note only WSO2 engineers can see. The
+  composer's background tints and gets a left accent bar while this is on, and existing
+  internal notes are shown the same way in the timeline with an "Internal note" chip, so
+  customer-visible and internal content are never visually ambiguous.
+- If public replies are currently locked for the case (for example, work is paused), the
+  composer forces you into internal-note mode and shows why, with a one-click "Resume work"
+  action when that's the reason, so you don't have to leave the composer to unblock a public
+  reply.
+- The **HTML source** toggle switches the editor to raw HTML for fixing paste formatting or
+  inserting a table; whatever you type there is sent as-is.
+- Attach files from the editor's toolbar before sending; drag-and-drop onto the composer works
+  too.
+
+Comments in the timeline are color/role-tagged (Customer, WSO2, System, AI Agent) so you can
+scan who said what at a glance, and each has a permalink (click the timestamp) for referencing
+a specific comment.
+
+## Attachments
+
+Click an image or PDF attachment to preview it: images open inline in a dialog; PDFs open in a
+new browser tab (this is a browser limitation, not a portal choice: Chrome won't render a PDF
+inside the sandboxed preview). Other file types don't have an inline preview; download them
+instead.
