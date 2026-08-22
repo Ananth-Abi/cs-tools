@@ -178,6 +178,7 @@ const CsmTimeCardsPage = lazy(
 const CsmAnnouncementsPage = lazy(
   () => import("@features/csm-announcements/pages/CsmAnnouncementsPage"),
 );
+const HelpPage = lazy(() => import("@features/help/pages/HelpPage"));
 
 /**
  * Landing for `/`. Defers to AuthGuard's post-login deep-link restore when a
@@ -570,6 +571,13 @@ export default function App(): JSX.Element {
                     path="announcements/:caseId"
                     element={<CsmCaseDetailPage />}
                   />
+
+                  {/* Help — static, bundled Markdown docs, all rendered on
+                      one scrollable page with a table of contents at the top
+                      (see HelpPage). Every topic is an in-page anchor rather
+                      than its own route, so unlike Customers/Settings above
+                      there is nothing to redirect an index route to. */}
+                  <Route path="help" element={<HelpPage />} />
                 </Route>
               </Route>
 
