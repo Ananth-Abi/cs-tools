@@ -46,13 +46,14 @@ const BACK_TO_TOP_THRESHOLD = 240;
  * enough for this, no scroll library needed.
  */
 function BackToTopButton(): JSX.Element {
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(
+    () => window.scrollY > BACK_TO_TOP_THRESHOLD,
+  );
 
   useEffect(() => {
     const onScroll = (): void => {
       setVisible(window.scrollY > BACK_TO_TOP_THRESHOLD);
     };
-    onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
@@ -98,9 +99,30 @@ function BackToTopButton(): JSX.Element {
  * list instead of a route guard, since there is no longer a per-topic route
  * to guard.
  */
+/**
+ * Scrolls the section matching the current `#<topic>` hash into view, both on
+ * first mount (a direct link like `/help#operations`) and on any later hash
+ * change (the TOC's own anchor links, which the browser can otherwise leave
+ * unhandled since every topic's section is a plain DOM node rendered by this
+ * same component, not a route the router would scroll for on navigation).
+ */
+function useScrollToHashOnMount(): void {
+  useEffect(() => {
+    const scrollToHash = (): void => {
+      const id = window.location.hash.slice(1);
+      if (!id) return;
+      document.getElementById(id)?.scrollIntoView();
+    };
+    scrollToHash();
+    window.addEventListener("hashchange", scrollToHash);
+    return () => window.removeEventListener("hashchange", scrollToHash);
+  }, []);
+}
+
 export default function HelpPage(): JSX.Element {
   const helpSection = navNodeById("help");
   const topics = helpSection ? enabledNavChildren(helpSection) : [];
+  useScrollToHashOnMount();
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>

@@ -7,7 +7,7 @@ no create, edit, or delete here yet for any of Users, Roles, Groups, or Teams.
 
 Open Settings from the sidebar and you land on a tile grid, one tile per directory, rather
 than a tab strip. A tile marked **WIP** isn't wired up yet; the tiles that aren't marked WIP
-are.
+open their real directory.
 
 ## Users
 

@@ -92,7 +92,7 @@ history, not your deliberately pinned working set.
 Both pinned tabs and recent-view entries store a title, not just a URL. For
 case, project, incident, and similar detail pages, that title comes from
 the record itself (for example, a case number and subject). For a page
-without its own recorder (a dashboard, a filtered list, or any other route),
+without its own record (a dashboard, a filtered list, or any other route),
 the title is derived from the page's name in the navigation menu, or, for
 a filtered view, from a short summary of the applied filters (e.g. a quoted
 search term, or a count of active filters). If the route isn't recognized

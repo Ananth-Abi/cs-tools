@@ -20,7 +20,8 @@
  * production build). A plain relative path in the raw Markdown string can't
  * resolve on its own — the string is rendered to HTML and injected via
  * `dangerouslySetInnerHTML`, so the browser would resolve it against the
- * *page's* URL (`/help/overview`), not against this file. `resolveHelpImages`
+ * *page's* URL (`/help#<topic>`, all topics share the one `/help` route), not
+ * against this file. `resolveHelpImages`
  * below rewrites `src="images/<name>"` to this map's real URL before the HTML
  * is sanitized and rendered, so an author only ever has to add both the image
  * file and its one entry here — never hand-compute a bundled path.

@@ -27,8 +27,8 @@ CSV export of the filtered results. Each row links to a detail page.
 The detail page shows:
 
 - An **overview** card: project, type, linked case, deployment, deployed
-  product, product, assigned engineer/team, duration, planned start/end,
-  and audit fields.
+  product, assigned engineer/team, duration, planned start/end, and audit
+  fields.
 - Tabs for **Approval**, **Details**, **Comments**, and **Attachments**.
   - **Approval** shows the customer-approval/review flags plus a full
     approval-stage breakdown (e.g. Assess, Authorize, Customer Approval) with

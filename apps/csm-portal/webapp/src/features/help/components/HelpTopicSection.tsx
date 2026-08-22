@@ -103,9 +103,6 @@ export default function HelpTopicSection({ topicId }: HelpTopicSectionProps): JS
         "& h1, & h2, & h3": { mt: 1, mb: 0.5 },
         "& .md-table-wrap": { overflowX: "auto", maxWidth: "100%", my: 0.75 },
         "& table": {
-          display: "block",
-          overflowX: "auto",
-          maxWidth: "100%",
           width: "max-content",
           minWidth: "100%",
           borderCollapse: "collapse",

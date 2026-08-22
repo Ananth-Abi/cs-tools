@@ -32,10 +32,13 @@ function setOverrides(value: unknown): void {
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   setOverrides(undefined);
+  Element.prototype.scrollIntoView = vi.fn();
+  window.location.hash = "";
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  window.location.hash = "";
 });
 
 describe("HelpPage", () => {
@@ -94,5 +97,23 @@ describe("HelpPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Back to top" }));
 
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+  });
+
+  it("scrolls the matching section into view on a direct /help#<topic> entry", () => {
+    window.location.hash = "#operations";
+    render(<HelpPage />);
+
+    const section = document.getElementById("operations");
+    expect(section?.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("scrolls the matching section into view when the hash changes after mount", () => {
+    render(<HelpPage />);
+    const section = document.getElementById("operations");
+
+    window.location.hash = "#operations";
+    fireEvent(window, new HashChangeEvent("hashchange"));
+
+    expect(section?.scrollIntoView).toHaveBeenCalled();
   });
 });
