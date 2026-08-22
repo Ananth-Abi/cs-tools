@@ -16,7 +16,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
 vi.mock("@api/backend/client", () => ({
@@ -63,6 +63,10 @@ vi.mock("@components/RefreshButton", () => ({
 
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 function LocationProbe() {
   const location = useLocation();
   return <div data-testid="location-probe">{location.pathname}</div>;
@@ -104,5 +108,71 @@ describe("CsmIssuesView back navigation", () => {
   it("suppresses its own Back button when hideBackButton is set, even with a `from` state present", () => {
     renderAt({ from: "/dashboard" }, true);
     expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
+  });
+});
+
+describe("CsmIssuesView column customization", () => {
+  // Mirrors the real `CsmEngagementsPage`: locked to one case type (so Type
+  // is offered but not default-visible — see `isLockedToSingleType`'s doc in
+  // `CsmIssuesView`) and severity hidden (Engagements has no severity concept).
+  function renderEngagementsLike() {
+    return render(
+      <MemoryRouter initialEntries={["/engagements"]}>
+        <CsmIssuesView
+          title="Engagements"
+          entityNoun="engagements"
+          lockedFilters={{ caseTypes: ["engagement"] }}
+          hideSeverityColumn
+          enableColumnCustomization
+          columnsViewId="engagements"
+        />
+      </MemoryRouter>,
+    );
+  }
+
+  it("is off by default (no picker rendered for a plain CsmIssuesView)", () => {
+    renderAt(null);
+    expect(
+      screen.queryByRole("button", { name: /Customise .* columns/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the picker and lists Product/Type/Assignee/Customer/Created (not Severity) when hideSeverityColumn is set", () => {
+    renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+
+    expect(screen.getByText("Product")).toBeInTheDocument();
+    expect(screen.getByText("Type")).toBeInTheDocument();
+    expect(screen.getByText("Assignee")).toBeInTheDocument();
+    expect(screen.getByText("Customer")).toBeInTheDocument();
+    expect(screen.getByText("Created")).toBeInTheDocument();
+    expect(screen.queryByText("Severity")).not.toBeInTheDocument();
+  });
+
+  it("defaults every optional column but Product to hidden, since the view is locked to one case type, so a returning user sees no change until they opt in", () => {
+    renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+
+    // Order mirrors `CASE_OPTIONAL_COLUMNS`: Product, Type, Assignee, Customer, Created
+    // (Severity is excluded entirely here via hideSeverityColumn).
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(5);
+    expect(checkboxes[0]).toBeChecked(); // Product — the one default-visible column
+    expect(checkboxes[1]).not.toBeChecked(); // Type
+    expect(checkboxes[2]).not.toBeChecked(); // Assignee
+    expect(checkboxes[3]).not.toBeChecked(); // Customer
+    expect(checkboxes[4]).not.toBeChecked(); // Created
+  });
+
+  it("persists a toggled column across a remount for the same user + view", () => {
+    const { unmount } = renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+    fireEvent.click(screen.getByText("Assignee"));
+    unmount();
+
+    renderEngagementsLike();
+    fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes[2]).toBeChecked(); // Assignee, toggled on above
   });
 });
