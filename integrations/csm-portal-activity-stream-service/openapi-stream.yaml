@@ -2,12 +2,9 @@ openapi: 3.0.1
 info:
   title: CSM Portal Case Activity Stream
   description: >
-    Server-Sent Events endpoint served by csm-portal-backend's dedicated
-    :9092 listener (see cmd/server/main.go) — kept out of openapi.yaml
-    because that spec describes the :8080 REST API, which does not serve
-    this path. Behind the same JWT auth as every other endpoint; see that
-    backend's CLAUDE.md for why this listener is separate (long-lived
-    connections vs. the REST listener's WriteTimeout/IdleTimeout).
+    Server-Sent Events endpoint served by csm-portal-activity-stream-service's
+    dedicated :9092 listener (see cmd/server/main.go). Behind the same JWT
+    auth as every other endpoint.
   version: 1.0.0
 security:
   - jwtAssertion: []
@@ -28,7 +25,7 @@ paths:
         `{caseId, type, timestamp}` — never comment text or field values)
         whenever the case gets a new comment or its status changes; a
         comment-only `: ping` heartbeat every 15s otherwise. Returns 503
-        when Event Hub isn't configured on the backend, since there would
+        when Event Hub isn't configured on the service, since there would
         be nothing to broadcast.
       operationId: getCasesIdActivitiesStream
       parameters:

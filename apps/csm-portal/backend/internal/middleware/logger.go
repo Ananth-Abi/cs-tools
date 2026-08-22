@@ -39,8 +39,8 @@ func (rw *responseWriter) WriteHeader(code int) {
 // interface field only promotes that interface's own methods, not the
 // concrete writer's full method set, so without this a handler behind
 // Logger that type-asserts w.(http.Flusher) — e.g. a long-lived SSE
-// connection, see handler.CaseHandler.StreamCaseActivities — would fail the
-// assertion and never be able to flush partial writes to the client.
+// connection — would fail the assertion and never be able to flush
+// partial writes to the client.
 func (rw *responseWriter) Flush() {
 	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

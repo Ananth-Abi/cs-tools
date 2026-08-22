@@ -17,41 +17,43 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/stream"
 )
+
+var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // caseActivityStreamHeartbeat is how often StreamCaseActivities writes a
 // comment-only SSE ping to keep the connection alive through intermediate
 // proxies that would otherwise time out an idle response.
 const caseActivityStreamHeartbeat = 15 * time.Second
 
-// StreamCaseActivities handles GET /cases/{id}/activities/stream: a
-// long-lived Server-Sent Events connection that emits a `case_updated` event
-// whenever internal/caseevents.Handler observes a case.comment_added or
-// case.status_changed record for this case on any backend replica (see
-// internal/stream.BroadcastHub). It is registered on the dedicated :9092
-// listener (see cmd/server/main.go) so the main :8080 listener's
-// WriteTimeout/IdleTimeout can't kill the connection, but it sits behind the
-// same middleware.Auth chain as every other endpoint — there is no separate
-// auth mechanism for streaming, unlike the ticket-based design this
-// superseded; the browser connects with its normal x-jwt-assertion/
-// x-user-id-token headers via a fetch-backed EventSource polyfill (native
-// EventSource cannot set custom headers).
+// StreamHandler handles GET /cases/{id}/activities/stream: a long-lived
+// Server-Sent Events connection that emits a `case_updated` event whenever
+// internal/caseevents.Handler observes a case.comment_added or case.status_changed
+// record for this case on any backend replica (see internal/stream.BroadcastHub).
+// It is registered on the dedicated :9092 listener (see cmd/server/main.go)
+// so the health check listener's timeouts can't kill the connection, but it
+// sits behind the same middleware.Auth chain as every other endpoint — there
+// is no separate auth mechanism for streaming; the browser connects with its
+// normal x-jwt-assertion/x-user-id-token headers via a fetch-backed EventSource
+// polyfill (native EventSource cannot set custom headers).
 //
 // The broadcast payload is a minimal {caseId, type, timestamp} — never
-// comment text or field values (see events.CommentAddedPayload/
-// StatusChangedPayload) — but even that is per-case, so a caller must be
-// authorized to read the requested case before subscribing, not merely hold
-// a valid token: see the GetCase call below, which registers the
-// subscription only once the same upstream ACL check every other
-// case-reading endpoint relies on has passed. This is unrelated to
-// internal/caseevents.Handler, which is a server-internal component with no
-// external caller and legitimately sees every event system-wide.
+// comment text or field values (see events.CommentAddedPayload/StatusChangedPayload)
+// — but even that is per-case, so a caller must be authorized to read the
+// requested case before subscribing, not merely hold a valid token: see the
+// GetCase call below, which registers the subscription only once the same
+// upstream ACL check every other case-reading endpoint relies on has passed.
+// This is unrelated to internal/caseevents.Handler, which is a server-internal
+// component with no external caller and legitimately sees every event system-wide.
 //
 // Known limitation, not yet addressed: there is no per-user or per-replica
 // cap on how many of these a single caller can hold open concurrently, and
@@ -62,7 +64,25 @@ const caseActivityStreamHeartbeat = 15 * time.Second
 // bounded admission control (e.g. a per-user semaphore rejecting beyond some
 // limit) or confirm and document an enforced platform-level limit before
 // relying on this in a hostile-client environment.
-func (h *CaseHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Request) {
+type StreamHandler struct {
+	entityClient entityCaseClient
+	hub          *stream.BroadcastHub
+}
+
+// entityCaseClient is the minimal interface StreamHandler needs from the
+// entity service — only GetCase for the authorization check before subscribing.
+type entityCaseClient interface {
+	GetCase(ctx context.Context, caseID string) ([]byte, error)
+}
+
+// NewStreamHandler constructs a StreamHandler. hub may be nil —
+// StreamCaseActivities checks for that before registering.
+func NewStreamHandler(entityClient entityCaseClient, hub *stream.BroadcastHub) *StreamHandler {
+	return &StreamHandler{entityClient: entityClient, hub: hub}
+}
+
+// StreamCaseActivities handles GET /cases/{id}/activities/stream.
+func (h *StreamHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
 		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
@@ -75,19 +95,19 @@ func (h *CaseHandler) StreamCaseActivities(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if h.hub == nil {
+		writeError(w, http.StatusServiceUnavailable, "Live updates are not available right now.")
+		return
+	}
+
 	// A caller with a valid token but no read access to this specific case
 	// must not learn even that it changed. Reuse the same upstream call
 	// GetCase itself uses — the caller's forwarded x-user-id-token is what
 	// ServiceNow enforces the ACL against — before registering the
 	// subscription, so an unauthorized caseID never reaches h.hub.Register.
-	if _, err := h.entity.GetCase(r.Context(), caseID); err != nil {
+	if _, err := h.entityClient.GetCase(r.Context(), caseID); err != nil {
 		slog.ErrorContext(r.Context(), "entity GetCase failed during stream authorization", "userID", user.UserID, "caseID", caseID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to open the case activity stream.")
-		return
-	}
-
-	if h.hub == nil {
-		writeError(w, http.StatusServiceUnavailable, "Live updates are not available right now.")
 		return
 	}
 

@@ -18,8 +18,8 @@
 // BroadcastHub that fans a per-case string payload out to every open
 // /cases/{id}/activities/stream connection on this replica. It carries no
 // auth or transport concerns of its own — the HTTP handler that registers
-// with it (internal/handler.CaseHandler.StreamCaseActivities) sits behind
-// the same middleware.Auth chain as every other endpoint.
+// with it (internal/handler.StreamCaseActivities) sits behind the same
+// middleware.Auth chain as every other endpoint.
 package stream
 
 import "sync"

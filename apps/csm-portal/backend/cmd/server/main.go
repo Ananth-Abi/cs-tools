@@ -19,9 +19,7 @@ package main
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -29,11 +27,9 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/caseevents"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
@@ -42,7 +38,6 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/scim"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/stream"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
 
@@ -77,51 +72,22 @@ func main() {
 
 	customerEntityClient := entity.NewCustomerEntityClient(customerEntityCfg)
 
-	// Event Hub — shared by the producer (this backend's own writes, via
-	// eventPublisher below), the case-events consumer (internal/caseevents),
-	// and the case-activity SSE broadcast hub those events feed
-	// (internal/stream.BroadcastHub, consumed by the dedicated :9092
-	// listener started further down). Optional: left unset, this backend
-	// neither publishes, consumes, nor serves live case-activity updates —
-	// callers fall back to their existing manual-refresh/staleTime polling.
-	var caseEventsConsumer *eventbus.Consumer
+	// Event Hub — optional producer side (this backend's own writes, via
+	// eventPublisher below). When EVENT_HUB_BROKER is unset, this backend
+	// neither publishes nor consumes events; callers fall back to their
+	// existing manual-refresh/staleTime polling. The consumer side (case
+	// activity stream) has moved to integrations/csm-portal-activity-stream-service.
 	var eventPublisher *eventpublisher.Publisher
-	var activityHub *stream.BroadcastHub
 	if broker := os.Getenv("EVENT_HUB_BROKER"); broker != "" {
 		eventBusCfg := eventbus.Config{
 			Broker:           broker,
 			ConnectionString: mustEnv("EVENT_HUB_CONNECTION_STRING"),
 			Topic:            mustEnv("EVENT_HUB_TOPIC"),
 		}
-		// Every replica gets its own consumer group (a suffix on top of the
-		// configured/default base name) rather than sharing one, so each
-		// replica sees 100% of events instead of Kafka load-balancing them
-		// across replicas — a shared group would mean an SSE client
-		// connected to replica B never learns about an event a shared
-		// group happened to hand to replica A. See internal/stream.
-		// BroadcastHub: it only knows about subscribers on its own
-		// process, so every replica must independently observe every event
-		// to be able to broadcast it to whichever subscribers it happens to
-		// be holding the connection for. Every ordinary rolling deploy (not
-		// just a crash-restart) still means a brand new consumer group —
-		// even newReplicaID's hostname-based suffix changes with every new
-		// pod — so LatestOffset (not the package default) is required
-		// here: EarliestOffset would replay the entire retained topic
-		// history into a burst of stale case_updated notifications on
-		// every deploy. This does mean an unbounded number of dead,
-		// never-explicitly-deleted consumer groups accumulate on the
-		// broker over the service's lifetime — an accepted tradeoff, since
-		// per-replica uniqueness is required for the fan-out property
-		// above and Event Hub's Kafka surface has no API this backend can
-		// call to delete a consumer group it's done with.
-		consumerGroupBase := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-portal-backend")
-		consumerGroup := fmt.Sprintf("%s-replica-%s", consumerGroupBase, newReplicaID())
-		caseEventsConsumer = eventbus.NewConsumer(eventBusCfg, consumerGroup, eventbus.LatestOffset)
 		eventPublisher = eventpublisher.New(eventbus.NewProducer(eventBusCfg), customerEntityClient)
-		activityHub = stream.NewBroadcastHub()
 	}
 
-	caseHandler := handler.NewCaseHandler(customerEntityClient, eventPublisher, activityHub)
+	caseHandler := handler.NewCaseHandler(customerEntityClient, eventPublisher)
 	dashboardHandler := handler.NewDashboardHandler()
 	accountHandler := handler.NewAccountHandler(customerEntityClient)
 	projectHandler := handler.NewProjectHandler(customerEntityClient)
@@ -308,53 +274,6 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	// The case-activity SSE stream (GET /cases/{id}/activities/stream) needs
-	// a connection that can stay open indefinitely, which the timeouts above
-	// would kill — WriteTimeout/IdleTimeout apply for the life of the
-	// connection, not per-request. It gets its own listener/http.Server on a
-	// separate port with those timeouts disabled, mirroring how this
-	// backend's WebSocket work solved the identical problem. Only started
-	// when Event Hub is configured (activityHub != nil) — without it there
-	// is nothing for the stream to ever broadcast, so standing up a second
-	// server would just be a permanently-503 endpoint.
-	var streamSrv *http.Server
-	var streamLn net.Listener
-	if activityHub != nil {
-		streamMux := http.NewServeMux()
-		streamMux.HandleFunc("GET /cases/{id}/activities/stream", caseHandler.StreamCaseActivities)
-
-		streamAddr := ":" + mustPort("STREAM_PORT", "9092")
-		streamLn, err = (&net.ListenConfig{}).Listen(ctx, "tcp", streamAddr)
-		if err != nil {
-			slog.Error("failed to bind", "addr", streamAddr, "err", err)
-			os.Exit(1)
-		}
-
-		streamSrv = &http.Server{
-			// SecurityHeaders must stay outermost so its headers are present
-			// on every response, including a CORS preflight — CORS runs
-			// next, still ahead of Auth: a browser preflight carries no
-			// x-jwt-assertion header, so Auth must never see it first. See
-			// middleware.CORS's doc comment.
-			// STREAM_CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
-			// unset allows any origin (local-dev-friendly default — see
-			// middleware.CORS on why that's safe here).
-			Handler: middleware.SecurityHeaders(
-				middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
-					middleware.CorrelationID(
-						authMiddleware(
-							middleware.Logger(streamMux),
-						),
-					),
-				),
-			),
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      0,
-			IdleTimeout:       0,
-		}
-	}
-
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			slog.Error("server exited", "err", err)
@@ -363,63 +282,28 @@ func main() {
 	}()
 	slog.Info("CSM Portal Backend started", "addr", addr)
 
-	if streamSrv != nil {
-		go func() {
-			if err := streamSrv.Serve(streamLn); err != nil && err != http.ErrServerClosed {
-				slog.Error("stream server exited", "err", err)
-				os.Exit(1)
-			}
-		}()
-		slog.Info("case-activity stream server started", "addr", streamLn.Addr().String())
-	}
-
-	if caseEventsConsumer != nil {
-		go caseEventsConsumer.Run(ctx, caseevents.NewHandler(activityHub).Handle)
-		slog.Info("case-events consumer started")
-	}
-
 	<-ctx.Done()
 	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Both listeners get the shutdown goroutine's own use of shutdownCtx,
-	// running concurrently rather than one after the other — Shutdown
-	// doesn't cancel an already-running handler's own request context, it
-	// only waits (up to shutdownCtx) for handlers to return on their own,
-	// so a long-lived SSE connection on the stream listener can otherwise
-	// consume the *entire* shared budget before the main API's own
-	// Shutdown even starts, turning what should be a graceful drain into
-	// an abrupt os.Exit(1) below.
-	var wg sync.WaitGroup
-	if streamSrv != nil {
-		wg.Go(func() {
-			if err := streamSrv.Shutdown(shutdownCtx); err != nil {
-				slog.Error("stream server graceful shutdown failed", "err", err)
-			}
-		})
-	}
 	var srvErr error
-	wg.Go(func() {
-		srvErr = srv.Shutdown(shutdownCtx)
-	})
-	wg.Wait()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		srvErr = err
+	}
 	if srvErr != nil {
 		slog.Error("graceful shutdown failed", "err", srvErr)
 		os.Exit(1)
 	}
 
-	// Both listeners have now drained, so no new publishAsync goroutine can
-	// start — safe to wait for the ones already in flight before closing
-	// the producer/consumer they depend on. A state-changing request can
-	// return 200 with its publishAsync goroutine still running; closing the
-	// producer out from under it would otherwise silently drop the event.
+	// No new publishAsync goroutine can start after Shutdown returns —
+	// safe to wait for the ones already in flight before closing the
+	// producer. A state-changing request can return 200 with its
+	// publishAsync goroutine still running; closing the producer out
+	// from under it would otherwise silently drop the event.
 	caseHandler.WaitPendingPublishes(shutdownCtx)
 
-	if caseEventsConsumer != nil {
-		caseEventsConsumer.Close()
-	}
 	if eventPublisher != nil {
 		eventPublisher.Close()
 	}
@@ -560,38 +444,6 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
-}
-
-// newReplicaID returns a stable identifier for this process's Kafka
-// consumer group suffix (see the EVENT_HUB_BROKER block above), preferring
-// the container/pod hostname — in Kubernetes/Choreo this is the pod name by
-// default, requiring no extra deployment config — over a fresh random ID.
-// A random ID on every plain process restart would make Event Hub treat it
-// as a brand new, never-before-seen consumer group every time: NewConsumer
-// starts new groups at kafka.FirstOffset, so the restart would replay every
-// retained event and re-broadcast stale case_updated notifications to
-// whichever SSE clients happen to be connected. The hostname is only stable
-// within the same pod's lifetime, so an actual redeploy (new pod, new
-// hostname) still causes a one-time replay — an accepted, much rarer
-// tradeoff than replaying on every restart.
-//
-// Falls back to a random UUID v4 (deliberately duplicating
-// middleware.newCorrelationID's same crypto/rand-based approach rather than
-// exporting/sharing it — the two ids serve unrelated purposes and don't
-// need to be coupled by a shared helper) only if the hostname is
-// unavailable, which is rare outside unusual sandboxed environments.
-func newReplicaID() string {
-	if host, err := os.Hostname(); err == nil && host != "" {
-		return host
-	}
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		slog.Error("failed to generate replica id", "err", err)
-		os.Exit(1)
-	}
-	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
 // mustPort returns the value of the given environment variable (or def if

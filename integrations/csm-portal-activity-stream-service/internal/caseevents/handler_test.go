@@ -20,7 +20,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventbus"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/eventbus"
 )
 
 func TestHandle_ValidRecord_ReturnsNil(t *testing.T) {

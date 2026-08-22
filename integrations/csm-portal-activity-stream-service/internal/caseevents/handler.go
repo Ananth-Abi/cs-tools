@@ -21,7 +21,7 @@
 // case-activity SSE stream cares about — fans a minimal broadcast payload
 // out to internal/stream.BroadcastHub, which is what actually pushes the
 // `case_updated` event to any browser subscribed to that case on this
-// replica (see internal/handler.CaseHandler.StreamCaseActivities).
+// replica (see internal/handler.StreamCaseActivities).
 package caseevents
 
 import (
@@ -29,8 +29,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventbus"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/events"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/eventbus"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/events"
 )
 
 // broadcastHub abstracts stream.BroadcastHub for testability.
@@ -41,7 +41,7 @@ type broadcastHub interface {
 // Handler reacts to events on the case-events topic. hub may be nil — every
 // broadcast call site below must check for that — since Event Hub config
 // (and therefore the whole case-events consumer) is optional in this
-// backend (see cmd/server/main.go).
+// service (see cmd/server/main.go).
 type Handler struct {
 	hub broadcastHub
 }
@@ -70,7 +70,7 @@ type broadcastPayload struct {
 //
 // Deliberately does not log payload: it can carry PII (recipient emails,
 // comment text, etc. — see the case.* payloads in csm-notification-service's
-// internal/events), and this backend's own logging convention is IDs and
+// internal/events), and this service's own logging convention is IDs and
 // error summaries only, never request/event bodies.
 func (h *Handler) Handle(ctx context.Context, record eventbus.Record) error {
 	var env events.Envelope

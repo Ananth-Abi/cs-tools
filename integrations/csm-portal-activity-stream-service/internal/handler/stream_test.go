@@ -26,15 +26,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/apierror"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/stream"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/stream"
 )
 
 const streamTestCaseID = "11111111-1111-1111-1111-111111111111"
 
+var testUser = &middleware.UserInfo{
+	Email:  "agent@wso2.com",
+	UserID: "uid-123",
+	Groups: []string{"csm-agents"},
+}
+
+type mockEntityCaseClient struct {
+	getCaseFn func(ctx context.Context, caseID string) ([]byte, error)
+}
+
+func (m *mockEntityCaseClient) GetCase(ctx context.Context, caseID string) ([]byte, error) {
+	if m.getCaseFn != nil {
+		return m.getCaseFn(ctx, caseID)
+	}
+	return []byte(`{"id":"` + caseID + `"}`), nil
+}
+
 func TestStreamCaseActivities_Unauthorized(t *testing.T) {
-	h := NewCaseHandler(&mockEntityCaseClient{}, nil, stream.NewBroadcastHub())
+	h := NewStreamHandler(&mockEntityCaseClient{}, stream.NewBroadcastHub())
 	req := httptest.NewRequest(http.MethodGet, "/cases/"+streamTestCaseID+"/activities/stream", nil)
 	req.SetPathValue("id", streamTestCaseID)
 	w := httptest.NewRecorder()
@@ -45,7 +62,7 @@ func TestStreamCaseActivities_Unauthorized(t *testing.T) {
 }
 
 func TestStreamCaseActivities_InvalidCaseID(t *testing.T) {
-	h := NewCaseHandler(&mockEntityCaseClient{}, nil, stream.NewBroadcastHub())
+	h := NewStreamHandler(&mockEntityCaseClient{}, stream.NewBroadcastHub())
 	req := withUser(httptest.NewRequest(http.MethodGet, "/cases/not-a-uuid/activities/stream", nil))
 	req.SetPathValue("id", "not-a-uuid")
 	w := httptest.NewRecorder()
@@ -56,7 +73,7 @@ func TestStreamCaseActivities_InvalidCaseID(t *testing.T) {
 }
 
 func TestStreamCaseActivities_EmptyCaseID(t *testing.T) {
-	h := NewCaseHandler(&mockEntityCaseClient{}, nil, stream.NewBroadcastHub())
+	h := NewStreamHandler(&mockEntityCaseClient{}, stream.NewBroadcastHub())
 	req := withUser(httptest.NewRequest(http.MethodGet, "/cases//activities/stream", nil))
 	req.SetPathValue("id", "")
 	w := httptest.NewRecorder()
@@ -67,7 +84,7 @@ func TestStreamCaseActivities_EmptyCaseID(t *testing.T) {
 }
 
 func TestStreamCaseActivities_HubNotConfigured(t *testing.T) {
-	h := NewCaseHandler(&mockEntityCaseClient{}, nil, nil)
+	h := NewStreamHandler(&mockEntityCaseClient{}, nil)
 	req := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+streamTestCaseID+"/activities/stream", nil))
 	req.SetPathValue("id", streamTestCaseID)
 	w := httptest.NewRecorder()
@@ -87,7 +104,7 @@ func TestStreamCaseActivities_UnauthorizedCase(t *testing.T) {
 		},
 	}
 	hub := stream.NewBroadcastHub()
-	h := NewCaseHandler(client, nil, hub)
+	h := NewStreamHandler(client, hub)
 	req := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+streamTestCaseID+"/activities/stream", nil))
 	req.SetPathValue("id", streamTestCaseID)
 	w := httptest.NewRecorder()
@@ -148,7 +165,7 @@ func (r *syncRecorder) Status() int {
 
 func TestStreamCaseActivities_StreamsPublishedEvent(t *testing.T) {
 	hub := stream.NewBroadcastHub()
-	h := NewCaseHandler(&mockEntityCaseClient{}, nil, hub)
+	h := NewStreamHandler(&mockEntityCaseClient{}, hub)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -200,5 +217,18 @@ waitForEvent:
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("handler did not return after context cancellation")
+	}
+}
+
+// ---- test helpers ----
+
+func withUser(r *http.Request) *http.Request {
+	return r.WithContext(middleware.WithUserInfo(r.Context(), testUser))
+}
+
+func assertStatus(t *testing.T, w *httptest.ResponseRecorder, want int) {
+	t.Helper()
+	if w.Code != want {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, want, w.Body.String())
 	}
 }
