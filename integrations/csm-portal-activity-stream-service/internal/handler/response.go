@@ -21,7 +21,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/apierror"
 )
 
 // Error message constants matching the customer-portal error vocabulary.

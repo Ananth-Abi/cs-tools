@@ -26,7 +26,7 @@ import (
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/entity"
 )
 
 // authErrorBody is the JSON error payload for auth failures.

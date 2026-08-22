@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/apierror"
 )
 
 func newCustomerTokenServer(t *testing.T) *httptest.Server {

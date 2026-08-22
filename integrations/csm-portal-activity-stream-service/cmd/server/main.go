@@ -33,12 +33,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/caseevents"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/entity"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/eventbus"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/handler"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/stream"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/caseevents"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/eventbus"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/handler"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/stream"
 )
 
 func main() {
@@ -99,7 +99,7 @@ func main() {
 		// per-replica uniqueness is required for the fan-out property
 		// above and Event Hub's Kafka surface has no API this backend can
 		// call to delete a consumer group it's done with.
-		consumerGroupBase := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-activity-stream-service")
+		consumerGroupBase := envOrDefault("EVENT_HUB_CONSUMER_GROUP", "csm-portal-activity-stream-service")
 		consumerGroup := fmt.Sprintf("%s-replica-%s", consumerGroupBase, newReplicaID())
 		caseEventsConsumer = eventbus.NewConsumer(eventBusCfg, consumerGroup, eventbus.LatestOffset)
 		activityHub = stream.NewBroadcastHub()

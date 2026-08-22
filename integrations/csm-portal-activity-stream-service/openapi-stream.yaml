@@ -2,7 +2,7 @@ openapi: 3.0.1
 info:
   title: CSM Portal Case Activity Stream
   description: >
-    Server-Sent Events endpoint served by csm-activity-stream-service's
+    Server-Sent Events endpoint served by csm-portal-activity-stream-service's
     dedicated :9092 listener (see cmd/server/main.go). Behind the same JWT
     auth as every other endpoint.
   version: 1.0.0

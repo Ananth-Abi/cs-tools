@@ -25,7 +25,7 @@ import (
 	"os"
 	"regexp"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/entity"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/entity"
 )
 
 const correlationIDHeader = "X-CSM-Correlation-ID"

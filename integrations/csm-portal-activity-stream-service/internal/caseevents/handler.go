@@ -29,8 +29,8 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/eventbus"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/events"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/eventbus"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/events"
 )
 
 // broadcastHub abstracts stream.BroadcastHub for testability.

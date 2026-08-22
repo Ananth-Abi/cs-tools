@@ -76,7 +76,7 @@ func main() {
 	// eventPublisher below). When EVENT_HUB_BROKER is unset, this backend
 	// neither publishes nor consumes events; callers fall back to their
 	// existing manual-refresh/staleTime polling. The consumer side (case
-	// activity stream) has moved to integrations/csm-activity-stream-service.
+	// activity stream) has moved to integrations/csm-portal-activity-stream-service.
 	var eventPublisher *eventpublisher.Publisher
 	if broker := os.Getenv("EVENT_HUB_BROKER"); broker != "" {
 		eventBusCfg := eventbus.Config{

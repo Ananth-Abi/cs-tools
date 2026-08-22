@@ -1,4 +1,4 @@
-module github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service
+module github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service
 
 go 1.26.0
 

@@ -23,7 +23,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
 )
 
 // noopHandler writes 200 OK and is used as the inner handler in middleware tests.

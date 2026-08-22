@@ -23,7 +23,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
 )
 
 // capturingHandler is a minimal slog.Handler that records every attr of the

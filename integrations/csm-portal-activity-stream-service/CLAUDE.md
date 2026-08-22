@@ -44,7 +44,7 @@ The incoming `x-user-id-token` is forwarded to the entity-service `GetCase` call
 | `EVENT_HUB_BROKER` | No — optional feature gate | Kafka-compatible bootstrap address, e.g. `<namespace>.servicebus.windows.net:9093`. Left unset, the service starts and serves only the health check; the SSE endpoint returns 503 |
 | `EVENT_HUB_CONNECTION_STRING` | Required once `EVENT_HUB_BROKER` is set | Shared Access Policy connection string (namespace-scoped, no EntityPath) |
 | `EVENT_HUB_TOPIC` | Required once `EVENT_HUB_BROKER` is set | Event Hub name = Kafka topic (`case-events`) |
-| `EVENT_HUB_CONSUMER_GROUP` | No (default `csm-activity-stream-service`) | Base consumer group name (suffixed per-replica with `-replica-<hostname>`) |
+| `EVENT_HUB_CONSUMER_GROUP` | No (default `csm-portal-activity-stream-service`) | Base consumer group name (suffixed per-replica with `-replica-<hostname>`) |
 | `STREAM_PORT` | No (default 9092) | Port the SSE listener binds to |
 | `STREAM_CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the SSE endpoint; fail-closed |
 | `CORS_ALLOWED_ORIGINS` | No | Comma-separated browser Origins for the health listener (:8080); fail-closed |
@@ -61,7 +61,7 @@ The incoming `x-user-id-token` is forwarded to the entity-service `GetCase` call
 ## Running locally
 
 ```bash
-# from integrations/csm-activity-stream-service
+# from integrations/csm-portal-activity-stream-service
 go run ./cmd/server/main.go
 ```
 

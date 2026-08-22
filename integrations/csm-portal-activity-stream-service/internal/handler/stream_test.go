@@ -26,9 +26,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/apierror"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/stream"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/stream"
 )
 
 const streamTestCaseID = "11111111-1111-1111-1111-111111111111"

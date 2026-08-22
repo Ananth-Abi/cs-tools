@@ -24,8 +24,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/integrations/csm-activity-stream-service/internal/stream"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/middleware"
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-portal-activity-stream-service/internal/stream"
 )
 
 var uuidRe = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
