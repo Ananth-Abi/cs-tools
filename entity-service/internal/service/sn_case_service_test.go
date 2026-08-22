@@ -665,6 +665,18 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 				ID: testDeploymentUUID, Type: strPtr("case"), Product: strPtr("API Manager"),
 			},
 		},
+		{
+			// Standalone (no other field at all) -- addPublicComment's own
+			// handling never runs without addPublicComment itself present, so
+			// product/publicTicket would otherwise be silently dropped rather
+			// than erroring or being forwarded.
+			name: "standalone product with no addPublicComment",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, Product: strPtr("API Manager")},
+		},
+		{
+			name: "standalone publicTicket with no addPublicComment",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, PublicTicket: strPtr("GH-123")},
+		},
 	}
 
 	svc := NewServiceNowCaseService(nil, nil)

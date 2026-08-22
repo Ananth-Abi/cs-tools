@@ -1509,6 +1509,9 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.Type == nil && (req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0) {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType, catalogId, catalogItemId, and variables are only allowed when type is also provided"}
 	}
+	if req.AddPublicComment == nil && (req.Product != nil || req.PublicTicket != nil) {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "product and publicTicket are only allowed when addPublicComment is also provided"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
