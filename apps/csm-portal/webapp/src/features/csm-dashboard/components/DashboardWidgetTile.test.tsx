@@ -1480,7 +1480,7 @@ describe("DashboardWidgetTile", () => {
     expect(screen.queryByTestId("location-probe")).not.toBeInTheDocument();
   });
 
-  it("shape count: shows no 'Last refreshed' label before the refresh button is clicked, and shows it (with the right text) once the refresh resolves", async () => {
+  it("shape count: folds 'Last refreshed' into the refresh button's tooltip (no room for an inline label on this shape), absent before click and present after", async () => {
     postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
 
     renderWithClient(
@@ -1494,15 +1494,33 @@ describe("DashboardWidgetTile", () => {
     );
 
     await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+    const refreshButton = screen.getByRole("button", { name: "Refresh My Patches" });
+
     // Not shown from the tile's own initial data load — only after a manual
     // refresh click (matches the section-level RefreshButton's own gating).
+    // Count-shape tiles are too narrow for an inline label, so this never
+    // renders as visible text on the tile itself either before or after the
+    // click — only ever inside the tooltip.
     expect(screen.queryByText(/Last refreshed/)).not.toBeInTheDocument();
+    fireEvent.mouseOver(refreshButton);
+    await waitFor(() => expect(screen.getByRole("tooltip")).toBeInTheDocument());
+    // Deliberately generic — no widget name (it's already visible next to
+    // the tile's own title; including it made the combined tooltip too
+    // long). The `aria-label` above still carries the widget name for
+    // screen-reader users who need to tell apart multiple refresh buttons.
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Refresh this widget");
+    expect(screen.getByRole("tooltip")).not.toHaveTextContent(/Last refreshed/);
+    fireEvent.mouseOut(refreshButton);
+    await waitFor(() => expect(screen.queryByRole("tooltip")).not.toBeInTheDocument());
 
-    const refreshButton = screen.getByRole("button", { name: "Refresh My Patches" });
     fireEvent.click(refreshButton);
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
 
-    await waitFor(() => expect(screen.getByText(/Last refreshed/)).toBeInTheDocument());
-    expect(screen.getByText(/Last refreshed.*just now|Last refreshed.*ago/)).toBeInTheDocument();
+    expect(screen.queryByText(/Last refreshed/)).not.toBeInTheDocument();
+    fireEvent.mouseOver(refreshButton);
+    await waitFor(() =>
+      expect(screen.getByRole("tooltip")).toHaveTextContent(/Last refreshed.*(just now|ago)/),
+    );
   });
 
   it("shape list: renders a per-widget refresh button", async () => {

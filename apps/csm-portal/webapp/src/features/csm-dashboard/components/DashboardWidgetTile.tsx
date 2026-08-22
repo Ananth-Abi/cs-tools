@@ -268,17 +268,36 @@ export default function DashboardWidgetTile({
   // in the keyboard Tab order throughout (unlike `display: none`, which
   // would remove it from Tab order entirely). Both the label and the icon
   // live inside this same wrapper so they hide/reveal as one unit.
+  //
+  // Shape "count" tiles are too narrow to fit the label inline next to the
+  // icon (they're the shortest/tightest tiles, and the icon already shares
+  // that corner with `infoIcon` when a description is set) — for that shape
+  // only, the same "Last refreshed …" text is folded into the icon's own
+  // tooltip instead of rendered as a separate label. The widget's own name
+  // is deliberately left out of the tooltip text (unlike the `aria-label`,
+  // which keeps it — screen-reader users still need it to tell apart the
+  // many refresh buttons on one dashboard page) since it's already visible
+  // right next to the tile's own title, and including it made the combined
+  // "Refresh <name> — Last refreshed <time>" tooltip too long.
+  const isCountShape = shape === "count";
+  const lastRefreshedText = lastRefreshedAt
+    ? `Last refreshed ${formatRelativeTime(new Date(lastRefreshedAt).toISOString(), now)}`
+    : undefined;
+  const refreshTooltipTitle =
+    isCountShape && lastRefreshedText
+      ? `Refresh this widget - ${lastRefreshedText}`
+      : "Refresh this widget";
   const refreshButton = (
     <Box
       className="dashboard-widget-refresh"
       sx={{ display: "flex", alignItems: "center", gap: 0.75, ...widgetRefreshRevealSx }}
     >
-      {lastRefreshedAt ? (
+      {!isCountShape && lastRefreshedText ? (
         <Typography variant="caption" color="text.secondary" noWrap>
-          Last refreshed {formatRelativeTime(new Date(lastRefreshedAt).toISOString(), now)}
+          {lastRefreshedText}
         </Typography>
       ) : null}
-      <Tooltip title={`Refresh ${resolvedDisplayName}`}>
+      <Tooltip title={refreshTooltipTitle}>
         <span>
           <IconButton
             size="small"
