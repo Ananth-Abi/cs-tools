@@ -5486,12 +5486,15 @@ components:
       type: object
       description: |
         Exactly one of `state`, `severity`, `workState`, `watchList`, `assigneeEmail`, `parentId`,
-        `acknowledge`, `subject`, `description`, `deploymentId`, `deployedProductId`,
+        `acknowledge`, `type`, `subject`, `description`, `deploymentId`, `deployedProductId`,
         `relatedCaseId`, `autocloseHoldUntil`, `bestCaseFixEta`, `mostLikelyFixEta`, or
         `worstCaseFixEta` must be provided. `watchList`, `assigneeEmail`, `parentId`, and `autocloseHoldUntil` are
         supported only for the ServiceNow data source.
         `resolutionCode`, `cause`, and `closeNotes` are optional resolution fields that may only be
         provided alongside `state: closed` or `state: solution_proposed`.
+        `type` transfers the case to another type (digiops-cs#2818/#2852), ServiceNow only.
+        `engagementType` is required alongside `type: engagement`; `catalogId`/`catalogItemId`
+        (and optionally `variables`) are required alongside `type: service_request`.
       oneOf:
         - required: [state]
         - required: [severity]
@@ -5500,6 +5503,7 @@ components:
         - required: [assigneeEmail]
         - required: [parentId]
         - required: [acknowledge]
+        - required: [type]
         - required: [subject]
         - required: [description]
         - required: [deploymentId]
@@ -5518,6 +5522,39 @@ components:
           type: string
           enum: [catastrophic, critical, high, medium, low]
           description: The new severity of the case.
+        type:
+          type: string
+          enum: [case, engagement, security_report_analysis, service_request]
+          description: >
+            Transfers the case to this type (ServiceNow only). `announcement` is
+            system-managed and never a valid transfer target.
+        engagementType:
+          type: string
+          enum: [migration, consultancy, new_feature_improvement, follow_up, onboarding]
+          description: "Required alongside `type: engagement`."
+        catalogId:
+          type: string
+          format: uuid
+          description: "Required alongside `type: service_request`."
+        catalogItemId:
+          type: string
+          format: uuid
+          description: "Required alongside `type: service_request`."
+        variables:
+          type: array
+          description: >
+            Answers to the target catalog item's questions, only meaningful alongside
+            `type: service_request`. Optional even then — a catalog item with no
+            questions has nothing to answer.
+          items:
+            type: object
+            required: [id, value]
+            properties:
+              id:
+                type: string
+                format: uuid
+              value:
+                type: string
         workState:
           type: string
           enum: [ongoing, paused]

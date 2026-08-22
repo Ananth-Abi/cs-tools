@@ -1632,6 +1632,22 @@ type UpdateCaseRequest struct {
 	State     *CaseState     `json:"state"`
 	Severity  *CaseSeverity  `json:"severity"`
 	WorkState *CaseWorkState `json:"workState"`
+	// Type transfers the case to another type (digiops-cs#2818/#2852). One of
+	// "case" / "engagement" / "security_report_analysis" / "service_request" —
+	// "announcement" and the hosting_* types are system-managed and are never
+	// transfer targets. EngagementType is required alongside Type when
+	// transferring into "engagement"; CatalogID/CatalogItemID (and optionally
+	// Variables) are required alongside Type when transferring into
+	// "service_request". Neither combination is meaningful for any other Type
+	// value and both are rejected if supplied otherwise.
+	Type           *string         `json:"type"`
+	EngagementType *EngagementType `json:"engagementType"`
+	CatalogID      *string         `json:"catalogId"`
+	CatalogItemID  *string         `json:"catalogItemId"`
+	// Variables answers the target catalog item's questions, same shape as
+	// CreateCaseRequest.Variables. Optional even when transferring into
+	// service_request -- a catalog item with no questions has nothing to answer.
+	Variables []Variable `json:"variables"`
 	// WatchList replaces the case's watch list wholesale with the given platform
 	// user UUIDs. It is a pointer so an absent field and an explicitly empty list
 	// are distinguishable: nil leaves the watch list untouched, while an empty
@@ -1716,11 +1732,16 @@ type CaseLabelRef struct {
 
 // UpdatedCase carries the fields of a case that may change after an update.
 type UpdatedCase struct {
-	ID         string               `json:"id"`
-	UpdatedOn  time.Time            `json:"updatedOn"`
-	UpdatedBy  string               `json:"updatedBy,omitempty"`
-	State      CaseState            `json:"state,omitempty"`
-	Severity   CaseSeverity         `json:"severity,omitempty"`
+	ID        string       `json:"id"`
+	UpdatedOn time.Time    `json:"updatedOn"`
+	UpdatedBy string       `json:"updatedBy,omitempty"`
+	State     CaseState    `json:"state,omitempty"`
+	Severity  CaseSeverity `json:"severity,omitempty"`
+	// Type echoes the case's new type back on a successful transfer (digiops-cs#2818).
+	// EngagementType/CatalogID/CatalogItemID/Variables aren't echoed -- same as every
+	// other field this update accepts alongside a type-defining field (subject,
+	// description, deploymentId, ...), none of which echo back either.
+	Type       string               `json:"type,omitempty"`
 	WorkState  *CaseWorkState       `json:"workState"`
 	WatchList  []WatchListUser      `json:"watchList,omitempty"`
 	AssignedTo *AssignedEngineerRef `json:"assignedTo,omitempty"`
@@ -2495,7 +2516,7 @@ type ProjectContact struct {
 	// than treating it as an error. A pointer keeps "no id" distinguishable from an
 	// empty id internally; on the wire both a nil and an absent id are omitted, so the
 	// published shape is unchanged.
-	ID                   *string  `json:"id,omitempty"`
+	ID *string `json:"id,omitempty"`
 	// Name is nil when the row has no contact record linked -- the name is only ever
 	// known from that record.
 	Name *string `json:"name"`
