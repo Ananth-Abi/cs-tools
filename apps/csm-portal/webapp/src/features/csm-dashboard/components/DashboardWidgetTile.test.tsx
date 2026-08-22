@@ -1858,4 +1858,24 @@ describe("DashboardWidgetTile", () => {
     expect(screen.getByText("Unsupported widget type.")).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
   });
+
+  it("shape count: hides its own refresh button when hideRefreshButton is set (avoids covering the dashboard builder's Edit/Remove overlay)", async () => {
+    postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="count"
+        filters={{}}
+        hideRefreshButton
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+    expect(
+      screen.queryByRole("button", { name: "Refresh My Patches" }),
+    ).not.toBeInTheDocument();
+  });
 });

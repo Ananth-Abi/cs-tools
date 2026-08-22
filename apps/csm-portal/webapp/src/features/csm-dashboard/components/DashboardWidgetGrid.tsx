@@ -186,6 +186,13 @@ export default function DashboardWidgetGrid({
           selectedTeamCreGroupId={selectedTeamCreGroupId}
           selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
+          // The builder action below renders as a sibling absolutely
+          // positioned over this same top-right corner (at a higher
+          // zIndex), fully covering the tile's own refresh button — so
+          // suppress the tile's refresh button exactly when (and only
+          // when) a builder action actually exists for this widget. See
+          // `hideRefreshButton`'s own doc comment on `DashboardWidgetTile`.
+          hideRefreshButton={Boolean(action)}
         />
         {action && (
           <Box sx={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}>{action}</Box>

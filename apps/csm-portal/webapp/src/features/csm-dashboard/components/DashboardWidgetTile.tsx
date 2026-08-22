@@ -132,6 +132,20 @@ interface DashboardWidgetTileProps {
    * `selectedTeamCreGroupId` is (the token is then stripped rather than left
    * literally visible). */
   selectedTeamLabel?: string;
+  /** Suppresses this tile's own per-widget refresh button entirely. Exists
+   * for `CsmDashboardBuilderEditorPage`, the only caller that also passes a
+   * `renderWidgetAction` into `DashboardWidgetGrid` (Edit/Remove icons):
+   * that action renders as a sibling `Box` absolutely positioned over the
+   * same top-right corner this tile's own refresh button occupies (see
+   * `DashboardWidgetGrid.tsx`'s `renderTile`), at a higher `zIndex`, so
+   * without this the builder action fully covers the refresh button and an
+   * admin can never click it. The builder-editor page is a config-editing
+   * surface, not a live-data-monitoring one, so dropping the refresh
+   * button there (rather than trying to reposition both into two separate
+   * corners) is the right trade — Edit/Remove are the actions that matter
+   * in that context. `undefined`/falsy is a no-op: a normal dashboard page
+   * (no `renderWidgetAction`) keeps its refresh button exactly as before. */
+  hideRefreshButton?: boolean;
 }
 
 /**
@@ -165,6 +179,7 @@ export default function DashboardWidgetTile({
   selectedTeamCreGroupId,
   selectedTeamSreGroupId,
   selectedTeamLabel,
+  hideRefreshButton,
 }: DashboardWidgetTileProps): JSX.Element {
   const theme = useTheme();
   const navigate = useNavigate();
@@ -287,7 +302,11 @@ export default function DashboardWidgetTile({
     isCountShape && lastRefreshedText
       ? `Refresh this widget - ${lastRefreshedText}`
       : "Refresh this widget";
-  const refreshButton = (
+  // `null` (not a conditionally-skipped render below) when
+  // `hideRefreshButton` is set — see that prop's own doc comment — so every
+  // one of the three shapes below, which all reuse this single variable,
+  // stays untouched rather than needing its own gate.
+  const refreshButton = hideRefreshButton ? null : (
     <Box
       className="dashboard-widget-refresh"
       sx={{ display: "flex", alignItems: "center", gap: 0.75, ...widgetRefreshRevealSx }}
