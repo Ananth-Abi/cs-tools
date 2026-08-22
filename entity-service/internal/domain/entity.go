@@ -1007,6 +1007,15 @@ const (
 	EngagementTypeOnboarding            EngagementType = "onboarding"
 )
 
+// EngagementPaymentType classifies whether an engagement case is paid or
+// covered free of charge.
+type EngagementPaymentType string
+
+const (
+	EngagementPaymentTypePaid EngagementPaymentType = "paid"
+	EngagementPaymentTypeFOC  EngagementPaymentType = "foc"
+)
+
 // CaseSortField enumerates the columns available for sorting case search results.
 type CaseSortField string
 
@@ -1861,7 +1870,8 @@ type CreateCaseRequest struct {
 	// For security_report_analysis type
 	Attachments []CaseAttachment `json:"attachments"`
 	// For engagement type
-	EngagementType EngagementType `json:"engagementType"`
+	EngagementType        EngagementType        `json:"engagementType"`
+	EngagementPaymentType EngagementPaymentType `json:"engagementPaymentType"`
 }
 
 // CommentType classifies the type of a case comment.

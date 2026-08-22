@@ -5109,12 +5109,13 @@ components:
       properties:
         type:
           type: string
-          enum: [case, service_request, security_report_analysis]
+          enum: [case, service_request, security_report_analysis, engagement]
           description: |
             Case type.
             - `case`: standard support case; requires `subject`, `description`, `severity`, `issueType`.
             - `service_request`: catalog-based service request (ServiceNow only); requires `catalogId`, `catalogItemId`, `variables`.
             - `security_report_analysis`: security report (ServiceNow only); requires `subject`, `description`, and at least one entry in `attachments`.
+            - `engagement`: professional-services engagement (e.g. migration, onboarding); requires `subject`, `description`, `engagementType`, `engagementPaymentType`.
         projectId:
           type: string
           format: uuid
@@ -5126,10 +5127,10 @@ components:
           format: uuid
         subject:
           type: string
-          description: Required for `case` and `security_report_analysis` types.
+          description: Required for `case`, `security_report_analysis`, and `engagement` types.
         description:
           type: string
-          description: Required for `case` and `security_report_analysis` types.
+          description: Required for `case`, `security_report_analysis`, and `engagement` types.
         severity:
           type: string
           enum: [catastrophic, critical, high, medium, low]
@@ -5158,6 +5159,14 @@ components:
           items:
             $ref: '#/components/schemas/CaseAttachment'
           description: Required for `security_report_analysis` type (at least one entry).
+        engagementType:
+          type: string
+          enum: [migration, consultancy, new_feature_improvement, follow_up, onboarding]
+          description: Required for `engagement` type.
+        engagementPaymentType:
+          type: string
+          enum: [paid, foc]
+          description: Required for `engagement` type. `foc` means "free of charge".
         relatedCaseId:
           type: string
           format: uuid

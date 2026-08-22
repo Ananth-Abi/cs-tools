@@ -60,6 +60,11 @@ var validEngagementType = map[domain.EngagementType]bool{
 	domain.EngagementTypeOnboarding:            true,
 }
 
+var validEngagementPaymentType = map[domain.EngagementPaymentType]bool{
+	domain.EngagementPaymentTypePaid: true,
+	domain.EngagementPaymentTypeFOC:  true,
+}
+
 var validCaseSortOrder = map[domain.CaseSortOrder]bool{
 	domain.CaseSortOrderAsc:  true,
 	domain.CaseSortOrderDesc: true,
@@ -178,6 +183,9 @@ func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
 		}
 		if !validEngagementType[req.EngagementType] {
 			return &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(req.EngagementType)}
+		}
+		if !validEngagementPaymentType[req.EngagementPaymentType] {
+			return &apierror.ValidationError{Msg: "engagementPaymentType contains invalid value: " + string(req.EngagementPaymentType)}
 		}
 	}
 
