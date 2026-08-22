@@ -16,45 +16,112 @@
 
 import { Box, Button, Tooltip } from "@wso2/oxygen-ui";
 import { Check, Link2 } from "@wso2/oxygen-ui-icons-react";
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
-import { formatAbsoluteForUser } from "@utils/dateTime";
+import { formatAbsoluteForUser, parseBackendTimestamp } from "@utils/dateTime";
 
-/** How often mounted relative-time displays refresh themselves. Coarser than
- * a second-level ticker since the display granularity is minutes, but tight
- * enough that "1m ago" turning into "2m ago" feels prompt. */
-const TICK_INTERVAL_MS = 20_000;
+/**
+ * The granularity `formatRelativeTime` displays at, by how far `abs` (the
+ * distance between the tracked timestamp and "now") currently is. Mirrors
+ * that function's own bucketing (`diffMin` while `abs < 1h`, `diffHr` while
+ * `abs < 24h`, `diffDay` beyond that) so the scheduler wakes up exactly when
+ * the displayed text would actually change, not on a fixed cadence.
+ */
+const MINUTE_MS = 60_000;
+const HOUR_MS = 60 * MINUTE_MS;
+const DAY_MS = 24 * HOUR_MS;
 
-type TickListener = () => void;
-
-/** Module-level subscriber set backing a single shared `setInterval`, so a
- * page with many relative timestamps mounted at once (e.g. a `CasesList`
- * table, or a long comment thread) re-renders off one timer instead of one
- * per instance. */
-const tickListeners = new Set<TickListener>();
-let tickIntervalId: ReturnType<typeof setInterval> | null = null;
-
-function ensureTicking(): void {
-  if (tickIntervalId !== null) return;
-  tickIntervalId = setInterval(() => {
-    tickListeners.forEach((listener) => listener());
-  }, TICK_INTERVAL_MS);
-}
-
-function stopTickingIfIdle(): void {
-  if (tickListeners.size === 0 && tickIntervalId !== null) {
-    clearInterval(tickIntervalId);
-    tickIntervalId = null;
-  }
+function currentGranularityMs(absMs: number): number {
+  if (absMs < HOUR_MS) return MINUTE_MS;
+  if (absMs < DAY_MS) return HOUR_MS;
+  return DAY_MS;
 }
 
 /**
- * Subscribes the calling component to the shared tick and returns the
- * timestamp (ms) as of the last tick, so it re-renders — and recomputes
- * whatever it derives from "now" — on the same cadence as every other
- * `RelativeTime` on the page. Used by {@link RelativeTime} itself, and by
- * the two "Last refreshed …" labels (`CaseSlaTable`, `RefreshButton`) that
- * format a relative string outside this component.
+ * How long from `nowMs` until the text for a timestamp at `timestampMs`
+ * would next change. Handles both directions `formatRelativeTime` supports:
+ *
+ * - Past ("Xm ago"): `abs` grows as real time passes, so the next change is
+ *   when `abs` reaches the *next* multiple of the current granularity.
+ * - Future ("Xm from now"): `abs` shrinks as real time passes (converging on
+ *   the timestamp), so the next change is when `abs` drops to the *current*
+ *   (lower) multiple of the granularity.
+ *
+ * Clamped to a 1s floor purely to avoid a zero-delay `setTimeout` re-firing
+ * immediately due to integer rounding at an exact boundary — sub-second
+ * precision isn't meaningful here since the coarsest display unit is a
+ * minute.
+ */
+function nextChangeDelayMs(timestampMs: number, nowMs: number): number {
+  const diffMs = nowMs - timestampMs;
+  const absMs = Math.abs(diffMs);
+  const granularity = currentGranularityMs(absMs);
+  const bucket = Math.floor(absMs / granularity);
+  const delay =
+    diffMs >= 0
+      ? (bucket + 1) * granularity - absMs // past: wait for abs to grow into the next bucket
+      : absMs - bucket * granularity; // future: wait for abs to shrink out of this bucket
+  return Math.max(delay, 1000);
+}
+
+type TickListener = () => void;
+
+interface Registration {
+  timestampMs: number;
+  listener: TickListener;
+}
+
+/** Module-level registry backing a single shared, adaptively-scheduled
+ * timer, so a page with many relative timestamps mounted at once (e.g. a
+ * `CasesList` table, or a long comment thread) re-renders off one timer
+ * instead of one per instance — and that one timer only wakes when some
+ * registered timestamp's displayed text would actually change, instead of
+ * polling on a fixed cadence. Keyed by a per-hook-instance object identity
+ * rather than the timestamp value, since two mounted instances can track
+ * the same timestamp. */
+const registrations = new Map<object, Registration>();
+let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+function fireTick(): void {
+  timeoutId = null;
+  registrations.forEach(({ listener }) => listener());
+  reschedule();
+}
+
+/** Recomputes the minimum "next change" delay across every currently
+ * registered timestamp and (re)schedules a single `setTimeout` for it.
+ * Always clears any existing timer first — called both when the timer
+ * itself fires and whenever the registered set changes (mount, unmount, or
+ * a tracked timestamp changing), so the scheduled delay never goes stale. */
+function reschedule(): void {
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+    timeoutId = null;
+  }
+  if (registrations.size === 0) return;
+  const nowMs = Date.now();
+  let minDelay: number | null = null;
+  registrations.forEach(({ timestampMs }) => {
+    const delay = nextChangeDelayMs(timestampMs, nowMs);
+    if (minDelay === null || delay < minDelay) minDelay = delay;
+  });
+  if (minDelay === null) return;
+  timeoutId = setTimeout(fireTick, minDelay);
+}
+
+/**
+ * Subscribes the calling component to the shared adaptive scheduler and
+ * returns the timestamp (ms) as of the last update, so it re-renders — and
+ * recomputes whatever it derives from "now" — exactly when its own tracked
+ * timestamp's displayed text would change (not on a fixed cadence shared
+ * with every other timestamp on the page). Used by {@link RelativeTime}
+ * itself, and by the two "Last refreshed …" labels (`CaseSlaTable`,
+ * `RefreshButton`) that format a relative string outside this component.
+ *
+ * `trackedMs` is the epoch-ms of the timestamp this caller displays —
+ * falsy (`undefined`/`null`/`0`/`NaN`) means "nothing to display yet"
+ * (matches the callers' own `updatedAt ? … : null` guards), so the hook
+ * simply doesn't register with the scheduler in that case.
  *
  * Deliberately returns the timestamp itself, not an opaque counter: this
  * webapp runs the React Compiler, which auto-memoizes calls like
@@ -62,21 +129,30 @@ function stopTickingIfIdle(): void {
  * A counter that's merely in scope wouldn't be picked up as a dependency —
  * the caller must pass this value in as the explicit `now` argument (see
  * `formatRelativeTime`'s second parameter) for the compiler to know the
- * result needs recomputing on every tick.
+ * result needs recomputing on every update.
  */
-// eslint-disable-next-line react-refresh/only-export-components -- hook is colocated with the shared ticker it manages, and reused by the two other relative-time call sites (fast-refresh DX only)
-export function useRelativeTimeTick(): number {
+// eslint-disable-next-line react-refresh/only-export-components -- hook is colocated with the shared scheduler it manages, and reused by the two other relative-time call sites (fast-refresh DX only)
+export function useRelativeTimeTick(trackedMs?: number | null): number {
   const [now, setNow] = useState(() => Date.now());
+  const keyRef = useRef<object>({});
 
   useEffect(() => {
-    const listener = (): void => setNow(Date.now());
-    tickListeners.add(listener);
-    ensureTicking();
+    const key = keyRef.current;
+    if (!trackedMs || !Number.isFinite(trackedMs)) {
+      registrations.delete(key);
+      reschedule();
+      return;
+    }
+    registrations.set(key, {
+      timestampMs: trackedMs,
+      listener: () => setNow(Date.now()),
+    });
+    reschedule();
     return () => {
-      tickListeners.delete(listener);
-      stopTickingIfIdle();
+      registrations.delete(key);
+      reschedule();
     };
-  }, []);
+  }, [trackedMs]);
 
   return now;
 }
@@ -149,9 +225,12 @@ export default function RelativeTime({
   href,
   className,
 }: RelativeTimeProps): JSX.Element {
-  // Subscribed only to trigger a re-render on each tick; the recomputed
-  // relative string below always reads a fresh `Date.now()` internally.
-  const now = useRelativeTimeTick();
+  // Resolve the epoch this instance tracks, so the shared scheduler can
+  // compute exactly when *this* timestamp's display text would next change
+  // — mirrors the parsing `formatRelativeTime` itself does below.
+  const parsed = iso ? parseBackendTimestamp(iso) : null;
+  const trackedMs = parsed ? parsed.getTime() : iso ? new Date(iso).getTime() : null;
+  const now = useRelativeTimeTick(Number.isNaN(trackedMs) ? null : trackedMs);
   const relative = formatRelativeTime(iso, now);
   const absolute = formatAbsoluteForUser(iso) ?? "Unknown time";
 

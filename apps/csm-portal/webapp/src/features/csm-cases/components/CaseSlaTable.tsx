@@ -95,12 +95,13 @@ interface CaseSlaTableProps {
 export function CaseSlaTable({ caseId }: CaseSlaTableProps): JSX.Element {
   const { data, isLoading, isError, isFetching, dataUpdatedAt, refetch } =
     useGetCsmCaseSlas(caseId);
-  // Re-render on the shared tick so "Last refreshed …" keeps advancing
-  // without requiring another fetch or unrelated state change. `now` is
-  // passed explicitly into `formatRelativeTime` below (rather than relying
-  // on its internal `Date.now()` default) so the React Compiler's
-  // auto-memoization sees the tick as a dependency and recomputes the label.
-  const now = useRelativeTimeTick();
+  // Re-render exactly when "Last refreshed …" text would next change
+  // (adaptive shared scheduler — see RelativeTime.tsx), without requiring
+  // another fetch or unrelated state change. `now` is passed explicitly
+  // into `formatRelativeTime` below (rather than relying on its internal
+  // `Date.now()` default) so the React Compiler's auto-memoization sees it
+  // as a dependency and recomputes the label.
+  const now = useRelativeTimeTick(dataUpdatedAt);
 
   const slas = data?.slas ?? [];
   const count = data?.count ?? slas.length;

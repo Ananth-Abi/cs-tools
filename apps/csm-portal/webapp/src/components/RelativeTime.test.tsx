@@ -109,15 +109,92 @@ describe("RelativeTime", () => {
       render(<RelativeTime iso={fixedIso} />);
       expect(screen.getByText("1m ago")).toBeInTheDocument();
 
-      // Advance the clock by 6 minutes' worth of ticks with no parent
-      // re-render and no user interaction — only the internal timer fires.
-      // `advanceTimersByTime` also advances the fake system clock itself, so
-      // this alone moves both "now" and the interval forward together.
+      // Advance the clock by 6 minutes' worth of real time with no parent
+      // re-render and no user interaction — only the shared scheduler's
+      // internal timer(s) fire. `advanceTimersByTime` also advances the fake
+      // system clock itself, so this alone moves both "now" and the
+      // scheduled fire(s) forward together.
       act(() => {
         vi.advanceTimersByTime(6 * 60_000);
       });
 
       expect(screen.getByText("7m ago")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("schedules exactly one adaptive timer, firing at the next minute boundary rather than a fixed interval", () => {
+    vi.useFakeTimers();
+    try {
+      const start = new Date("2026-08-22T10:00:00.000Z");
+      vi.setSystemTime(start);
+      // 58s ago: still "just now" (< 1 minute), and only 2s from crossing
+      // into the "1m ago" bucket.
+      const fixedIso = new Date(start.getTime() - 58_000).toISOString();
+
+      render(<RelativeTime iso={fixedIso} />);
+      expect(screen.getByText("just now")).toBeInTheDocument();
+      // One timestamp mounted -> exactly one scheduled timer, not a fixed
+      // fixed-cadence poller.
+      expect(vi.getTimerCount()).toBe(1);
+
+      // Advancing by less than the 2s remaining must not flip the text yet
+      // — proves the scheduler isn't just waiting a fixed 20s (or any other
+      // arbitrary cadence) and firing early/late relative to the boundary.
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(screen.getByText("just now")).toBeInTheDocument();
+
+      // Crossing the remaining ~1s past the boundary flips it to "1m ago".
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      expect(screen.getByText("1m ago")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not schedule frequent wakeups for an old timestamp already in the day bucket", () => {
+    vi.useFakeTimers();
+    try {
+      const start = new Date("2026-08-22T10:00:00.000Z");
+      vi.setSystemTime(start);
+      const fixedIso = new Date(
+        start.getTime() - 3 * 24 * 60 * 60_000,
+      ).toISOString(); // "3d ago"
+
+      render(<RelativeTime iso={fixedIso} />);
+      expect(screen.getByText("3d ago")).toBeInTheDocument();
+      expect(vi.getTimerCount()).toBe(1);
+
+      // A "3d ago" display only changes on the next full day boundary, so an
+      // hour of elapsed time — several multiples of the old 20s fixed
+      // interval — must not touch the displayed text at all.
+      act(() => {
+        vi.advanceTimersByTime(60 * 60_000);
+      });
+      expect(screen.getByText("3d ago")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears its scheduler registration on unmount, leaving no pending timer once nothing is mounted", () => {
+    vi.useFakeTimers();
+    try {
+      const start = new Date("2026-08-22T10:00:00.000Z");
+      vi.setSystemTime(start);
+      const fixedIso = new Date(start.getTime() - 60_000).toISOString();
+
+      const { unmount } = render(<RelativeTime iso={fixedIso} />);
+      expect(vi.getTimerCount()).toBe(1);
+
+      unmount();
+
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
