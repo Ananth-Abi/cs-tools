@@ -524,10 +524,11 @@ export interface BeCaseAttachmentPayload {
 
 /**
  * Security report analysis (`type: "security_report_analysis"`). ServiceNow-only;
- * requires a subject and description. Attachments are optional here — the case
- * is created first, then attachments upload separately via the post-case
- * attachment endpoint (see `CreateSecurityReportPage.tsx`), so a failed upload
- * never blocks or masks a successful report creation.
+ * requires a subject and description. Unlike the other case-creation flows,
+ * at least one attachment is also required and must be included in this same
+ * create payload — the backing service validates it atomically at creation
+ * time, so uploading via the post-case attachment endpoint afterward doesn't
+ * satisfy it (see `CreateSecurityReportPage.tsx`).
  */
 export interface BeSecurityReportCreatePayload {
   type: "security_report_analysis";
