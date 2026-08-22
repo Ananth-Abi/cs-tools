@@ -583,7 +583,7 @@ export default function DashboardWidgetTile({
           }}
         />
         <Box sx={{ position: "relative", zIndex: 1, height: "100%", pointerEvents: "none" }}>
-          <Box sx={{ position: "absolute", top: 8, right: 8, pointerEvents: "auto" }}>
+          <Box sx={{ position: "absolute", top: -4, right: -4, pointerEvents: "auto" }}>
             {refreshButton}
           </Box>
           {/* The header's own bottom padding — not just a top margin on the
@@ -724,8 +724,8 @@ export default function DashboardWidgetTile({
         <Box
           sx={{
             position: "absolute",
-            top: 4,
-            right: resolvedDescription ? 36 : 4,
+            top: -4,
+            right: resolvedDescription ? 28 : -4,
             pointerEvents: "auto",
           }}
         >
