@@ -20,6 +20,8 @@ import { useRef, useState, type JSX, type KeyboardEvent, type MouseEvent, type R
 import { Link as RouterLink, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { useElementVisibleOnce } from "@hooks/useElementVisibleOnce";
+import { useRelativeTimeTick } from "@components/RelativeTime";
+import { formatRelativeTime } from "@features/csm-dashboard/utils/abtDashboard";
 import { invalidateWidgetQueries } from "@features/csm-dashboard/utils/invalidateWidgetQueries";
 import type {
   BeDashboardGroupByConfig,
@@ -185,6 +187,19 @@ export default function DashboardWidgetTile({
   // refetch without the rest of the tile flashing back to its skeleton
   // state.
   const [isRefreshing, setIsRefreshing] = useState(false);
+  // This widget's own last-manually-refreshed timestamp (ms) — set once the
+  // in-flight `invalidateWidgetQueries` call below resolves. `undefined`
+  // until the user has clicked refresh at least once, which is exactly the
+  // gate the "Last refreshed" label below reads (see `refreshButton`) —
+  // mirrors the section-level `RefreshButton`'s own `hasManuallyRefreshed`
+  // pattern, just tracked per-widget here instead of per-section.
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | undefined>(undefined);
+  // Re-renders exactly when the "Last refreshed …" text below would next
+  // change (adaptive shared scheduler — see RelativeTime.tsx), without
+  // requiring another fetch. Passed explicitly into `formatRelativeTime`
+  // below (rather than relying on its internal `Date.now()` default) so the
+  // React Compiler's auto-memoization sees it as a dependency.
+  const now = useRelativeTimeTick(lastRefreshedAt);
   const handleWidgetRefresh = (e: MouseEvent): void => {
     // Stops this click from also being interpreted as a click on the
     // tile's own whole-card/tile-level click-through target that this
@@ -193,9 +208,10 @@ export default function DashboardWidgetTile({
     e.stopPropagation();
     e.preventDefault();
     setIsRefreshing(true);
-    void invalidateWidgetQueries(queryClient, new Set([widgetId])).finally(() =>
-      setIsRefreshing(false),
-    );
+    void invalidateWidgetQueries(queryClient, new Set([widgetId])).finally(() => {
+      setIsRefreshing(false);
+      setLastRefreshedAt(Date.now());
+    });
   };
   // Resolves every client-side filter placeholder a widget's own (opaque)
   // filters may carry — `__current_team__` (see `teamFilterPlaceholder.ts`),
@@ -239,17 +255,29 @@ export default function DashboardWidgetTile({
   // which carries `displayName` verbatim — see `buildWidgetPreviewHref`).
   const resolvedDisplayName = resolveWidgetText(displayName, selectedTeamLabel) ?? displayName;
   const resolvedDescription = resolveWidgetText(description, selectedTeamLabel);
-  // Icon-only refresh control for this widget alone (no "Last refreshed"
-  // label — that's the section-level RefreshButton's own job, not asked for
-  // per-widget). Hidden by default, revealed together with any other
+  // Per-widget refresh control: icon plus a "Last refreshed …" label,
+  // matching the section-level `RefreshButton`'s own layout (label to the
+  // left of the icon) and its "only after a manual click" gating —
+  // `lastRefreshedAt` stays `undefined` until this widget's own refresh has
+  // been clicked at least once, so the label never appears from this tile's
+  // initial data load. Hidden by default, revealed together with any other
   // hover-gated control on the tile via the ancestor Card's own
   // `&:hover .dashboard-widget-refresh, &:focus-within .dashboard-widget-refresh`
   // rule (see `widgetRefreshRevealSx`) — kept inert (opacity 0 + pointerEvents
   // none) while hidden so it can't be clicked without being seen, but stays
   // in the keyboard Tab order throughout (unlike `display: none`, which
-  // would remove it from Tab order entirely).
+  // would remove it from Tab order entirely). Both the label and the icon
+  // live inside this same wrapper so they hide/reveal as one unit.
   const refreshButton = (
-    <Box className="dashboard-widget-refresh" sx={widgetRefreshRevealSx}>
+    <Box
+      className="dashboard-widget-refresh"
+      sx={{ display: "flex", alignItems: "center", gap: 0.75, ...widgetRefreshRevealSx }}
+    >
+      {lastRefreshedAt ? (
+        <Typography variant="caption" color="text.secondary" noWrap>
+          Last refreshed {formatRelativeTime(new Date(lastRefreshedAt).toISOString(), now)}
+        </Typography>
+      ) : null}
       <Tooltip title={`Refresh ${resolvedDisplayName}`}>
         <span>
           <IconButton

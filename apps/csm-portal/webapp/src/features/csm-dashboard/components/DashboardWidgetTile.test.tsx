@@ -1480,6 +1480,31 @@ describe("DashboardWidgetTile", () => {
     expect(screen.queryByTestId("location-probe")).not.toBeInTheDocument();
   });
 
+  it("shape count: shows no 'Last refreshed' label before the refresh button is clicked, and shows it (with the right text) once the refresh resolves", async () => {
+    postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_patches"
+        displayName="My Patches"
+        resourceType="case"
+        shape="count"
+        filters={{}}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("3")).toBeInTheDocument());
+    // Not shown from the tile's own initial data load — only after a manual
+    // refresh click (matches the section-level RefreshButton's own gating).
+    expect(screen.queryByText(/Last refreshed/)).not.toBeInTheDocument();
+
+    const refreshButton = screen.getByRole("button", { name: "Refresh My Patches" });
+    fireEvent.click(refreshButton);
+
+    await waitFor(() => expect(screen.getByText(/Last refreshed/)).toBeInTheDocument());
+    expect(screen.getByText(/Last refreshed.*just now|Last refreshed.*ago/)).toBeInTheDocument();
+  });
+
   it("shape list: renders a per-widget refresh button", async () => {
     postMock.mockResolvedValue({
       total: 2,
