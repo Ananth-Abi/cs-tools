@@ -115,6 +115,14 @@ export default function DashboardWidgetGrid({
   const queryClient = useQueryClient();
   // Per-section refresh tracks its own in-flight state, keyed by section.
   const [refreshingSections, setRefreshingSections] = useState<Set<string>>(new Set());
+  // A section can bundle multiple widgets/queries, so there's no single
+  // query's `dataUpdatedAt` to hand to that section's `RefreshButton` the
+  // way single-widget call sites do — track our own "last refreshed" epoch
+  // per section instead, set once `invalidateWidgets` below actually
+  // resolves (its default `refetchType: "active"` means the promise only
+  // resolves after the matched queries have refetched, not just been
+  // marked stale).
+  const [sectionLastRefreshedAt, setSectionLastRefreshedAt] = useState<Record<string, number>>({});
 
   /**
    * Invalidates only the widget-data queries belonging to `widgetIds` —
@@ -139,6 +147,7 @@ export default function DashboardWidgetGrid({
     setRefreshingSections((prev) => new Set(prev).add(sectionKey));
     try {
       await invalidateWidgets(widgetIds);
+      setSectionLastRefreshedAt((prev) => ({ ...prev, [sectionKey]: Date.now() }));
     } finally {
       setRefreshingSections((prev) => {
         const next = new Set(prev);
@@ -221,6 +230,7 @@ export default function DashboardWidgetGrid({
                   <RefreshButton
                     onRefresh={() => void handleSectionRefresh(sectionKey, sectionWidgetIds)}
                     isFetching={refreshingSections.has(sectionKey)}
+                    updatedAt={sectionLastRefreshedAt[sectionKey]}
                     label={
                       resolvedSectionTitle
                         ? `Refresh ${resolvedSectionTitle}`
