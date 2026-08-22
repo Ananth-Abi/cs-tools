@@ -148,6 +148,17 @@ export function useRelativeTimeTick(trackedMs?: number | null): number {
       listener: () => setNow(Date.now()),
     });
     reschedule();
+    // Registering (or re-registering on a `trackedMs` change) only sets up
+    // a FUTURE timer via `reschedule()` above — it doesn't itself refresh
+    // `now`. Without this, a component whose `now` state went stale while
+    // mounted (nothing tracked, or its previous tracked timestamp hadn't
+    // ticked yet) would compare a freshly-set `trackedMs` (e.g. "right now"
+    // from a refresh click) against that stale `now`, producing a
+    // transient negative diff ("Xm from now") until the next scheduled
+    // tick self-corrects it. Refresh immediately so a new registration is
+    // never rendered against a stale `now`.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs `now` to the external shared-scheduler registry the instant this instance (re)registers a timestamp, so it's never rendered against a stale `now` left over from before this timestamp existed
+    setNow(Date.now());
     return () => {
       registrations.delete(key);
       reschedule();

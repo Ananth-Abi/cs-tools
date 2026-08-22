@@ -182,6 +182,40 @@ describe("RelativeTime", () => {
     }
   });
 
+  it("does not show a stale/negative ('from now') time when a fresh timestamp registers after time has passed with nothing tracked", () => {
+    // Reproduces the real trigger: RefreshButton/CaseSlaTable mount with no
+    // `updatedAt` yet (nothing registered with the scheduler, so `now`
+    // never ticks), then later re-render with a brand-new "right now"
+    // timestamp once a refresh completes — e.g. a user clicking refresh a
+    // couple of minutes after page load.
+    vi.useFakeTimers();
+    try {
+      const start = new Date("2026-08-22T10:00:00.000Z");
+      vi.setSystemTime(start);
+
+      const { rerender } = render(<RelativeTime iso={null} />);
+      // Nothing tracked yet -> no scheduler registration, no pending timer.
+      expect(vi.getTimerCount()).toBe(0);
+
+      // Two minutes pass with nothing registered, so the shared scheduler
+      // never fires and this instance's `now` state is never refreshed.
+      act(() => {
+        vi.advanceTimersByTime(2 * 60_000);
+      });
+
+      // A fresh timestamp ("now", from the advanced clock's perspective)
+      // registers — e.g. a refresh completing right now.
+      const freshIso = new Date().toISOString();
+      rerender(<RelativeTime iso={freshIso} />);
+
+      // Must read "just now" immediately, not a transient "0m from now"
+      // computed against the stale `now` left over from mount.
+      expect(screen.getByText("just now")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears its scheduler registration on unmount, leaving no pending timer once nothing is mounted", () => {
     vi.useFakeTimers();
     try {
