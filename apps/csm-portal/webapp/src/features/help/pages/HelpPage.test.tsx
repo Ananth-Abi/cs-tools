@@ -32,7 +32,6 @@ function setOverrides(value: unknown): void {
 beforeEach(() => {
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   setOverrides(undefined);
-  Element.prototype.scrollIntoView = vi.fn();
   window.location.hash = "";
 });
 
@@ -42,7 +41,7 @@ afterEach(() => {
 });
 
 describe("HelpPage", () => {
-  it("renders a table of contents with one anchor link per enabled topic, in nav order", () => {
+  it("renders a sidebar link per enabled topic, in nav order, pointing at that topic's hash", () => {
     render(<HelpPage />);
     const nav = screen.getByRole("navigation", { name: "Help topics" });
     const help = navNodeById("help");
@@ -50,70 +49,103 @@ describe("HelpPage", () => {
 
     const links = within(nav).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual(labels);
+    expect(screen.getByRole("link", { name: "Operations" })).toHaveAttribute(
+      "href",
+      "#operations",
+    );
   });
 
-  it("points each TOC entry at the matching topic section's in-page anchor", () => {
-    render(<HelpPage />);
-    const link = screen.getByRole("link", { name: "Operations" });
-    expect(link).toHaveAttribute("href", "#operations");
-  });
-
-  it("renders every topic's content below the table of contents, each in its own labelled section", () => {
+  it("shows only the first topic's content on a bare /help load", () => {
     render(<HelpPage />);
     expect(screen.getByRole("heading", { name: "Overview" })).toBeVisible();
-    expect(
-      document.getElementById("operations")?.tagName.toLowerCase(),
-    ).toBe("section");
+    expect(screen.queryByRole("heading", { name: "Operations" })).toBeNull();
   });
 
-  it("drops a topic from both the table of contents and the rendered sections once it's disabled", () => {
+  it("shows the topic named by the URL hash on a direct /help#<topic> load", () => {
+    window.location.hash = "#operations";
+    render(<HelpPage />);
+    expect(screen.getByRole("heading", { name: "Operations" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Overview" })).toBeNull();
+  });
+
+  it("switches the shown topic when a sidebar link is clicked, without changing the route", () => {
+    render(<HelpPage />);
+    fireEvent.click(screen.getByRole("link", { name: "Operations" }));
+
+    expect(screen.getByRole("heading", { name: "Operations" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Overview" })).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Operations" }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  it("drops a topic from the sidebar once it's disabled", () => {
     setOverrides({ "help.operations": "hidden" });
     render(<HelpPage />);
     expect(screen.queryByRole("link", { name: "Operations" })).toBeNull();
-    expect(document.getElementById("operations")).toBeNull();
   });
 
-  it("shows the back-to-top button only after scrolling past the top of the page", () => {
+  it("falls back to the first enabled topic when the hash names a disabled one", () => {
+    window.location.hash = "#operations";
+    setOverrides({ "help.operations": "hidden" });
     render(<HelpPage />);
-    expect(
-      screen.queryByRole("button", { name: "Back to top" }),
-    ).toBeNull();
+    expect(screen.getByRole("heading", { name: "Overview" })).toBeVisible();
+  });
 
-    Object.defineProperty(window, "scrollY", { value: 400, configurable: true });
-    fireEvent.scroll(window);
+  it("offers a Next-topic link to the following topic, and follows it on click", () => {
+    render(<HelpPage />);
+    const nextLink = screen.getByRole("link", {
+      name: "Next topic: Navigation & personalization",
+    });
+    fireEvent.click(nextLink);
 
     expect(
-      screen.getByRole("button", { name: "Back to top" }),
+      screen.getByRole("heading", { name: "Navigation & personalization" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Previous topic: Overview" }),
     ).toBeVisible();
   });
 
-  it("scrolls back to the top of the page when the back-to-top button is clicked", () => {
+  it("shows no Previous-topic link on the first topic and no Next-topic link on the last", () => {
     render(<HelpPage />);
-    Object.defineProperty(window, "scrollY", { value: 400, configurable: true });
-    fireEvent.scroll(window);
+    expect(screen.queryByRole("link", { name: /^Previous topic:/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /^Next topic:/ })).toBeVisible();
 
-    const scrollTo = vi.fn();
-    window.scrollTo = scrollTo;
-    fireEvent.click(screen.getByRole("button", { name: "Back to top" }));
+    const help = navNodeById("help");
+    const lastLabel = (help?.children ?? []).at(-1)?.label as string;
+    fireEvent.click(screen.getByRole("link", { name: lastLabel }));
 
-    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" });
+    expect(screen.queryByRole("link", { name: /^Next topic:/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /^Previous topic:/ })).toBeVisible();
   });
 
-  it("scrolls the matching section into view on a direct /help#<topic> entry", () => {
-    window.location.hash = "#operations";
+  it("narrows the sidebar list to topics matching the search box, without changing the shown topic", () => {
     render(<HelpPage />);
+    fireEvent.change(screen.getByPlaceholderText("Search topics…"), {
+      target: { value: "security" },
+    });
 
-    const section = document.getElementById("operations");
-    expect(section?.scrollIntoView).toHaveBeenCalled();
+    expect(screen.getByRole("link", { name: "Security Center" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Operations" })).toBeNull();
+    // The content pane still shows whatever was active before filtering.
+    expect(screen.getByRole("heading", { name: "Overview" })).toBeVisible();
   });
 
-  it("scrolls the matching section into view when the hash changes after mount", () => {
+  it("shows a no-match message when the search box matches no topic", () => {
     render(<HelpPage />);
-    const section = document.getElementById("operations");
+    fireEvent.change(screen.getByPlaceholderText("Search topics…"), {
+      target: { value: "nonexistent-topic" },
+    });
 
+    expect(screen.getByText(/No topics match .nonexistent-topic./)).toBeVisible();
+  });
+
+  it("updates the shown topic when the URL hash changes after mount (browser back/forward)", () => {
+    render(<HelpPage />);
     window.location.hash = "#operations";
     fireEvent(window, new HashChangeEvent("hashchange"));
 
-    expect(section?.scrollIntoView).toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Operations" })).toBeVisible();
   });
 });

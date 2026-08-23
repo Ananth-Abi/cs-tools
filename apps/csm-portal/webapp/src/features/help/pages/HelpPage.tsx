@@ -16,154 +16,376 @@
 
 import {
   Box,
-  Divider,
+  Button,
   IconButton,
+  InputAdornment,
   List,
   ListItemButton,
+  ListItemIcon,
   ListItemText,
-  Tooltip,
+  TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { ArrowUp } from "@wso2/oxygen-ui-icons-react";
-import { type JSX, useEffect, useState } from "react";
-import { navNodeById } from "@config/csmNavItems";
+import {
+  ArrowLeft,
+  ArrowRight,
+  BookOpen,
+  Briefcase,
+  Building2,
+  ChartColumn,
+  Clock,
+  Cog,
+  Compass,
+  Headset,
+  LifeBuoy,
+  Megaphone,
+  RefreshCw,
+  Search,
+  Shield,
+  UserCog,
+  UsersRound,
+  X,
+} from "@wso2/oxygen-ui-icons-react";
+import {
+  type ComponentType,
+  type JSX,
+  type MouseEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { type CsmNavNode, navNodeById } from "@config/csmNavItems";
 import { enabledNavChildren } from "@config/featureFlags";
 import HelpTopicSection from "@features/help/components/HelpTopicSection";
 
 /** Bare topic id (e.g. `"operations"`) from a `help.<id>` nav node id — the
- * key `HELP_TOPIC_CONTENT` and every anchor target on this page share. */
+ * key `HELP_TOPIC_CONTENT` and this page's `#<topic>` hash share. */
 function bareTopicId(nodeId: string): string {
   return nodeId.replace(/^help\./, "");
 }
 
-/** Scroll-Y, in px, past which the "back to top" button becomes visible. */
-const BACK_TO_TOP_THRESHOLD = 240;
+/**
+ * Per-topic sidebar icon, matching the icon its own top-level nav section
+ * already uses elsewhere in the app (`csmNavItems.ts`) where a topic maps
+ * 1:1 onto one (e.g. `support` -> the same `Headset` the Support rail item
+ * uses) — a topic with no such section (Overview, Navigation &
+ * personalization, People & project access) gets a sensible standalone
+ * pick instead. Falls back to Help's own icon for any future topic added
+ * here without an entry, rather than rendering with no icon at all.
+ *
+ * `settings` deliberately does NOT reuse the real Settings section's own
+ * `Settings` gear icon, unlike every other entry here — that gear renders
+ * visually identical to `operations`'s `Cog` in this icon set, and with
+ * every topic's icon sitting in one dense list (unlike the main sidebar,
+ * where the two are far apart and each always has its own visible label),
+ * two indistinguishable gears right next to each other defeats the point of
+ * having icons at all. `UserCog` (this topic covers user/role/group/team
+ * management) is both visually distinct and still thematically apt.
+ */
+const TOPIC_ICONS: Record<string, ComponentType<{ size?: number | string }>> = {
+  overview: BookOpen,
+  "workspace-basics": Compass,
+  dashboard: ChartColumn,
+  support: Headset,
+  operations: Cog,
+  engagements: Briefcase,
+  "security-center": Shield,
+  updates: RefreshCw,
+  "time-cards": Clock,
+  announcements: Megaphone,
+  customers: Building2,
+  "people-access": UsersRound,
+  settings: UserCog,
+};
 
 /**
- * Floating "back to top" control. Hidden near the top of the page, fades in
- * once the user has scrolled past the table of contents, and smooth-scrolls
- * back to the top on click — a plain scroll listener + `window.scrollTo` is
- * enough for this, no scroll library needed.
+ * The topic id to show first: whatever `#<topic>` a direct/bookmarked link
+ * (`/help#operations`) carries, as long as it's still an enabled topic,
+ * falling back to the first topic in nav order otherwise (a bare `/help`, or
+ * one pointing at a topic this deployment has hidden).
  */
-function BackToTopButton(): JSX.Element {
-  const [visible, setVisible] = useState(
-    () => window.scrollY > BACK_TO_TOP_THRESHOLD,
-  );
-
-  useEffect(() => {
-    const onScroll = (): void => {
-      setVisible(window.scrollY > BACK_TO_TOP_THRESHOLD);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  if (!visible) return <></>;
-
-  return (
-    <Tooltip title="Back to top">
-      <IconButton
-        aria-label="Back to top"
-        onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-        sx={{
-          position: "fixed",
-          bottom: 24,
-          right: 24,
-          zIndex: (theme) => theme.zIndex.tooltip,
-          bgcolor: "background.paper",
-          border: 1,
-          borderColor: "divider",
-          boxShadow: 3,
-          "&:hover": { bgcolor: "action.hover" },
-        }}
-      >
-        <ArrowUp size={20} />
-      </IconButton>
-    </Tooltip>
-  );
+function resolveInitialTopicId(topics: CsmNavNode[]): string {
+  const fromHash = window.location.hash.slice(1);
+  if (topics.some((topic) => bareTopicId(topic.id) === fromHash)) return fromHash;
+  return topics.length > 0 ? bareTopicId(topics[0].id) : "";
 }
 
 /**
- * The whole Help section: one scrollable page with a table of contents up
- * top, every topic rendered below it in nav order, and a floating
- * "back to top" button. Replaces the earlier sidebar-plus-per-topic-route
- * layout (`HelpLayout` + `HelpTopicPage`, one route per topic) — a long-form
- * doc reads better as one page you can skim/search/print than as a set of
- * separate routes, and a floating in-page TOC gets the same "jump to a
- * topic" behaviour natively, via anchor links, with no router involved.
+ * Prev/Next footer links read as plain text links rather than filled
+ * buttons — MUI's default "text" `Button` hover (a solid rounded-rect
+ * background) reads too heavy for a footer nav pair. Bolding on hover
+ * keeps the "this is clickable" cue without the button chrome or an
+ * underline; safe from layout jank here specifically because each button
+ * sits at one end of a `justify-content: space-between` row, so the small
+ * width change from bolding grows it away from its own anchored edge
+ * rather than shifting anything else.
+ */
+const PREV_NEXT_LINK_SX = {
+  "&:hover": { backgroundColor: "transparent", fontWeight: 700 },
+} as const;
+
+/**
+ * The real scrolling element for `el` (AppLayout's main content area scrolls
+ * itself via `overflow: auto` — the window/document never does, since the
+ * app shell is pinned to `100dvh` with `overflow: hidden`), or the document's
+ * own scrolling element if `el` isn't in a scrollable ancestor. Mirrors
+ * `findVerticalScrollAncestor` in `csm-cases/utils/permalinkScroll.ts`
+ * (kept local rather than shared since this page's need — "scroll back to
+ * top" — is much narrower than that helper's fragment-highlight machinery).
+ */
+function findScrollAncestor(el: HTMLElement): HTMLElement {
+  let cur: HTMLElement | null = el.parentElement;
+  while (cur && cur !== document.body) {
+    const overflowY = window.getComputedStyle(cur).overflowY;
+    if ((overflowY === "auto" || overflowY === "scroll") && cur.scrollHeight > cur.clientHeight) {
+      return cur;
+    }
+    cur = cur.parentElement;
+  }
+  return (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+}
+
+/**
+ * Docs-style Help: a sticky left-hand list of every enabled topic and a
+ * content pane showing exactly one topic at a time, switching instantly on
+ * click (no route change — the topic id lives in the `#<topic>` hash, so a
+ * link like `/help#operations` still lands on the right topic). Replaces the
+ * earlier single-scroll layout (all 13 topics stacked on one page behind a
+ * short table-of-contents) — reported live as reading like "a wall of text";
+ * showing one topic at a time, plus Prev/Next links between them, keeps each
+ * screenful focused on what the reader actually clicked for.
  *
  * Topics are still declared once, in `csmNavItems.ts`'s `help` node, and
  * filtered here to the ones this deployment has enabled via
- * `CSM_PORTAL_FEATURE_OVERRIDES` — the same mechanism every other section's
- * tab strip uses (`enabledNavChildren`), just applied to a plain rendered
- * list instead of a route guard, since there is no longer a per-topic route
- * to guard.
+ * `CSM_PORTAL_FEATURE_OVERRIDES` (`enabledNavChildren`), same as every other
+ * section's tab strip.
  */
-/**
- * Scrolls the section matching the current `#<topic>` hash into view, both on
- * first mount (a direct link like `/help#operations`) and on any later hash
- * change (the TOC's own anchor links, which the browser can otherwise leave
- * unhandled since every topic's section is a plain DOM node rendered by this
- * same component, not a route the router would scroll for on navigation).
- */
-function useScrollToHashOnMount(): void {
-  useEffect(() => {
-    const scrollToHash = (): void => {
-      const id = window.location.hash.slice(1);
-      if (!id) return;
-      document.getElementById(id)?.scrollIntoView();
-    };
-    scrollToHash();
-    window.addEventListener("hashchange", scrollToHash);
-    return () => window.removeEventListener("hashchange", scrollToHash);
-  }, []);
-}
-
 export default function HelpPage(): JSX.Element {
   const helpSection = navNodeById("help");
-  const topics = helpSection ? enabledNavChildren(helpSection) : [];
-  useScrollToHashOnMount();
+  const topics = useMemo(
+    () => (helpSection ? enabledNavChildren(helpSection) : []),
+    [helpSection],
+  );
+
+  const [activeTopicId, setActiveTopicId] = useState<string>(() => resolveInitialTopicId(topics));
+  const contentRef = useRef<HTMLDivElement>(null);
+  const isFirstRender = useRef(true);
+
+  // Narrows the sidebar list only — the underlying topic order (and so
+  // Prev/Next, and the "X of N" counter below) always stays the full,
+  // unfiltered set, so clearing the search box never changes where those
+  // point.
+  const [filterQuery, setFilterQuery] = useState("");
+  const filteredTopics = useMemo(() => {
+    const query = filterQuery.trim().toLowerCase();
+    if (!query) return topics;
+    return topics.filter((topic) => topic.label.toLowerCase().includes(query));
+  }, [topics, filterQuery]);
+
+  // Keeps the shown topic in sync with the URL's own hash — a bookmarked or
+  // shared `/help#<topic>` link, and browser back/forward between topics
+  // already visited, both change the hash without going through this page's
+  // own click handlers.
+  useEffect(() => {
+    const onHashChange = (): void => {
+      const id = window.location.hash.slice(1);
+      if (topics.some((topic) => bareTopicId(topic.id) === id)) setActiveTopicId(id);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [topics]);
+
+  // The other direction: pushes `activeTopicId` out to the URL once React has
+  // committed it, so a click only ever needs to update state, never the URL
+  // directly. Guarded by the equality check so this doesn't fight the effect
+  // above in a loop, and so a hash that already matches (the initial render,
+  // or an update that *originated* from `onHashChange` above) doesn't add a
+  // redundant history entry.
+  useEffect(() => {
+    if (window.location.hash.slice(1) !== activeTopicId) {
+      window.location.hash = activeTopicId;
+    }
+  }, [activeTopicId]);
+
+  // Scrolls the content pane back to its own top on every topic switch after
+  // the first render — otherwise a short topic opened while scrolled halfway
+  // down a long one would render mostly blank above the fold.
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    if (contentRef.current) {
+      // Optional call: jsdom's `document.scrollingElement` (the fallback
+      // target when `contentRef` isn't nested in a scrollable ancestor,
+      // which is always true under jsdom's layout-less rendering) doesn't
+      // implement `scrollTo` — real browsers always do, on every element.
+      findScrollAncestor(contentRef.current).scrollTo?.({ top: 0, behavior: "smooth" });
+    }
+  }, [activeTopicId]);
+
+  // Handles every in-page topic link (sidebar entries, Prev/Next). Must
+  // `preventDefault` rather than letting the browser follow the anchor's own
+  // `href`: React re-renders synchronously within this same click, which
+  // updates that anchor's `href` to point at the *next* topic after this one
+  // (Prev/Next always reflects the topic *after* whichever one becomes
+  // active) — the browser's default fragment-navigation reads `href` fresh
+  // right after this handler returns, so left alone it follows the
+  // already-updated (one-topic-too-far) value instead of the one actually
+  // clicked. Verified in a real browser: clicking Next landed two topics
+  // ahead until this fix. The URL itself is updated separately, by the
+  // `activeTopicId`-driven effect above, once React has committed this
+  // click's state change — not here, directly.
+  const navigateToTopic = (id: string, event: MouseEvent): void => {
+    event.preventDefault();
+    setActiveTopicId(id);
+  };
+
+  const activeIndex = topics.findIndex((topic) => bareTopicId(topic.id) === activeTopicId);
+  const activeTopic = activeIndex >= 0 ? topics[activeIndex] : undefined;
+  const prevTopic = activeIndex > 0 ? topics[activeIndex - 1] : undefined;
+  const nextTopic =
+    activeIndex >= 0 && activeIndex < topics.length - 1 ? topics[activeIndex + 1] : undefined;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
       <Typography variant="h5">Help</Typography>
 
-      <Box
-        component="nav"
-        aria-label="Help topics"
-        sx={{
-          border: 1,
-          borderColor: "divider",
-          borderRadius: 1,
-          overflow: "hidden",
-          maxWidth: 420,
-        }}
-      >
-        <List dense disablePadding>
-          {topics.map((topic) => {
-            const id = bareTopicId(topic.id);
-            return (
-              <ListItemButton key={topic.id} component="a" href={`#${id}`}>
-                <ListItemText primary={topic.label} />
-              </ListItemButton>
-            );
-          })}
-        </List>
-      </Box>
-
-      {topics.map((topic, index) => {
-        const id = bareTopicId(topic.id);
-        return (
-          <Box key={topic.id}>
-            {index > 0 && <Divider sx={{ mb: 3 }} />}
-            <Box component="section" id={id} sx={{ minWidth: 0 }}>
-              <HelpTopicSection topicId={id} />
-            </Box>
+      <Box sx={{ display: "flex", gap: 3, alignItems: "flex-start", minWidth: 0 }}>
+        <Box
+          component="nav"
+          aria-label="Help topics"
+          sx={{
+            width: 260,
+            flexShrink: 0,
+            position: "sticky",
+            top: 0,
+            border: 1,
+            borderColor: "divider",
+            borderRadius: 1,
+            overflow: "hidden",
+          }}
+        >
+          <Box sx={{ p: 1, borderBottom: 1, borderColor: "divider" }}>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="Search topics…"
+              value={filterQuery}
+              onChange={(event) => setFilterQuery(event.target.value)}
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Search size={16} />
+                    </InputAdornment>
+                  ),
+                  endAdornment: filterQuery ? (
+                    <InputAdornment position="end">
+                      <IconButton
+                        size="small"
+                        edge="end"
+                        onClick={() => setFilterQuery("")}
+                        aria-label="Clear topic search"
+                      >
+                        <X size={16} />
+                      </IconButton>
+                    </InputAdornment>
+                  ) : undefined,
+                },
+              }}
+            />
           </Box>
-        );
-      })}
+          {filteredTopics.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
+              No topics match &ldquo;{filterQuery}&rdquo;.
+            </Typography>
+          ) : (
+            <List dense disablePadding>
+              {filteredTopics.map((topic) => {
+                const id = bareTopicId(topic.id);
+                const selected = id === activeTopicId;
+                const Icon = TOPIC_ICONS[id] ?? LifeBuoy;
+                return (
+                  <ListItemButton
+                    key={topic.id}
+                    component="a"
+                    href={`#${id}`}
+                    selected={selected}
+                    aria-current={selected ? "page" : undefined}
+                    onClick={(event) => navigateToTopic(id, event)}
+                  >
+                    <ListItemIcon sx={{ minWidth: 32, color: selected ? "primary.main" : "text.secondary" }}>
+                      <Icon size={18} />
+                    </ListItemIcon>
+                    <ListItemText
+                      primary={topic.label}
+                      slotProps={{ primary: { style: { fontWeight: selected ? 600 : 400 } } }}
+                    />
+                  </ListItemButton>
+                );
+              })}
+            </List>
+          )}
+        </Box>
 
-      <BackToTopButton />
+        <Box ref={contentRef} sx={{ flex: 1, minWidth: 0 }}>
+          {activeTopic ? (
+            <>
+              <Typography variant="caption" color="text.secondary">
+                Topic {activeIndex + 1} of {topics.length}
+              </Typography>
+              <Box component="section" id={activeTopicId}>
+                <HelpTopicSection topicId={activeTopicId} />
+              </Box>
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  mt: 4,
+                  pt: 2,
+                  borderTop: 1,
+                  borderColor: "divider",
+                }}
+              >
+                {prevTopic ? (
+                  <Button
+                    component="a"
+                    href={`#${bareTopicId(prevTopic.id)}`}
+                    onClick={(event) => navigateToTopic(bareTopicId(prevTopic.id), event)}
+                    startIcon={<ArrowLeft size={16} />}
+                    size="small"
+                    aria-label={`Previous topic: ${prevTopic.label}`}
+                    sx={PREV_NEXT_LINK_SX}
+                  >
+                    {prevTopic.label}
+                  </Button>
+                ) : (
+                  <span />
+                )}
+                {nextTopic ? (
+                  <Button
+                    component="a"
+                    href={`#${bareTopicId(nextTopic.id)}`}
+                    onClick={(event) => navigateToTopic(bareTopicId(nextTopic.id), event)}
+                    endIcon={<ArrowRight size={16} />}
+                    size="small"
+                    aria-label={`Next topic: ${nextTopic.label}`}
+                    sx={PREV_NEXT_LINK_SX}
+                  >
+                    {nextTopic.label}
+                  </Button>
+                ) : (
+                  <span />
+                )}
+              </Box>
+            </>
+          ) : (
+            <Typography color="text.secondary">No help topics are available.</Typography>
+          )}
+        </Box>
+      </Box>
     </Box>
   );
 }
