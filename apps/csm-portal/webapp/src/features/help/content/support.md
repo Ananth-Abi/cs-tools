@@ -53,8 +53,13 @@ attachments, and any linked service requests.
 
 **Linked service requests** appear in their own widget on the case, listing each linked
 request's number, name, state, and current assignee. Clicking a row navigates to that
-request's own case page (with a "back" link that returns you here). If a case is closed, the
-**Create service request** action is disabled: closed cases are read-only.
+request's own case page (with a "back" link that returns you here). You can start a new
+linked request either from that widget or from the case's **More** menu ("Create service
+request…") — both open the same pre-filled form. If a case is closed, the **Create service
+request** action is disabled in both places: closed cases are read-only.
+
+Service requests aren't available on every project. If the selected project isn't eligible,
+the create form shows a warning and blocks submission.
 
 ## Comments
 

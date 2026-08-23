@@ -110,6 +110,7 @@ import { useAddCaseTag, useRemoveCaseTag } from "@features/csm-cases/api/useCase
 import { ChildCasesWidget } from "@features/csm-cases/components/ChildCasesWidget";
 import { LinkedServiceRequestsWidget } from "@features/csm-cases/components/LinkedServiceRequestsWidget";
 import { LinkedChangeRequestsWidget } from "@features/csm-cases/components/LinkedChangeRequestsWidget";
+import { LinkedIncidentWidget } from "@features/csm-cases/components/LinkedIncidentWidget";
 import { CreateGithubIssueDialog } from "@features/csm-cases/components/CreateGithubIssueDialog";
 import { isCloudSupportSubscription } from "@features/csm-projects/utils/subscriptionType";
 import { usePostCaseGithubIssue } from "@features/csm-cases/api/useCsmCaseGithubIssue";
@@ -262,9 +263,9 @@ const FEEDBACK_PALETTE: Record<
 // Only covers secondary actions that are handled inline below with a fixed,
 // literal toast — every action with real branching feedback (success/error,
 // dynamic text) sets its own message directly instead of reading this map.
-const SECONDARY_TOAST: Record<string, string> = {
-  copy_link: "Case link copied to clipboard.",
-};
+// Currently empty (its one entry, copy_link, was removed with the menu item)
+// but kept as the lookup fallback below for the next fixed-toast action.
+const SECONDARY_TOAST: Record<string, string> = {};
 
 type CaseTabId =
   | "activities"
@@ -1086,6 +1087,23 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
+      // Create service request navigates to the service-request create form,
+      // pre-filled with this case as the new SR's linked case — same nav-state
+      // shape and target route as the Related tab's "Linked service requests"
+      // card (see that widget's onCreateServiceRequest above); this is just a
+      // second entry point onto the same flow, mirroring create_incident.
+      if (action.secondary === "create_service_request" && data) {
+        const navState: CreateServiceRequestFromCaseNavState = {
+          projectId: data.projectId,
+          relatedCaseId: data.id,
+          relatedCaseNumber: data.caseNumber,
+          deploymentId: data.productContext.deploymentId,
+          deployedProductId: data.productContext.deployedProductId,
+        };
+        navigate("/operations/service-requests/new", { state: navState });
+        return;
+      }
+
       // Create change request navigates to the change-request create form,
       // pre-filled with this service request as the new change request's
       // "Originating service request" — mirrors the create_incident handler
@@ -1099,20 +1117,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
           projectId: data.projectId,
         };
         navigate("/operations/change-requests/new", { state: navState });
-        return;
-      }
-
-      // Link to incident opens the search-and-pick dialog; the PATCH happens
-      // in onLinkIncident once a target incident is chosen.
-      if (action.secondary === "link_incident") {
-        setLinkIncidentOpen(true);
-        return;
-      }
-
-      // Create task opens the task-create form; the POST happens in
-      // onCreateTask once it's submitted.
-      if (action.secondary === "create_task") {
-        setCreateTaskOpen(true);
         return;
       }
 
@@ -1173,27 +1177,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
-      // Copy-link is async: only confirm success once the clipboard write
-      // actually resolves, otherwise a failure shows both a false "copied"
-      // toast and an error.
-      if (action.secondary === "copy_link") {
-        if (data && navigator.clipboard) {
-          navigator.clipboard
-            .writeText(`${window.location.origin}${detailPath}`)
-            .then(() =>
-              setFeedback({
-                message: SECONDARY_TOAST.copy_link,
-                severity: "success",
-                sticky: false,
-              }),
-            )
-            .catch(() => showError("Could not copy link."));
-        } else {
-          showError("Could not copy link.");
-        }
-        return;
-      }
-
       if (action.secondary === "log_time") {
         // Time cards can still be logged after a case is closed — engineers
         // often record time after the fact.
@@ -1228,7 +1211,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
       showSuccess,
       patchCase,
       findMyOngoingCases,
-      detailPath,
       startWork,
       resolveOngoingConflict,
       currentUserEmail,
@@ -1991,7 +1973,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
                         : t.id === "tasks"
                           ? caseTasks?.total
                           : t.id === "related"
-                            ? (c.linkedChangeRequests?.length ?? 0) +
+                            ? (c.parentCase?.type === "incident" ? 1 : 0) +
+                              (c.linkedChangeRequests?.length ?? 0) +
                               (c.linkedServiceRequests?.length ?? 0)
                             : undefined;
             return (
@@ -2393,6 +2376,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
             }}
           >
             <ChildCasesWidget caseId={c.id} />
+            <LinkedIncidentWidget
+              caseId={c.id}
+              parentCase={c.parentCase}
+              onLinkIncident={() => setLinkIncidentOpen(true)}
+              linkDisabled={isClosed}
+            />
             {/* Content-relevance, not a data-source gate: shown whenever this is
                 a service request (the only case type that carries the link) or
                 the list already has entries — never checks the record's data

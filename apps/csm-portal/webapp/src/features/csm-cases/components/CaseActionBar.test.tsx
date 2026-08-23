@@ -402,15 +402,17 @@ describe("CaseActionBar — create related case (closed-case reopen replacement)
   });
 });
 
-describe("CaseActionBar — Create incident from case / Link to incident (ISSU-021)", () => {
+describe("CaseActionBar — Create incident from case / Create service request (ISSU-021)", () => {
   // Both now have a real backend flow (CsmCaseDetailPage.tsx dispatches
-  // "create_incident" to CreateIncidentPage's nav state, and "link_incident"
-  // opens LinkIncidentDialog), so they follow the same closed-case
-  // read-only gate as every other secondary item rather than staying
-  // permanently disabled.
+  // "create_incident" and "create_service_request" to their respective
+  // create form's nav state), so they follow the same closed-case read-only
+  // gate as every other secondary item rather than staying permanently
+  // disabled. "Link to incident" used to be a third item here — it's been
+  // relocated to the Related tab's LinkedIncidentWidget, see that widget's
+  // own test file.
   const ITEMS: [RegExp, string][] = [
     [/create incident from case/i, "create_incident"],
-    [/link to incident/i, "link_incident"],
+    [/create service request/i, "create_service_request"],
   ];
 
   it.each(ITEMS)(
@@ -514,11 +516,8 @@ describe("CaseActionBar — Hold auto-closure / Edit case details", () => {
   );
 });
 
-describe("CaseActionBar — Create task / Set fix ETA", () => {
-  const ITEMS: Array<[RegExp, string]> = [
-    [/create task/i, "create_task"],
-    [/set fix eta/i, "set_fix_eta"],
-  ];
+describe("CaseActionBar — Set fix ETA", () => {
+  const ITEMS: Array<[RegExp, string]> = [[/set fix eta/i, "set_fix_eta"]];
 
   it.each(ITEMS)("dispatches %s as a secondary action when the case is open", (name, key) => {
     const onAction = vi.fn();
