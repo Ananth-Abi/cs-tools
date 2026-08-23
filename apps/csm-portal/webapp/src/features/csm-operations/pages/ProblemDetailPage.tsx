@@ -188,9 +188,26 @@ export default function ProblemDetailPage(): JSX.Element {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
       {BackButton}
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-          <Typography variant="h5">{problem.subject || problem.number || "Problem"}</Typography>
+      <Box
+        sx={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 1,
+          minWidth: 0,
+        }}
+      >
+        <Typography
+          variant="h6"
+          sx={{
+            fontFamily: "monospace",
+            fontWeight: 700,
+            letterSpacing: 0.2,
+            lineHeight: 1.2,
+          }}
+        >
+          {problem.number || problem.id}
+        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
           {problem.state && (
             <Chip
               size="small"
@@ -199,9 +216,7 @@ export default function ProblemDetailPage(): JSX.Element {
             />
           )}
         </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ fontFamily: "monospace" }}>
-          {problem.number || problem.id}
-        </Typography>
+        <Typography variant="h5">{problem.subject || problem.number || "Problem"}</Typography>
       </Box>
 
       <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>

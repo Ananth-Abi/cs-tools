@@ -383,25 +383,56 @@ export default function CsmIncidentDetailPage(): JSX.Element {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
       {BackButton}
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
+      <Box
+        sx={{
+          display: "flex",
+          gap: 2,
+          alignItems: "flex-start",
+          flexWrap: { xs: "wrap", md: "nowrap" },
+          justifyContent: "space-between",
+        }}
+      >
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <Typography
+            variant="h6"
+            sx={{
+              fontFamily: "monospace",
+              fontWeight: 700,
+              letterSpacing: 0.2,
+              lineHeight: 1.2,
+            }}
+          >
+            {incident.number || incident.id}
+          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+            {incident.state && (
+              <Chip
+                size="small"
+                color={incidentStateColor(incident.state)}
+                label={incidentStateLabel(incident.state)}
+              />
+            )}
+            {incident.priority && (
+              <Chip
+                size="small"
+                variant="outlined"
+                color={incidentPriorityColor(incident.priority)}
+                label={incidentPriorityLabel(incident.priority)}
+              />
+            )}
+          </Box>
           <Typography variant="h5">{incident.subject || incident.number || "Incident"}</Typography>
-          {incident.state && (
-            <Chip
-              size="small"
-              color={incidentStateColor(incident.state)}
-              label={incidentStateLabel(incident.state)}
-            />
-          )}
-          {incident.priority && (
-            <Chip
-              size="small"
-              variant="outlined"
-              color={incidentPriorityColor(incident.priority)}
-              label={incidentPriorityLabel(incident.priority)}
-            />
-          )}
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1, ml: "auto", flexShrink: 0 }}>
+        </Box>
+        <Box sx={{ flexShrink: 0, alignSelf: { xs: "stretch", md: "flex-start" } }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <IncidentActionBar
               incident={incident}
               isPending={patchIncident.isPending}
@@ -417,9 +448,6 @@ export default function CsmIncidentDetailPage(): JSX.Element {
             </Button>
           </Box>
         </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ fontFamily: "monospace" }}>
-          {incident.number || incident.id}
-        </Typography>
       </Box>
 
       <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
