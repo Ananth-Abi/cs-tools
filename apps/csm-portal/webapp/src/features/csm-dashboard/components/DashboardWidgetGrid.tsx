@@ -17,15 +17,40 @@
 import { Box, Divider, Typography } from "@wso2/oxygen-ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { Fragment, useState, type JSX, type ReactNode } from "react";
-import { ApiQueryKeys } from "@constants/apiConstants";
 import type { BeDashboardWidget } from "@api/backend/types";
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
 import RefreshButton from "@components/RefreshButton";
 import { resolveWidgetText } from "@features/csm-dashboard/utils/widgetTextPlaceholder";
+import { invalidateWidgetQueries } from "@features/csm-dashboard/utils/invalidateWidgetQueries";
 import {
   WIDGET_GRID_SX,
   groupWidgetsBySection,
 } from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
+
+// Hides the section refresh button + its "Last refreshed" label by default
+// and reveals both together on hover/focus of an ancestor carrying this sx
+// (see `sectionHeaderSx` below, applied to the row wide enough that hovering
+// anywhere near the section title reveals the control). Kept inert (not
+// clickable, not hit-testable) while hidden so it can't be triggered by a
+// stray click that happens to land where it would render once visible, but
+// stays reachable by keyboard Tab order throughout — `display: none` would
+// remove it from the tab sequence entirely, which is why opacity +
+// pointerEvents is used instead.
+const hoverRevealSx = {
+  opacity: 0,
+  pointerEvents: "none",
+  transition: "opacity 0.15s ease",
+} as const;
+
+const sectionHeaderSx = {
+  display: "flex",
+  alignItems: "center",
+  gap: 1,
+  "&:hover .dashboard-section-refresh, &:focus-within .dashboard-section-refresh": {
+    opacity: 1,
+    pointerEvents: "auto",
+  },
+} as const;
 
 function widgetGridColumnSx(widget: BeDashboardWidget) {
   // A list-shape widget renders a real table (4 rows, several columns) —
@@ -115,30 +140,20 @@ export default function DashboardWidgetGrid({
   const queryClient = useQueryClient();
   // Per-section refresh tracks its own in-flight state, keyed by section.
   const [refreshingSections, setRefreshingSections] = useState<Set<string>>(new Set());
-
-  /**
-   * Invalidates only the widget-data queries belonging to `widgetIds` —
-   * every shape's query key carries a widget id, just at a different
-   * position: `[KEY, widgetId, ...]` for count/list (see `useWidgetData`),
-   * `[KEY, "pie-slice", widgetId, ...]` for pie/bar via `slices` (see
-   * `useWidgetPieData`), `[KEY, "group-by", widgetId, ...]` for pie/bar via
-   * `groupBy` (see `useWidgetGroupByData`).
-   */
-  const invalidateWidgets = (widgetIds: Set<string>): Promise<void> =>
-    queryClient.invalidateQueries({
-      predicate: (query) => {
-        const key = query.queryKey;
-        if (key[0] !== ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA) return false;
-        const widgetId =
-          key[1] === "pie-slice" || key[1] === "group-by" ? key[2] : key[1];
-        return typeof widgetId === "string" && widgetIds.has(widgetId);
-      },
-    });
+  // A section can bundle multiple widgets/queries, so there's no single
+  // query's `dataUpdatedAt` to hand to that section's `RefreshButton` the
+  // way single-widget call sites do — track our own "last refreshed" epoch
+  // per section instead, set once `invalidateWidgets` below actually
+  // resolves (its default `refetchType: "active"` means the promise only
+  // resolves after the matched queries have refetched, not just been
+  // marked stale).
+  const [sectionLastRefreshedAt, setSectionLastRefreshedAt] = useState<Record<string, number>>({});
 
   const handleSectionRefresh = async (sectionKey: string, widgetIds: Set<string>): Promise<void> => {
     setRefreshingSections((prev) => new Set(prev).add(sectionKey));
     try {
-      await invalidateWidgets(widgetIds);
+      await invalidateWidgetQueries(queryClient, widgetIds);
+      setSectionLastRefreshedAt((prev) => ({ ...prev, [sectionKey]: Date.now() }));
     } finally {
       setRefreshingSections((prev) => {
         const next = new Set(prev);
@@ -171,6 +186,13 @@ export default function DashboardWidgetGrid({
           selectedTeamCreGroupId={selectedTeamCreGroupId}
           selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
+          // The builder action below renders as a sibling absolutely
+          // positioned over this same top-right corner (at a higher
+          // zIndex), fully covering the tile's own refresh button — so
+          // suppress the tile's refresh button exactly when (and only
+          // when) a builder action actually exists for this widget. See
+          // `hideRefreshButton`'s own doc comment on `DashboardWidgetTile`.
+          hideRefreshButton={Boolean(action)}
         />
         {action && (
           <Box sx={{ position: "absolute", top: 6, right: 6, zIndex: 2 }}>{action}</Box>
@@ -191,7 +213,19 @@ export default function DashboardWidgetGrid({
         const chartWidgets = group.widgets.filter((w) => w.shape === "pie" || w.shape === "bar");
         if (mainWidgets.length === 0 && chartWidgets.length === 0) return null;
 
-        const sectionKey = group.section ?? `__default_${i}`;
+        // Namespaced so a real section named e.g. `"__default_0"` can never
+        // collide with the synthetic key generated for the unnamed section —
+        // a collision there would cross-contaminate the two sections'
+        // refresh state (`refreshingSections`, `sectionLastRefreshedAt`),
+        // disabling/timestamping the wrong one. A constant (not `i`-based)
+        // key for the unnamed case: `groupWidgetsBySection` collapses every
+        // section-less widget into exactly one group, so there is never more
+        // than one "unnamed" section to collide with itself — but an
+        // index-based key broke when a named section was inserted/removed/
+        // reordered ahead of it, since that shifts `i` for the same logical
+        // group across renders, silently orphaning its in-flight
+        // `refreshingSections` entry and `sectionLastRefreshedAt` value.
+        const sectionKey = group.section != null ? `named:${group.section}` : "unnamed";
         const sectionWidgetIds = new Set(group.widgets.map((w) => w.widgetId));
         // Section titles support the same {{currentTeam}} text token as an
         // individual widget's own displayName/description (see
@@ -205,10 +239,8 @@ export default function DashboardWidgetGrid({
             <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
               <Box
                 sx={{
-                  display: "flex",
-                  alignItems: "center",
+                  ...sectionHeaderSx,
                   justifyContent: resolvedSectionTitle ? "space-between" : "flex-end",
-                  gap: 1,
                 }}
               >
                 {resolvedSectionTitle && (
@@ -218,15 +250,18 @@ export default function DashboardWidgetGrid({
                 )}
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   {renderSectionActions?.(group.section, resolvedSectionTitle, sectionWidgetIds)}
-                  <RefreshButton
-                    onRefresh={() => void handleSectionRefresh(sectionKey, sectionWidgetIds)}
-                    isFetching={refreshingSections.has(sectionKey)}
-                    label={
-                      resolvedSectionTitle
-                        ? `Refresh ${resolvedSectionTitle}`
-                        : "Refresh section"
-                    }
-                  />
+                  <Box className="dashboard-section-refresh" sx={hoverRevealSx}>
+                    <RefreshButton
+                      onRefresh={() => void handleSectionRefresh(sectionKey, sectionWidgetIds)}
+                      isFetching={refreshingSections.has(sectionKey)}
+                      updatedAt={sectionLastRefreshedAt[sectionKey]}
+                      label={
+                        resolvedSectionTitle
+                          ? `Refresh ${resolvedSectionTitle}`
+                          : "Refresh section"
+                      }
+                    />
+                  </Box>
                 </Box>
               </Box>
               {mainWidgets.length > 0 && (
