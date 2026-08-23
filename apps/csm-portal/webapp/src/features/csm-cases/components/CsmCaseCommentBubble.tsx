@@ -181,9 +181,9 @@ export default function CsmCaseCommentBubble({
       }
       const snLinkMarker = target.closest?.("[data-sn-link-type]");
       if (snLinkMarker && onSnLinkClick) {
-        const type = snLinkMarker.getAttribute("data-sn-link-type") as SnLinkType | null;
+        const type = snLinkMarker.getAttribute("data-sn-link-type");
         const id = snLinkMarker.getAttribute("data-sn-link-id");
-        if (type && id) {
+        if ((type === "alert" || type === "smartAlert") && id) {
           e.preventDefault();
           onSnLinkClick(type, id);
         }
@@ -218,9 +218,9 @@ export default function CsmCaseCommentBubble({
         }
         const snLinkMarker = target.closest?.("[data-sn-link-type]");
         if (snLinkMarker && onSnLinkClick) {
-          const type = snLinkMarker.getAttribute("data-sn-link-type") as SnLinkType | null;
+          const type = snLinkMarker.getAttribute("data-sn-link-type");
           const id = snLinkMarker.getAttribute("data-sn-link-id");
-          if (type && id) {
+          if ((type === "alert" || type === "smartAlert") && id) {
             e.preventDefault();
             onSnLinkClick(type, id);
           }

@@ -300,6 +300,23 @@ describe("CsmCaseCommentBubble", () => {
     expect(() => fireEvent.click(marker)).not.toThrow();
   });
 
+  it("does not invoke onSnLinkClick for an unrecognized data-sn-link-type value", () => {
+    const onSnLinkClick = vi.fn();
+    renderWithProviders(
+      <CsmCaseCommentBubble
+        comment={makeComment({
+          bodyHtml:
+            '<span data-sn-link-type="other" data-sn-link-id="7a43e2d4-3b2a-4b50-9140-4c6aa5e45a41" role="button" tabindex="0">Suspicious marker</span>',
+        })}
+        onSnLinkClick={onSnLinkClick}
+      />,
+    );
+    const marker = screen.getByRole("button", { name: "Suspicious marker" });
+    fireEvent.click(marker);
+    fireEvent.keyDown(marker, { key: "Enter" });
+    expect(onSnLinkClick).not.toHaveBeenCalled();
+  });
+
   it("preserves the original call-request task-number text as the clickable label", () => {
     const onCallRequestClick = vi.fn();
     renderWithProviders(
