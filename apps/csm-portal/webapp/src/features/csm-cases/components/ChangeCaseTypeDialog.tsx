@@ -491,9 +491,7 @@ export default function ChangeCaseTypeDialog({
                   </FormControl>
                 </Box>
                 <Typography variant="caption" color="text.secondary">
-                  Both are required to complete the transfer. Issue type isn&rsquo;t saved yet
-                  though — there&rsquo;s no way to update it on an existing case today, only at
-                  creation, so a pick here previews the field without changing anything.
+                  Both are required to complete the transfer, and both are saved as part of it.
                 </Typography>
               </>
             )}
