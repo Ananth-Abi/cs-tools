@@ -610,6 +610,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // during render (React's recommended pattern for resetting state when a
   // prop changes) rather than in an effect, to avoid an extra render pass.
   const [prevCaseId, setPrevCaseId] = useState(caseId);
+  // Distinguishes this render's view of the page from every prior one, even
+  // a return visit to the same caseId (A -> B -> A) — a plain caseId
+  // comparison can't tell those apart, which is exactly what let a stale
+  // mutation callback from the first visit to A slip through on the second.
+  // Bumped inside the reset block below, once per genuine transition.
+  const caseViewTokenRef = useRef(0);
   if (caseId !== prevCaseId) {
     setPrevCaseId(caseId);
     setFeedback(null);
@@ -637,6 +643,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setFixEtaOpen(false);
     setRequestUpdateOpen(false);
     setAddTagOpen(false);
+    // A new view of the page, distinct from every prior one even if it's a
+    // return visit to the same caseId (A -> B -> A) — see caseViewTokenRef
+    // below, which onRequestUpdate compares against instead of caseId itself.
+    caseViewTokenRef.current += 1;
     // The permalink-fragment-triggered force to Activities (for both this
     // case-change and a same-case fragment change) lives in one effect below
     // — see `permalinkForceRef` — rather than here, since `setActiveTab` now
@@ -1567,22 +1577,21 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [patchCase, showError],
   );
 
-  // `caseId` at mutate-time, captured per-call so a slow response for a
-  // since-navigated-away-from case can't close the dialog or show feedback
-  // for whatever case the page has moved on to (CsmCaseDetailPage stays
-  // mounted across a caseId change — see the `prevCaseId` reset block above).
-  const activeCaseIdRef = useRef(caseId);
-  activeCaseIdRef.current = caseId;
-
   const onRequestUpdate = useCallback(
     (payload: RequestUpdateSavePayload) => {
       if (!caseId) return;
-      const submittedCaseId = caseId;
+      // Compared against caseViewTokenRef in the callbacks below, not caseId
+      // itself: a plain caseId comparison can't tell a still-pending request
+      // from *this* view of the case apart from one left over from an
+      // earlier visit to the same case (A -> B -> A), since the id is
+      // identical in both. The token bumps on every transition, including a
+      // return to a previously-visited case, so it can.
+      const submittedViewToken = caseViewTokenRef.current;
       requestCaseUpdate.mutate(
         { caseId, ...payload },
         {
           onSuccess: () => {
-            if (activeCaseIdRef.current !== submittedCaseId) return;
+            if (caseViewTokenRef.current !== submittedViewToken) return;
             setRequestUpdateOpen(false);
             setFeedback({
               message: "Update request posted.",
@@ -1591,7 +1600,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             });
           },
           onError: (err) => {
-            if (activeCaseIdRef.current !== submittedCaseId) return;
+            if (caseViewTokenRef.current !== submittedViewToken) return;
             // 403 (not the assigned engineer) / 409 (case moved out of the
             // eligible state since the dialog opened) both carry an
             // actionable, specific backend message — surface it instead of a
