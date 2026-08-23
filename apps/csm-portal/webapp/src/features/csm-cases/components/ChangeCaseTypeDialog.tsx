@@ -177,8 +177,9 @@ export default function ChangeCaseTypeDialog({
   const engagementTypeMissing = targetType === "engagement" && engagementType === "";
   // severity and issueType are both required by the backend for a transfer to `case`;
   // submitting without them is a guaranteed 400, so gate the button instead.
-  const caseFieldsMissing =
-    targetType === "case" && (severity === "" || issueType === "");
+  const severityMissing = targetType === "case" && severity === "";
+  const issueTypeMissing = targetType === "case" && issueType === "";
+  const caseFieldsMissing = severityMissing || issueTypeMissing;
 
   const catalogs = useSearchCatalogs(
     targetType === "service_request" ? deployedProductId : undefined,
@@ -449,8 +450,8 @@ export default function ChangeCaseTypeDialog({
                     gap: 2,
                   }}
                 >
-                  <FormControl fullWidth size="small">
-                    <InputLabel id="transfer-severity-label">Severity (optional)</InputLabel>
+                  <FormControl fullWidth size="small" required error={severityMissing}>
+                    <InputLabel id="transfer-severity-label">Severity</InputLabel>
                     <Select
                       labelId="transfer-severity-label"
                       label="Severity"
@@ -464,10 +465,13 @@ export default function ChangeCaseTypeDialog({
                         </MenuItem>
                       ))}
                     </Select>
+                    {severityMissing && (
+                      <FormHelperText error>Required to continue.</FormHelperText>
+                    )}
                   </FormControl>
 
-                  <FormControl fullWidth size="small">
-                    <InputLabel id="transfer-issue-type-label">Issue type (optional)</InputLabel>
+                  <FormControl fullWidth size="small" required error={issueTypeMissing}>
+                    <InputLabel id="transfer-issue-type-label">Issue type</InputLabel>
                     <Select
                       labelId="transfer-issue-type-label"
                       label="Issue type"
@@ -481,10 +485,13 @@ export default function ChangeCaseTypeDialog({
                         </MenuItem>
                       ))}
                     </Select>
+                    {issueTypeMissing && (
+                      <FormHelperText error>Required to continue.</FormHelperText>
+                    )}
                   </FormControl>
                 </Box>
                 <Typography variant="caption" color="text.secondary">
-                  Neither is required to complete the transfer. Issue type isn&rsquo;t saved yet
+                  Both are required to complete the transfer. Issue type isn&rsquo;t saved yet
                   though — there&rsquo;s no way to update it on an existing case today, only at
                   creation, so a pick here previews the field without changing anything.
                 </Typography>

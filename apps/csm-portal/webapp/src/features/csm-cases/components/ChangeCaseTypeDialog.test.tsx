@@ -384,6 +384,24 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("marks severity and issue type as required, with no stale '(optional)' wording", () => {
+    render(
+      <ChangeCaseTypeDialog
+        currentType="engagement"
+        currentSeverity="unset"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/^case$/i);
+    expect(screen.queryByText(/severity \(optional\)/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/issue type \(optional\)/i)).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /^severity$/i })).toBeRequired();
+    expect(screen.getByRole("combobox", { name: /^issue type$/i })).toBeRequired();
+  });
+
   it("submits severity and issue type together in one call", () => {
     const onSubmit = vi.fn();
     render(
