@@ -2221,6 +2221,94 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /alerts/{id}:
+    get:
+      summary: Get an alert by ID.
+      operationId: getAlert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Alert UUID.
+      responses:
+        "200":
+          description: The alert with the given ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertView'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Alert not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /smart-alerts/{id}:
+    get:
+      summary: Get a smart alert by ID.
+      operationId: getSmartAlert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Smart alert UUID.
+      responses:
+        "200":
+          description: The smart alert with the given ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmartAlertView'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Smart alert not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /change-requests/search:
     post:
       summary: Search change requests (ServiceNow data source only).
@@ -8788,6 +8876,110 @@ components:
               type: string
             createdBy:
               type: string
+
+    AlertView:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        number:
+          type: string
+          nullable: true
+        environment:
+          type: string
+          nullable: true
+        metricName:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+          description: Opaque, free-form text.
+        incidentId:
+          type: string
+          nullable: true
+          description: ID of the linked incident, if any.
+        serviceId:
+          type: string
+          nullable: true
+          description: ID of the linked service, if any.
+        createdOn:
+          type: string
+
+    SmartAlertView:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        alertId:
+          type: string
+          nullable: true
+          description: ID of the linked alert, if any.
+        sourceAlertId:
+          type: string
+          nullable: true
+          description: Opaque identifier assigned by the originating alert source.
+        alertStatus:
+          type: string
+          nullable: true
+        windowStatus:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          nullable: true
+        urgency:
+          type: string
+          nullable: true
+        impact:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        environment:
+          type: string
+          nullable: true
+        resourceName:
+          type: string
+          nullable: true
+        shortDescription:
+          type: string
+          nullable: true
+        details:
+          type: string
+          nullable: true
+          description: Opaque, free-form text.
+        monitorUrl:
+          type: string
+          nullable: true
+        firedAt:
+          type: string
+          nullable: true
+        receivedAt:
+          type: string
+          nullable: true
+        fireCount:
+          type: integer
+          nullable: true
+        incidentId:
+          type: string
+          nullable: true
+          description: ID of the linked incident, if any.
 
     IncidentView:
       type: object

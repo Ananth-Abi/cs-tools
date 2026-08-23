@@ -167,6 +167,16 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		problemHandler = handler.NewProblemHandler(service.NewServiceNowProblemService(serviceNowIntegrationServiceClient))
 	}
 
+	var alertHandler *handler.AlertHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		alertHandler = handler.NewAlertHandler(service.NewServiceNowAlertService(serviceNowIntegrationServiceClient))
+	}
+
+	var smartAlertHandler *handler.SmartAlertHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		smartAlertHandler = handler.NewSmartAlertHandler(service.NewServiceNowSmartAlertService(serviceNowIntegrationServiceClient))
+	}
+
 	var incidentTaskHandler *handler.IncidentTaskHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		incidentTaskHandler = handler.NewIncidentTaskHandler(service.NewServiceNowIncidentTaskService(serviceNowIntegrationServiceClient))
@@ -383,6 +393,14 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("POST /incident-tasks/search", incidentTaskHandler.SearchIncidentTasks)
 		mux.HandleFunc("POST /incident-tasks/aggregate", incidentTaskHandler.AggregateIncidentTasks)
 		mux.HandleFunc("GET /incident-tasks/{id}", incidentTaskHandler.GetIncidentTask)
+	}
+
+	if alertHandler != nil {
+		mux.HandleFunc("GET /alerts/{id}", alertHandler.GetAlert)
+	}
+
+	if smartAlertHandler != nil {
+		mux.HandleFunc("GET /smart-alerts/{id}", smartAlertHandler.GetSmartAlert)
 	}
 
 	if conversationHandler != nil {

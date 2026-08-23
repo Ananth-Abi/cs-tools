@@ -4081,6 +4081,48 @@ type SearchConversationView struct {
 	CreatedBy      *UserReference `json:"createdBy"`
 }
 
+// AlertView is the full detail representation returned by GET /alerts/{id}.
+type AlertView struct {
+	ID          *string `json:"id"`
+	Number      *string `json:"number"`
+	Environment *string `json:"environment"`
+	MetricName  *string `json:"metricName"`
+	Source      *string `json:"source"`
+	Category    *string `json:"category"`
+	Severity    *string `json:"severity"`
+	// Description is an opaque, free-form string and is passed through unparsed.
+	Description *string `json:"description"`
+	// IncidentID/ServiceID reference the linked incident/service, if any.
+	IncidentID *string `json:"incidentId"`
+	ServiceID  *string `json:"serviceId"`
+	CreatedOn  string  `json:"createdOn"`
+}
+
+// SmartAlertView is the full detail representation returned by GET /smart-alerts/{id}.
+type SmartAlertView struct {
+	ID               *string `json:"id"`
+	AlertID          *string `json:"alertId"`
+	SourceAlertID    *string `json:"sourceAlertId"`
+	AlertStatus      *string `json:"alertStatus"`
+	WindowStatus     *string `json:"windowStatus"`
+	Severity         *string `json:"severity"`
+	Urgency          *string `json:"urgency"`
+	Impact           *string `json:"impact"`
+	Category         *string `json:"category"`
+	Source           *string `json:"source"`
+	Environment      *string `json:"environment"`
+	ResourceName     *string `json:"resourceName"`
+	ShortDescription *string `json:"shortDescription"`
+	// Details is an opaque, free-form string and is passed through unparsed.
+	Details    *string `json:"details"`
+	MonitorURL *string `json:"monitorUrl"`
+	FiredAt    *string `json:"firedAt"`
+	ReceivedAt *string `json:"receivedAt"`
+	FireCount  *int    `json:"fireCount"`
+	// IncidentID references the linked incident, if any.
+	IncidentID *string `json:"incidentId"`
+}
+
 // SearchConversationsResponse is the paginated result of a conversation search.
 type SearchConversationsResponse struct {
 	Conversations []SearchConversationView `json:"conversations"`
