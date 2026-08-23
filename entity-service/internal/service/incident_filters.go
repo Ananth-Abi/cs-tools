@@ -18,7 +18,6 @@ package service
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -45,13 +44,18 @@ var incidentFilterOpSet = map[string]bool{
 }
 
 // parseIncidentFilterBool mirrors case_filters.go's parseCaseFilterPercent
-// error-shape convention, retyped for a boolean-valued eq filter.
+// error-shape convention, retyped for a boolean-valued eq filter. Only the
+// exact lowercase "true"/"false" the OpenAPI contract documents are accepted
+// -- not every string strconv.ParseBool tolerates (e.g. "1", "t", "TRUE").
 func parseIncidentFilterBool(f domain.IncidentFieldFilter, value string) (bool, error) {
-	b, err := strconv.ParseBool(value)
-	if err != nil {
+	switch value {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
 		return false, &apierror.ValidationError{Msg: fmt.Sprintf("filters: field %q op %q value %q must be a boolean", f.Field, f.Op, value)}
 	}
-	return b, nil
 }
 
 // parseIncidentFilterDate mirrors case_filters.go's parseCaseFilterDate,
