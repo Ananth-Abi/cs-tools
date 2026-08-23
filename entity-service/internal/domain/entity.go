@@ -5055,12 +5055,18 @@ type SetSLAClockTierRequest struct {
 // (the operation is idempotent; see the repository's SetTierReachedIfUnset).
 // AlreadyReached distinguishes those two cases: false means this call is
 // the one that just wrote ReachedOn; true means it was already set by an
-// earlier call. A caller that reacts to a tier being reached (e.g.
-// publishing a notification) must gate that reaction on AlreadyReached
-// being false — otherwise a caller that merely rediscovers an
-// already-reached tier (e.g. a stale scheduling entry rediscovered after
-// an outage, or a second replica racing the first) ends up reacting to it
-// a second time for nothing new.
+// earlier call.
+//
+// AlreadyReached reflects only the database claim, not whether any
+// caller's downstream reaction to winning that claim (e.g. publishing a
+// notification) ever actually succeeded. Do NOT gate a reaction on
+// AlreadyReached being false unless that reaction's own completion is
+// also tracked durably and separately — a caller whose reaction failed
+// after it won the claim would otherwise see AlreadyReached=true on
+// retry and skip the reaction forever, having never completed it once.
+// This was a real bug caught in review on csm-notification-service's own
+// use of this field (see integrations/csm-notification-service's
+// internal/slaengine.Engine and its CLAUDE.md) — don't repeat it here.
 type SetSLAClockTierReachedResponse struct {
 	ReachedOn      time.Time `json:"reachedOn"`
 	AlreadyReached bool      `json:"alreadyReached"`

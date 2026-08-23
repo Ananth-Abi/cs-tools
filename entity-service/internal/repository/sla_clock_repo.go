@@ -48,12 +48,21 @@ type SLAClockRepository interface {
 	// (true) — the underlying UPDATE's own WHERE ... IS NULL clause is
 	// what actually decides this atomically, so it's correct even when two
 	// callers race to set the same tier at the same time; only one of them
-	// can ever see alreadySet=false for a given tier. Callers that publish
-	// a notification on a successful set should gate that publish on
-	// alreadySet being false, not on the returned timestamp being valid
-	// (which it always is, either way) — otherwise a caller that merely
-	// rediscovers an already-reached tier will re-publish for it. Returns
-	// a *apierror.NotFoundError if no such clock has been registered.
+	// can ever see alreadySet=false for a given tier.
+	//
+	// alreadySet reflects the database claim only — it says nothing about
+	// whether any caller's downstream reaction (e.g. publishing a
+	// notification) to winning that claim ever actually succeeded. A
+	// caller must NOT use alreadySet=true as a reason to skip its own
+	// reaction unless it separately, durably tracks whether that reaction
+	// was ever completed — otherwise a caller whose own reaction failed
+	// after it won the claim will see alreadySet=true on retry and skip
+	// the reaction forever, having never actually completed it once. This
+	// was a real bug caught in review on csm-notification-service's own
+	// use of this field (see that repo's internal/slaengine.Engine, and
+	// the CLAUDE.md note there) — don't reintroduce it here or in a future
+	// caller. Returns a *apierror.NotFoundError if no such clock has been
+	// registered.
 	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (reachedAt time.Time, alreadySet bool, err error)
 }
 
