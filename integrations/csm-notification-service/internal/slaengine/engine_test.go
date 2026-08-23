@@ -42,9 +42,10 @@ type fakeEntityClock struct {
 
 	getClockFn func(caseID, clockType string) (Clock, error)
 
-	tierCalls  []tierCall
-	tierResult time.Time
-	tierErr    error
+	tierCalls          []tierCall
+	tierResult         time.Time
+	tierAlreadyReached bool
+	tierErr            error
 }
 
 func (f *fakeEntityClock) RegisterClock(_ context.Context, caseID, clockType string, startedAt, dueAt time.Time) error {
@@ -59,9 +60,9 @@ func (f *fakeEntityClock) GetClock(_ context.Context, caseID, clockType string) 
 	return Clock{}, nil
 }
 
-func (f *fakeEntityClock) SetTierReachedIfUnset(_ context.Context, caseID, clockType, tier string) (time.Time, error) {
+func (f *fakeEntityClock) SetTierReachedIfUnset(_ context.Context, caseID, clockType, tier string) (time.Time, bool, error) {
 	f.tierCalls = append(f.tierCalls, tierCall{caseID, clockType, tier})
-	return f.tierResult, f.tierErr
+	return f.tierResult, f.tierAlreadyReached, f.tierErr
 }
 
 type wakeEntry struct {
@@ -231,6 +232,32 @@ func TestEngine_Tick_FiresDueMemberAndPublishes(t *testing.T) {
 
 	if len(wake.removed) != 1 || wake.removed[0] != "CASE-1|response|50" {
 		t.Errorf("removed = %v, want the fired member removed", wake.removed)
+	}
+}
+
+// TestEngine_Tick_SkipsPublishWhenAlreadyReached verifies the accepted
+// trade-off documented on Tick's own doc comment: when entity-service
+// reports the tier was already claimed by an earlier call, this engine
+// does not publish again — it just drops the now-stale wake entry. This is
+// a deliberate choice (favoring no duplicates over guaranteed retry of a
+// failed publish), not an oversight — see Tick's doc comment for the full
+// reasoning and the residual risk it accepts.
+func TestEngine_Tick_SkipsPublishWhenAlreadyReached(t *testing.T) {
+	reached := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	entity := &fakeEntityClock{tierResult: reached, tierAlreadyReached: true}
+	wake := &fakeWakeIndex{due: []string{"CASE-1|response|50"}}
+	pub := &fakePublisher{}
+	e := newTestEngine(entity, wake, pub)
+
+	if err := e.Tick(context.Background(), time.Now()); err != nil {
+		t.Fatalf("Tick() error = %v, want nil", err)
+	}
+
+	if len(pub.calls) != 0 {
+		t.Fatalf("expected no publish when alreadyReached=true, got %d", len(pub.calls))
+	}
+	if len(wake.removed) != 1 || wake.removed[0] != "CASE-1|response|50" {
+		t.Errorf("expected the stale wake entry cleaned up regardless, removed = %v", wake.removed)
 	}
 }
 

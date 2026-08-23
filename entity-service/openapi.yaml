@@ -12716,6 +12716,21 @@ components:
         reachedOn:
           type: string
           format: date-time
+        alreadyReached:
+          type: boolean
+          description: >-
+            False if this call is the one that just recorded the tier as
+            reached; true if it was already recorded by an earlier call.
+            Reflects only the database claim, not whether any caller's
+            reaction to winning that claim (e.g. publishing a notification)
+            ever actually succeeded. Gating such a reaction on this being
+            false is a valid choice when duplicate-free behavior matters
+            more than guaranteed delivery, but it is a trade-off: a caller
+            whose reaction failed after winning the claim will see this as
+            true on retry and skip the reaction forever, having never
+            completed it once. Only rely on this field to gate a reaction
+            if that risk is acceptable, or if the reaction's own completion
+            is tracked separately and durably instead.
 
     SearchEventPublishFailuresResponse:
       type: object

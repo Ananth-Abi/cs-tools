@@ -36,11 +36,12 @@ type fakeSLAClockRepo struct {
 	getResult       domain.SLAClock
 	getErr          error
 
-	gotTierCaseID    string
-	gotTierClockType string
-	gotTier          string
-	tierResult       time.Time
-	tierErr          error
+	gotTierCaseID      string
+	gotTierClockType   string
+	gotTier            string
+	tierResult         time.Time
+	tierAlreadyReached bool
+	tierErr            error
 }
 
 func (f *fakeSLAClockRepo) Register(_ context.Context, req domain.RegisterSLAClockRequest) (domain.SLAClock, error) {
@@ -54,11 +55,11 @@ func (f *fakeSLAClockRepo) Get(_ context.Context, caseID, clockType string) (dom
 	return f.getResult, f.getErr
 }
 
-func (f *fakeSLAClockRepo) SetTierReachedIfUnset(_ context.Context, caseID, clockType, tier string) (time.Time, error) {
+func (f *fakeSLAClockRepo) SetTierReachedIfUnset(_ context.Context, caseID, clockType, tier string) (time.Time, bool, error) {
 	f.gotTierCaseID = caseID
 	f.gotTierClockType = clockType
 	f.gotTier = tier
-	return f.tierResult, f.tierErr
+	return f.tierResult, f.tierAlreadyReached, f.tierErr
 }
 
 func TestSLAClockService_RegisterSLAClock_ForwardsValidRequest(t *testing.T) {
@@ -185,7 +186,32 @@ func TestSLAClockService_SetSLAClockTierReached_AcceptsKnownTiers(t *testing.T) 
 			if !resp.ReachedOn.Equal(reached) {
 				t.Fatalf("expected reached timestamp returned unchanged, got %v want %v", resp.ReachedOn, reached)
 			}
+			if resp.AlreadyReached {
+				t.Fatalf("expected AlreadyReached=false when the repo reports a fresh write, got true")
+			}
 		})
+	}
+}
+
+// TestSLAClockService_SetSLAClockTierReached_PropagatesAlreadyReached verifies
+// the AlreadyReached flag (which callers use to decide whether to react to a
+// tier being reached, e.g. by publishing a notification) is forwarded from
+// the repository unchanged rather than always defaulting to false.
+func TestSLAClockService_SetSLAClockTierReached_PropagatesAlreadyReached(t *testing.T) {
+	reached := time.Now()
+	repo := &fakeSLAClockRepo{tierResult: reached, tierAlreadyReached: true}
+	svc := NewSLAClockService(repo)
+
+	req := domain.SetSLAClockTierRequest{Status: domain.SLATierStatusReached}
+	resp, err := svc.SetSLAClockTierReached(context.Background(), "case-1", "response", "50", req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !resp.AlreadyReached {
+		t.Fatal("expected AlreadyReached=true when the repo reports the tier was already set, got false")
+	}
+	if !resp.ReachedOn.Equal(reached) {
+		t.Fatalf("expected the pre-existing reached timestamp returned, got %v want %v", resp.ReachedOn, reached)
 	}
 }
 

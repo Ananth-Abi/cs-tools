@@ -89,9 +89,9 @@ func (s *slaClockService) SetSLAClockTierReached(ctx context.Context, caseID, cl
 	if !validSLATierStatus[req.Status] {
 		return domain.SetSLAClockTierReachedResponse{}, &apierror.ValidationError{Msg: `status must be "reached"`}
 	}
-	reachedAt, err := s.repo.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
+	reachedAt, alreadyReached, err := s.repo.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
 	if err != nil {
 		return domain.SetSLAClockTierReachedResponse{}, err
 	}
-	return domain.SetSLAClockTierReachedResponse{ReachedOn: reachedAt}, nil
+	return domain.SetSLAClockTierReachedResponse{ReachedOn: reachedAt, AlreadyReached: alreadyReached}, nil
 }

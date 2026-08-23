@@ -33,7 +33,7 @@ import (
 type entityClock interface {
 	RegisterClock(ctx context.Context, caseID, clockType string, startedAt, dueAt time.Time) error
 	GetClock(ctx context.Context, caseID, clockType string) (Clock, error)
-	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (time.Time, error)
+	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (reachedAt time.Time, alreadyReached bool, err error)
 }
 
 // wakeIndex abstracts WakeIndex for testability.
@@ -153,20 +153,32 @@ func tierTime(startedAt time.Time, d time.Duration, tier string) time.Time {
 // entity-service write already happened and is itself idempotent, so
 // re-attempting it on a retry is harmless).
 //
-// KNOWN LIMITATION: DueMembers doesn't claim a member before returning it.
-// RunTicker starts exactly one Tick loop per process (independent of
-// SLA_CONSUMER_COUNT, which only controls how many eventbus.Consumer
-// instances call Handle), so a single-replica deployment is unaffected —
-// but if this service is ever run as more than one replica against the
-// same Redis instance, each replica's own RunTicker loop can read and act
-// on the same due member in the same window, each publishing its own
-// events.TypeSLATierReached for that tier before either removes the wake
-// entry, producing duplicate tier-reached events for one crossing
-// (SetTierReachedIfUnset itself stays correct; only the count of published
-// events is affected). Closing this needs an atomic claim (e.g. a Redis
-// lease with a TTL, released on failure so a crashed replica doesn't strand
-// it) before Tick acts on a member — a real addition, not a quick fix, so
-// it's flagged here rather than built speculatively.
+// ACCEPTED TRADE-OFF: processDueMember gates publishing on
+// SetTierReachedIfUnset's alreadyReached (skip if some earlier call already
+// claimed the tier) — a deliberate choice, made with eyes open to what it
+// costs. alreadyReached only reports whether the database claim succeeded,
+// not whether a notification was ever actually delivered: if the caller
+// that won the claim then fails to publish (Event Hub rejects the publish,
+// or this process crashes between the database write and the publish
+// call), a later rediscovery of that same tier will see alreadyReached=true
+// and skip publishing — the notification is then permanently lost, not
+// just delayed. That risk is judged acceptable here because a publish
+// failure to Azure Event Hub is rare, and clean, duplicate-free rediscovery
+// matters routinely, not just on the rare occasion a replica races
+// another: a planned (not yet built) fallback for when Redis itself is
+// unreachable — falling back to asking entity-service directly which
+// tiers are overdue — would, once Redis recovers, rediscover whatever
+// stale wake entries survived the outage. Without this gating, every one
+// of those would duplicate-publish on every recovery, not just
+// occasionally; that routine cost is what actually motivated keeping this
+// gating rather than the rare multi-replica race alone.
+//
+// If this trade-off ever stops being acceptable (e.g. Event Hub reliability
+// turns out worse in practice, or this service starts running multiple
+// replicas), the real fix is a durable delivery/outbox state tracked
+// separately from the reached-claim, with a lease or expiry so a failed
+// attempt's slot can still be retried by someone else — not built, and a
+// real addition, not a quick one.
 func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 	members, err := e.wake.DueMembers(ctx, now)
 	if err != nil {
@@ -182,6 +194,13 @@ func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 	return errors.Join(errs...)
 }
 
+// processDueMember handles one due wake-index member: checks the clock
+// isn't paused, claims the tier as reached on entity-service, and skips
+// publishing (just drops the wake entry) if that claim reports
+// alreadyReached — see Tick's own doc comment for the trade-off this
+// accepts. Otherwise it publishes events.TypeSLATierReached and only then
+// removes the wake entry, so a publish failure on this specific call
+// leaves the entry in place for the next tick to retry.
 func (e *Engine) processDueMember(ctx context.Context, member string) error {
 	caseID, clockType, tier, ok := parseWakeMember(member)
 	if !ok {
@@ -198,9 +217,24 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 		return e.wake.RemoveWake(ctx, member)
 	}
 
-	reachedAt, err := e.entity.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
+	reachedAt, alreadyReached, err := e.entity.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
 	if err != nil {
 		return fmt.Errorf("set tier reached %s/%s/%s: %w", caseID, clockType, tier, err)
+	}
+	if alreadyReached {
+		// A deliberate, accepted trade-off — see this function's own doc
+		// comment above for the full reasoning: this skips publishing on
+		// the rare chance that the caller who won the claim already
+		// published but this caller can't tell that from "claimed but
+		// never got to publish." Chosen because a duplicate-free rediscovery
+		// path matters routinely (the planned Redis-outage fallback would
+		// otherwise duplicate on every recovery), while the residual risk
+		// this accepts — a publish to Event Hub failing, or this process
+		// crashing between the database write and the publish call — is
+		// judged rare enough to live with.
+		slog.InfoContext(ctx, "slaengine: tier already reached by another caller, dropping stale wake entry without republishing",
+			"caseId", caseID, "clockType", clockType, "tier", tier, "reachedAt", reachedAt.Format(time.RFC3339))
+		return e.wake.RemoveWake(ctx, member)
 	}
 
 	envelope := events.Envelope{

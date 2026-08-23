@@ -93,7 +93,27 @@ Exposed at `POST /cases/{caseId}/sla-clocks` (register/reset),
 modeled as an enum rather than a bare boolean so a future status doesn't
 need a breaking change) to mark a `50`/`75`/`100` tier reached, idempotently
 — a second call for an already-reached tier returns the original timestamp,
-not an error. The sole caller today is `csm-notification-service`'s SLA timer engine
+not an error, plus `alreadyReached: true` so the caller can tell the two
+cases apart (the underlying `UPDATE ... WHERE ... IS NULL` already decides
+atomically which caller "really" set it; `alreadyReached` is just that
+outcome surfaced instead of discarded).
+
+**`alreadyReached` reflects the database claim only, not whether any
+caller's own reaction (e.g. publishing a notification) to winning that
+claim ever actually succeeded.** Gating a reaction on it being false is a
+real, valid choice when duplicate-free behavior matters more than
+guaranteed delivery — `csm-notification-service`'s
+`internal/slaengine.Engine` does exactly this (see that repo's `CLAUDE.md`
+for its full reasoning: it accepts the rare risk of a lost notification on
+an Event Hub publish failure in exchange for not duplicate-publishing every
+time a stale wake entry gets rediscovered, e.g. after a Redis outage) — but
+it is a trade-off, not a free win: a caller whose reaction failed after it
+won the claim will see `alreadyReached=true` on retry and skip the
+reaction forever, having never completed it once. Only gate a reaction on
+this field if that risk is acceptable for the use case, or if the
+reaction's own completion is tracked separately and durably instead. The
+sole caller today is
+`csm-notification-service`'s SLA timer engine
 (`internal/slaengine`), which owns the actual scheduling (a Redis wake index
 and ticker) — this service only stores the result of that scheduling, it does
 not compute or track wake times itself.
