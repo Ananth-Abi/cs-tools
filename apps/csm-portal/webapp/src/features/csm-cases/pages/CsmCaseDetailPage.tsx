@@ -635,6 +635,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setEditDetailsOpen(false);
     setCreateTaskOpen(false);
     setFixEtaOpen(false);
+    setRequestUpdateOpen(false);
     setAddTagOpen(false);
     // The permalink-fragment-triggered force to Activities (for both this
     // case-change and a same-case fragment change) lives in one effect below

@@ -610,6 +610,24 @@ describe("CaseActionBar — Request update (enabled only in Awaiting info / Solu
       expect(onAction).not.toHaveBeenCalled();
     },
   );
+
+  it("disables request_update in an eligible state when the caller isn't the assigned engineer", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...caseInState("awaiting_info", ["waiting_on_wso2"]),
+          assigneeIsMe: false,
+        }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /request update/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).not.toHaveBeenCalled();
+  });
 });
 
 describe("CaseActionBar — advisory close-gate (open task)", () => {

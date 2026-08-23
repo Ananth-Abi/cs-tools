@@ -45,7 +45,17 @@ func TestRequestCaseUpdate(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.RequestCaseUpdate(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+	})
+
+	t.Run("rejects malformed UUID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/not-a-uuid/request-update", strings.NewReader(`{"stage":"first"}`)))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.RequestCaseUpdate(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
 	})
 
 	t.Run("rejects body exceeding the size cap", func(t *testing.T) {
