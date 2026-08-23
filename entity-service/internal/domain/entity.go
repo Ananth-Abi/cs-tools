@@ -1647,13 +1647,14 @@ type UpdateCaseRequest struct {
 	// Type transfers the case to another type. One of
 	// "case" / "engagement" / "security_report_analysis" / "service_request" —
 	// "announcement" and the hosting_* types are system-managed and are never
-	// transfer targets. EngagementType is required alongside Type when
-	// transferring into "engagement"; CatalogID/CatalogItemID (and optionally
-	// Variables) are required alongside Type when transferring into
+	// transfer targets. EngagementType and EngagementPaymentType are both required
+	// alongside Type when transferring into "engagement"; CatalogID/CatalogItemID
+	// (and optionally Variables) are required alongside Type when transferring into
 	// "service_request". Neither combination is meaningful for any other Type
 	// value and both are rejected if supplied otherwise.
-	Type           *string         `json:"type"`
-	EngagementType *EngagementType `json:"engagementType"`
+	Type                  *string                `json:"type"`
+	EngagementType        *EngagementType        `json:"engagementType"`
+	EngagementPaymentType *EngagementPaymentType `json:"engagementPaymentType"`
 	// IssueType classifies the case when transferring to type "case". Required in that
 	// transfer and rejected for every other target type: the backing data source stores
 	// issue type only on Incident/Query records.

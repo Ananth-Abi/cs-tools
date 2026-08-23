@@ -603,6 +603,7 @@ func TestSNCaseService_UpdateCase_NewSingleFieldVariants(t *testing.T) {
 func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
 	engagement := domain.EngagementTypeMigration
+	paymentType := domain.EngagementPaymentTypePaid
 	severity := domain.CaseSeverityHigh
 
 	tests := []struct {
@@ -618,12 +619,22 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, Type: strPtr("engagement")},
 		},
 		{
+			name: "engagement without engagementPaymentType",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("engagement"), EngagementType: &engagement,
+			},
+		},
+		{
 			name: "service_request without catalogId/catalogItemId",
 			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, Type: strPtr("service_request")},
 		},
 		{
 			name: "engagementType supplied without type",
 			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, EngagementType: &engagement},
+		},
+		{
+			name: "engagementPaymentType supplied without type",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, EngagementPaymentType: &paymentType},
 		},
 		{
 			name: "catalogId supplied without type",
@@ -636,16 +647,30 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 			},
 		},
 		{
+			name: "engagementPaymentType supplied with type \"case\"",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("case"), EngagementPaymentType: &paymentType,
+			},
+		},
+		{
 			name: "catalogId supplied with type \"engagement\"",
 			req: domain.UpdateCaseRequest{
 				ID: testDeploymentUUID, Type: strPtr("engagement"), EngagementType: &engagement,
-				CatalogID: strPtr(testDeploymentUUID),
+				EngagementPaymentType: &paymentType,
+				CatalogID:             strPtr(testDeploymentUUID),
 			},
 		},
 		{
 			name: "engagementType supplied with type \"service_request\"",
 			req: domain.UpdateCaseRequest{
 				ID: testDeploymentUUID, Type: strPtr("service_request"), EngagementType: &engagement,
+				CatalogID: strPtr(testDeploymentUUID), CatalogItemID: strPtr(testDeploymentUUID),
+			},
+		},
+		{
+			name: "engagementPaymentType supplied with type \"service_request\"",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("service_request"), EngagementPaymentType: &paymentType,
 				CatalogID: strPtr(testDeploymentUUID), CatalogItemID: strPtr(testDeploymentUUID),
 			},
 		},
@@ -729,7 +754,7 @@ func TestSNCaseService_UpdateCase_TypeTransfer_Case(t *testing.T) {
 	if _, ok := gotBody["severityKey"]; !ok {
 		t.Fatalf("expected severityKey to be sent alongside type: %+v", gotBody)
 	}
-	for _, field := range []string{"engagementType", "catalogId", "catalogItemId", "variables"} {
+	for _, field := range []string{"engagementType", "engagementPaymentType", "catalogId", "catalogItemId", "variables"} {
 		if _, ok := gotBody[field]; ok {
 			t.Fatalf("unexpected extra field %q present in a type: \"case\" payload: %+v", field, gotBody)
 		}
@@ -799,6 +824,7 @@ func TestSNCaseService_UpdateCase_IssueTypeWithoutTypeRejected(t *testing.T) {
 func TestSNCaseService_UpdateCase_TypeTransfer_Engagement(t *testing.T) {
 	typ := "engagement"
 	engagement := domain.EngagementTypeMigration
+	paymentType := domain.EngagementPaymentTypePaid
 	var gotBody map[string]any
 	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -813,7 +839,7 @@ func TestSNCaseService_UpdateCase_TypeTransfer_Engagement(t *testing.T) {
 
 	svc := NewServiceNowCaseService(client, nil)
 	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
-		ID: testDeploymentUUID, Type: &typ, EngagementType: &engagement,
+		ID: testDeploymentUUID, Type: &typ, EngagementType: &engagement, EngagementPaymentType: &paymentType,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -823,6 +849,9 @@ func TestSNCaseService_UpdateCase_TypeTransfer_Engagement(t *testing.T) {
 	}
 	if got, ok := gotBody["engagementType"]; !ok || !jsonEqual(got, float64(1)) {
 		t.Fatalf("expected engagementType 1 (migration), got %v (body: %+v)", got, gotBody)
+	}
+	if got, ok := gotBody["engagementPaymentType"]; !ok || !jsonEqual(got, float64(1)) {
+		t.Fatalf("expected engagementPaymentType 1 (paid), got %v (body: %+v)", got, gotBody)
 	}
 }
 
@@ -928,6 +957,7 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequestRequiresVariables(t
 func TestSNCaseService_UpdateCase_TypeTransfer_SeverityRejectedForOtherTargets(t *testing.T) {
 	sev := domain.CaseSeverityHigh
 	engagement := domain.EngagementTypeMigration
+	paymentType := domain.EngagementPaymentTypePaid
 	catalogUUID := "44444444-4444-4444-4444-444444444444"
 	catalogItemUUID := "55555555-5555-5555-5555-555555555555"
 	variableUUID := "66666666-6666-6666-6666-666666666666"
@@ -944,7 +974,8 @@ func TestSNCaseService_UpdateCase_TypeTransfer_SeverityRejectedForOtherTargets(t
 		{
 			name: "engagement",
 			req: domain.UpdateCaseRequest{
-				ID: testDeploymentUUID, Type: strPtr("engagement"), EngagementType: &engagement, Severity: &sev,
+				ID: testDeploymentUUID, Type: strPtr("engagement"), EngagementType: &engagement,
+				EngagementPaymentType: &paymentType, Severity: &sev,
 			},
 		},
 		{

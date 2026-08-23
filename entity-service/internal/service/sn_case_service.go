@@ -1224,16 +1224,17 @@ type snUpdateCasePayload struct {
 	WorkStateKey *int `json:"workStateKey,omitempty"`
 	// Type transfers the case to another type --
 	// same string values as the create payload's own Type field (see
-	// snCaseTypeMap). EngagementType (int key, only meaningful with
-	// Type "engagement") and CatalogID/CatalogItemID/Variables (only
-	// meaningful with Type "service_request") are its companions, mirroring
+	// snCaseTypeMap). EngagementType/EngagementPaymentType (int keys, only
+	// meaningful with Type "engagement") and CatalogID/CatalogItemID/Variables
+	// (only meaningful with Type "service_request") are its companions, mirroring
 	// snCreateCasePayload's own field set for those two type-specific shapes.
-	Type           *string          `json:"type,omitempty"`
-	EngagementType *int             `json:"engagementType,omitempty"`
-	IssueTypeKey   *int             `json:"issueTypeKey,omitempty"`
-	CatalogID      *string          `json:"catalogId,omitempty"`
-	CatalogItemID  *string          `json:"catalogItemId,omitempty"`
-	Variables      []snCaseVariable `json:"variables,omitempty"`
+	Type                  *string          `json:"type,omitempty"`
+	EngagementType        *int             `json:"engagementType,omitempty"`
+	EngagementPaymentType *int             `json:"engagementPaymentType,omitempty"`
+	IssueTypeKey          *int             `json:"issueTypeKey,omitempty"`
+	CatalogID             *string          `json:"catalogId,omitempty"`
+	CatalogItemID         *string          `json:"catalogItemId,omitempty"`
+	Variables             []snCaseVariable `json:"variables,omitempty"`
 	// WatchList replaces the whole list, so an explicitly empty list must still be
 	// sent to clear it rather than be omitted -- hence the pointer.
 	WatchList     *[]string `json:"watchList,omitempty"`
@@ -1521,8 +1522,8 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if hasResolutionFields && req.State == nil {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "resolutionCode, cause, and closeNotes are only allowed when state is also provided"}
 	}
-	if req.Type == nil && (req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 || req.IssueType != nil) {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType, issueType, catalogId, catalogItemId, and variables are only allowed when type is also provided"}
+	if req.Type == nil && (req.EngagementType != nil || req.EngagementPaymentType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 || req.IssueType != nil) {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType, engagementPaymentType, issueType, catalogId, catalogItemId, and variables are only allowed when type is also provided"}
 	}
 	if req.AddPublicComment == nil && (req.Product != nil || req.PublicTicket != nil) {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "product and publicTicket are only allowed when addPublicComment is also provided"}
@@ -1584,6 +1585,9 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			if req.EngagementType == nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is required when type is \"engagement\""}
 			}
+			if req.EngagementPaymentType == nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementPaymentType is required when type is \"engagement\""}
+			}
 			if req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
 			}
@@ -1596,8 +1600,13 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			if !validEngagementType[*req.EngagementType] {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(*req.EngagementType)}
 			}
+			if !validEngagementPaymentType[*req.EngagementPaymentType] {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementPaymentType contains invalid value: " + string(*req.EngagementPaymentType)}
+			}
 			id := snEngagementTypeIDMap[*req.EngagementType]
 			payload.EngagementType = &id
+			paymentID := snEngagementPaymentTypeIDMap[*req.EngagementPaymentType]
+			payload.EngagementPaymentType = &paymentID
 		case "service_request":
 			if req.CatalogID == nil || req.CatalogItemID == nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "catalogId and catalogItemId are required when type is \"service_request\""}
@@ -1608,8 +1617,8 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			if len(req.Variables) == 0 {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "variables must contain at least one entry when type is \"service_request\""}
 			}
-			if req.EngagementType != nil {
-				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\""}
+			if req.EngagementType != nil || req.EngagementPaymentType != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType and engagementPaymentType are only accepted when type is \"engagement\""}
 			}
 			if req.Severity != nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity may only accompany type when type is \"case\""}
@@ -1635,8 +1644,8 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 				payload.Variables = vars
 			}
 		case "case":
-			if req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
-				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\"; catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
+			if req.EngagementType != nil || req.EngagementPaymentType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType and engagementPaymentType are only accepted when type is \"engagement\"; catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
 			}
 			// Both are mandatory at the backing data source: severity selects Incident vs Query,
 			// and issue type is the classification those records carry.
@@ -1655,8 +1664,8 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			}
 			payload.IssueTypeKey = &issueTypeID
 		default:
-			if req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
-				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\"; catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
+			if req.EngagementType != nil || req.EngagementPaymentType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType and engagementPaymentType are only accepted when type is \"engagement\"; catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
 			}
 			if req.IssueType != nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType is only accepted when type is \"case\""}
