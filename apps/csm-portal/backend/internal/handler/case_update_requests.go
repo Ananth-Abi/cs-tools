@@ -65,12 +65,6 @@ var requestUpdateTemplates = map[requestUpdateCategory]map[requestUpdateStage]st
 	},
 }
 
-// maxRequestUpdateBodyBytes caps the "request update" request body. The body
-// is just {stage, customContent?} — a small JSON object, not a rich-text
-// comment — so it gets a much smaller cap than maxCommentBodyBytes (10 MiB,
-// sized for base64 inline images).
-const maxRequestUpdateBodyBytes = 32 << 10
-
 // requestUpdateRequest is the body of POST /cases/{id}/request-update.
 type requestUpdateRequest struct {
 	Stage         requestUpdateStage `json:"stage"`
@@ -103,7 +97,7 @@ func (h *CaseHandler) RequestCaseUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestUpdateBodyBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		if _, ok := err.(*http.MaxBytesError); ok {

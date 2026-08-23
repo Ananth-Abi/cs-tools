@@ -60,7 +60,7 @@ func TestRequestCaseUpdate(t *testing.T) {
 
 	t.Run("rejects body exceeding the size cap", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		body := `{"stage":"custom","customContent":"` + strings.Repeat("x", maxRequestUpdateBodyBytes) + `"}`
+		body := `{"stage":"custom","customContent":"` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testUpdateRequestCaseID+"/request-update", strings.NewReader(body)))
 		r.SetPathValue("id", testUpdateRequestCaseID)
 		w := httptest.NewRecorder()

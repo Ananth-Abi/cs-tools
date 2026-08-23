@@ -1567,13 +1567,22 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [patchCase, showError],
   );
 
+  // `caseId` at mutate-time, captured per-call so a slow response for a
+  // since-navigated-away-from case can't close the dialog or show feedback
+  // for whatever case the page has moved on to (CsmCaseDetailPage stays
+  // mounted across a caseId change — see the `prevCaseId` reset block above).
+  const activeCaseIdRef = useRef(caseId);
+  activeCaseIdRef.current = caseId;
+
   const onRequestUpdate = useCallback(
     (payload: RequestUpdateSavePayload) => {
       if (!caseId) return;
+      const submittedCaseId = caseId;
       requestCaseUpdate.mutate(
         { caseId, ...payload },
         {
           onSuccess: () => {
+            if (activeCaseIdRef.current !== submittedCaseId) return;
             setRequestUpdateOpen(false);
             setFeedback({
               message: "Update request posted.",
@@ -1582,6 +1591,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             });
           },
           onError: (err) => {
+            if (activeCaseIdRef.current !== submittedCaseId) return;
             // 403 (not the assigned engineer) / 409 (case moved out of the
             // eligible state since the dialog opened) both carry an
             // actionable, specific backend message — surface it instead of a
