@@ -3315,6 +3315,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+    patch:
+      summary: >-
+        Update a problem -- a forward state transition, plain-field updates, or both
+        (ServiceNow data source only).
+      operationId: updateProblem
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProblemRequest'
+      responses:
+        "200":
+          description: Problem updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateProblemResponse'
+        "400":
+          description: Missing fields, invalid transition, or invalid state transition.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Problem, assignedToId, or assignmentGroupId not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: State transition rejected by the data source.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /incident-tasks/search:
     post:
       summary: Search incident tasks (ServiceNow data source only). Search and get only -- no create/update.
@@ -9245,6 +9301,89 @@ components:
         primaryIncidentId:
           type: string
           format: uuid
+          nullable: true
+
+    UpdateProblemRequest:
+      type: object
+      description: >-
+        All fields are optional, but at least one must be provided. A transition request may
+        also carry any of the plain-field keys in the same body (e.g. attaching an owner and
+        requesting "assess" together).
+      minProperties: 1
+      properties:
+        transition:
+          type: string
+          description: >-
+            Forward state transition to request: one of "assess", "confirm", "fix", "resolve",
+            "close". Left as an open string (validated server-side by the data source, not a
+            closed enum here) so an invalid value's actionable error message reaches the
+            caller unchanged.
+        assignedToId:
+          type: string
+          format: uuid
+          nullable: true
+          description: >-
+            404 if not a real user. Setting this on a brand-new problem with no prior assignee
+            can auto-promote it to Assess as a data-source side effect -- the response always
+            reflects the real resulting state, never the caller's assumption.
+        assignmentGroupId:
+          type: string
+          format: uuid
+          nullable: true
+          description: 404 if not a real group.
+        causeNotes:
+          type: string
+          nullable: true
+        fixNotes:
+          type: string
+          nullable: true
+        workaround:
+          type: string
+          nullable: true
+        targetResolutionDate:
+          type: string
+          nullable: true
+          description: >-
+            Format: YYYY-MM-DD HH:mm:ss. Not surfaced on the native Problem form in the
+            backing data source.
+
+    UpdateProblemResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        problem:
+          $ref: '#/components/schemas/UpdateProblemView'
+
+    UpdateProblemView:
+      type: object
+      description: >-
+        Deliberately narrower than ProblemDetail: only the fields the update response
+        actually carries.
+      properties:
+        id:
+          type: string
+          nullable: true
+        updatedOn:
+          type: string
+          nullable: true
+        updatedBy:
+          type: string
+          nullable: true
+        state:
+          type: string
+          nullable: true
+          description: >-
+            Always the real post-write state, not the caller's requested transition --
+            the data source's business rules can force- or fail-promote it.
+        resolutionCode:
+          type: string
+          nullable: true
+        assignedTo:
+          $ref: '#/components/schemas/EntityRef'
+          nullable: true
+        assignmentGroup:
+          $ref: '#/components/schemas/EntityRef'
           nullable: true
 
     ProblemFieldFilter:

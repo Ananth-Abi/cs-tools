@@ -93,3 +93,20 @@ func (h *ProblemHandler) CreateProblem(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(resp)
 }
+
+// PatchProblem handles PATCH /problems/{id}.
+func (h *ProblemHandler) PatchProblem(w http.ResponseWriter, r *http.Request) {
+	var req domain.UpdateProblemRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	req.ID = r.PathValue("id")
+	resp, err := h.svc.UpdateProblem(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}

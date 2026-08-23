@@ -475,6 +475,13 @@ type ProblemService interface {
 	// CreateProblem creates a new problem. Subject is required; OriginCaseID is optional.
 	// Supported by the ServiceNow data source only.
 	CreateProblem(ctx context.Context, req domain.CreateProblemRequest) (domain.ProblemDetail, error)
+
+	// UpdateProblem partially updates an existing problem -- a forward state transition
+	// (assess/confirm/fix/resolve/close), plain-field updates, or both in the same request. At
+	// least one field must be provided. Transition is validated by the data source, not here.
+	// A NotFoundError is returned if the problem does not exist; a ConflictError if the data
+	// source rejects or reverts the requested transition.
+	UpdateProblem(ctx context.Context, req domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error)
 }
 
 // IncidentTaskService defines the operations available on the incident_task entity.

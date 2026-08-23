@@ -387,6 +387,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
 		mux.HandleFunc("POST /problems/aggregate", problemHandler.AggregateProblems)
 		mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
+		mux.HandleFunc("PATCH /problems/{id}", problemHandler.PatchProblem)
 	}
 
 	if incidentTaskHandler != nil {
