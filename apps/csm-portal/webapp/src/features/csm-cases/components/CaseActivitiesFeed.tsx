@@ -44,10 +44,12 @@ import {
 } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type JSX } from "react";
 import type { BeCallRequestView } from "@api/backend/types";
+import AlertDetailModal from "@features/csm-cases/components/AlertDetailModal";
 import AttachmentPreviewDialog from "@features/csm-cases/components/AttachmentPreviewDialog";
 import CallRequestDetailModal from "@features/csm-cases/components/CallRequestDetailModal";
 import CsmCaseCommentBubble from "@features/csm-cases/components/CsmCaseCommentBubble";
 import ImageFullscreenModal from "@features/csm-cases/components/ImageFullscreenModal";
+import SmartAlertDetailModal from "@features/csm-cases/components/SmartAlertDetailModal";
 import RelativeTime from "@components/RelativeTime";
 import UserRefLink from "@components/UserRefLink";
 import { formatBytes } from "@utils/formatBytes";
@@ -57,6 +59,7 @@ import {
   compareFeedEntries,
   type FeedEntry,
 } from "@features/csm-cases/utils/caseActivityFeed";
+import type { SnLinkType } from "@features/csm-cases/utils/snLinkRegistry";
 import type {
   CaseAttachment,
   CaseAuditEntry,
@@ -170,6 +173,9 @@ export default function CaseActivitiesFeed({
   const [fullscreenImageAlt, setFullscreenImageAlt] = useState<string | undefined>(undefined);
   const [selectedCallRequest, setSelectedCallRequest] =
     useState<BeCallRequestView | null>(null);
+  const [openSnLink, setOpenSnLink] = useState<{ type: SnLinkType; id: string } | null>(
+    null,
+  );
 
   const entries: FeedEntry[] = useMemo(() => {
     const out: FeedEntry[] = [];
@@ -311,6 +317,7 @@ export default function CaseActivitiesFeed({
                     const match = callRequests.find((cr) => cr.id === sysId);
                     if (match) setSelectedCallRequest(match);
                   }}
+                  onSnLinkClick={(type, id) => setOpenSnLink({ type, id })}
                 />
               );
             }
@@ -542,6 +549,18 @@ export default function CaseActivitiesFeed({
         <CallRequestDetailModal
           callRequest={selectedCallRequest}
           onClose={() => setSelectedCallRequest(null)}
+        />
+      )}
+      {openSnLink?.type === "alert" && (
+        <AlertDetailModal
+          alertId={openSnLink.id}
+          onClose={() => setOpenSnLink(null)}
+        />
+      )}
+      {openSnLink?.type === "smartAlert" && (
+        <SmartAlertDetailModal
+          smartAlertId={openSnLink.id}
+          onClose={() => setOpenSnLink(null)}
         />
       )}
     </Box>
