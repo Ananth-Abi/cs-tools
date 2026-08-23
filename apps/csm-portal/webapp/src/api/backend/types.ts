@@ -1376,6 +1376,9 @@ export interface BeProject {
   name?: string;
   projectKey?: string;
   subscriptionType?: BeSubscriptionType;
+  /** Whether this project is eligible to raise service requests, as
+   *  precomputed by the backing data source. */
+  hasSr?: boolean;
   startDate?: string;
   endDate?: string;
   createdAt?: string;

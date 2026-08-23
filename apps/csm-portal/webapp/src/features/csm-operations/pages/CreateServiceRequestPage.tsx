@@ -42,7 +42,6 @@ import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import ProjectSelectionField from "@features/csm-cases/components/ProjectSelectionField";
 import { useSearchDeployments } from "@features/csm-cases/api/useSearchDeployments";
 import { useGetProject } from "@features/csm-projects/api/useGetProject";
-import { getServiceRequestEligibility } from "@features/csm-projects/utils/subscriptionType";
 import { useDeployedProductOptions } from "@features/csm-cases/api/useDeployedProductOptions";
 import { usePostCsmCase } from "@features/csm-cases/api/usePostCsmCase";
 import { usePostCsmCaseAttachment } from "@features/csm-cases/api/useCsmCaseAttachments";
@@ -108,13 +107,13 @@ export default function CreateServiceRequestPage(): JSX.Element {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [attachments, setAttachments] = useState<EncodedAttachment[]>([]);
 
-  // Client-side mirror of the backing data source's project-type feature
-  // matrix, so an ineligible project is caught before the engineer fills out
-  // the rest of the form rather than on a rejected submit.
+  // `hasSr` is precomputed by the backing data source, so an ineligible
+  // project is caught before the engineer fills out the rest of the form
+  // rather than on a rejected submit.
   const selectedProject = useGetProject(projectId || undefined);
-  const eligibility = getServiceRequestEligibility(
-    selectedProject.data?.subscriptionType,
-  );
+  const isIneligibleForSr = projectId
+    ? selectedProject.data?.hasSr === false
+    : false;
 
   const deployments = useSearchDeployments(projectId || undefined);
   const deployedProducts = useDeployedProductOptions(deploymentId || undefined);
@@ -206,7 +205,7 @@ export default function CreateServiceRequestPage(): JSX.Element {
       !variables.isError &&
       // Hot fix (mirrors the customer portal): all typable variables required.
       firstEmptyRequired === null &&
-      !eligibility.blocking &&
+      !isIneligibleForSr &&
       !submitting,
     [
       projectId,
@@ -217,7 +216,7 @@ export default function CreateServiceRequestPage(): JSX.Element {
       variables.isLoading,
       variables.isError,
       firstEmptyRequired,
-      eligibility.blocking,
+      isIneligibleForSr,
       submitting,
     ],
   );
@@ -307,9 +306,9 @@ export default function CreateServiceRequestPage(): JSX.Element {
           </Box>
         )}
 
-        {!!projectId && eligibility.message && (
-          <Alert severity={eligibility.blocking ? "error" : "warning"} sx={{ mb: 2 }}>
-            {eligibility.message}
+        {!!projectId && !selectedProject.isLoading && isIneligibleForSr && (
+          <Alert severity="error" sx={{ mb: 2 }}>
+            This project isn't eligible to raise service requests.
           </Alert>
         )}
 

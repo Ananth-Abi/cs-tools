@@ -58,11 +58,8 @@ linked request either from that widget or from the case's **More** menu ("Create
 request…") — both open the same pre-filled form. If a case is closed, the **Create service
 request** action is disabled in both places: closed cases are read-only.
 
-Service requests aren't available on every project. If the selected project's subscription
-type doesn't support them, the create form shows a warning and blocks submission; for
-cloud-support projects specifically, eligibility depends on product configuration the form
-can't check up front, so it shows a heads-up instead and lets you continue — the request is
-still validated on submit.
+Service requests aren't available on every project. If the selected project isn't eligible,
+the create form shows a warning and blocks submission.
 
 ## Comments
 
