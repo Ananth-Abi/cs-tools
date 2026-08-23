@@ -80,6 +80,14 @@ From the detail page a CS engineer can:
 - Add comments (public or internal) and upload/download attachments, with
   inline preview for supported attachment types.
 
+Work notes on an incident often reference the alert or smart alert that
+triggered it. Those references render as an inline **View alert** / **View
+smart alert** link in the Activities timeline — click one to open a read-only
+detail popup (severity, source, environment, and a link to the incident it's
+tied to, if any) without leaving the page. A reference to an alert that's
+since been removed shows a "could no longer be found" message in the popup
+instead of an error.
+
 ## Problem management
 
 The Problem management tab lists problems with server-side search,
