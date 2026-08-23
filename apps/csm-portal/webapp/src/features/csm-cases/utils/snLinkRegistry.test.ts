@@ -45,6 +45,14 @@ describe("containsSnLink", () => {
     ).toBe(true);
   });
 
+  it("detects an already-anchored smart-alert URL", () => {
+    expect(
+      containsSnLink(
+        `<a href="https://sn.example.com/u_smart_alert_buffer.do?sys_id=${SMART_ALERT_SYSID}">SALERT-1</a>`,
+      ),
+    ).toBe(true);
+  });
+
   it("returns false when there is no recognized link", () => {
     expect(containsSnLink("<p>Hello there</p>")).toBe(false);
   });
@@ -84,6 +92,18 @@ describe("replaceSnLinks — smart alert (u_smart_alert_buffer)", () => {
     const result = replaceSnLinks(html);
     expect(result).toContain(`data-sn-link-type="smartAlert"`);
     expect(result).toContain(`data-sn-link-id="${SMART_ALERT_UUID}"`);
+    expect(result).not.toContain(SMART_ALERT_SYSID);
+  });
+
+  it("replaces an already-anchored smart-alert URL with the marker, dropping the raw anchor", () => {
+    const html = `<p>Smart alert: <a href="https://sn.example.com/u_smart_alert_buffer.do?sys_id=${SMART_ALERT_SYSID}">SALERT-1</a></p>`;
+    const result = replaceSnLinks(html);
+    expect(result).toContain(`data-sn-link-type="smartAlert"`);
+    expect(result).toContain(`data-sn-link-id="${SMART_ALERT_UUID}"`);
+    // The anchor must be fully replaced by the marker span, not left with a
+    // <span> nested inside a malformed href attribute.
+    expect(result).not.toContain("<a ");
+    expect(result).not.toContain("href=");
     expect(result).not.toContain(SMART_ALERT_SYSID);
   });
 });

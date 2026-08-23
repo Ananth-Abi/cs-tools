@@ -73,7 +73,11 @@ function anchorPattern(table: string): RegExp {
 const ALERT_TABLE = "u_custom_alert";
 
 // The backing smart-alert table. Sampled work notes only ever carry this as a
-// bare URL on its own line, never pre-anchored.
+// bare URL on its own line, never pre-anchored — but `bareUrlRegex` alone
+// would still match the same URL text sitting inside an `<a href="...">` if
+// one ever showed up, mangling the href with an inserted `<span>`. Carrying
+// `anchorRegex` too, same as the `alert` entry, means that case is handled
+// correctly instead of producing malformed HTML if it ever occurs.
 const SMART_ALERT_TABLE = "u_smart_alert_buffer";
 
 const SN_LINK_DEFINITIONS: SnLinkDefinition[] = [
@@ -87,6 +91,7 @@ const SN_LINK_DEFINITIONS: SnLinkDefinition[] = [
     type: "smartAlert",
     label: "View smart alert",
     bareUrlRegex: bareUrlPattern(SMART_ALERT_TABLE),
+    anchorRegex: anchorPattern(SMART_ALERT_TABLE),
   },
 ];
 
