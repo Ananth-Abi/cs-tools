@@ -213,7 +213,12 @@ export default function DashboardWidgetGrid({
         const chartWidgets = group.widgets.filter((w) => w.shape === "pie" || w.shape === "bar");
         if (mainWidgets.length === 0 && chartWidgets.length === 0) return null;
 
-        const sectionKey = group.section ?? `__default_${i}`;
+        // Namespaced so a real section named e.g. `"__default_0"` can never
+        // collide with the synthetic key generated for an unnamed section at
+        // the same index — a collision there would cross-contaminate the two
+        // sections' refresh state (`refreshingSections`,
+        // `sectionLastRefreshedAt`), disabling/timestamping the wrong one.
+        const sectionKey = group.section != null ? `named:${group.section}` : `unnamed:${i}`;
         const sectionWidgetIds = new Set(group.widgets.map((w) => w.widgetId));
         // Section titles support the same {{currentTeam}} text token as an
         // individual widget's own displayName/description (see

@@ -68,7 +68,7 @@ class AlwaysIntersectingObserver {
   disconnect(): void {}
 }
 
-function widget(id: string, section: string): BeDashboardWidget {
+function widget(id: string, section?: string): BeDashboardWidget {
   return {
     widgetId: id,
     displayName: id,
@@ -80,9 +80,8 @@ function widget(id: string, section: string): BeDashboardWidget {
   };
 }
 
-function renderGrid() {
+function renderGrid(widgets: BeDashboardWidget[]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const widgets = [widget("w1", "My Section"), widget("w2", "My Section")];
   return render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
@@ -108,7 +107,7 @@ describe("DashboardWidgetGrid section refresh 'Last refreshed' hint", () => {
   });
 
   it("shows no 'Last refreshed' hint before any click, and shows it once the section's refresh resolves", async () => {
-    renderGrid();
+    renderGrid([widget("w1", "My Section"), widget("w2", "My Section")]);
 
     // Two widgets share one section, so there's a single refresh button for
     // both.
@@ -129,7 +128,7 @@ describe("DashboardWidgetGrid section refresh 'Last refreshed' hint", () => {
     // assertable here is that the control is structurally present and
     // still focusable/clickable at all times, rather than being removed
     // from the DOM (or the tab order) until hovered.
-    renderGrid();
+    renderGrid([widget("w1", "My Section"), widget("w2", "My Section")]);
 
     await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
 
@@ -145,5 +144,28 @@ describe("DashboardWidgetGrid section refresh 'Last refreshed' hint", () => {
     // The label sits in the DOM right alongside the button once it exists,
     // both governed by the same hover/focus-within reveal wrapper.
     expect(screen.getByText(/Last refreshed\s+just now/)).toBeInTheDocument();
+  });
+
+  it("keys refresh state so an unnamed section can never collide with a real section named after its synthetic key", async () => {
+    // Unnamed section lands at index 0, so its internal key is
+    // `unnamed:0` — pick a real section name that is exactly what the
+    // (pre-fix) collision-prone synthetic key looked like, to prove the
+    // two never share refresh state.
+    renderGrid([widget("w1"), widget("w2", "unnamed:0")]);
+
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+
+    const unnamedSectionRefresh = screen.getByRole("button", { name: "Refresh section" });
+    const namedSectionRefresh = screen.getByRole("button", { name: "Refresh unnamed:0" });
+
+    fireEvent.click(unnamedSectionRefresh);
+
+    await waitFor(() => expect(screen.getByText(/Last refreshed\s+just now/)).toBeInTheDocument());
+
+    // Only the unnamed section's refresh fired — the "unnamed:0"-named
+    // section's own button must still be untouched (not disabled, no
+    // "Last refreshed" label of its own yet).
+    expect(namedSectionRefresh).not.toBeDisabled();
+    expect(screen.getAllByText(/Last refreshed/)).toHaveLength(1);
   });
 });

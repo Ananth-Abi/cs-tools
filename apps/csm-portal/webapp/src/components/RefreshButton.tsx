@@ -43,18 +43,21 @@ export default function RefreshButton({
   updatedAt,
   label,
 }: RefreshButtonProps): JSX.Element {
+  // The "Last refreshed" hint only appears after the user has manually
+  // clicked this control at least once — not from the page's initial data
+  // load, which also sets `updatedAt`.
+  const [hasManuallyRefreshed, setHasManuallyRefreshed] = useState(false);
+
   // Re-render exactly when "Last refreshed …" text would next change
   // (adaptive shared scheduler — see RelativeTime.tsx), without requiring
   // another fetch or unrelated state change. `now` is passed explicitly
   // into `formatRelativeTime` below (rather than relying on its internal
   // `Date.now()` default) so the React Compiler's auto-memoization sees it
-  // as a dependency and recomputes the label.
-  const now = useRelativeTimeTick(updatedAt);
-
-  // The "Last refreshed" hint only appears after the user has manually
-  // clicked this control at least once — not from the page's initial data
-  // load, which also sets `updatedAt`.
-  const [hasManuallyRefreshed, setHasManuallyRefreshed] = useState(false);
+  // as a dependency and recomputes the label. Only registered with the
+  // shared scheduler once the label is actually going to render — before
+  // the first manual refresh, the hint is hidden, so there's nothing to
+  // tick for.
+  const now = useRelativeTimeTick(hasManuallyRefreshed ? updatedAt : null);
 
   const handleRefreshClick = (): void => {
     setHasManuallyRefreshed(true);
