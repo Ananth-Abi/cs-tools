@@ -31,14 +31,12 @@ import {
   CheckCircle,
   ChevronDown,
   Clock,
-  Copy,
   FileText,
   Gauge,
   GitBranch,
   GitPullRequest,
   Inbox,
   Link as LinkIcon,
-  ListChecks,
   PauseCircle,
   Pencil,
   Play,
@@ -227,17 +225,12 @@ interface SecondaryItem {
  *                                       create form pre-filled with this service request as the
  *                                       "Originating service request" (POST /change-requests, then
  *                                       PATCH { caseId } — see CreateChangeRequestPage.tsx).
- *   - Create task                    → ISSU-025 (POST /cases/{caseId}/tasks, see CreateTaskDialog.tsx).
- *                                       Kept here even though a Tasks tab exists: that tab is
- *                                       still `hidden` in CsmCaseDetailPage's TAB_DEFS, so this
- *                                       menu item is the only reachable entry point today.
  *   - Set fix ETA                    → PATCH /cases/{id} { bestCaseFixEta?, mostLikelyFixEta?,
  *                                       worstCaseFixEta?, addPublicComment?, product?,
  *                                       publicTicket? } combined in one call, see SetFixEtaDialog.tsx
  *   - Log time                       → ISSU-017
  *   - Change severity                → PATCH /cases/{id} { severity }, already fully
  *                                       backend-supported (see ChangeSeverityDialog.tsx)
- *   - Copy case link                 → ISSU-010 (per-comment + per-case permalinks)
  *
  * Intentionally NOT here (removed as duplicate entry points once their target
  * tab already exposes the same action directly, so there's one way to do each
@@ -248,6 +241,16 @@ interface SecondaryItem {
  *   - Link to another case → the Related tab's "Linked service requests" card
  *                          has its own "Link to another case…" button wired to
  *                          the same LinkCaseDialog.
+ *   - Link to incident → relocated to the Related tab's new "Linked incident"
+ *                          widget, which has its own "Link to incident…"
+ *                          button — same pattern as "Link to another case"
+ *                          above.
+ *   - Create task → hidden with no replacement; the Tasks tab this would
+ *                          otherwise belong to is still hidden in
+ *                          CsmCaseDetailPage's TAB_DEFS, so task creation is
+ *                          unreachable until that's addressed separately
+ *                          (deliberate, not an oversight).
+ *   - Copy case link → removed per product decision, no replacement.
  *   - Request a call    → the Call requests tab has its own "Create call
  *                          request" button (CallRequestsWidget.tsx); the menu
  *                          item only jumped there and auto-opened that same
@@ -384,21 +387,7 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
       key: "create_service_request",
       label: "Create service request…",
       icon: <FileText size={16} />,
-      disabled: caseClosed,
-      tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
-    },
-    {
-      key: "link_incident",
-      label: "Link to incident…",
-      icon: <LinkIcon size={16} />,
       divider: true,
-      disabled: caseClosed,
-      tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
-    },
-    {
-      key: "create_task",
-      label: "Create task…",
-      icon: <ListChecks size={16} />,
       disabled: caseClosed,
       tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
     },
@@ -410,8 +399,7 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
       disabled: caseClosed,
       tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
     },
-    { key: "log_time", label: "Log time…", icon: <Clock size={16} />, divider: true },
-    { key: "copy_link", label: "Copy case link", icon: <Copy size={16} /> },
+    { key: "log_time", label: "Log time…", icon: <Clock size={16} /> },
   );
 
   return items;
