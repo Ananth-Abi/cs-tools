@@ -92,6 +92,7 @@ func main() {
 	incidentHandler := handler.NewIncidentHandler(customerEntityClient)
 	problemHandler := handler.NewProblemHandler(customerEntityClient)
 	incidentTaskHandler := handler.NewIncidentTaskHandler(customerEntityClient)
+	alertHandler := handler.NewAlertHandler(customerEntityClient)
 
 	// Google Chat is not yet configured for every deployment, so its spaces
 	// are read with os.Getenv (never mustEnv) — a missing or malformed value
@@ -226,6 +227,8 @@ func main() {
 	mux.HandleFunc("POST /incidents/{id}/comments", incidentHandler.CreateIncidentComment)
 	mux.HandleFunc("POST /incidents/{id}/comments/search", incidentHandler.SearchIncidentComments)
 	mux.HandleFunc("POST /incidents/{id}/activities/search", incidentHandler.SearchIncidentActivities)
+	mux.HandleFunc("GET /alerts/{id}", alertHandler.GetAlert)
+	mux.HandleFunc("GET /smart-alerts/{id}", alertHandler.GetSmartAlert)
 	mux.HandleFunc("POST /change-requests/{id}/comments", changeRequestHandler.CreateChangeRequestComment)
 	mux.HandleFunc("POST /change-requests/{id}/comments/search", changeRequestHandler.SearchChangeRequestComments)
 	mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
