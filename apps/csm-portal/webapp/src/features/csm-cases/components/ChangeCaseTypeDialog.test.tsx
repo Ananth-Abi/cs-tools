@@ -410,3 +410,117 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
     });
   });
 });
+
+describe("ChangeCaseTypeDialog — transfer into security_report_analysis", () => {
+  it("submits with no companion fields", () => {
+    const onSubmit = vi.fn();
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/security report/i);
+    advanceToReview();
+    fireEvent.click(screen.getByRole("button", { name: /transfer to security report/i }));
+    expect(onSubmit).toHaveBeenCalledWith({ targetType: "security_report_analysis" });
+  });
+
+  it("blocks confirm when the case has no attachment", () => {
+    const onSubmit = vi.fn();
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments={false}
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/security report/i);
+    // Without an attachment the fields step is invalid, so review is unreachable —
+    // the gate sits on Next rather than on the confirm button.
+    expect(screen.getByRole("button", { name: /^next$/i })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+describe("ChangeCaseTypeDialog — transfer into service_request", () => {
+  it("submits the catalog item and its answered variables", () => {
+    mockUseCatalogItemVariables.mockReturnValue(
+      asQueryResult({
+        data: [
+          { id: "var-1", questionText: "Environment name", type: "single_line_text", order: 1 },
+        ],
+        isLoading: false,
+        isError: false,
+      }),
+    );
+    const onSubmit = vi.fn();
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        deployedProductId="dp-1"
+        onClose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/service request/i);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Catalog" }));
+    fireEvent.click(screen.getByRole("option", { name: /api manager support/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Catalog item" }));
+    fireEvent.click(screen.getByRole("option", { name: /request environment scaling/i }));
+    fireEvent.change(screen.getByLabelText(/environment name/i), {
+      target: { value: "prod-eu" },
+    });
+    advanceToReview();
+    fireEvent.click(screen.getByRole("button", { name: /transfer to service request/i }));
+    expect(onSubmit).toHaveBeenCalledWith({
+      targetType: "service_request",
+      catalogId: "cat-1",
+      catalogItemId: "item-1",
+      variables: [{ id: "var-1", value: "prod-eu" }],
+    });
+  });
+
+  it("blocks confirm until a required question is answered", () => {
+    mockUseCatalogItemVariables.mockReturnValue(
+      asQueryResult({
+        data: [
+          { id: "var-1", questionText: "Environment name", type: "single_line_text", order: 1 },
+        ],
+        isLoading: false,
+        isError: false,
+      }),
+    );
+    const onSubmit = vi.fn();
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        deployedProductId="dp-1"
+        onClose={() => {}}
+        onSubmit={onSubmit}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/service request/i);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Catalog" }));
+    fireEvent.click(screen.getByRole("option", { name: /api manager support/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Catalog item" }));
+    fireEvent.click(screen.getByRole("option", { name: /request environment scaling/i }));
+    // The unanswered required question makes the fields step invalid, so review is
+    // unreachable — the gate sits on Next rather than on the confirm button.
+    expect(screen.getByRole("button", { name: /^next$/i })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});

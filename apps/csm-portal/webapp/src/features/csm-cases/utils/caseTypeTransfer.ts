@@ -33,14 +33,16 @@ export const TRANSFERABLE_CASE_TYPES: readonly BeCaseType[] = [
 ];
 
 /**
- * Transfer targets the backend actually accepts today.
- * `security_report_analysis` and `service_request` are represented in the UI
- * below so the full proposal is visible, but their "Transfer" button stays
- * disabled until entity-service's `caseType` validator is extended to accept
- * them (and, for service_request, ServiceNow's support for a mid-life
- * catalog-item assignment is confirmed).
+ * Transfer targets the backend accepts. All four, as of the entity-service
+ * validator accepting every type on update and the backing data source's
+ * support for a mid-life catalog-item assignment being confirmed — the two
+ * preconditions that previously kept `service_request` and
+ * `security_report_analysis` visible-but-disabled here.
+ *
+ * Kept as a named export rather than inlined: it is the single place a target
+ * gets withdrawn again if one ever needs to be.
  */
-export const SUPPORTED_TRANSFER_TARGETS: readonly BeCaseType[] = ["case", "engagement"];
+export const SUPPORTED_TRANSFER_TARGETS: readonly BeCaseType[] = TRANSFERABLE_CASE_TYPES;
 
 /** One field this type collects beyond the shared fields every case has. */
 export interface CaseTypeSpecificField {

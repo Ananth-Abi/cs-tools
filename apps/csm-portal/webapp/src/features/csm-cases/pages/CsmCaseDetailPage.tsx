@@ -1361,11 +1361,20 @@ export default function CsmCaseDetailPage(): JSX.Element {
       patchCase.mutate(
         submission.targetType === "engagement"
           ? { type: "engagement", engagementType: submission.engagementType }
-          : {
-              type: "case",
-              severity: priorityFromSeverity(submission.severity),
-              issueType: submission.issueType,
-            },
+          : submission.targetType === "security_report_analysis"
+            ? { type: "security_report_analysis" }
+            : submission.targetType === "service_request"
+              ? {
+                  type: "service_request",
+                  catalogId: submission.catalogId,
+                  catalogItemId: submission.catalogItemId,
+                  variables: submission.variables,
+                }
+              : {
+                  type: "case",
+                  severity: priorityFromSeverity(submission.severity),
+                  issueType: submission.issueType,
+                },
         {
           onSuccess: () => {
             setChangeCaseTypeOpen(false);

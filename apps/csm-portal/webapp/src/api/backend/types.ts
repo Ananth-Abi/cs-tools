@@ -728,6 +728,19 @@ export type BeCaseUpdatePayload =
       type: "engagement";
       engagementType: BeEngagementType;
     })
+  /** Case type transfer into `service_request` — the target catalog item and a
+   * non-empty set of answers to its questions are required in the same call.
+   * The backend rejects a service request with no variable values, exactly as
+   * it does at create time. */
+  | (Omit<BeCaseUpdateNever, "type" | "catalogId" | "catalogItemId" | "variables"> & {
+      type: "service_request";
+      catalogId: string;
+      catalogItemId: string;
+      variables: { id: string; value: string }[];
+    })
+  /** Case type transfer into `security_report_analysis` — carries no companion
+   * fields of its own. */
+  | (Omit<BeCaseUpdateNever, "type"> & { type: "security_report_analysis" })
   /** Work sub-state toggle (`ongoing` / `paused`) for an in-progress case. */
   | (Omit<BeCaseUpdateNever, "workState"> & { workState: BeCaseWorkState })
   /** Email of the engineer to assign (ServiceNow only). */

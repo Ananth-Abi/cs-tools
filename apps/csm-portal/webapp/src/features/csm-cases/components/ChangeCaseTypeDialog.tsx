@@ -42,6 +42,7 @@ import { useSearchCatalogs } from "@features/csm-operations/api/useSearchCatalog
 import { useCatalogItemVariables } from "@features/csm-operations/api/useCatalogItemVariables";
 import CatalogVariableFields from "@features/csm-operations/components/CatalogVariableFields";
 import {
+  encodeVariableValue,
   getFirstEmptyRequiredField,
   getUserEditableVariables,
   isAttachmentField,
@@ -76,10 +77,9 @@ const ENGAGEMENT_TYPES: { value: BeEngagementType; label: string }[] = [
 type Step = "pick" | "fields" | "review";
 const STEP_NUMBER: Record<Step, number> = { pick: 1, fields: 2, review: 3 };
 
-/** What the dialog hands back to the caller on confirm. Only `case` and
- * `engagement` are real submit targets — see `SUPPORTED_TRANSFER_TARGETS`.
- * A discriminated union so `engagementType` is compiler-enforced for the
- * `"engagement"` variant rather than relying on a runtime guard. */
+/** What the dialog hands back to the caller on confirm — a discriminated union so
+ * each target's mandatory companions are compiler-enforced rather than relying on
+ * runtime guards. Mirrors the backend's own per-target requirements. */
 export type CaseTypeTransferSubmission =
   | { targetType: "engagement"; engagementType: BeEngagementType }
   | {
@@ -88,7 +88,16 @@ export type CaseTypeTransferSubmission =
        * type from the severity, and stores the issue type on the resulting record. */
       severity: Severity;
       issueType: BeCaseIssueType;
-    };
+    }
+  | {
+      targetType: "service_request";
+      /** The backend rejects a service request with no variable values, so
+       * `variables` is required and non-empty. */
+      catalogId: string;
+      catalogItemId: string;
+      variables: { id: string; value: string }[];
+    }
+  | { targetType: "security_report_analysis" };
 
 interface ChangeCaseTypeDialogProps {
   currentType: BeCaseType;
@@ -170,8 +179,6 @@ export default function ChangeCaseTypeDialog({
   // submitting without them is a guaranteed 400, so gate the button instead.
   const caseFieldsMissing =
     targetType === "case" && (severity === "" || issueType === "");
-  const canSubmit =
-    isSupportedTarget && !engagementTypeMissing && !caseFieldsMissing && !isSubmitting;
 
   const catalogs = useSearchCatalogs(
     targetType === "service_request" ? deployedProductId : undefined,
@@ -205,6 +212,16 @@ export default function ChangeCaseTypeDialog({
           ? !!catalogId && !!catalogItemId && firstEmptyRequired === null
           : true;
 
+  // fieldsStepValid already carries each target's own requirements (catalog +
+  // answered required questions for service_request, an attachment for
+  // security_report_analysis), so gate submission on it rather than duplicating them.
+  const canSubmit =
+    isSupportedTarget &&
+    !engagementTypeMissing &&
+    !caseFieldsMissing &&
+    fieldsStepValid &&
+    !isSubmitting;
+
   const handleTargetChange = (next: BeCaseType): void => {
     setTargetType(next);
     setEngagementType("");
@@ -225,6 +242,20 @@ export default function ChangeCaseTypeDialog({
     if (!canSubmit) return;
     if (targetType === "engagement") {
       onSubmit({ targetType: "engagement", engagementType: engagementType as BeEngagementType });
+    } else if (targetType === "security_report_analysis") {
+      onSubmit({ targetType: "security_report_analysis" });
+    } else if (targetType === "service_request") {
+      // Same shape the create-a-service-request flow submits: user-editable,
+      // non-attachment variables, encoded by type, empties omitted.
+      onSubmit({
+        targetType: "service_request",
+        catalogId,
+        catalogItemId,
+        variables: getUserEditableVariables(allVariables)
+          .filter((v) => !isAttachmentField(v))
+          .map((v) => ({ id: v.id, value: encodeVariableValue(v, answers[v.id] ?? "") }))
+          .filter((v) => v.value !== ""),
+      });
     } else {
       onSubmit({
         targetType: "case",
@@ -422,7 +453,7 @@ export default function ChangeCaseTypeDialog({
                     <InputLabel id="transfer-severity-label">Severity (optional)</InputLabel>
                     <Select
                       labelId="transfer-severity-label"
-                      label="Severity (optional)"
+                      label="Severity"
                       value={severity}
                       onChange={(e) => setSeverity(e.target.value as Severity)}
                       disabled={isSubmitting}
@@ -439,7 +470,7 @@ export default function ChangeCaseTypeDialog({
                     <InputLabel id="transfer-issue-type-label">Issue type (optional)</InputLabel>
                     <Select
                       labelId="transfer-issue-type-label"
-                      label="Issue type (optional)"
+                      label="Issue type"
                       value={issueType}
                       onChange={(e) => setIssueType(e.target.value as BeCaseIssueType)}
                       disabled={isSubmitting}
