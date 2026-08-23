@@ -2752,6 +2752,77 @@ export interface BeProblemDetail {
 }
 
 /**
+ * `PATCH /problems/{id}` body (ServiceNow data source only, `minProperties:
+ * 1`). Two mutually-non-exclusive shapes in one payload: a `transition`
+ * request may also carry any of the plain-field keys in the same call (this
+ * is in fact required for `assess` on a bare New problem with no prior
+ * owner — see `transition`'s own doc comment).
+ */
+export interface BeUpdateProblemPayload {
+  /**
+   * One of `assess` | `confirm` | `fix` | `resolve` | `close`, matching the
+   * live 6-state forward chain `New -> Assess -> Root Cause Analysis -> Fix
+   * in Progress -> Resolved -> Closed`. Deliberately typed as a plain
+   * string, not a closed union, mirroring every layer below this one
+   * (ServiceNow, Ballerina, Go entity-service, CSM BFF): a closed-enum
+   * check here would swallow ServiceNow's own actionable "Invalid
+   * transition: ...must be one of: ..." error behind a generic one. Do not
+   * add client-side value validation beyond the state-machine-driven
+   * button set already in `getNextProblemTransition`.
+   *
+   * A bare `assess` on a New problem with no existing owner 409s (a real
+   * ServiceNow precondition: Problem Management requires an owner before
+   * any state move) — pair it with `assignedToId` in the same request,
+   * which is also enough on its own to trigger `assess` as a side effect
+   * (see `assignedToId` below).
+   */
+  transition?: string;
+  /**
+   * Setting this on a New problem with no prior owner auto-promotes it to
+   * Assess as a ServiceNow business-rule side effect, even with no
+   * `transition` key present — the response (and the refetched detail)
+   * always reflects the real resulting state, never the caller's
+   * assumption.
+   */
+  assignedToId?: string | null;
+  assignmentGroupId?: string | null;
+  /** Free text; closest real field to "root cause". */
+  causeNotes?: string;
+  /** Free text; closest real field to a permanent-fix description. */
+  fixNotes?: string;
+  workaround?: string;
+  /**
+   * `YYYY-MM-DD HH:mm:ss`. Backed by the generic `task.due_date` column —
+   * confirmed writable and persistent, but **not on the native ServiceNow
+   * Problem form at all**, so a value set here won't be visible to an SRE
+   * looking at the record in ServiceNow directly.
+   */
+  targetResolutionDate?: string;
+}
+
+/**
+ * `PATCH /problems/{id}` response. Deliberately narrower than
+ * `BeProblemDetail` — only the fields the update response actually
+ * carries (`causeNotes`/`fixNotes`/`workaround`/`targetResolutionDate` are
+ * not echoed back; refetch `GET /problems/{id}` to see them, which
+ * `usePatchProblem` does automatically).
+ */
+export interface BeProblemUpdateView {
+  id: string;
+  updatedOn?: string;
+  updatedBy?: string;
+  state?: BeProblemState;
+  resolutionCode?: string | null;
+  assignedTo?: BeEntityRef | null;
+  assignmentGroup?: BeEntityRef | null;
+}
+
+export interface BePatchProblemResponse {
+  message: string;
+  problem: BeProblemUpdateView;
+}
+
+/**
  * List-item shape for `POST /incident-tasks/search`. No dedicated detail
  * page exists for incident tasks in this app (unlike problem/incident), so
  * there is no separate `BeIncidentTaskDetail` type yet — `description`,

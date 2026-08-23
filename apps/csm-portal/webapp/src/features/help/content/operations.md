@@ -105,9 +105,26 @@ incident, linked change request, and linked incidents), and, once resolved,
 a resolution section with resolution code, resolved-by, resolved-on, cause
 notes, fix notes, and workaround.
 
-Problem management is read-only in the portal today: there is no Edit dialog
-and no state-changing action bar. Problems are owned by the SRE team, and the
-portal doesn't yet expose a mutation endpoint for them the way it does for
-change requests and incidents. A **Create problem** button on the list opens
-a form to raise a new problem, but nothing on the detail page can be changed
-from here afterward.
+A **Create problem** button on the list opens a form to raise a new problem.
+
+The detail page's action bar moves a problem through ServiceNow's own
+Problem Management lifecycle, one step at a time: **New → Assess → Root
+Cause Analysis → Fix In Progress → Resolved → Closed**. Only one transition
+is ever available at once (the next step in the chain); once a problem is
+Closed there is nothing further to do. Moving to Fix In Progress opens a
+small dialog offering to record cause notes and fix notes — both optional,
+and can be added or edited later — before the state changes.
+
+An **Edit** button on the detail page opens a separate dialog for fields
+that don't require a lifecycle transition: assigned engineer, assignment
+group, workaround, and target resolution date. Two caveats:
+
+- Assigning an engineer to a problem that has no owner yet automatically
+  moves it to Assess, even without using the action bar — this is a
+  ServiceNow business rule, not a portal quirk.
+- Assignment group and target resolution date always start blank in the
+  Edit dialog, even if a value was set previously — the portal can't read
+  either one back from ServiceNow yet, so it doesn't guess. Target
+  resolution date in particular is not shown anywhere on ServiceNow's own
+  Problem form; it's a generic tracking field exposed here for the portal's
+  own use.
