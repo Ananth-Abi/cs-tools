@@ -114,6 +114,13 @@ export default function CreateServiceRequestPage(): JSX.Element {
   const isIneligibleForSr = projectId
     ? selectedProject.data?.hasSr === false
     : false;
+  // Fail closed: a project-load error or a 404 (data === null) means
+  // eligibility is unknown, not confirmed — canSubmit must not treat unknown
+  // as eligible.
+  const projectLoadFailed =
+    !!projectId &&
+    !selectedProject.isLoading &&
+    (selectedProject.isError || selectedProject.data === null);
 
   const deployments = useSearchDeployments(projectId || undefined);
   const deployedProducts = useDeployedProductOptions(deploymentId || undefined);
@@ -206,6 +213,9 @@ export default function CreateServiceRequestPage(): JSX.Element {
       // Hot fix (mirrors the customer portal): all typable variables required.
       firstEmptyRequired === null &&
       !isIneligibleForSr &&
+      // Fail closed while a selected project's eligibility is still loading
+      // or couldn't be confirmed at all — see projectLoadFailed above.
+      (!projectId || (!selectedProject.isLoading && !projectLoadFailed)) &&
       !submitting,
     [
       projectId,
@@ -217,6 +227,8 @@ export default function CreateServiceRequestPage(): JSX.Element {
       variables.isError,
       firstEmptyRequired,
       isIneligibleForSr,
+      selectedProject.isLoading,
+      projectLoadFailed,
       submitting,
     ],
   );
@@ -306,7 +318,21 @@ export default function CreateServiceRequestPage(): JSX.Element {
           </Box>
         )}
 
-        {!!projectId && !selectedProject.isLoading && isIneligibleForSr && (
+        {projectLoadFailed && (
+          <Alert
+            severity="error"
+            sx={{ mb: 2 }}
+            action={
+              <Button size="small" onClick={() => void selectedProject.refetch()}>
+                Retry
+              </Button>
+            }
+          >
+            Could not load this project. Its service-request eligibility can't be confirmed.
+          </Alert>
+        )}
+
+        {!!projectId && !selectedProject.isLoading && !projectLoadFailed && isIneligibleForSr && (
           <Alert severity="error" sx={{ mb: 2 }}>
             This project isn't eligible to raise service requests.
           </Alert>

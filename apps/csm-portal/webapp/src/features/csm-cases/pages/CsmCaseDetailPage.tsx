@@ -1973,7 +1973,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
                         : t.id === "tasks"
                           ? caseTasks?.total
                           : t.id === "related"
-                            ? (c.linkedChangeRequests?.length ?? 0) +
+                            ? (c.parentCase?.type === "incident" ? 1 : 0) +
+                              (c.linkedChangeRequests?.length ?? 0) +
                               (c.linkedServiceRequests?.length ?? 0)
                             : undefined;
             return (
