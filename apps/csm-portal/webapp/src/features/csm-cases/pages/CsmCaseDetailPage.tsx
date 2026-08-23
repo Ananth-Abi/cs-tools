@@ -1325,7 +1325,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [patchCase, showError],
   );
 
-  // Changes the case's type (digiops-cs#2818). The type change itself is one
+  // Changes the case's type. The type change itself is one
   // PATCH ({type} alone, or {type, engagementType} together for a transfer
   // into engagement — the backend requires them combined there). Severity is
   // a separate, optional follow-up PATCH when transferring into `case`: it's
@@ -1337,21 +1337,28 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // no manual navigation needed here.
   const onChangeCaseType = useCallback(
     (submission: CaseTypeTransferSubmission) => {
+      // One atomic PATCH, not a transfer followed by a severity patch: the backend
+      // requires severity and issueType *in the same call* as `type: "case"`, and a
+      // standalone severity patch is rejected outright on a case of any other type.
       patchCase.mutate(
         submission.targetType === "engagement"
           ? { type: "engagement", engagementType: submission.engagementType }
-          : { type: "case" },
+          : submission.targetType === "security_report_analysis"
+            ? { type: "security_report_analysis" }
+            : submission.targetType === "service_request"
+              ? {
+                  type: "service_request",
+                  catalogId: submission.catalogId,
+                  catalogItemId: submission.catalogItemId,
+                  variables: submission.variables,
+                }
+              : {
+                  type: "case",
+                  severity: priorityFromSeverity(submission.severity),
+                  issueType: submission.issueType,
+                },
         {
           onSuccess: () => {
-            if (submission.targetType === "case" && submission.severity) {
-              patchCase.mutate(
-                { severity: priorityFromSeverity(submission.severity) },
-                {
-                  onError: (err) =>
-                    showError("Case type changed, but could not set severity.", err),
-                },
-              );
-            }
             setChangeCaseTypeOpen(false);
             setFeedback({
               message: `Case type changed to ${caseTypeTransferLabel(submission.targetType)}.`,
@@ -2175,7 +2182,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
               arrives as the feed's opening comment the way it does for every
               other case type (see the note near `safeComments`). Render it
               directly below the timeline instead — the only place an
-              announcement's actual content is shown. digiops-cs#2800. */}
+              announcement's actual content is shown. */}
           {isAnnouncement && !isBlankHtml(c.description) && (
             <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
               <Typography variant="subtitle2">Description</Typography>
@@ -2696,6 +2703,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             setGithubIssueError(null);
             setGithubIssueResult(null);
           }}
+          onOpenConfirm={() => setGithubIssueError(null)}
           onSubmit={(payload) => {
             setGithubIssueError(null);
             postGithubIssue.mutate(

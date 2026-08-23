@@ -1231,6 +1231,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Case is not in a state that allows filing a GitHub issue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
           content:
@@ -2204,6 +2210,94 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "404":
           description: Vulnerability not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /alerts/{id}:
+    get:
+      summary: Get an alert by ID.
+      operationId: getAlert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Alert UUID.
+      responses:
+        "200":
+          description: The alert with the given ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertView'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Alert not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /smart-alerts/{id}:
+    get:
+      summary: Get a smart alert by ID.
+      operationId: getSmartAlert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Smart alert UUID.
+      responses:
+        "200":
+          description: The smart alert with the given ID.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SmartAlertView'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Smart alert not found.
           content:
             application/json:
               schema:
@@ -4729,16 +4823,19 @@ components:
       description: |
         Exactly one of `state`, `severity`, `workState`, `watchList`, `assigneeEmail`,
         `acknowledge`, `type`, `bestCaseFixEta`, `mostLikelyFixEta`, or `worstCaseFixEta` must be
-        provided.
+        provided. The single exception is `severity`, which may accompany `type` and is
+        required when `type` is `case`.
         `watchList`, `assigneeEmail`, `bestCaseFixEta`, `mostLikelyFixEta`, and
         `worstCaseFixEta` are supported only for the ServiceNow data source.
         `resolutionCode`, `cause`, and `closeNotes` are optional and may only be provided alongside
         `state` when the state is `closed` or `solution_proposed`.
-        `type` transfers the case to another type (digiops-cs#2818/#2852) and is supported
-        only for the ServiceNow data source. `engagementType` is required alongside
-        `type: engagement`; `catalogId`/`catalogItemId` (and optionally `variables`) are
-        required alongside `type: service_request`. Neither combination is accepted with
-        any other `type` value.
+        `type` transfers the case to another type and is supported only for the ServiceNow
+        data source. Its companion fields carry the target type's mandatory data:
+        `severity` and `issueType` alongside `type: case`; `engagementType` alongside
+        `type: engagement`; `catalogId`, `catalogItemId` and a non-empty `variables`
+        alongside `type: service_request`; none for `type: security_report_analysis`.
+        A companion is rejected when sent without `type`, or with a `type` it does not
+        belong to. `severity` is the one field that may be combined with `type`.
       oneOf:
         - required: [state]
         - required: [severity]
@@ -4769,6 +4866,12 @@ components:
           type: string
           enum: [migration, consultancy, new_feature_improvement, follow_up, onboarding]
           description: "Required alongside `type: engagement`."
+        issueType:
+          type: string
+          enum: [total_outage, partial_outage, performance_degradation, question, security_or_compliance, error]
+          description: >
+            Required alongside `type: case`, and rejected for every other target type —
+            the backing data source stores issue type only on records of that type.
         catalogId:
           type: string
           format: uuid
@@ -4780,9 +4883,10 @@ components:
         variables:
           type: array
           description: >
-            Answers to the target catalog item's questions, required alongside
-            `type: service_request`. Optional even then — a catalog item with no
-            questions has nothing to answer.
+            Answers to the target catalog item's questions. Required and non-empty
+            alongside `type: service_request` — the backing data source rejects a service
+            request with no variable values, the same way it does at create time.
+          minItems: 1
           items:
             type: object
             required: [id, value]
@@ -8786,6 +8890,110 @@ components:
               type: string
             createdBy:
               type: string
+
+    AlertView:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        number:
+          type: string
+          nullable: true
+        environment:
+          type: string
+          nullable: true
+        metricName:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+          description: Opaque, free-form text.
+        incidentId:
+          type: string
+          nullable: true
+          description: ID of the linked incident, if any.
+        serviceId:
+          type: string
+          nullable: true
+          description: ID of the linked service, if any.
+        createdOn:
+          type: string
+
+    SmartAlertView:
+      type: object
+      properties:
+        id:
+          type: string
+          nullable: true
+        alertId:
+          type: string
+          nullable: true
+          description: ID of the linked alert, if any.
+        sourceAlertId:
+          type: string
+          nullable: true
+          description: Opaque identifier assigned by the originating alert source.
+        alertStatus:
+          type: string
+          nullable: true
+        windowStatus:
+          type: string
+          nullable: true
+        severity:
+          type: string
+          nullable: true
+        urgency:
+          type: string
+          nullable: true
+        impact:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        source:
+          type: string
+          nullable: true
+        environment:
+          type: string
+          nullable: true
+        resourceName:
+          type: string
+          nullable: true
+        shortDescription:
+          type: string
+          nullable: true
+        details:
+          type: string
+          nullable: true
+          description: Opaque, free-form text.
+        monitorUrl:
+          type: string
+          nullable: true
+        firedAt:
+          type: string
+          nullable: true
+        receivedAt:
+          type: string
+          nullable: true
+        fireCount:
+          type: integer
+          nullable: true
+        incidentId:
+          type: string
+          nullable: true
+          description: ID of the linked incident, if any.
 
     IncidentView:
       type: object

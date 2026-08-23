@@ -91,7 +91,12 @@ describe("TRANSFERABLE_CASE_TYPES / SUPPORTED_TRANSFER_TARGETS", () => {
     expect(TRANSFERABLE_CASE_TYPES).toHaveLength(4);
   });
 
-  it("only supports case and engagement as real submit targets today", () => {
-    expect(SUPPORTED_TRANSFER_TARGETS).toEqual(["case", "engagement"]);
+  it("supports every transferable type as a submit target", () => {
+    // service_request and security_report_analysis were visible-but-disabled while
+    // the entity-service validator did not accept them on update and a mid-life
+    // catalog-item assignment was unconfirmed. Both preconditions now hold.
+    expect([...SUPPORTED_TRANSFER_TARGETS].sort()).toEqual(
+      [...TRANSFERABLE_CASE_TYPES].sort(),
+    );
   });
 });

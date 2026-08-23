@@ -33,12 +33,21 @@ vi.mock("@api/backend/client", () => ({
 
 import CaseActivitiesFeed from "@features/csm-cases/components/CaseActivitiesFeed";
 import { formatAbsoluteForUser } from "@utils/dateTime";
-import type { BeCallRequestView } from "@api/backend/types";
+import type { BeAlertDetail, BeCallRequestView } from "@api/backend/types";
+import { useGetAlert, useGetSmartAlert } from "@features/csm-cases/api/useSnLinkEntities";
 import type {
   CaseAttachment,
   CaseAuditEntry,
   CsmCaseComment,
 } from "@features/csm-cases/types/csmCases";
+
+vi.mock("@features/csm-cases/api/useSnLinkEntities", () => ({
+  useGetAlert: vi.fn(),
+  useGetSmartAlert: vi.fn(),
+}));
+
+const mockedUseGetAlert = vi.mocked(useGetAlert);
+const mockedUseGetSmartAlert = vi.mocked(useGetSmartAlert);
 
 // `UserRefLink` (used for the attachment uploader and the comment/lifecycle
 // actor) renders a `react-router` `Link` and resolves its id through
@@ -388,6 +397,82 @@ describe("CaseActivitiesFeed — call-request link in a comment", () => {
     fireEvent.click(marker);
 
     expect(screen.queryByText(/^Call request/)).not.toBeInTheDocument();
+  });
+});
+
+describe("CaseActivitiesFeed — alert/smart-alert link in a comment", () => {
+  const ALERT_SYSID = "7a43e2d43b2a4b5091404c6aa5e45a41";
+  const ALERT_UUID = "7a43e2d4-3b2a-4b50-9140-4c6aa5e45a41";
+  const SMART_ALERT_SYSID = "00000000000000000000000000000001";
+  const SMART_ALERT_UUID = "00000000-0000-0000-0000-000000000001";
+
+  function makeComment(bodyHtml: string): CsmCaseComment {
+    return {
+      id: "c-1",
+      caseId: "case-1",
+      authorName: "Jane Doe",
+      authorRole: "customer",
+      bodyHtml,
+      createdAt: "2026-07-01T00:00:00Z",
+    };
+  }
+
+  const ALERT: BeAlertDetail = {
+    id: ALERT_UUID,
+    number: "ALT0001",
+    severity: "Critical",
+    source: "Prometheus",
+  };
+
+  beforeEach(() => {
+    mockedUseGetAlert.mockReturnValue({
+      data: ALERT,
+      isLoading: false,
+      isError: false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- partial UseQueryResult stub
+    } as any);
+    mockedUseGetSmartAlert.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- partial UseQueryResult stub
+    } as any);
+  });
+
+  it("opens AlertDetailModal on an alert marker click", () => {
+    renderWithRouter(
+      <CaseActivitiesFeed
+        comments={[
+          makeComment(
+            `See https://sn-dev.example.com/u_custom_alert.do?sys_id=${ALERT_SYSID}`,
+          ),
+        ]}
+        audit={[]}
+        attachments={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "View alert" }));
+    expect(screen.getByText("Alert · ALT0001")).toBeInTheDocument();
+    expect(mockedUseGetAlert).toHaveBeenCalledWith(ALERT_UUID);
+  });
+
+  it("opens SmartAlertDetailModal (not-found state) on a smart-alert marker click", () => {
+    renderWithRouter(
+      <CaseActivitiesFeed
+        comments={[
+          makeComment(
+            `https://sn-dev.example.com/u_smart_alert_buffer.do?sys_id=${SMART_ALERT_SYSID}`,
+          ),
+        ]}
+        audit={[]}
+        attachments={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "View smart alert" }));
+    expect(screen.getByText(/could no longer be found/)).toBeInTheDocument();
+    expect(mockedUseGetSmartAlert).toHaveBeenCalledWith(SMART_ALERT_UUID);
   });
 });
 

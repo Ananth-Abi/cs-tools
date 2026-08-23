@@ -60,8 +60,8 @@ import {
 import { useTeams } from "@features/csm-dashboard/api/useTeams";
 import {
   deleteFilterView,
+  moveFilterView,
   saveFilterView,
-  SUGGESTED_FILTER_VIEWS,
   useSavedFilterViews,
 } from "@features/csm-cases/utils/savedFilterViews";
 import type {
@@ -604,20 +604,6 @@ export default function CasesFilterBar({
             <ListItemText primary="Save current view…" />
           </MenuItem>
           <Divider />
-          <ListSubheader sx={{ lineHeight: "32px" }}>Suggested</ListSubheader>
-          {SUGGESTED_FILTER_VIEWS.map((v) => (
-            <MenuItem
-              key={`suggested-${v.name}`}
-              selected={isActiveView(v.qs)}
-              onClick={() => applyView(v.qs)}
-            >
-              <ListItemIcon>
-                {isActiveView(v.qs) ? <Check size={16} /> : null}
-              </ListItemIcon>
-              <ListItemText primary={v.name} />
-            </MenuItem>
-          ))}
-          <Divider />
           <ListSubheader sx={{ lineHeight: "32px" }}>Saved</ListSubheader>
           {savedViews.length === 0 ? (
             <MenuItem disabled>
@@ -627,7 +613,7 @@ export default function CasesFilterBar({
               />
             </MenuItem>
           ) : (
-            savedViews.map((v) => (
+            savedViews.map((v, i) => (
               <MenuItem
                 key={`saved-${v.name}`}
                 selected={isActiveView(v.qs)}
@@ -640,12 +626,36 @@ export default function CasesFilterBar({
                 <IconButton
                   size="small"
                   edge="end"
+                  aria-label={`Move saved view ${v.name} up`}
+                  disabled={i === 0}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    moveFilterView(v.name, "up");
+                  }}
+                  sx={{ ml: 1 }}
+                >
+                  <ChevronUp size={15} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  edge="end"
+                  aria-label={`Move saved view ${v.name} down`}
+                  disabled={i === savedViews.length - 1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    moveFilterView(v.name, "down");
+                  }}
+                >
+                  <ChevronDown size={15} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  edge="end"
                   aria-label={`Delete saved view ${v.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     deleteFilterView(v.name);
                   }}
-                  sx={{ ml: 1 }}
                 >
                   <Trash2 size={15} />
                 </IconButton>

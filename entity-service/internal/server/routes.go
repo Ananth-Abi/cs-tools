@@ -134,7 +134,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 
 	var caseGithubIssueHandler *handler.CaseGithubIssueHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
-		caseGithubIssueHandler = handler.NewCaseGithubIssueHandler(service.NewServiceNowCaseGithubIssueService(serviceNowIntegrationServiceClient))
+		caseGithubIssueHandler = handler.NewCaseGithubIssueHandler(service.NewServiceNowCaseGithubIssueService(serviceNowIntegrationServiceClient, activeCaseSvc))
 	}
 
 	var changeRequestHandler *handler.ChangeRequestHandler
@@ -165,6 +165,16 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	var problemHandler *handler.ProblemHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		problemHandler = handler.NewProblemHandler(service.NewServiceNowProblemService(serviceNowIntegrationServiceClient))
+	}
+
+	var alertHandler *handler.AlertHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		alertHandler = handler.NewAlertHandler(service.NewServiceNowAlertService(serviceNowIntegrationServiceClient))
+	}
+
+	var smartAlertHandler *handler.SmartAlertHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		smartAlertHandler = handler.NewSmartAlertHandler(service.NewServiceNowSmartAlertService(serviceNowIntegrationServiceClient))
 	}
 
 	var incidentTaskHandler *handler.IncidentTaskHandler
@@ -383,6 +393,14 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("POST /incident-tasks/search", incidentTaskHandler.SearchIncidentTasks)
 		mux.HandleFunc("POST /incident-tasks/aggregate", incidentTaskHandler.AggregateIncidentTasks)
 		mux.HandleFunc("GET /incident-tasks/{id}", incidentTaskHandler.GetIncidentTask)
+	}
+
+	if alertHandler != nil {
+		mux.HandleFunc("GET /alerts/{id}", alertHandler.GetAlert)
+	}
+
+	if smartAlertHandler != nil {
+		mux.HandleFunc("GET /smart-alerts/{id}", smartAlertHandler.GetSmartAlert)
 	}
 
 	if conversationHandler != nil {

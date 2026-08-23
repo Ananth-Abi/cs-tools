@@ -413,6 +413,20 @@ type ProductVulnerabilityService interface {
 	GetProductVulnerability(ctx context.Context, id string) (domain.ProductVulnerabilityView, error)
 }
 
+// AlertService defines the operations available on alerts.
+type AlertService interface {
+	// GetAlertByID returns the detail of a single alert by its UUID.
+	// A NotFoundError is returned if the alert does not exist.
+	GetAlertByID(ctx context.Context, id string) (domain.AlertView, error)
+}
+
+// SmartAlertService defines the operations available on smart alerts.
+type SmartAlertService interface {
+	// GetSmartAlertByID returns the detail of a single smart alert by its UUID.
+	// A NotFoundError is returned if the smart alert does not exist.
+	GetSmartAlertByID(ctx context.Context, id string) (domain.SmartAlertView, error)
+}
+
 // IncidentService defines the operations available on the incidents entity.
 type IncidentService interface {
 	// SearchIncidents returns a paginated list of incidents filtered by optional search query,

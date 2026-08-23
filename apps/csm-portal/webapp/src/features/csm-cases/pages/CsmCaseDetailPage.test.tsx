@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import {
@@ -310,7 +310,7 @@ vi.mock("@features/csm-cases/components/ChangeCaseTypeDialog", () => ({
     onSubmit: (
       submission:
         | { targetType: "engagement"; engagementType: string }
-        | { targetType: "case"; severity?: string },
+        | { targetType: "case"; severity: string; issueType: string },
     ) => void;
   }) => (
     <>
@@ -322,7 +322,9 @@ vi.mock("@features/csm-cases/components/ChangeCaseTypeDialog", () => ({
       </button>
       <button
         type="button"
-        onClick={() => onSubmit({ targetType: "case", severity: "S2" })}
+        onClick={() =>
+          onSubmit({ targetType: "case", severity: "S2", issueType: "error" })
+        }
       >
         stub transfer to case with severity
       </button>
@@ -840,7 +842,7 @@ describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () 
 // Announcements have no composer and no real comment thread (see the
 // isAnnouncement gate in the page), so the case description never arrives as
 // the Activities feed's opening comment the way it does for every other case
-// type — it has to be rendered directly. digiops-cs#2800.
+// type — it has to be rendered directly.
 function renderCaseDetailPage(
   path: string,
   routePattern: string,
@@ -1160,19 +1162,20 @@ describe("CsmCaseDetailPage — change case type", () => {
     );
   });
 
-  it("follows a case transfer with a separate severity PATCH, since the backend accepts only one field per call", () => {
+  it("sends the type, severity and issue type in a single PATCH", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /stub open change case type/i }));
     fireEvent.click(screen.getByRole("button", { name: /stub transfer to case with severity/i }));
 
-    expect(patchCaseMutateMock).toHaveBeenCalledWith({ type: "case" }, expect.anything());
-    // Simulate the type PATCH succeeding, which fires the severity follow-up.
-    const typeCallHandlers = patchCaseMutateMock.mock.calls.find(
-      ([payload]) => JSON.stringify(payload) === JSON.stringify({ type: "case" }),
-    )?.[1] as { onSuccess: () => void };
-    act(() => typeCallHandlers.onSuccess());
-
+    // One atomic call: the backend requires severity and issueType alongside `type`,
+    // and rejects a standalone severity patch on a case of any other type.
     expect(patchCaseMutateMock).toHaveBeenCalledWith(
+      { type: "case", severity: "high", issueType: "error" },
+      expect.anything(),
+    );
+    // and crucially no standalone severity follow-up, which the backend rejects
+    // on a case whose type is not already Incident/Query.
+    expect(patchCaseMutateMock).not.toHaveBeenCalledWith(
       { severity: "high" },
       expect.anything(),
     );

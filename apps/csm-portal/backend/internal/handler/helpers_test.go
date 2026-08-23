@@ -587,6 +587,27 @@ func (m *mockEntityProblemClient) CreateProblem(ctx context.Context, body []byte
 	return []byte(`{}`), nil
 }
 
+// ----- mock entity alert client -----
+
+type mockEntityAlertClient struct {
+	getAlertFn      func(ctx context.Context, id string) ([]byte, error)
+	getSmartAlertFn func(ctx context.Context, id string) ([]byte, error)
+}
+
+func (m *mockEntityAlertClient) GetAlert(ctx context.Context, id string) ([]byte, error) {
+	if m.getAlertFn != nil {
+		return m.getAlertFn(ctx, id)
+	}
+	return []byte(`{}`), nil
+}
+
+func (m *mockEntityAlertClient) GetSmartAlert(ctx context.Context, id string) ([]byte, error) {
+	if m.getSmartAlertFn != nil {
+		return m.getSmartAlertFn(ctx, id)
+	}
+	return []byte(`{}`), nil
+}
+
 // ----- mock entity incident task client -----
 
 type mockEntityIncidentTaskClient struct {

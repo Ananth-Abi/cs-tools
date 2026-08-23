@@ -536,3 +536,15 @@ func (c *CustomerEntityClient) RemoveCaseTag(ctx context.Context, caseID, tagID 
 func (c *CustomerEntityClient) SearchTags(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/tags/search", body)
 }
+
+// GetAlert calls GET /alerts/{id} on the entity service.
+// Response is returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) GetAlert(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/alerts/%s", url.PathEscape(id)), nil)
+}
+
+// GetSmartAlert calls GET /smart-alerts/{id} on the entity service.
+// Response is returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) GetSmartAlert(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/smart-alerts/%s", url.PathEscape(id)), nil)
+}

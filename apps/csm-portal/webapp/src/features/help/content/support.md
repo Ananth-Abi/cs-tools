@@ -39,12 +39,10 @@ A few things worth knowing:
   saved views. Switching browsers or clearing site data loses them.
 - You can save up to 50 views. Saving with a name that matches an existing view (case-
   insensitively) overwrites it rather than creating a duplicate.
-- The menu also lists a fixed set of **Suggested** views (S0/S1 active, Awaiting info, Open
-  (unstarted)) that are always available; they aren't something you saved, and they can't be
-  deleted.
 - Whichever view's filters exactly match what's currently applied is checked in the menu.
-- Delete a saved view with the trash icon next to it in the menu; suggested views don't have
-  one.
+- Delete a saved view with the trash icon next to it in the menu.
+- Reorder your saved views with the up/down arrows next to each one in the menu; a freshly
+  saved view still jumps to the top of the list.
 
 ## Case detail
 

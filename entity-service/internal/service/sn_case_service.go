@@ -1222,7 +1222,7 @@ type snUpdateCasePayload struct {
 	StateKey     *int `json:"stateKey,omitempty"`
 	SeverityKey  *int `json:"severityKey,omitempty"`
 	WorkStateKey *int `json:"workStateKey,omitempty"`
-	// Type transfers the case to another type (digiops-cs#2818/#2852) --
+	// Type transfers the case to another type --
 	// same string values as the create payload's own Type field (see
 	// snCaseTypeMap). EngagementType (int key, only meaningful with
 	// Type "engagement") and CatalogID/CatalogItemID/Variables (only
@@ -1230,6 +1230,7 @@ type snUpdateCasePayload struct {
 	// snCreateCasePayload's own field set for those two type-specific shapes.
 	Type           *string          `json:"type,omitempty"`
 	EngagementType *int             `json:"engagementType,omitempty"`
+	IssueTypeKey   *int             `json:"issueTypeKey,omitempty"`
 	CatalogID      *string          `json:"catalogId,omitempty"`
 	CatalogItemID  *string          `json:"catalogItemId,omitempty"`
 	Variables      []snCaseVariable `json:"variables,omitempty"`
@@ -1437,7 +1438,12 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.State != nil {
 		exclusiveCount++
 	}
-	if req.Severity != nil {
+	// Severity is a *companion* of Type when a type transfer is requested: transferring to
+	// "case" needs a severity, which is also what selects Incident vs Query at the backing
+	// data source. In that one combination it does not take an exclusive slot of its own.
+	// Every other severity request is unchanged.
+	severityIsTypeCompanion := req.Severity != nil && req.Type != nil
+	if req.Severity != nil && !severityIsTypeCompanion {
 		exclusiveCount++
 	}
 	if req.WorkState != nil {
@@ -1515,8 +1521,8 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if hasResolutionFields && req.State == nil {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "resolutionCode, cause, and closeNotes are only allowed when state is also provided"}
 	}
-	if req.Type == nil && (req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0) {
-		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType, catalogId, catalogItemId, and variables are only allowed when type is also provided"}
+	if req.Type == nil && (req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 || req.IssueType != nil) {
+		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType, issueType, catalogId, catalogItemId, and variables are only allowed when type is also provided"}
 	}
 	if req.AddPublicComment == nil && (req.Product != nil || req.PublicTicket != nil) {
 		return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "product and publicTicket are only allowed when addPublicComment is also provided"}
@@ -1581,6 +1587,12 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			if req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
 			}
+			if req.IssueType != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType is only accepted when type is \"case\""}
+			}
+			if req.Severity != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity may only accompany type when type is \"case\""}
+			}
 			if !validEngagementType[*req.EngagementType] {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(*req.EngagementType)}
 			}
@@ -1590,8 +1602,17 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			if req.CatalogID == nil || req.CatalogItemID == nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "catalogId and catalogItemId are required when type is \"service_request\""}
 			}
+			// The backing data source requires at least one variable: a service request with no
+			// variable values has no request detail, and renders with an empty category in the
+			// customer-facing portal.
+			if len(req.Variables) == 0 {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "variables must contain at least one entry when type is \"service_request\""}
+			}
 			if req.EngagementType != nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\""}
+			}
+			if req.Severity != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity may only accompany type when type is \"case\""}
 			}
 			if err := validateUUIDs("catalogId", []string{*req.CatalogID}); err != nil {
 				return domain.UpdateCaseResponse{}, err
@@ -1613,9 +1634,35 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 				}
 				payload.Variables = vars
 			}
+		case "case":
+			if req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\"; catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
+			}
+			// Both are mandatory at the backing data source: severity selects Incident vs Query,
+			// and issue type is the classification those records carry.
+			if req.Severity == nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity is required when type is \"case\""}
+			}
+			if req.IssueType == nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType is required when type is \"case\""}
+			}
+			if !validCaseIssueType[*req.IssueType] {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType contains invalid value: " + string(*req.IssueType)}
+			}
+			issueTypeID, ok := snIssueTypeIDMap[*req.IssueType]
+			if !ok {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType " + string(*req.IssueType) + " is not supported by ServiceNow"}
+			}
+			payload.IssueTypeKey = &issueTypeID
 		default:
 			if req.EngagementType != nil || req.CatalogID != nil || req.CatalogItemID != nil || len(req.Variables) > 0 {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\"; catalogId, catalogItemId, and variables are only accepted when type is \"service_request\""}
+			}
+			if req.IssueType != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType is only accepted when type is \"case\""}
+			}
+			if req.Severity != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity may only accompany type when type is \"case\""}
 			}
 		}
 	}

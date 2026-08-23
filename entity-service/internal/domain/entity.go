@@ -1644,7 +1644,7 @@ type UpdateCaseRequest struct {
 	State     *CaseState     `json:"state"`
 	Severity  *CaseSeverity  `json:"severity"`
 	WorkState *CaseWorkState `json:"workState"`
-	// Type transfers the case to another type (digiops-cs#2818/#2852). One of
+	// Type transfers the case to another type. One of
 	// "case" / "engagement" / "security_report_analysis" / "service_request" —
 	// "announcement" and the hosting_* types are system-managed and are never
 	// transfer targets. EngagementType is required alongside Type when
@@ -1654,8 +1654,12 @@ type UpdateCaseRequest struct {
 	// value and both are rejected if supplied otherwise.
 	Type           *string         `json:"type"`
 	EngagementType *EngagementType `json:"engagementType"`
-	CatalogID      *string         `json:"catalogId"`
-	CatalogItemID  *string         `json:"catalogItemId"`
+	// IssueType classifies the case when transferring to type "case". Required in that
+	// transfer and rejected for every other target type: the backing data source stores
+	// issue type only on Incident/Query records.
+	IssueType     *CaseIssueType `json:"issueType"`
+	CatalogID     *string        `json:"catalogId"`
+	CatalogItemID *string        `json:"catalogItemId"`
 	// Variables answers the target catalog item's questions, same shape as
 	// CreateCaseRequest.Variables. Optional even when transferring into
 	// service_request -- a catalog item with no questions has nothing to answer.
@@ -1749,7 +1753,7 @@ type UpdatedCase struct {
 	UpdatedBy string       `json:"updatedBy,omitempty"`
 	State     CaseState    `json:"state,omitempty"`
 	Severity  CaseSeverity `json:"severity,omitempty"`
-	// Type echoes the case's new type back on a successful transfer (digiops-cs#2818).
+	// Type echoes the case's new type back on a successful transfer.
 	// EngagementType/CatalogID/CatalogItemID/Variables aren't echoed -- same as every
 	// other field this update accepts alongside a type-defining field (subject,
 	// description, deploymentId, ...), none of which echo back either.
@@ -4082,6 +4086,48 @@ type SearchConversationView struct {
 	State          *string        `json:"state"`
 	CreatedOn      string         `json:"createdOn"`
 	CreatedBy      *UserReference `json:"createdBy"`
+}
+
+// AlertView is the full detail representation returned by GET /alerts/{id}.
+type AlertView struct {
+	ID          *string `json:"id"`
+	Number      *string `json:"number"`
+	Environment *string `json:"environment"`
+	MetricName  *string `json:"metricName"`
+	Source      *string `json:"source"`
+	Category    *string `json:"category"`
+	Severity    *string `json:"severity"`
+	// Description is an opaque, free-form string and is passed through unparsed.
+	Description *string `json:"description"`
+	// IncidentID/ServiceID reference the linked incident/service, if any.
+	IncidentID *string `json:"incidentId"`
+	ServiceID  *string `json:"serviceId"`
+	CreatedOn  string  `json:"createdOn"`
+}
+
+// SmartAlertView is the full detail representation returned by GET /smart-alerts/{id}.
+type SmartAlertView struct {
+	ID               *string `json:"id"`
+	AlertID          *string `json:"alertId"`
+	SourceAlertID    *string `json:"sourceAlertId"`
+	AlertStatus      *string `json:"alertStatus"`
+	WindowStatus     *string `json:"windowStatus"`
+	Severity         *string `json:"severity"`
+	Urgency          *string `json:"urgency"`
+	Impact           *string `json:"impact"`
+	Category         *string `json:"category"`
+	Source           *string `json:"source"`
+	Environment      *string `json:"environment"`
+	ResourceName     *string `json:"resourceName"`
+	ShortDescription *string `json:"shortDescription"`
+	// Details is an opaque, free-form string and is passed through unparsed.
+	Details    *string `json:"details"`
+	MonitorURL *string `json:"monitorUrl"`
+	FiredAt    *string `json:"firedAt"`
+	ReceivedAt *string `json:"receivedAt"`
+	FireCount  *int    `json:"fireCount"`
+	// IncidentID references the linked incident, if any.
+	IncidentID *string `json:"incidentId"`
 }
 
 // SearchConversationsResponse is the paginated result of a conversation search.

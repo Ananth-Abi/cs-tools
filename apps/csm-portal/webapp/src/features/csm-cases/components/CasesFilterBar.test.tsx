@@ -420,6 +420,74 @@ describe("CasesFilterBar — work state has no bar control, only a chip", () => 
   });
 });
 
+describe("CasesFilterBar — saved views reordering", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    localStorage.clear();
+    localStorage.setItem(
+      "csm.savedFilters.v1",
+      JSON.stringify([
+        { name: "First", qs: "states=open" },
+        { name: "Second", qs: "states=closed" },
+      ]),
+    );
+  });
+
+  function openSavedViewsMenu(): void {
+    fireEvent.click(screen.getByRole("button", { name: /Saved views/ }));
+  }
+
+  it("renders move up/down buttons for saved views; the Suggested section is gone", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS });
+    openSavedViewsMenu();
+
+    // The built-in Suggested section has been removed entirely.
+    expect(screen.queryByText("Suggested")).not.toBeInTheDocument();
+    expect(screen.queryByText("S0/S1 active")).not.toBeInTheDocument();
+
+    // Saved (user) views get reorder controls.
+    expect(
+      screen.getByRole("button", { name: "Move saved view First down" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Move saved view Second up" }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables (or omits an enabled) up-arrow on the first item", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS });
+    openSavedViewsMenu();
+
+    expect(
+      screen.getByRole("button", { name: "Move saved view First up" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Move saved view Second down" }),
+    ).toBeDisabled();
+  });
+
+  it("clicking move-down on the first saved view reorders the list without applying it", () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
+    openSavedViewsMenu();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Move saved view First down" }),
+    );
+
+    // Reordering must not also apply/select the view.
+    expect(onChange).not.toHaveBeenCalled();
+
+    // The persisted order flips, reflected back through the reactive hook —
+    // "Second" now moves up-button-enabled into the first slot.
+    expect(
+      screen.getByRole("button", { name: "Move saved view Second up" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Move saved view First up" }),
+    ).not.toBeDisabled();
+  });
+});
+
 describe("CasesFilterBar — case-type control label", () => {
   beforeEach(() => {
     postMock.mockReset();
