@@ -3988,6 +3988,11 @@ components:
         updatedOn:
           type: string
           format: date-time
+        hasSr:
+          type: boolean
+          description: >
+            Whether this project is eligible to raise service requests, per the
+            backing data source's own project classification.
         closureState:
           type: string
           nullable: true

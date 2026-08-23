@@ -469,6 +469,9 @@ type ProjectDetailsView struct {
 	EndDate          time.Time         `json:"endDate"`
 	CreatedOn        time.Time         `json:"createdOn"`
 	UpdatedOn        time.Time         `json:"updatedOn"`
+	// HasSr is the backing data source's own precomputed answer to whether
+	// this project is eligible to raise service requests.
+	HasSr bool `json:"hasSr"`
 	ProjectClosureFields
 }
 

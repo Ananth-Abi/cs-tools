@@ -268,6 +268,7 @@ type snProjectDetailsResponse struct {
 	EndDate   string           `json:"endDate"`
 	Type      snProjectType    `json:"type"`
 	Account   snProjectAccount `json:"account"`
+	HasSr     bool             `json:"hasSr"`
 	snProjectClosureFields
 }
 
@@ -334,6 +335,7 @@ func (s *snProjectService) GetProjectByID(ctx context.Context, id string) (domai
 		EndDate:          endDate,
 		CreatedOn:        createdOn,
 		UpdatedOn:        createdOn,
+		HasSr:            sn.HasSr,
 		ProjectClosureFields: domain.ProjectClosureFields{
 			ClosureState:                    sn.ClosureState,
 			EndDateClosureState:             sn.EndDateClosureState,
