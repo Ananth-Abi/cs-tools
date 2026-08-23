@@ -3339,3 +3339,50 @@ export interface BeDashboard {
   widgets: BeDashboardWidget[];
 }
 
+/** `GET /alerts/{id}` response. Backs an alert reference embedded in an
+ * incident's work notes/comments (see `snLinkRegistry`). */
+export interface BeAlertDetail {
+  id?: string;
+  number?: string;
+  environment?: string;
+  metricName?: string;
+  source?: string;
+  category?: string;
+  severity?: string;
+  /** Opaque, free-form text — may be JSON; render with a parse-and-fall-back. */
+  description?: string;
+  /** ID of the linked incident, if any. */
+  incidentId?: string;
+  /** ID of the linked service, if any. */
+  serviceId?: string;
+  createdOn?: string;
+}
+
+/** `GET /smart-alerts/{id}` response. Backs a smart-alert reference embedded
+ * in an incident's work notes/comments (see `snLinkRegistry`). */
+export interface BeSmartAlertDetail {
+  id?: string;
+  /** ID of the linked alert, if any. */
+  alertId?: string;
+  /** Opaque identifier assigned by the originating alert source. */
+  sourceAlertId?: string;
+  alertStatus?: string;
+  windowStatus?: string;
+  severity?: string;
+  urgency?: string;
+  impact?: string;
+  category?: string;
+  source?: string;
+  environment?: string;
+  resourceName?: string;
+  shortDescription?: string;
+  /** Opaque, free-form text — may be JSON; render with a parse-and-fall-back. */
+  details?: string;
+  monitorUrl?: string;
+  firedAt?: string;
+  receivedAt?: string;
+  fireCount?: number;
+  /** ID of the linked incident, if any. */
+  incidentId?: string;
+}
+
