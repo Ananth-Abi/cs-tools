@@ -134,7 +134,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 
 	var caseGithubIssueHandler *handler.CaseGithubIssueHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
-		caseGithubIssueHandler = handler.NewCaseGithubIssueHandler(service.NewServiceNowCaseGithubIssueService(serviceNowIntegrationServiceClient))
+		caseGithubIssueHandler = handler.NewCaseGithubIssueHandler(service.NewServiceNowCaseGithubIssueService(serviceNowIntegrationServiceClient, activeCaseSvc))
 	}
 
 	var changeRequestHandler *handler.ChangeRequestHandler

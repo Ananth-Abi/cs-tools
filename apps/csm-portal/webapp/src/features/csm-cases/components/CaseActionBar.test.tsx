@@ -458,7 +458,25 @@ describe("CaseActionBar — Raise internal Git issue is blocked on a closed case
     expect(onAction).not.toHaveBeenCalled();
   });
 
-  it("keeps it enabled for a non-closed case", () => {
+  it("keeps it enabled for a case in an SN-actionable state", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("waiting_on_wso2", ["awaiting_info"])}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /raise internal git issue/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "raise_git_issue" });
+  });
+
+  // SN's own gate (CaseGithubIssueUtils.isCaseActionable) does not include
+  // Awaiting info — mirrored here so the FE doesn't offer an action SN will
+  // 409 on. See notes/sn-customer-portal-api/CHANGES-github-issues.md.
+  it("disables the menu item while the case is awaiting info", () => {
     const onAction = vi.fn();
     render(
       <CaseActionBar
@@ -468,9 +486,9 @@ describe("CaseActionBar — Raise internal Git issue is blocked on a closed case
     );
     fireEvent.click(screen.getByRole("button", { name: /more/i }));
     const item = screen.getByRole("menuitem", { name: /raise internal git issue/i });
-    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(item);
-    expect(onAction).toHaveBeenCalledWith({ secondary: "raise_git_issue" });
+    expect(onAction).not.toHaveBeenCalled();
   });
 });
 

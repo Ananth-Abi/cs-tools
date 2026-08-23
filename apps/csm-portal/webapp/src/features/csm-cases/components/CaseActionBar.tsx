@@ -278,15 +278,19 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
   // attachments, and time tracking (see CsmCaseDetailPage.tsx's isClosed).
   const caseClosed = caseDetail.state === "closed";
 
-  // Git issues may only be raised while the case is active: Open, Work in
-  // progress, Awaiting info, Waiting on WSO2, or Reopened. Anything else
-  // (e.g. Solution proposed, Closed) blocks the action. `caseDetail.state` is
-  // the normalized label (see `uiStateFromBe`) — this must match the real
-  // `CaseState` values (there is no "waiting_on_client" state).
+  // Git issues may only be raised while the case is in a state SN's own
+  // gate allows — CaseGithubIssueUtils.isCaseActionable's ALLOWED_CASE_STATES
+  // ('1', '10', '1002', '1003', '1006': Open, Work in progress, [a legacy SN
+  // state id with no CSM-side equivalent], Waiting on WSO2, Reopened; see
+  // notes/sn-customer-portal-api/CHANGES-github-issues.md in the planning
+  // repo). Notably this does NOT include Awaiting info — anything outside
+  // this list (Awaiting info, Solution proposed, Closed) blocks the action.
+  // `caseDetail.state` is the normalized label (see `uiStateFromBe`) — this
+  // must match the real `CaseState` values (there is no "waiting_on_client"
+  // state).
   const GIT_ISSUE_ALLOWED_STATES: readonly string[] = [
     "open",
     "work_in_progress",
-    "awaiting_info",
     "waiting_on_wso2",
     "reopened",
   ];
@@ -319,7 +323,7 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
       tooltip: caseClosed
         ? "This case is closed — it's read-only."
         : gitIssueStateBlocked
-          ? "Git issues can only be raised while the case is Open, Work in progress, Awaiting info, Waiting on WSO2, or Reopened."
+          ? "Git issues can only be raised while the case is Open, Work in progress, Waiting on WSO2, or Reopened."
           : undefined,
     },
     {

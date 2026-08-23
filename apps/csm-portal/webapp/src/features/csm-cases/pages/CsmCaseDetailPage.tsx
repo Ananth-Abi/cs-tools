@@ -2714,6 +2714,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             setGithubIssueError(null);
             setGithubIssueResult(null);
           }}
+          onOpenConfirm={() => setGithubIssueError(null)}
           onSubmit={(payload) => {
             setGithubIssueError(null);
             postGithubIssue.mutate(
