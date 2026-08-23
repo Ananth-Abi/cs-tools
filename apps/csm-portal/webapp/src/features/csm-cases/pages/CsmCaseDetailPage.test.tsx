@@ -309,14 +309,20 @@ vi.mock("@features/csm-cases/components/ChangeCaseTypeDialog", () => ({
   }: {
     onSubmit: (
       submission:
-        | { targetType: "engagement"; engagementType: string }
+        | { targetType: "engagement"; engagementType: string; engagementPaymentType: string }
         | { targetType: "case"; severity: string; issueType: string },
     ) => void;
   }) => (
     <>
       <button
         type="button"
-        onClick={() => onSubmit({ targetType: "engagement", engagementType: "migration" })}
+        onClick={() =>
+          onSubmit({
+            targetType: "engagement",
+            engagementType: "migration",
+            engagementPaymentType: "paid",
+          })
+        }
       >
         stub transfer to engagement
       </button>
@@ -1151,13 +1157,13 @@ describe("CsmCaseDetailPage — Watchers tab", () => {
 });
 
 describe("CsmCaseDetailPage — change case type", () => {
-  it("PATCHes type and engagementType together for an engagement transfer", () => {
+  it("PATCHes type, engagementType, and engagementPaymentType together for an engagement transfer", () => {
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: /stub open change case type/i }));
     fireEvent.click(screen.getByRole("button", { name: /stub transfer to engagement/i }));
 
     expect(patchCaseMutateMock).toHaveBeenCalledWith(
-      { type: "engagement", engagementType: "migration" },
+      { type: "engagement", engagementType: "migration", engagementPaymentType: "paid" },
       expect.anything(),
     );
   });

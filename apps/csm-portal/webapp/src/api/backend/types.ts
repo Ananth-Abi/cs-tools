@@ -663,6 +663,7 @@ interface BeCaseUpdateNever {
   severity?: never;
   type?: never;
   engagementType?: never;
+  engagementPaymentType?: never;
   workState?: never;
   assigneeEmail?: never;
   watchList?: never;
@@ -684,8 +685,8 @@ interface BeCaseUpdateNever {
 
 /**
  * Request body for `PATCH /cases/{id}` (mirrors the entity `UpdateCaseRequest`).
- * **Exactly one** of `state` / `severity` / `type` (+ `engagementType` when
- * `type` is `"engagement"`) / `workState` / `assigneeEmail` / `watchList` /
+ * **Exactly one** of `state` / `severity` / `type` (+ `engagementType` and
+ * `engagementPaymentType` when `type` is `"engagement"`) / `workState` / `assigneeEmail` / `watchList` /
  * `parentId` / `subject` / `description` / `deploymentId` /
  * `deployedProductId` / `relatedCaseId` / `autocloseHoldUntil` / the combined
  * fix-ETA variant (below) is sent per call — the backend rejects zero or more
@@ -719,14 +720,16 @@ export type BeCaseUpdatePayload =
       severity: BeCaseSeverity;
       issueType: BeCaseIssueType;
     })
-  /** Case type transfer into `engagement` — `engagementType` is required
-   * alongside `type` in the same call, mirroring the create payload's own
-   * requirement for this type (same `BeEngagementType` string enum as
-   * {@link BeEngagementCreatePayload}, not a raw ServiceNow choice-list
-   * integer — that translation is a backend concern). */
-  | (Omit<BeCaseUpdateNever, "type" | "engagementType"> & {
+  /** Case type transfer into `engagement` — `engagementType` and
+   * `engagementPaymentType` are both required alongside `type` in the same
+   * call, mirroring the create payload's own requirement for this type (same
+   * `BeEngagementType` / `BeEngagementPaymentType` string enums as
+   * {@link BeEngagementCreatePayload}, not raw ServiceNow choice-list
+   * integers — that translation is a backend concern). */
+  | (Omit<BeCaseUpdateNever, "type" | "engagementType" | "engagementPaymentType"> & {
       type: "engagement";
       engagementType: BeEngagementType;
+      engagementPaymentType: BeEngagementPaymentType;
     })
   /** Case type transfer into `service_request` — the target catalog item and a
    * non-empty set of answers to its questions are required in the same call.

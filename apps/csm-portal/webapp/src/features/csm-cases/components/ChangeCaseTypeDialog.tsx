@@ -35,7 +35,12 @@ import {
 } from "@wso2/oxygen-ui";
 import { Check, Upload } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useRef, useState, type ChangeEvent, type JSX } from "react";
-import type { BeCaseIssueType, BeCaseType, BeEngagementType } from "@api/backend/types";
+import type {
+  BeCaseIssueType,
+  BeCaseType,
+  BeEngagementPaymentType,
+  BeEngagementType,
+} from "@api/backend/types";
 import type { Severity, SeverityOrUnset } from "@features/csm-dashboard/types/abtDashboard";
 import { SEVERITY_LABEL } from "@features/csm-dashboard/utils/abtDashboard";
 import { useSearchCatalogs } from "@features/csm-operations/api/useSearchCatalogs";
@@ -74,6 +79,11 @@ const ENGAGEMENT_TYPES: { value: BeEngagementType; label: string }[] = [
   { value: "onboarding", label: "Onboarding" },
 ];
 
+const ENGAGEMENT_PAYMENT_TYPES: { value: BeEngagementPaymentType; label: string }[] = [
+  { value: "paid", label: "Paid" },
+  { value: "foc", label: "FOC" },
+];
+
 type Step = "pick" | "fields" | "review";
 const STEP_NUMBER: Record<Step, number> = { pick: 1, fields: 2, review: 3 };
 
@@ -81,7 +91,11 @@ const STEP_NUMBER: Record<Step, number> = { pick: 1, fields: 2, review: 3 };
  * each target's mandatory companions are compiler-enforced rather than relying on
  * runtime guards. Mirrors the backend's own per-target requirements. */
 export type CaseTypeTransferSubmission =
-  | { targetType: "engagement"; engagementType: BeEngagementType }
+  | {
+      targetType: "engagement";
+      engagementType: BeEngagementType;
+      engagementPaymentType: BeEngagementPaymentType;
+    }
   | {
       targetType: "case";
       /** Both are mandatory for this target: the backend selects the concrete case
@@ -163,6 +177,9 @@ export default function ChangeCaseTypeDialog({
     TRANSFERABLE_CASE_TYPES.find((t) => t !== currentType) ?? TRANSFERABLE_CASE_TYPES[0],
   );
   const [engagementType, setEngagementType] = useState<BeEngagementType | "">("");
+  const [engagementPaymentType, setEngagementPaymentType] = useState<
+    BeEngagementPaymentType | ""
+  >("");
   const [severity, setSeverity] = useState<Severity | "">(
     currentSeverity === "unset" ? "" : currentSeverity,
   );
@@ -175,6 +192,8 @@ export default function ChangeCaseTypeDialog({
   const preview = computeTransferPreview(currentType, targetType, hasAttachments);
   const isSupportedTarget = SUPPORTED_TRANSFER_TARGETS.includes(targetType);
   const engagementTypeMissing = targetType === "engagement" && engagementType === "";
+  const engagementPaymentTypeMissing =
+    targetType === "engagement" && engagementPaymentType === "";
   // severity and issueType are both required by the backend for a transfer to `case`;
   // submitting without them is a guaranteed 400, so gate the button instead.
   const severityMissing = targetType === "case" && severity === "";
@@ -206,7 +225,7 @@ export default function ChangeCaseTypeDialog({
 
   const fieldsStepValid =
     targetType === "engagement"
-      ? !engagementTypeMissing
+      ? !engagementTypeMissing && !engagementPaymentTypeMissing
       : targetType === "security_report_analysis"
         ? hasAttachments
         : targetType === "service_request"
@@ -219,6 +238,7 @@ export default function ChangeCaseTypeDialog({
   const canSubmit =
     isSupportedTarget &&
     !engagementTypeMissing &&
+    !engagementPaymentTypeMissing &&
     !caseFieldsMissing &&
     fieldsStepValid &&
     !isSubmitting;
@@ -226,6 +246,7 @@ export default function ChangeCaseTypeDialog({
   const handleTargetChange = (next: BeCaseType): void => {
     setTargetType(next);
     setEngagementType("");
+    setEngagementPaymentType("");
     setCatalogId("");
     setCatalogItemId("");
     setAnswers({});
@@ -242,7 +263,11 @@ export default function ChangeCaseTypeDialog({
   const handleConfirm = (): void => {
     if (!canSubmit) return;
     if (targetType === "engagement") {
-      onSubmit({ targetType: "engagement", engagementType: engagementType as BeEngagementType });
+      onSubmit({
+        targetType: "engagement",
+        engagementType: engagementType as BeEngagementType,
+        engagementPaymentType: engagementPaymentType as BeEngagementPaymentType,
+      });
     } else if (targetType === "security_report_analysis") {
       onSubmit({ targetType: "security_report_analysis" });
     } else if (targetType === "service_request") {
@@ -436,6 +461,32 @@ export default function ChangeCaseTypeDialog({
                   ))}
                 </Select>
                 {engagementTypeMissing && (
+                  <FormHelperText error>Required to continue.</FormHelperText>
+                )}
+              </FormControl>
+            )}
+
+            {targetType === "engagement" && (
+              <FormControl fullWidth size="small" required error={engagementPaymentTypeMissing}>
+                <InputLabel id="transfer-engagement-payment-type-label">
+                  Engagement payment type
+                </InputLabel>
+                <Select
+                  labelId="transfer-engagement-payment-type-label"
+                  label="Engagement payment type"
+                  value={engagementPaymentType}
+                  onChange={(e) =>
+                    setEngagementPaymentType(e.target.value as BeEngagementPaymentType)
+                  }
+                  disabled={isSubmitting}
+                >
+                  {ENGAGEMENT_PAYMENT_TYPES.map((ept) => (
+                    <MenuItem key={ept.value} value={ept.value}>
+                      {ept.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+                {engagementPaymentTypeMissing && (
                   <FormHelperText error>Required to continue.</FormHelperText>
                 )}
               </FormControl>
