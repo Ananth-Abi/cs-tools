@@ -4937,6 +4937,62 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+    patch:
+      summary: Partially update a problem (ServiceNow data source only).
+      operationId: patchProblemById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID of the problem.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        description: Problem update payload. All fields are optional, but at least one must be provided.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProblemPayload'
+        required: true
+      responses:
+        "200":
+          description: Problem updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateProblemResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Problem not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /problems/search:
     post:
       summary: Search problems (ServiceNow data source only).
@@ -10901,6 +10957,64 @@ components:
           type: string
         incident:
           $ref: '#/components/schemas/IncidentDetail'
+
+    UpdateProblemPayload:
+      type: object
+      description: All fields are optional, but at least one must be provided.
+      minProperties: 1
+      properties:
+        transition:
+          type: string
+          description: >-
+            One of assess, confirm, fix, resolve, close per the data source's own
+            server-side validation. Deliberately typed as a plain string, not a closed
+            enum: an invalid value is rejected upstream with an actionable error naming
+            the valid values, and validating it here would hide that message behind a
+            generic one instead.
+        assignedToId:
+          type: string
+          format: uuid
+        assignmentGroupId:
+          type: string
+          format: uuid
+        causeNotes:
+          type: string
+        fixNotes:
+          type: string
+        workaround:
+          type: string
+        targetResolutionDate:
+          type: string
+
+    UpdateProblemResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        problem:
+          $ref: '#/components/schemas/UpdateProblemView'
+
+    UpdateProblemView:
+      type: object
+      description: >-
+        Deliberately narrower than ProblemDetail: only the fields the update response
+        actually carries.
+      properties:
+        id:
+          type: string
+          format: uuid
+        updatedOn:
+          type: string
+        updatedBy:
+          type: string
+        state:
+          type: string
+        resolutionCode:
+          type: string
+        assignedTo:
+          $ref: '#/components/schemas/EntityRef'
+        assignmentGroup:
+          $ref: '#/components/schemas/EntityRef'
 
     ProblemSearchPayload:
       type: object
