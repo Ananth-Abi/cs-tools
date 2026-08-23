@@ -299,7 +299,7 @@ export default function ProblemDetailPage(): JSX.Element {
               />
             )}
           </Box>
-          <Typography variant="h5">{problem.subject || problem.number || "Problem"}</Typography>
+          <Typography variant="h5">{problem.subject || "Problem"}</Typography>
         </Box>
         <Box sx={{ flexShrink: 0, alignSelf: { xs: "stretch", md: "flex-start" } }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

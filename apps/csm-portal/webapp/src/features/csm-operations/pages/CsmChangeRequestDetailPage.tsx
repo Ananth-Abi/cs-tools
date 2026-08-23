@@ -484,7 +484,7 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
               />
             )}
           </Box>
-          <Typography variant="h5">{cr.subject || cr.number || "Change request"}</Typography>
+          <Typography variant="h5">{cr.subject || "Change request"}</Typography>
         </Box>
         <Box sx={{ flexShrink: 0, alignSelf: { xs: "stretch", md: "flex-start" } }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

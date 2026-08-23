@@ -429,7 +429,7 @@ export default function CsmIncidentDetailPage(): JSX.Element {
               />
             )}
           </Box>
-          <Typography variant="h5">{incident.subject || incident.number || "Incident"}</Typography>
+          <Typography variant="h5">{incident.subject || "Incident"}</Typography>
         </Box>
         <Box sx={{ flexShrink: 0, alignSelf: { xs: "stretch", md: "flex-start" } }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
