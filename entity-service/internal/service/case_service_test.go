@@ -245,7 +245,7 @@ func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
 }
 
 // TestCaseService_UpdateCase_RejectsTypeTransferFields proves the case-type
-// transfer fields (digiops-cs#2818/#2852) are rejected before the
+// transfer fields are rejected before the
 // Postgres-backed UpdateCase ever reaches the repository -- stubCaseRepo's
 // UpdateCase panics if called, so a passing test here proves the rejection,
 // not just a repository that happens to ignore the field. Postgres-backed

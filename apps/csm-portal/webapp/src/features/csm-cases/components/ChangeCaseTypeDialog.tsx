@@ -84,8 +84,10 @@ export type CaseTypeTransferSubmission =
   | { targetType: "engagement"; engagementType: BeEngagementType }
   | {
       targetType: "case";
-      /** Optional data-completeness extra, only offered when `targetType` is `"case"`. */
-      severity?: Severity;
+      /** Both are mandatory for this target: the backend selects the concrete case
+       * type from the severity, and stores the issue type on the resulting record. */
+      severity: Severity;
+      issueType: BeCaseIssueType;
     };
 
 interface ChangeCaseTypeDialogProps {
@@ -119,7 +121,7 @@ interface ChangeCaseTypeDialogProps {
 
 /**
  * Transfer a case between Case, Engagement, Security Report Analysis, and
- * Service Request (digiops-cs#2818). Three steps: pick the target type (a
+ * Service Request. Three steps: pick the target type (a
  * single-row radio choice of the other 3 — the case's current type isn't
  * offered as a target), fill in whatever the target needs, then review
  * what's retained/lost and confirm. Only Case <-> Engagement submits today —
@@ -127,7 +129,7 @@ interface ChangeCaseTypeDialogProps {
  * fully previewable (SRA's attachment uploader really uploads; Service
  * Request's catalog picker is real), so the whole proposal is explorable —
  * but the confirm button on step 3 stays disabled for them until
- * entity-service's `caseType` validator (digiops-cs#2852) accepts them as
+ * entity-service's `caseType` validator accepts them as
  * targets.
  */
 export default function ChangeCaseTypeDialog({
@@ -164,7 +166,12 @@ export default function ChangeCaseTypeDialog({
   const preview = computeTransferPreview(currentType, targetType, hasAttachments);
   const isSupportedTarget = SUPPORTED_TRANSFER_TARGETS.includes(targetType);
   const engagementTypeMissing = targetType === "engagement" && engagementType === "";
-  const canSubmit = isSupportedTarget && !engagementTypeMissing && !isSubmitting;
+  // severity and issueType are both required by the backend for a transfer to `case`;
+  // submitting without them is a guaranteed 400, so gate the button instead.
+  const caseFieldsMissing =
+    targetType === "case" && (severity === "" || issueType === "");
+  const canSubmit =
+    isSupportedTarget && !engagementTypeMissing && !caseFieldsMissing && !isSubmitting;
 
   const catalogs = useSearchCatalogs(
     targetType === "service_request" ? deployedProductId : undefined,
@@ -219,7 +226,11 @@ export default function ChangeCaseTypeDialog({
     if (targetType === "engagement") {
       onSubmit({ targetType: "engagement", engagementType: engagementType as BeEngagementType });
     } else {
-      onSubmit({ targetType: "case", severity: severity === "" ? undefined : severity });
+      onSubmit({
+        targetType: "case",
+        severity: severity as Severity,
+        issueType: issueType as BeCaseIssueType,
+      });
     }
   };
 

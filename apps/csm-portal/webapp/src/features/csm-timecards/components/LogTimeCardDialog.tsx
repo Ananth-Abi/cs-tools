@@ -252,7 +252,7 @@ export default function LogTimeCardDialog({
       // Approvers must hold the timecard_approver role — listing every
       // internal WSO2 account here (the old INTERNAL_USER_ROLES filter)
       // let a submitter pick literally anyone at the company, including
-      // people with no CS/team-lead involvement at all (digiops-cs#2821).
+      // people with no CS/team-lead involvement at all.
       roleIds: [TIMECARD_APPROVER_GROUP],
       active: true,
     },

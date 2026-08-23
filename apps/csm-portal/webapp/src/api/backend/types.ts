@@ -706,14 +706,19 @@ export type BeCaseUpdatePayload =
     })
   | (Omit<BeCaseUpdateNever, "severity"> & { severity: BeCaseSeverity })
   /**
-   * Case type transfer (digiops-cs#2818/#2852) — converts the case to another
-   * type. Only `case` and `engagement` are accepted by the backend today
-   * (`security_report_analysis`/`service_request` need creation-time-only
-   * fields the entity-service validator doesn't yet support on update). See
-   * `features/csm-cases/utils/caseTypeTransfer.ts` for the full 4-type UI
+   * Case type transfer into `case` — converts the case to a plain support
+   * case. `severity` and `issueType` are both required in the *same* call:
+   * the backend selects the concrete case type from the severity and stores
+   * the issue type on the resulting record, and it rejects a transfer that
+   * omits either. Only `case` and `engagement` are wired up in the UI today;
+   * see `features/csm-cases/utils/caseTypeTransfer.ts` for the full 4-type
    * proposal this is scoped down from.
    */
-  | (Omit<BeCaseUpdateNever, "type"> & { type: "case" })
+  | (Omit<BeCaseUpdateNever, "type" | "severity" | "issueType"> & {
+      type: "case";
+      severity: BeCaseSeverity;
+      issueType: BeCaseIssueType;
+    })
   /** Case type transfer into `engagement` — `engagementType` is required
    * alongside `type` in the same call, mirroring the create payload's own
    * requirement for this type (same `BeEngagementType` string enum as

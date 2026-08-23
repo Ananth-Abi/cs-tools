@@ -1641,7 +1641,7 @@ type UpdateCaseRequest struct {
 	State     *CaseState     `json:"state"`
 	Severity  *CaseSeverity  `json:"severity"`
 	WorkState *CaseWorkState `json:"workState"`
-	// Type transfers the case to another type (digiops-cs#2818/#2852). One of
+	// Type transfers the case to another type. One of
 	// "case" / "engagement" / "security_report_analysis" / "service_request" —
 	// "announcement" and the hosting_* types are system-managed and are never
 	// transfer targets. EngagementType is required alongside Type when
@@ -1651,8 +1651,12 @@ type UpdateCaseRequest struct {
 	// value and both are rejected if supplied otherwise.
 	Type           *string         `json:"type"`
 	EngagementType *EngagementType `json:"engagementType"`
-	CatalogID      *string         `json:"catalogId"`
-	CatalogItemID  *string         `json:"catalogItemId"`
+	// IssueType classifies the case when transferring to type "case". Required in that
+	// transfer and rejected for every other target type: the backing data source stores
+	// issue type only on Incident/Query records.
+	IssueType     *CaseIssueType `json:"issueType"`
+	CatalogID     *string        `json:"catalogId"`
+	CatalogItemID *string        `json:"catalogItemId"`
 	// Variables answers the target catalog item's questions, same shape as
 	// CreateCaseRequest.Variables. Optional even when transferring into
 	// service_request -- a catalog item with no questions has nothing to answer.
@@ -1746,7 +1750,7 @@ type UpdatedCase struct {
 	UpdatedBy string       `json:"updatedBy,omitempty"`
 	State     CaseState    `json:"state,omitempty"`
 	Severity  CaseSeverity `json:"severity,omitempty"`
-	// Type echoes the case's new type back on a successful transfer (digiops-cs#2818).
+	// Type echoes the case's new type back on a successful transfer.
 	// EngagementType/CatalogID/CatalogItemID/Variables aren't echoed -- same as every
 	// other field this update accepts alongside a type-defining field (subject,
 	// description, deploymentId, ...), none of which echo back either.

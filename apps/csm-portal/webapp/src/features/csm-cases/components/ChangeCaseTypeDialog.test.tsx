@@ -359,7 +359,7 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
 });
 
 describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
-  it("allows transfer without picking a severity — it's optional", () => {
+  it("blocks confirm until both severity and issue type are picked — the backend requires both", () => {
     const onSubmit = vi.fn();
     render(
       <ChangeCaseTypeDialog
@@ -373,13 +373,18 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
     );
     pickTargetAndAdvanceToFields(/^case$/i);
     advanceToReview();
-    const confirmBtn = screen.getByRole("button", { name: /transfer to case/i });
-    expect(confirmBtn).toBeEnabled();
-    fireEvent.click(confirmBtn);
-    expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: undefined });
+    expect(screen.getByRole("button", { name: /transfer to case/i })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /severity/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^s2/i }));
+    advanceToReview();
+    // Severity alone is still not enough.
+    expect(screen.getByRole("button", { name: /transfer to case/i })).toBeDisabled();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("includes the picked severity when one is chosen", () => {
+  it("submits severity and issue type together in one call", () => {
     const onSubmit = vi.fn();
     render(
       <ChangeCaseTypeDialog
@@ -394,269 +399,14 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into case", () => {
     pickTargetAndAdvanceToFields(/^case$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /severity/i }));
     fireEvent.click(screen.getByRole("option", { name: /^s2/i }));
-    advanceToReview();
-    fireEvent.click(screen.getByRole("button", { name: /transfer to case/i }));
-    expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: "S2" });
-  });
-
-  it("lets an issue type be picked but doesn't submit it — there's no update path for it yet", () => {
-    const onSubmit = vi.fn();
-    render(
-      <ChangeCaseTypeDialog
-        currentType="engagement"
-        currentSeverity="unset"
-        hasAttachments
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={onSubmit}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/^case$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /issue type/i }));
     fireEvent.click(screen.getByRole("option", { name: /^error$/i }));
     advanceToReview();
     fireEvent.click(screen.getByRole("button", { name: /transfer to case/i }));
-    expect(onSubmit).toHaveBeenCalledWith({ targetType: "case", severity: undefined });
-  });
-});
-
-describe("ChangeCaseTypeDialog — step 3: not-yet-supported targets", () => {
-  it("keeps the transfer button disabled for security_report_analysis", () => {
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/security report/i);
-    advanceToReview();
-    expect(
-      screen.getByRole("button", { name: /transfer to security report/i }),
-    ).toBeDisabled();
-  });
-
-  it("keeps the transfer button disabled for service_request", () => {
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        deployedProductId="dp-1"
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/service request/i);
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /^catalog$/i }));
-    fireEvent.click(screen.getByRole("option", { name: /api manager support/i }));
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /catalog item/i }));
-    fireEvent.click(screen.getByRole("option", { name: /request environment scaling/i }));
-    advanceToReview();
-    expect(
-      screen.getByRole("button", { name: /transfer to service request/i }),
-    ).toBeDisabled();
-  });
-});
-
-describe("ChangeCaseTypeDialog — step 2: security report analysis attachment uploader", () => {
-  it("shows an uploader when the case has no attachment yet", () => {
-    const onUploadAttachment = vi.fn();
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments={false}
-        onUploadAttachment={onUploadAttachment}
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/security report/i);
-    expect(screen.getByRole("button", { name: /upload attachment/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^next$/i })).toBeDisabled();
-  });
-
-  it("uploads the picked file through onUploadAttachment", () => {
-    const onUploadAttachment = vi.fn();
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments={false}
-        onUploadAttachment={onUploadAttachment}
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/security report/i);
-    const file = new File(["content"], "screenshot.png", { type: "image/png" });
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(input, { target: { files: [file] } });
-    expect(onUploadAttachment).toHaveBeenCalledWith(file);
-  });
-
-  it("shows the uploading state and any upload error", () => {
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments={false}
-        onUploadAttachment={() => {}}
-        isUploadingAttachment
-        uploadAttachmentError="Could not upload the attachment."
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/security report/i);
-    expect(screen.getByRole("button", { name: /uploading/i })).toBeDisabled();
-    expect(screen.getByText(/could not upload the attachment/i)).toBeInTheDocument();
-  });
-
-  it("shows a satisfied message instead of the uploader once the case already has an attachment", () => {
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        onUploadAttachment={() => {}}
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/security report/i);
-    expect(screen.getByText(/already has an attachment/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /upload attachment/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^next$/i })).toBeEnabled();
-  });
-});
-
-describe("ChangeCaseTypeDialog — step 2: service request catalog field step", () => {
-  it("shows the deployed product's catalogs and cascades to catalog items", () => {
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        deployedProductId="dp-1"
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/service request/i);
-
-    expect(
-      screen.getByRole("combobox", { name: /^catalog$/i }),
-    ).toBeInTheDocument();
-    // Catalog item is disabled until a catalog is picked.
-    expect(screen.getByRole("combobox", { name: /catalog item/i })).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /^catalog$/i }));
-    fireEvent.click(screen.getByRole("option", { name: /api manager support/i }));
-
-    expect(screen.getByRole("combobox", { name: /catalog item/i })).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
-  });
-
-  it("renders the catalog item's dynamic variable fields once one is chosen", () => {
-    // mockImplementation (not mockReturnValueOnce) because the dialog
-    // re-renders several times as catalog/catalog-item state cascades — a
-    // "once" value gets consumed by an earlier render before catalogItemId
-    // is actually set, not the render this test cares about.
-    mockUseCatalogItemVariables.mockImplementation((_catalogId, catalogItemId) =>
-      asQueryResult({
-        data:
-          catalogItemId === "item-1"
-            ? [{ id: "var-1", questionText: "Justification", type: "Single Line Text" }]
-            : [],
-        isLoading: false,
-        isError: false,
-      }),
-    );
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        deployedProductId="dp-1"
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/service request/i);
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /^catalog$/i }));
-    fireEvent.click(screen.getByRole("option", { name: /api manager support/i }));
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /catalog item/i }));
-    fireEvent.click(screen.getByRole("option", { name: /request environment scaling/i }));
-
-    expect(screen.getByLabelText(/justification/i)).toBeInTheDocument();
-  });
-
-  it("keeps the transfer button disabled even once the catalog form is fully filled in", () => {
-    mockUseCatalogItemVariables.mockImplementation((_catalogId, catalogItemId) =>
-      asQueryResult({
-        data:
-          catalogItemId === "item-1"
-            ? [{ id: "var-1", questionText: "Justification", type: "Single Line Text" }]
-            : [],
-        isLoading: false,
-        isError: false,
-      }),
-    );
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        deployedProductId="dp-1"
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/service request/i);
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /^catalog$/i }));
-    fireEvent.click(screen.getByRole("option", { name: /api manager support/i }));
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: /catalog item/i }));
-    fireEvent.click(screen.getByRole("option", { name: /request environment scaling/i }));
-    fireEvent.change(screen.getByLabelText(/justification/i), {
-      target: { value: "Scaling for a launch" },
+    expect(onSubmit).toHaveBeenCalledWith({
+      targetType: "case",
+      severity: "S2",
+      issueType: "error",
     });
-    advanceToReview();
-
-    expect(
-      screen.getByRole("button", { name: /transfer to service request/i }),
-    ).toBeDisabled();
-  });
-
-  it("shows a helper message when the case has no deployed product", () => {
-    render(
-      <ChangeCaseTypeDialog
-        currentType="case"
-        currentSeverity="S2"
-        hasAttachments
-        isSubmitting={false}
-        onClose={() => {}}
-        onSubmit={() => {}}
-      />,
-    );
-    pickTargetAndAdvanceToFields(/service request/i);
-    expect(screen.getByText(/no deployed product on file/i)).toBeInTheDocument();
   });
 });

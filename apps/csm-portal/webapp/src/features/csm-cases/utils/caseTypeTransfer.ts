@@ -18,7 +18,7 @@ import type { BeCaseType } from "@api/backend/types";
 import { CASE_TYPE_LABEL } from "@features/csm-cases/utils/caseType";
 
 /**
- * The 4 case types a case can be transferred between (digiops-cs#2818).
+ * The 4 case types a case can be transferred between.
  * `announcement` is deliberately excluded — it's system-managed (produced by
  * the security-advisory automation writing directly to the backing data
  * source, see the create-payload validator on the entity-service side), with
@@ -33,7 +33,7 @@ export const TRANSFERABLE_CASE_TYPES: readonly BeCaseType[] = [
 ];
 
 /**
- * Transfer targets the backend actually accepts today (digiops-cs#2852).
+ * Transfer targets the backend actually accepts today.
  * `security_report_analysis` and `service_request` are represented in the UI
  * below so the full proposal is visible, but their "Transfer" button stays
  * disabled until entity-service's `caseType` validator is extended to accept

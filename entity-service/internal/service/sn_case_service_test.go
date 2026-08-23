@@ -598,7 +598,7 @@ func TestSNCaseService_UpdateCase_NewSingleFieldVariants(t *testing.T) {
 	}
 }
 
-// --- UpdateCase: type transfer (digiops-cs#2818/#2852) ---
+// --- UpdateCase: type transfer ---
 
 func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 	strPtr := func(s string) *string { return &s }
@@ -692,6 +692,8 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ValidationErrors(t *testing.T) {
 
 func TestSNCaseService_UpdateCase_TypeTransfer_Case(t *testing.T) {
 	typ := "case"
+	sev := domain.CaseSeverityLow
+	issue := domain.CaseIssueTypeQuestion
 	var gotBody map[string]any
 	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -710,8 +712,10 @@ func TestSNCaseService_UpdateCase_TypeTransfer_Case(t *testing.T) {
 	})
 
 	svc := NewServiceNowCaseService(client, nil)
+	// severity and issueType are both mandatory for this target: the backing data source
+	// selects Incident vs Query from the severity, and stores issue type on those records.
 	resp, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
-		ID: testDeploymentUUID, Type: &typ,
+		ID: testDeploymentUUID, Type: &typ, Severity: &sev, IssueType: &issue,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -719,13 +723,76 @@ func TestSNCaseService_UpdateCase_TypeTransfer_Case(t *testing.T) {
 	if got, ok := gotBody["type"]; !ok || got != "default_case" {
 		t.Fatalf("expected type %q, got %v (body: %+v)", "default_case", got, gotBody)
 	}
+	if got, ok := gotBody["issueTypeKey"]; !ok || got != float64(4) {
+		t.Fatalf("expected issueTypeKey 4 for %q, got %v (body: %+v)", issue, got, gotBody)
+	}
+	if _, ok := gotBody["severityKey"]; !ok {
+		t.Fatalf("expected severityKey to be sent alongside type: %+v", gotBody)
+	}
 	for _, field := range []string{"engagementType", "catalogId", "catalogItemId", "variables"} {
 		if _, ok := gotBody[field]; ok {
-			t.Fatalf("unexpected extra field %q present in a bare type: \"case\" payload: %+v", field, gotBody)
+			t.Fatalf("unexpected extra field %q present in a type: \"case\" payload: %+v", field, gotBody)
 		}
 	}
 	if resp.Case.Type != "case" {
 		t.Fatalf("expected echoed type \"case\", got %q", resp.Case.Type)
+	}
+}
+
+func TestSNCaseService_UpdateCase_TypeTransfer_CaseRequiresSeverityAndIssueType(t *testing.T) {
+	typ := "case"
+	sev := domain.CaseSeverityLow
+	issue := domain.CaseIssueTypeQuestion
+	client := newTestCaseClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("backing service must not be called for an incomplete transfer")
+		w.WriteHeader(http.StatusOK)
+	})
+	svc := NewServiceNowCaseService(client, nil)
+
+	for name, req := range map[string]domain.UpdateCaseRequest{
+		"missing both":      {ID: testDeploymentUUID, Type: &typ},
+		"missing issueType": {ID: testDeploymentUUID, Type: &typ, Severity: &sev},
+		"missing severity":  {ID: testDeploymentUUID, Type: &typ, IssueType: &issue},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err == nil {
+				t.Fatal("expected a validation error, got nil")
+			}
+		})
+	}
+}
+
+func TestSNCaseService_UpdateCase_TypeTransfer_IssueTypeRejectedForOtherTargets(t *testing.T) {
+	issue := domain.CaseIssueTypeQuestion
+	client := newTestCaseClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("backing service must not be called for a mismatched transfer")
+		w.WriteHeader(http.StatusOK)
+	})
+	svc := NewServiceNowCaseService(client, nil)
+
+	for _, typ := range []string{"engagement", "security_report_analysis"} {
+		t.Run(typ, func(t *testing.T) {
+			target := typ
+			if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: &target, IssueType: &issue,
+			}); err == nil {
+				t.Fatalf("expected issueType to be rejected for type %q", typ)
+			}
+		})
+	}
+}
+
+func TestSNCaseService_UpdateCase_IssueTypeWithoutTypeRejected(t *testing.T) {
+	issue := domain.CaseIssueTypeQuestion
+	client := newTestCaseClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("backing service must not be called")
+		w.WriteHeader(http.StatusOK)
+	})
+	svc := NewServiceNowCaseService(client, nil)
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+		ID: testDeploymentUUID, IssueType: &issue,
+	}); err == nil {
+		t.Fatal("expected issueType alone to be rejected")
 	}
 }
 
@@ -838,37 +905,26 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequest(t *testing.T) {
 	}
 }
 
-func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequest_VariablesOptional(t *testing.T) {
+func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequestRequiresVariables(t *testing.T) {
 	typ := "service_request"
 	catalogUUID := "44444444-4444-4444-4444-444444444444"
 	catalogItemUUID := "55555555-5555-5555-5555-555555555555"
-	var gotBody map[string]any
-	client := newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
-			t.Fatalf("decode request body: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"message": "Case updated successfully.",
-			"case": {"id": "` + testWLCaseSysid + `", "updatedOn": "2026-01-02 10:00:00", "updatedBy": "engineer@example.com"}
-		}`))
+	client := newTestCaseClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("backing service must not be called when variables are missing")
+		w.WriteHeader(http.StatusOK)
 	})
 
 	svc := NewServiceNowCaseService(client, nil)
-	// A catalog item with no additional questions has nothing to answer --
-	// variables must be omittable, not required, for a transfer to succeed.
-	_, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
+	// The backing data source requires at least one variable for a service request, exactly as
+	// it does at create time. A transfer with none would be rejected downstream, so reject it
+	// here rather than spending the round-trip.
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{
 		ID: testDeploymentUUID, Type: &typ, CatalogID: &catalogUUID, CatalogItemID: &catalogItemUUID,
-	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := gotBody["variables"]; ok {
-		t.Fatalf("expected no variables field when none were supplied, got %+v", gotBody)
+	}); err == nil {
+		t.Fatal("expected a validation error when variables are omitted")
 	}
 }
 
-// jsonEqual compares two decoded-JSON values (bool/string/number) for equality.
 func jsonEqual(got, want any) bool {
 	switch w := want.(type) {
 	case bool:

@@ -5492,9 +5492,12 @@ components:
         supported only for the ServiceNow data source.
         `resolutionCode`, `cause`, and `closeNotes` are optional resolution fields that may only be
         provided alongside `state: closed` or `state: solution_proposed`.
-        `type` transfers the case to another type (digiops-cs#2818/#2852), ServiceNow only.
-        `engagementType` is required alongside `type: engagement`; `catalogId`/`catalogItemId`
-        (and optionally `variables`) are required alongside `type: service_request`.
+        `type` transfers the case to another type, ServiceNow only. Its companion fields carry
+        the target type's mandatory data: `severity` and `issueType` alongside `type: case`;
+        `engagementType` alongside `type: engagement`; `catalogId`, `catalogItemId` and a
+        non-empty `variables` alongside `type: service_request`; none for
+        `type: security_report_analysis`. A companion is rejected without `type`, or with a
+        `type` it does not belong to. `severity` is the one field that may accompany `type`.
       oneOf:
         - required: [state]
         - required: [severity]
@@ -5528,6 +5531,10 @@ components:
           description: >
             Transfers the case to this type (ServiceNow only). `announcement` is
             system-managed and never a valid transfer target.
+        issueType:
+          type: string
+          enum: [total_outage, partial_outage, performance_degradation, question, security_or_compliance, error]
+          description: "Required alongside `type: case`; rejected for every other target type."
         engagementType:
           type: string
           enum: [migration, consultancy, new_feature_improvement, follow_up, onboarding]
