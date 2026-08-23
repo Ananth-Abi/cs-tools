@@ -58,6 +58,11 @@ import {
 import { type CsmNavNode, navNodeById } from "@config/csmNavItems";
 import { enabledNavChildren } from "@config/featureFlags";
 import HelpTopicSection from "@features/help/components/HelpTopicSection";
+import {
+  findTopicMatch,
+  HELP_TOPIC_PLAIN_TEXT,
+  type TopicSearchMatch,
+} from "@features/help/utils/helpSearch";
 
 /** Bare topic id (e.g. `"operations"`) from a `help.<id>` nav node id — the
  * key `HELP_TOPIC_CONTENT` and this page's `#<topic>` hash share. */
@@ -175,12 +180,21 @@ export default function HelpPage(): JSX.Element {
   // Narrows the sidebar list only — the underlying topic order (and so
   // Prev/Next, and the "X of N" counter below) always stays the full,
   // unfiltered set, so clearing the search box never changes where those
-  // point.
+  // point. Matches full topic content, not just the label — a search for
+  // "incidents" (a tab inside Operations, not a topic of its own) would
+  // otherwise return nothing even though Operations covers it in depth.
+  // Each result carries `match`, which is only more than "matched the
+  // title" when the hit came from content, so the row below can show a
+  // snippet explaining why an otherwise-unrelated-looking topic matched.
   const [filterQuery, setFilterQuery] = useState("");
-  const filteredTopics = useMemo(() => {
-    const query = filterQuery.trim().toLowerCase();
-    if (!query) return topics;
-    return topics.filter((topic) => topic.label.toLowerCase().includes(query));
+  const filteredResults = useMemo(() => {
+    return topics
+      .map((topic) => {
+        const id = bareTopicId(topic.id);
+        const match = findTopicMatch(topic.label, HELP_TOPIC_PLAIN_TEXT[id] ?? "", filterQuery);
+        return match ? { topic, match } : null;
+      })
+      .filter((result): result is { topic: CsmNavNode; match: TopicSearchMatch } => result !== null);
   }, [topics, filterQuery]);
 
   // Keeps the shown topic in sync with the URL's own hash — a bookmarked or
@@ -202,11 +216,26 @@ export default function HelpPage(): JSX.Element {
   // above in a loop, and so a hash that already matches (the initial render,
   // or an update that *originated* from `onHashChange` above) doesn't add a
   // redundant history entry.
+  //
+  // A *correction* — the current hash isn't a known, enabled topic at all
+  // (a bare `/help` load with an empty hash, or one naming a disabled/typo'd
+  // topic that `resolveInitialTopicId`/`onHashChange` already fell back away
+  // from) — uses `replaceState` instead of a real push: pushing here would
+  // leave a phantom history entry between "no topic" and the resolved one,
+  // so leaving the page needs two Back presses instead of one. A genuine
+  // topic-to-topic move (the current hash *is* a known topic, just not this
+  // one) still pushes, since that's exactly what makes Back/Forward step
+  // between previously-visited topics.
   useEffect(() => {
-    if (window.location.hash.slice(1) !== activeTopicId) {
-      window.location.hash = activeTopicId;
+    const currentHash = window.location.hash.slice(1);
+    if (currentHash === activeTopicId) return;
+    const isKnownTopic = topics.some((topic) => bareTopicId(topic.id) === currentHash);
+    if (!isKnownTopic) {
+      window.history.replaceState(null, "", `#${activeTopicId}`);
+      return;
     }
-  }, [activeTopicId]);
+    window.location.hash = activeTopicId;
+  }, [activeTopicId, topics]);
 
   // Scrolls the content pane back to its own top on every topic switch after
   // the first render — otherwise a short topic opened while scrolled halfway
@@ -297,13 +326,13 @@ export default function HelpPage(): JSX.Element {
               }}
             />
           </Box>
-          {filteredTopics.length === 0 ? (
+          {filteredResults.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
               No topics match &ldquo;{filterQuery}&rdquo;.
             </Typography>
           ) : (
             <List dense disablePadding>
-              {filteredTopics.map((topic) => {
+              {filteredResults.map(({ topic, match }) => {
                 const id = bareTopicId(topic.id);
                 const selected = id === activeTopicId;
                 const Icon = TOPIC_ICONS[id] ?? LifeBuoy;
@@ -315,12 +344,29 @@ export default function HelpPage(): JSX.Element {
                     selected={selected}
                     aria-current={selected ? "page" : undefined}
                     onClick={(event) => navigateToTopic(id, event)}
+                    sx={{ alignItems: "flex-start" }}
                   >
-                    <ListItemIcon sx={{ minWidth: 32, color: selected ? "primary.main" : "text.secondary" }}>
+                    <ListItemIcon sx={{ minWidth: 32, mt: "2px", color: selected ? "primary.main" : "text.secondary" }}>
                       <Icon size={18} />
                     </ListItemIcon>
                     <ListItemText
                       primary={topic.label}
+                      secondary={
+                        !match.matchedInTitle && match.snippet ? (
+                          <Typography
+                            component="span"
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: "block", overflowWrap: "anywhere" }}
+                          >
+                            {match.snippet.before}
+                            <Box component="mark" sx={{ bgcolor: "transparent", color: "text.primary", fontWeight: 700 }}>
+                              {match.snippet.match}
+                            </Box>
+                            {match.snippet.after}
+                          </Typography>
+                        ) : undefined
+                      }
                       slotProps={{ primary: { style: { fontWeight: selected ? 600 : 400 } } }}
                     />
                   </ListItemButton>

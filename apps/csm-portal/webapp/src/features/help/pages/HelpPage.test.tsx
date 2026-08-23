@@ -61,6 +61,34 @@ describe("HelpPage", () => {
     expect(screen.queryByRole("heading", { name: "Operations" })).toBeNull();
   });
 
+  it("corrects a bare /help load's empty hash in place, without adding a history entry", () => {
+    const lengthBefore = window.history.length;
+    render(<HelpPage />);
+
+    expect(window.location.hash).toBe("#overview");
+    expect(window.history.length).toBe(lengthBefore);
+  });
+
+  it("corrects the hash in place when it names a disabled topic, without adding a history entry", () => {
+    window.location.hash = "#operations";
+    setOverrides({ "help.operations": "hidden" });
+    const lengthBefore = window.history.length;
+    render(<HelpPage />);
+
+    expect(window.location.hash).toBe("#overview");
+    expect(window.history.length).toBe(lengthBefore);
+  });
+
+  it("pushes a real history entry for a genuine topic-to-topic navigation", () => {
+    render(<HelpPage />);
+    const lengthBefore = window.history.length;
+
+    fireEvent.click(screen.getByRole("link", { name: /^Next topic:/ }));
+
+    expect(window.location.hash).toBe("#workspace-basics");
+    expect(window.history.length).toBe(lengthBefore + 1);
+  });
+
   it("shows the topic named by the URL hash on a direct /help#<topic> load", () => {
     window.location.hash = "#operations";
     render(<HelpPage />);
@@ -130,6 +158,20 @@ describe("HelpPage", () => {
     expect(screen.queryByRole("link", { name: "Operations" })).toBeNull();
     // The content pane still shows whatever was active before filtering.
     expect(screen.getByRole("heading", { name: "Overview" })).toBeVisible();
+  });
+
+  it("surfaces a topic whose content (not its title) matches, with a snippet explaining why", () => {
+    // "Incidents" is a tab inside the Operations topic, not a Help topic of
+    // its own — searching it should still surface Operations rather than
+    // returning nothing.
+    render(<HelpPage />);
+    fireEvent.change(screen.getByPlaceholderText("Search topics…"), {
+      target: { value: "incidents" },
+    });
+
+    const operationsLink = screen.getByRole("link", { name: /Operations/ });
+    expect(operationsLink).toBeVisible();
+    expect(within(operationsLink).getByText("incidents")).toBeVisible();
   });
 
   it("shows a no-match message when the search box matches no topic", () => {
