@@ -168,24 +168,31 @@ func (c *EntityClient) GetClock(ctx context.Context, caseID, clockType string) (
 // SetTierReachedIfUnset calls
 // PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier} with
 // {"status": "reached"} and returns the (possibly pre-existing) reached
-// timestamp.
-func (c *EntityClient) SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (time.Time, error) {
+// timestamp, plus alreadyReached: whether this call is the one that just
+// recorded the tier (false) or it was already recorded by an earlier call
+// (true). Callers MUST gate any reaction to the tier being reached (e.g.
+// publishing a notification) on alreadyReached being false — see
+// entity-service's own doc comment on this field for why: the underlying
+// database write already atomically decides which caller "really" set it,
+// even when two callers race for the same tier at the same time.
+func (c *EntityClient) SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (reachedAt time.Time, alreadyReached bool, err error) {
 	body, err := json.Marshal(struct {
 		Status string `json:"status"`
 	}{Status: "reached"})
 	if err != nil {
-		return time.Time{}, fmt.Errorf("slaengine: encode SetTierReachedIfUnset request: %w", err)
+		return time.Time{}, false, fmt.Errorf("slaengine: encode SetTierReachedIfUnset request: %w", err)
 	}
 	path := "/cases/" + url.PathEscape(caseID) + "/sla-clocks/" + url.PathEscape(clockType) + "/tiers/" + url.PathEscape(tier)
 	respBody, err := c.do(ctx, http.MethodPatch, path, body)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, false, err
 	}
 	var parsed struct {
-		ReachedOn time.Time `json:"reachedOn"`
+		ReachedOn      time.Time `json:"reachedOn"`
+		AlreadyReached bool      `json:"alreadyReached"`
 	}
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return time.Time{}, fmt.Errorf("slaengine: decode SetTierReachedIfUnset response: %w", err)
+		return time.Time{}, false, fmt.Errorf("slaengine: decode SetTierReachedIfUnset response: %w", err)
 	}
-	return parsed.ReachedOn, nil
+	return parsed.ReachedOn, parsed.AlreadyReached, nil
 }

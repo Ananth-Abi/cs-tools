@@ -33,7 +33,7 @@ import (
 type entityClock interface {
 	RegisterClock(ctx context.Context, caseID, clockType string, startedAt, dueAt time.Time) error
 	GetClock(ctx context.Context, caseID, clockType string) (Clock, error)
-	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (time.Time, error)
+	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (reachedAt time.Time, alreadyReached bool, err error)
 }
 
 // wakeIndex abstracts WakeIndex for testability.
@@ -153,20 +153,19 @@ func tierTime(startedAt time.Time, d time.Duration, tier string) time.Time {
 // entity-service write already happened and is itself idempotent, so
 // re-attempting it on a retry is harmless).
 //
-// KNOWN LIMITATION: DueMembers doesn't claim a member before returning it.
-// RunTicker starts exactly one Tick loop per process (independent of
-// SLA_CONSUMER_COUNT, which only controls how many eventbus.Consumer
-// instances call Handle), so a single-replica deployment is unaffected —
-// but if this service is ever run as more than one replica against the
-// same Redis instance, each replica's own RunTicker loop can read and act
-// on the same due member in the same window, each publishing its own
-// events.TypeSLATierReached for that tier before either removes the wake
-// entry, producing duplicate tier-reached events for one crossing
-// (SetTierReachedIfUnset itself stays correct; only the count of published
-// events is affected). Closing this needs an atomic claim (e.g. a Redis
-// lease with a TTL, released on failure so a crashed replica doesn't strand
-// it) before Tick acts on a member — a real addition, not a quick fix, so
-// it's flagged here rather than built speculatively.
+// DueMembers itself doesn't claim a member before returning it, so if this
+// service is ever run as more than one replica against the same Redis
+// instance, each replica's own RunTicker loop can read and act on the same
+// due member in the same window — but this no longer produces a duplicate
+// events.TypeSLATierReached: SetTierReachedIfUnset's alreadyReached tells
+// processDueMember which caller actually won the race (entity-service's own
+// UPDATE ... WHERE ... IS NULL decides atomically, even under concurrent
+// callers), and only that caller publishes; the other sees alreadyReached
+// and just drops its now-stale wake entry. What multiple replicas still
+// cost is redundant work, not incorrect output: every replica that loses
+// the race still makes its own GetClock/SetTierReachedIfUnset round trip
+// to entity-service for nothing. Cheap enough at today's volume not to be
+// worth a Redis-side claim/lease on top of this.
 func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 	members, err := e.wake.DueMembers(ctx, now)
 	if err != nil {
@@ -198,9 +197,21 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 		return e.wake.RemoveWake(ctx, member)
 	}
 
-	reachedAt, err := e.entity.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
+	reachedAt, alreadyReached, err := e.entity.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
 	if err != nil {
 		return fmt.Errorf("set tier reached %s/%s/%s: %w", caseID, clockType, tier, err)
+	}
+	if alreadyReached {
+		// Some other caller already recorded this tier and (if it got
+		// that far) already published for it — e.g. another replica's
+		// ticker won the race for this same due member, or a future
+		// direct-to-entity-service fallback path already handled it.
+		// Publishing again here would be a duplicate notification for
+		// something that isn't actually new; just drop the now-stale wake
+		// entry without publishing.
+		slog.InfoContext(ctx, "slaengine: tier already reached by another caller, dropping stale wake entry without republishing",
+			"caseId", caseID, "clockType", clockType, "tier", tier, "reachedAt", reachedAt.Format(time.RFC3339))
+		return e.wake.RemoveWake(ctx, member)
 	}
 
 	envelope := events.Envelope{

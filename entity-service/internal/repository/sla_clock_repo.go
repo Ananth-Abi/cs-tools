@@ -42,9 +42,19 @@ type SLAClockRepository interface {
 	// SetTierReachedIfUnset writes reached_<tier>_at only if it is still
 	// null, and returns the timestamp that ends up stored either way —
 	// idempotent, so retrying a call whose response was lost (e.g. after a
-	// network blip) doesn't clobber the original reached time. Returns a
-	// *apierror.NotFoundError if no such clock has been registered.
-	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (time.Time, error)
+	// network blip) doesn't clobber the original reached time. alreadySet
+	// reports whether this specific call is the one that just wrote the
+	// value (false) or whether it was already set by an earlier call
+	// (true) — the underlying UPDATE's own WHERE ... IS NULL clause is
+	// what actually decides this atomically, so it's correct even when two
+	// callers race to set the same tier at the same time; only one of them
+	// can ever see alreadySet=false for a given tier. Callers that publish
+	// a notification on a successful set should gate that publish on
+	// alreadySet being false, not on the returned timestamp being valid
+	// (which it always is, either way) — otherwise a caller that merely
+	// rediscovers an already-reached tier will re-publish for it. Returns
+	// a *apierror.NotFoundError if no such clock has been registered.
+	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (reachedAt time.Time, alreadySet bool, err error)
 }
 
 type slaClockRepo struct {
@@ -126,31 +136,33 @@ func tierColumn(tier string) (string, error) {
 }
 
 // SetTierReachedIfUnset implements SLAClockRepository.
-func (r *slaClockRepo) SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (time.Time, error) {
+func (r *slaClockRepo) SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (time.Time, bool, error) {
 	col, err := tierColumn(tier)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, false, err
 	}
 
 	var reached time.Time
 	updateQuery := `UPDATE sla_clocks SET ` + col + ` = NOW(), updated_at = NOW() WHERE case_id = $1 AND clock_type = $2 AND ` + col + ` IS NULL RETURNING ` + col
 	err = r.db.QueryRow(ctx, updateQuery, caseID, clockType).Scan(&reached)
 	if err == nil {
-		return reached, nil
+		// This call's own UPDATE matched a row — it just wrote the value.
+		return reached, false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return time.Time{}, fmt.Errorf("set sla_clock tier reached: %w", err)
+		return time.Time{}, false, fmt.Errorf("set sla_clock tier reached: %w", err)
 	}
 
-	// Either the tier was already reached (read back the existing value
+	// The UPDATE's WHERE ... IS NULL matched zero rows: either the tier was
+	// already reached by an earlier call (read back that existing value
 	// below), or the clock doesn't exist at all.
 	selectQuery := `SELECT ` + col + ` FROM sla_clocks WHERE case_id = $1 AND clock_type = $2`
 	err = r.db.QueryRow(ctx, selectQuery, caseID, clockType).Scan(&reached)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return time.Time{}, &apierror.NotFoundError{Msg: "sla_clock not found for case " + caseID + " and clock type " + clockType}
+			return time.Time{}, false, &apierror.NotFoundError{Msg: "sla_clock not found for case " + caseID + " and clock type " + clockType}
 		}
-		return time.Time{}, fmt.Errorf("read sla_clock tier reached: %w", err)
+		return time.Time{}, false, fmt.Errorf("read sla_clock tier reached: %w", err)
 	}
 	if reached.IsZero() {
 		// The UPDATE's WHERE ... IS NULL matched zero rows because the
@@ -159,7 +171,7 @@ func (r *slaClockRepo) SetTierReachedIfUnset(ctx context.Context, caseID, clockT
 		// (another SetTierReachedIfUnset call would have already returned a
 		// non-zero value), surfaced rather than silently returned as a
 		// plausible-looking zero time.
-		return time.Time{}, fmt.Errorf("sla_clock tier %s for case %s has no reached timestamp after an unset UPDATE matched no rows", tier, caseID)
+		return time.Time{}, false, fmt.Errorf("sla_clock tier %s for case %s has no reached timestamp after an unset UPDATE matched no rows", tier, caseID)
 	}
-	return reached, nil
+	return reached, true, nil
 }

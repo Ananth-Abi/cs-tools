@@ -5053,6 +5053,15 @@ type SetSLAClockTierRequest struct {
 // ReachedOn is the timestamp now stored for that tier — either just written
 // by this call, or the pre-existing value if the tier was already reached
 // (the operation is idempotent; see the repository's SetTierReachedIfUnset).
+// AlreadyReached distinguishes those two cases: false means this call is
+// the one that just wrote ReachedOn; true means it was already set by an
+// earlier call. A caller that reacts to a tier being reached (e.g.
+// publishing a notification) must gate that reaction on AlreadyReached
+// being false — otherwise a caller that merely rediscovers an
+// already-reached tier (e.g. a stale scheduling entry rediscovered after
+// an outage, or a second replica racing the first) ends up reacting to it
+// a second time for nothing new.
 type SetSLAClockTierReachedResponse struct {
-	ReachedOn time.Time `json:"reachedOn"`
+	ReachedOn      time.Time `json:"reachedOn"`
+	AlreadyReached bool      `json:"alreadyReached"`
 }

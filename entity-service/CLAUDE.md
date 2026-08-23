@@ -93,7 +93,15 @@ Exposed at `POST /cases/{caseId}/sla-clocks` (register/reset),
 modeled as an enum rather than a bare boolean so a future status doesn't
 need a breaking change) to mark a `50`/`75`/`100` tier reached, idempotently
 — a second call for an already-reached tier returns the original timestamp,
-not an error. The sole caller today is `csm-notification-service`'s SLA timer engine
+not an error, plus `alreadyReached: true` so the caller can tell the two
+cases apart. That flag matters: it's what lets `csm-notification-service`'s
+SLA engine avoid re-publishing a tier-reached notification when two
+callers race to mark the same tier (e.g. two replicas' tickers, or a
+future direct-to-entity-service fallback rediscovering a tier the normal
+path already handled) — the underlying `UPDATE ... WHERE ... IS NULL`
+already decides atomically which caller "really" set it; `alreadyReached`
+is just that outcome surfaced to the caller instead of discarded. The sole
+caller today is `csm-notification-service`'s SLA timer engine
 (`internal/slaengine`), which owns the actual scheduling (a Redis wake index
 and ticker) — this service only stores the result of that scheduling, it does
 not compute or track wake times itself.

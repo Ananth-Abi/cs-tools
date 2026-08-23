@@ -12716,6 +12716,16 @@ components:
         reachedOn:
           type: string
           format: date-time
+        alreadyReached:
+          type: boolean
+          description: >-
+            False if this call is the one that just recorded the tier as
+            reached; true if it was already recorded by an earlier call.
+            Callers that react to a tier being reached (e.g. publishing a
+            notification) must gate that reaction on this being false, not
+            on reachedOn being present (which it always is, either way) —
+            otherwise a caller that merely rediscovers an already-reached
+            tier reacts to it again for nothing new.
 
     SearchEventPublishFailuresResponse:
       type: object
