@@ -36,10 +36,9 @@ var validCaseGithubIssueReasons = map[domain.CaseGithubIssueReason]struct{}{
 
 // caseGithubIssueActionableStates mirrors the SN scripted API's own gate
 // (CaseGithubIssueUtils.isCaseActionable / ALLOWED_CASE_STATES = ['1', '10',
-// '1002', '1003', '1006'] — see notes/sn-customer-portal-api/CHANGES-github-issues.md
-// in the planning repo). '1002' has no corresponding domain.CaseState today (not
-// in snStateIDMap), so it can never be produced by this service and is omitted
-// here; the four that do map are kept in sync with SN's list.
+// '1002', '1003', '1006']). '1002' has no corresponding domain.CaseState today
+// (not in snStateIDMap), so it can never be produced by this service and is
+// omitted here; the four that do map are kept in sync with SN's list.
 var caseGithubIssueActionableStates = map[domain.CaseState]struct{}{
 	domain.CaseStateOpen:           {},
 	domain.CaseStateWorkInProgress: {},

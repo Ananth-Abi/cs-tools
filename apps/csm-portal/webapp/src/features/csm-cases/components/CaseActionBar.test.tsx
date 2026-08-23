@@ -475,7 +475,7 @@ describe("CaseActionBar — Raise internal Git issue is blocked on a closed case
 
   // SN's own gate (CaseGithubIssueUtils.isCaseActionable) does not include
   // Awaiting info — mirrored here so the FE doesn't offer an action SN will
-  // 409 on. See notes/sn-customer-portal-api/CHANGES-github-issues.md.
+  // 409 on.
   it("disables the menu item while the case is awaiting info", () => {
     const onAction = vi.fn();
     render(

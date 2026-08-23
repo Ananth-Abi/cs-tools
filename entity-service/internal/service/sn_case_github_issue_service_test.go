@@ -183,8 +183,8 @@ func TestSNCaseGithubIssueService_CreateCaseGithubIssue_StateGate(t *testing.T) 
 	}
 
 	// States mirroring SN's ALLOWED_CASE_STATES ('1', '10', '1002', '1003',
-	// '1006' — see notes/sn-customer-portal-api/CHANGES-github-issues.md).
-	// '1002' has no domain.CaseState equivalent, so it isn't exercised here.
+	// '1006'). '1002' has no domain.CaseState equivalent, so it isn't
+	// exercised here.
 	blockedStates := []domain.CaseState{
 		domain.CaseStateAwaitingInfo,
 		domain.CaseStateSolutionProposed,

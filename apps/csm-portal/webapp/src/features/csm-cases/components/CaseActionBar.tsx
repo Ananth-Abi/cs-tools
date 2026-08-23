@@ -281,10 +281,9 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
   // Git issues may only be raised while the case is in a state SN's own
   // gate allows — CaseGithubIssueUtils.isCaseActionable's ALLOWED_CASE_STATES
   // ('1', '10', '1002', '1003', '1006': Open, Work in progress, [a legacy SN
-  // state id with no CSM-side equivalent], Waiting on WSO2, Reopened; see
-  // notes/sn-customer-portal-api/CHANGES-github-issues.md in the planning
-  // repo). Notably this does NOT include Awaiting info — anything outside
-  // this list (Awaiting info, Solution proposed, Closed) blocks the action.
+  // state id with no CSM-side equivalent], Waiting on WSO2, Reopened).
+  // Notably this does NOT include Awaiting info — anything outside this
+  // list (Awaiting info, Solution proposed, Closed) blocks the action.
   // `caseDetail.state` is the normalized label (see `uiStateFromBe`) — this
   // must match the real `CaseState` values (there is no "waiting_on_client"
   // state).
