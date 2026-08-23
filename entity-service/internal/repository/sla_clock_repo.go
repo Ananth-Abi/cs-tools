@@ -52,17 +52,18 @@ type SLAClockRepository interface {
 	//
 	// alreadySet reflects the database claim only — it says nothing about
 	// whether any caller's downstream reaction (e.g. publishing a
-	// notification) to winning that claim ever actually succeeded. A
-	// caller must NOT use alreadySet=true as a reason to skip its own
-	// reaction unless it separately, durably tracks whether that reaction
-	// was ever completed — otherwise a caller whose own reaction failed
-	// after it won the claim will see alreadySet=true on retry and skip
-	// the reaction forever, having never actually completed it once. This
-	// was a real bug caught in review on csm-notification-service's own
-	// use of this field (see that repo's internal/slaengine.Engine, and
-	// the CLAUDE.md note there) — don't reintroduce it here or in a future
-	// caller. Returns a *apierror.NotFoundError if no such clock has been
-	// registered.
+	// notification) to winning that claim ever actually succeeded. Using
+	// alreadySet=true to skip that reaction is a real, valid choice for a
+	// caller that wants duplicate-free rediscovery — csm-notification-service's
+	// internal/slaengine.Engine does exactly this (see that repo's CLAUDE.md
+	// for its full reasoning) — but it's a trade-off, not a free win:
+	// gating this way means a caller whose own reaction failed (or crashed)
+	// after it won the claim will, on retry, see alreadySet=true and skip
+	// the reaction forever, having never actually completed it once. Only
+	// gate a reaction on this if that residual risk is acceptable for your
+	// use case, or if you separately, durably track the reaction's own
+	// completion instead of relying on this field for it. Returns a
+	// *apierror.NotFoundError if no such clock has been registered.
 	SetTierReachedIfUnset(ctx context.Context, caseID, clockType, tier string) (reachedAt time.Time, alreadySet bool, err error)
 }
 

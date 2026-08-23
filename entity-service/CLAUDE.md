@@ -98,16 +98,21 @@ cases apart (the underlying `UPDATE ... WHERE ... IS NULL` already decides
 atomically which caller "really" set it; `alreadyReached` is just that
 outcome surfaced instead of discarded).
 
-**`alreadyReached` reflects the database claim only — never gate a
-caller's own reaction (e.g. publishing a notification) on it being false
-unless that reaction's completion is tracked separately and durably.** A
-caller whose reaction failed after it won the claim would otherwise see
-`alreadyReached=true` on retry and skip the reaction forever, having never
-completed it once — a real bug caught in review on
-`csm-notification-service`'s own use of this field (see that repo's
-`internal/slaengine.Engine` and its `CLAUDE.md`; it deliberately always
-retries its reaction regardless of this flag, accepting an occasional
-duplicate over a silently lost one). The sole caller today is
+**`alreadyReached` reflects the database claim only, not whether any
+caller's own reaction (e.g. publishing a notification) to winning that
+claim ever actually succeeded.** Gating a reaction on it being false is a
+real, valid choice when duplicate-free behavior matters more than
+guaranteed delivery — `csm-notification-service`'s
+`internal/slaengine.Engine` does exactly this (see that repo's `CLAUDE.md`
+for its full reasoning: it accepts the rare risk of a lost notification on
+an Event Hub publish failure in exchange for not duplicate-publishing every
+time a stale wake entry gets rediscovered, e.g. after a Redis outage) — but
+it is a trade-off, not a free win: a caller whose reaction failed after it
+won the claim will see `alreadyReached=true` on retry and skip the
+reaction forever, having never completed it once. Only gate a reaction on
+this field if that risk is acceptable for the use case, or if the
+reaction's own completion is tracked separately and durably instead. The
+sole caller today is
 `csm-notification-service`'s SLA timer engine
 (`internal/slaengine`), which owns the actual scheduling (a Redis wake index
 and ticker) — this service only stores the result of that scheduling, it does

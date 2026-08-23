@@ -5059,14 +5059,16 @@ type SetSLAClockTierRequest struct {
 //
 // AlreadyReached reflects only the database claim, not whether any
 // caller's downstream reaction to winning that claim (e.g. publishing a
-// notification) ever actually succeeded. Do NOT gate a reaction on
-// AlreadyReached being false unless that reaction's own completion is
-// also tracked durably and separately — a caller whose reaction failed
-// after it won the claim would otherwise see AlreadyReached=true on
-// retry and skip the reaction forever, having never completed it once.
-// This was a real bug caught in review on csm-notification-service's own
-// use of this field (see integrations/csm-notification-service's
-// internal/slaengine.Engine and its CLAUDE.md) — don't repeat it here.
+// notification) ever actually succeeded. Gating a reaction on
+// AlreadyReached being false is a real, valid choice when duplicate-free
+// behavior matters more than guaranteed delivery — integrations/csm-notification-service's
+// internal/slaengine.Engine does exactly this (see that repo's CLAUDE.md
+// for its full reasoning) — but it's a trade-off: a caller whose own
+// reaction failed after it won the claim will, on retry, see
+// AlreadyReached=true and skip the reaction forever, having never
+// completed it once. Only rely on this field to gate a reaction if that
+// residual risk is acceptable, or if the reaction's own completion is
+// tracked durably and separately instead.
 type SetSLAClockTierReachedResponse struct {
 	ReachedOn      time.Time `json:"reachedOn"`
 	AlreadyReached bool      `json:"alreadyReached"`

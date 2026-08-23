@@ -153,30 +153,32 @@ func tierTime(startedAt time.Time, d time.Duration, tier string) time.Time {
 // entity-service write already happened and is itself idempotent, so
 // re-attempting it on a retry is harmless).
 //
-// KNOWN LIMITATION: DueMembers doesn't claim a member before returning it,
-// so if this service is ever run as more than one replica against the
-// same Redis instance, each replica's own RunTicker loop can read and act
-// on the same due member in the same window, each publishing its own
-// events.TypeSLATierReached for that tier before either removes the wake
-// entry — a duplicate notification for one crossing.
+// ACCEPTED TRADE-OFF: processDueMember gates publishing on
+// SetTierReachedIfUnset's alreadyReached (skip if some earlier call already
+// claimed the tier) — a deliberate choice, made with eyes open to what it
+// costs. alreadyReached only reports whether the database claim succeeded,
+// not whether a notification was ever actually delivered: if the caller
+// that won the claim then fails to publish (Event Hub rejects the publish,
+// or this process crashes between the database write and the publish
+// call), a later rediscovery of that same tier will see alreadyReached=true
+// and skip publishing — the notification is then permanently lost, not
+// just delayed. That risk is judged acceptable here because a publish
+// failure to Azure Event Hub is rare, and clean, duplicate-free rediscovery
+// matters routinely, not just on the rare occasion a replica races
+// another: a planned (not yet built) fallback for when Redis itself is
+// unreachable — falling back to asking entity-service directly which
+// tiers are overdue — would, once Redis recovers, rediscover whatever
+// stale wake entries survived the outage. Without this gating, every one
+// of those would duplicate-publish on every recovery, not just
+// occasionally; that routine cost is what actually motivated keeping this
+// gating rather than the rare multi-replica race alone.
 //
-// SetTierReachedIfUnset's alreadyReached looks like an obvious fix for
-// this (skip publishing when someone else already claimed the tier) —
-// deliberately NOT used that way, because it makes a worse failure mode
-// possible: alreadyReached only reports whether the database claim
-// succeeded, not whether a notification was ever actually delivered. If
-// the caller that won the claim then fails to publish (a transient error,
-// or a crash between the database write and the publish call), every
-// later retry sees alreadyReached=true and, if gated on it, would drop
-// the wake entry without ever publishing — silently losing that tier's
-// notification forever, which is strictly worse than an occasional
-// duplicate. processDueMember always attempts to publish regardless of
-// alreadyReached for exactly this reason (see its own doc comment).
-// Properly closing the duplicate-under-concurrency gap needs a durable
-// delivery/outbox state tracked separately from the reached-claim, with a
-// lease or expiry so a crashed attempt's slot can still be retried by
-// someone else — a real addition, not a quick fix, so it's flagged here
-// rather than built speculatively.
+// If this trade-off ever stops being acceptable (e.g. Event Hub reliability
+// turns out worse in practice, or this service starts running multiple
+// replicas), the real fix is a durable delivery/outbox state tracked
+// separately from the reached-claim, with a lease or expiry so a failed
+// attempt's slot can still be retried by someone else — not built, and a
+// real addition, not a quick one.
 func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 	members, err := e.wake.DueMembers(ctx, now)
 	if err != nil {
@@ -193,13 +195,12 @@ func (e *Engine) Tick(ctx context.Context, now time.Time) error {
 }
 
 // processDueMember handles one due wake-index member: checks the clock
-// isn't paused, claims the tier as reached on entity-service, then always
-// attempts to publish events.TypeSLATierReached — deliberately regardless
-// of whether the claim reports alreadyReached, since that flag only
-// reflects the database write, not whether a notification was ever
-// actually delivered (see Tick's own doc comment for why gating on it is
-// unsafe). Only after publishing is removing the wake entry attempted, so
-// a publish failure leaves it in place for the next tick to retry.
+// isn't paused, claims the tier as reached on entity-service, and skips
+// publishing (just drops the wake entry) if that claim reports
+// alreadyReached — see Tick's own doc comment for the trade-off this
+// accepts. Otherwise it publishes events.TypeSLATierReached and only then
+// removes the wake entry, so a publish failure on this specific call
+// leaves the entry in place for the next tick to retry.
 func (e *Engine) processDueMember(ctx context.Context, member string) error {
 	caseID, clockType, tier, ok := parseWakeMember(member)
 	if !ok {
@@ -216,23 +217,24 @@ func (e *Engine) processDueMember(ctx context.Context, member string) error {
 		return e.wake.RemoveWake(ctx, member)
 	}
 
-	// alreadyReached is deliberately NOT used to skip publishing here — see
-	// this function's own doc comment above for why that's actually unsafe:
-	// it can't distinguish "someone else already delivered the
-	// notification" from "the database claim succeeded but the publish
-	// that was supposed to follow it failed or crashed," and treating the
-	// latter as the former means the notification is silently lost
-	// forever, not just duplicated. Always attempting to publish accepts
-	// the cheaper failure mode (an occasional duplicate under a
-	// hypothetical multi-replica race) over the more expensive one (a
-	// permanently dropped SLA breach notification).
 	reachedAt, alreadyReached, err := e.entity.SetTierReachedIfUnset(ctx, caseID, clockType, tier)
 	if err != nil {
 		return fmt.Errorf("set tier reached %s/%s/%s: %w", caseID, clockType, tier, err)
 	}
 	if alreadyReached {
-		slog.InfoContext(ctx, "slaengine: tier was already reached by an earlier call; republishing anyway since delivery isn't tracked separately from the claim",
+		// A deliberate, accepted trade-off — see this function's own doc
+		// comment above for the full reasoning: this skips publishing on
+		// the rare chance that the caller who won the claim already
+		// published but this caller can't tell that from "claimed but
+		// never got to publish." Chosen because a duplicate-free rediscovery
+		// path matters routinely (the planned Redis-outage fallback would
+		// otherwise duplicate on every recovery), while the residual risk
+		// this accepts — a publish to Event Hub failing, or this process
+		// crashing between the database write and the publish call — is
+		// judged rare enough to live with.
+		slog.InfoContext(ctx, "slaengine: tier already reached by another caller, dropping stale wake entry without republishing",
 			"caseId", caseID, "clockType", clockType, "tier", tier, "reachedAt", reachedAt.Format(time.RFC3339))
+		return e.wake.RemoveWake(ctx, member)
 	}
 
 	envelope := events.Envelope{

@@ -235,19 +235,14 @@ func TestEngine_Tick_FiresDueMemberAndPublishes(t *testing.T) {
 	}
 }
 
-// TestEngine_Tick_StillPublishesWhenAlreadyReached is a regression test for
-// a real bug caught in review: gating the publish on alreadyReached looks
-// like an obvious way to dedupe concurrent callers, but alreadyReached only
-// reflects whether entity-service's claim write succeeded, not whether a
-// notification was ever actually delivered. If the winning caller's own
-// publish then failed (or it crashed between the database write and the
-// publish call), every later retry would see alreadyReached=true — and,
-// gated on it, would drop the wake entry without ever publishing, silently
-// losing that tier's notification forever. So this must always attempt to
-// publish regardless of alreadyReached; see Tick's own doc comment for the
-// full reasoning and the known trade-off this accepts instead (an
-// occasional duplicate under a hypothetical multi-replica race).
-func TestEngine_Tick_StillPublishesWhenAlreadyReached(t *testing.T) {
+// TestEngine_Tick_SkipsPublishWhenAlreadyReached verifies the accepted
+// trade-off documented on Tick's own doc comment: when entity-service
+// reports the tier was already claimed by an earlier call, this engine
+// does not publish again — it just drops the now-stale wake entry. This is
+// a deliberate choice (favoring no duplicates over guaranteed retry of a
+// failed publish), not an oversight — see Tick's doc comment for the full
+// reasoning and the residual risk it accepts.
+func TestEngine_Tick_SkipsPublishWhenAlreadyReached(t *testing.T) {
 	reached := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	entity := &fakeEntityClock{tierResult: reached, tierAlreadyReached: true}
 	wake := &fakeWakeIndex{due: []string{"CASE-1|response|50"}}
@@ -258,11 +253,11 @@ func TestEngine_Tick_StillPublishesWhenAlreadyReached(t *testing.T) {
 		t.Fatalf("Tick() error = %v, want nil", err)
 	}
 
-	if len(pub.calls) != 1 {
-		t.Fatalf("expected a publish attempt even when alreadyReached=true (delivery isn't tracked separately from the claim), got %d", len(pub.calls))
+	if len(pub.calls) != 0 {
+		t.Fatalf("expected no publish when alreadyReached=true, got %d", len(pub.calls))
 	}
 	if len(wake.removed) != 1 || wake.removed[0] != "CASE-1|response|50" {
-		t.Errorf("expected the wake entry removed after a successful publish, removed = %v", wake.removed)
+		t.Errorf("expected the stale wake entry cleaned up regardless, removed = %v", wake.removed)
 	}
 }
 
