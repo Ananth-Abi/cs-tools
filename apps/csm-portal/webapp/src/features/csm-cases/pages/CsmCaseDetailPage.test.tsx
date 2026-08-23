@@ -270,6 +270,9 @@ vi.mock("@features/csm-cases/api/useCaseTags", () => ({
 vi.mock("@features/csm-cases/api/useCsmCaseGithubIssue", () => ({
   usePostCaseGithubIssue: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+vi.mock("@features/csm-cases/api/useRequestCaseUpdate", () => ({
+  useRequestCaseUpdate: () => ({ mutate: vi.fn(), isPending: false }),
+}));
 vi.mock("@features/csm-timecards/api/useTimeCards", () => ({
   usePostTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
@@ -350,6 +353,9 @@ vi.mock("@features/csm-cases/components/CreateTaskDialog", () => ({
   default: () => null,
 }));
 vi.mock("@features/csm-cases/components/AddTagDialog", () => ({
+  default: () => null,
+}));
+vi.mock("@features/csm-cases/components/RequestUpdateDialog", () => ({
   default: () => null,
 }));
 vi.mock("@features/csm-cases/components/ChildCasesWidget", () => ({

@@ -1091,6 +1091,38 @@ export interface BeCommentSearchResponse extends BeSearchResponseBase {
 }
 
 // ---------------------------------------------------------------------------
+// "Request update" nudges — POST /cases/{id}/request-update,
+// GET /case-update-request-templates
+// ---------------------------------------------------------------------------
+
+/**
+ * Which fixed reminder stage (or a caller-supplied custom message) to post.
+ * The category (generic vs. migration) is never part of the request — the
+ * backend derives it itself from the case's own `type`/`engagementType`.
+ */
+export type BeCaseUpdateRequestStage = "first" | "second" | "final" | "custom";
+
+/** Body of `POST /cases/{id}/request-update`. */
+export interface BeCaseUpdateRequestPayload {
+  stage: BeCaseUpdateRequestStage;
+  /** Required (non-empty) iff `stage` is `"custom"`; omitted/rejected otherwise. */
+  customContent?: string;
+}
+
+/** One category's fixed HTML message for each of the three reminder stages. */
+export interface BeCaseUpdateRequestTemplateSet {
+  first: string;
+  second: string;
+  final: string;
+}
+
+/** `GET /case-update-request-templates` response — both categories' full sets. */
+export interface BeCaseUpdateRequestTemplates {
+  generic: BeCaseUpdateRequestTemplateSet;
+  migration: BeCaseUpdateRequestTemplateSet;
+}
+
+// ---------------------------------------------------------------------------
 // Conversations (Novera chat sessions)
 // ---------------------------------------------------------------------------
 

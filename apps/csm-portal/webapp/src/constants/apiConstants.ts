@@ -123,6 +123,7 @@ export const ApiQueryKeys = {
   CSM_CASE_SLAS: "csm-case-slas",
   CSM_CASE_CHILDREN: "csm-case-children",
   CSM_CASE_SEARCH_BY_QUERY: "csm-case-search-by-query",
+  CSM_CASE_UPDATE_REQUEST_TEMPLATES: "csm-case-update-request-templates",
   CSM_PROJECTS: "csm-projects",
   CSM_PROJECT_DETAIL: "csm-project-detail",
   CSM_ACCOUNTS: "csm-accounts",

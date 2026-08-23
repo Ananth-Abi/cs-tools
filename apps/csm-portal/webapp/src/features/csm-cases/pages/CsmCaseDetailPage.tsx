@@ -103,6 +103,11 @@ import LinkCaseDialog, {
 import SetFixEtaDialog, {
   type FixEtaSavePayload,
 } from "@features/csm-cases/components/SetFixEtaDialog";
+import RequestUpdateDialog, {
+  type RequestUpdateSavePayload,
+} from "@features/csm-cases/components/RequestUpdateDialog";
+import { useRequestCaseUpdate } from "@features/csm-cases/api/useRequestCaseUpdate";
+import { deriveCaseUpdateRequestCategory } from "@features/csm-cases/utils/caseUpdateRequests";
 import CreateTaskDialog from "@features/csm-cases/components/CreateTaskDialog";
 import AddTagDialog from "@features/csm-cases/components/AddTagDialog";
 import { useCreateCaseTask } from "@features/csm-cases/api/useCreateCaseTask";
@@ -509,6 +514,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const createTask = useCreateCaseTask(caseId);
   const addTag = useAddCaseTag(caseId);
   const removeTag = useRemoveCaseTag(caseId);
+  const requestCaseUpdate = useRequestCaseUpdate();
   const findMyOngoingCases = useFindMyOngoingCases();
   const recordView = useRecordRecentView();
   const claims = useIdTokenClaims();
@@ -555,6 +561,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [fixEtaOpen, setFixEtaOpen] = useState(false);
+  const [requestUpdateOpen, setRequestUpdateOpen] = useState(false);
   const [addTagOpen, setAddTagOpen] = useState(false);
   // ISSU-026: closing or proposing a solution opens this instead of PATCHing
   // immediately — it collects the Post Resolution Activity and doubles as
@@ -1127,6 +1134,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
+      // Request update opens the reminder-template dialog; the POST happens
+      // in onRequestUpdate once a stage (or custom message) is confirmed.
+      if (action.secondary === "request_update") {
+        setRequestUpdateOpen(true);
+        return;
+      }
+
       // Pause / resume the work sub-state via PATCH { workState }. Only for an
       // in-progress case assigned to the current user. Pausing is a direct
       // single-field patch. Resuming sets this case `ongoing`, so it runs the
@@ -1550,6 +1564,37 @@ export default function CsmCaseDetailPage(): JSX.Element {
       });
     },
     [patchCase, showError],
+  );
+
+  const onRequestUpdate = useCallback(
+    (payload: RequestUpdateSavePayload) => {
+      if (!caseId) return;
+      requestCaseUpdate.mutate(
+        { caseId, ...payload },
+        {
+          onSuccess: () => {
+            setRequestUpdateOpen(false);
+            setFeedback({
+              message: "Update request posted.",
+              severity: "success",
+              sticky: false,
+            });
+          },
+          onError: (err) => {
+            // 403 (not the assigned engineer) / 409 (case moved out of the
+            // eligible state since the dialog opened) both carry an
+            // actionable, specific backend message — surface it instead of a
+            // generic fallback, same treatment as every other 4xx on this page.
+            const msg =
+              err instanceof BackendApiError && err.status < 500 && err.message
+                ? err.message
+                : "Could not post the update request.";
+            showError(msg, err);
+          },
+        },
+      );
+    },
+    [caseId, requestCaseUpdate, showError],
   );
 
   const onAddTag = useCallback(
@@ -2615,6 +2660,15 @@ export default function CsmCaseDetailPage(): JSX.Element {
           isSaving={patchCase.isPending}
           onClose={() => setFixEtaOpen(false)}
           onSave={onSetFixEta}
+        />
+      )}
+
+      {requestUpdateOpen && (
+        <RequestUpdateDialog
+          category={deriveCaseUpdateRequestCategory(c)}
+          isSaving={requestCaseUpdate.isPending}
+          onClose={() => setRequestUpdateOpen(false)}
+          onSave={onRequestUpdate}
         />
       )}
 
