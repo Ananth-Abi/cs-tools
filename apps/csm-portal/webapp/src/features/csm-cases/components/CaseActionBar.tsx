@@ -32,6 +32,7 @@ import {
   ChevronDown,
   Clock,
   Copy,
+  FileText,
   Gauge,
   GitBranch,
   GitPullRequest,
@@ -211,6 +212,14 @@ interface SecondaryItem {
  *   - Edit case details              → subject/description/deployment/deployed product (see EditCaseDetailsDialog.tsx)
  *   - Create incident from case      → ISSU-021 (POST /incidents { parentId }, see
  *                                       CreateIncidentPage.tsx's read of the nav state)
+ *   - Create service request…        → navigates to the service-request create form
+ *                                       pre-linked to this case (POST /cases { type:
+ *                                       "service_request", relatedCaseId }, see
+ *                                       CreateServiceRequestPage.tsx's read of the nav
+ *                                       state). Mirrors the same action already reachable
+ *                                       from the Related tab's Linked service requests
+ *                                       card — kept in both places, same as "Create change
+ *                                       request…" below.
  *   - Link to incident               → ISSU-021 (PATCH /cases/{id} { parentId }, see
  *                                       LinkIncidentDialog.tsx)
  *   - Raise Git issue                → ISSU-020
@@ -368,6 +377,13 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
       key: "create_incident",
       label: "Create incident from case…",
       icon: <AlertTriangle size={16} />,
+      disabled: caseClosed,
+      tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
+    },
+    {
+      key: "create_service_request",
+      label: "Create service request…",
+      icon: <FileText size={16} />,
       disabled: caseClosed,
       tooltip: caseClosed ? "This case is closed — it's read-only." : undefined,
     },

@@ -402,14 +402,15 @@ describe("CaseActionBar — create related case (closed-case reopen replacement)
   });
 });
 
-describe("CaseActionBar — Create incident from case / Link to incident (ISSU-021)", () => {
-  // Both now have a real backend flow (CsmCaseDetailPage.tsx dispatches
-  // "create_incident" to CreateIncidentPage's nav state, and "link_incident"
-  // opens LinkIncidentDialog), so they follow the same closed-case
-  // read-only gate as every other secondary item rather than staying
-  // permanently disabled.
+describe("CaseActionBar — Create incident from case / Create service request / Link to incident (ISSU-021)", () => {
+  // All three now have a real backend flow (CsmCaseDetailPage.tsx dispatches
+  // "create_incident" and "create_service_request" to their respective
+  // create form's nav state, and "link_incident" opens LinkIncidentDialog),
+  // so they follow the same closed-case read-only gate as every other
+  // secondary item rather than staying permanently disabled.
   const ITEMS: [RegExp, string][] = [
     [/create incident from case/i, "create_incident"],
+    [/create service request/i, "create_service_request"],
     [/link to incident/i, "link_incident"],
   ];
 

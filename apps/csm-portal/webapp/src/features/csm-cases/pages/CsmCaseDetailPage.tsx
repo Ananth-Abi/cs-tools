@@ -1086,6 +1086,23 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
+      // Create service request navigates to the service-request create form,
+      // pre-filled with this case as the new SR's linked case — same nav-state
+      // shape and target route as the Related tab's "Linked service requests"
+      // card (see that widget's onCreateServiceRequest above); this is just a
+      // second entry point onto the same flow, mirroring create_incident.
+      if (action.secondary === "create_service_request" && data) {
+        const navState: CreateServiceRequestFromCaseNavState = {
+          projectId: data.projectId,
+          relatedCaseId: data.id,
+          relatedCaseNumber: data.caseNumber,
+          deploymentId: data.productContext.deploymentId,
+          deployedProductId: data.productContext.deployedProductId,
+        };
+        navigate("/operations/service-requests/new", { state: navState });
+        return;
+      }
+
       // Create change request navigates to the change-request create form,
       // pre-filled with this service request as the new change request's
       // "Originating service request" — mirrors the create_incident handler
