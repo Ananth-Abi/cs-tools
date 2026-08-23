@@ -1590,6 +1590,9 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			if req.IssueType != nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "issueType is only accepted when type is \"case\""}
 			}
+			if req.Severity != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity may only accompany type when type is \"case\""}
+			}
 			if !validEngagementType[*req.EngagementType] {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType contains invalid value: " + string(*req.EngagementType)}
 			}
@@ -1607,6 +1610,9 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			}
 			if req.EngagementType != nil {
 				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "engagementType is only accepted when type is \"engagement\""}
+			}
+			if req.Severity != nil {
+				return domain.UpdateCaseResponse{}, &apierror.ValidationError{Msg: "severity may only accompany type when type is \"case\""}
 			}
 			if err := validateUUIDs("catalogId", []string{*req.CatalogID}); err != nil {
 				return domain.UpdateCaseResponse{}, err

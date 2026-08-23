@@ -925,6 +925,53 @@ func TestSNCaseService_UpdateCase_TypeTransfer_ServiceRequestRequiresVariables(t
 	}
 }
 
+func TestSNCaseService_UpdateCase_TypeTransfer_SeverityRejectedForOtherTargets(t *testing.T) {
+	sev := domain.CaseSeverityHigh
+	engagement := domain.EngagementTypeMigration
+	catalogUUID := "44444444-4444-4444-4444-444444444444"
+	catalogItemUUID := "55555555-5555-5555-5555-555555555555"
+	variableUUID := "66666666-6666-6666-6666-666666666666"
+	client := newTestCaseClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("backing service must not be called for a mismatched transfer")
+		w.WriteHeader(http.StatusOK)
+	})
+	svc := NewServiceNowCaseService(client, nil)
+
+	tests := []struct {
+		name string
+		req  domain.UpdateCaseRequest
+	}{
+		{
+			name: "engagement",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("engagement"), EngagementType: &engagement, Severity: &sev,
+			},
+		},
+		{
+			name: "service_request",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("service_request"),
+				CatalogID: &catalogUUID, CatalogItemID: &catalogItemUUID,
+				Variables: []domain.Variable{{ID: variableUUID, Value: "Scaling for a launch"}},
+				Severity:  &sev,
+			},
+		},
+		{
+			name: "security_report_analysis",
+			req: domain.UpdateCaseRequest{
+				ID: testDeploymentUUID, Type: strPtr("security_report_analysis"), Severity: &sev,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := svc.UpdateCase(contextWithUserIDToken("token"), tt.req); err == nil {
+				t.Fatalf("expected severity to be rejected for type %q", tt.name)
+			}
+		})
+	}
+}
+
 func jsonEqual(got, want any) bool {
 	switch w := want.(type) {
 	case bool:
