@@ -82,13 +82,24 @@ function widget(id: string, section?: string): BeDashboardWidget {
 
 function renderGrid(widgets: BeDashboardWidget[]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const utils = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <DashboardWidgetGrid widgets={widgets} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return {
+    ...utils,
+    rerenderWidgets: (nextWidgets: BeDashboardWidget[]) =>
+      utils.rerender(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter>
+            <DashboardWidgetGrid widgets={nextWidgets} />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      ),
+  };
 }
 
 describe("DashboardWidgetGrid section refresh 'Last refreshed' hint", () => {
@@ -167,5 +178,26 @@ describe("DashboardWidgetGrid section refresh 'Last refreshed' hint", () => {
     // "Last refreshed" label of its own yet).
     expect(namedSectionRefresh).not.toBeDisabled();
     expect(screen.getAllByText(/Last refreshed/)).toHaveLength(1);
+  });
+
+  it("keeps the unnamed section's refresh state stable when a named section is inserted ahead of it", async () => {
+    // The unnamed section starts at index 0 (no named section yet), refresh
+    // it, then insert a named section ahead of it so the unnamed section's
+    // array index shifts from 0 to 1. An index-derived key would silently
+    // orphan the "Last refreshed" state recorded under the old index.
+    const { rerenderWidgets } = renderGrid([widget("w1")]);
+
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(1));
+
+    const unnamedSectionRefresh = screen.getByRole("button", { name: "Refresh section" });
+    fireEvent.click(unnamedSectionRefresh);
+    await waitFor(() => expect(screen.getByText(/Last refreshed\s+just now/)).toBeInTheDocument());
+
+    rerenderWidgets([widget("w2", "New Section"), widget("w1")]);
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+
+    // Still present, still keyed to the same (now index-1) unnamed section —
+    // an index-based key would have shown this as never-refreshed instead.
+    expect(screen.getByText(/Last refreshed\s+just now/)).toBeInTheDocument();
   });
 });
