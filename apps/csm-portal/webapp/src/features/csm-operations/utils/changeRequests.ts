@@ -15,6 +15,7 @@
 // under the License.
 
 import type {
+  BeChangeRequestApproval,
   BeChangeRequestDetail,
   BeChangeRequestImpact,
   BeChangeRequestState,
@@ -68,6 +69,23 @@ const IMPACT_COLOR: Record<BeChangeRequestImpact, ChipColor> = {
 
 /** All CR states, for a filter control. */
 export const CHANGE_REQUEST_STATES = Object.keys(STATE_LABEL) as BeChangeRequestState[];
+
+/**
+ * The 9 states that make up the CR's linear forward path, in order —
+ * `CHANGE_REQUEST_STATES` minus `rollback`/`canceled`. Those two are
+ * destructive off-ramps reachable from several points in the path (see
+ * `DESTRUCTIVE_TRANSITIONS` below), not sequential steps in it, so a lifecycle
+ * step indicator built from this array should render them separately rather
+ * than forcing them into the same line.
+ */
+export const CHANGE_REQUEST_FORWARD_STATES = CHANGE_REQUEST_STATES.filter(
+  (s) => s !== "rollback" && s !== "canceled",
+);
+
+/** True for `rollback`/`canceled`: an off-ramp from the linear forward path, not a step in it. */
+export function isChangeRequestOffRampState(state?: string | null): boolean {
+  return state === "rollback" || state === "canceled";
+}
 
 /** All CR impact levels, for a filter control. */
 export const CHANGE_REQUEST_IMPACTS = Object.keys(IMPACT_LABEL) as BeChangeRequestImpact[];
@@ -141,6 +159,30 @@ export function approvalStatusLabel(status?: string | null): string {
 export function approvalStatusColor(status?: string | null): ChipColor {
   if (!status) return "default";
   return APPROVAL_STATUS_COLOR[status.toUpperCase()] ?? "default";
+}
+
+/** Stage-level statuses that mean the stage is actively waiting on someone. */
+const WAITING_APPROVAL_STATUSES = new Set(["PENDING", "REQUESTED"]);
+
+/**
+ * Plain-language reason a change request isn't moving on its own right now,
+ * derived from its approval stages (`GET /change-requests/{id}/approvals`) —
+ * the same data `ChangeRequestApprovals` renders. Names the first stage still
+ * waiting on someone (in stage order, not necessarily severity order): e.g.
+ * "Awaiting Authorize approval" or, when the stage carries a named approver
+ * group, "Awaiting Devops Approval". Returns `null` when nothing is currently
+ * blocking on approval — no waiting stage, or the approvals haven't loaded
+ * yet — so callers should treat `null` as "no reason to show", not an error.
+ */
+export function changeRequestBlockingReason(
+  approvals: BeChangeRequestApproval[] | undefined,
+): string | null {
+  const waiting = approvals?.find((a) => WAITING_APPROVAL_STATUSES.has(a.status.trim().toUpperCase()));
+  if (!waiting) return null;
+  const who = waiting.approverName?.trim() || waiting.stage;
+  // Approver-group names sometimes already say "Approval" ("Devops
+  // Approval"); avoid a doubled "approval approval" in that case.
+  return /approval/i.test(who) ? `Awaiting ${who}` : `Awaiting ${who} approval`;
 }
 
 // ---------------------------------------------------------------------------
