@@ -82,6 +82,8 @@ type entityCaseClient interface {
 	SearchCaseAttachments(ctx context.Context, body []byte) ([]byte, error)
 	GetCaseAttachmentContent(ctx context.Context, attachmentID string) ([]byte, string, error)
 	DeleteCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	GetAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	UpdateAttachment(ctx context.Context, attachmentID string, body []byte) ([]byte, error)
 	CreateCallRequest(ctx context.Context, body []byte) ([]byte, error)
 	SearchCallRequests(ctx context.Context, body []byte) ([]byte, error)
 	SearchAllCallRequests(ctx context.Context, body []byte) ([]byte, error)
@@ -658,6 +660,75 @@ func (h *CaseHandler) DeleteCaseAttachment(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity DeleteCaseAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to delete case attachment.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// GetAttachment handles GET /attachments/{id}.
+// Returns the attachment's metadata as JSON; for the binary file contents, see
+// GetCaseAttachmentContent (GET /attachments/{id}/content).
+func (h *CaseHandler) GetAttachment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	attachmentID := r.PathValue("id")
+	if attachmentID == "" || !uuidRe.MatchString(attachmentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.GetAttachment(r.Context(), attachmentID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve attachment.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// UpdateAttachment handles PATCH /attachments/{id}.
+// Accepts referenceId, referenceType, and optionally name/description; the body
+// is forwarded verbatim, since the requirement that at least one of
+// name/description is present is validated upstream by the entity service.
+func (h *CaseHandler) UpdateAttachment(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	attachmentID := r.PathValue("id")
+	if attachmentID == "" || !uuidRe.MatchString(attachmentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.UpdateAttachment(r.Context(), attachmentID, body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity UpdateAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
+		mapUpstreamError(w, err, "Failed to update attachment.")
 		return
 	}
 

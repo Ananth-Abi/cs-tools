@@ -956,6 +956,115 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
 
   /attachments/{id}:
+    get:
+      summary: Get a case attachment's metadata.
+      operationId: getAttachment
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the attachment.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    patch:
+      summary: Update a case attachment's name and/or description.
+      operationId: updateAttachment
+      requestBody:
+        description: At least one of name or description must be provided (enforced upstream by the entity service).
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentUpdatePayload'
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the attachment.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "409":
+          description: Conflict — upstream rejected the update (e.g. neither name nor description provided).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
     delete:
       summary: Delete a case attachment (ServiceNow data source only).
       operationId: deleteCaseAttachment
@@ -9177,6 +9286,24 @@ components:
         - change_request
         - deployment
         - incident
+
+    AttachmentUpdatePayload:
+      type: object
+      required: [referenceId, referenceType]
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+          description: UUID of the reference entity (case, change request, etc.)
+        referenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        name:
+          type: string
+          description: New file name. At least one of name or description is required.
+        description:
+          type: string
+          nullable: true
+          description: New description. At least one of name or description is required.
 
     AttachmentSearchPayload:
       type: object

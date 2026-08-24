@@ -1957,6 +1957,202 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 	})
 }
 
+// ----- GetAttachment -----
+
+func TestGetAttachment(t *testing.T) {
+	const testAttachmentID = "22222222-2222-2222-2222-222222222222"
+
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID, nil)
+		r.SetPathValue("id", testAttachmentID)
+		w := httptest.NewRecorder()
+		h.GetAttachment(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects empty attachment ID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/", nil))
+		w := httptest.NewRecorder()
+		h.GetAttachment(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects non-UUID attachment ID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/not-a-uuid", nil))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.GetAttachment(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("forwards attachment ID and returns upstream metadata", func(t *testing.T) {
+		const upstreamResp = `{"id":"` + testAttachmentID + `","name":"screenshot.png","description":"a screenshot"}`
+		var capturedID string
+		client := &mockEntityCaseClient{
+			getAttachmentFn: func(_ context.Context, attachmentID string) ([]byte, error) {
+				capturedID = attachmentID
+				return []byte(upstreamResp), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID, nil))
+		r.SetPathValue("id", testAttachmentID)
+		w := httptest.NewRecorder()
+		h.GetAttachment(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+		if capturedID != testAttachmentID {
+			t.Errorf("upstream received attachmentID %q, want %q", capturedID, testAttachmentID)
+		}
+		if w.Body.String() != upstreamResp {
+			t.Errorf("body = %q, want %q", w.Body.String(), upstreamResp)
+		}
+	})
+
+	t.Run("maps upstream errors", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve attachment.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					getAttachmentFn: func(_ context.Context, _ string) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID, nil))
+				r.SetPathValue("id", testAttachmentID)
+				w := httptest.NewRecorder()
+				h.GetAttachment(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+}
+
+// ----- UpdateAttachment -----
+
+func TestUpdateAttachment(t *testing.T) {
+	const testAttachmentID = "22222222-2222-2222-2222-222222222222"
+	const validPayload = `{"referenceId":"11111111-1111-1111-1111-111111111111","referenceType":"case","name":"renamed.png"}`
+
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := httptest.NewRequest(http.MethodPatch, "/attachments/"+testAttachmentID, strings.NewReader(validPayload))
+		r.SetPathValue("id", testAttachmentID)
+		w := httptest.NewRecorder()
+		h.UpdateAttachment(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects empty attachment ID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/", strings.NewReader(validPayload)))
+		w := httptest.NewRecorder()
+		h.UpdateAttachment(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects non-UUID attachment ID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/not-a-uuid", strings.NewReader(validPayload)))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.UpdateAttachment(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/"+testAttachmentID, strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
+		r.SetPathValue("id", testAttachmentID)
+		w := httptest.NewRecorder()
+		h.UpdateAttachment(w, r)
+		assertStatus(t, w, http.StatusRequestEntityTooLarge)
+		assertErrorMessage(t, w, ErrMsgTooLarge)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects invalid JSON body", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/"+testAttachmentID, strings.NewReader(`not-json`)))
+		r.SetPathValue("id", testAttachmentID)
+		w := httptest.NewRecorder()
+		h.UpdateAttachment(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("forwards attachment ID and body, returns 200 with upstream response", func(t *testing.T) {
+		var capturedID string
+		var capturedBody []byte
+		const upstreamResp = `{"id":"` + testAttachmentID + `","name":"renamed.png"}`
+		client := &mockEntityCaseClient{
+			updateAttachmentFn: func(_ context.Context, attachmentID string, body []byte) ([]byte, error) {
+				capturedID = attachmentID
+				capturedBody = body
+				return []byte(upstreamResp), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/"+testAttachmentID, strings.NewReader(validPayload)))
+		r.SetPathValue("id", testAttachmentID)
+		w := httptest.NewRecorder()
+		h.UpdateAttachment(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+		if capturedID != testAttachmentID {
+			t.Errorf("upstream received attachmentID %q, want %q", capturedID, testAttachmentID)
+		}
+		if string(capturedBody) != validPayload {
+			t.Errorf("upstream received body %q, want %q", capturedBody, validPayload)
+		}
+		if w.Body.String() != upstreamResp {
+			t.Errorf("body = %q, want %q", w.Body.String(), upstreamResp)
+		}
+	})
+
+	t.Run("maps upstream errors", func(t *testing.T) {
+		for _, tc := range upstreamErrors("Failed to update attachment.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					updateAttachmentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/"+testAttachmentID, strings.NewReader(validPayload)))
+				r.SetPathValue("id", testAttachmentID)
+				w := httptest.NewRecorder()
+				h.UpdateAttachment(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+}
+
 func TestCreateCaseGithubIssue(t *testing.T) {
 	const caseID = "11111111-1111-1111-1111-111111111111"
 
