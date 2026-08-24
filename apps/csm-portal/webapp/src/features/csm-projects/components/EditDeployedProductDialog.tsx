@@ -21,51 +21,68 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  IconButton,
   Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   Tabs,
   TextField,
-  Typography,
 } from "@wso2/oxygen-ui";
-import { Pencil, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
-import { useMemo, useState, type JSX } from "react";
+import { useState, type JSX } from "react";
 import type {
   BeDeployedProduct,
   BeDeployedProductDetailUpdatePayload,
   BeProductUpdate,
 } from "@api/backend/types";
+import UpdateHistoryPanel, {
+  type UpdateHistoryFormState,
+} from "@features/csm-projects/components/UpdateHistoryPanel";
 
 interface EditDeployedProductDialogProps {
   deployedProduct: BeDeployedProduct;
-  /** True while the PATCH is in flight; disables actions. */
+  /** True while the Details-tab PATCH is in flight; disables Details fields/Save. */
   isSaving: boolean;
   onClose: () => void;
-  /** Persist the changed detail fields (only changed fields are sent). */
-  onSave: (payload: BeDeployedProductDetailUpdatePayload) => void;
+  /** Persist the changed detail fields only (only changed fields are sent). */
+  onSaveDetails: (payload: BeDeployedProductDetailUpdatePayload) => void;
+  /**
+   * Persist the whole update-history array immediately. Independent of
+   * {@link onSaveDetails} — does not close the dialog either way; the caller
+   * resolves/rejects based on the PATCH result so the history panel can show
+   * inline feedback.
+   */
+  onSaveHistory: (updates: BeProductUpdate[]) => Promise<void>;
 }
 
 const DESCRIPTION_MAX = 4000;
 
-/** Deep-enough equality for the update-history array (small, plain objects). */
-function updatesEqual(a: BeProductUpdate[], b: BeProductUpdate[]): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+function updateHistoryFooterLabel(action: UpdateHistoryFormState["saveAction"]): string {
+  switch (action) {
+    case "delete":
+      return "Deleting Update...";
+    case "edit":
+      return "Saving Update...";
+    default:
+      return "Adding...";
+  }
 }
 
 /**
  * Edit a deployed product: its cores/tps/description (Details tab) and its
- * update-level history (Update History tab), both via
+ * update-level history (Update History tab), via
  * `PATCH /deployments/{deploymentId}/products/{productId}` (detail variant).
  *
- * Only changed fields are sent — the BE requires minProperties 1, so Save is
- * disabled until at least one field differs across either tab. The Update
- * History tab is a client-side array editor: add/edit/delete a row locally,
- * then Save PATCHes the *whole* resulting array (there is no per-entry
- * endpoint) alongside any changed detail fields.
+ * The two tabs are independent saves, matching customer-portal's
+ * `ManageProductModal`/`UpdateHistoryTab` interaction:
+ *  - Details tab: only changed fields are sent (BE requires minProperties 1);
+ *    Save is disabled until at least one field differs. On success the
+ *    dialog closes.
+ *  - Update History tab: add/edit/delete each PATCH the whole resulting
+ *    array immediately (there is no per-entry endpoint) via
+ *    {@link UpdateHistoryPanel}; the dialog stays open either way, showing
+ *    inline feedback in the panel itself.
+ *
+ * The footer's action button switches with the active tab: "Save changes"
+ * on Details, "Add update" (label reflecting the in-flight action) on Update
+ * History — the latter is bound to the history panel's own add-form submit
+ * via state the panel lifts up through {@link onFormStateChange}.
  *
  * Deactivation is a separate concern handled via a confirm dialog in
  * {@link DeployedProductsPanel}, not here — keeping the two BE shapes distinct
@@ -77,7 +94,8 @@ export default function EditDeployedProductDialog({
   deployedProduct,
   isSaving,
   onClose,
-  onSave,
+  onSaveDetails,
+  onSaveHistory,
 }: EditDeployedProductDialogProps): JSX.Element {
   const [tab, setTab] = useState(0);
 
@@ -105,86 +123,24 @@ export default function EditDeployedProductDialog({
   const tpsChanged = tpsNum !== originalTps;
   const descriptionChanged = description.trim() !== originalDescription;
 
-  // --- Update History tab state -----------------------------------------
-  const originalUpdates = useMemo<BeProductUpdate[]>(
-    () => deployedProduct.updates ?? [],
-    [deployedProduct.updates],
-  );
-  const [updates, setUpdates] = useState<BeProductUpdate[]>(originalUpdates);
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
-  const [rowLevel, setRowLevel] = useState("");
-  const [rowDate, setRowDate] = useState("");
-  const [rowDetails, setRowDetails] = useState("");
+  const detailsPayload: BeDeployedProductDetailUpdatePayload = {};
+  if (coresChanged) detailsPayload.cores = coresNum;
+  if (tpsChanged) detailsPayload.tps = tpsNum;
+  if (descriptionChanged) {
+    detailsPayload.description = description.trim().length > 0 ? description.trim() : null;
+  }
 
-  const updatesChanged = !updatesEqual(updates, originalUpdates);
-
-  const rowLevelNum = rowLevel.trim() === "" ? null : Number(rowLevel);
-  const rowLevelError =
-    rowLevel.trim() !== "" && (!Number.isInteger(rowLevelNum) || (rowLevelNum as number) < 0);
-  const canAddOrSaveRow =
-    rowLevel.trim() !== "" && !rowLevelError && rowDate.trim() !== "";
-
-  const resetRowForm = (): void => {
-    setEditingIndex(null);
-    setRowLevel("");
-    setRowDate("");
-    setRowDetails("");
-  };
-
-  const handleAddOrSaveRow = (): void => {
-    if (!canAddOrSaveRow) return;
-    const entry: BeProductUpdate = {
-      updateLevel: rowLevelNum as number,
-      date: rowDate,
-      details: rowDetails.trim() ? rowDetails.trim() : undefined,
-    };
-    if (editingIndex === null) {
-      setUpdates((prev) => [...prev, entry]);
-    } else {
-      setUpdates((prev) => prev.map((u, i) => (i === editingIndex ? entry : u)));
-    }
-    resetRowForm();
-  };
-
-  const handleEditRow = (index: number): void => {
-    const u = updates[index];
-    setEditingIndex(index);
-    setRowLevel(String(u.updateLevel));
-    setRowDate(u.date);
-    setRowDetails(u.details ?? "");
-  };
-
-  const handleDeleteRow = (index: number): void => {
-    setUpdates((prev) => prev.filter((_, i) => i !== index));
-    if (editingIndex === index) resetRowForm();
-  };
-
-  // --- Combined save ------------------------------------------------------
-  const payload = useMemo<BeDeployedProductDetailUpdatePayload>(() => {
-    const next: Record<string, unknown> = {};
-    if (coresChanged) next.cores = coresNum;
-    if (tpsChanged) next.tps = tpsNum;
-    if (descriptionChanged) {
-      next.description = description.trim().length > 0 ? description.trim() : null;
-    }
-    if (updatesChanged) next.updates = updates;
-    return next as BeDeployedProductDetailUpdatePayload;
-  }, [
-    coresChanged,
-    tpsChanged,
-    descriptionChanged,
-    coresNum,
-    tpsNum,
-    description,
-    updatesChanged,
-    updates,
-  ]);
-
-  const canSave =
+  const canSaveDetails =
     !isSaving &&
     !coresError &&
     !tpsError &&
-    (coresChanged || tpsChanged || descriptionChanged || updatesChanged);
+    (coresChanged || tpsChanged || descriptionChanged);
+
+  // --- Update History tab state -----------------------------------------
+  const updates = deployedProduct.updates ?? [];
+  const [historyFormState, setHistoryFormState] = useState<UpdateHistoryFormState | null>(null);
+
+  const anySaving = isSaving || (historyFormState?.isSaving ?? false);
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
@@ -207,6 +163,7 @@ export default function EditDeployedProductDialog({
               slotProps={{ htmlInput: { min: 0, step: 1 } }}
               error={coresError}
               helperText={coresError ? "Must be a non-negative integer." : " "}
+              disabled={isSaving}
             />
 
             <TextField
@@ -219,6 +176,7 @@ export default function EditDeployedProductDialog({
               slotProps={{ htmlInput: { min: 0, step: 0.1 } }}
               error={tpsError}
               helperText={tpsError ? "Must be a non-negative number." : " "}
+              disabled={isSaving}
             />
 
             <TextField
@@ -230,132 +188,43 @@ export default function EditDeployedProductDialog({
               multiline
               minRows={2}
               slotProps={{ htmlInput: { maxLength: DESCRIPTION_MAX } }}
+              disabled={isSaving}
             />
           </Box>
         )}
 
         {tab === 1 && (
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 0.5 }}>
-            {updates.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                No update history recorded.
-              </Typography>
-            ) : (
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Level</TableCell>
-                    <TableCell>Date</TableCell>
-                    <TableCell>Details</TableCell>
-                    <TableCell align="right">Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {updates.map((u, i) => (
-                    <TableRow key={i}>
-                      <TableCell>{u.updateLevel}</TableCell>
-                      <TableCell>{u.date}</TableCell>
-                      <TableCell sx={{ maxWidth: 160 }}>
-                        <Typography variant="body2" noWrap title={u.details ?? undefined}>
-                          {u.details || "—"}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="right">
-                        <IconButton
-                          size="small"
-                          aria-label={`Edit update level ${u.updateLevel}`}
-                          onClick={() => handleEditRow(i)}
-                          disabled={isSaving}
-                        >
-                          <Pencil size={14} />
-                        </IconButton>
-                        <IconButton
-                          size="small"
-                          aria-label={`Delete update level ${u.updateLevel}`}
-                          onClick={() => handleDeleteRow(i)}
-                          disabled={isSaving}
-                        >
-                          <Trash2 size={14} />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-
-            <Box
-              sx={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 1.5,
-                border: 1,
-                borderColor: "divider",
-                borderRadius: 1,
-                p: 1.5,
-              }}
-            >
-              <Typography variant="caption" color="text.secondary">
-                {editingIndex === null ? "Add an update" : "Edit update"}
-              </Typography>
-              <Box sx={{ display: "flex", gap: 1.5, flexWrap: "wrap" }}>
-                <TextField
-                  label="Update level"
-                  value={rowLevel}
-                  onChange={(e) => setRowLevel(e.target.value)}
-                  size="small"
-                  type="number"
-                  slotProps={{ htmlInput: { min: 0, step: 1 } }}
-                  error={rowLevelError}
-                  helperText={rowLevelError ? "Must be a non-negative integer." : " "}
-                  sx={{ flex: 1, minWidth: 120 }}
-                />
-                <TextField
-                  label="Date"
-                  value={rowDate}
-                  onChange={(e) => setRowDate(e.target.value)}
-                  size="small"
-                  type="date"
-                  slotProps={{ inputLabel: { shrink: true } }}
-                  sx={{ flex: 1, minWidth: 160 }}
-                />
-              </Box>
-              <TextField
-                label="Details"
-                value={rowDetails}
-                onChange={(e) => setRowDetails(e.target.value)}
-                size="small"
-                fullWidth
-                multiline
-                minRows={2}
-              />
-              <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-                {editingIndex !== null && (
-                  <Button size="small" onClick={resetRowForm} disabled={isSaving}>
-                    Cancel
-                  </Button>
-                )}
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<Plus size={14} />}
-                  onClick={handleAddOrSaveRow}
-                  disabled={!canAddOrSaveRow || isSaving}
-                >
-                  {editingIndex === null ? "Add" : "Save row"}
-                </Button>
-              </Box>
-            </Box>
-          </Box>
+          <UpdateHistoryPanel
+            updates={updates}
+            onSaveUpdates={onSaveHistory}
+            onFormStateChange={setHistoryFormState}
+          />
         )}
       </DialogContent>
       <DialogActions>
-        <Button onClick={onClose} disabled={isSaving}>
+        <Button onClick={onClose} disabled={anySaving}>
           Cancel
         </Button>
-        <Button variant="contained" disabled={!canSave} onClick={() => onSave(payload)}>
-          Save changes
-        </Button>
+        {tab === 0 && (
+          <Button
+            variant="contained"
+            disabled={!canSaveDetails}
+            onClick={() => onSaveDetails(detailsPayload)}
+          >
+            Save changes
+          </Button>
+        )}
+        {tab === 1 && historyFormState && (
+          <Button
+            variant="contained"
+            disabled={!historyFormState.canAdd}
+            onClick={historyFormState.handleAdd}
+          >
+            {historyFormState.isSaving
+              ? updateHistoryFooterLabel(historyFormState.saveAction)
+              : "Add update"}
+          </Button>
+        )}
       </DialogActions>
     </Dialog>
   );

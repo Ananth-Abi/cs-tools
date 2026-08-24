@@ -1558,7 +1558,11 @@ export type BeDeploymentType =
 
 export interface BeDeployment {
   id: string;
+  /** @deprecated The search/get response carries `project` (an id+name ref), not this
+   * field — it is never populated by the backend. Kept only so any external caller
+   * still typing against the old (wrong) shape doesn't break; use `project.id` instead. */
   projectId?: string;
+  project?: BeEntityRef;
   name?: string;
   type?: BeDeploymentType;
   description?: string;

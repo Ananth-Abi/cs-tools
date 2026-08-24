@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import EditDeployedProductDialog from "@features/csm-projects/components/EditDeployedProductDialog";
@@ -29,26 +29,32 @@ const DEPLOYED_PRODUCT: BeDeployedProduct = {
 };
 
 function renderDialog(overrides?: Partial<BeDeployedProduct>) {
-  const onSave = vi.fn();
+  const onSaveDetails = vi.fn();
+  const onSaveHistory = vi.fn().mockResolvedValue(undefined);
   const onClose = vi.fn();
   render(
     <EditDeployedProductDialog
       deployedProduct={{ ...DEPLOYED_PRODUCT, ...overrides }}
       isSaving={false}
       onClose={onClose}
-      onSave={onSave}
+      onSaveDetails={onSaveDetails}
+      onSaveHistory={onSaveHistory}
     />,
   );
-  return { onSave, onClose };
+  return { onSaveDetails, onSaveHistory, onClose };
 }
 
-const saveButton = (): HTMLElement =>
+const saveDetailsButton = (): HTMLElement =>
   screen.getByRole("button", { name: /save changes/i });
 
-describe("EditDeployedProductDialog", () => {
+const switchToHistoryTab = (): void => {
+  fireEvent.click(screen.getByRole("tab", { name: /update history/i }));
+};
+
+describe("EditDeployedProductDialog — Details tab", () => {
   it("disables Save until a field changes", () => {
     renderDialog();
-    expect(saveButton()).toBeDisabled();
+    expect(saveDetailsButton()).toBeDisabled();
   });
 
   it("renders numeric cores/tps directly (no re-parse of strings)", () => {
@@ -57,50 +63,106 @@ describe("EditDeployedProductDialog", () => {
     expect(screen.getByLabelText(/tps/i)).toHaveValue(100);
   });
 
-  it("sends only the changed cores as a number", () => {
-    const { onSave } = renderDialog();
+  it("sends only the changed cores as a number, and does not touch updates", () => {
+    const { onSaveDetails, onSaveHistory } = renderDialog();
     fireEvent.change(screen.getByLabelText(/cores/i), { target: { value: "8" } });
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ cores: 8 });
+    fireEvent.click(saveDetailsButton());
+    expect(onSaveDetails).toHaveBeenCalledWith({ cores: 8 });
+    expect(onSaveHistory).not.toHaveBeenCalled();
   });
 
   it("sends null when cores is cleared", () => {
-    const { onSave } = renderDialog();
+    const { onSaveDetails } = renderDialog();
     fireEvent.change(screen.getByLabelText(/cores/i), { target: { value: "" } });
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ cores: null });
+    fireEvent.click(saveDetailsButton());
+    expect(onSaveDetails).toHaveBeenCalledWith({ cores: null });
   });
 
+  it("calling onSaveDetails is the only way the dialog would close (parent decides, not asserted here)", () => {
+    // The dialog itself never calls onClose from a save — DeployedProductsPanel
+    // decides to close on the Details-save success callback. Confirm no
+    // automatic onClose call happens as a side effect of clicking Save.
+    const { onClose } = renderDialog();
+    fireEvent.change(screen.getByLabelText(/cores/i), { target: { value: "8" } });
+    fireEvent.click(saveDetailsButton());
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("EditDeployedProductDialog — Update History tab", () => {
   it("switches to the Update History tab and lists existing entries", () => {
     renderDialog();
-    fireEvent.click(screen.getByRole("tab", { name: /update history/i }));
+    switchToHistoryTab();
     expect(screen.getByText("Initial rollout")).toBeInTheDocument();
-    expect(screen.getByText("2026-01-01")).toBeInTheDocument();
+    expect(screen.getByText(/date: 2026-01-01/i)).toBeInTheDocument();
   });
 
-  it("adds a new update-history row and saves the whole array on Save changes", () => {
-    const { onSave } = renderDialog();
-    fireEvent.click(screen.getByRole("tab", { name: /update history/i }));
+  it("shows the footer 'Add update' button only on the Update History tab", () => {
+    renderDialog();
+    expect(screen.queryByRole("button", { name: /^add update$/i })).not.toBeInTheDocument();
+    switchToHistoryTab();
+    expect(screen.getByRole("button", { name: /^add update$/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /save changes/i })).not.toBeInTheDocument();
+  });
+
+  it("adds a new update-history entry immediately via the footer button, without closing the dialog", async () => {
+    const { onSaveHistory, onClose } = renderDialog();
+    switchToHistoryTab();
 
     fireEvent.change(screen.getByLabelText(/^update level$/i), { target: { value: "2" } });
     fireEvent.change(screen.getByLabelText(/^date$/i), { target: { value: "2026-02-01" } });
-    fireEvent.click(screen.getByRole("button", { name: /^add$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^add update$/i }));
 
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({
-      updates: [
+    await waitFor(() =>
+      expect(onSaveHistory).toHaveBeenCalledWith([
         { updateLevel: 1, date: "2026-01-01", details: "Initial rollout" },
         { updateLevel: 2, date: "2026-02-01", details: undefined },
-      ],
-    });
+      ]),
+    );
+    expect(onClose).not.toHaveBeenCalled();
   });
 
-  it("deletes an update-history row and saves the shrunk array", () => {
-    const { onSave } = renderDialog();
-    fireEvent.click(screen.getByRole("tab", { name: /update history/i }));
+  it("deletes an update-history entry immediately, without a confirm step, and without closing", async () => {
+    const { onSaveHistory, onClose } = renderDialog();
+    switchToHistoryTab();
 
     fireEvent.click(screen.getByRole("button", { name: /delete update level 1/i }));
-    fireEvent.click(saveButton());
-    expect(onSave).toHaveBeenCalledWith({ updates: [] });
+
+    await waitFor(() => expect(onSaveHistory).toHaveBeenCalledWith([]));
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("only the latest (highest updateLevel) entry is editable", () => {
+    renderDialog({
+      updates: [
+        { updateLevel: 1, date: "2026-01-01", details: "Initial rollout" },
+        { updateLevel: 2, date: "2026-02-01", details: "Second update" },
+      ],
+    });
+    switchToHistoryTab();
+
+    expect(screen.getByRole("button", { name: /edit update level 2/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /edit update level 1/i })).not.toBeInTheDocument();
+  });
+
+  it("edits the latest entry in place and PATCHes the replaced array via the footer button", async () => {
+    const { onSaveHistory, onClose } = renderDialog();
+    switchToHistoryTab();
+
+    fireEvent.click(screen.getByRole("button", { name: /edit update level 1/i }));
+    // Both the in-place edit form and the always-present "Add an update"
+    // form section render a "Details" field; the edit form's timeline card
+    // appears first in DOM order.
+    fireEvent.change(screen.getAllByLabelText(/^details$/i)[0], {
+      target: { value: "Revised notes" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(onSaveHistory).toHaveBeenCalledWith([
+        { updateLevel: 1, date: "2026-01-01", details: "Revised notes" },
+      ]),
+    );
+    expect(onClose).not.toHaveBeenCalled();
   });
 });
