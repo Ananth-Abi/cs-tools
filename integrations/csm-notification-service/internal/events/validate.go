@@ -130,9 +130,16 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.Product == "" || p.Title == "" || p.ShortDescription == "" ||
-			p.IncidentLink == "" || !e164Pattern.MatchString(p.CallTo) {
+		if p.Title == "" || p.ShortDescription == "" || p.IncidentLink == "" {
 			return fmt.Errorf("events: missing required field for %s", t)
+		}
+		// Product and CallTo are optional: a publisher that can't determine
+		// which Chat space or on-call number applies (e.g. entity-service)
+		// may omit them, and dispatch substitutes its own configured
+		// defaults. A non-empty CallTo must still be a valid E.164 number —
+		// this only relaxes "absent," not "malformed."
+		if p.CallTo != "" && !e164Pattern.MatchString(p.CallTo) {
+			return fmt.Errorf("events: %s callTo %q is not a valid E.164 phone number", t, p.CallTo)
 		}
 	case TypeSLAClockRegister:
 		var p SLAClockRegisterPayload

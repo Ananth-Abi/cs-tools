@@ -32,13 +32,14 @@ func TestValidate_Valid(t *testing.T) {
 		typ      Type
 		payload  string
 	}{
-		"case.created":        {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","recipients":["r@x.com"]}`},
-		"case.comment_added":  {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"t","caseComment":"c","commentId":"C-1","recipients":["r@x.com"]}`},
-		"case.status_changed": {"CASE-1", TypeStatusChanged, `{"projectId":"PROJ-1","caseId":"CASE-1","newStatus":"Open","recipients":["r@x.com"]}`},
-		"case.assigned":       {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","projectId":"PROJ-1","caseId":"CASE-1","recipients":["r@x.com"]}`},
-		"incident.created":    {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}`},
-		"sla.clock.register":  {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{"response":"2h"}}`},
-		"sla.tier_reached":    {"CASE-1", TypeSLATierReached, `{"caseId":"CASE-1","clockType":"response","tier":"50"}`},
+		"case.created":                          {"CASE-1", TypeCaseCreated, `{"reporterName":"n","projectName":"p","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"t","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"d","recipients":["r@x.com"]}`},
+		"case.comment_added":                    {"CASE-1", TypeCommentAdded, `{"name":"n","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"t","caseComment":"c","commentId":"C-1","recipients":["r@x.com"]}`},
+		"case.status_changed":                   {"CASE-1", TypeStatusChanged, `{"projectId":"PROJ-1","caseId":"CASE-1","newStatus":"Open","recipients":["r@x.com"]}`},
+		"case.assigned":                         {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","projectId":"PROJ-1","caseId":"CASE-1","recipients":["r@x.com"]}`},
+		"incident.created":                      {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}`},
+		"incident.created omits product/callTo": {"INC-1", TypeIncidentCreated, `{"title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1"}`},
+		"sla.clock.register":                    {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{"response":"2h"}}`},
+		"sla.tier_reached":                      {"CASE-1", TypeSLATierReached, `{"caseId":"CASE-1","clockType":"response","tier":"50"}`},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -77,9 +78,8 @@ func TestValidate_RequiresFields(t *testing.T) {
 		"assigned missing projectId":                  {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","caseId":"CASE-1","recipients":["r@x.com"]}`},
 		"assigned missing recipients":                 {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","projectId":"PROJ-1","caseId":"CASE-1"}`},
 		"assigned caseId/entityId mismatch":           {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","projectId":"PROJ-1","caseId":"CASE-2","recipients":["r@x.com"]}`},
-		"incident missing callTo":                     {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"t","shortDescription":"d","incidentLink":"https://x/INC-1"}`},
+		"incident missing title":                      {"INC-1", TypeIncidentCreated, `{"product":"api-manager","shortDescription":"d","incidentLink":"https://x/INC-1","callTo":"+15551234567"}`},
 		"incident malformed callTo":                   {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"t","shortDescription":"d","incidentLink":"https://x/INC-1","callTo":"555-1234"}`},
-		"incident missing product":                    {"INC-1", TypeIncidentCreated, `{"title":"t","shortDescription":"d","incidentLink":"https://x/INC-1","callTo":"+15551234567"}`},
 		"unknown type":                                {"CASE-1", Type("case.deleted"), `{}`},
 		"sla.clock.register missing caseId":           {"CASE-1", TypeSLAClockRegister, `{"durations":{"response":"2h"}}`},
 		"sla.clock.register missing durations":        {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{}}`},

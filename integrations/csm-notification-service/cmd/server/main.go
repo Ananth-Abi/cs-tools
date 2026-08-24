@@ -162,7 +162,24 @@ func main() {
 	if !emailSendingEnabled {
 		slog.Warn("EMAIL_SENDING_ENABLED=false; case.* emails will be logged, not sent")
 	}
-	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailSendingEnabled)
+
+	// Same killswitch convention as EMAIL_SENDING_ENABLED, but for
+	// incident.created's Twilio call specifically — doesn't affect the
+	// Google Chat alert.
+	callSendingEnabled := os.Getenv("CALL_SENDING_ENABLED") != "false"
+	if !callSendingEnabled {
+		slog.Warn("CALL_SENDING_ENABLED=false; incident.created calls will be logged, not placed")
+	}
+
+	// Fallback Google Chat product (case.created and incident.created alike)
+	// and on-call number (incident.created's call only) for when a publisher
+	// (e.g. entity-service) can't determine which Chat space or on-call
+	// number applies and omits them from the payload — see
+	// dispatch.Dispatcher.defaultChatProduct/defaultOnCallNumber.
+	defaultChatProduct := os.Getenv("DEFAULT_CHAT_PRODUCT")
+	defaultOnCallNumber := os.Getenv("INCIDENT_DEFAULT_CALL_TO")
+
+	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailSendingEnabled, callSendingEnabled, defaultChatProduct, defaultOnCallNumber)
 
 	// The main consumer's OnExhausted: publish the exhausted record to the
 	// dead-letter topic instead of just logging and dropping it. The DLQ's

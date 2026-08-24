@@ -56,6 +56,7 @@ type callSender interface {
 // linkResolver abstracts recipientlinks.Resolver for testability.
 type linkResolver interface {
 	ResolveLinks(ctx context.Context, emails []string, projectID, caseID string) ([]recipientlinks.RecipientLink, error)
+	CSMLink(caseID string) string
 }
 
 // Dispatcher turns a published events.Envelope into an actual notification
@@ -84,6 +85,22 @@ type Dispatcher struct {
 	// path — only the final send is skipped.
 	emailSendingEnabled bool
 
+	// callSendingEnabled is the same kind of killswitch (CALL_SENDING_ENABLED)
+	// for incident.created's Twilio call specifically — see
+	// handleIncidentCreated's own doc comment. Doesn't affect the Google
+	// Chat alert.
+	callSendingEnabled bool
+
+	// defaultChatProduct/defaultOnCallNumber are handleCaseCreated's and
+	// handleIncidentCreated's fallback values for their payload's own
+	// Product/CallTo when a publisher omits them — see handleIncidentCreated's
+	// doc comment for why a publisher (e.g. entity-service) might not know
+	// either value itself. defaultChatProduct applies to both event types'
+	// Google Chat alert (case.created has no call reaction, hence no
+	// case.created-specific default for defaultOnCallNumber).
+	defaultChatProduct  string
+	defaultOnCallNumber string
+
 	// doneMu/done track which (record, channel) pairs have already
 	// succeeded — see handleIncidentCreated's doc comment for why this
 	// exists. In-memory only: this is a stopgap for not having a durable
@@ -98,14 +115,20 @@ type Dispatcher struct {
 }
 
 // NewDispatcher constructs a Dispatcher. See Dispatcher.emailSendingEnabled's
-// doc comment for what emailSendingEnabled controls.
-func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailSendingEnabled bool) *Dispatcher {
+// and Dispatcher.callSendingEnabled's doc comments for what those two
+// killswitches control, and Dispatcher.defaultChatProduct/
+// defaultOnCallNumber's doc comment for the Google Chat/call fallback
+// values.
+func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailSendingEnabled, callSendingEnabled bool, defaultChatProduct, defaultOnCallNumber string) *Dispatcher {
 	return &Dispatcher{
 		email:               email,
 		googleChat:          googleChat,
 		call:                call,
 		links:               links,
 		emailSendingEnabled: emailSendingEnabled,
+		callSendingEnabled:  callSendingEnabled,
+		defaultChatProduct:  defaultChatProduct,
+		defaultOnCallNumber: defaultOnCallNumber,
 		done:                make(map[string]bool),
 	}
 }
@@ -175,32 +198,65 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 	}
 }
 
+// handleCaseCreated has two independent reactions, like handleIncidentCreated
+// below: the case-created email (per resolved recipient link) and a Google
+// Chat alert to the shared internal Chat space, via the same
+// GoogleChatClient.SendIncidentAlert incident.created uses — its doc comment
+// already covers "a newly created incident/case" for exactly this reuse. The
+// Chat alert always targets the CSM portal's case link (links.CSMLink), not
+// a per-recipient link, since there's no per-recipient audience for a Chat
+// post the way there is for email. Product falls back to
+// Dispatcher.defaultChatProduct when the payload omits it, the same as
+// handleIncidentCreated's Product fallback — see that function's doc comment.
+//
+// Unlike handleIncidentCreated, this has no per-channel idempotency
+// tracking: a retry that resends an already-succeeded Chat alert alongside a
+// genuinely-failing email is the same accepted at-least-once trade-off
+// sendPerGroup's own doc comment already accepts for case.* email
+// duplication — not worth adding here either.
 func (d *Dispatcher) handleCaseCreated(ctx context.Context, raw json.RawMessage) error {
 	var p events.CaseCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.created payload: %w", err)
 	}
+
+	var errs []error
+
 	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
-		return err
-	}
-	subject := fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle)
-	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
-		return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
-			ReporterName:              p.ReporterName,
-			ProjectName:               p.ProjectName,
-			CaseID:                    p.CaseID,
-			CaseTitle:                 p.CaseTitle,
-			CaseType:                  p.CaseType,
-			Priority:                  p.Priority,
-			Product:                   p.Product,
-			CreatedAt:                 p.CreatedAt,
-			Description:               p.Description,
-			IncidentImpactDescription: p.IncidentImpactDescription,
-			CaseLink:                  caseLink,
-			CommentLink:               commentLinkFor(caseLink, ""),
+		errs = append(errs, err)
+	} else {
+		subject := fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle)
+		emailErr := d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+			return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
+				ReporterName:              p.ReporterName,
+				ProjectName:               p.ProjectName,
+				CaseID:                    p.CaseID,
+				CaseTitle:                 p.CaseTitle,
+				CaseType:                  p.CaseType,
+				Priority:                  p.Priority,
+				Product:                   p.Product,
+				CreatedAt:                 p.CreatedAt,
+				Description:               p.Description,
+				IncidentImpactDescription: p.IncidentImpactDescription,
+				CaseLink:                  caseLink,
+				CommentLink:               commentLinkFor(caseLink, ""),
+			})
 		})
-	})
+		if emailErr != nil {
+			errs = append(errs, emailErr)
+		}
+	}
+
+	product := p.Product
+	if product == "" {
+		product = d.defaultChatProduct
+	}
+	if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr != nil {
+		errs = append(errs, chatErr)
+	}
+
+	return errors.Join(errs...)
 }
 
 func (d *Dispatcher) handleCommentAdded(ctx context.Context, raw json.RawMessage) error {
@@ -317,9 +373,23 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]strin
 }
 
 // handleIncidentCreated has two independent reactions, unlike every other
-// event type here: a Google Chat alert and a voice call. Both are attempted
-// even if one fails, and their errors are combined — a Chat outage shouldn't
-// suppress the call, or vice versa.
+// event type here except handleCaseCreated: a Google Chat alert and a voice
+// call. Both are attempted even if one fails, and their errors are combined
+// — a Chat outage shouldn't suppress the call, or vice versa.
+//
+// Product/CallTo fall back to Dispatcher's configured defaults
+// (defaultChatProduct/defaultOnCallNumber) when the payload's own value
+// is empty — a publisher that has no way to determine either (e.g.
+// entity-service, which knows nothing about Chat-space routing or on-call
+// rotations) can omit them entirely; events.Validate allows this. A
+// publisher that does know the right values per incident can still supply
+// them and takes precedence over the defaults.
+//
+// callSendingEnabled gates only the MakeCall step (CALL_SENDING_ENABLED) —
+// mirroring sendPerGroup's EMAIL_SENDING_ENABLED killswitch exactly: when
+// false, this logs what would have been called instead of calling, and
+// still marks the call "done" so a disabled call doesn't retry forever.
+// The Google Chat alert is unaffected either way.
 //
 // This is also the one handler that needs its own idempotency tracking:
 // eventbus.Consumer retries this whole function on any error, and without
@@ -345,9 +415,18 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 	base := record.Topic + "/" + strconv.FormatInt(int64(record.Partition), 10) + "/" + strconv.FormatInt(record.Offset, 10)
 	chatKey, callKey := base+"/chat", base+"/call"
 
+	product := p.Product
+	if product == "" {
+		product = d.defaultChatProduct
+	}
+	callTo := p.CallTo
+	if callTo == "" {
+		callTo = d.defaultOnCallNumber
+	}
+
 	var chatErr error
 	if !d.alreadyDone(chatKey) {
-		chatErr = d.googleChat.SendIncidentAlert(ctx, p.Product, p.Title, p.ShortDescription, p.IncidentLink)
+		chatErr = d.googleChat.SendIncidentAlert(ctx, product, p.Title, p.ShortDescription, p.IncidentLink)
 		if chatErr == nil {
 			d.markDone(chatKey)
 		}
@@ -355,10 +434,15 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 
 	var callErr error
 	if !d.alreadyDone(callKey) {
-		message := fmt.Sprintf("New incident: %s. %s", p.Title, p.ShortDescription)
-		callErr = d.call.MakeCall(ctx, p.CallTo, message)
-		if callErr == nil {
+		if !d.callSendingEnabled {
+			slog.InfoContext(ctx, "dispatch: call sending disabled (CALL_SENDING_ENABLED=false); not calling", "to", callTo)
 			d.markDone(callKey)
+		} else {
+			message := fmt.Sprintf("New incident: %s. %s", p.Title, p.ShortDescription)
+			callErr = d.call.MakeCall(ctx, callTo, message)
+			if callErr == nil {
+				d.markDone(callKey)
+			}
 		}
 	}
 

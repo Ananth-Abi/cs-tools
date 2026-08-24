@@ -175,6 +175,16 @@ func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found 
 	return fmt.Sprintf("%s/cases/%s", r.csmBase, url.PathEscape(caseID))
 }
 
+// CSMLink builds the CSM portal's case link directly, without any recipient
+// or role lookup — for a notification with no per-recipient audience to
+// resolve against (e.g. dispatch's case.created Google Chat alert, which
+// posts once to a shared internal Chat space rather than per-recipient), the
+// CSM portal is always the right audience; there's no customer-facing
+// equivalent of that Chat space to route to instead.
+func (r *Resolver) CSMLink(caseID string) string {
+	return fmt.Sprintf("%s/cases/%s", r.csmBase, url.PathEscape(caseID))
+}
+
 func (r *Resolver) matchesAny(roles []string, set map[string]bool) bool {
 	for _, role := range roles {
 		if set[role] {
