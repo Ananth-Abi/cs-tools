@@ -1793,11 +1793,18 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // disables the public-reply path in the composer — never work notes.
   // Mirrors the BFF comment guard so the engineer sees a clear reason instead
   // of a generic error.
-  const publicReplyGateReason = publicCommentGateReason(
-    c.state,
-    c.workState,
-    c.assigneeIsMe,
-  );
+  //
+  // Announcements are exempt from this whole gate on the backend (see
+  // CreateCaseComment's announcement carve-out): they publish immediately,
+  // have no work_in_progress/ongoing workflow, and may carry no assigned
+  // engineer at all. The only thing that still blocks a comment there is the
+  // case being closed, which `isClosed` above (and the composer's `disabled`
+  // prop below) already covers — so skip the state/ownership gate here rather
+  // than have it report a reason ("...actively in progress"/"...assigned
+  // engineer...") that would never resolve for an announcement.
+  const publicReplyGateReason = isAnnouncement
+    ? null
+    : publicCommentGateReason(c.state, c.workState, c.assigneeIsMe);
   // The composer's inline "Resume work" quick-fix only applies to this one
   // lock reason — the case is already work_in_progress and assigned to the
   // signed-in engineer, just paused, so resuming is the single-field PATCH
@@ -1805,11 +1812,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // reason (not started yet) needs the full assign/start flow, which doesn't
   // belong in the composer; `assigneeIsMe` also excludes another engineer's
   // paused case, matching CaseActionBar's own gate on the same action.
-  const canResumeToUnlockPublicReply = computeCanResumeToUnlockPublicReply(
-    c.state,
-    c.workState,
-    c.assigneeIsMe,
-  );
+  // Never applicable to announcements — see publicReplyGateReason above.
+  const canResumeToUnlockPublicReply = isAnnouncement
+    ? false
+    : computeCanResumeToUnlockPublicReply(c.state, c.workState, c.assigneeIsMe);
   // FE-only, advisory close-gate: warn when the case has an open task, so the
   // engineer isn't surprised by a close rejection. Best-effort — the task
   // *list* (`POST /cases/{id}/tasks/search`) returns `BeTaskSummary`, which
@@ -2071,10 +2077,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
               the thread the focal point until the engineer chooses to reply.
               The composer is always available (an internal work note can be
               added in any state); the public-reply path is gated inside it via
-              `publicReplyGateReason` when the case isn't in-progress/ongoing. */}
-          {/* Announcements are read-only broadcasts — no reply/work-note
-              composer, matching the hidden CaseActionBar (no patch ops). */}
-          {isAnnouncement ? null : composerOpen ? (
+              `publicReplyGateReason` when the case isn't in-progress/ongoing —
+              always null for an announcement, per the note on that constant
+              above. Shown for announcements too (backend now accepts both
+              comment types there), despite the hidden CaseActionBar above —
+              that hides case-lifecycle patch actions, which don't apply to an
+              announcement, not the ability to reply to one. */}
+          {composerOpen ? (
             <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
               <Box
                 sx={{
@@ -2242,12 +2251,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
             )}
           </Card>
 
-          {/* Announcements have no composer and no real comment thread (see
-              the isAnnouncement gate above), so the case description never
-              arrives as the feed's opening comment the way it does for every
-              other case type (see the note near `safeComments`). Render it
-              directly below the timeline instead — the only place an
-              announcement's actual content is shown. */}
+          {/* An announcement's own body is never echoed as the feed's opening
+              comment the way it is for every other case type (see the note
+              near `safeComments`) — only replies posted via the composer
+              above show up there. Render the body directly below the
+              timeline instead — the only place an announcement's actual
+              content is shown. */}
           {isAnnouncement && !isBlankHtml(c.description) && (
             <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
               <Typography variant="subtitle2">Description</Typography>

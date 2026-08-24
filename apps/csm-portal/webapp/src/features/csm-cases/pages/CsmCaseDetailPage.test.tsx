@@ -30,7 +30,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@testing-library/jest-dom/vitest";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
-import type { BeCaseType } from "@api/backend/types";
+import type { BeCaseState, BeCaseType } from "@api/backend/types";
 
 // `@api/backend/client` -> `useAuthApiClient` -> `@config/apiConfig`, which
 // throws at module load when `window.config` isn't set — not present under
@@ -84,7 +84,11 @@ vi.mock("@utils/useDarkMode", () => ({
 // `isLoading`/`isError`/`!data` early returns) for whichever case is active.
 function buildCase(
   id: string,
-  overrides?: { caseType?: BeCaseType; description?: string },
+  overrides?: {
+    caseType?: BeCaseType;
+    description?: string;
+    state?: BeCaseState;
+  },
 ): CsmCaseDetail {
   return {
     id,
@@ -96,7 +100,7 @@ function buildCase(
     projectName: "Acme Project",
     product: "WSO2 Identity Server",
     severity: "S2",
-    state: "open",
+    state: overrides?.state ?? "open",
     assignee: "Unassigned",
     assigneeIsMe: false,
     slaClockType: "resolution",
@@ -940,18 +944,18 @@ describe("CsmCaseDetailPage — request-update stale-callback guard", () => {
   });
 });
 
-// Announcements have no composer and no real comment thread (see the
-// isAnnouncement gate in the page), so the case description never arrives as
-// the Activities feed's opening comment the way it does for every other case
-// type — it has to be rendered directly.
+// An announcement's own body never arrives as the Activities feed's opening
+// comment the way it does for every other case type — it has to be rendered
+// directly (see the note above the description card in the page).
 function renderCaseDetailPage(
   path: string,
   routePattern: string,
   caseType: BeCaseType | undefined,
   description: string,
+  state?: BeCaseState,
 ): ReturnType<typeof render> {
   useGetCsmCaseDetailMock.mockImplementation((id: string | undefined) => ({
-    data: id ? buildCase(id, { caseType, description }) : undefined,
+    data: id ? buildCase(id, { caseType, description, state }) : undefined,
     isLoading: false,
     isError: false,
     error: null,
@@ -1017,6 +1021,55 @@ describe("CsmCaseDetailPage — announcement description rendering", () => {
     );
 
     expect(screen.queryByText("Description")).not.toBeInTheDocument();
+  });
+});
+
+// The comment/work-note composer used to be suppressed outright for
+// announcements (`isAnnouncement ? null : …`) — the entity now accepts
+// replies on an announcement the same as any other open case (see the
+// backend's announcement carve-out in CreateCaseComment), so the page must
+// show the same collapsed-until-clicked composer toggle it already shows for
+// a plain case, and only gate it on the case being closed.
+describe("CsmCaseDetailPage — announcement comment composer", () => {
+  it("shows the collapsed 'Add comment' toggle for an open announcement and reveals the composer on click", () => {
+    renderCaseDetailPage(
+      "/announcements/case-1",
+      "/announcements/:caseId",
+      "announcement",
+      "<p>Advisory content</p>",
+      "open",
+    );
+
+    const toggle = screen.getByRole("button", {
+      name: /compose a reply to the customer/i,
+    });
+    expect(toggle).toBeEnabled();
+
+    // Composer content itself is a mocked stub (see the CsmCaseCommentInput
+    // mock above) — what this page owns is the reveal chrome around it: the
+    // "Reply" header and its Cancel action only exist once composerOpen is
+    // true.
+    expect(screen.queryByText("Reply")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByText("Reply")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /cancel/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables the 'Add comment' toggle for a closed announcement", () => {
+    renderCaseDetailPage(
+      "/announcements/case-1",
+      "/announcements/:caseId",
+      "announcement",
+      "<p>Advisory content</p>",
+      "closed",
+    );
+
+    const toggle = screen.getByRole("button", {
+      name: /this case is closed — comments and work notes are read-only/i,
+    });
+    expect(toggle).toBeDisabled();
   });
 });
 
