@@ -92,7 +92,11 @@ func (h *CaseHandler) RequestCaseUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	caseID := r.PathValue("id")
-	if caseID == "" || !uuidRe.MatchString(caseID) {
+	if caseID == "" {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	if !uuidRe.MatchString(caseID) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
 		return
 	}

@@ -45,7 +45,7 @@ func TestRequestCaseUpdate(t *testing.T) {
 		w := httptest.NewRecorder()
 		h.RequestCaseUpdate(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
-		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
 	})
 
 	t.Run("rejects malformed UUID", func(t *testing.T) {
