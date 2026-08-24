@@ -238,32 +238,61 @@ func TestDispatcher_Handle_CaseCreated_ChatFailureStillSendsEmail(t *testing.T) 
 }
 
 // TestDispatcher_Handle_CaseCreated_RetryDoesNotResendSucceededChatAlert is a
-// regression test: eventbus.Consumer retries the whole Handle call on any
-// error. A persistently-failing email step (e.g. a misconfigured email
-// OAuth2 client — the real-world failure that surfaced this) must not cause
-// an already-succeeded Chat alert to be reposted on every retry too.
+// regression test for a real production incident: a case.created record
+// whose email step keeps failing exhausts eventbus.Consumer's 3 main-topic
+// attempts and gets dead-lettered — same Value, but a brand new
+// topic/partition/offset (see cmd/server/main.go's OnExhausted and
+// recordBaseKey's own doc comment) — then goes through the DLQ topic's own
+// 3 attempts. The already-succeeded Chat alert must be sent exactly once
+// across all 6 attempts, on both topics — not resent once the DLQ takes
+// over, which is exactly the bug this reproduces: an earlier version keyed
+// idempotency off Kafka coordinates and force-forgot on the main topic's
+// own IsFinalAttempt, so the DLQ's first attempt saw an unclaimed key and
+// reposted the alert.
 func TestDispatcher_Handle_CaseCreated_RetryDoesNotResendSucceededChatAlert(t *testing.T) {
 	mock := &mockEmailSender{err: errors.New("email service unreachable")}
 	chat := &mockGoogleChatSender{}
 	d := newTestDispatcher(mock, chat, &mockCallSender{})
 
-	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+	value := []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)
 
+	mainRecord := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: value}
 	for attempt := 1; attempt <= 3; attempt++ {
-		record.IsFinalAttempt = attempt == 3
-		if err := d.Handle(context.Background(), record); err == nil {
-			t.Fatalf("attempt %d: expected the email error to still propagate", attempt)
+		// NoMoreRetries stays false throughout: the main topic's own
+		// OnExhausted dead-letters on exhaustion, so there is always one
+		// more tier of attempts coming for this content, even on the main
+		// topic's own last attempt.
+		mainRecord.IsFinalAttempt = attempt == 3
+		if err := d.Handle(context.Background(), mainRecord); err == nil {
+			t.Fatalf("main attempt %d: expected the email error to still propagate", attempt)
+		}
+	}
+	if len(chat.calls) != 1 {
+		t.Fatalf("chat sent %d times across 3 main-topic attempts, want exactly 1", len(chat.calls))
+	}
+	if len(d.done) == 0 {
+		t.Fatal("done map is empty after the main topic's final attempt — the Chat claim must survive to protect the upcoming DLQ delivery")
+	}
+
+	// Same content, dead-lettered: new topic/partition/offset, identical
+	// Value — recordBaseKey must resolve to the same key as mainRecord's.
+	dlqRecord := eventbus.Record{Topic: "case-events-dlq", Partition: 0, Offset: 99, Value: value}
+	for attempt := 1; attempt <= 3; attempt++ {
+		dlqRecord.IsFinalAttempt = attempt == 3
+		dlqRecord.NoMoreRetries = attempt == 3 // the DLQ topic's Consumer has no OnExhausted of its own.
+		if err := d.Handle(context.Background(), dlqRecord); err == nil {
+			t.Fatalf("dlq attempt %d: expected the email error to still propagate", attempt)
 		}
 	}
 
 	if len(chat.calls) != 1 {
-		t.Errorf("chat sent %d times across 3 retries, want exactly 1 (email kept failing, chat should not be resent)", len(chat.calls))
+		t.Errorf("chat sent %d times across main+DLQ attempts, want exactly 1 (the DLQ redelivery must not resend an already-succeeded Chat alert)", len(chat.calls))
 	}
-	if len(mock.calls) != 3 {
-		t.Errorf("email attempted %d times across 3 retries, want 3 (the genuinely failing channel should keep retrying)", len(mock.calls))
+	if len(mock.calls) != 6 {
+		t.Errorf("email attempted %d times across main+DLQ attempts, want 6 (3 main + 3 DLQ, the genuinely failing channel should keep retrying on both)", len(mock.calls))
 	}
 	if len(d.done) != 0 {
-		t.Errorf("done map should be empty after the final attempt, has %d entries (leaked tracking for a channel that never succeeded)", len(d.done))
+		t.Errorf("done map should be empty after the DLQ's own final attempt, has %d entries (leaked tracking for a channel that never succeeded anywhere)", len(d.done))
 	}
 }
 
@@ -449,7 +478,11 @@ func TestDispatcher_Handle_TwoRecipientsTwoLinks_SendsTwoEmails(t *testing.T) {
 // error. When one recipient group's SendEmail persistently fails while
 // another group's already succeeded, the succeeded group must not be
 // resent on every retry — only the genuinely failing group should keep
-// being attempted.
+// being attempted. record.NoMoreRetries (not IsFinalAttempt — see
+// recordBaseKey/NoMoreRetries' own doc comments) is set true on the last of
+// these 3 attempts to simulate this being the last tier with nowhere
+// further to retry (e.g. the DLQ topic's own final attempt), so the test
+// can also verify no tracking leaks once that's genuinely true.
 func TestDispatcher_Handle_CommentAdded_RetryDoesNotResendSucceededGroup(t *testing.T) {
 	mock := &mockEmailSender{errFor: func(to []string) error {
 		if len(to) == 1 && to[0] == "agent@wso2.com" {
@@ -468,7 +501,7 @@ func TestDispatcher_Handle_CommentAdded_RetryDoesNotResendSucceededGroup(t *test
 	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["customer@acme.com","agent@wso2.com"]}}`)}
 
 	for attempt := 1; attempt <= 3; attempt++ {
-		record.IsFinalAttempt = attempt == 3
+		record.NoMoreRetries = attempt == 3
 		if err := d.Handle(context.Background(), record); err == nil {
 			t.Fatalf("attempt %d: expected the agent group's error to still propagate", attempt)
 		}
@@ -678,10 +711,12 @@ func TestDispatcher_Handle_IncidentCreated_CallFailureStillSendsChat(t *testing.
 // a regression test: eventbus.Consumer retries the whole Handle call on any
 // error. Before the per-channel done-tracking existed, a persistently
 // failing call would cause the chat alert to be resent on every retry too.
-// It also covers the done-map cleanup on the final attempt: the call channel
-// here never succeeds, so IsFinalAttempt (not "both succeeded") is what
-// releases its and chat's tracking entries once eventbus.Consumer is done
-// retrying — without that, they'd stay in d.done forever.
+// It also covers the done-map cleanup once there's truly no further retry
+// coming: the call channel here never succeeds, so record.NoMoreRetries
+// (not IsFinalAttempt — see NoMoreRetries' own doc comment for why) is what
+// releases its and chat's tracking entries once nothing will ever attempt
+// this record's content again — without that, they'd stay in d.done
+// forever.
 func TestDispatcher_Handle_IncidentCreated_RetryDoesNotResendSucceededChannel(t *testing.T) {
 	chat := &mockGoogleChatSender{}
 	call := &mockCallSender{err: errors.New("twilio unreachable")}
@@ -690,7 +725,7 @@ func TestDispatcher_Handle_IncidentCreated_RetryDoesNotResendSucceededChannel(t 
 	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(validIncidentRecord)}
 
 	for attempt := 1; attempt <= 3; attempt++ {
-		record.IsFinalAttempt = attempt == 3
+		record.NoMoreRetries = attempt == 3
 		if err := d.Handle(context.Background(), record); err == nil {
 			t.Fatalf("attempt %d: expected the call error to still propagate", attempt)
 		}

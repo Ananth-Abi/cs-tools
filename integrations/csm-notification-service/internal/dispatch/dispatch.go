@@ -22,6 +22,8 @@ package dispatch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,7 +31,6 @@ import (
 	"maps"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -170,7 +171,7 @@ func (d *Dispatcher) claim(key string) bool {
 
 // forget removes key — called either to release a claim whose outbound
 // call just failed (see claim's doc comment), or once every channel for a
-// record has fully succeeded (or record.IsFinalAttempt is true), so the map
+// record has fully succeeded (or record.NoMoreRetries is true), so the map
 // doesn't hold onto a successful claim forever.
 func (d *Dispatcher) forget(key string) {
 	d.doneMu.Lock()
@@ -178,12 +179,23 @@ func (d *Dispatcher) forget(key string) {
 	delete(d.done, key)
 }
 
-// recordBaseKey builds the per-record prefix every idempotency-tracked
-// channel below keys off of — unique per (topic, partition, offset), so a
-// retry of the same record reuses the same keys, and a different record
-// never collides with it.
+// recordBaseKey builds the per-event prefix every idempotency-tracked
+// channel below keys off of. It hashes record.Value (the raw envelope
+// bytes) rather than the record's Kafka coordinates (topic/partition/
+// offset), which an earlier version of this used: a record that exhausts
+// eventbus.Consumer's retries gets published to the dead-letter topic with
+// the exact same Value but a brand new topic/partition/offset (see
+// cmd/server/main.go's OnExhausted func, which republishes record.Key/
+// record.Value unchanged) — keying off coordinates meant the DLQ consumer's
+// very first attempt at a dead-lettered record computed a key that had
+// never been claimed before, so an already-succeeded channel (e.g. a Chat
+// alert sent on the main topic, before some other channel's persistent
+// failure sent the record to the DLQ) got reclaimed and resent there. A
+// content hash keys the same logical event identically everywhere it's
+// delivered, main topic or DLQ.
 func recordBaseKey(record eventbus.Record) string {
-	return record.Topic + "/" + strconv.FormatInt(int64(record.Partition), 10) + "/" + strconv.FormatInt(record.Offset, 10)
+	sum := sha256.Sum256(record.Value)
+	return hex.EncodeToString(sum[:])
 }
 
 // Handle implements eventbus.Handle. A non-nil return causes the caller
@@ -258,8 +270,9 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 // here directly, mirroring handleIncidentCreated's shape. Both kinds are
 // forgotten together, once the whole call succeeds (len(errs) == 0, so
 // Handle is about to return nil — no more retries coming) or
-// record.IsFinalAttempt is true (no further retry coming regardless of
-// outcome) — never on an individual channel's own success alone, which
+// record.NoMoreRetries is true (no further retry coming at all, on this
+// topic or the dead-letter one — see its doc comment) — never on an
+// individual channel's own success alone, which
 // would release it while other channels in this same call are still
 // failing and eventbus.Consumer keeps retrying, immediately re-arming that
 // channel to resend on the very next attempt.
@@ -315,13 +328,18 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		}
 	}
 
-	// record.IsFinalAttempt always forgets, regardless of ownership — see
-	// handleIncidentCreated's matching comment for why. Otherwise, only
-	// forget chatKey when this call actually owns it (chatOwned) — a call
-	// that lost the claim never touches it, so gating on len(errs) == 0
-	// alone (without checking ownership) would let a losing call, whose
-	// own contribution to errs is nil either way, forget a key a different
-	// concurrent call is actively relying on staying claimed.
+	// record.NoMoreRetries always forgets, regardless of ownership — see
+	// handleIncidentCreated's matching comment for why (and why this must
+	// not be record.IsFinalAttempt: a record dead-lettered off the main
+	// topic gets a fresh attempt cycle on the DLQ topic under the exact
+	// same content key — see recordBaseKey — so releasing on the main
+	// topic's own final attempt would reopen an already-succeeded channel
+	// to being reclaimed and resent there). Otherwise, only forget chatKey
+	// when this call actually owns it (chatOwned) — a call that lost the
+	// claim never touches it, so gating on len(errs) == 0 alone (without
+	// checking ownership) would let a losing call, whose own contribution
+	// to errs is nil either way, forget a key a different concurrent call
+	// is actively relying on staying claimed.
 	//
 	// forgetEmailGroups is not similarly ownership-gated — each group's own
 	// claim is checked inside sendPerGroup, but this call site doesn't know
@@ -332,7 +350,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 	// resending is cheap, matching sendPerGroup's own accepted-duplication
 	// precedent for other failure modes) — flagged here rather than fully
 	// plumbing per-group ownership back through sendPerGroup's return value.
-	if record.IsFinalAttempt {
+	if record.NoMoreRetries {
 		d.forget(chatKey)
 		d.forgetEmailGroups(baseKey, groups)
 	} else if chatOwned && len(errs) == 0 {
@@ -361,7 +379,7 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderCommentAddedEmail(p.Name, p.ProjectID, p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
 	})
-	if sendErr == nil || record.IsFinalAttempt {
+	if sendErr == nil || record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, groups)
 	}
 	return sendErr
@@ -383,7 +401,7 @@ func (d *Dispatcher) handleStatusChanged(ctx context.Context, record eventbus.Re
 	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderStatusChangedEmail(p.CaseID, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
 	})
-	if sendErr == nil || record.IsFinalAttempt {
+	if sendErr == nil || record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, groups)
 	}
 	return sendErr
@@ -405,7 +423,7 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, p.CaseID, caseLink, commentLinkFor(caseLink, ""))
 	})
-	if sendErr == nil || record.IsFinalAttempt {
+	if sendErr == nil || record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, groups)
 	}
 	return sendErr
@@ -562,16 +580,21 @@ func (d *Dispatcher) forgetEmailGroups(baseKey string, groups map[string][]strin
 // tracking which side already succeeded, a Twilio failure alone would cause
 // the (already-successful) Chat alert to be resent on every retry too —
 // paging on-call once but posting 3 duplicate Chat cards, or vice versa.
-// alreadyDone/markDone key on this specific record (topic/partition/offset,
-// unique per record) plus which channel, so a retry only re-attempts the
-// channel that's still actually failing. Both keys are released once either
-// both channels have succeeded, or record.IsFinalAttempt is true — the
+// claim/forget key on this specific record (recordBaseKey, unique per event
+// content, not per Kafka delivery — see its doc comment) plus which
+// channel, so a retry only re-attempts the channel that's still actually
+// failing. Both keys are released once either
+// both channels have succeeded, or record.NoMoreRetries is true — the
 // latter matters because a channel that never succeeds (e.g. Twilio stays
-// down for all 3 attempts) would otherwise never hit the "both succeeded"
-// branch, and its key would sit in d.done forever: IsFinalAttempt tells us
-// eventbus.Consumer is about to commit and move on regardless of outcome,
-// so there's no future retry left to protect against, and it's safe to
-// stop tracking.
+// down for all 3 attempts, on the main topic AND the DLQ topic) would
+// otherwise never hit the "both succeeded" branch, and its key would sit in
+// d.done forever: NoMoreRetries tells us there is truly no future retry
+// left to protect against — on this topic or the dead-letter one — so it's
+// safe to stop tracking. This is deliberately record.NoMoreRetries and not
+// record.IsFinalAttempt: the main topic's own final attempt still has a DLQ
+// tier of retries coming for the identical content (same recordBaseKey),
+// so forgetting there would let an already-succeeded channel be reclaimed
+// and resent once the dead-lettered record's first DLQ attempt arrives.
 func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.Record, entityID string, raw json.RawMessage) error {
 	var p events.IncidentCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -622,19 +645,21 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 		}
 	}
 
-	// record.IsFinalAttempt always forgets both, regardless of ownership —
-	// eventbus.Consumer is done retrying this record either way, so nothing
-	// forgets these keys later if we don't do it now. Otherwise, only
-	// forget when THIS call actually owns both channels (chatOwned/
-	// callOwned — won their claim and resolved them this round): gating on
-	// chatErr/callErr being nil alone, without checking ownership, was the
-	// exact bug a concurrent Handle call for the same record could trigger
-	// — a call that lost a claim never touches that channel, so its own
-	// error variable for it stays its zero value (nil), indistinguishable
-	// from "I actually succeeded." Without the ownership check, that losing
-	// call would forget a key a different, still in-flight call is
-	// actively relying on staying claimed.
-	if record.IsFinalAttempt {
+	// record.NoMoreRetries always forgets both, regardless of ownership —
+	// there is truly no future retry left for this event's content either
+	// way (see NoMoreRetries' own doc comment for why this must not be
+	// record.IsFinalAttempt), so nothing forgets these keys later if we
+	// don't do it now. Otherwise, only forget when THIS call actually owns
+	// both channels (chatOwned/callOwned — won their claim and resolved
+	// them this round): gating on chatErr/callErr being nil alone, without
+	// checking ownership, was the exact bug a concurrent Handle call for
+	// the same record could trigger — a call that lost a claim never
+	// touches that channel, so its own error variable for it stays its
+	// zero value (nil), indistinguishable from "I actually succeeded."
+	// Without the ownership check, that losing call would forget a key a
+	// different, still in-flight call is actively relying on staying
+	// claimed.
+	if record.NoMoreRetries {
 		d.forget(chatKey)
 		d.forget(callKey)
 	} else if chatOwned && callOwned {

@@ -56,13 +56,31 @@ type Record struct {
 	Key       []byte
 	Value     []byte
 	// IsFinalAttempt is true on the last of handleAttempts calls to Handle
-	// for this record — set by handleAndCommit, which is about to commit
-	// and move on regardless of this call's outcome. A Handle implementation
-	// that tracks its own per-record state (e.g. dispatch.Dispatcher's
-	// per-channel idempotency map) can use this to release that state once
-	// no further retry will ever come for this exact record, instead of
-	// only releasing it on success and leaking otherwise.
+	// for this record on THIS topic — set by processRecord, which is about
+	// to call onExhausted (or log-and-drop) and move on regardless of this
+	// call's outcome. This does not by itself mean no further attempt will
+	// ever come for this event's content: the main consumer's onExhausted
+	// republishes the exact same Value to the dead-letter topic, which gets
+	// its own fresh IsFinalAttempt cycle. See NoMoreRetries for the
+	// property a Handle implementation actually wants when deciding whether
+	// it's safe to release content-keyed idempotency state.
 	IsFinalAttempt bool
+	// NoMoreRetries is true only when IsFinalAttempt is true AND there is
+	// no further tier of retries coming for this event's content — i.e.
+	// onExhausted is nil, so processRecord will log and drop rather than
+	// dead-letter. The DLQ topic's own Consumer always has onExhausted=nil
+	// (see cmd/server/main.go), so this is true on its final attempt; the
+	// main topic's Consumer has onExhausted set (dead-letter), so its final
+	// attempt leaves this false — one more tier of attempts is coming, on
+	// the DLQ topic, for the identical content under new Kafka coordinates.
+	//
+	// A Handle that keys its own idempotency tracking off event content
+	// rather than Kafka coordinates (see dispatch.recordBaseKey) must gate
+	// releasing that tracking on this, not IsFinalAttempt: releasing on the
+	// main topic's final attempt would let an already-succeeded channel be
+	// reclaimed and resent once the dead-lettered record's own first
+	// attempt arrives, since it would compute the exact same content key.
+	NoMoreRetries bool
 }
 
 // Consumer reads records from a topic as a member of a named consumer group,
@@ -178,6 +196,7 @@ func processRecord(ctx context.Context, record Record, handle Handle, onExhauste
 	var err error
 	for attempt := 1; attempt <= attempts; attempt++ {
 		record.IsFinalAttempt = attempt == attempts
+		record.NoMoreRetries = record.IsFinalAttempt && onExhausted == nil
 		if err = handle(ctx, record); err == nil {
 			return true
 		}

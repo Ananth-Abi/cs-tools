@@ -151,3 +151,47 @@ func TestProcessRecord_IsFinalAttemptOnlyOnLastCall(t *testing.T) {
 		}
 	}
 }
+
+// TestProcessRecord_NoMoreRetries_FalseWhenOnExhaustedSet verifies that a
+// record with a dead-letter tier to fall back to (onExhausted != nil, the
+// main topic's own Consumer.Run) never reports NoMoreRetries=true, even on
+// its own final attempt — there's still a DLQ topic redelivery coming for
+// the exact same content. See eventbus.Record.NoMoreRetries' doc comment
+// and dispatch.recordBaseKey for why a Handle implementation that keys
+// idempotency off content (not Kafka coordinates) depends on this.
+func TestProcessRecord_NoMoreRetries_FalseWhenOnExhaustedSet(t *testing.T) {
+	var flags []bool
+	handle := func(ctx context.Context, r Record) error {
+		flags = append(flags, r.NoMoreRetries)
+		return errors.New("keep failing")
+	}
+	onExhausted := func(ctx context.Context, record Record, handleErr error) error { return nil }
+	processRecord(context.Background(), Record{}, handle, onExhausted, 3, testRetryDelay)
+	for i, got := range flags {
+		if got {
+			t.Errorf("attempt %d: NoMoreRetries = true, want false (onExhausted is set — a DLQ tier is still coming)", i+1)
+		}
+	}
+}
+
+// TestProcessRecord_NoMoreRetries_TrueOnFinalAttemptWhenNoOnExhausted
+// verifies the DLQ topic's own Consumer.Run shape (onExhausted == nil):
+// NoMoreRetries is false on every attempt except the last, where it's true
+// — there really is nowhere further for this content to go.
+func TestProcessRecord_NoMoreRetries_TrueOnFinalAttemptWhenNoOnExhausted(t *testing.T) {
+	var flags []bool
+	handle := func(ctx context.Context, r Record) error {
+		flags = append(flags, r.NoMoreRetries)
+		return errors.New("keep failing")
+	}
+	processRecord(context.Background(), Record{}, handle, nil, 3, testRetryDelay)
+	want := []bool{false, false, true}
+	if len(flags) != len(want) {
+		t.Fatalf("got %d attempts, want %d", len(flags), len(want))
+	}
+	for i, w := range want {
+		if flags[i] != w {
+			t.Errorf("attempt %d: NoMoreRetries = %v, want %v", i+1, flags[i], w)
+		}
+	}
+}
