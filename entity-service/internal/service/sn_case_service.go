@@ -715,11 +715,15 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 	if err := validateUUIDs("projectId", []string{req.ProjectID}); err != nil {
 		return domain.CreateCaseResponse{}, err
 	}
-	if err := validateUUIDs("deploymentId", []string{req.DeploymentID}); err != nil {
-		return domain.CreateCaseResponse{}, err
-	}
-	if err := validateUUIDs("deployedProductId", []string{req.DeployedProductID}); err != nil {
-		return domain.CreateCaseResponse{}, err
+	// Announcements have no deployment/deployed-product concept, so these
+	// fields are left empty rather than validated as UUIDs.
+	if req.Type != "announcement" {
+		if err := validateUUIDs("deploymentId", []string{req.DeploymentID}); err != nil {
+			return domain.CreateCaseResponse{}, err
+		}
+		if err := validateUUIDs("deployedProductId", []string{req.DeployedProductID}); err != nil {
+			return domain.CreateCaseResponse{}, err
+		}
 	}
 
 	payload := snCreateCasePayload{
@@ -769,6 +773,9 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 		payload.Description = req.Description
 		payload.EngagementType = snEngagementTypeIDMap[req.EngagementType]
 		payload.EngagementPaymentType = snEngagementPaymentTypeIDMap[req.EngagementPaymentType]
+	case "announcement":
+		payload.Title = req.Subject
+		payload.Description = req.Description
 	}
 
 	if len(req.WatchList) > 0 {

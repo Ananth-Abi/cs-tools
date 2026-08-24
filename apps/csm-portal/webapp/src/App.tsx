@@ -178,6 +178,9 @@ const CsmTimeCardsPage = lazy(
 const CsmAnnouncementsPage = lazy(
   () => import("@features/csm-announcements/pages/CsmAnnouncementsPage"),
 );
+const CsmAnnouncementCreatePage = lazy(
+  () => import("@features/csm-announcements/pages/CsmAnnouncementCreatePage"),
+);
 const HelpPage = lazy(() => import("@features/help/pages/HelpPage"));
 
 /**
@@ -567,6 +570,10 @@ export default function App(): JSX.Element {
                   </Route>
                   <Route path="time-cards" element={<CsmTimeCardsPage />} />
                   <Route path="announcements" element={<CsmAnnouncementsPage />} />
+                  <Route
+                    path="announcements/new"
+                    element={<CsmAnnouncementCreatePage />}
+                  />
                   <Route
                     path="announcements/:caseId"
                     element={<CsmCaseDetailPage />}

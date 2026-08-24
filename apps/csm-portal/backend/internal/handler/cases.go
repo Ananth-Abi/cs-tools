@@ -269,6 +269,7 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		var currentCase struct {
+			Type             string  `json:"type"`
 			State            string  `json:"state"`
 			WorkState        *string `json:"workState"`
 			AssignedEngineer *struct {
@@ -280,26 +281,38 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusInternalServerError, ErrMsgInternal)
 			return
 		}
-		if currentCase.State != "work_in_progress" || currentCase.WorkState == nil || *currentCase.WorkState != "ongoing" {
-			writeError(w, http.StatusConflict, ErrMsgCommentNotAllowed)
-			return
-		}
-		// Ownership check. assignedEngineer.id is a platform user record id, so
-		// it can only be compared against the caller's own platform id — never
-		// against the identity provider's user id on the JWT. Resolved here,
-		// after the state gate, so the extra lookup is only paid on a request
-		// that would otherwise be accepted.
-		currentUserID := h.resolveCurrentUserID(r, user)
-		if currentUserID == "" {
-			// The caller's identity could not be established, so ownership
-			// cannot be decided either way: fail closed, but as a server-side
-			// failure rather than a misleading "you are not the assignee".
-			writeError(w, http.StatusInternalServerError, ErrMsgInternal)
-			return
-		}
-		if currentCase.AssignedEngineer == nil || currentCase.AssignedEngineer.ID == nil || *currentCase.AssignedEngineer.ID != currentUserID {
-			writeError(w, http.StatusForbidden, ErrMsgCommentNotOwnCase)
-			return
+		if currentCase.Type == caseTypeAnnouncement {
+			// Announcement cases publish immediately and have no
+			// work_in_progress/ongoing workflow, and may carry no assigned
+			// engineer at all — the state and ownership gates below don't
+			// apply. They still block new comments once closed, like every
+			// other case type.
+			if currentCase.State == caseStateClosed {
+				writeError(w, http.StatusConflict, ErrMsgCommentOnClosedCase)
+				return
+			}
+		} else {
+			if currentCase.State != caseStateWorkInProgress || currentCase.WorkState == nil || *currentCase.WorkState != "ongoing" {
+				writeError(w, http.StatusConflict, ErrMsgCommentNotAllowed)
+				return
+			}
+			// Ownership check. assignedEngineer.id is a platform user record id, so
+			// it can only be compared against the caller's own platform id — never
+			// against the identity provider's user id on the JWT. Resolved here,
+			// after the state gate, so the extra lookup is only paid on a request
+			// that would otherwise be accepted.
+			currentUserID := h.resolveCurrentUserID(r, user)
+			if currentUserID == "" {
+				// The caller's identity could not be established, so ownership
+				// cannot be decided either way: fail closed, but as a server-side
+				// failure rather than a misleading "you are not the assignee".
+				writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+				return
+			}
+			if currentCase.AssignedEngineer == nil || currentCase.AssignedEngineer.ID == nil || *currentCase.AssignedEngineer.ID != currentUserID {
+				writeError(w, http.StatusForbidden, ErrMsgCommentNotOwnCase)
+				return
+			}
 		}
 	}
 
