@@ -36,6 +36,7 @@ import type {
 } from "@features/csm-cases/types/csmCases";
 import {
   DEFAULT_CASES_SORT,
+  type CasesSortField,
   type CasesSortOrder,
 } from "@features/csm-cases/utils/casesSort";
 
@@ -64,11 +65,13 @@ const EXACT_MATCH_LIMIT = 5;
  * `limit` / `offset` / `hasMore`).
  *
  * `page` is zero-based (matching MUI `TablePagination`); `pageSize` is the row
- * limit (≤ the backend's page-size cap, `BE_MAX_PAGE_LIMIT`). Cases are always sorted by `updatedOn`;
- * `sortOrder` (default `"desc"`) controls direction, so the cases page loads
- * the most recently updated cases on arrival by default but can be flipped
- * to oldest-updated-first. `enabled` is an optional escape hatch to suspend
- * the fetch.
+ * limit (≤ the backend's page-size cap, `BE_MAX_PAGE_LIMIT`). `sortField`
+ * (default `"updatedOn"`) picks which column drives the server-side sort —
+ * `createdOn`, `updatedOn`, `severity`, or `state` — and `sortOrder` (default
+ * `"desc"`) controls direction, so the cases page loads the most recently
+ * updated cases on arrival by default but can be flipped or repointed at a
+ * different column. `enabled` is an optional escape hatch to suspend the
+ * fetch.
  */
 export function useGetCsmCases(
   filters: CasesFilters,
@@ -76,6 +79,7 @@ export function useGetCsmCases(
   pageSize: number,
   enabled = true,
   sortOrder: CasesSortOrder = DEFAULT_CASES_SORT.order,
+  sortField: CasesSortField = DEFAULT_CASES_SORT.field,
 ): UseQueryResult<CsmCasesListResponse, Error> {
   const logger = useLogger();
   const api = useBackendApi();
@@ -140,6 +144,7 @@ export function useGetCsmCases(
       wantsMe ? (currentUserId ?? "") : "",
       page,
       pageSize,
+      sortField,
       sortOrder,
     ],
     queryFn: async (): Promise<CsmCasesListResponse> => {
@@ -177,7 +182,7 @@ export function useGetCsmCases(
       ): Promise<BeCaseSearchResponse> =>
         api.post<BeCaseSearchPayload, BeCaseSearchResponse>("/cases/search", {
           pagination,
-          sortBy: { field: "updatedOn", order: sortOrder },
+          sortBy: { field: sortField, order: sortOrder },
           filters: buildCaseSearchFilters(
             filters,
             search,
