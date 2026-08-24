@@ -61,3 +61,38 @@ type StatusChangedPayload struct {
 	Timestamp string `json:"timestamp"`
 	NewStatus string `json:"newStatus"`
 }
+
+// CaseCreatedPayload is the Payload shape for TypeCaseCreated — mirrors
+// csm-notification-service's own CaseCreatedPayload (its internal/events/
+// validate.go is the schema authority; keep this in sync by hand the same
+// way Envelope above is kept in sync). That payload also has optional
+// Product/IncidentImpactDescription fields; they're omitted here rather than
+// always encoded empty, since this service has no data source for either
+// yet — omitting an optional field and encoding it empty are equivalent on
+// the wire (see the notification service's decodeStrict).
+type CaseCreatedPayload struct {
+	ReporterName string   `json:"reporterName"`
+	ProjectName  string   `json:"projectName"`
+	ProjectID    string   `json:"projectId"`
+	CaseID       string   `json:"caseId"`
+	CaseTitle    string   `json:"caseTitle"`
+	CaseType     string   `json:"caseType"`
+	Priority     string   `json:"priority"`
+	CreatedAt    string   `json:"createdAt"`
+	Description  string   `json:"description"`
+	Recipients   []string `json:"recipients"`
+}
+
+// IncidentCreatedPayload is the Payload shape for TypeIncidentCreated —
+// mirrors csm-notification-service's own IncidentCreatedPayload, which also
+// has Product (Google Chat space) and CallTo (on-call phone number) fields.
+// Both are deliberately omitted here: this service has no product→Chat-space
+// mapping or on-call number of its own to supply, and
+// csm-notification-service's dispatch.Dispatcher substitutes its own
+// configured defaults (DEFAULT_CHAT_PRODUCT/INCIDENT_DEFAULT_CALL_TO) when
+// either is absent — see that service's events.Validate, which accepts this.
+type IncidentCreatedPayload struct {
+	Title            string `json:"title"`
+	ShortDescription string `json:"shortDescription"`
+	IncidentLink     string `json:"incidentLink"`
+}

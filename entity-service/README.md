@@ -28,7 +28,7 @@ entity-service/
 │   ├── service/
 │   │   ├── interfaces.go        # CaseRepository and CaseService interfaces
 │   │   ├── entity_service.go    # Business logic — pagination, validation
-│   │   ├── event_publisher_service.go # EventPublisherService.Publish — builds the envelope, publishes it, records a failure if Event Hub doesn't ack (not yet wired into main.go — no caller)
+│   │   ├── event_publisher_service.go # EventPublisherService.Publish — builds the envelope, publishes it, records a failure if Event Hub doesn't ack (wired in via routes.go; called from snCaseService.CreateCase and snIncidentService.CreateIncident)
 │   │   └── sla_clock_service.go # SLAClockService — register/get/mark-tier-reached for a case's SLA clocks
 │   ├── repository/
 │   │   ├── entity_repo.go       # SQL queries against the "case" table
@@ -129,18 +129,27 @@ Configure them in `apps/csm-portal/backend/.env` — see that module's
 [README](../apps/csm-portal/backend/README.md#directory-vocabularies). Setting them here has no
 effect.
 
-### Event Hub — not yet wired in
+### Event Hub publishing
 
-`internal/service.EventPublisherService` publishes domain events (`case.created`, `case.comment_added`,
-`case.status_changed`, `case.assigned`, `incident.created`) to Event Hub's Kafka-compatible endpoint for
-`csm-notification-service` to consume. It is not constructed in `cmd/api/main.go` yet — no service method
-calls `Publish`.
+`internal/service.EventPublisherService` publishes domain events to Event Hub's Kafka-compatible
+endpoint for `csm-notification-service` to consume. Constructed in `internal/server/routes.go`,
+gated on `EVENT_HUB_BROKER` (not `DATA_SOURCE`) — left unset, nothing changes; `CreateCase`/
+`CreateIncident` behave exactly as before this was wired in.
+
+Currently published, both ServiceNow-data-source-only: `case.created` (from
+`snCaseService.CreateCase`, re-enriched via `GetCaseByID` for the reporter's name/project
+name/watch-list emails — `Recipients` is the watch list's emails only, and publishing is
+skipped for a case with no watchers) and `incident.created` (from
+`snIncidentService.CreateIncident`, built directly from the request — no enrichment call
+needed). See entity-service's `CLAUDE.md` ("Event Hub publishing") for the full reasoning,
+including why both publish synchronously with a bounded timeout rather than async.
 
 | Variable | Description |
 |---|---|
-| `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` (optional) |
-| `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string — must be namespace-scoped (no `EntityPath`), not scoped to a single Event Hub (optional) |
-| `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (optional) |
+| `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` — the feature gate (optional) |
+| `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string — must be namespace-scoped (no `EntityPath`), not scoped to a single Event Hub (required once `EVENT_HUB_BROKER` is set) |
+| `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (required once `EVENT_HUB_BROKER` is set) |
+| `CSM_PORTAL_WEB_BASE_URL` | CSM portal base URL; builds `incident.created`'s `IncidentLink`. Unset means `incident.created` is never published, even with Event Hub configured (optional) |
 
 ### SLA clocks
 

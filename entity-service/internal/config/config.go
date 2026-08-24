@@ -53,6 +53,23 @@ type Config struct {
 	ServiceNowIntegrationServiceClientID     string
 	ServiceNowIntegrationServiceClientSecret string
 	ServiceNowIntegrationServiceScopes       string
+	// EventHubBroker/EventHubConnectionString/EventHubTopic configure this
+	// service's EventPublisherService (internal/service/
+	// event_publisher_service.go). Optional — gated on EventHubBroker being
+	// set (see routes.go), not required by Validate, mirroring
+	// apps/csm-portal/backend's own optional Event Hub wiring: when unset,
+	// case.created/incident.created are simply never published and
+	// CreateCase/CreateIncident behave exactly as before this was wired in.
+	EventHubBroker           string
+	EventHubConnectionString string
+	EventHubTopic            string
+	// CSMPortalWebBaseURL is the CSM portal webapp's base URL, used to build
+	// incident.created's IncidentLink (<CSMPortalWebBaseURL>/operations/incidents/{id}) —
+	// the one outbound field this service otherwise has no data source for.
+	// Optional; when unset, incident.created is not published (see
+	// snIncidentService's publish helper) since a missing link would defeat
+	// the point of the Chat alert's "Open in Portal" button.
+	CSMPortalWebBaseURL string
 }
 
 // Load reads configuration from environment variables and returns a populated
@@ -73,6 +90,10 @@ func Load() *Config {
 		ServiceNowIntegrationServiceClientID:     os.Getenv("SERVICENOW_INTEGRATION_SERVICE_CLIENT_ID"),
 		ServiceNowIntegrationServiceClientSecret: os.Getenv("SERVICENOW_INTEGRATION_SERVICE_CLIENT_SECRET"),
 		ServiceNowIntegrationServiceScopes:       os.Getenv("SERVICENOW_INTEGRATION_SERVICE_SCOPES"),
+		EventHubBroker:                           os.Getenv("EVENT_HUB_BROKER"),
+		EventHubConnectionString:                 os.Getenv("EVENT_HUB_CONNECTION_STRING"),
+		EventHubTopic:                            os.Getenv("EVENT_HUB_TOPIC"),
+		CSMPortalWebBaseURL:                      os.Getenv("CSM_PORTAL_WEB_BASE_URL"),
 	}
 }
 

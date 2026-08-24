@@ -20,13 +20,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
+
+// publishIncidentCreatedTimeout bounds publishIncidentCreated's publish call
+// — see that function's doc comment for why this runs synchronously rather
+// than detached.
+const publishIncidentCreatedTimeout = 5 * time.Second
 
 // snIncidentsResponse mirrors the Choreo POST /incidents/search response.
 type snIncidentsResponse struct {
@@ -177,11 +184,20 @@ var validIncidentSortOrder = map[domain.IncidentSortOrder]bool{
 
 type snIncidentService struct {
 	client *integrationservice.Client
+	// publisher is nil when Event Hub is not configured — every call site
+	// must check before using it. See publishIncidentCreated.
+	publisher EventPublisherService
+	// csmPortalBaseURL builds publishIncidentCreated's IncidentLink
+	// (<csmPortalBaseURL>/operations/incidents/{id}) — empty when
+	// config.Config.CSMPortalWebBaseURL is unset.
+	csmPortalBaseURL string
 }
 
-// NewServiceNowIncidentService constructs an IncidentService backed by the Choreo API.
-func NewServiceNowIncidentService(client *integrationservice.Client) IncidentService {
-	return &snIncidentService{client: client}
+// NewServiceNowIncidentService constructs an IncidentService backed by the
+// Choreo API. publisher/csmPortalBaseURL may be nil/empty (see
+// snIncidentService's doc comments on those fields).
+func NewServiceNowIncidentService(client *integrationservice.Client, publisher EventPublisherService, csmPortalBaseURL string) IncidentService {
+	return &snIncidentService{client: client, publisher: publisher, csmPortalBaseURL: csmPortalBaseURL}
 }
 
 func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.SearchIncidentsRequest) (domain.SearchIncidentsResponse, error) {
@@ -724,7 +740,60 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 	resp.Incident.Number = snResp.Incident.Number
 	resp.Incident.CreatedOn = snResp.Incident.CreatedOn
 	resp.Incident.CreatedBy = snResp.Incident.CreatedBy
+	s.publishIncidentCreated(ctx, req, resp.Incident.ID)
 	return resp, nil
+}
+
+// publishIncidentCreated best-effort publishes an incident.created event for
+// a newly created incident. Unlike publishCaseCreated, no enrichment round
+// trip is needed: Title/ShortDescription come directly from req, which
+// already carries everything the notification needs (Subject, and
+// optionally AdditionalComments) without a follow-up GetIncidentByID call.
+//
+// ShortDescription falls back to req.Subject when req.AdditionalComments is
+// absent — a freshly created incident often has no additional comments yet,
+// and events.Validate on the receiving side requires ShortDescription
+// non-empty.
+//
+// Product/CallTo are left unset — this service has no product→Chat-space
+// mapping or on-call number of its own; csm-notification-service substitutes
+// its own configured defaults (see events.IncidentCreatedPayload's doc
+// comment). IncidentLink requires csmPortalBaseURL to be configured; without
+// it, publishing is skipped entirely (logged), since a Chat alert with no
+// working "Open in Portal" link defeats its own purpose.
+//
+// Runs synchronously, bounded by publishIncidentCreatedTimeout — see
+// publishCaseCreated's doc comment for why (same reasoning applies here).
+// Any failure is logged and does not fail CreateIncident itself: the
+// incident already exists in ServiceNow by this point.
+func (s *snIncidentService) publishIncidentCreated(ctx context.Context, req domain.CreateIncidentRequest, incidentID string) {
+	if s.publisher == nil {
+		return
+	}
+	if s.csmPortalBaseURL == "" {
+		slog.WarnContext(ctx, "sn create incident: incident.created not published, CSM_PORTAL_WEB_BASE_URL is not configured", "incidentId", incidentID)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishIncidentCreatedTimeout)
+	defer cancel()
+
+	shortDescription := req.Subject
+	if req.AdditionalComments != nil && *req.AdditionalComments != "" {
+		shortDescription = *req.AdditionalComments
+	}
+
+	payload, err := json.Marshal(events.IncidentCreatedPayload{
+		Title:            req.Subject,
+		ShortDescription: shortDescription,
+		IncidentLink:     s.csmPortalBaseURL + "/operations/incidents/" + incidentID,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn create incident: encode incident.created payload failed", "incidentId", incidentID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeIncidentCreated, incidentID, payload); err != nil {
+		slog.ErrorContext(ctx, "sn create incident: publish incident.created failed", "incidentId", incidentID, "error", err)
+	}
 }
 
 // snIncidentSubcategoryLabelMap maps SN subcategory string values to domain enum strings.

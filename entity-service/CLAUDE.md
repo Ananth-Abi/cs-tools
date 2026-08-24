@@ -36,6 +36,10 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `DB_NAME`     | yes      | —       | Database name              |
 | `DB_SSLMODE`  | no       | —       | `disable` or `require`    |
 | `SERVER_PORT` | no       | `8080`  | HTTP listen port           |
+| `EVENT_HUB_BROKER` | no | — | Kafka-compatible bootstrap address; feature-gates `EventPublisherService` (see "Event Hub publishing" below) |
+| `EVENT_HUB_CONNECTION_STRING` | no* | — | Event Hub namespace Shared Access Policy connection string. *Required once `EVENT_HUB_BROKER` is set |
+| `EVENT_HUB_TOPIC` | no* | — | Event Hub (Kafka topic) name. *Required once `EVENT_HUB_BROKER` is set |
+| `CSM_PORTAL_WEB_BASE_URL` | no | — | CSM portal base URL; builds `incident.created`'s `IncidentLink`. Unset means `incident.created` is never published, even with Event Hub configured |
 
 `CSM_TEAM_REGISTRY` and `CSM_USER_ROLES` are **not read here**. The team registry
 and the assignable-role allow-list are organisation vocabulary and live in the CSM
@@ -62,12 +66,62 @@ records the failure via `EventPublishFailureService.CreateEventPublishFailure`
 `eventpublisher.Publisher`, which has to reach this same table over HTTP
 (`POST /event-publish-failures`) since it lives in a different service.
 
-**Not yet wired in**: `NewEventPublisherService` is not constructed in
-`cmd/api/main.go`, and no service method calls `Publish` yet. The next step is
-constructing it (gated on `EVENT_HUB_BROKER`, mirroring
-`apps/csm-portal/backend/cmd/server/main.go`'s own optional wiring) and
-calling `Publish` from whichever service methods create/update cases,
-comments, and incidents.
+**Wired in**: `NewEventPublisherService` is constructed in
+`internal/server/routes.go` (not `cmd/api/main.go` — `NewRouter` owns the
+whole dependency graph; see "Adding a new entity" below), gated on
+`cfg.EventHubBroker != ""` — the same optional-wiring convention
+`apps/csm-portal/backend/cmd/server/main.go` uses, but keyed on Event Hub
+config specifically, not `cfg.DataSource`: publishing is a distinct concern
+from which backend serves reads. `NewRouter` returns the constructed
+`EventPublisherService` (nil if unconfigured) alongside the `http.Handler`,
+threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
+it during shutdown, after `srv.Shutdown`.
+
+Two call sites publish today, both ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
+there is no Postgres-backed equivalent for either):
+
+- **`snCaseService.CreateCase`** publishes `case.created` via a private
+  `publishCaseCreated` helper, called after the SN create call succeeds.
+  Rather than building the payload from `req`/the create response (which
+  carries only a few fields — see `snCreateCaseResponse`), it re-fetches the
+  case via `GetCaseByID`, whose own SN response already resolves the
+  reporter's display name, the project's name, and each watcher's email —
+  exactly what `events.CaseCreatedPayload` needs. `Recipients` is the
+  resolved watch list's emails only (an explicit, deliberate decision — this
+  service has no other notion of who should be emailed for a case); a case
+  created with no watchers is a normal state, not an error, so publishing is
+  silently skipped rather than sending a payload
+  `csm-notification-service`'s `events.Validate` would reject anyway for an
+  empty `recipients` list.
+- **`snIncidentService.CreateIncident`** publishes `incident.created` via
+  `publishIncidentCreated`, called the same way. No enrichment round trip is
+  needed here: `req.Subject`/`req.AdditionalComments` already carry
+  everything the payload needs (`Title`/`ShortDescription`, the latter
+  falling back to `Subject` when `AdditionalComments` is absent).
+  `IncidentLink` is built from `cfg.CSMPortalWebBaseURL` + `/operations/incidents/{id}`;
+  publishing is skipped entirely (logged) when that config is unset, since a
+  Chat alert with no working "Open in Portal" link would defeat its own
+  purpose. Neither `Product` (which Google Chat space) nor `CallTo` (on-call
+  number) is ever set from this service — per explicit decision, that
+  resolution belongs entirely in `csm-notification-service`, which
+  substitutes its own configured defaults (`DEFAULT_CHAT_PRODUCT`/
+  `INCIDENT_DEFAULT_CALL_TO`) when either is absent from the payload.
+
+Both helpers run **synchronously** (not detached/async the way
+`apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`
+is), bounded by a 5s `context.WithTimeout` (`publishCaseCreatedTimeout`/
+`publishIncidentCreatedTimeout`) so a slow ServiceNow or Event Hub round trip
+can't consume this service's own 30s request timeout — a deliberate
+simplicity trade-off over the async+`WaitGroup`-drain pattern, made because
+this service (unlike that backend) has no existing per-handler struct to
+hold a drain hook, and adding one purely for this would be a larger change
+than the added latency (typically well under a second) justifies. Revisit if
+that latency turns out to matter in practice. Either helper's failure —
+enrichment or the publish call itself — is logged (`slog.Error`/`slog.Warn`)
+and does **not** fail `CreateCase`/`CreateIncident`'s own response: the
+case/incident already exists in ServiceNow by that point, so a
+notification-side hiccup must not be reported to the caller as a failed
+create.
 
 ## SLA clocks
 
