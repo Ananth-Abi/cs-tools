@@ -35,6 +35,8 @@ import {
   getFileIcon,
   scrollElement,
   INSERT_IMAGE_COMMAND,
+  tokenizePlainTextPaste,
+  unwrapNestedPreCodeElements,
 } from "@components/rich-text-editor/richTextEditor";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { type ReactNode, useEffect, useState, useCallback, useMemo, useRef } from "react";
@@ -61,6 +63,9 @@ import {
   $getSelection,
   $isRangeSelection,
   INSERT_PARAGRAPH_COMMAND,
+  PASTE_COMMAND,
+  PASTE_TAG,
+  $createTabNode,
 } from "lexical";
 import { $isListItemNode } from "@lexical/list";
 import { $findMatchingParent } from "@lexical/utils";
@@ -261,6 +266,89 @@ const ClipboardImagePlugin = ({ onPasteError }: { onPasteError?: () => void }): 
         prevRootElement?.removeEventListener("paste", handlePaste);
         rootElement?.addEventListener("paste", handlePaste);
       },
+    );
+  }, [editor]);
+
+  return null;
+};
+
+/**
+ * Normalizes two paste-import gaps in Lexical's default paste handling
+ * before it runs (registered at COMMAND_PRIORITY_HIGH, above the default
+ * rich-text paste handler's COMMAND_PRIORITY_EDITOR, so it can intercept
+ * first). Falls through (returns false) whenever neither fix applies, so
+ * every other paste shape is handled exactly as before.
+ *
+ * - Plain-text paste (clipboard has text/plain but no text/html -- exactly
+ *   ChatGPT's own clipboard format): replays the same tokenization Lexical's
+ *   default handler uses, but collapsing blank lines into ordinary paragraph
+ *   breaks instead of standalone empty paragraphs. See
+ *   `tokenizePlainTextPaste` in richTextEditor.tsx for why the default
+ *   causes the reported "extra space between paragraphs".
+ * - HTML paste containing `<pre><code>...</code></pre>` (ChatGPT/GitHub/
+ *   Notion's standard code block markup): flattens the nested `<code>`
+ *   before conversion so it doesn't produce a duplicated, nested CodeNode.
+ *   See `unwrapNestedPreCodeElements` in richTextEditor.tsx.
+ */
+const PasteNormalizationPlugin = (): null => {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      PASTE_COMMAND,
+      (event) => {
+        if (!(event instanceof ClipboardEvent)) return false;
+        const clipboardData = event.clipboardData;
+        if (!clipboardData) return false;
+
+        const html = clipboardData.getData("text/html");
+        const text = clipboardData.getData("text/plain");
+
+        if (html.trim()) {
+          const dom = new DOMParser().parseFromString(html, "text/html");
+          if (!unwrapNestedPreCodeElements(dom)) return false;
+
+          event.preventDefault();
+          editor.update(
+            () => {
+              const selection = $getSelection();
+              if (!$isRangeSelection(selection)) return;
+              const nodes = $generateNodesFromDOM(editor, dom);
+              selection.insertNodes(nodes);
+            },
+            { tag: PASTE_TAG },
+          );
+          return true;
+        }
+
+        if (text) {
+          const tokens = tokenizePlainTextPaste(text);
+          if (tokens.length === 0) return false;
+
+          event.preventDefault();
+          editor.update(
+            () => {
+              for (const token of tokens) {
+                const currentSelection = $getSelection();
+                if (!$isRangeSelection(currentSelection)) continue;
+
+                if (token.type === "paragraph") {
+                  currentSelection.insertParagraph();
+                } else if (token.type === "tab") {
+                  currentSelection.insertNodes([$createTabNode()]);
+                } else {
+                  currentSelection.insertText(token.value);
+                }
+              }
+            },
+            { tag: PASTE_TAG },
+          );
+          return true;
+        }
+
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
     );
   }, [editor]);
 
@@ -529,6 +617,7 @@ const Editor = ({
           <ListPlugin />
           <ImagesPlugin />
           <ClipboardImagePlugin onPasteError={onPasteError} />
+          <PasteNormalizationPlugin />
           <LinkPlugin />
           <ClickableLinkPlugin />
           <InitialValuePlugin initialHtml={value} />
