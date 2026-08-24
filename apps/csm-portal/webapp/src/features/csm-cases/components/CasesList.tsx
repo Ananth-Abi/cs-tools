@@ -35,7 +35,10 @@ import StateChip from "@components/StateChip";
 import WorkStateChip from "@components/WorkStateChip";
 import CasePreviewDrawer from "@features/csm-cases/components/CasePreviewDrawer";
 import type { CsmCaseRow } from "@features/csm-cases/types/csmCases";
-import type { CasesSortOrder } from "@features/csm-cases/utils/casesSort";
+import type {
+  CasesSortField,
+  CasesSortOrder,
+} from "@features/csm-cases/utils/casesSort";
 import {
   CASE_TYPE_COLOR,
   CASE_TYPE_LABEL,
@@ -71,13 +74,28 @@ interface CasesListProps {
    * long-standing fixed set, gated only by `hideSeverityColumn`, exactly as
    * every other caller of `CasesList` already gets it. */
   optionalColumns?: CaseOptionalColumnId[];
-  /** Current sort order for the "Updated" column, when the caller wants it
-   * sortable. Omit both `sortOrder` and `onSortOrderChange` for a plain
-   * (non-interactive) header — the list is always server-sorted by
-   * `updatedOn`, this just lets the user flip the direction. */
+  /** Which column is currently driving the server-side sort — Updated and
+   * State are always present; Created and Severity only sort when their own
+   * optional column is visible (see `OPTIONAL_COLUMN_SORT_FIELD`). Pass all
+   * four of `sortField` / `sortOrder` / `onSortFieldChange` /
+   * `onSortOrderChange` together for sortable headers, or omit all four for
+   * plain (non-interactive) ones — a caller that only wants the legacy
+   * "Updated" toggle can still do that by wiring only the "Updated" click
+   * through, since every header's click handler always reports back through
+   * these same two callbacks. */
+  sortField?: CasesSortField;
+  onSortFieldChange?: (field: CasesSortField) => void;
   sortOrder?: CasesSortOrder;
   onSortOrderChange?: (order: CasesSortOrder) => void;
 }
+
+/** Maps the optional columns that double as sort headers to the field they
+ * sort by. Columns not listed here (Product, Type, Assignee, Customer) have
+ * no server-side sort of their own. */
+const OPTIONAL_COLUMN_SORT_FIELD: Partial<Record<CaseOptionalColumnId, CasesSortField>> = {
+  createdAt: "createdOn",
+  severity: "severity",
+};
 
 function renderOptionalCell(id: CaseOptionalColumnId, c: CsmCaseRow): JSX.Element {
   switch (id) {
@@ -151,6 +169,8 @@ export default function CasesList({
   detailBasePath,
   hideSeverityColumn = false,
   optionalColumns,
+  sortField,
+  onSortFieldChange,
   sortOrder,
   onSortOrderChange,
 }: CasesListProps): JSX.Element {
@@ -165,11 +185,65 @@ export default function CasesList({
   const effectiveOptionalColumns: CaseOptionalColumnId[] =
     optionalColumns ?? (hideSeverityColumn ? ["product"] : ["product", "type", "severity"]);
 
-  const headerCells = [
-    "Case ID",
-    "Subject",
-    ...effectiveOptionalColumns.map((id) => CASE_OPTIONAL_COLUMNS[id].label),
-    "State",
+  // Sortable headers only render as such when the caller wired up all four
+  // sort props — a caller that passes none of them (dashboard widgets, mini
+  // tables) keeps every header as plain, non-interactive text.
+  const sortInteractive =
+    sortField !== undefined &&
+    sortOrder !== undefined &&
+    onSortFieldChange !== undefined &&
+    onSortOrderChange !== undefined;
+
+  const handleSortClick = (field: CasesSortField): void => {
+    if (!onSortFieldChange || !onSortOrderChange) return;
+    if (field === sortField) {
+      onSortOrderChange(sortOrder === "desc" ? "asc" : "desc");
+    } else {
+      onSortFieldChange(field);
+      onSortOrderChange("desc");
+    }
+  };
+
+  function renderHeaderCell(label: string, field?: CasesSortField): JSX.Element {
+    if (!field || !sortInteractive) {
+      return (
+        <Typography
+          key={label}
+          variant="caption"
+          color="text.secondary"
+          sx={{ fontWeight: 600, textAlign: "left" }}
+        >
+          {label}
+        </Typography>
+      );
+    }
+    const isActive = field === sortField;
+    return (
+      <TableSortLabel
+        key={label}
+        active={isActive}
+        direction={isActive ? sortOrder : "desc"}
+        onClick={() => handleSortClick(field)}
+        sx={{
+          justifySelf: "start",
+          "& .MuiTableSortLabel-icon": { fontSize: "1rem" },
+        }}
+      >
+        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+          {label}
+        </Typography>
+      </TableSortLabel>
+    );
+  }
+
+  const headerCells: { label: string; sortableField?: CasesSortField }[] = [
+    { label: "Case ID" },
+    { label: "Subject" },
+    ...effectiveOptionalColumns.map((id) => ({
+      label: CASE_OPTIONAL_COLUMNS[id].label,
+      sortableField: OPTIONAL_COLUMN_SORT_FIELD[id],
+    })),
+    { label: "State", sortableField: "state" as CasesSortField },
   ];
   const gridTemplateColumns = [
     "auto",
@@ -216,45 +290,8 @@ export default function CasesList({
         >
           Preview
         </Typography>
-        {headerCells.map((label) => (
-          <Typography
-            key={label}
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontWeight: 600, textAlign: "left" }}
-          >
-            {label}
-          </Typography>
-        ))}
-        {sortOrder && onSortOrderChange ? (
-          <TableSortLabel
-            active
-            direction={sortOrder}
-            onClick={() =>
-              onSortOrderChange(sortOrder === "desc" ? "asc" : "desc")
-            }
-            sx={{
-              justifySelf: "start",
-              "& .MuiTableSortLabel-icon": { fontSize: "1rem" },
-            }}
-          >
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontWeight: 600 }}
-            >
-              Updated
-            </Typography>
-          </TableSortLabel>
-        ) : (
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ fontWeight: 600, textAlign: "left" }}
-          >
-            Updated
-          </Typography>
-        )}
+        {headerCells.map((cell) => renderHeaderCell(cell.label, cell.sortableField))}
+        {renderHeaderCell("Updated", "updatedOn")}
       </Box>
 
       {/* Rows */}

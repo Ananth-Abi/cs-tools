@@ -65,6 +65,7 @@ import {
 } from "@features/csm-cases/utils/casesFiltersUrl";
 import {
   DEFAULT_CASES_SORT,
+  type CasesSortField,
   type CasesSortOrder,
 } from "@features/csm-cases/utils/casesSort";
 import { stateLabel } from "@features/csm-dashboard/utils/abtDashboard";
@@ -206,6 +207,9 @@ export default function CsmIssuesView({
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
   const [isFiltersOpen, setIsFiltersOpen] = useState(true);
+  const [sortField, setSortField] = useState<CasesSortField>(
+    DEFAULT_CASES_SORT.field,
+  );
   const [sortOrder, setSortOrder] = useState<CasesSortOrder>(
     DEFAULT_CASES_SORT.order,
   );
@@ -274,7 +278,12 @@ export default function CsmIssuesView({
     error,
     refetch,
     dataUpdatedAt,
-  } = useGetCsmCases(queryFilters, page, rowsPerPage, true, sortOrder);
+  } = useGetCsmCases(queryFilters, page, rowsPerPage, true, sortOrder, sortField);
+
+  const handleSortFieldChange = (field: CasesSortField): void => {
+    setSortField(field);
+    setPage(0);
+  };
 
   const handleSortOrderChange = (order: CasesSortOrder): void => {
     setSortOrder(order);
@@ -352,14 +361,14 @@ export default function CsmIssuesView({
         "/cases/search",
         {
           pagination: { offset, limit },
-          sortBy: { field: "updatedOn", order: sortOrder },
+          sortBy: { field: sortField, order: sortOrder },
           filters: buildCaseSearchFilters(queryFilters, exportSearch, assignedUserIds),
         },
       );
       const items = (res.cases ?? []).map((c) => mapCaseSearchViewToRow(c, currentUserEmail));
       return { items, total: res.total };
     },
-    [api, queryFilters, exportSearch, sortOrder, currentUserId, currentUserEmail],
+    [api, queryFilters, exportSearch, sortField, sortOrder, currentUserId, currentUserEmail],
   );
 
   // Same gate `CasesList` is given (`hideSeverityColumn={isServiceRequestOnly
@@ -545,6 +554,8 @@ export default function CsmIssuesView({
             ? columnPrefs.visibleColumns.map((c) => c.id as CaseOptionalColumnId)
             : undefined
         }
+        sortField={sortField}
+        onSortFieldChange={handleSortFieldChange}
         sortOrder={sortOrder}
         onSortOrderChange={handleSortOrderChange}
       />
