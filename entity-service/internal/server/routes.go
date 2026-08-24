@@ -22,6 +22,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
@@ -31,8 +32,11 @@ import (
 
 // NewRouter builds the dependency graph (repository → service → handler),
 // registers all routes, and wraps the mux with the middleware chain:
-// CorrelationID → Recovery → Logger → UserIDToken → Timeout.
-func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
+// CorrelationID → Recovery → Logger → UserIDToken → Timeout. Also returns
+// the constructed EventPublisherService (nil if EVENT_HUB_BROKER is unset)
+// so the caller (server.New, then cmd/api/main.go) can close it gracefully
+// on shutdown.
+func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.EventPublisherService) {
 	userRepo := repository.NewUserRepository(db)
 	userSvc := service.NewUserService(userRepo)
 	userHandler := handler.NewUserHandler(userSvc)
@@ -41,7 +45,25 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	// Postgres regardless of cfg.DataSource, same as the pool itself (see
 	// db.NewPool's call site in cmd/api/main.go).
 	eventPublishFailureRepo := repository.NewEventPublishFailureRepository(db)
-	eventPublishFailureHandler := handler.NewEventPublishFailureHandler(service.NewEventPublishFailureService(eventPublishFailureRepo))
+	eventPublishFailureSvc := service.NewEventPublishFailureService(eventPublishFailureRepo)
+	eventPublishFailureHandler := handler.NewEventPublishFailureHandler(eventPublishFailureSvc)
+
+	// EventPublisherService is optional, like every ServiceNow-only
+	// dependency below — gated on EventHubBroker rather than cfg.DataSource,
+	// since publishing is a distinct concern from which backend serves reads
+	// (see config.Config.EventHubBroker's doc comment). nil when unset; every
+	// caller (snCaseService, snIncidentService) already handles that.
+	var eventPublisher service.EventPublisherService
+	if cfg.EventHubBroker != "" {
+		eventPublisher = service.NewEventPublisherService(
+			eventbus.NewProducer(eventbus.Config{
+				Broker:           cfg.EventHubBroker,
+				ConnectionString: cfg.EventHubConnectionString,
+				Topic:            cfg.EventHubTopic,
+			}),
+			eventPublishFailureSvc,
+		)
+	}
 
 	// sla_clocks has no ServiceNow equivalent either — same reasoning as
 	// event_publish_failures above.
@@ -137,7 +159,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	pgCaseSvc := service.NewCaseService(caseRepo, userRepo)
 	var activeCaseSvc service.CaseService
 	if cfg.DataSource == config.DataSourceServiceNow {
-		activeCaseSvc = service.NewServiceNowCaseService(serviceNowIntegrationServiceClient, pgCaseSvc)
+		activeCaseSvc = service.NewServiceNowCaseService(serviceNowIntegrationServiceClient, pgCaseSvc, eventPublisher)
 	} else {
 		activeCaseSvc = pgCaseSvc
 	}
@@ -175,7 +197,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 
 	var incidentHandler *handler.IncidentHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
-		incidentHandler = handler.NewIncidentHandler(service.NewServiceNowIncidentService(serviceNowIntegrationServiceClient))
+		incidentHandler = handler.NewIncidentHandler(service.NewServiceNowIncidentService(serviceNowIntegrationServiceClient, eventPublisher))
 	}
 
 	var problemHandler *handler.ProblemHandler
@@ -476,5 +498,5 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 				),
 			),
 		),
-	)
+	), eventPublisher
 }

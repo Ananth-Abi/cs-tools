@@ -158,9 +158,17 @@ type CaseAssignedPayload struct {
 
 // IncidentCreatedPayload is TypeIncidentCreated's payload. Unlike the case.*
 // events above, this one has two reactions, not one: a Google Chat alert
-// (Product/Title/ShortDescription/IncidentLink map directly onto
-// GoogleChatClient.SendIncidentAlert's params) and a Twilio voice call to
+// (Product/Title/ShortDescription map onto GoogleChatClient.SendIncidentAlert's
+// params, alongside the portal link — see below) and a Twilio voice call to
 // CallTo, reading Title and ShortDescription aloud.
+//
+// There is deliberately no IncidentLink field: unlike an earlier version of
+// this struct, the "Open in Portal" button target is built by this service
+// itself (dispatch.handleIncidentCreated calls
+// recipientlinks.Resolver.IncidentLink(entityID)), the same way case.created
+// already gets its own portal link built here rather than trusting a
+// caller-supplied one. A publisher only needs to know the fact that an
+// incident was created, not this service's portal URL configuration.
 type IncidentCreatedPayload struct {
 	// Product selects which configured Google Chat space receives the alert
 	// (e.g. "api-manager"); matched case/whitespace-insensitively against
@@ -168,8 +176,6 @@ type IncidentCreatedPayload struct {
 	Product          string `json:"product"`
 	Title            string `json:"title"`
 	ShortDescription string `json:"shortDescription"`
-	// IncidentLink is the "Open in Portal" button target on the Chat card.
-	IncidentLink string `json:"incidentLink"`
 	// CallTo is the on-call phone number (E.164, e.g. "+14155552671") the
 	// voice call is placed to.
 	CallTo string `json:"callTo"`

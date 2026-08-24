@@ -130,9 +130,22 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.Product == "" || p.Title == "" || p.ShortDescription == "" ||
-			p.IncidentLink == "" || !e164Pattern.MatchString(p.CallTo) {
+		// entityID is required here (unlike its role for the case.* types
+		// above, where it's checked against the payload's own CaseID
+		// instead): dispatch.handleIncidentCreated builds the Chat alert's
+		// portal link directly from it (recipientlinks.Resolver.IncidentLink),
+		// so an empty entityID would produce a broken link on an otherwise
+		// "valid" event rather than being caught here.
+		if entityID == "" || p.Title == "" || p.ShortDescription == "" {
 			return fmt.Errorf("events: missing required field for %s", t)
+		}
+		// Product and CallTo are optional: a publisher that can't determine
+		// which Chat space or on-call number applies (e.g. entity-service)
+		// may omit them, and dispatch substitutes its own configured
+		// defaults. A non-empty CallTo must still be a valid E.164 number —
+		// this only relaxes "absent," not "malformed."
+		if p.CallTo != "" && !e164Pattern.MatchString(p.CallTo) {
+			return fmt.Errorf("events: %s callTo %q is not a valid E.164 phone number", t, p.CallTo)
 		}
 	case TypeSLAClockRegister:
 		var p SLAClockRegisterPayload

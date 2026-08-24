@@ -62,7 +62,7 @@ func TestSNCaseService_GroupCasesBy_CallsGroupByEndpointAndMapsResponse(t *testi
 	})
 
 	client := newTestSNClient(t, mux)
-	svc := NewServiceNowCaseService(client, nil)
+	svc := NewServiceNowCaseService(client, nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	req := domain.GroupCasesByRequest{
@@ -136,7 +136,7 @@ func TestSNCaseService_GroupCasesBy_RejectsBadFilterFieldAndCombo(t *testing.T) 
 	})
 
 	client := newTestSNClient(t, mux)
-	svc := NewServiceNowCaseService(client, nil)
+	svc := NewServiceNowCaseService(client, nil, nil)
 	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
 
 	t.Run("bad field name", func(t *testing.T) {

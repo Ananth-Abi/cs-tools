@@ -84,10 +84,15 @@ type EventPublishFailureService interface {
 // EventPublisherService publishes domain events to the case-events Event Hub
 // topic for csm-notification-service (and any other future consumer) to
 // react to — see eventPublisherService's doc comment for the wire format and
-// failure handling. Not yet constructed in cmd/api/main.go or called by any
-// handler/service — the next step is wiring NewEventPublisherService in and
-// calling Publish from whichever service methods create/update cases,
-// comments, and incidents.
+// failure handling. Constructed in internal/server/routes.go, gated on
+// config.Config.EventHubBroker being set (nil otherwise — every caller must
+// handle a nil EventPublisherService, matching every other optional
+// dependency in this service). Currently called only from
+// snCaseService.CreateCase (case.created) and
+// snIncidentService.CreateIncident (incident.created), both synchronously
+// and best-effort: a publish failure there is logged, not returned, since
+// the case/incident already exists in ServiceNow by that point and a
+// notification-side hiccup must not be reported as a failed create.
 type EventPublisherService interface {
 	// Publish builds the {type, entityId, payload} envelope for eventType/
 	// entityID/payload and publishes it to Event Hub, keyed by entityID so

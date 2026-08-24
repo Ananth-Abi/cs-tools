@@ -54,7 +54,7 @@ func TestSNCaseService_CreateCase_EngagementValidation(t *testing.T) {
 	}
 
 	// client is intentionally nil: every case must fail validation before touching it.
-	svc := NewServiceNowCaseService(nil, nil)
+	svc := NewServiceNowCaseService(nil, nil, nil)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -84,7 +84,7 @@ func TestSNCaseService_CreateCase_AnnouncementRejected(t *testing.T) {
 	}
 
 	// client is intentionally nil: this must fail validation before touching it.
-	svc := NewServiceNowCaseService(nil, nil)
+	svc := NewServiceNowCaseService(nil, nil, nil)
 
 	_, err := svc.CreateCase(contextWithUserIDToken("token"), req)
 	if _, ok := err.(*apierror.ValidationError); !ok {
@@ -112,7 +112,7 @@ func TestSNCaseService_CreateCase_Engagement(t *testing.T) {
 		}`))
 	})
 
-	svc := NewServiceNowCaseService(client, nil)
+	svc := NewServiceNowCaseService(client, nil, nil)
 	req := domain.CreateCaseRequest{
 		Type:              "engagement",
 		ProjectID:         testProjectUUID,
@@ -166,7 +166,7 @@ func TestSNCaseService_CreateCase_DefaultCaseAliasNormalizesToCase(t *testing.T)
 		}`))
 	})
 
-	svc := NewServiceNowCaseService(client, nil)
+	svc := NewServiceNowCaseService(client, nil, nil)
 	req := domain.CreateCaseRequest{
 		Type:              "default_case",
 		ProjectID:         testProjectUUID,
@@ -211,7 +211,7 @@ func TestSNCaseService_CreateCase_SecurityReportAnalysis_AttachmentsOptional(t *
 		}`))
 	})
 
-	svc := NewServiceNowCaseService(client, nil)
+	svc := NewServiceNowCaseService(client, nil, nil)
 	req := domain.CreateCaseRequest{
 		Type:              "security_report_analysis",
 		ProjectID:         testProjectUUID,

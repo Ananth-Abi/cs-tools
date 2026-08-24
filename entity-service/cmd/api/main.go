@@ -49,7 +49,7 @@ func main() {
 	defer pool.Close()
 
 	addr := ":" + cfg.ServerPort
-	srv := server.New(addr, pool, cfg)
+	srv, eventPublisher := server.New(addr, pool, cfg)
 
 	go func() {
 		log.Printf("Customer Entity REST Service started in PORT : %s", cfg.ServerPort)
@@ -67,6 +67,9 @@ func main() {
 
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Fatalf("graceful shutdown failed: %v", err)
+	}
+	if eventPublisher != nil {
+		eventPublisher.Close()
 	}
 	log.Println("server stopped")
 }

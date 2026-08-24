@@ -30,9 +30,17 @@ import (
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
+
+// publishCaseCreatedTimeout bounds publishCaseCreated's enrichment
+// (GetCaseByID) + publish, so a slow ServiceNow or Event Hub round trip
+// can't consume all of the request's own deadline (middleware.Timeout) —
+// see publishCaseCreated's doc comment for why this runs synchronously
+// rather than detached.
+const publishCaseCreatedTimeout = 5 * time.Second
 
 // snCasesResponse mirrors the Choreo POST /cases/search response.
 type snCasesResponse struct {
@@ -622,12 +630,17 @@ func validateDateOnly(field, value string) error {
 type snCaseService struct {
 	client     *integrationservice.Client
 	pgFallback CaseService
+	// publisher is nil when Event Hub is not configured (see
+	// config.Config.EventHubBroker) — every call site must check before
+	// using it. See publishCaseCreated.
+	publisher EventPublisherService
 }
 
 // NewSNCaseService constructs a CaseService that delegates SearchCases to the
-// Choreo API and all write/read-by-id operations to pgFallback.
-func NewServiceNowCaseService(client *integrationservice.Client, pgFallback CaseService) CaseService {
-	return &snCaseService{client: client, pgFallback: pgFallback}
+// Choreo API and all write/read-by-id operations to pgFallback. publisher may
+// be nil (see snCaseService.publisher's doc comment).
+func NewServiceNowCaseService(client *integrationservice.Client, pgFallback CaseService, publisher EventPublisherService) CaseService {
+	return &snCaseService{client: client, pgFallback: pgFallback, publisher: publisher}
 }
 
 // snIssueTypeID maps domain CaseIssueType to the ServiceNow issue-type choice-list value.
@@ -787,7 +800,7 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 		stateLabel = snResp.Case.State.Label
 	}
 
-	return domain.CreateCaseResponse{
+	resp := domain.CreateCaseResponse{
 		Message: snResp.Message,
 		Case: domain.CreateCaseDetails{
 			ID:         sysidToUUID(snResp.Case.ID),
@@ -797,7 +810,89 @@ func (s *snCaseService) CreateCase(ctx context.Context, req domain.CreateCaseReq
 			CreatedOn:  createdOn,
 			State:      stateLabel,
 		},
-	}, nil
+	}
+	s.publishCaseCreated(ctx, req, resp.Case.ID)
+	return resp, nil
+}
+
+// publishCaseCreated best-effort publishes a case.created event for a newly
+// created case. It re-fetches the case via GetCaseByID rather than building
+// the payload from snCreateCaseResponse/req alone: the create response
+// carries only a handful of fields (see snCreateCaseResponse), while
+// GetCaseByID's own SN response already resolves the reporter's display name,
+// the project's name, and each watcher's email — exactly what
+// events.CaseCreatedPayload needs and req/snCreateCaseResponse don't have.
+//
+// Recipients is the case's WatchList emails only (per explicit decision —
+// this service has no other notion of "who should be emailed" for a case).
+// A case created with no watchers is a real, expected state (watchers are
+// often added after creation), not an error — publishing is silently skipped
+// rather than sending a payload csm-notification-service's events.Validate
+// would reject anyway for an empty recipients list.
+//
+// Runs synchronously (not detached/async like apps/csm-portal/backend's own
+// publishAsync) so no goroutine-draining hook is needed on this service's
+// shutdown path — publishCaseCreatedTimeout bounds the added latency instead.
+// Any failure (enrichment or publish) is logged and does not fail CreateCase
+// itself: the case already exists in ServiceNow by this point, and a
+// notification-side hiccup must not be reported to the caller as a failed
+// case creation.
+func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.CreateCaseRequest, caseID string) {
+	if s.publisher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishCaseCreatedTimeout)
+	defer cancel()
+
+	cv, err := s.GetCaseByID(ctx, caseID)
+	if err != nil {
+		// Not logging err itself: it can carry a raw ServiceNow response
+		// (potentially including response-body content), and this service's
+		// own convention is to log only ids and sanitised summaries (see
+		// CLAUDE.md's Security section).
+		slog.ErrorContext(ctx, "sn create case: enrich case for case.created publish failed", "caseId", caseID)
+		return
+	}
+
+	recipients := make([]string, 0, len(cv.WatchList))
+	for _, w := range cv.WatchList {
+		if w.Email != "" {
+			recipients = append(recipients, w.Email)
+		}
+	}
+	if len(recipients) == 0 {
+		slog.InfoContext(ctx, "sn create case: case.created not published, case has no watchers to email", "caseId", caseID)
+		return
+	}
+
+	reporterName := ""
+	if cv.CreatedBy != nil {
+		reporterName = cv.CreatedBy.Name
+	}
+
+	payload, err := json.Marshal(events.CaseCreatedPayload{
+		ReporterName: reporterName,
+		ProjectName:  cv.ProjectDetails.Name,
+		ProjectID:    cv.ProjectDetails.ID,
+		CaseID:       caseID,
+		CaseTitle:    cv.Subject,
+		CaseType:     strings.ToUpper(req.Type),
+		Priority:     strings.ToUpper(string(cv.Severity)),
+		CreatedAt:    cv.CreatedOn.Format(time.RFC3339),
+		Description:  cv.Description,
+		Recipients:   recipients,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn create case: encode case.created payload failed", "caseId", caseID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeCaseCreated, caseID, payload); err != nil {
+		// Not logging err itself — see publishIncidentCreated's matching log
+		// line for why (same reasoning: a raw Event Hub client error, and
+		// the full error is already durably recorded in
+		// event_publish_failures by Publish itself).
+		slog.ErrorContext(ctx, "sn create case: publish case.created failed", "caseId", caseID)
+	}
 }
 
 func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.CaseView, error) {
