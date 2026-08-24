@@ -608,11 +608,14 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     secondaryLabel: stateSecondaryLabel,
     // CsmAnnouncementsPage keeps its own filters in local component state,
     // not the URL (unlike /cases, /operations, /engagements) — there is no
-    // query-param scheme to land a filtered click-through on yet, so this
-    // stays unfiltered, same as `problem` above (including any `anyOf` a
-    // widget sets — no `caseFamilyBuildHref` wrapper here, since there's no
-    // filtered destination for it to fall back to in the first place).
-    buildHref: () => "/announcements",
+    // query-param scheme to land a filtered click-through on for the plain
+    // case, so the fallback stays the unfiltered list, same as `problem`
+    // above. An `anyOf` filter still routes through `caseFamilyBuildHref` to
+    // the generic dashboard-widget preview page, though: that page resolves
+    // `resourceType` from `previewSlug` generically and posts raw filters
+    // straight to the search endpoint, so it needs no announcement-specific
+    // filtered route of its own to render this widget's exact result set.
+    buildHref: (filters, ctx) => caseFamilyBuildHref("announcements", filters, ctx, () => "/announcements"),
     icon: Megaphone,
     iconColor: "success",
     previewSlug: "announcements",
