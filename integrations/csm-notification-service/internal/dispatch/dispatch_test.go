@@ -126,7 +126,7 @@ func TestDispatcher_Handle_CaseCreated(t *testing.T) {
 	chat := &mockGoogleChatSender{}
 	d := newTestDispatcher(mock, chat, &mockCallSender{})
 
-	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
 
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -171,6 +171,31 @@ func TestDispatcher_Handle_CaseCreated_ChatUsesDefaultProduct(t *testing.T) {
 	}
 }
 
+// TestDispatcher_Handle_CaseCreated_SkipsChatWhenNoProduct verifies that
+// when both the payload's product and DEFAULT_CHAT_PRODUCT are empty, the
+// Google Chat alert is skipped (not attempted with an empty product, which
+// would return a real "no space configured" error and, unlike
+// incident.created, cause the email to be resent on every retry too, since
+// case.created's email step has no idempotency tracking) while the email
+// still sends independently.
+func TestDispatcher_Handle_CaseCreated_SkipsChatWhenNoProduct(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(chat.calls) != 0 {
+		t.Errorf("expected no Google Chat alert with no product resolved, got %d calls", len(chat.calls))
+	}
+	if len(mock.calls) != 1 {
+		t.Errorf("expected the email to still be sent independently, got %d calls", len(mock.calls))
+	}
+}
+
 // TestDispatcher_Handle_CaseCreated_ChatFailureStillSendsEmail verifies the
 // two reactions are independent, the same as
 // TestDispatcher_Handle_IncidentCreated_ChatFailureStillPlacesCall.
@@ -179,7 +204,7 @@ func TestDispatcher_Handle_CaseCreated_ChatFailureStillSendsEmail(t *testing.T) 
 	chat := &mockGoogleChatSender{err: errors.New("webhook unreachable")}
 	d := newTestDispatcher(mock, chat, &mockCallSender{})
 
-	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
 
 	if err := d.Handle(context.Background(), record); err == nil {
 		t.Fatal("expected the chat error to propagate")

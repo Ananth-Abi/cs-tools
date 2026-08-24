@@ -215,7 +215,15 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 // a per-recipient link, since there's no per-recipient audience for a Chat
 // post the way there is for email. Product falls back to
 // Dispatcher.defaultChatProduct when the payload omits it, the same as
-// handleIncidentCreated's Product fallback — see that function's doc comment.
+// handleIncidentCreated's Product fallback — see that function's doc
+// comment. If the resolved product is still empty (payload and
+// DEFAULT_CHAT_PRODUCT both unset), the Chat alert is skipped (logged) the
+// same way handleIncidentCreated skips its own Chat alert in that case,
+// rather than calling SendIncidentAlert with an empty product — that would
+// return a real "no space configured" error, which (unlike
+// handleIncidentCreated) would retry this email alongside the Chat attempt
+// every time, since case.created's email step has no idempotency tracking
+// of its own (see below).
 //
 // Unlike handleIncidentCreated, this has no per-channel idempotency
 // tracking: a retry that resends an already-succeeded Chat alert alongside a
@@ -260,7 +268,9 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, raw json.RawMessage)
 	if product == "" {
 		product = d.defaultChatProduct
 	}
-	if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr != nil {
+	if product == "" {
+		slog.WarnContext(ctx, "dispatch: no product for case.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
+	} else if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr != nil {
 		errs = append(errs, chatErr)
 	}
 
