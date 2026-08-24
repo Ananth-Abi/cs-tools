@@ -301,7 +301,7 @@ export default function CaseActivitiesFeed({
             : "Nothing to show — enable more categories in the Filter menu."}
         </Typography>
       ) : (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 1.75 }}>
           {entries.map((e) => {
             if (e.kind === "comment") {
               return (
@@ -355,8 +355,12 @@ export default function CaseActivitiesFeed({
                       display: "flex",
                       flexDirection: "column",
                       gap: 0.75,
-                      backgroundColor: isBreach ? "error.50" : undefined,
-                      borderColor: isBreach ? "error.main" : undefined,
+                      // Same base card-separation fix as the comment bubble
+                      // (explicit elevated surface + stronger theme-derived
+                      // border) for the non-breach case; the breach styling
+                      // itself is untouched.
+                      backgroundColor: isBreach ? "error.50" : "background.paper",
+                      borderColor: isBreach ? "error.main" : "action.disabled",
                     }}
                   >
                     {/* Header mirrors the comment bubble: actor + time up top,
@@ -370,7 +374,7 @@ export default function CaseActivitiesFeed({
                         flexWrap: "wrap",
                       }}
                     >
-                      <Typography variant="subtitle2">
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                         <UserRefLink
                           name={e.entry.actor}
                           email={e.entry.actorUser?.email}
@@ -448,6 +452,9 @@ export default function CaseActivitiesFeed({
                     display: "flex",
                     flexDirection: "column",
                     gap: 0.75,
+                    // Same base card-separation fix as the comment bubble.
+                    bgcolor: "background.paper",
+                    borderColor: "action.disabled",
                   }}
                 >
                   <Box
@@ -458,7 +465,7 @@ export default function CaseActivitiesFeed({
                       flexWrap: "wrap",
                     }}
                   >
-                    <Typography variant="subtitle2">
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                       <UserRefLink
                         name={e.attachment.uploadedBy}
                         email={
