@@ -296,7 +296,9 @@ export default function CaseActivitiesFeed({
 
       {entries.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
-          Nothing to show — enable more categories in the Filter menu.
+          {activeFilters === filterOptions.length
+            ? "No activity yet."
+            : "Nothing to show — enable more categories in the Filter menu."}
         </Typography>
       ) : (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
