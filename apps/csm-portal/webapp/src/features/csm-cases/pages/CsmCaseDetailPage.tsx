@@ -1351,8 +1351,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
   );
 
   // Changes the case's type. The type change itself is one
-  // PATCH ({type} alone, or {type, engagementType} together for a transfer
-  // into engagement — the backend requires them combined there). Severity is
+  // PATCH ({type} alone, or {type, engagementType, engagementPaymentType}
+  // together for a transfer into engagement — the backend requires them
+  // combined there). Severity is
   // a separate, optional follow-up PATCH when transferring into `case`: it's
   // a data-completeness extra, not required to complete the transfer (see
   // caseTypeTransfer.ts), so its failure is reported but doesn't roll back
@@ -1367,7 +1368,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
       // standalone severity patch is rejected outright on a case of any other type.
       patchCase.mutate(
         submission.targetType === "engagement"
-          ? { type: "engagement", engagementType: submission.engagementType }
+          ? {
+              type: "engagement",
+              engagementType: submission.engagementType,
+              engagementPaymentType: submission.engagementPaymentType,
+            }
           : submission.targetType === "security_report_analysis"
             ? { type: "security_report_analysis" }
             : submission.targetType === "service_request"

@@ -219,6 +219,8 @@ describe("ChangeCaseTypeDialog — step 2: retained attributes carry over disabl
     expect(screen.queryByRole("combobox", { name: /^severity$/i })).not.toBeInTheDocument();
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /consultancy/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement payment type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^foc$/i }));
     advanceToReview();
     expect(screen.getByText(/no longer applies/i)).toBeInTheDocument();
     expect(screen.getByText("Severity")).toBeInTheDocument();
@@ -255,6 +257,8 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     pickTargetAndAdvanceToFields(/^engagement$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /consultancy/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement payment type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^foc$/i }));
     advanceToReview();
     expect(screen.getByText(/step 3 of 3/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /transfer to engagement/i })).toBeEnabled();
@@ -273,7 +277,7 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     );
     pickTargetAndAdvanceToFields(/^engagement$/i);
     expect(screen.getByRole("button", { name: /^next$/i })).toBeDisabled();
-    expect(screen.getByText(/required to continue/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/required to continue/i).length).toBeGreaterThan(0);
   });
 
   it("submits type and engagementType together", () => {
@@ -291,13 +295,34 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     pickTargetAndAdvanceToFields(/^engagement$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /migration/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement payment type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^paid$/i }));
     advanceToReview();
     fireEvent.click(screen.getByRole("button", { name: /transfer to engagement/i }));
 
     expect(onSubmit).toHaveBeenCalledWith({
       targetType: "engagement",
       engagementType: "migration",
+      engagementPaymentType: "paid",
     });
+  });
+
+  it("blocks confirm until engagement payment type is also picked", () => {
+    render(
+      <ChangeCaseTypeDialog
+        currentType="case"
+        currentSeverity="S2"
+        hasAttachments
+        isSubmitting={false}
+        onClose={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    pickTargetAndAdvanceToFields(/^engagement$/i);
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /migration/i }));
+    expect(screen.getByRole("button", { name: /^next$/i })).toBeDisabled();
+    expect(screen.getAllByText(/required to continue/i).length).toBeGreaterThan(0);
   });
 
   it("lists the source type's lost fields on the review step", () => {
@@ -314,6 +339,8 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     pickTargetAndAdvanceToFields(/^engagement$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /migration/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement payment type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^paid$/i }));
     advanceToReview();
     expect(screen.getByText(/no longer applies/i)).toBeInTheDocument();
     expect(screen.getByText("Severity")).toBeInTheDocument();
@@ -351,6 +378,8 @@ describe("ChangeCaseTypeDialog — step 2 -> 3: transfer into engagement", () =>
     pickTargetAndAdvanceToFields(/^engagement$/i);
     fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement type/i }));
     fireEvent.click(screen.getByRole("option", { name: /migration/i }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /engagement payment type/i }));
+    fireEvent.click(screen.getByRole("option", { name: /^paid$/i }));
     advanceToReview();
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
     expect(screen.getByText(/step 2 of 3/i)).toBeInTheDocument();

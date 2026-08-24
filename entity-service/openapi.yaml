@@ -4887,9 +4887,10 @@ components:
         `state` when the state is `closed` or `solution_proposed`.
         `type` transfers the case to another type and is supported only for the ServiceNow
         data source. Its companion fields carry the target type's mandatory data:
-        `severity` and `issueType` alongside `type: case`; `engagementType` alongside
-        `type: engagement`; `catalogId`, `catalogItemId` and a non-empty `variables`
-        alongside `type: service_request`; none for `type: security_report_analysis`.
+        `severity` and `issueType` alongside `type: case`; `engagementType` and
+        `engagementPaymentType` alongside `type: engagement`; `catalogId`, `catalogItemId`
+        and a non-empty `variables` alongside `type: service_request`; none for
+        `type: security_report_analysis`.
         A companion is rejected when sent without `type`, or with a `type` it does not
         belong to. `severity` is the one field that may be combined with `type`.
       oneOf:
@@ -4922,6 +4923,11 @@ components:
           type: string
           enum: [migration, consultancy, new_feature_improvement, follow_up, onboarding]
           description: "Required alongside `type: engagement`."
+        engagementPaymentType:
+          type: string
+          enum: [paid, foc]
+          description: >
+            Required alongside `type: engagement`. `foc` means "free of charge".
         issueType:
           type: string
           enum: [total_outage, partial_outage, performance_degradation, question, security_or_compliance, error]
