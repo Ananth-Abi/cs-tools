@@ -332,7 +332,7 @@ export function LogTimeCardDialog({
             ))}
           </Stack>
 
-          <Stack direction="row" alignItems="center" justifyContent="space-between" gap={1}>
+          <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
             <TextField
               select
               label="Issue complexity"
@@ -349,8 +349,11 @@ export function LogTimeCardDialog({
               ))}
             </TextField>
             {/* Bounded so the caption below wraps onto its own line(s) instead of growing this
-                column wide enough to push the row into flex-wrap, which put the toggle on its own
-                line under Issue complexity. */}
+                column wide enough to push the row into flex-wrap at normal dialog widths, which
+                is what put the toggle on its own line under Issue complexity. flexWrap stays on
+                the row itself (rather than switching to nowrap) as a fallback for genuinely
+                narrow viewports where even 120px (Issue complexity) + 150px (this column) can't
+                both fit — there it still wraps instead of clipping. */}
             <Stack alignItems="flex-end" gap={0.25} sx={{ maxWidth: 150 }}>
               <FormControlLabel
                 control={
