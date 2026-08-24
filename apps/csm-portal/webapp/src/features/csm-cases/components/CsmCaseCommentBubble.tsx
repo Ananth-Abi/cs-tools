@@ -339,6 +339,11 @@ export default function CsmCaseCommentBubble({
           display: "flex",
           flexDirection: "column",
           gap: 0.75,
+          // The default outlined-Paper divider is near-invisible against the
+          // page background in some theme presets; an elevated surface +
+          // stronger border keeps entries visually distinct in both themes.
+          bgcolor: "background.paper",
+          borderColor: "action.disabled",
           ...(isInternal && {
             bgcolor: "action.hover",
             borderColor: "divider",
@@ -348,7 +353,7 @@ export default function CsmCaseCommentBubble({
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-          <Typography variant="subtitle2">
+          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
             {compact && "Commented by "}
             <UserRefLink
               name={comment.authorName}
