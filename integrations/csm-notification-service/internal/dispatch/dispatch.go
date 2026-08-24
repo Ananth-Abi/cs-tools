@@ -30,6 +30,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
@@ -347,6 +348,19 @@ func commentLinkFor(caseLink, commentID string) string {
 	return caseLink + "#" + url.PathEscape(commentID)
 }
 
+// maskPhone redacts all but the last 4 characters of an E.164 phone number
+// for logging — this repo's own convention is to log only ids and sanitised
+// summaries, not raw PII, and a phone number is PII the same way a recipient
+// email address is (see internal/recipientlinks' own equivalent reasoning).
+// A number with 4 or fewer characters (never valid E.164, but defensive
+// against a malformed default) is masked entirely rather than echoed as-is.
+func maskPhone(phone string) string {
+	if len(phone) <= 4 {
+		return strings.Repeat("*", len(phone))
+	}
+	return strings.Repeat("*", len(phone)-4) + phone[len(phone)-4:]
+}
+
 // sendPerGroup renders and sends one email per distinct resolved link, in
 // sorted link order (deterministic, rather than Go's randomized map
 // iteration). render is called once per group with that group's own case
@@ -402,7 +416,14 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]strin
 // entity-service, which knows nothing about Chat-space routing or on-call
 // rotations) can omit them entirely; events.Validate allows this. A
 // publisher that does know the right values per incident can still supply
-// them and takes precedence over the defaults.
+// them and takes precedence over the defaults. If a resolved value is still
+// empty (payload and default both unset), that one channel is skipped
+// (logged, treated as succeeded) instead of calling SendIncidentAlert/
+// MakeCall with an empty product/destination — both would just return a
+// real error (an unmapped product, an empty call destination), which would
+// otherwise burn all of eventbus.Consumer's retries and dead-letter an
+// incident whose only problem is a missing operator default, not a
+// transient failure.
 //
 // callSendingEnabled gates only the MakeCall step (CALL_SENDING_ENABLED):
 // when false, this logs what would have been called instead of calling, and
@@ -448,18 +469,27 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 
 	var chatErr error
 	if !d.alreadyDone(chatKey) {
-		chatErr = d.googleChat.SendIncidentAlert(ctx, product, p.Title, p.ShortDescription, p.IncidentLink)
-		if chatErr == nil {
+		if product == "" {
+			slog.WarnContext(ctx, "dispatch: no product for incident.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
 			d.markDone(chatKey)
+		} else {
+			chatErr = d.googleChat.SendIncidentAlert(ctx, product, p.Title, p.ShortDescription, p.IncidentLink)
+			if chatErr == nil {
+				d.markDone(chatKey)
+			}
 		}
 	}
 
 	var callErr error
 	if !d.alreadyDone(callKey) {
-		if !d.callSendingEnabled {
-			slog.InfoContext(ctx, "dispatch: call sending disabled (CALL_SENDING_ENABLED=false); not calling", "to", callTo)
+		switch {
+		case !d.callSendingEnabled:
+			slog.InfoContext(ctx, "dispatch: call sending disabled (CALL_SENDING_ENABLED=false); not calling", "to", maskPhone(callTo))
 			d.markDone(callKey)
-		} else {
+		case callTo == "":
+			slog.WarnContext(ctx, "dispatch: no callTo for incident.created (payload and INCIDENT_DEFAULT_CALL_TO both empty); skipping call")
+			d.markDone(callKey)
+		default:
 			message := fmt.Sprintf("New incident: %s. %s", p.Title, p.ShortDescription)
 			callErr = d.call.MakeCall(ctx, callTo, message)
 			if callErr == nil {

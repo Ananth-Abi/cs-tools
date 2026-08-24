@@ -846,7 +846,11 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 
 	cv, err := s.GetCaseByID(ctx, caseID)
 	if err != nil {
-		slog.ErrorContext(ctx, "sn create case: enrich case for case.created publish failed", "caseId", caseID, "error", err)
+		// Not logging err itself: it can carry a raw ServiceNow response
+		// (potentially including response-body content), and this service's
+		// own convention is to log only ids and sanitised summaries (see
+		// CLAUDE.md's Security section).
+		slog.ErrorContext(ctx, "sn create case: enrich case for case.created publish failed", "caseId", caseID)
 		return
 	}
 
@@ -883,7 +887,11 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 		return
 	}
 	if err := s.publisher.Publish(ctx, events.TypeCaseCreated, caseID, payload); err != nil {
-		slog.ErrorContext(ctx, "sn create case: publish case.created failed", "caseId", caseID, "error", err)
+		// Not logging err itself — see publishIncidentCreated's matching log
+		// line for why (same reasoning: a raw Event Hub client error, and
+		// the full error is already durably recorded in
+		// event_publish_failures by Publish itself).
+		slog.ErrorContext(ctx, "sn create case: publish case.created failed", "caseId", caseID)
 	}
 }
 

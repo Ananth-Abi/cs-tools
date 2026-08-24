@@ -107,8 +107,9 @@ func getEnvOrDefault(key, defaultVal string) string {
 // Validate checks that the configuration is self-consistent. It returns an
 // error if DATA_SOURCE is an unrecognised value, if DB_USER/DB_PASSWORD/DB_NAME
 // are missing (required regardless of DATA_SOURCE — see db.NewPoolFromConfig),
-// or if SERVICENOW_INTEGRATION_SERVICE_BASE_URL is missing when
-// DATA_SOURCE=servicenow.
+// if SERVICENOW_INTEGRATION_SERVICE_BASE_URL is missing when
+// DATA_SOURCE=servicenow, or if EVENT_HUB_BROKER/EVENT_HUB_CONNECTION_STRING/
+// EVENT_HUB_TOPIC are only partially set.
 func (c *Config) Validate() error {
 	switch c.DataSource {
 	case DataSourcePostgres, DataSourceServiceNow:
@@ -138,6 +139,19 @@ func (c *Config) Validate() error {
 		if c.ServiceNowIntegrationServiceClientSecret == "" {
 			return fmt.Errorf("SERVICENOW_INTEGRATION_SERVICE_CLIENT_SECRET is required when DATA_SOURCE=servicenow")
 		}
+	}
+	// EVENT_HUB_BROKER/EVENT_HUB_CONNECTION_STRING/EVENT_HUB_TOPIC are
+	// all-or-nothing (see EventHubBroker's own doc comment and routes.go's
+	// EventPublisherService wiring, which only checks EventHubBroker): a
+	// partial set would let EventPublisherService get constructed with an
+	// empty connection string or topic, so every publish attempt fails
+	// silently (logged, doesn't fail case/incident creation — see
+	// publishCaseCreated/publishIncidentCreated) while the deployment
+	// otherwise looks healthy. Reject that combination at startup instead.
+	eventHubSet := c.EventHubBroker != "" || c.EventHubConnectionString != "" || c.EventHubTopic != ""
+	eventHubComplete := c.EventHubBroker != "" && c.EventHubConnectionString != "" && c.EventHubTopic != ""
+	if eventHubSet && !eventHubComplete {
+		return fmt.Errorf("EVENT_HUB_BROKER, EVENT_HUB_CONNECTION_STRING, and EVENT_HUB_TOPIC must be set together or not at all")
 	}
 	return nil
 }

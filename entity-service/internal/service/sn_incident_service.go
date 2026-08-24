@@ -792,7 +792,14 @@ func (s *snIncidentService) publishIncidentCreated(ctx context.Context, req doma
 		return
 	}
 	if err := s.publisher.Publish(ctx, events.TypeIncidentCreated, incidentID, payload); err != nil {
-		slog.ErrorContext(ctx, "sn create incident: publish incident.created failed", "incidentId", incidentID, "error", err)
+		// Not logging err itself: it can carry a raw Event Hub client error
+		// (potentially including connection/broker details), and this
+		// service's own convention is to log only ids and sanitised
+		// summaries (see CLAUDE.md's Security section). The full error is
+		// already durably recorded in event_publish_failures by Publish
+		// itself (see EventPublisherService's doc comment) for anyone who
+		// needs to debug this specific failure.
+		slog.ErrorContext(ctx, "sn create incident: publish incident.created failed", "incidentId", incidentID)
 	}
 }
 

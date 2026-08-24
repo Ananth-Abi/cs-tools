@@ -72,8 +72,15 @@ whole dependency graph; see "Adding a new entity" below), gated on
 `cfg.EventHubBroker != ""` — the same optional-wiring convention
 `apps/csm-portal/backend/cmd/server/main.go` uses, but keyed on Event Hub
 config specifically, not `cfg.DataSource`: publishing is a distinct concern
-from which backend serves reads. `NewRouter` returns the constructed
-`EventPublisherService` (nil if unconfigured) alongside the `http.Handler`,
+from which backend serves reads. `Config.Validate` rejects a partial
+Event Hub configuration (e.g. `EVENT_HUB_BROKER` set but
+`EVENT_HUB_CONNECTION_STRING`/`EVENT_HUB_TOPIC` empty) at startup — all
+three must be set together or not at all, since `NewRouter`'s gate only
+checks `EventHubBroker`, and constructing `EventPublisherService` with a
+missing connection string or topic would make every publish attempt fail
+silently while the deployment otherwise looks healthy. `NewRouter` returns
+the constructed `EventPublisherService` (nil if unconfigured) alongside the
+`http.Handler`,
 threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
 it during shutdown, after `srv.Shutdown`.
 

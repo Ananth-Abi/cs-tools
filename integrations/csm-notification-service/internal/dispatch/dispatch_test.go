@@ -612,6 +612,52 @@ func TestDispatcher_Handle_IncidentCreated_UsesDefaultsWhenOmitted(t *testing.T)
 	}
 }
 
+// TestDispatcher_Handle_IncidentCreated_SkipsChatWhenNoProduct verifies that
+// when both the payload's product and DEFAULT_CHAT_PRODUCT are empty, the
+// Google Chat alert is skipped (not attempted with an empty product, which
+// would just return a real "no space configured" error and burn retries)
+// while the call still goes through independently.
+func TestDispatcher_Handle_IncidentCreated_SkipsChatWhenNoProduct(t *testing.T) {
+	chat := &mockGoogleChatSender{}
+	call := &mockCallSender{}
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, false, nil, true, "", "")
+
+	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(chat.calls) != 0 {
+		t.Errorf("expected no Google Chat alert with no product resolved, got %d calls", len(chat.calls))
+	}
+	if len(call.calls) != 1 {
+		t.Errorf("expected the call to still be placed independently, got %d calls", len(call.calls))
+	}
+}
+
+// TestDispatcher_Handle_IncidentCreated_SkipsCallWhenNoCallTo verifies the
+// mirror image: when both the payload's callTo and INCIDENT_DEFAULT_CALL_TO
+// are empty (and calling is otherwise enabled), the call is skipped instead
+// of being attempted with an empty destination, while the Chat alert still
+// sends independently.
+func TestDispatcher_Handle_IncidentCreated_SkipsCallWhenNoCallTo(t *testing.T) {
+	chat := &mockGoogleChatSender{}
+	call := &mockCallSender{}
+	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, false, nil, true, "", "")
+
+	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1"}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(chat.calls) != 1 {
+		t.Errorf("expected the chat alert to still be sent independently, got %d calls", len(chat.calls))
+	}
+	if len(call.calls) != 0 {
+		t.Errorf("expected no call with no callTo resolved, got %d calls", len(call.calls))
+	}
+}
+
 // TestDispatcher_Handle_IncidentCreated_CallSendingDisabled verifies the
 // CALL_SENDING_ENABLED killswitch: Handle still succeeds and the Google Chat
 // alert still sends, but MakeCall is never invoked.
@@ -655,5 +701,25 @@ func TestDispatcher_Handle_IgnoresSLAEventTypes(t *testing.T) {
 	}
 	if len(mock.calls) != 0 || len(chat.calls) != 0 || len(call.calls) != 0 {
 		t.Errorf("expected no notification sent, got email=%d chat=%d call=%d", len(mock.calls), len(chat.calls), len(call.calls))
+	}
+}
+
+// TestMaskPhone verifies only the last 4 characters of a phone number
+// survive in a log line — the rest must never be recoverable from the
+// masked output.
+func TestMaskPhone(t *testing.T) {
+	tests := []struct {
+		phone string
+		want  string
+	}{
+		{"+15551234567", "********4567"},
+		{"1234", "****"},
+		{"12", "**"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := maskPhone(tt.phone); got != tt.want {
+			t.Errorf("maskPhone(%q) = %q, want %q", tt.phone, got, tt.want)
+		}
 	}
 }
