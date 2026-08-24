@@ -73,6 +73,13 @@ func (h *TimeCardHandler) SearchTimeCards(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if !validateDateParams(w,
+		dateParam{"filters.startDate", derefString(req.Filters.StartDate)},
+		dateParam{"filters.endDate", derefString(req.Filters.EndDate)},
+	) {
+		return
+	}
+
 	result, err := h.entity.SearchTimeCards(r.Context(), dto.BuildEntitySearchTimeCardsRequest(projectID, req))
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity SearchTimeCards failed", "userID", user.UserID, "err", summarizeErr(err))
