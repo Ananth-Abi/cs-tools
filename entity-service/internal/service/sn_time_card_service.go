@@ -334,6 +334,13 @@ type snCaseTimeCardCaseRef struct {
 	Name      string       `json:"name"`
 	UpdatedOn string       `json:"updatedOn"`
 	Project   *snEntityRef `json:"project"`
+	// Choreo sends these three alongside updatedOn; leaving them undeclared
+	// meant encoding/json discarded them, so the portal's time-tracking card had
+	// no author to render. Pointers per this service's optional-field convention:
+	// nil serialises as null rather than an empty string.
+	CreatedOn *string `json:"createdOn"`
+	CreatedBy *string `json:"createdBy"`
+	UpdatedBy *string `json:"updatedBy"`
 }
 
 // snCaseTimeCardSummary mirrors the Choreo CaseTimeCardSummary shape.
@@ -379,6 +386,9 @@ func (s *snTimeCardService) SearchCaseTimeCards(ctx context.Context, req domain.
 				Number:    c.Case.Number,
 				Name:      c.Case.Name,
 				UpdatedOn: c.Case.UpdatedOn,
+				CreatedOn: c.Case.CreatedOn,
+				CreatedBy: c.Case.CreatedBy,
+				UpdatedBy: c.Case.UpdatedBy,
 			},
 			TotalTime:   c.TotalTime,
 			TotalCount:  c.TotalCount,

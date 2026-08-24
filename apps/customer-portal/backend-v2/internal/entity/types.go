@@ -2219,6 +2219,9 @@ type CaseTimeCardCaseRef struct {
 	Name      string     `json:"name"`
 	UpdatedOn string     `json:"updatedOn"`
 	Project   *EntityRef `json:"project"`
+	CreatedOn *string    `json:"createdOn"`
+	CreatedBy *string    `json:"createdBy"`
+	UpdatedBy *string    `json:"updatedBy"`
 }
 
 // CaseTimeCardSummary is the time-card rollup for a single case.
