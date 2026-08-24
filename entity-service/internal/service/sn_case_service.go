@@ -661,8 +661,8 @@ var snIssueTypeID = map[domain.CaseIssueType]int{
 type snCreateCasePayload struct {
 	Type                  string             `json:"type"`
 	ProjectID             string             `json:"projectId"`
-	DeploymentID          string             `json:"deploymentId"`
-	DeployedProductID     string             `json:"deployedProductId"`
+	DeploymentID          string             `json:"deploymentId,omitempty"`
+	DeployedProductID     string             `json:"deployedProductId,omitempty"`
 	Title                 string             `json:"title,omitempty"`
 	Description           string             `json:"description,omitempty"`
 	SeverityKey           int                `json:"severityKey,omitempty"`

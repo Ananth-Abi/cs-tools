@@ -3091,6 +3091,8 @@ export interface BeSearchTimeCardsFilters {
 
 export interface BeSearchTimeCardsPayload {
   filters?: BeSearchTimeCardsFilters;
+  /** Defaults to updatedOn desc server-side when omitted. */
+  sortBy?: { field: "workDate" | "updatedOn"; order: "asc" | "desc" };
   pagination?: BePagination;
 }
 

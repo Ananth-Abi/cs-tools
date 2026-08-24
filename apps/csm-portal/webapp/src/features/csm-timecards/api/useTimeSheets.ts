@@ -197,11 +197,18 @@ export interface TimeCardSearchResult {
  * their own such walk — was slow enough to sometimes fail outright. Real,
  * caller-driven pagination replaces that: callers ask for one page at a
  * time via `pagination`, and `total` lets them drive page controls.
+ *
+ * `sortBy` is an escape hatch for callers that need the server to select
+ * (not just order) by a specific field before applying `pagination` — e.g.
+ * {@link useRecentApprovers}, where the top `RECENT_APPROVERS_LOOKBACK`
+ * cards must actually be the most recent by `workDate`, not just sorted
+ * after the fact within whatever page the default order happened to return.
  */
 export async function searchTimeCards(
   api: BackendApi,
   filters?: TimeCardSearchFilters,
   pagination?: TimeCardPagination,
+  sortBy?: BeSearchTimeCardsPayload["sortBy"],
 ): Promise<TimeCardSearchResult> {
   const limit = Math.min(pagination?.rowsPerPage ?? BE_MAX_PAGE_LIMIT, BE_MAX_PAGE_LIMIT);
   const wireFilters: BeSearchTimeCardsFilters = {
@@ -216,6 +223,7 @@ export async function searchTimeCards(
   };
   const payload: BeSearchTimeCardsPayload = {
     filters: wireFilters,
+    ...(sortBy ? { sortBy } : {}),
     pagination: { limit, offset: (pagination?.page ?? 0) * limit },
   };
   const res = await api.post<BeSearchTimeCardsPayload, BeSearchTimeCardsResponse>(
@@ -316,6 +324,85 @@ export function useAllTimeCards(
     queryFn: (): Promise<TimeCardSearchResult> => searchTimeCards(api, filters, pagination),
     enabled: enabled && !!me.id,
     staleTime: 5_000,
+  });
+}
+
+/** A previously-selected approver, reduced from the signed-in engineer's own
+ * recent time-card submissions (see {@link useRecentApprovers}) — deliberately
+ * the same `{ id, name }` shape as {@link TimeCardApprover} since it feeds the
+ * exact same approver-picker candidate rendering in `LogTimeCardDialog`. */
+export interface RecentApprover {
+  id: string;
+  name: string;
+}
+
+/** How many distinct recent approvers {@link useRecentApprovers} surfaces —
+ * enough to cover an engineer's usual handful of team leads without turning
+ * the "before you type" list into a full roster. */
+const RECENT_APPROVERS_MAX = 4;
+
+/** How many of the signed-in engineer's own most-recent cards to look at when
+ * deriving {@link RecentApprover}s — a small page is enough since the same
+ * few approvers repeat constantly; this is "who did I pick before", not a
+ * complete history. */
+const RECENT_APPROVERS_LOOKBACK = 20;
+
+/**
+ * The signed-in engineer's own most-recently-submitted-to approvers, most
+ * recent first, deduped by id, capped at {@link RECENT_APPROVERS_MAX} —
+ * powers "Log time"'s approver picker showing previously-picked approvers
+ * before the engineer types anything (digiops-cs#2839), instead of requiring
+ * the same search every time.
+ *
+ * Derived entirely from the existing `POST /time-cards/search` endpoint
+ * (`userId`-scoped to the signed-in engineer, no `states` filter — an
+ * approved, rejected, or still-`submitted` card all equally answer "who did I
+ * pick before") rather than a new backend endpoint or local storage: no state
+ * restriction is needed here, this is about the approver pick, not the
+ * outcome. `/time-cards/search`'s own default ordering isn't documented, so
+ * results are explicitly re-sorted here by `workDate` descending rather than
+ * assumed to already be newest-first.
+ *
+ * `enabled` should be gated to create-mode only (see `LogTimeCardDialog`) —
+ * the approver field is read-only once editing, so there's nothing for this
+ * list to feed there.
+ */
+export function useRecentApprovers(enabled: boolean): UseQueryResult<RecentApprover[], Error> {
+  const api = useBackendApi();
+  const me = useCurrentEngineer();
+  return useQuery<RecentApprover[], Error>({
+    queryKey: [ApiQueryKeys.TIME_SHEETS_SEARCH, "recent-approvers", me.id],
+    queryFn: async (): Promise<RecentApprover[]> => {
+      if (!me.id) return [];
+      // sortBy: workDate desc so the page itself is the most-recent-by-workDate
+      // cards — the server's default order (updatedOn desc) selects a
+      // different, and possibly non-overlapping, top-N.
+      const { cards } = await searchTimeCards(
+        api,
+        { userId: me.id },
+        { page: 0, rowsPerPage: RECENT_APPROVERS_LOOKBACK },
+        { field: "workDate", order: "desc" },
+      );
+      const newestFirst = [...cards].sort((a, b) =>
+        (b.workDate || "").localeCompare(a.workDate || ""),
+      );
+      const seen = new Set<string>();
+      const recents: RecentApprover[] = [];
+      for (const card of newestFirst) {
+        for (const approver of card.approvers ?? []) {
+          // Defensive only: nothing should let an engineer submit a card
+          // approved by themself, mirroring the same self-exclusion already
+          // applied to live search candidates in LogTimeCardDialog.
+          if (approver.id === me.id || seen.has(approver.id)) continue;
+          seen.add(approver.id);
+          recents.push({ id: approver.id, name: approver.name });
+          if (recents.length >= RECENT_APPROVERS_MAX) return recents;
+        }
+      }
+      return recents;
+    },
+    enabled: enabled && !!me.id,
+    staleTime: 30_000,
   });
 }
 
