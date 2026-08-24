@@ -17,9 +17,11 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -78,7 +80,8 @@ type jwtClaims struct {
 func Auth(cfg Config) func(http.Handler) http.Handler {
 	var keyFunc jwt.Keyfunc
 	if cfg.TokenValidatorEnabled {
-		jwks, err := keyfunc.NewDefault([]string{cfg.JWKSEndpoint})
+		client := &http.Client{Transport: &x5cStrippingTransport{base: http.DefaultTransport}}
+		jwks, err := keyfunc.NewDefaultOverrideCtx(context.Background(), []string{cfg.JWKSEndpoint}, keyfunc.Override{Client: client})
 		if err != nil {
 			// Misconfigured auth must not silently pass — fail at startup.
 			panic("auth: failed to initialise JWKS from " + cfg.JWKSEndpoint + ": " + err.Error())
@@ -118,6 +121,78 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// x5cStrippingTransport removes the "x5c" certificate chain from every key in
+// a JWKS response before it reaches the jwkset parser. Verification only
+// needs "n"/"e" (or the EC/OKP equivalents); jwkset unconditionally parses
+// "x5c" as X.509 certificates, and some IdPs (e.g. Asgardeo) publish certs
+// with a negative serial number that Go's x509 parser rejects since Go 1.23,
+// which would otherwise make the whole JWK Set fail to load.
+type x5cStrippingTransport struct {
+	base http.RoundTripper
+}
+
+func (t *x5cStrippingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return resp, err
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read JWKS response body: %w", err)
+	}
+
+	sanitized, ok := stripX5C(body)
+	if !ok {
+		// Not a JWKS document we can sanitize (e.g. a non-JWKS JSON body the server
+		// returned with a 200 status); hand back the original body untouched rather than
+		// risk fabricating a {"keys":null} document a naive unmarshal-then-remarshal would
+		// silently produce for any valid JSON that just happens to have no "keys" array.
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp, nil
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(sanitized))
+	resp.ContentLength = int64(len(sanitized))
+	resp.Header.Set("Content-Length", fmt.Sprint(len(sanitized)))
+	return resp, nil
+}
+
+// stripX5C removes the "x5c" field from every entry in body's top-level "keys" array.
+// Returns ok=false — with sanitized left nil — when body isn't a JWKS document (no
+// top-level "keys" array), so the caller can fall back to passing the original body
+// through unchanged instead of replacing it with a fabricated result.
+func stripX5C(body []byte) (sanitized []byte, ok bool) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, false
+	}
+	rawKeys, present := doc["keys"]
+	if !present {
+		return nil, false
+	}
+	var keys []map[string]any
+	if err := json.Unmarshal(rawKeys, &keys); err != nil {
+		return nil, false
+	}
+
+	for _, key := range keys {
+		delete(key, "x5c")
+	}
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return nil, false
+	}
+	doc["keys"] = keysJSON
+
+	sanitized, err = json.Marshal(doc)
+	if err != nil {
+		return nil, false
+	}
+	return sanitized, true
 }
 
 // UserInfoFromContext retrieves the authenticated user's info from the context.
