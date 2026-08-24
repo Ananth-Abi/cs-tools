@@ -143,12 +143,25 @@ const PREVIEW_COLUMN = { label: "Preview", width: "auto" };
 /** Case: reuses `CasesList` (the Cases tab's own table) verbatim, via the
  * same `mapCaseSearchViewToRow` mapper the tab itself uses — real reuse, not
  * a lookalike. `currentUserEmail` is omitted (only affects the "assigned to
- * me" highlight, not relevant to a dashboard preview). */
+ * me" highlight, not relevant to a dashboard preview). `optionalColumns` adds
+ * Assignee to this widget's default set (`CasesList`'s own long-standing
+ * default of product/type/severity omits it) -- a dashboard reviewer scanning
+ * a list of cases needs to see who owns each one without opening it. This
+ * renderer is shared by every `resourceType` whose rows are case rows
+ * (`service_request`/`security_report_analysis`/`announcement`/`engagement`
+ * — see `WIDGET_LIST_RENDERERS` below), so they all get the same column. */
 function CaseWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Element {
   const cases = items.map((item) =>
     mapCaseSearchViewToRow(item as unknown as BeCaseSearchView, undefined),
   );
-  return <CasesList cases={cases} isLoading={isLoading} skeletonCount={4} />;
+  return (
+    <CasesList
+      cases={cases}
+      isLoading={isLoading}
+      skeletonCount={4}
+      optionalColumns={["product", "type", "severity", "assignee"]}
+    />
+  );
 }
 
 /** Time card: reuses `TimeCardsTable` verbatim via the tab's own `mapTimeCard`

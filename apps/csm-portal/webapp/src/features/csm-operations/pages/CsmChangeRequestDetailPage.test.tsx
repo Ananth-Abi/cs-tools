@@ -59,6 +59,10 @@ vi.mock("@context/error-banner/ErrorBannerContext", () => ({
 vi.mock("@features/csm-operations/api/useGetChangeRequest", () => ({
   useGetChangeRequest: () => useGetChangeRequestMock(),
 }));
+const useGetChangeRequestApprovalsMock = vi.fn();
+vi.mock("@features/csm-operations/api/useGetChangeRequestApprovals", () => ({
+  useGetChangeRequestApprovals: () => useGetChangeRequestApprovalsMock(),
+}));
 vi.mock("@features/csm-operations/api/usePatchChangeRequest", () => ({
   usePatchChangeRequest: () => ({
     mutate: patchMutateMock,
@@ -139,6 +143,12 @@ beforeEach(() => {
   patchMutateAsyncMock.mockResolvedValue({ id: "chg-1" });
   postCommentMutateAsyncMock.mockReset();
   postCommentMutateAsyncMock.mockResolvedValue({ id: "comment-1" });
+  useGetChangeRequestApprovalsMock.mockReturnValue({
+    data: null,
+    isLoading: false,
+    isError: false,
+    error: null,
+  });
 });
 
 /** Surfaces the router's current search string, for the `?tab=` sync tests
@@ -197,6 +207,116 @@ describe("CsmChangeRequestDetailPage", () => {
     renderPage();
     const linkedCaseCell = screen.getByText("Linked case").parentElement!;
     expect(within(linkedCaseCell).getByText("—")).toBeInTheDocument();
+  });
+
+  it("shows the Impact meta cell in the Overview grid, alongside the header chip", () => {
+    mockQueryResult({ data: { ...BASE_CR, impact: "high" } });
+    renderPage();
+    const impactCell = screen.getByText("Impact").parentElement!;
+    expect(within(impactCell).getByText("High")).toBeInTheDocument();
+  });
+
+  it("shows a dash for Impact in the Overview grid when unset", () => {
+    mockQueryResult({ data: { ...BASE_CR, impact: undefined } });
+    renderPage();
+    const impactCell = screen.getByText("Impact").parentElement!;
+    expect(within(impactCell).getByText("—")).toBeInTheDocument();
+  });
+
+  it("renders the lifecycle stepper for this CR's state", () => {
+    mockQueryResult({ data: { ...BASE_CR, state: "implement" } });
+    renderPage();
+    expect(screen.getByRole("list", { name: /change request lifecycle/i })).toBeInTheDocument();
+  });
+});
+
+describe("CsmChangeRequestDetailPage — blocking-reason header note", () => {
+  it("shows 'Awaiting <stage> approval' when a stage is pending or requested", () => {
+    mockQueryResult({ data: { ...BASE_CR, state: "assess" } });
+    useGetChangeRequestApprovalsMock.mockReturnValue({
+      data: {
+        approvals: [
+          {
+            stage: "Assess",
+            approverType: "STATIC_GROUP",
+            approverName: null,
+            status: "REQUESTED",
+            approvers: [],
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+    renderPage();
+    expect(screen.getByText("Awaiting Assess approval")).toBeInTheDocument();
+  });
+
+  it("names the approver group when the stage carries one", () => {
+    mockQueryResult({ data: { ...BASE_CR, state: "authorize" } });
+    useGetChangeRequestApprovalsMock.mockReturnValue({
+      data: {
+        approvals: [
+          {
+            stage: "Authorize",
+            approverType: "STATIC_GROUP",
+            approverName: "Devops Approval",
+            status: "PENDING",
+            approvers: [],
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+    renderPage();
+    expect(screen.getByText("Awaiting Devops Approval")).toBeInTheDocument();
+  });
+
+  it("shows no blocking-reason note when no stage is pending/requested", () => {
+    mockQueryResult({ data: { ...BASE_CR, state: "authorize" } });
+    useGetChangeRequestApprovalsMock.mockReturnValue({
+      data: {
+        approvals: [
+          {
+            stage: "Assess",
+            approverType: "STATIC_GROUP",
+            approverName: null,
+            status: "APPROVED",
+            approvers: [],
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+    renderPage();
+    expect(screen.queryByText(/awaiting/i)).not.toBeInTheDocument();
+  });
+
+  it("suppresses the blocking-reason note once the CR is closed, even with stale pending approval data", () => {
+    mockQueryResult({ data: { ...BASE_CR, state: "closed" } });
+    useGetChangeRequestApprovalsMock.mockReturnValue({
+      data: {
+        approvals: [
+          {
+            stage: "Assess",
+            approverType: "STATIC_GROUP",
+            approverName: null,
+            status: "REQUESTED",
+            approvers: [],
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+    });
+    renderPage();
+    expect(screen.queryByText(/awaiting/i)).not.toBeInTheDocument();
   });
 });
 

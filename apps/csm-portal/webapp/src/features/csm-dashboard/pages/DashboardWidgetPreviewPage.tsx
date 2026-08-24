@@ -31,6 +31,7 @@ import {
 } from "@features/csm-dashboard/config/widgetResourceConfig";
 import {
   describeWidgetFilters,
+  isAnyOfBranchArray,
   parseWidgetPreviewFilters,
   resolveCurrentUserSentinels,
 } from "@features/csm-dashboard/utils/widgetPreviewUrl";
@@ -57,6 +58,19 @@ const SEARCH_DEBOUNCE_MS = 300;
  * `CasesFilterBar` + `useGetCsmCases` + `CasesList`, the same trio the Cases
  * tab itself uses, seeded from the widget's own filters via
  * `translateCaseDashboardFilters` and then fully editable from there.
+ *
+ * Exception: a widget carrying `anyOf` (cross-field OR — see
+ * `isAnyOfBranchArray`) skips this editable path entirely and falls through
+ * to the plain `DashboardWidgetPreviewContent` below instead (see the
+ * `!isAnyOfBranchArray(...)` check at the call site) — `CasesFilters` has no
+ * OR construct to seed `CasesFilterBar` with, so `translateCaseDashboardFilters`
+ * would have to silently drop `anyOf` the same way `casesHref`'s own
+ * click-through used to (the bug `caseFamilyBuildHref` in
+ * `widgetResourceConfig.ts` exists to close). `DashboardWidgetPreviewContent`
+ * posts the widget's raw, un-translated filters straight to `/cases/search`
+ * via `useWidgetData` — the same request shape the tile's own count used —
+ * so its result set is guaranteed to match, at the cost of a plain search box
+ * instead of a fully editable filter bar for just this one case.
  */
 const CASE_FAMILY_RESOURCE_TYPES = new Set<BeWidgetResourceType>([
   "case",
@@ -140,7 +154,7 @@ export default function DashboardWidgetPreviewPage(): JSX.Element {
 
   const filters = resolveCurrentUserSentinels(rawFilters, user?.id);
 
-  if (CASE_FAMILY_RESOURCE_TYPES.has(resourceType)) {
+  if (CASE_FAMILY_RESOURCE_TYPES.has(resourceType) && !isAnyOfBranchArray(filters.anyOf)) {
     return (
       <CaseFamilyWidgetPreview
         displayName={displayName}

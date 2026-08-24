@@ -27,6 +27,7 @@ import {
 import {
   ArrowLeft,
   Check,
+  Clock,
   ClipboardCheck,
   CopyPlus,
   FileText,
@@ -52,6 +53,7 @@ import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useEngineerDisplayName } from "@hooks/useEngineerDisplayName";
 import { useRecordRecentView } from "@features/csm-recent/hooks/useRecentViews";
 import { useGetChangeRequest } from "@features/csm-operations/api/useGetChangeRequest";
+import { useGetChangeRequestApprovals } from "@features/csm-operations/api/useGetChangeRequestApprovals";
 import { usePatchChangeRequest } from "@features/csm-operations/api/usePatchChangeRequest";
 import {
   useGetCsmChangeRequestComments,
@@ -59,11 +61,13 @@ import {
 } from "@features/csm-operations/api/useCsmChangeRequestComments";
 import ChangeRequestActionBar from "@features/csm-operations/components/ChangeRequestActionBar";
 import ChangeRequestApprovals from "@features/csm-operations/components/ChangeRequestApprovals";
+import ChangeRequestLifecycleStepper from "@features/csm-operations/components/ChangeRequestLifecycleStepper";
 import ChangeRequestTransitionReasonDialog from "@features/csm-operations/components/ChangeRequestTransitionReasonDialog";
 import EditChangeRequestDialog from "@features/csm-operations/components/EditChangeRequestDialog";
 import EntityRefLink from "@features/csm-operations/components/EntityRefLink";
 import {
   buildCloneChangeRequestNavState,
+  changeRequestBlockingReason,
   changeRequestCommentGateReason,
   changeRequestTransitionRequiresReason,
   changeRequestImpactColor,
@@ -218,6 +222,12 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   const backState = useLocation().state as { from?: string } | undefined;
   const backTarget = backState?.from ?? OPERATIONS_CR_PATH;
   const { data, isLoading, isError } = useGetChangeRequest(id);
+  // Fetched here (not just inside the Approval tab's `ChangeRequestApprovals`)
+  // so the header's blocking-reason note has data on first render, even when
+  // the engineer lands on a different tab. Both call sites share the same
+  // query key, so react-query dedupes this into a single request rather than
+  // fetching twice.
+  const { data: approvalsData } = useGetChangeRequestApprovals(id);
   const { showError } = useErrorBanner();
   const patchCr = usePatchChangeRequest();
   const [editOpen, setEditOpen] = useState(false);
@@ -330,6 +340,13 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   }
 
   const cr = data;
+  // Only meaningful while the CR is actively moving through approval —
+  // closed/canceled/rollback are terminal or off-ramp states where "awaiting
+  // approval" no longer describes what's happening.
+  const blockingReason =
+    cr.state === "closed" || cr.state === "canceled" || cr.state === "rollback"
+      ? null
+      : changeRequestBlockingReason(approvalsData?.approvals);
   // A transition is in flight whenever either half of a destructive
   // transition (the reason comment, then the patch) or a plain patch is
   // running, so the bar stays disabled across both and a double-click can't
@@ -483,8 +500,17 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
                 label={`${changeRequestImpactLabel(cr.impact)} impact`}
               />
             )}
+            {blockingReason && (
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                <Clock size={14} />
+                <Typography variant="body2" color="text.secondary">
+                  {blockingReason}
+                </Typography>
+              </Box>
+            )}
           </Box>
           <Typography variant="h5">{cr.subject || "Change request"}</Typography>
+          <ChangeRequestLifecycleStepper state={cr.state} />
         </Box>
         <Box sx={{ flexShrink: 0, alignSelf: { xs: "stretch", md: "flex-start" } }}>
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -539,6 +565,18 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
             <Typography variant="body2">{cr.type || "—"}</Typography>
           </MetaCell>
           <MetaCell label="Linked case"><EntityRefLink value={cr.case} routeBase="/cases" /></MetaCell>
+          <MetaCell label="Impact">
+            {cr.impact ? (
+              <Chip
+                size="small"
+                variant="outlined"
+                color={changeRequestImpactColor(cr.impact)}
+                label={changeRequestImpactLabel(cr.impact)}
+              />
+            ) : (
+              <Typography variant="body2">—</Typography>
+            )}
+          </MetaCell>
           <MetaCell label="Deployment"><RefText value={cr.deployment} /></MetaCell>
           <MetaCell label="Deployed product"><RefText value={cr.deployedProduct} /></MetaCell>
           <MetaCell label="Product"><RefText value={cr.product} /></MetaCell>
@@ -596,30 +634,59 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
       </Box>
 
       {activeTab === "approval" && (
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-          <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>
-            <Typography variant="subtitle2">Approval</Typography>
-            <Box
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <Typography
+              variant="overline"
+              color="text.secondary"
+              sx={{ letterSpacing: 0.6 }}
+            >
+              Customer approval
+            </Typography>
+            <Card
               sx={{
-                display: "grid",
+                p: 2.5,
+                display: "flex",
+                flexDirection: "column",
                 gap: 2,
-                gridTemplateColumns: {
-                  xs: "1fr",
-                  sm: "repeat(2, minmax(0, 1fr))",
-                  md: "repeat(3, minmax(0, 1fr))",
-                },
+                borderLeft: 3,
+                borderColor: "info.main",
               }}
             >
-              <MetaCell label="Customer approved"><YesNo value={cr.hasCustomerApproved} /></MetaCell>
-              <MetaCell label="Customer reviewed"><YesNo value={cr.hasCustomerReviewed} /></MetaCell>
-              <MetaCell label="Approved by"><RefText value={cr.approvedBy} /></MetaCell>
-              <MetaCell label="Approved on">
-                <Typography variant="body2">{formatDateTime(cr.approvedOn)}</Typography>
-              </MetaCell>
-            </Box>
-          </Card>
+              <Typography variant="body2" color="text.secondary">
+                What the customer has confirmed on this change.
+              </Typography>
+              <Box
+                sx={{
+                  display: "grid",
+                  gap: 2,
+                  gridTemplateColumns: {
+                    xs: "1fr",
+                    sm: "repeat(2, minmax(0, 1fr))",
+                    md: "repeat(3, minmax(0, 1fr))",
+                  },
+                }}
+              >
+                <MetaCell label="Customer approved"><YesNo value={cr.hasCustomerApproved} /></MetaCell>
+                <MetaCell label="Customer reviewed"><YesNo value={cr.hasCustomerReviewed} /></MetaCell>
+                <MetaCell label="Approved by"><RefText value={cr.approvedBy} /></MetaCell>
+                <MetaCell label="Approved on">
+                  <Typography variant="body2">{formatDateTime(cr.approvedOn)}</Typography>
+                </MetaCell>
+              </Box>
+            </Card>
+          </Box>
 
-          <ChangeRequestApprovals id={cr.id} />
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <Typography
+              variant="overline"
+              color="text.secondary"
+              sx={{ letterSpacing: 0.6 }}
+            >
+              Internal approval workflow
+            </Typography>
+            <ChangeRequestApprovals id={cr.id} />
+          </Box>
         </Box>
       )}
 

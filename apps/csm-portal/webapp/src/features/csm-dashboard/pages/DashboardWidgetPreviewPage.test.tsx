@@ -320,6 +320,64 @@ describe("DashboardWidgetPreviewPage — generic resourceTypes keep the read-onl
 });
 
 /**
+ * Regression (digiops-cs#2880): a case-family widget carrying `anyOf`
+ * (cross-field OR branches) must NOT fall into `CaseFamilyWidgetPreview` —
+ * `CasesFilters`/`CasesFilterBar` have no OR construct, so seeding them from
+ * `translateCaseDashboardFilters` would silently drop `anyOf` and land on a
+ * broader, unfiltered-by-`anyOf` result set than the tile it was reached
+ * from actually counted. It falls through to the generic, filter-faithful
+ * `useWidgetData`-backed content instead (same path `resourceType: "incident"`
+ * always used), which posts the widget's raw filters — `anyOf` included —
+ * straight to `/cases/search`.
+ */
+describe("DashboardWidgetPreviewPage — a case-family widget with anyOf skips the editable filter bar", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it("posts the widget's anyOf branches verbatim to /cases/search instead of seeding CasesFilterBar", async () => {
+    postMock.mockResolvedValue({
+      cases: [{ id: "c1", number: "CS-1", subject: "Disk full", state: "open" }],
+      total: 1,
+      limit: 10,
+      offset: 0,
+    });
+
+    const anyOf = [
+      { filters: [{ field: "severity", op: "in", values: ["catastrophic", "critical"] }] },
+      { filters: [{ field: "type", op: "in", values: ["security_report_analysis"] }] },
+    ];
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "wow_p0p1",
+        displayName: "WOW P0/P1",
+        filters: {
+          filters: [{ field: "state", op: "in", values: ["open"] }],
+          anyOf,
+        },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    // The real, editable Cases filter bar never mounts for this widget.
+    expect(screen.queryByRole("combobox", { name: "Severity" })).not.toBeInTheDocument();
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      expect.objectContaining({
+        filters: expect.objectContaining({
+          filters: [{ field: "state", op: "in", values: ["open"] }],
+          anyOf,
+        }),
+      }),
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+});
+
+/**
  * Reported live: a case-family widget's "View more" landed on a static
  * "Filtered by:" chip summary, unlike every other list page in the app,
  * which has a real, editable filter bar. `CaseFamilyWidgetPreview` (in

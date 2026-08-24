@@ -206,6 +206,34 @@ describe("widgetListConfig — quick-preview icon per resourceType", () => {
     expect(screen.queryByTestId("location-probe")).not.toBeInTheDocument();
   });
 
+  it("case: renders an Assignee column, falling back to Unassigned when no engineer is assigned", () => {
+    const Renderer = WIDGET_LIST_RENDERERS.case;
+    renderRenderer(
+      <Renderer
+        items={[
+          {
+            id: "case-1",
+            caseNumber: "CS0000001",
+            subject: "Cluster degraded",
+            assignedEngineer: { id: "u-1", email: "jane.doe@example.com", name: "Jane Doe" },
+          },
+          {
+            id: "case-2",
+            caseNumber: "CS0000002",
+            subject: "Login failing",
+            assignedEngineer: null,
+          },
+        ]}
+        isLoading={false}
+      />,
+      "/cases/:id",
+    );
+
+    expect(screen.getByText("Assignee")).toBeInTheDocument();
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+    expect(screen.getByText("Unassigned")).toBeInTheDocument();
+  });
+
   it("call_request: renders the preview icon, opens the existing detail modal without navigating the owning case", () => {
     const Renderer = WIDGET_LIST_RENDERERS.call_request;
     renderRenderer(
