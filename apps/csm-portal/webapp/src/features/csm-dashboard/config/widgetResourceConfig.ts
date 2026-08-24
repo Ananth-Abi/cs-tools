@@ -57,7 +57,10 @@ import {
 import { writeChangeRequestFiltersToUrl } from "@features/csm-operations/utils/changeRequestsFiltersUrl";
 import { taskStateLabel } from "@features/csm-cases/utils/taskState";
 import type { BeTaskState } from "@api/backend/types";
-import { buildWidgetPreviewHref } from "@features/csm-dashboard/utils/widgetPreviewUrl";
+import {
+  buildWidgetPreviewHref,
+  isAnyOfBranchArray,
+} from "@features/csm-dashboard/utils/widgetPreviewUrl";
 
 /** A resolved search-result row, typed loosely since its real shape depends
  * on `resourceType` — the label extractors below narrow what they read. */
@@ -200,10 +203,17 @@ function caseFilterEntry(
  * `projectType`, and the `createdOn`/`updatedOn`/`closedOn` date ranges,
  * which was the root cause of the click-through data-loss bug this function
  * exists to fix (a tile reading a filtered count landed on the org-wide
- * cases list because its filters had nowhere to go). Only `anyOf`,
- * `parentId`, and `resolutionNotes` remain genuinely dropped: no dashboard
- * widget uses them today, and `CasesFilters` has no equivalent to invent one
- * for without guessing at a UI treatment.
+ * cases list because its filters had nowhere to go). `parentId` and
+ * `resolutionNotes` remain genuinely dropped: no dashboard widget uses them
+ * today, and `CasesFilters` has no equivalent to invent one for without
+ * guessing at a UI treatment. `anyOf` (cross-field OR) is dropped here too —
+ * `CasesFilters` is an AND-only model with nothing to translate it into — but
+ * a widget carrying `anyOf` never reaches this function's output at all (see
+ * `caseFamilyBuildHref` below, and `DashboardWidgetPreviewPage.tsx`'s own
+ * `anyOf` routing check): its click-through routes to the generic,
+ * filter-faithful dashboard-widget preview page instead, the same fallback
+ * `incident_task` uses for a resourceType with no representable destination
+ * in its own list page.
  *
  * `assignedUserId` carries the current user's own UUID (every widget that
  * sets it does so via the current-user placeholder), and
@@ -423,6 +433,36 @@ function caseTypeListHref(basePath: string, filters: Record<string, unknown>): s
   return qs ? `${basePath}?${qs}` : basePath;
 }
 
+/**
+ * Shared `buildHref` wrapper for every case-family resourceType (`case`,
+ * `service_request`, `security_report_analysis`, `engagement` —
+ * `announcement` is excluded, see its own `buildHref` comment): a widget's
+ * `anyOf` cross-field-OR branches have no representation in `CasesFilters`
+ * (an AND-only model), so `fallback()` — which goes through
+ * `translateCaseDashboardFilters` one way or another — would silently drop
+ * them and land on a broader, unfiltered-by-`anyOf` list than what the tile
+ * actually counted (the bug this wrapper exists to close). Route through the
+ * generic, filter-faithful dashboard-widget preview page instead whenever
+ * `anyOf` is present, exactly mirroring `incident_task`'s own fallback for a
+ * resourceType with no representable destination of its own.
+ */
+function caseFamilyBuildHref(
+  previewSlug: string,
+  filters: Record<string, unknown>,
+  ctx: { widgetId: string; displayName: string } | undefined,
+  fallback: () => string,
+): string {
+  if (isAnyOfBranchArray(filters.anyOf)) {
+    return buildWidgetPreviewHref({
+      previewSlug,
+      widgetId: ctx?.widgetId ?? "",
+      displayName: ctx?.displayName ?? "",
+      filters,
+    });
+  }
+  return fallback();
+}
+
 /** Dashboard incident filters already use the real `BeIncidentPriority`
  * wire values (`CRITICAL`/`HIGH`/...), same as `IncidentFilters.priorities` —
  * no translation table needed, only a type narrowing. */
@@ -496,7 +536,10 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     itemsKey: "cases",
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
-    buildHref: (filters) => casesHref(translateCaseDashboardFilters(filters)),
+    buildHref: (filters, ctx) =>
+      caseFamilyBuildHref("cases", filters, ctx, () =>
+        casesHref(translateCaseDashboardFilters(filters)),
+      ),
     icon: Briefcase,
     iconColor: "primary",
     previewSlug: "cases",
@@ -521,13 +564,15 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
-    buildHref: (filters) =>
-      operationsHref(
-        "service_requests",
-        writeCasesFiltersToUrl({
-          ...DEFAULT_CASES_FILTERS,
-          ...translateCaseDashboardFilters(filters),
-        }),
+    buildHref: (filters, ctx) =>
+      caseFamilyBuildHref("service-requests", filters, ctx, () =>
+        operationsHref(
+          "service_requests",
+          writeCasesFiltersToUrl({
+            ...DEFAULT_CASES_FILTERS,
+            ...translateCaseDashboardFilters(filters),
+          }),
+        ),
       ),
     icon: Cog,
     iconColor: "info",
@@ -540,13 +585,15 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
-    buildHref: (filters) =>
-      securityCenterHref(
-        "security_reports",
-        writeCasesFiltersToUrl({
-          ...DEFAULT_CASES_FILTERS,
-          ...translateCaseDashboardFilters(filters),
-        }),
+    buildHref: (filters, ctx) =>
+      caseFamilyBuildHref("security-reports", filters, ctx, () =>
+        securityCenterHref(
+          "security_reports",
+          writeCasesFiltersToUrl({
+            ...DEFAULT_CASES_FILTERS,
+            ...translateCaseDashboardFilters(filters),
+          }),
+        ),
       ),
     icon: Shield,
     iconColor: "warning",
@@ -562,7 +609,9 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     // CsmAnnouncementsPage keeps its own filters in local component state,
     // not the URL (unlike /cases, /operations, /engagements) — there is no
     // query-param scheme to land a filtered click-through on yet, so this
-    // stays unfiltered, same as `problem` above.
+    // stays unfiltered, same as `problem` above (including any `anyOf` a
+    // widget sets — no `caseFamilyBuildHref` wrapper here, since there's no
+    // filtered destination for it to fall back to in the first place).
     buildHref: () => "/announcements",
     icon: Megaphone,
     iconColor: "success",
@@ -575,7 +624,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     detailHref: caseDetailHref,
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
-    buildHref: (filters) => caseTypeListHref("/engagements", filters),
+    buildHref: (filters, ctx) =>
+      caseFamilyBuildHref("engagements", filters, ctx, () => caseTypeListHref("/engagements", filters)),
     icon: Handshake,
     iconColor: "secondary",
     previewSlug: "engagements",

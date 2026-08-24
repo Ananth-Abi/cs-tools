@@ -410,6 +410,58 @@ describe("WIDGET_RESOURCE_CONFIG — case-table resourceTypes beyond `case`", ()
     expect(params.get("n")).toBe("My Incident Tasks");
   });
 
+  // Regression (digiops-cs#2880): a widget's `anyOf` cross-field OR branches
+  // have no representation in `CasesFilters` (an AND-only model), so
+  // `translateCaseDashboardFilters` used to silently drop them -- a tile
+  // reading a count restricted by `anyOf` landed its "View all" click on a
+  // broader, unfiltered-by-`anyOf` cases list than what it actually counted.
+  // Each case-family type must route to the widget preview page instead
+  // (mirroring `incident_task` above) whenever `anyOf` is present, carrying
+  // the widget context and round-tripping the OR branches through the URL
+  // rather than dropping them.
+  describe("anyOf routes to the widget preview page instead of a lossy CasesFilters translation", () => {
+    const anyOfFilters = {
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+      anyOf: [
+        { filters: [{ field: "severity", op: "in", values: ["catastrophic", "critical"] }] },
+        { filters: [{ field: "type", op: "in", values: ["security_report_analysis"] }] },
+      ],
+    };
+    const ctx = { widgetId: "widget-99", displayName: "WOW P0/P1" };
+
+    it("case", () => {
+      const href = WIDGET_RESOURCE_CONFIG.case.buildHref(anyOfFilters, ctx);
+      expect(href.startsWith("/dashboard/preview/cases?")).toBe(true);
+      const params = hrefParams(href);
+      expect(params.get("w")).toBe("widget-99");
+      expect(params.get("n")).toBe("WOW P0/P1");
+      expect(params.has("_anyOf")).toBe(true);
+    });
+
+    it("service_request", () => {
+      const href = WIDGET_RESOURCE_CONFIG.service_request.buildHref(anyOfFilters, ctx);
+      expect(href.startsWith("/dashboard/preview/service-requests?")).toBe(true);
+    });
+
+    it("security_report_analysis", () => {
+      const href = WIDGET_RESOURCE_CONFIG.security_report_analysis.buildHref(anyOfFilters, ctx);
+      expect(href.startsWith("/dashboard/preview/security-reports?")).toBe(true);
+    });
+
+    it("engagement", () => {
+      const href = WIDGET_RESOURCE_CONFIG.engagement.buildHref(anyOfFilters, ctx);
+      expect(href.startsWith("/dashboard/preview/engagements?")).toBe(true);
+    });
+
+    it("a case-family widget with no anyOf still lands on its own list page, unaffected", () => {
+      const href = WIDGET_RESOURCE_CONFIG.case.buildHref(
+        { filters: [{ field: "state", op: "in", values: ["open"] }] },
+        ctx,
+      );
+      expect(href.startsWith("/cases?")).toBe(true);
+    });
+  });
+
   it("each of the four has its own distinct icon from `case` and from each other", () => {
     const icons = [
       WIDGET_RESOURCE_CONFIG.case.icon,
