@@ -6347,6 +6347,8 @@ components:
             - taskSLABusinessElapsedPercent
             - escalationLevel
             - escalation
+            - slaBreached
+            - accountEscalationActive
             - number
             - internalId
         op:
@@ -6444,6 +6446,16 @@ components:
         - **escalation** (isEmpty / isNotEmpty): values ignored; isEmpty
           matches cases with no active escalation, isNotEmpty matches cases
           with an active escalation.
+        - **slaBreached** (eq): "true"/"false". Matches cases with a
+          currently-breached SLA against ServiceNow's own named SLA
+          definition set (task_sla.has_breached + stage=in_progress). Only
+          applied by the ServiceNow data source.
+        - **accountEscalationActive** (eq): "true"/"false". Matches cases
+          whose ACCOUNT currently has an active escalation
+          (active_account_escalation.state in Requested/Escalated) --
+          distinct from **escalation** above, which is a case-level flag.
+          The two are independent and may both be queried. Only applied by
+          the ServiceNow data source.
         - **number** (eq): a single case number (e.g. "CS0441174"); matches
           exactly. Routed as a first-class filter rather than through the
           free-text searchQuery scan.
@@ -10779,6 +10791,41 @@ components:
                 A single incident number (e.g. "INC0010001"); matches
                 exactly. Routed as a first-class filter rather than through
                 the free-text searchQuery scan.
+            state:
+              type: array
+              items:
+                type: string
+              description: >-
+                Incident state keys (e.g. "NEW", "IN_PROGRESS", "CLOSED",
+                "CANCELLED"). Already accepted by the entity-service today;
+                documented here to catch this schema up to what the code
+                actually accepts.
+            businessServiceId:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: >-
+                Business-service UUIDs. Already accepted by the
+                entity-service today; documented here to catch this schema
+                up to what the code actually accepts.
+            slaViolated:
+              type: boolean
+              description: >-
+                Whether the incident has a breached SLA, derived from
+                task_sla.has_breached (a related-list join), not from
+                ServiceNow's raw made_sla field -- deliberately more
+                reliable than made_sla, which catches only a small fraction
+                of actually-breached incidents on this instance. Prefer
+                this field for correctness-sensitive SLA-breach filtering.
+            madeSla:
+              type: boolean
+              description: >-
+                ServiceNow's raw made_sla field on the incident. Different
+                from, and less reliable than, slaViolated above -- kept
+                only for exact parity with ServiceNow dashboards/reports
+                that filter on this raw field directly. Do not use this for
+                general SLA-breach filtering; use slaViolated instead.
         sortBy:
           type: object
           properties:
