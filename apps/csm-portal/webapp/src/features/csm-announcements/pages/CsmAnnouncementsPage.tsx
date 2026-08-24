@@ -31,9 +31,10 @@ import {
   TextField,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Search, X } from "@wso2/oxygen-ui-icons-react";
+import { Plus, Search, X } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type ChangeEvent, type JSX, type ReactNode } from "react";
 import { Link as RouterLink } from "react-router";
+import { useNavTransition } from "@hooks/useNavTransition";
 import ColumnCustomizerButton from "@components/column-customizer/ColumnCustomizerButton";
 import MultiSelectField from "@components/MultiSelectField";
 import QueryErrorState from "@components/QueryErrorState";
@@ -169,13 +170,14 @@ function renderAnnouncementCell(id: AnnouncementColumnId, a: CsmAnnouncementRow)
 }
 
 /**
- * Read-only announcements list. Announcements are cases of
- * `type: "announcement"` surfaced via `POST /cases/search`. Filterable by
- * state and project (all default to "show all"). Creating /
- * targeting / unpublishing needs the dedicated announcement backend,
- * tracked separately, which isn't built yet, so this page is view-only for now.
+ * Announcements list. Announcements are cases of `type: "announcement"`
+ * surfaced via `POST /cases/search`. Filterable by state and project (all
+ * default to "show all"). Creating one is handled by
+ * `CsmAnnouncementCreatePage` ("New announcement" below); unpublishing isn't
+ * built yet.
  */
 export default function CsmAnnouncementsPage(): JSX.Element {
+  const navigate = useNavTransition();
   const [filters, setFilters] = useState<AnnouncementFilters>(DEFAULT_ANNOUNCEMENT_FILTERS);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
@@ -224,6 +226,15 @@ export default function CsmAnnouncementsPage(): JSX.Element {
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            startIcon={<Plus size={16} />}
+            onClick={() => navigate("/announcements/new")}
+          >
+            New announcement
+          </Button>
           <RefreshButton
             onRefresh={() => void refetch()}
             isFetching={isFetching}

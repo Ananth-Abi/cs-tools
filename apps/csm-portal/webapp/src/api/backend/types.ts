@@ -556,14 +556,31 @@ export interface BeEngagementCreatePayload {
 }
 
 /**
+ * Announcement (`type: "announcement"`). A broadcast, not a worked case — no
+ * severity/issueType/deployment/deployedProduct/attachments. Always created
+ * against a single project; a multi-project announcement is fanned out into
+ * one create call per project by the caller (see
+ * `CsmAnnouncementCreatePage.tsx`), not expressed as one payload with a
+ * target list.
+ */
+export interface BeAnnouncementCreatePayload {
+  type: "announcement";
+  projectId: string;
+  subject: string;
+  description: string;
+}
+
+/**
  * Any body accepted by `POST /cases`: a standard support case, a catalog
- * service request, a security report analysis, or an engagement.
+ * service request, a security report analysis, an engagement, or an
+ * announcement.
  */
 export type BeCaseCreateBody =
   | BeCaseCreatePayload
   | BeServiceRequestCreatePayload
   | BeSecurityReportCreatePayload
-  | BeEngagementCreatePayload;
+  | BeEngagementCreatePayload
+  | BeAnnouncementCreatePayload;
 
 /** The case summary embedded in the `POST /cases` success envelope. */
 export interface BeCreatedCase {
