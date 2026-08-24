@@ -815,17 +815,31 @@ type DeployedProductVersionRef struct {
 
 // DeployedProductView is the enriched search result for a deployed product.
 // It embeds deployment, product, and version as named refs and uses createdOn/updatedOn naming.
-// Cores, TPS, and Category are SN-only fields; they are always null for the Postgres path.
+// Cores, TPS, Category, and Updates are SN-only fields; they are always null/empty for the
+// Postgres path.
 type DeployedProductView struct {
 	ID         string                     `json:"id"`
 	Deployment EntityRef                  `json:"deployment"`
 	Product    EntityRef                  `json:"product"`
 	Version    *DeployedProductVersionRef `json:"version"`
-	Cores      *string                    `json:"cores"`
-	TPS        *string                    `json:"tps"`
+	Cores      *int                       `json:"cores"`
+	TPS        *float64                   `json:"tps"`
 	Category   *string                    `json:"category"`
-	CreatedOn  time.Time                  `json:"createdOn"`
-	UpdatedOn  time.Time                  `json:"updatedOn"`
+	// Updates is the deployed product's update-level history, most-recent-first as
+	// returned by the backing data source. Nil/empty when none have been recorded.
+	Updates   []ProductUpdateEntry `json:"updates"`
+	CreatedOn time.Time            `json:"createdOn"`
+	UpdatedOn time.Time            `json:"updatedOn"`
+}
+
+// ProductUpdateEntry records a single update-level change applied to a deployed product
+// (e.g. a patch or upgrade applied to the running instance).
+type ProductUpdateEntry struct {
+	UpdateLevel int `json:"updateLevel"`
+	// Date is a date-only "YYYY-MM-DD" string, matching the backing data source's wire format.
+	Date string `json:"date"`
+	// Details is optional free-text describing the update.
+	Details *string `json:"details"`
 }
 
 // SearchDeployedProductsRequest is the input for a deployed-product search operation.
@@ -871,17 +885,22 @@ type CreatedDeployedProduct struct {
 }
 
 // UpdateDeployedProductRequest is the input for PATCH /deployed-products/{id}.
-// Either detail fields (Cores, TPS, Description) or Active=false must be provided, but not both.
+// Either detail fields (Cores, TPS, Description, Updates) or Active=false must be provided,
+// but not both.
 // Description uses json.RawMessage to preserve three states: nil/empty = omit, "null" = clear, `"value"` = set.
 // DeploymentID, when provided, scopes the update: the deployed product must belong to that
 // deployment or the operation returns a NotFoundError.
+// Updates, when non-nil, replaces the deployed product's entire update-history array (the
+// backing data source has whole-array replace semantics: the caller fetches the current
+// array, mutates it client-side, and PATCHes the full array back).
 type UpdateDeployedProductRequest struct {
-	ID           string          `json:"-"`
-	DeploymentID *string         `json:"deploymentId,omitempty"`
-	Cores        *int            `json:"cores"`
-	TPS          *float64        `json:"tps"`
-	Description  json.RawMessage `json:"description,omitempty"`
-	Active       *bool           `json:"active"`
+	ID           string               `json:"-"`
+	DeploymentID *string              `json:"deploymentId,omitempty"`
+	Cores        *int                 `json:"cores"`
+	TPS          *float64             `json:"tps"`
+	Description  json.RawMessage      `json:"description,omitempty"`
+	Updates      []ProductUpdateEntry `json:"updates,omitempty"`
+	Active       *bool                `json:"active"`
 }
 
 // UpdateDeployedProductResponse is the response for PATCH /deployed-products/{id}.
@@ -895,6 +914,10 @@ type UpdatedDeployedProduct struct {
 	ID        string    `json:"id"`
 	UpdatedOn time.Time `json:"updatedOn"`
 	UpdatedBy string    `json:"updatedBy"`
+	// Updates echoes back the deployed product's update-history array as it stands
+	// after the write, when the backing data source returns it. Nil when the write
+	// did not touch Updates and the data source omits it from the response.
+	Updates []ProductUpdateEntry `json:"updates,omitempty"`
 }
 
 // CaseIssueType classifies the nature of a support case.
@@ -2251,6 +2274,31 @@ type DeleteAttachmentRequest struct {
 // DeleteAttachmentResponse is the output for DELETE /cases/{id}/attachments/{attachmentId}.
 type DeleteAttachmentResponse struct {
 	Message string `json:"message"`
+}
+
+// UpdateAttachmentRequest is the input for PATCH /attachments/{attachmentId}.
+// ReferenceID and ReferenceType scope the update the same way SearchAttachmentsRequest does
+// (an IDOR guard: the caller asserts which entity it believes the attachment belongs to).
+// At least one of Name or Description must be provided.
+type UpdateAttachmentRequest struct {
+	AttachmentID  string        `json:"-"`
+	ReferenceID   string        `json:"referenceId"`
+	ReferenceType ReferenceType `json:"referenceType"`
+	Name          *string       `json:"name,omitempty"`
+	Description   *string       `json:"description,omitempty"`
+}
+
+// UpdateAttachmentResponse is the response for PATCH /attachments/{attachmentId}.
+type UpdateAttachmentResponse struct {
+	Message    string            `json:"message"`
+	Attachment UpdatedAttachment `json:"attachment"`
+}
+
+// UpdatedAttachment carries the fields that may change after an attachment update.
+type UpdatedAttachment struct {
+	ID        string    `json:"id"`
+	UpdatedOn time.Time `json:"updatedOn"`
+	UpdatedBy string    `json:"updatedBy"`
 }
 
 // ChangeRequestType classifies the change request type.

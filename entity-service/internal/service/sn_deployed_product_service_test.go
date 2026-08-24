@@ -107,3 +107,197 @@ func TestSNDeployedProductService_SearchDeployedProducts_NilCategoryStaysNil(t *
 		t.Fatalf("expected nil category, got %v", *resp.DeployedProducts[0].Category)
 	}
 }
+
+// TestSNDeployedProductService_SearchDeployedProducts_CoresTPSNumericAndUpdatesPopulated
+// guards the removal of the old fmt.Sprintf-based cores/tps stringification: SN's wire
+// type decodes them as numeric (*int / *float64) already, so SearchDeployedProducts must
+// pass them straight through instead of re-stringifying, and the updates array must be
+// mapped from the SN response into domain.ProductUpdateEntry.
+func TestSNDeployedProductService_SearchDeployedProducts_CoresTPSNumericAndUpdatesPopulated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployed-products/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"deployedProducts": []map[string]any{
+				{
+					"id":         testDeployedProductSysid,
+					"deployment": map[string]any{"id": testDeployedProductDeploySysid, "name": "Production"},
+					"product":    map[string]any{"id": testDeployedProductProdSysid, "name": "API Manager"},
+					"cores":      4,
+					"tps":        100.5,
+					"category":   nil,
+					"updates": []map[string]any{
+						{"updateLevel": 3, "date": "2026-02-01", "details": "Applied patch level 3"},
+						{"updateLevel": 2, "date": "2026-01-01", "details": nil},
+					},
+					"createdOn": "2026-01-01 00:00:00",
+					"updatedOn": "2026-01-02 00:00:00",
+				},
+			},
+			"totalRecords": 1, "offset": 0, "limit": 20,
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowDeployedProductService(client)
+
+	resp, err := svc.SearchDeployedProducts(contextWithUserIDToken("token"), domain.SearchDeployedProductsRequest{
+		Pagination: domain.Pagination{Limit: 20, Offset: 0},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resp.DeployedProducts) != 1 {
+		t.Fatalf("expected 1 deployed product, got %d", len(resp.DeployedProducts))
+	}
+	got := resp.DeployedProducts[0]
+
+	if got.Cores == nil || *got.Cores != 4 {
+		t.Fatalf("Cores = %v, want *int(4)", got.Cores)
+	}
+	if got.TPS == nil || *got.TPS != 100.5 {
+		t.Fatalf("TPS = %v, want *float64(100.5)", got.TPS)
+	}
+
+	if len(got.Updates) != 2 {
+		t.Fatalf("expected 2 update-history entries, got %d", len(got.Updates))
+	}
+	if got.Updates[0].UpdateLevel != 3 || got.Updates[0].Date != "2026-02-01" {
+		t.Fatalf("Updates[0] = %+v, want {UpdateLevel:3 Date:2026-02-01 ...}", got.Updates[0])
+	}
+	if got.Updates[0].Details == nil || *got.Updates[0].Details != "Applied patch level 3" {
+		t.Fatalf("Updates[0].Details = %v, want non-nil %q", got.Updates[0].Details, "Applied patch level 3")
+	}
+	if got.Updates[1].UpdateLevel != 2 || got.Updates[1].Details != nil {
+		t.Fatalf("Updates[1] = %+v, want {UpdateLevel:2 Details:nil}", got.Updates[1])
+	}
+}
+
+// TestSNDeployedProductService_SearchDeployedProducts_NilUpdatesStaysNil confirms an
+// absent "updates" field on the wire produces a nil (not empty-non-nil) domain slice.
+func TestSNDeployedProductService_SearchDeployedProducts_NilUpdatesStaysNil(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployed-products/search", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"deployedProducts": []map[string]any{
+				{
+					"id":         testDeployedProductSysid,
+					"deployment": map[string]any{"id": testDeployedProductDeploySysid, "name": "Production"},
+					"product":    map[string]any{"id": testDeployedProductProdSysid, "name": "API Manager"},
+					"createdOn":  "2026-01-01 00:00:00",
+					"updatedOn":  "2026-01-02 00:00:00",
+				},
+			},
+			"totalRecords": 1, "offset": 0, "limit": 20,
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowDeployedProductService(client)
+
+	resp, err := svc.SearchDeployedProducts(contextWithUserIDToken("token"), domain.SearchDeployedProductsRequest{
+		Pagination: domain.Pagination{Limit: 20, Offset: 0},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.DeployedProducts[0].Updates != nil {
+		t.Fatalf("expected nil Updates, got %+v", resp.DeployedProducts[0].Updates)
+	}
+}
+
+// TestSNDeployedProductService_UpdateDeployedProduct_UpdatesRoundTrip proves a request
+// carrying a non-empty Updates array is forwarded to SN as the whole-array-replace payload,
+// and the mocked SN response's echoed "updates" array comes back through in the domain
+// response.
+func TestSNDeployedProductService_UpdateDeployedProduct_UpdatesRoundTrip(t *testing.T) {
+	productUUID := sysidToUUID(testDeployedProductSysid)
+	details := "Applied patch level 5"
+
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployed-products/"+testDeployedProductSysid, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPatch {
+			t.Fatalf("expected PATCH, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "updated",
+			"deployedProduct": map[string]any{
+				"id":        testDeployedProductSysid,
+				"updatedOn": "2026-02-01 00:00:00",
+				"updatedBy": "jane.doe@example.com",
+				"updates": []map[string]any{
+					{"updateLevel": 5, "date": "2026-02-01", "details": details},
+				},
+			},
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowDeployedProductService(client)
+
+	req := domain.UpdateDeployedProductRequest{
+		ID: productUUID,
+		Updates: []domain.ProductUpdateEntry{
+			{UpdateLevel: 4, Date: "2026-01-01", Details: nil},
+			{UpdateLevel: 5, Date: "2026-02-01", Details: &details},
+		},
+	}
+
+	resp, err := svc.UpdateDeployedProduct(contextWithUserIDToken("token"), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Assert the outbound payload carried the full Updates array, not just a delta.
+	rawUpdates, ok := gotBody["updates"].([]any)
+	if !ok || len(rawUpdates) != 2 {
+		t.Fatalf("outbound payload updates = %v, want a 2-element array", gotBody["updates"])
+	}
+	first, _ := rawUpdates[0].(map[string]any)
+	if first["updateLevel"] != float64(4) || first["date"] != "2026-01-01" {
+		t.Fatalf("outbound payload updates[0] = %v, want {updateLevel:4 date:2026-01-01}", first)
+	}
+
+	if len(resp.DeployedProduct.Updates) != 1 {
+		t.Fatalf("expected 1 echoed update entry, got %d", len(resp.DeployedProduct.Updates))
+	}
+	if resp.DeployedProduct.Updates[0].UpdateLevel != 5 {
+		t.Fatalf("echoed Updates[0].UpdateLevel = %d, want 5", resp.DeployedProduct.Updates[0].UpdateLevel)
+	}
+	if resp.DeployedProduct.Updates[0].Details == nil || *resp.DeployedProduct.Updates[0].Details != details {
+		t.Fatalf("echoed Updates[0].Details = %v, want %q", resp.DeployedProduct.Updates[0].Details, details)
+	}
+}
+
+// TestSNDeployedProductService_UpdateDeployedProduct_UpdatesAloneSatisfiesDetailFields
+// proves a request carrying only Updates (no cores/tps/description) is accepted as a
+// valid "detail fields" update rather than rejected as an empty request.
+func TestSNDeployedProductService_UpdateDeployedProduct_UpdatesAloneSatisfiesDetailFields(t *testing.T) {
+	productUUID := sysidToUUID(testDeployedProductSysid)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployed-products/"+testDeployedProductSysid, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "updated",
+			"deployedProduct": map[string]any{
+				"id":        testDeployedProductSysid,
+				"updatedOn": "2026-02-01 00:00:00",
+				"updatedBy": "jane.doe@example.com",
+			},
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowDeployedProductService(client)
+
+	req := domain.UpdateDeployedProductRequest{
+		ID:      productUUID,
+		Updates: []domain.ProductUpdateEntry{{UpdateLevel: 1, Date: "2026-01-01"}},
+	}
+	if _, err := svc.UpdateDeployedProduct(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

@@ -584,6 +584,14 @@ func (s *caseService) DeleteCaseAttachment(_ context.Context, _ domain.DeleteAtt
 	return domain.DeleteAttachmentResponse{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
 }
 
+func (s *caseService) GetAttachment(_ context.Context, _ string) (domain.Attachment, error) {
+	return domain.Attachment{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
+}
+
+func (s *caseService) UpdateAttachment(_ context.Context, _ domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error) {
+	return domain.UpdateAttachmentResponse{}, &apierror.ServiceUnavailableError{Msg: "attachments are only supported for the ServiceNow data source"}
+}
+
 func (s *caseService) AddCaseTag(_ context.Context, _, _ string) (domain.Tag, error) {
 	return domain.Tag{}, &apierror.ServiceUnavailableError{Msg: "case tags are only supported for the ServiceNow data source"}
 }

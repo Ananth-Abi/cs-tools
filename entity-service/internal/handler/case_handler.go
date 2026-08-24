@@ -262,6 +262,34 @@ func (h *CaseHandler) DeleteCaseAttachment(w http.ResponseWriter, r *http.Reques
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// GetAttachment handles GET /attachments/{id}.
+func (h *CaseHandler) GetAttachment(w http.ResponseWriter, r *http.Request) {
+	attachmentID := r.PathValue("id")
+	resp, err := h.svc.GetAttachment(r.Context(), attachmentID)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// UpdateAttachment handles PATCH /attachments/{id}.
+func (h *CaseHandler) UpdateAttachment(w http.ResponseWriter, r *http.Request) {
+	var req domain.UpdateAttachmentRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	req.AttachmentID = r.PathValue("id")
+	resp, err := h.svc.UpdateAttachment(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // AddCaseTag handles POST /cases/{id}/tags.
 func (h *CaseHandler) AddCaseTag(w http.ResponseWriter, r *http.Request) {
 	caseID := r.PathValue("id")

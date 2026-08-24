@@ -44,8 +44,43 @@ type snDeployedProduct struct {
 	Cores      *int                      `json:"cores"`
 	TPS        *float64                  `json:"tps"` // Ballerina decimal? serialises as 100.0
 	Category   *snDeployedProductRef     `json:"category"`
+	Updates    []snProductUpdate         `json:"updates"`
 	CreatedOn  string                    `json:"createdOn"`
 	UpdatedOn  string                    `json:"updatedOn"`
+}
+
+// snProductUpdate is the wire shape of a single deployed-product update-history entry,
+// matching Ballerina's ProductUpdate record.
+type snProductUpdate struct {
+	UpdateLevel int     `json:"updateLevel"`
+	Date        string  `json:"date"`
+	Details     *string `json:"details"`
+}
+
+// toSNProductUpdates converts the domain update-history array to its wire shape.
+// Returns nil for a nil input so an absent Updates field stays omitted (omitempty) on the
+// wire, and a non-nil empty slice for an explicit empty array so a caller can clear history.
+func toSNProductUpdates(updates []domain.ProductUpdateEntry) []snProductUpdate {
+	if updates == nil {
+		return nil
+	}
+	out := make([]snProductUpdate, 0, len(updates))
+	for _, u := range updates {
+		out = append(out, snProductUpdate{UpdateLevel: u.UpdateLevel, Date: u.Date, Details: u.Details})
+	}
+	return out
+}
+
+// fromSNProductUpdates converts the wire update-history array to its domain shape.
+func fromSNProductUpdates(updates []snProductUpdate) []domain.ProductUpdateEntry {
+	if updates == nil {
+		return nil
+	}
+	out := make([]domain.ProductUpdateEntry, 0, len(updates))
+	for _, u := range updates {
+		out = append(out, domain.ProductUpdateEntry{UpdateLevel: u.UpdateLevel, Date: u.Date, Details: u.Details})
+	}
+	return out
 }
 
 type snDeployedProductRef struct {
@@ -101,19 +136,22 @@ type snCreateDeployedProductResponse struct {
 
 // snUpdateDeployedProductPayload is the Choreo PATCH /deployed-products/{id} request body.
 // Description is json.RawMessage so an explicit null can be distinguished from an omitted field.
+// Updates, when present, whole-array-replaces the deployed product's update-level history.
 type snUpdateDeployedProductPayload struct {
-	Cores       *int            `json:"cores,omitempty"`
-	TPS         *float64        `json:"tps,omitempty"` // Ballerina decimal?
-	Description json.RawMessage `json:"description,omitempty"`
-	Active      *bool           `json:"active,omitempty"`
+	Cores       *int              `json:"cores,omitempty"`
+	TPS         *float64          `json:"tps,omitempty"` // Ballerina decimal?
+	Description json.RawMessage   `json:"description,omitempty"`
+	Updates     []snProductUpdate `json:"updates,omitempty"`
+	Active      *bool             `json:"active,omitempty"`
 }
 
 type snUpdateDeployedProductResponse struct {
 	Message         string `json:"message"`
 	DeployedProduct struct {
-		ID        string `json:"id"`
-		UpdatedOn string `json:"updatedOn"`
-		UpdatedBy string `json:"updatedBy"`
+		ID        string            `json:"id"`
+		UpdatedOn string            `json:"updatedOn"`
+		UpdatedBy string            `json:"updatedBy"`
+		Updates   []snProductUpdate `json:"updates"`
 	} `json:"deployedProduct"`
 }
 
@@ -180,7 +218,7 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 		}
 	}
 
-	hasDetailFields := req.Cores != nil || req.TPS != nil || len(req.Description) > 0
+	hasDetailFields := req.Cores != nil || req.TPS != nil || len(req.Description) > 0 || req.Updates != nil
 	if !hasDetailFields && req.Active == nil {
 		return domain.UpdateDeployedProductResponse{}, &apierror.ValidationError{Msg: "at least one of cores, tps, or description must be provided, or active must be set to false"}
 	}
@@ -238,6 +276,9 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 	if len(req.Description) > 0 {
 		payload.Description = req.Description
 	}
+	if req.Updates != nil {
+		payload.Updates = toSNProductUpdates(req.Updates)
+	}
 
 	raw, err := s.client.Patch(ctx, "/deployed-products/"+uuidToSysid(req.ID), token, payload)
 	if err != nil {
@@ -260,6 +301,7 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 			ID:        sysidToUUID(snResp.DeployedProduct.ID),
 			UpdatedOn: updatedOn,
 			UpdatedBy: snResp.DeployedProduct.UpdatedBy,
+			Updates:   fromSNProductUpdates(snResp.DeployedProduct.Updates),
 		},
 	}, nil
 }
@@ -322,16 +364,6 @@ func (s *snDeployedProductService) SearchDeployedProducts(ctx context.Context, r
 			}
 		}
 
-		var cores, tps *string
-		if dp.Cores != nil {
-			s := fmt.Sprintf("%d", *dp.Cores)
-			cores = &s
-		}
-		if dp.TPS != nil {
-			s := fmt.Sprintf("%g", *dp.TPS)
-			tps = &s
-		}
-
 		var category *string
 		if dp.Category != nil {
 			category = &dp.Category.Name
@@ -342,9 +374,10 @@ func (s *snDeployedProductService) SearchDeployedProducts(ctx context.Context, r
 			Deployment: domain.EntityRef{ID: sysidToUUID(dp.Deployment.ID), Name: dp.Deployment.Name},
 			Product:    domain.EntityRef{ID: sysidToUUID(dp.Product.ID), Name: dp.Product.Name},
 			Version:    versionRef,
-			Cores:      cores,
-			TPS:        tps,
+			Cores:      dp.Cores,
+			TPS:        dp.TPS,
 			Category:   category,
+			Updates:    fromSNProductUpdates(dp.Updates),
 			CreatedOn:  createdOn,
 			UpdatedOn:  updatedOn,
 		})
