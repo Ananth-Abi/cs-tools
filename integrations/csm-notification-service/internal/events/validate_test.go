@@ -80,6 +80,7 @@ func TestValidate_RequiresFields(t *testing.T) {
 		"assigned caseId/entityId mismatch":           {"CASE-1", TypeCaseAssigned, `{"assignerName":"n","assignerEmail":"e@x.com","projectId":"PROJ-1","caseId":"CASE-2","recipients":["r@x.com"]}`},
 		"incident missing title":                      {"INC-1", TypeIncidentCreated, `{"product":"api-manager","shortDescription":"d","callTo":"+15551234567"}`},
 		"incident malformed callTo":                   {"INC-1", TypeIncidentCreated, `{"product":"api-manager","title":"t","shortDescription":"d","callTo":"555-1234"}`},
+		"incident missing entityId":                   {"", TypeIncidentCreated, `{"title":"t","shortDescription":"d"}`},
 		"unknown type":                                {"CASE-1", Type("case.deleted"), `{}`},
 		"sla.clock.register missing caseId":           {"CASE-1", TypeSLAClockRegister, `{"durations":{"response":"2h"}}`},
 		"sla.clock.register missing durations":        {"CASE-1", TypeSLAClockRegister, `{"caseId":"CASE-1","durations":{}}`},
