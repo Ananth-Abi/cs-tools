@@ -152,20 +152,24 @@ func main() {
 	mainConsumerCount := envInt("MAIN_CONSUMER_COUNT", 1)
 	dlqConsumerCount := envInt("DLQ_CONSUMER_COUNT", 1)
 
-	// Temporary killswitch for the four case.* types' actual email delivery —
-	// unset/anything but "false" means real sending, matching this repo's own
-	// AUTH_TOKEN_VALIDATOR_ENABLED convention (apps/csm-portal/backend). When
-	// disabled, Dispatcher still resolves recipient links and logs what it
-	// would have sent — only the SendEmail call itself is skipped. Doesn't
-	// affect Google Chat/Twilio.
-	emailSendingEnabled := os.Getenv("EMAIL_SENDING_ENABLED") != "false"
-	if !emailSendingEnabled {
-		slog.Warn("EMAIL_SENDING_ENABLED=false; case.* emails will be logged, not sent")
+	// EMAIL_DEBUG_MODE redirects the four case.* types' actual email delivery
+	// to EMAIL_DEBUG_RECIPIENTS instead of each event's real resolved
+	// recipients — unset/anything but "true" means real sending to real
+	// recipients. Unlike a killswitch, debug mode still sends a real email
+	// (see dispatch.Dispatcher.emailDebugMode's doc comment) — it's meant
+	// for exercising a dev/staging deployment end-to-end without risking a
+	// real mailbox. Doesn't affect Google Chat/Twilio.
+	emailDebugMode := os.Getenv("EMAIL_DEBUG_MODE") == "true"
+	emailDebugRecipients := splitComma(os.Getenv("EMAIL_DEBUG_RECIPIENTS"))
+	if emailDebugMode {
+		slog.Warn("EMAIL_DEBUG_MODE=true; case.* emails will be redirected to EMAIL_DEBUG_RECIPIENTS", "recipientCount", len(emailDebugRecipients))
 	}
 
-	// Same killswitch convention as EMAIL_SENDING_ENABLED, but for
-	// incident.created's Twilio call specifically — doesn't affect the
-	// Google Chat alert.
+	// Temporary killswitch, matching this repo's own AUTH_TOKEN_VALIDATOR_ENABLED
+	// convention (apps/csm-portal/backend), for incident.created's Twilio
+	// call specifically — doesn't affect the Google Chat alert. Unlike
+	// EMAIL_DEBUG_MODE above, calls have no debug-recipient equivalent, so
+	// this keeps the simpler disable-entirely (log-only) shape.
 	callSendingEnabled := os.Getenv("CALL_SENDING_ENABLED") != "false"
 	if !callSendingEnabled {
 		slog.Warn("CALL_SENDING_ENABLED=false; incident.created calls will be logged, not placed")
@@ -179,7 +183,7 @@ func main() {
 	defaultChatProduct := os.Getenv("DEFAULT_CHAT_PRODUCT")
 	defaultOnCallNumber := os.Getenv("INCIDENT_DEFAULT_CALL_TO")
 
-	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailSendingEnabled, callSendingEnabled, defaultChatProduct, defaultOnCallNumber)
+	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailDebugMode, emailDebugRecipients, callSendingEnabled, defaultChatProduct, defaultOnCallNumber)
 
 	// The main consumer's OnExhausted: publish the exhausted record to the
 	// dead-letter topic instead of just logging and dropping it. The DLQ's

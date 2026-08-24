@@ -73,7 +73,8 @@ Copy `.env.example` to `.env` and fill in the values:
 | `EMAIL_CLIENT_SECRET` | OAuth2 client secret for the email service (optional) |
 | `EMAIL_SCOPES` | Comma-separated OAuth2 scopes (optional) |
 | `EMAIL_FROM_ADDRESS` | Fixed "From" address used for every outgoing email (optional) |
-| `EMAIL_SENDING_ENABLED` | Temporary killswitch — set to `false` to log instead of actually sending `case.*` emails (recipient links are still resolved either way); unset/anything else means real sending. Doesn't affect Google Chat or Twilio |
+| `EMAIL_DEBUG_MODE` | Set to `true` to redirect every `case.*` email to `EMAIL_DEBUG_RECIPIENTS` instead of the event's real recipients (recipient links are still resolved against the real recipients either way) — the email still actually sends, just to a safe test list; unset/anything else means real sending to real recipients. Doesn't affect Google Chat or Twilio |
+| `EMAIL_DEBUG_RECIPIENTS` | Comma-separated email addresses used instead of the real recipients when `EMAIL_DEBUG_MODE=true`. Empty + debug mode on skips that email entirely rather than sending to nobody |
 
 ### Google Chat notification channel
 

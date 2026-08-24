@@ -76,14 +76,20 @@ type Dispatcher struct {
 	call       callSender
 	links      linkResolver
 
-	// emailSendingEnabled gates only sendPerGroup's actual SendEmail call —
-	// a temporary killswitch (EMAIL_SENDING_ENABLED) for disabling real
-	// email delivery for the four case.* types without touching Twilio or
-	// Google Chat. When false, sendPerGroup logs what it would have sent
-	// instead of calling d.email. Link resolution (groupByLink) still runs
-	// either way, so this doesn't mask a broken recipientlinks/entity-service
-	// path — only the final send is skipped.
-	emailSendingEnabled bool
+	// emailDebugMode/emailDebugRecipients (EMAIL_DEBUG_MODE/
+	// EMAIL_DEBUG_RECIPIENTS) redirect sendPerGroup's actual SendEmail calls
+	// for the four case.* types to emailDebugRecipients instead of each
+	// group's real resolved recipients, without touching Twilio or Google
+	// Chat — real emails still go out, just to a safe test list rather than
+	// real watchers/customers, so a dev/staging deployment can be exercised
+	// end-to-end without risking a real mailbox. Link resolution
+	// (groupByLink) still runs either way, so this doesn't mask a broken
+	// recipientlinks/entity-service path — only the final recipient list is
+	// swapped. If emailDebugMode is true but emailDebugRecipients is empty
+	// (misconfigured), sendPerGroup logs and skips that group rather than
+	// calling SendEmail with zero recipients.
+	emailDebugMode       bool
+	emailDebugRecipients []string
 
 	// callSendingEnabled is the same kind of killswitch (CALL_SENDING_ENABLED)
 	// for incident.created's Twilio call specifically — see
@@ -114,22 +120,22 @@ type Dispatcher struct {
 	done   map[string]bool
 }
 
-// NewDispatcher constructs a Dispatcher. See Dispatcher.emailSendingEnabled's
-// and Dispatcher.callSendingEnabled's doc comments for what those two
-// killswitches control, and Dispatcher.defaultChatProduct/
-// defaultOnCallNumber's doc comment for the Google Chat/call fallback
-// values.
-func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailSendingEnabled, callSendingEnabled bool, defaultChatProduct, defaultOnCallNumber string) *Dispatcher {
+// NewDispatcher constructs a Dispatcher. See Dispatcher.emailDebugMode's and
+// Dispatcher.callSendingEnabled's doc comments for what those two
+// controls do, and Dispatcher.defaultChatProduct/defaultOnCallNumber's doc
+// comment for the Google Chat/call fallback values.
+func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailDebugMode bool, emailDebugRecipients []string, callSendingEnabled bool, defaultChatProduct, defaultOnCallNumber string) *Dispatcher {
 	return &Dispatcher{
-		email:               email,
-		googleChat:          googleChat,
-		call:                call,
-		links:               links,
-		emailSendingEnabled: emailSendingEnabled,
-		callSendingEnabled:  callSendingEnabled,
-		defaultChatProduct:  defaultChatProduct,
-		defaultOnCallNumber: defaultOnCallNumber,
-		done:                make(map[string]bool),
+		email:                email,
+		googleChat:           googleChat,
+		call:                 call,
+		links:                links,
+		emailDebugMode:       emailDebugMode,
+		emailDebugRecipients: emailDebugRecipients,
+		callSendingEnabled:   callSendingEnabled,
+		defaultChatProduct:   defaultChatProduct,
+		defaultOnCallNumber:  defaultOnCallNumber,
+		done:                 make(map[string]bool),
 	}
 }
 
@@ -347,6 +353,15 @@ func commentLinkFor(caseLink, commentID string) string {
 // link, so each group's body carries the portal link its recipients can
 // actually open.
 //
+// When emailDebugMode is true, each group's real recipients are replaced
+// with emailDebugRecipients before sending — the email still actually goes
+// out (unlike the old EMAIL_SENDING_ENABLED=false log-only killswitch this
+// replaced), just to a safe configured test list instead of real
+// watchers/customers. A group is skipped entirely (logged, not an error) if
+// emailDebugMode is true but emailDebugRecipients is empty — sending to zero
+// recipients would either be rejected by the email provider or silently do
+// nothing, neither of which is better than not calling it at all.
+//
 // Partial failure here is at-least-once, not tracked with idempotency
 // state: if one group's SendEmail fails after another group already
 // succeeded, Handle's non-nil return causes eventbus.Consumer to retry the
@@ -356,16 +371,20 @@ func commentLinkFor(caseLink, commentID string) string {
 // recipient/group counts small enough, that this case accepts the
 // duplication rather than adding the same tracking here.
 func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]string, subject string, render func(caseLink string) string) error {
-	if !d.emailSendingEnabled {
-		for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
-			slog.InfoContext(ctx, "dispatch: email sending disabled (EMAIL_SENDING_ENABLED=false); not sending",
-				"subject", subject, "recipientCount", len(groups[caseLink]))
-		}
-		return nil
-	}
 	var errs []error
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
-		if err := d.email.SendEmail(ctx, groups[caseLink], nil, nil, nil, subject, render(caseLink), nil); err != nil {
+		to := groups[caseLink]
+		if d.emailDebugMode {
+			if len(d.emailDebugRecipients) == 0 {
+				slog.WarnContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true but EMAIL_DEBUG_RECIPIENTS is empty; not sending",
+					"subject", subject)
+				continue
+			}
+			slog.InfoContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true; redirecting email to configured debug recipients",
+				"subject", subject, "realRecipientCount", len(to), "debugRecipientCount", len(d.emailDebugRecipients))
+			to = d.emailDebugRecipients
+		}
+		if err := d.email.SendEmail(ctx, to, nil, nil, nil, subject, render(caseLink), nil); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -385,11 +404,14 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]strin
 // publisher that does know the right values per incident can still supply
 // them and takes precedence over the defaults.
 //
-// callSendingEnabled gates only the MakeCall step (CALL_SENDING_ENABLED) —
-// mirroring sendPerGroup's EMAIL_SENDING_ENABLED killswitch exactly: when
-// false, this logs what would have been called instead of calling, and
-// still marks the call "done" so a disabled call doesn't retry forever.
-// The Google Chat alert is unaffected either way.
+// callSendingEnabled gates only the MakeCall step (CALL_SENDING_ENABLED):
+// when false, this logs what would have been called instead of calling, and
+// still marks the call "done" so a disabled call doesn't retry forever —
+// the same log-only shape sendPerGroup's email sending used to have before
+// EMAIL_DEBUG_MODE replaced it with a redirect-to-a-test-list behavior (see
+// sendPerGroup's doc comment); calls have no equivalent debug-recipient
+// concept, so this keeps the simpler disable-entirely shape. The Google
+// Chat alert is unaffected either way.
 //
 // This is also the one handler that needs its own idempotency tracking:
 // eventbus.Consumer retries this whole function on any error, and without
