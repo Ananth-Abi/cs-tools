@@ -8673,6 +8673,7 @@ components:
             - businessServiceId
             - createdOn
             - slaViolated
+            - madeSla
             - productName
         op:
           type: string
@@ -8700,6 +8701,13 @@ components:
         - **slaViolated** (eq): a single boolean value ("true"/"false").
           Restricts to incidents with (or without) at least one breached SLA
           record.
+        - **madeSla** (eq): a single boolean value ("true"/"false").
+          Restricts to incidents matching ServiceNow's raw `made_sla` field.
+          Deliberately separate from **slaViolated** above: slaViolated is
+          derived from task_sla.has_breached and is the reliable signal;
+          madeSla is ServiceNow's own less-reliable raw field, kept only for
+          exact parity with SN's native incident dashboards. Prefer
+          slaViolated unless dashboard parity is the explicit goal.
         - **productName** (in): one or more product names to match as a
           union (an incident matching any one of them is returned). Only a
           minority of incidents carry a product association, so this filter
