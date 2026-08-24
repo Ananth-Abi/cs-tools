@@ -214,6 +214,55 @@ func TestDispatcher_Handle_CaseCreated_ChatFailureStillSendsEmail(t *testing.T) 
 	}
 }
 
+// TestDispatcher_Handle_CaseCreated_RetryDoesNotResendSucceededChatAlert is a
+// regression test: eventbus.Consumer retries the whole Handle call on any
+// error. A persistently-failing email step (e.g. a misconfigured email
+// OAuth2 client — the real-world failure that surfaced this) must not cause
+// an already-succeeded Chat alert to be reposted on every retry too.
+func TestDispatcher_Handle_CaseCreated_RetryDoesNotResendSucceededChatAlert(t *testing.T) {
+	mock := &mockEmailSender{err: errors.New("email service unreachable")}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		record.IsFinalAttempt = attempt == 3
+		if err := d.Handle(context.Background(), record); err == nil {
+			t.Fatalf("attempt %d: expected the email error to still propagate", attempt)
+		}
+	}
+
+	if len(chat.calls) != 1 {
+		t.Errorf("chat sent %d times across 3 retries, want exactly 1 (email kept failing, chat should not be resent)", len(chat.calls))
+	}
+	if len(mock.calls) != 3 {
+		t.Errorf("email attempted %d times across 3 retries, want 3 (the genuinely failing channel should keep retrying)", len(mock.calls))
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after the final attempt, has %d entries (leaked tracking for a channel that never succeeded)", len(d.done))
+	}
+}
+
+// TestDispatcher_Handle_CaseCreated_ForgetsAfterFullSuccess is a regression
+// test for the other direction: once both the email and the Chat alert
+// succeed, the tracking entry must not leak forever, and a later,
+// unrelated record must not be affected by stale tracking.
+func TestDispatcher_Handle_CaseCreated_ForgetsAfterFullSuccess(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after full success, has %d entries", len(d.done))
+	}
+}
+
 // TestDispatcher_Handle_EmailDebugMode_RedirectsToConfiguredRecipients
 // verifies EMAIL_DEBUG_MODE: Handle still succeeds and still resolves
 // recipient links against the event's real recipients (a broken link

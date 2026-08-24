@@ -184,7 +184,7 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 
 	switch env.Type {
 	case events.TypeCaseCreated:
-		return d.handleCaseCreated(ctx, env.Payload)
+		return d.handleCaseCreated(ctx, record, env.Payload)
 	case events.TypeCommentAdded:
 		return d.handleCommentAdded(ctx, env.Payload)
 	case events.TypeStatusChanged:
@@ -225,16 +225,27 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 // every time, since case.created's email step has no idempotency tracking
 // of its own (see below).
 //
-// Unlike handleIncidentCreated, this has no per-channel idempotency
-// tracking: a retry that resends an already-succeeded Chat alert alongside a
-// genuinely-failing email is the same accepted at-least-once trade-off
-// sendPerGroup's own doc comment already accepts for case.* email
-// duplication — not worth adding here either.
-func (d *Dispatcher) handleCaseCreated(ctx context.Context, raw json.RawMessage) error {
+// The Chat alert (unlike case.created's email — see sendPerGroup's own doc
+// comment on why that accepts at-least-once duplication) does have
+// per-record idempotency tracking, the same mechanism
+// handleIncidentCreated uses: a real-world failure mode this was missing
+// until it actually happened — a persistently-failing email step (e.g. a
+// misconfigured EMAIL_TOKEN_URL) means every one of eventbus.Consumer's 3
+// retries, and then the DLQ consumer's own 3 retries, re-runs this whole
+// function, so an unguarded Chat alert would repost up to 6 times for one
+// event before the email step is ever fixed. alreadyDone/markDone/forget
+// key on chatKey alone (this handler has only one channel to protect,
+// unlike handleIncidentCreated's two) — forgotten once the Chat alert
+// itself succeeds (or is skipped due to an empty product) or
+// record.IsFinalAttempt is true, mirroring handleIncidentCreated's own
+// release condition.
+func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
 	var p events.CaseCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.created payload: %w", err)
 	}
+
+	chatKey := record.Topic + "/" + strconv.FormatInt(int64(record.Partition), 10) + "/" + strconv.FormatInt(record.Offset, 10) + "/chat"
 
 	var errs []error
 
@@ -264,14 +275,33 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, raw json.RawMessage)
 		}
 	}
 
-	product := p.Product
-	if product == "" {
-		product = d.defaultChatProduct
+	if !d.alreadyDone(chatKey) {
+		product := p.Product
+		if product == "" {
+			product = d.defaultChatProduct
+		}
+		if product == "" {
+			slog.WarnContext(ctx, "dispatch: no product for case.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
+			d.markDone(chatKey)
+		} else if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr == nil {
+			d.markDone(chatKey)
+		} else {
+			errs = append(errs, chatErr)
+		}
 	}
-	if product == "" {
-		slog.WarnContext(ctx, "dispatch: no product for case.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
-	} else if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr != nil {
-		errs = append(errs, chatErr)
+
+	// Forgetting must wait for the whole call to succeed (no more retries
+	// coming for this record), not just this channel's own success — chatErr
+	// alone would forget right after the Chat alert's first successful
+	// attempt even while the email keeps failing and eventbus.Consumer keeps
+	// retrying, immediately re-arming the Chat alert to resend on the very
+	// next attempt. len(errs) == 0 means Handle is about to return nil (this
+	// record is done); record.IsFinalAttempt means no further retry is
+	// coming regardless of outcome — both are the same release conditions
+	// handleIncidentCreated uses, just phrased for its own two tracked
+	// channels instead of one.
+	if len(errs) == 0 || record.IsFinalAttempt {
+		d.forget(chatKey)
 	}
 
 	return errors.Join(errs...)

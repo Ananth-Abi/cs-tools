@@ -68,10 +68,7 @@ Copy `.env.example` to `.env` and fill in the values:
 | Variable | Description |
 |---|---|
 | `EMAIL_BASE_URL` | Base URL of the email notification service (optional) |
-| `EMAIL_TOKEN_URL` | OAuth2 token endpoint for the email service (optional) |
-| `EMAIL_CLIENT_ID` | OAuth2 client ID for the email service (optional) |
-| `EMAIL_CLIENT_SECRET` | OAuth2 client secret for the email service (optional) |
-| `EMAIL_SCOPES` | Comma-separated OAuth2 scopes (optional) |
+| `EMAIL_SCOPES` | Comma-separated OAuth2 scopes for the email service (optional) — authenticates with the shared `OAUTH2_CLIENT_ID`/`OAUTH2_CLIENT_SECRET`/`OAUTH2_TOKEN_URL` below, not its own credentials |
 | `EMAIL_FROM_ADDRESS` | Fixed "From" address used for every outgoing email (optional) |
 | `EMAIL_DEBUG_MODE` | Set to `true` to redirect every `case.*` email to `EMAIL_DEBUG_RECIPIENTS` instead of the event's real recipients (recipient links are still resolved against the real recipients either way) — the email still actually sends, just to a safe test list; unset/anything else means real sending to real recipients. Doesn't affect Google Chat or Twilio |
 | `EMAIL_DEBUG_RECIPIENTS` | Comma-separated email addresses used instead of the real recipients when `EMAIL_DEBUG_MODE=true`. Empty + debug mode on skips that email entirely rather than sending to nobody |
@@ -99,11 +96,11 @@ Copy `.env.example` to `.env` and fill in the values:
 
 ### Customer entity service
 
-Backs `internal/recipientlinks`'s per-recipient role lookup (`POST /users/search` only). Optional per deployment like the channels above, but an unset `CUSTOMER_ENTITY_BASE_URL` makes every `case.*` email fail rather than just disabling one channel — a startup warning is logged when this happens. Unlike the channels above, this client authenticates with the **shared** `OAUTH2_CLIENT_ID`/`OAUTH2_CLIENT_SECRET`/`OAUTH2_TOKEN_URL` credentials (see below), the same OAuth2 app `apps/csm-portal/backend`'s own entity client uses — only `BaseURL`/`Scopes` are specific to this client.
+Backs `internal/recipientlinks`'s per-recipient role lookup (`POST /users/search` only). Optional per deployment like the channels above, but an unset `CUSTOMER_ENTITY_BASE_URL` makes every `case.*` email fail rather than just disabling one channel — a startup warning is logged when this happens. Like the email channel above, this client authenticates with the **shared** `OAUTH2_CLIENT_ID`/`OAUTH2_CLIENT_SECRET`/`OAUTH2_TOKEN_URL` credentials (see below), the same OAuth2 app `apps/csm-portal/backend`'s own entity client uses — only `BaseURL`/`Scopes` are specific to this client.
 
 | Variable | Description |
 |---|---|
-| `OAUTH2_CLIENT_ID` | Shared OAuth2 client ID, used only by the customer entity service client (optional) |
+| `OAUTH2_CLIENT_ID` | Shared OAuth2 client ID, used by the email channel and the customer entity service client (optional) |
 | `OAUTH2_CLIENT_SECRET` | Shared OAuth2 client secret (optional) |
 | `OAUTH2_TOKEN_URL` | Shared OAuth2 token endpoint (optional) |
 | `CUSTOMER_ENTITY_BASE_URL` | Base URL of this repo's entity-service (optional, see above) |
