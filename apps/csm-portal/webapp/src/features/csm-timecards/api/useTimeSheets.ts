@@ -197,11 +197,18 @@ export interface TimeCardSearchResult {
  * their own such walk — was slow enough to sometimes fail outright. Real,
  * caller-driven pagination replaces that: callers ask for one page at a
  * time via `pagination`, and `total` lets them drive page controls.
+ *
+ * `sortBy` is an escape hatch for callers that need the server to select
+ * (not just order) by a specific field before applying `pagination` — e.g.
+ * {@link useRecentApprovers}, where the top `RECENT_APPROVERS_LOOKBACK`
+ * cards must actually be the most recent by `workDate`, not just sorted
+ * after the fact within whatever page the default order happened to return.
  */
 export async function searchTimeCards(
   api: BackendApi,
   filters?: TimeCardSearchFilters,
   pagination?: TimeCardPagination,
+  sortBy?: BeSearchTimeCardsPayload["sortBy"],
 ): Promise<TimeCardSearchResult> {
   const limit = Math.min(pagination?.rowsPerPage ?? BE_MAX_PAGE_LIMIT, BE_MAX_PAGE_LIMIT);
   const wireFilters: BeSearchTimeCardsFilters = {
@@ -216,6 +223,7 @@ export async function searchTimeCards(
   };
   const payload: BeSearchTimeCardsPayload = {
     filters: wireFilters,
+    ...(sortBy ? { sortBy } : {}),
     pagination: { limit, offset: (pagination?.page ?? 0) * limit },
   };
   const res = await api.post<BeSearchTimeCardsPayload, BeSearchTimeCardsResponse>(
@@ -366,10 +374,14 @@ export function useRecentApprovers(enabled: boolean): UseQueryResult<RecentAppro
     queryKey: [ApiQueryKeys.TIME_SHEETS_SEARCH, "recent-approvers", me.id],
     queryFn: async (): Promise<RecentApprover[]> => {
       if (!me.id) return [];
+      // sortBy: workDate desc so the page itself is the most-recent-by-workDate
+      // cards — the server's default order (updatedOn desc) selects a
+      // different, and possibly non-overlapping, top-N.
       const { cards } = await searchTimeCards(
         api,
         { userId: me.id },
         { page: 0, rowsPerPage: RECENT_APPROVERS_LOOKBACK },
+        { field: "workDate", order: "desc" },
       );
       const newestFirst = [...cards].sort((a, b) =>
         (b.workDate || "").localeCompare(a.workDate || ""),

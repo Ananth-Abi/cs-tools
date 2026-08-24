@@ -331,17 +331,33 @@ export default function LogTimeCardDialog({
   // picking the same team lead again doesn't require retyping the same
   // search every time. Only fetched in create mode: the approver field is
   // read-only once editing, so there's nothing for this list to feed there.
-  const { data: recentApprovers = [] } = useRecentApprovers(!isEditMode);
+  const { data: rawRecentApprovers = [] } = useRecentApprovers(!isEditMode);
+  const recentApproverIds = useMemo(
+    () => rawRecentApprovers.map((a) => a.id),
+    [rawRecentApprovers],
+  );
+  // Re-checked against the same active/TIMECARD_APPROVER_GROUP eligibility as
+  // live search candidates: `rawRecentApprovers` is derived purely from past
+  // card submissions (see useRecentApprovers), so an approver deactivated or
+  // removed from the role since then would otherwise still show up here.
+  // Only queried once there's something to check (empty `userIds` would
+  // otherwise be an unscoped users search).
+  const { data: recentEligibility } = useSearchUsers(
+    {
+      filters: { userIds: recentApproverIds, roleIds: [TIMECARD_APPROVER_GROUP], active: true },
+      pagination: { limit: recentApproverIds.length || 1, offset: 0 },
+    },
+    recentApproverIds.length > 0,
+  );
+  const recentApprovers: ApproverOption[] = useMemo(() => {
+    if (recentApproverIds.length === 0) return [];
+    const eligibleIds = new Set((recentEligibility?.users ?? []).map((u) => u.id));
+    return rawRecentApprovers.filter((a) => eligibleIds.has(a.id));
+  }, [rawRecentApprovers, recentApproverIds, recentEligibility]);
   // Merges recents matching the current query ahead of the live search's own
   // candidates, deduped by id — a recent approver who still matches what was
   // typed should stay at the top rather than getting buried in whatever order
-  // useSearchUsers's page happens to return. Not cross-referenced against
-  // `data?.users` for live eligibility: that list is itself scoped to the
-  // current (possibly empty) query and page-limited to 6, so filtering
-  // recents against it would risk dropping a genuinely still-eligible
-  // approver who simply isn't on that particular page — this is a minor UX
-  // nicety, not a security boundary, and the create action itself still
-  // validates the approver server-side either way.
+  // useSearchUsers's page happens to return.
   const approverCandidates: ApproverOption[] = useMemo(() => {
     if (!hasApproverInput) return recentApprovers;
     const typed = approverInput.trim().toLowerCase();
