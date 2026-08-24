@@ -509,6 +509,61 @@ func TestCreateCaseComment(t *testing.T) {
 		assertErrorMessage(t, w, ErrMsgWorkNoteOnClosedCase)
 	})
 
+	t.Run("allows public comment on an announcement case with no work-in-progress state and no assigned engineer", func(t *testing.T) {
+		for _, state := range []string{"open", "published"} {
+			state := state
+			t.Run(state, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+						return []byte(`{"type":"announcement","state":"` + state + `"}`), nil
+					},
+					createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+						return []byte(`{"id":"comment-1"}`), nil
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
+				r.SetPathValue("id", "case-1")
+				w := httptest.NewRecorder()
+				h.CreateCaseComment(w, r)
+				assertStatus(t, w, http.StatusCreated)
+			})
+		}
+	})
+
+	t.Run("blocks public comment on a closed announcement case", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"type":"announcement","state":"closed"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
+		r.SetPathValue("id", "case-1")
+		w := httptest.NewRecorder()
+		h.CreateCaseComment(w, r)
+		assertStatus(t, w, http.StatusConflict)
+		assertErrorMessage(t, w, ErrMsgCommentOnClosedCase)
+	})
+
+	t.Run("allows work_note on an announcement case with no assigned engineer", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"type":"announcement","state":"open"}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(`{"type":"work_note","content":"internal note"}`)))
+		r.SetPathValue("id", "case-1")
+		w := httptest.NewRecorder()
+		h.CreateCaseComment(w, r)
+		assertStatus(t, w, http.StatusCreated)
+	})
+
 	t.Run("forwards body to entity and returns response", func(t *testing.T) {
 		var capturedCaseID string
 		var capturedBody []byte
