@@ -1,10 +1,9 @@
 # Announcements
 
 The Announcements section lists customer-facing announcements published across
-projects and tiers. Under the hood, an announcement is a case of type
-`announcement`, so it shows up here read-only, using the same search and
-detail infrastructure as regular cases, just trimmed down to what makes
-sense for a broadcast.
+projects. Under the hood, an announcement is a case of type `announcement`,
+so it shows up here using the same search and detail infrastructure as
+regular cases, just trimmed down to what makes sense for a broadcast.
 
 ## Viewing the list
 
