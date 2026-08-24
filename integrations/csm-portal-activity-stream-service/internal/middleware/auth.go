@@ -145,27 +145,54 @@ func (t *x5cStrippingTransport) RoundTrip(req *http.Request) (*http.Response, er
 		return nil, fmt.Errorf("read JWKS response body: %w", err)
 	}
 
-	var jwks struct {
-		Keys []map[string]any `json:"keys"`
-	}
-	if err := json.Unmarshal(body, &jwks); err != nil {
-		// Not a JWKS document we can sanitize; hand back the original body untouched.
+	sanitized, ok := stripX5C(body)
+	if !ok {
+		// Not a JWKS document we can sanitize (e.g. a non-JWKS JSON body the server
+		// returned with a 200 status); hand back the original body untouched rather than
+		// risk fabricating a {"keys":null} document a naive unmarshal-then-remarshal would
+		// silently produce for any valid JSON that just happens to have no "keys" array.
 		resp.Body = io.NopCloser(bytes.NewReader(body))
 		return resp, nil
-	}
-
-	for _, key := range jwks.Keys {
-		delete(key, "x5c")
-	}
-	sanitized, err := json.Marshal(jwks)
-	if err != nil {
-		return nil, fmt.Errorf("marshal sanitized JWKS: %w", err)
 	}
 
 	resp.Body = io.NopCloser(bytes.NewReader(sanitized))
 	resp.ContentLength = int64(len(sanitized))
 	resp.Header.Set("Content-Length", fmt.Sprint(len(sanitized)))
 	return resp, nil
+}
+
+// stripX5C removes the "x5c" field from every entry in body's top-level "keys" array.
+// Returns ok=false — with sanitized left nil — when body isn't a JWKS document (no
+// top-level "keys" array), so the caller can fall back to passing the original body
+// through unchanged instead of replacing it with a fabricated result.
+func stripX5C(body []byte) (sanitized []byte, ok bool) {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, false
+	}
+	rawKeys, present := doc["keys"]
+	if !present {
+		return nil, false
+	}
+	var keys []map[string]any
+	if err := json.Unmarshal(rawKeys, &keys); err != nil {
+		return nil, false
+	}
+
+	for _, key := range keys {
+		delete(key, "x5c")
+	}
+	keysJSON, err := json.Marshal(keys)
+	if err != nil {
+		return nil, false
+	}
+	doc["keys"] = keysJSON
+
+	sanitized, err = json.Marshal(doc)
+	if err != nil {
+		return nil, false
+	}
+	return sanitized, true
 }
 
 // UserInfoFromContext retrieves the authenticated user's info from the context.
