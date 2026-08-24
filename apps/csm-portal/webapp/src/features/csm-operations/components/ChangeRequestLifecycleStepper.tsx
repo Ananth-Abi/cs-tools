@@ -113,13 +113,20 @@ export default function ChangeRequestLifecycleStepper({
     ? -1
     : CHANGE_REQUEST_FORWARD_STATES.indexOf(state as (typeof CHANGE_REQUEST_FORWARD_STATES)[number]);
   const lastIndex = CHANGE_REQUEST_FORWARD_STATES.length - 1;
+  // A state the backend could start sending that isn't yet one of the 9
+  // forward states or a recognized off-ramp — distinct from "no state at
+  // all" (`!state`), which is just a CR still being created and gets no
+  // note. Without this, `currentIndex` is -1 the same as an off-ramp but
+  // `offRamp` is false, so every marker would render pending with no
+  // indication anywhere of what the CR's real state actually is.
+  const unrecognizedState = !offRamp && currentIndex < 0 && !!state;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       <Box
         role="list"
         aria-label="Change request lifecycle"
-        sx={{ display: "flex", alignItems: "flex-start", opacity: offRamp ? 0.45 : 1 }}
+        sx={{ display: "flex", alignItems: "flex-start", opacity: offRamp || unrecognizedState ? 0.45 : 1 }}
       >
         {CHANGE_REQUEST_FORWARD_STATES.map((s, index) => {
           const isCurrent = index === currentIndex;
@@ -185,6 +192,14 @@ export default function ChangeRequestLifecycleStepper({
             Diverted from the standard path:
           </Typography>
           <Chip size="small" color="error" label={changeRequestStateLabel(state)} />
+        </Box>
+      )}
+      {unrecognizedState && (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            Current state:
+          </Typography>
+          <Chip size="small" color="default" label={changeRequestStateLabel(state)} />
         </Box>
       )}
     </Box>

@@ -74,4 +74,19 @@ describe("ChangeRequestLifecycleStepper", () => {
     render(<ChangeRequestLifecycleStepper state="scheduled" />);
     expect(screen.queryByText(/diverted from the standard path/i)).not.toBeInTheDocument();
   });
+
+  it("shows a current-state note for a state that is neither a forward state nor a recognized off-ramp", () => {
+    render(<ChangeRequestLifecycleStepper state="some_future_state" />);
+    expect(screen.getByText(/current state:/i)).toBeInTheDocument();
+    expect(screen.getByText("some future state")).toBeInTheDocument();
+    // No forward-line marker claims to be current, and none render complete.
+    expect(document.querySelector('[aria-current="step"]')).toBeNull();
+    expect(screen.queryByText(/diverted from the standard path/i)).not.toBeInTheDocument();
+  });
+
+  it("shows no current-state note when the CR has no state yet", () => {
+    render(<ChangeRequestLifecycleStepper state={null} />);
+    expect(screen.queryByText(/current state:/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/diverted from the standard path/i)).not.toBeInTheDocument();
+  });
 });
