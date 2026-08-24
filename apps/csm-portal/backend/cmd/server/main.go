@@ -147,6 +147,8 @@ func main() {
 	mux.HandleFunc("POST /attachments/search", caseHandler.SearchCaseAttachments)
 	mux.HandleFunc("GET /attachments/{id}/content", caseHandler.GetCaseAttachmentContent)
 	mux.HandleFunc("DELETE /attachments/{id}", caseHandler.DeleteCaseAttachment)
+	mux.HandleFunc("GET /attachments/{id}", caseHandler.GetAttachment)
+	mux.HandleFunc("PATCH /attachments/{id}", caseHandler.UpdateAttachment)
 	mux.HandleFunc("POST /cases/{id}/call-requests", caseHandler.CreateCallRequest)
 	mux.HandleFunc("POST /cases/{id}/call-requests/search", caseHandler.SearchCallRequests)
 	mux.HandleFunc("POST /call-requests/search", caseHandler.SearchAllCallRequests)
