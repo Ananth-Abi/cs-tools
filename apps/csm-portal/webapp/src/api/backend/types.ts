@@ -1340,6 +1340,28 @@ export interface BeDeleteAttachmentResponse {
   message?: string;
 }
 
+/**
+ * Detail-field update for `PATCH /attachments/{id}`. `referenceId` +
+ * `referenceType` re-identify the owning entity (the BE requires both on the
+ * write, same as search/create); at least one of `name`/`description` is
+ * also required.
+ */
+export interface BeAttachmentUpdatePayload {
+  referenceId: string;
+  referenceType: BeReferenceType;
+  name?: string;
+  description?: string | null;
+}
+
+export interface BeAttachmentUpdateResponse {
+  message?: string;
+  attachment?: {
+    id: string;
+    updatedOn: string;
+    updatedBy: string;
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
@@ -1677,16 +1699,26 @@ export interface BeDeployedProductVersion {
   supportEoLDate?: string | null;
 }
 
+/** A single update-level entry in a deployed product's update history. */
+export interface BeProductUpdate {
+  updateLevel: number;
+  date: string;
+  details?: string | null;
+}
+
 export interface BeDeployedProduct {
   id: string;
   deployment?: BeEntityRef;
   product?: BeEntityRef;
   version?: BeDeployedProductVersion | null;
-  // SN-only sizing fields; the entity service returns them as strings (and
+  // SN-only sizing fields; the entity service returns them as numbers (and
   // always null for the Postgres data source).
-  cores?: string | null;
-  tps?: string | null;
+  cores?: number | null;
+  tps?: number | null;
   category?: string | null;
+  /** Update-level history for this deployed product, oldest/newest order as
+   * returned by the BE. Absent when the BE omits the field entirely. */
+  updates?: BeProductUpdate[];
   createdOn?: string;
   updatedOn?: string;
 }
@@ -1730,6 +1762,13 @@ export interface BeDeployedProductDetailUpdatePayload {
   cores?: number | null;
   tps?: number | null;
   description?: string | null;
+  /**
+   * Whole-array replace: to add/edit/delete one update-history entry, read
+   * the current full array (`BeDeployedProduct.updates`), mutate it
+   * client-side, and send the complete resulting array back. There is no
+   * per-entry endpoint.
+   */
+  updates?: BeProductUpdate[] | null;
   active?: never;
 }
 
@@ -1739,6 +1778,7 @@ export interface BeDeployedProductDeactivatePayload {
   cores?: never;
   tps?: never;
   description?: never;
+  updates?: never;
 }
 
 export type BeDeployedProductUpdatePayload =
