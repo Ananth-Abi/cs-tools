@@ -164,6 +164,14 @@ func (d *Dispatcher) forget(key string) {
 	delete(d.done, key)
 }
 
+// recordBaseKey builds the per-record prefix every idempotency-tracked
+// channel below keys off of — unique per (topic, partition, offset), so a
+// retry of the same record reuses the same keys, and a different record
+// never collides with it.
+func recordBaseKey(record eventbus.Record) string {
+	return record.Topic + "/" + strconv.FormatInt(int64(record.Partition), 10) + "/" + strconv.FormatInt(record.Offset, 10)
+}
+
 // Handle implements eventbus.Handle. A non-nil return causes the caller
 // (eventbus.Consumer) to retry — see its package doc for the retry policy.
 func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
@@ -186,11 +194,11 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 	case events.TypeCaseCreated:
 		return d.handleCaseCreated(ctx, record, env.Payload)
 	case events.TypeCommentAdded:
-		return d.handleCommentAdded(ctx, env.Payload)
+		return d.handleCommentAdded(ctx, record, env.Payload)
 	case events.TypeStatusChanged:
-		return d.handleStatusChanged(ctx, env.Payload)
+		return d.handleStatusChanged(ctx, record, env.Payload)
 	case events.TypeCaseAssigned:
-		return d.handleCaseAssigned(ctx, env.Payload)
+		return d.handleCaseAssigned(ctx, record, env.Payload)
 	case events.TypeIncidentCreated:
 		return d.handleIncidentCreated(ctx, record, env.EntityID, env.Payload)
 	case events.TypeSLAClockRegister, events.TypeSLATierReached:
@@ -225,27 +233,31 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 // every time, since case.created's email step has no idempotency tracking
 // of its own (see below).
 //
-// The Chat alert (unlike case.created's email — see sendPerGroup's own doc
-// comment on why that accepts at-least-once duplication) does have
-// per-record idempotency tracking, the same mechanism
-// handleIncidentCreated uses: a real-world failure mode this was missing
-// until it actually happened — a persistently-failing email step (e.g. a
-// misconfigured EMAIL_TOKEN_URL) means every one of eventbus.Consumer's 3
-// retries, and then the DLQ consumer's own 3 retries, re-runs this whole
-// function, so an unguarded Chat alert would repost up to 6 times for one
-// event before the email step is ever fixed. alreadyDone/markDone/forget
-// key on chatKey alone (this handler has only one channel to protect,
-// unlike handleIncidentCreated's two) — forgotten once the Chat alert
-// itself succeeds (or is skipped due to an empty product) or
-// record.IsFinalAttempt is true, mirroring handleIncidentCreated's own
-// release condition.
+// Every reaction here — each email group and the Chat alert — has
+// per-record idempotency tracking, the same mechanism handleIncidentCreated
+// uses: a real-world failure mode this was missing until it actually
+// happened — a persistently-failing step (e.g. a misconfigured email OAuth2
+// client) means every one of eventbus.Consumer's 3 retries, and then the
+// DLQ consumer's own 3 retries, re-runs this whole function, so an
+// unguarded already-succeeded channel would repost/resend up to 6 times for
+// one event before the failing one is ever fixed. Email groups are tracked
+// inside sendPerGroup itself (see its own doc comment); chatKey is tracked
+// here directly, mirroring handleIncidentCreated's shape. Both kinds are
+// forgotten together, once the whole call succeeds (len(errs) == 0, so
+// Handle is about to return nil — no more retries coming) or
+// record.IsFinalAttempt is true (no further retry coming regardless of
+// outcome) — never on an individual channel's own success alone, which
+// would release it while other channels in this same call are still
+// failing and eventbus.Consumer keeps retrying, immediately re-arming that
+// channel to resend on the very next attempt.
 func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
 	var p events.CaseCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.created payload: %w", err)
 	}
 
-	chatKey := record.Topic + "/" + strconv.FormatInt(int64(record.Partition), 10) + "/" + strconv.FormatInt(record.Offset, 10) + "/chat"
+	baseKey := recordBaseKey(record)
+	chatKey := baseKey + "/chat"
 
 	var errs []error
 
@@ -254,7 +266,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		errs = append(errs, err)
 	} else {
 		subject := fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle)
-		emailErr := d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+		emailErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 			return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
 				ReporterName:              p.ReporterName,
 				ProjectName:               p.ProjectName,
@@ -290,24 +302,19 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		}
 	}
 
-	// Forgetting must wait for the whole call to succeed (no more retries
-	// coming for this record), not just this channel's own success — chatErr
-	// alone would forget right after the Chat alert's first successful
-	// attempt even while the email keeps failing and eventbus.Consumer keeps
-	// retrying, immediately re-arming the Chat alert to resend on the very
-	// next attempt. len(errs) == 0 means Handle is about to return nil (this
-	// record is done); record.IsFinalAttempt means no further retry is
-	// coming regardless of outcome — both are the same release conditions
-	// handleIncidentCreated uses, just phrased for its own two tracked
-	// channels instead of one.
 	if len(errs) == 0 || record.IsFinalAttempt {
 		d.forget(chatKey)
+		d.forgetEmailGroups(baseKey, groups)
 	}
 
 	return errors.Join(errs...)
 }
 
-func (d *Dispatcher) handleCommentAdded(ctx context.Context, raw json.RawMessage) error {
+// handleCommentAdded's email step is tracked the same way handleCaseCreated's
+// is (see sendPerGroup's own doc comment) — a group that already sent must
+// not resend just because another group in the same record is still
+// failing.
+func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
 	var p events.CommentAddedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.comment_added payload: %w", err)
@@ -316,13 +323,20 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, raw json.RawMessage
 	if err != nil {
 		return err
 	}
+	baseKey := recordBaseKey(record)
 	subject := "Re: " + p.CaseTitle
-	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderCommentAddedEmail(p.Name, p.ProjectID, p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
 	})
+	if sendErr == nil || record.IsFinalAttempt {
+		d.forgetEmailGroups(baseKey, groups)
+	}
+	return sendErr
 }
 
-func (d *Dispatcher) handleStatusChanged(ctx context.Context, raw json.RawMessage) error {
+// handleStatusChanged's email step is tracked the same way — see
+// handleCommentAdded's doc comment.
+func (d *Dispatcher) handleStatusChanged(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
 	var p events.StatusChangedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.status_changed payload: %w", err)
@@ -331,13 +345,20 @@ func (d *Dispatcher) handleStatusChanged(ctx context.Context, raw json.RawMessag
 	if err != nil {
 		return err
 	}
+	baseKey := recordBaseKey(record)
 	subject := fmt.Sprintf("[%s] Status changed to %s", p.CaseID, p.NewStatus)
-	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderStatusChangedEmail(p.CaseID, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
 	})
+	if sendErr == nil || record.IsFinalAttempt {
+		d.forgetEmailGroups(baseKey, groups)
+	}
+	return sendErr
 }
 
-func (d *Dispatcher) handleCaseAssigned(ctx context.Context, raw json.RawMessage) error {
+// handleCaseAssigned's email step is tracked the same way — see
+// handleCommentAdded's doc comment.
+func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
 	var p events.CaseAssignedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.assigned payload: %w", err)
@@ -346,10 +367,15 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, raw json.RawMessage
 	if err != nil {
 		return err
 	}
+	baseKey := recordBaseKey(record)
 	subject := fmt.Sprintf("[%s] Case assigned", p.CaseID)
-	return d.sendPerGroup(ctx, groups, subject, func(caseLink string) string {
+	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, p.CaseID, caseLink, commentLinkFor(caseLink, ""))
 	})
+	if sendErr == nil || record.IsFinalAttempt {
+		d.forgetEmailGroups(baseKey, groups)
+	}
+	return sendErr
 }
 
 // groupByLink resolves each recipient's own case link (see
@@ -408,31 +434,40 @@ func maskPhone(phone string) string {
 // link, so each group's body carries the portal link its recipients can
 // actually open.
 //
+// Each group's own send is tracked with the same per-record idempotency
+// mechanism handleIncidentCreated's channels use (alreadyDone/markDone),
+// keyed by baseKey (see recordBaseKey) plus the group's own case link — a
+// retry that resends because some OTHER group (or, for case.created, the
+// Chat alert) is still failing must not resend a group that already
+// succeeded. This only marks a group done on success; it never calls
+// forget itself, since sendPerGroup doesn't know whether some other channel
+// in the same caller (e.g. handleCaseCreated's Chat alert) still needs to
+// succeed too before it's safe to release tracking — see
+// forgetEmailGroups, which every caller invokes once it knows the whole
+// record's outcome.
+//
 // When emailDebugMode is true, each group's real recipients are replaced
 // with emailDebugRecipients before sending — the email still actually goes
 // out (unlike the old EMAIL_SENDING_ENABLED=false log-only killswitch this
 // replaced), just to a safe configured test list instead of real
-// watchers/customers. A group is skipped entirely (logged, not an error) if
-// emailDebugMode is true but emailDebugRecipients is empty — sending to zero
-// recipients would either be rejected by the email provider or silently do
-// nothing, neither of which is better than not calling it at all.
-//
-// Partial failure here is at-least-once, not tracked with idempotency
-// state: if one group's SendEmail fails after another group already
-// succeeded, Handle's non-nil return causes eventbus.Consumer to retry the
-// whole record, re-sending the group(s) that already succeeded too. That's
-// the same trade-off handleIncidentCreated's done map exists to avoid for
-// its two channels — email duplication is cheap enough, and today's
-// recipient/group counts small enough, that this case accepts the
-// duplication rather than adding the same tracking here.
-func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]string, subject string, render func(caseLink string) string) error {
+// watchers/customers. A group is skipped entirely (logged, marked done —
+// retrying won't fix a missing debug-recipient config) if emailDebugMode is
+// true but emailDebugRecipients is empty — sending to zero recipients would
+// either be rejected by the email provider or silently do nothing, neither
+// of which is better than not calling it at all.
+func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups map[string][]string, subject string, render func(caseLink string) string) error {
 	var errs []error
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
+		key := baseKey + "/email/" + caseLink
+		if d.alreadyDone(key) {
+			continue
+		}
 		to := groups[caseLink]
 		if d.emailDebugMode {
 			if len(d.emailDebugRecipients) == 0 {
 				slog.WarnContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true but EMAIL_DEBUG_RECIPIENTS is empty; not sending",
 					"subject", subject)
+				d.markDone(key)
 				continue
 			}
 			slog.InfoContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true; redirecting email to configured debug recipients",
@@ -441,9 +476,25 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]strin
 		}
 		if err := d.email.SendEmail(ctx, to, nil, nil, nil, subject, render(caseLink), nil); err != nil {
 			errs = append(errs, err)
+		} else {
+			d.markDone(key)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// forgetEmailGroups releases sendPerGroup's per-group idempotency tracking
+// for every group in groups. Call once the caller knows no further retry is
+// coming for this record — see handleCaseCreated/handleCommentAdded/
+// handleStatusChanged/handleCaseAssigned for the exact release condition
+// each uses (and handleCaseCreated's own doc comment for why it must be the
+// whole call's outcome, not any single channel's own success). Ranging
+// over a nil groups map (e.g. handleCaseCreated's groupByLink failed this
+// attempt) is a safe no-op.
+func (d *Dispatcher) forgetEmailGroups(baseKey string, groups map[string][]string) {
+	for caseLink := range groups {
+		d.forget(baseKey + "/email/" + caseLink)
+	}
 }
 
 // handleIncidentCreated has two independent reactions, unlike every other
@@ -496,7 +547,7 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 		return fmt.Errorf("dispatch: decode incident.created payload: %w", err)
 	}
 
-	base := record.Topic + "/" + strconv.FormatInt(int64(record.Partition), 10) + "/" + strconv.FormatInt(record.Offset, 10)
+	base := recordBaseKey(record)
 	chatKey, callKey := base+"/chat", base+"/call"
 
 	product := p.Product

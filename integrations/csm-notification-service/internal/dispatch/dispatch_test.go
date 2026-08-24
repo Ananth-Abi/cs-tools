@@ -34,12 +34,19 @@ type sentEmail struct {
 }
 
 type mockEmailSender struct {
-	err   error
-	calls []sentEmail
+	err error
+	// errFor, when set, overrides err on a per-call basis — lets a test make
+	// one recipient group fail while another succeeds, to exercise
+	// sendPerGroup's per-group idempotency tracking.
+	errFor func(to []string) error
+	calls  []sentEmail
 }
 
 func (m *mockEmailSender) SendEmail(ctx context.Context, to, cc, bcc, replyTo []string, subject, htmlBody string, attachments []notifications.EmailAttachment) error {
 	m.calls = append(m.calls, sentEmail{to: to, subject: subject, htmlBody: htmlBody})
+	if m.errFor != nil {
+		return m.errFor(to)
+	}
 	return m.err
 }
 
@@ -418,6 +425,56 @@ func TestDispatcher_Handle_TwoRecipientsTwoLinks_SendsTwoEmails(t *testing.T) {
 	}
 	if !strings.Contains(agentEmail.htmlBody, "https://csm.example.com/cases/CASE-1") {
 		t.Errorf("agent email body = %q, want the CSM portal link", agentEmail.htmlBody)
+	}
+}
+
+// TestDispatcher_Handle_CommentAdded_RetryDoesNotResendSucceededGroup is a
+// regression test: eventbus.Consumer retries the whole Handle call on any
+// error. When one recipient group's SendEmail persistently fails while
+// another group's already succeeded, the succeeded group must not be
+// resent on every retry — only the genuinely failing group should keep
+// being attempted.
+func TestDispatcher_Handle_CommentAdded_RetryDoesNotResendSucceededGroup(t *testing.T) {
+	mock := &mockEmailSender{errFor: func(to []string) error {
+		if len(to) == 1 && to[0] == "agent@wso2.com" {
+			return errors.New("email service unreachable")
+		}
+		return nil
+	}}
+	links := &mockLinkResolver{linkFor: func(email string) string {
+		if email == "customer@acme.com" {
+			return "https://customer.example.com/projects/PROJ-1/support/cases/CASE-1"
+		}
+		return "https://csm.example.com/cases/CASE-1"
+	}}
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links, false, nil, true, "", "")
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["customer@acme.com","agent@wso2.com"]}}`)}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		record.IsFinalAttempt = attempt == 3
+		if err := d.Handle(context.Background(), record); err == nil {
+			t.Fatalf("attempt %d: expected the agent group's error to still propagate", attempt)
+		}
+	}
+
+	customerSends, agentSends := 0, 0
+	for _, call := range mock.calls {
+		if len(call.to) == 1 && call.to[0] == "customer@acme.com" {
+			customerSends++
+		}
+		if len(call.to) == 1 && call.to[0] == "agent@wso2.com" {
+			agentSends++
+		}
+	}
+	if customerSends != 1 {
+		t.Errorf("customer group sent %d times across 3 retries, want exactly 1 (already succeeded, should not be resent)", customerSends)
+	}
+	if agentSends != 3 {
+		t.Errorf("agent group attempted %d times across 3 retries, want 3 (the genuinely failing group should keep retrying)", agentSends)
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after the final attempt, has %d entries (leaked tracking for a group that never succeeded)", len(d.done))
 	}
 }
 
