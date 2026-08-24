@@ -399,3 +399,112 @@ func mapSNProblemDetailToView(p snProblemDetailResponse) domain.ProblemDetail {
 
 	return view
 }
+
+// snUpdateProblemPayload is the Choreo PATCH /problems/{id} request body.
+type snUpdateProblemPayload struct {
+	Transition           *string `json:"transition,omitempty"`
+	AssignedToID         *string `json:"assignedToId,omitempty"`
+	AssignmentGroupID    *string `json:"assignmentGroupId,omitempty"`
+	CauseNotes           *string `json:"causeNotes,omitempty"`
+	FixNotes             *string `json:"fixNotes,omitempty"`
+	Workaround           *string `json:"workaround,omitempty"`
+	TargetResolutionDate *string `json:"targetResolutionDate,omitempty"`
+}
+
+// snUpdateProblemResult mirrors the Choreo PATCH /problems/{id} response's "problem" object --
+// deliberately narrower than snProblemDetailResponse, matching what that endpoint actually
+// returns.
+type snUpdateProblemResult struct {
+	ID              string            `json:"id"`
+	UpdatedOn       string            `json:"updatedOn"`
+	UpdatedBy       string            `json:"updatedBy"`
+	State           *string           `json:"state"`
+	ResolutionCode  *string           `json:"resolutionCode"`
+	AssignedTo      *snProblemUserRef `json:"assignedTo"`
+	AssignmentGroup *snProblemUserRef `json:"assignmentGroup"`
+}
+
+// snUpdateProblemResponse mirrors the Choreo PATCH /problems/{id} response.
+type snUpdateProblemResponse struct {
+	Message string                `json:"message"`
+	Problem snUpdateProblemResult `json:"problem"`
+}
+
+// UpdateProblem implements ProblemService for the ServiceNow data source. It is a thin
+// passthrough: Transition is forwarded unvalidated (see domain.UpdateProblemRequest doc
+// comment), and the response always reflects the data source's real post-write state.
+func (s *snProblemService) UpdateProblem(ctx context.Context, req domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+	if err := validateUUIDs("id", []string{req.ID}); err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	hasUpdate := req.Transition != nil || req.AssignedToID != nil || req.AssignmentGroupID != nil ||
+		req.CauseNotes != nil || req.FixNotes != nil || req.Workaround != nil || req.TargetResolutionDate != nil
+	if !hasUpdate {
+		return domain.UpdateProblemResponse{}, &apierror.ValidationError{Msg: "at least one field must be provided"}
+	}
+
+	optionalUUIDs := map[string]*string{
+		"assignedToId":      req.AssignedToID,
+		"assignmentGroupId": req.AssignmentGroupID,
+	}
+	for field, val := range optionalUUIDs {
+		if val != nil {
+			if err := validateUUIDs(field, []string{*val}); err != nil {
+				return domain.UpdateProblemResponse{}, err
+			}
+		}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snUpdateProblemPayload{
+		Transition:           req.Transition,
+		CauseNotes:           req.CauseNotes,
+		FixNotes:             req.FixNotes,
+		Workaround:           req.Workaround,
+		TargetResolutionDate: req.TargetResolutionDate,
+	}
+	if req.AssignedToID != nil {
+		v := uuidToSysid(*req.AssignedToID)
+		payload.AssignedToID = &v
+	}
+	if req.AssignmentGroupID != nil {
+		v := uuidToSysid(*req.AssignmentGroupID)
+		payload.AssignmentGroupID = &v
+	}
+
+	raw, err := s.client.Patch(ctx, "/problems/"+uuidToSysid(req.ID), token, payload)
+	if err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	var snResp snUpdateProblemResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.UpdateProblemResponse{}, fmt.Errorf("sn update problem: parse response: %w", err)
+	}
+
+	updatedOn := snResp.Problem.UpdatedOn
+	updatedBy := snResp.Problem.UpdatedBy
+	view := domain.UpdateProblemView{
+		UpdatedOn:      &updatedOn,
+		UpdatedBy:      &updatedBy,
+		State:          snResp.Problem.State,
+		ResolutionCode: snResp.Problem.ResolutionCode,
+	}
+	if snResp.Problem.ID != "" {
+		id := sysidToUUID(snResp.Problem.ID)
+		view.ID = &id
+	}
+	if snResp.Problem.AssignedTo != nil {
+		view.AssignedTo = &domain.EntityRef{ID: sysidToUUID(snResp.Problem.AssignedTo.ID), Name: snResp.Problem.AssignedTo.Name}
+	}
+	if snResp.Problem.AssignmentGroup != nil {
+		view.AssignmentGroup = &domain.EntityRef{ID: sysidToUUID(snResp.Problem.AssignmentGroup.ID), Name: snResp.Problem.AssignmentGroup.Name}
+	}
+
+	return domain.UpdateProblemResponse{
+		Message: snResp.Message,
+		Problem: view,
+	}, nil
+}

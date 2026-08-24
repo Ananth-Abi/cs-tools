@@ -438,33 +438,56 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
       {BackButton}
 
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap" }}>
-          <Typography variant="h5">{cr.subject || cr.number || "Change request"}</Typography>
-          {cr.state && (
-            <Chip
-              size="small"
-              color={changeRequestStateColor(cr.state)}
-              label={changeRequestStateLabel(cr.state)}
-            />
-          )}
-          {cr.impact && (
-            <Chip
-              size="small"
-              variant="outlined"
-              color={changeRequestImpactColor(cr.impact)}
-              label={`${changeRequestImpactLabel(cr.impact)} impact`}
-            />
-          )}
-          <Box
+      <Box
+        sx={{
+          display: "flex",
+          gap: 2,
+          alignItems: "flex-start",
+          flexWrap: { xs: "wrap", md: "nowrap" },
+          justifyContent: "space-between",
+        }}
+      >
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          <Typography
+            variant="h6"
             sx={{
-              ml: "auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 1,
-              flexShrink: 0,
+              fontFamily: "monospace",
+              fontWeight: 700,
+              letterSpacing: 0.2,
+              lineHeight: 1.2,
             }}
           >
+            {cr.number || cr.id}
+          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+            {cr.state && (
+              <Chip
+                size="small"
+                color={changeRequestStateColor(cr.state)}
+                label={changeRequestStateLabel(cr.state)}
+              />
+            )}
+            {cr.impact && (
+              <Chip
+                size="small"
+                variant="outlined"
+                color={changeRequestImpactColor(cr.impact)}
+                label={`${changeRequestImpactLabel(cr.impact)} impact`}
+              />
+            )}
+          </Box>
+          <Typography variant="h5">{cr.subject || "Change request"}</Typography>
+        </Box>
+        <Box sx={{ flexShrink: 0, alignSelf: { xs: "stretch", md: "flex-start" } }}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <ChangeRequestActionBar
               cr={cr}
               isPending={transitionPending}
@@ -496,9 +519,6 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
             </Button>
           </Box>
         </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ fontFamily: "monospace" }}>
-          {cr.number || cr.id}
-        </Typography>
       </Box>
 
       <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 2 }}>

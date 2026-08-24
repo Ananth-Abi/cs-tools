@@ -3924,6 +3924,48 @@ type CreateProblemRequest struct {
 	PrimaryIncidentID *string `json:"primaryIncidentId,omitempty"`
 }
 
+// UpdateProblemRequest is the input for PATCH /problems/{id}. All fields are optional, but
+// at least one must be provided. A Transition request may also carry any of the plain-field
+// keys in the same body (e.g. attaching an owner and requesting "assess" together).
+//
+// Transition is a plain, unvalidated passthrough string -- one of "assess", "confirm", "fix",
+// "resolve", "close" per the data source's own server-side validation -- rather than a closed
+// enum. Do not add strict validation against this list here: the data source's own "Invalid
+// transition" error names the valid values, and a Go-side closed check would swallow that
+// message with a generic one instead, the same mistake the Ballerina layer made and reverted
+// (see CHANGES-problem-update.md).
+type UpdateProblemRequest struct {
+	ID                   string  `json:"-"`
+	Transition           *string `json:"transition,omitempty"`
+	AssignedToID         *string `json:"assignedToId,omitempty"`
+	AssignmentGroupID    *string `json:"assignmentGroupId,omitempty"`
+	CauseNotes           *string `json:"causeNotes,omitempty"`
+	FixNotes             *string `json:"fixNotes,omitempty"`
+	Workaround           *string `json:"workaround,omitempty"`
+	TargetResolutionDate *string `json:"targetResolutionDate,omitempty"`
+}
+
+// UpdateProblemResponse is the output for PATCH /problems/{id}.
+type UpdateProblemResponse struct {
+	Message string            `json:"message"`
+	Problem UpdateProblemView `json:"problem"`
+}
+
+// UpdateProblemView is the problem representation returned by the update (PATCH) operation --
+// deliberately narrower than ProblemDetail: only the fields the update response actually
+// carries. State and ResolutionCode always reflect the real post-write state, not the caller's
+// requested transition -- the data source's own business rules can force- or fail-promote the
+// state as a side effect (see CHANGES-problem-update.md).
+type UpdateProblemView struct {
+	ID              *string    `json:"id"`
+	UpdatedOn       *string    `json:"updatedOn"`
+	UpdatedBy       *string    `json:"updatedBy"`
+	State           *string    `json:"state"`
+	ResolutionCode  *string    `json:"resolutionCode"`
+	AssignedTo      *EntityRef `json:"assignedTo"`
+	AssignmentGroup *EntityRef `json:"assignmentGroup"`
+}
+
 // IncidentTaskFieldFilter is a single predicate in an incident-task search's
 // generic filter expression array: "field op values", mirroring
 // ProblemFieldFilter's contract. See service.ParseIncidentTaskFieldFilters

@@ -557,6 +557,7 @@ type mockEntityProblemClient struct {
 	aggregateProblemsFn func(ctx context.Context, body []byte) ([]byte, error)
 	getProblemFn        func(ctx context.Context, id string) ([]byte, error)
 	createProblemFn     func(ctx context.Context, body []byte) ([]byte, error)
+	updateProblemFn     func(ctx context.Context, id string, body []byte) ([]byte, error)
 }
 
 func (m *mockEntityProblemClient) SearchProblems(ctx context.Context, body []byte) ([]byte, error) {
@@ -583,6 +584,13 @@ func (m *mockEntityProblemClient) GetProblem(ctx context.Context, id string) ([]
 func (m *mockEntityProblemClient) CreateProblem(ctx context.Context, body []byte) ([]byte, error) {
 	if m.createProblemFn != nil {
 		return m.createProblemFn(ctx, body)
+	}
+	return []byte(`{}`), nil
+}
+
+func (m *mockEntityProblemClient) UpdateProblem(ctx context.Context, id string, body []byte) ([]byte, error) {
+	if m.updateProblemFn != nil {
+		return m.updateProblemFn(ctx, id, body)
 	}
 	return []byte(`{}`), nil
 }
