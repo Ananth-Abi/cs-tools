@@ -20,7 +20,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
@@ -34,12 +36,25 @@ type sentEmail struct {
 }
 
 type mockEmailSender struct {
-	err   error
+	err error
+	// errFor, when set, overrides err on a per-call basis — lets a test make
+	// one recipient group fail while another succeeds, to exercise
+	// sendPerGroup's per-group idempotency tracking.
+	errFor func(to []string) error
+	// mu guards calls — SendEmail is called concurrently by
+	// TestDispatcher_Handle_ConcurrentCallsClaimEachChannelOnce, unlike every
+	// other test here, which drives Handle sequentially.
+	mu    sync.Mutex
 	calls []sentEmail
 }
 
 func (m *mockEmailSender) SendEmail(ctx context.Context, to, cc, bcc, replyTo []string, subject, htmlBody string, attachments []notifications.EmailAttachment) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, sentEmail{to: to, subject: subject, htmlBody: htmlBody})
+	if m.errFor != nil {
+		return m.errFor(to)
+	}
 	return m.err
 }
 
@@ -48,11 +63,15 @@ type sentChatAlert struct {
 }
 
 type mockGoogleChatSender struct {
-	err   error
+	err error
+	// mu guards calls — see mockEmailSender.mu's doc comment.
+	mu    sync.Mutex
 	calls []sentChatAlert
 }
 
 func (m *mockGoogleChatSender) SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, sentChatAlert{product, title, shortDescription, portalURL})
 	return m.err
 }
@@ -62,11 +81,15 @@ type sentCall struct {
 }
 
 type mockCallSender struct {
-	err   error
+	err error
+	// mu guards calls — see mockEmailSender.mu's doc comment.
+	mu    sync.Mutex
 	calls []sentCall
 }
 
 func (m *mockCallSender) MakeCall(ctx context.Context, to, message string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, sentCall{to, message})
 	return m.err
 }
@@ -211,6 +234,55 @@ func TestDispatcher_Handle_CaseCreated_ChatFailureStillSendsEmail(t *testing.T) 
 	}
 	if len(mock.calls) != 1 {
 		t.Fatal("expected the email to still be sent despite the chat failure")
+	}
+}
+
+// TestDispatcher_Handle_CaseCreated_RetryDoesNotResendSucceededChatAlert is a
+// regression test: eventbus.Consumer retries the whole Handle call on any
+// error. A persistently-failing email step (e.g. a misconfigured email
+// OAuth2 client — the real-world failure that surfaced this) must not cause
+// an already-succeeded Chat alert to be reposted on every retry too.
+func TestDispatcher_Handle_CaseCreated_RetryDoesNotResendSucceededChatAlert(t *testing.T) {
+	mock := &mockEmailSender{err: errors.New("email service unreachable")}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		record.IsFinalAttempt = attempt == 3
+		if err := d.Handle(context.Background(), record); err == nil {
+			t.Fatalf("attempt %d: expected the email error to still propagate", attempt)
+		}
+	}
+
+	if len(chat.calls) != 1 {
+		t.Errorf("chat sent %d times across 3 retries, want exactly 1 (email kept failing, chat should not be resent)", len(chat.calls))
+	}
+	if len(mock.calls) != 3 {
+		t.Errorf("email attempted %d times across 3 retries, want 3 (the genuinely failing channel should keep retrying)", len(mock.calls))
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after the final attempt, has %d entries (leaked tracking for a channel that never succeeded)", len(d.done))
+	}
+}
+
+// TestDispatcher_Handle_CaseCreated_ForgetsAfterFullSuccess is a regression
+// test for the other direction: once both the email and the Chat alert
+// succeed, the tracking entry must not leak forever, and a later,
+// unrelated record must not be affected by stale tracking.
+func TestDispatcher_Handle_CaseCreated_ForgetsAfterFullSuccess(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after full success, has %d entries", len(d.done))
 	}
 }
 
@@ -369,6 +441,56 @@ func TestDispatcher_Handle_TwoRecipientsTwoLinks_SendsTwoEmails(t *testing.T) {
 	}
 	if !strings.Contains(agentEmail.htmlBody, "https://csm.example.com/cases/CASE-1") {
 		t.Errorf("agent email body = %q, want the CSM portal link", agentEmail.htmlBody)
+	}
+}
+
+// TestDispatcher_Handle_CommentAdded_RetryDoesNotResendSucceededGroup is a
+// regression test: eventbus.Consumer retries the whole Handle call on any
+// error. When one recipient group's SendEmail persistently fails while
+// another group's already succeeded, the succeeded group must not be
+// resent on every retry — only the genuinely failing group should keep
+// being attempted.
+func TestDispatcher_Handle_CommentAdded_RetryDoesNotResendSucceededGroup(t *testing.T) {
+	mock := &mockEmailSender{errFor: func(to []string) error {
+		if len(to) == 1 && to[0] == "agent@wso2.com" {
+			return errors.New("email service unreachable")
+		}
+		return nil
+	}}
+	links := &mockLinkResolver{linkFor: func(email string) string {
+		if email == "customer@acme.com" {
+			return "https://customer.example.com/projects/PROJ-1/support/cases/CASE-1"
+		}
+		return "https://csm.example.com/cases/CASE-1"
+	}}
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links, false, nil, true, "", "")
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["customer@acme.com","agent@wso2.com"]}}`)}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		record.IsFinalAttempt = attempt == 3
+		if err := d.Handle(context.Background(), record); err == nil {
+			t.Fatalf("attempt %d: expected the agent group's error to still propagate", attempt)
+		}
+	}
+
+	customerSends, agentSends := 0, 0
+	for _, call := range mock.calls {
+		if len(call.to) == 1 && call.to[0] == "customer@acme.com" {
+			customerSends++
+		}
+		if len(call.to) == 1 && call.to[0] == "agent@wso2.com" {
+			agentSends++
+		}
+	}
+	if customerSends != 1 {
+		t.Errorf("customer group sent %d times across 3 retries, want exactly 1 (already succeeded, should not be resent)", customerSends)
+	}
+	if agentSends != 3 {
+		t.Errorf("agent group attempted %d times across 3 retries, want 3 (the genuinely failing group should keep retrying)", agentSends)
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after the final attempt, has %d entries (leaked tracking for a group that never succeeded)", len(d.done))
 	}
 }
 
@@ -752,5 +874,78 @@ func TestMaskPhone(t *testing.T) {
 		if got := maskPhone(tt.phone); got != tt.want {
 			t.Errorf("maskPhone(%q) = %q, want %q", tt.phone, got, tt.want)
 		}
+	}
+}
+
+// concurrencyProbeChatSender is a googleChatSender that records the highest
+// number of SendIncidentAlert calls it ever had in flight at once — the
+// invariant TestDispatcher_Handle_ConcurrentClaimNeverOverlaps checks — by
+// sleeping briefly inside the "critical section" to widen the window a race
+// would need to land in. It deliberately does NOT check the total call
+// count: once a call completes and Dispatcher.forget releases its claim
+// (the same eager-cleanup-on-full-success behavior
+// TestDispatcher_Handle_IncidentCreated_ForgetsAfterFullSuccess already
+// pins as intentional), a later, independent Handle call legitimately
+// reclaims and resends — that is not the race being tested here.
+type concurrencyProbeChatSender struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	sends     int
+}
+
+func (s *concurrencyProbeChatSender) SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error {
+	s.mu.Lock()
+	s.active++
+	s.sends++
+	if s.active > s.maxActive {
+		s.maxActive = s.active
+	}
+	s.mu.Unlock()
+
+	time.Sleep(5 * time.Millisecond)
+
+	s.mu.Lock()
+	s.active--
+	s.mu.Unlock()
+	return nil
+}
+
+// TestDispatcher_Handle_ConcurrentClaimNeverOverlaps is a regression test
+// for a real race in the old alreadyDone/markDone pattern: checking "not
+// done yet" and marking "done" were two separate lock acquisitions, so two
+// Handle calls racing on the same record (e.g. during a Kafka
+// consumer-group rebalance transition, which this client's fencing isn't
+// guaranteed to make impossible) could both observe an unclaimed channel
+// and both attempt the same outbound call before either one recorded it as
+// claimed. claim() closes this by checking-and-setting in one lock
+// acquisition, so at most one caller is ever inside the send at once —
+// concurrencyProbeChatSender's maxActive is what this test actually
+// verifies, deliberately not the total send count (see its own doc
+// comment for why that's a separate, already-accepted behavior).
+func TestDispatcher_Handle_ConcurrentClaimNeverOverlaps(t *testing.T) {
+	chat := &concurrencyProbeChatSender{}
+	d := NewDispatcher(&mockEmailSender{}, chat, &mockCallSender{}, &mockLinkResolver{}, false, nil, true, "", "")
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(validIncidentRecord)}
+
+	const concurrency = 20
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			_ = d.Handle(context.Background(), record)
+		}()
+	}
+	wg.Wait()
+
+	chat.mu.Lock()
+	defer chat.mu.Unlock()
+	if chat.maxActive > 1 {
+		t.Errorf("maxActive = %d, want at most 1 (two Handle calls were inside SendIncidentAlert at the same time — claim() failed to serialize them)", chat.maxActive)
+	}
+	if chat.sends < 1 {
+		t.Error("expected at least one Chat alert to have been sent")
 	}
 }

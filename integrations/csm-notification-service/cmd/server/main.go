@@ -47,12 +47,21 @@ func main() {
 
 	// Email is not yet configured for every deployment, so its config is read
 	// with os.Getenv (never mustEnv) — a missing or invalid configuration only
-	// surfaces as an error the first time a caller requests the email channel.
+	// surfaces as an error the first time a caller requests the email
+	// channel.
+	//
+	// Shares the same OAuth2 client credentials app
+	// (OAUTH2_CLIENT_ID/OAUTH2_CLIENT_SECRET/OAUTH2_TOKEN_URL) as
+	// customerEntityClient below, rather than a dedicated EMAIL_TOKEN_URL/
+	// EMAIL_CLIENT_ID/EMAIL_CLIENT_SECRET — the real email-service deployment
+	// this points at authenticates every caller through the same shared
+	// gateway app, scoped via EMAIL_SCOPES, not a separate per-consumer app.
+	// Only BaseURL/Scopes/FromAddress are specific to this client.
 	emailClient := notifications.NewEmailClient(notifications.EmailConfig{
 		BaseURL:      os.Getenv("EMAIL_BASE_URL"),
-		TokenURL:     os.Getenv("EMAIL_TOKEN_URL"),
-		ClientID:     os.Getenv("EMAIL_CLIENT_ID"),
-		ClientSecret: os.Getenv("EMAIL_CLIENT_SECRET"),
+		TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
+		ClientID:     os.Getenv("OAUTH2_CLIENT_ID"),
+		ClientSecret: os.Getenv("OAUTH2_CLIENT_SECRET"),
 		Scopes:       splitComma(os.Getenv("EMAIL_SCOPES")),
 		FromAddress:  os.Getenv("EMAIL_FROM_ADDRESS"),
 	})
@@ -84,11 +93,11 @@ func main() {
 	// case.* email fail instead. Warn loudly at startup so a misconfigured
 	// deployment doesn't discover this silently on its first real event.
 	//
-	// Unlike the channel clients above, this one shares its OAuth2 client
-	// credentials app (OAUTH2_CLIENT_ID/OAUTH2_CLIENT_SECRET/OAUTH2_TOKEN_URL)
-	// rather than getting its own — mirroring apps/csm-portal/backend's own
-	// entity client, which authenticates against the same entity-service
-	// this way. Only BaseURL/Scopes are specific to this client.
+	// Shares the same OAuth2 client credentials app as emailClient above
+	// (OAUTH2_CLIENT_ID/OAUTH2_CLIENT_SECRET/OAUTH2_TOKEN_URL) rather than
+	// getting its own — mirroring apps/csm-portal/backend's own entity
+	// client, which authenticates against the same entity-service this way.
+	// Only BaseURL/Scopes are specific to this client.
 	customerEntityClient := entity.NewCustomerEntityClient(entity.CustomerEntityConfig{
 		BaseURL:      os.Getenv("CUSTOMER_ENTITY_BASE_URL"),
 		TokenURL:     os.Getenv("OAUTH2_TOKEN_URL"),
