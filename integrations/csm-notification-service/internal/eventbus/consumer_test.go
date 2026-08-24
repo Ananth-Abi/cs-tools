@@ -115,6 +115,40 @@ func TestProcessRecord_OnExhaustedFailure_StillCommits(t *testing.T) {
 	}
 }
 
+// TestProcessRecord_OnExhaustedFailure_MakesCleanupCallWithNoMoreRetries is a
+// regression test for a real gap CodeRabbit flagged: when the dead-letter
+// publish itself fails, there is truly no future delivery of this record's
+// content coming on any topic — but without an extra call, a Handle that
+// tracks content-keyed idempotency state (see dispatch.Dispatcher) would
+// never learn that and would leak its tracking forever. processRecord must
+// call handle one more time, with NoMoreRetries set, purely so that
+// cleanup can happen.
+func TestProcessRecord_OnExhaustedFailure_MakesCleanupCallWithNoMoreRetries(t *testing.T) {
+	var calls []Record
+	handle := func(ctx context.Context, r Record) error {
+		calls = append(calls, r)
+		return errors.New("persistent failure")
+	}
+	onExhausted := func(ctx context.Context, record Record, handleErr error) error {
+		return errors.New("dead-letter topic unreachable")
+	}
+	ok := processRecord(context.Background(), Record{}, handle, onExhausted, 3, testRetryDelay)
+	if !ok {
+		t.Error("processRecord() = false, want true")
+	}
+	if len(calls) != 4 {
+		t.Fatalf("handle called %d times, want 4 (3 retries + 1 cleanup call after the dead-letter publish itself failed)", len(calls))
+	}
+	for i, c := range calls[:3] {
+		if c.NoMoreRetries {
+			t.Errorf("attempt %d: NoMoreRetries = true, want false (onExhausted hadn't been tried yet)", i+1)
+		}
+	}
+	if !calls[3].NoMoreRetries {
+		t.Error("cleanup call: NoMoreRetries = false, want true (the dead-letter publish failed — nothing will ever redeliver this content)")
+	}
+}
+
 func TestProcessRecord_ContextCanceledMidRetry_DoesNotCommit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
@@ -148,6 +182,50 @@ func TestProcessRecord_IsFinalAttemptOnlyOnLastCall(t *testing.T) {
 	for i, w := range want {
 		if finalFlags[i] != w {
 			t.Errorf("attempt %d: IsFinalAttempt = %v, want %v", i+1, finalFlags[i], w)
+		}
+	}
+}
+
+// TestProcessRecord_NoMoreRetries_FalseWhenOnExhaustedSet verifies that a
+// record with a dead-letter tier to fall back to (onExhausted != nil, the
+// main topic's own Consumer.Run) never reports NoMoreRetries=true, even on
+// its own final attempt — there's still a DLQ topic redelivery coming for
+// the exact same content. See eventbus.Record.NoMoreRetries' doc comment
+// and dispatch.recordBaseKey for why a Handle implementation that keys
+// idempotency off content (not Kafka coordinates) depends on this.
+func TestProcessRecord_NoMoreRetries_FalseWhenOnExhaustedSet(t *testing.T) {
+	var flags []bool
+	handle := func(ctx context.Context, r Record) error {
+		flags = append(flags, r.NoMoreRetries)
+		return errors.New("keep failing")
+	}
+	onExhausted := func(ctx context.Context, record Record, handleErr error) error { return nil }
+	processRecord(context.Background(), Record{}, handle, onExhausted, 3, testRetryDelay)
+	for i, got := range flags {
+		if got {
+			t.Errorf("attempt %d: NoMoreRetries = true, want false (onExhausted is set — a DLQ tier is still coming)", i+1)
+		}
+	}
+}
+
+// TestProcessRecord_NoMoreRetries_TrueOnFinalAttemptWhenNoOnExhausted
+// verifies the DLQ topic's own Consumer.Run shape (onExhausted == nil):
+// NoMoreRetries is false on every attempt except the last, where it's true
+// — there really is nowhere further for this content to go.
+func TestProcessRecord_NoMoreRetries_TrueOnFinalAttemptWhenNoOnExhausted(t *testing.T) {
+	var flags []bool
+	handle := func(ctx context.Context, r Record) error {
+		flags = append(flags, r.NoMoreRetries)
+		return errors.New("keep failing")
+	}
+	processRecord(context.Background(), Record{}, handle, nil, 3, testRetryDelay)
+	want := []bool{false, false, true}
+	if len(flags) != len(want) {
+		t.Fatalf("got %d attempts, want %d", len(flags), len(want))
+	}
+	for i, w := range want {
+		if flags[i] != w {
+			t.Errorf("attempt %d: NoMoreRetries = %v, want %v", i+1, flags[i], w)
 		}
 	}
 }
