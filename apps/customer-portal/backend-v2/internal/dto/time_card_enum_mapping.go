@@ -51,25 +51,44 @@ var timeCardStateToEnum = map[string]string{
 // timeCardStatesToEnums translates the portal's time-card state filter values
 // into entity-service's enum vocabulary.
 //
-// An unrecognised value is dropped rather than forwarded, matching the
-// request-side convention for search filters described in this backend's
-// CLAUDE.md ("an unrecognized id is silently dropped (search)"). Note the
-// consequence: if every value is dropped the filter goes away entirely and
-// entity-service returns time cards in all states. That is the documented
-// behaviour for search filters, but it means a future choice-list label absent
-// from the table above shows unfiltered data rather than failing loudly — add
-// the label here when the choice list gains one.
+// Unrecognised values are dropped **only when at least one value translated**,
+// which is a deliberate departure from the "silently drop unknown filter ids"
+// convention this backend applies to case search. That convention is safe there
+// because dropping one of several status ids still leaves a filter in place. It
+// is not safe here: dropping the *only* value removes the state filter entirely,
+// and entity-service then returns time cards in every state — so the page would
+// quietly show unapproved cards as though they were approved, which is worse
+// than an error.
 //
-// Returns nil for no usable values so the field is omitted from the upstream
-// request instead of being sent as an empty array.
+// So when nothing translates, the original values are passed through unchanged
+// and entity-service's own validation rejects them with a 400. A wrong filter
+// fails loudly instead of showing wrong data. The ids come from ServiceNow via
+// GET /projects/{id}/filters and snFlexibleID accepts numbers as well as
+// strings, so an environment whose choice list uses numeric ids is a real
+// possibility, not a hypothetical.
+//
+// Returns nil for genuinely empty input so the field is omitted from the
+// upstream request rather than sent as an empty array.
 func timeCardStatesToEnums(states []string) []string {
 	if len(states) == 0 {
 		return nil
 	}
-	out := make([]string, 0, len(states))
-	seen := make(map[string]struct{}, len(states))
+	// Blank entries carry no intent, so they neither translate nor get forwarded
+	// as a bogus filter — a states array of only blanks means "no filter".
+	supplied := make([]string, 0, len(states))
 	for _, s := range states {
-		enum, ok := timeCardStateToEnum[strings.ToLower(strings.TrimSpace(s))]
+		if t := strings.TrimSpace(s); t != "" {
+			supplied = append(supplied, t)
+		}
+	}
+	if len(supplied) == 0 {
+		return nil
+	}
+
+	out := make([]string, 0, len(supplied))
+	seen := make(map[string]struct{}, len(supplied))
+	for _, s := range supplied {
+		enum, ok := timeCardStateToEnum[strings.ToLower(s)]
 		if !ok {
 			continue
 		}
@@ -80,7 +99,9 @@ func timeCardStatesToEnums(states []string) []string {
 		out = append(out, enum)
 	}
 	if len(out) == 0 {
-		return nil
+		// Nothing recognised. Forward as-is so the request fails visibly rather
+		// than silently widening to every state.
+		return supplied
 	}
 	return out
 }

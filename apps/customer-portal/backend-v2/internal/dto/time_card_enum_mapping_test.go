@@ -46,19 +46,41 @@ func TestTimeCardStatesToEnums_TranslatesServiceNowLabels(t *testing.T) {
 	}
 }
 
-// TestTimeCardStatesToEnums_OmitsWhenNothingUsable checks the field is omitted
-// rather than sent as an empty array. entity-service treats an absent filter as
-// "no state restriction"; an empty array would be a different, pointless
-// request shape.
-func TestTimeCardStatesToEnums_OmitsWhenNothingUsable(t *testing.T) {
+// TestTimeCardStatesToEnums_OmitsWhenNoIntent checks the field is omitted rather
+// than sent as an empty array when the caller supplied nothing meaningful.
+// entity-service treats an absent filter as "no state restriction"; an empty
+// array would be a different, pointless request shape.
+func TestTimeCardStatesToEnums_OmitsWhenNoIntent(t *testing.T) {
 	for name, in := range map[string][]string{
 		"nil":           nil,
 		"empty":         {},
-		"all unknown":   {"Draft", "In Review"},
-		"empty strings": {"", "   "},
+		"blank strings": {"", "   "},
+		"blanks only":   {"\t"},
 	} {
 		if got := timeCardStatesToEnums(in); got != nil {
 			t.Errorf("%s: got %v, want nil so the field is omitted upstream", name, got)
+		}
+	}
+}
+
+// TestTimeCardStatesToEnums_UnknownOnlyFailsLoudly is the deliberate departure
+// from the "silently drop unknown filter ids" convention used for case search.
+//
+// Dropping one of several case status ids still leaves a filter in place.
+// Dropping the *only* time-card state removes the filter entirely, and
+// entity-service then returns cards in every state — the page would quietly show
+// unapproved cards as approved. Forwarding the unrecognised value instead makes
+// entity-service reject it with a 400, so a wrong filter fails visibly rather
+// than displaying wrong data. ServiceNow choice ids can be numeric
+// (snFlexibleID accepts numbers), so this path is reachable in practice.
+func TestTimeCardStatesToEnums_UnknownOnlyFailsLoudly(t *testing.T) {
+	for name, in := range map[string][]string{
+		"unknown labels": {"Draft", "In Review"},
+		"numeric ids":    {"3"},
+	} {
+		got := timeCardStatesToEnums(in)
+		if len(got) == 0 {
+			t.Errorf("%s: got %v — dropping every value silently widens the search to all states", name, got)
 		}
 	}
 }
