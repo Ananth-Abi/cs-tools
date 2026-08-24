@@ -50,6 +50,7 @@ var validCaseType = map[string]bool{
 	"service_request":          true,
 	"security_report_analysis": true,
 	"engagement":               true,
+	"announcement":             true,
 }
 
 var validEngagementType = map[domain.EngagementType]bool{
@@ -124,11 +125,15 @@ func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
 	if req.ProjectID == "" {
 		return &apierror.ValidationError{Msg: "projectId is required"}
 	}
-	if req.DeploymentID == "" {
-		return &apierror.ValidationError{Msg: "deploymentId is required"}
-	}
-	if req.DeployedProductID == "" {
-		return &apierror.ValidationError{Msg: "deployedProductId is required"}
+	// Announcements have no deployment/deployed-product concept: these fields
+	// are deliberately omitted at the ServiceNow layer, not just optional.
+	if req.Type != "announcement" {
+		if req.DeploymentID == "" {
+			return &apierror.ValidationError{Msg: "deploymentId is required"}
+		}
+		if req.DeployedProductID == "" {
+			return &apierror.ValidationError{Msg: "deployedProductId is required"}
+		}
 	}
 
 	switch req.Type {
@@ -186,6 +191,13 @@ func validateCreateCaseRequest(req domain.CreateCaseRequest) error {
 		}
 		if !validEngagementPaymentType[req.EngagementPaymentType] {
 			return &apierror.ValidationError{Msg: "engagementPaymentType contains invalid value: " + string(req.EngagementPaymentType)}
+		}
+	case "announcement":
+		if req.Subject == "" {
+			return &apierror.ValidationError{Msg: "subject is required for announcement"}
+		}
+		if req.Description == "" {
+			return &apierror.ValidationError{Msg: "description is required for announcement"}
 		}
 	}
 
