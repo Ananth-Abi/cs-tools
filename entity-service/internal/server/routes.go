@@ -197,7 +197,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 
 	var incidentHandler *handler.IncidentHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
-		incidentHandler = handler.NewIncidentHandler(service.NewServiceNowIncidentService(serviceNowIntegrationServiceClient, eventPublisher, cfg.CSMPortalWebBaseURL))
+		incidentHandler = handler.NewIncidentHandler(service.NewServiceNowIncidentService(serviceNowIntegrationServiceClient, eventPublisher))
 	}
 
 	var problemHandler *handler.ProblemHandler

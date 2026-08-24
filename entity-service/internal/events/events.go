@@ -85,14 +85,19 @@ type CaseCreatedPayload struct {
 
 // IncidentCreatedPayload is the Payload shape for TypeIncidentCreated —
 // mirrors csm-notification-service's own IncidentCreatedPayload, which also
-// has Product (Google Chat space) and CallTo (on-call phone number) fields.
-// Both are deliberately omitted here: this service has no product→Chat-space
-// mapping or on-call number of its own to supply, and
-// csm-notification-service's dispatch.Dispatcher substitutes its own
-// configured defaults (DEFAULT_CHAT_PRODUCT/INCIDENT_DEFAULT_CALL_TO) when
-// either is absent — see that service's events.Validate, which accepts this.
+// has Product (Google Chat space) and CallTo (on-call phone number) fields,
+// and no IncidentLink field at all. All three are deliberately omitted or
+// absent here: this service has no product→Chat-space mapping or on-call
+// number of its own to supply (csm-notification-service's
+// dispatch.Dispatcher substitutes its own configured defaults,
+// DEFAULT_CHAT_PRODUCT/INCIDENT_DEFAULT_CALL_TO, when either is absent —
+// see that service's events.Validate, which accepts this), and doesn't know
+// that service's own portal URL configuration either — the "Open in Portal"
+// link is built by csm-notification-service itself
+// (recipientlinks.Resolver.IncidentLink(entityID)), the same way it already
+// builds case.created's portal link rather than trusting a caller-supplied
+// one.
 type IncidentCreatedPayload struct {
 	Title            string `json:"title"`
 	ShortDescription string `json:"shortDescription"`
-	IncidentLink     string `json:"incidentLink"`
 }

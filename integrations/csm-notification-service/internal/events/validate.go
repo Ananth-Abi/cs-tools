@@ -130,7 +130,7 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.Title == "" || p.ShortDescription == "" || p.IncidentLink == "" {
+		if p.Title == "" || p.ShortDescription == "" {
 			return fmt.Errorf("events: missing required field for %s", t)
 		}
 		// Product and CallTo are optional: a publisher that can't determine

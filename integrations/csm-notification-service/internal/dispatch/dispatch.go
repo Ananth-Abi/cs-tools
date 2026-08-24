@@ -58,6 +58,7 @@ type callSender interface {
 type linkResolver interface {
 	ResolveLinks(ctx context.Context, emails []string, projectID, caseID string) ([]recipientlinks.RecipientLink, error)
 	CSMLink(caseID string) string
+	IncidentLink(incidentID string) string
 }
 
 // Dispatcher turns a published events.Envelope into an actual notification
@@ -191,7 +192,7 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 	case events.TypeCaseAssigned:
 		return d.handleCaseAssigned(ctx, env.Payload)
 	case events.TypeIncidentCreated:
-		return d.handleIncidentCreated(ctx, record, env.Payload)
+		return d.handleIncidentCreated(ctx, record, env.EntityID, env.Payload)
 	case events.TypeSLAClockRegister, events.TypeSLATierReached:
 		// internal/slaengine's own consumer group (a different group ID, so
 		// it gets its own full copy of this same topic) is what reacts to
@@ -449,7 +450,7 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, groups map[string][]strin
 // eventbus.Consumer is about to commit and move on regardless of outcome,
 // so there's no future retry left to protect against, and it's safe to
 // stop tracking.
-func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
+func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.Record, entityID string, raw json.RawMessage) error {
 	var p events.IncidentCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode incident.created payload: %w", err)
@@ -473,7 +474,7 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 			slog.WarnContext(ctx, "dispatch: no product for incident.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
 			d.markDone(chatKey)
 		} else {
-			chatErr = d.googleChat.SendIncidentAlert(ctx, product, p.Title, p.ShortDescription, p.IncidentLink)
+			chatErr = d.googleChat.SendIncidentAlert(ctx, product, p.Title, p.ShortDescription, d.links.IncidentLink(entityID))
 			if chatErr == nil {
 				d.markDone(chatKey)
 			}

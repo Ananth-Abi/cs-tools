@@ -63,13 +63,6 @@ type Config struct {
 	EventHubBroker           string
 	EventHubConnectionString string
 	EventHubTopic            string
-	// CSMPortalWebBaseURL is the CSM portal webapp's base URL, used to build
-	// incident.created's IncidentLink (<CSMPortalWebBaseURL>/operations/incidents/{id}) —
-	// the one outbound field this service otherwise has no data source for.
-	// Optional; when unset, incident.created is not published (see
-	// snIncidentService's publish helper) since a missing link would defeat
-	// the point of the Chat alert's "Open in Portal" button.
-	CSMPortalWebBaseURL string
 }
 
 // Load reads configuration from environment variables and returns a populated
@@ -93,7 +86,6 @@ func Load() *Config {
 		EventHubBroker:                           os.Getenv("EVENT_HUB_BROKER"),
 		EventHubConnectionString:                 os.Getenv("EVENT_HUB_CONNECTION_STRING"),
 		EventHubTopic:                            os.Getenv("EVENT_HUB_TOPIC"),
-		CSMPortalWebBaseURL:                      os.Getenv("CSM_PORTAL_WEB_BASE_URL"),
 	}
 }
 

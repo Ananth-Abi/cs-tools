@@ -44,12 +44,14 @@ func newTestCreateIncidentClient(t *testing.T, incidentSysid string) *integratio
 }
 
 // TestSNIncidentService_CreateIncident_PublishesIncidentCreated verifies the
-// happy path: Title/ShortDescription/IncidentLink are built from req and
-// csmPortalBaseURL, with no enrichment call needed.
+// happy path: Title/ShortDescription are built from req, with no enrichment
+// call needed and no portal link involved — csm-notification-service builds
+// the "Open in Portal" link itself from the event's EntityID, the same way
+// it already does for case.created.
 func TestSNIncidentService_CreateIncident_PublishesIncidentCreated(t *testing.T) {
 	client := newTestCreateIncidentClient(t, testIncidentSysid)
 	publisher := &mockEventPublisher{}
-	svc := NewServiceNowIncidentService(client, publisher, "https://csm.example")
+	svc := NewServiceNowIncidentService(client, publisher)
 
 	req := validCreateIncidentRequest()
 	req.Subject = "Payment gateway down"
@@ -82,10 +84,6 @@ func TestSNIncidentService_CreateIncident_PublishesIncidentCreated(t *testing.T)
 	if payload.ShortDescription != "Customers cannot check out" {
 		t.Errorf("shortDescription = %q, want %q", payload.ShortDescription, "Customers cannot check out")
 	}
-	wantLink := "https://csm.example/operations/incidents/" + resp.Incident.ID
-	if payload.IncidentLink != wantLink {
-		t.Errorf("incidentLink = %q, want %q", payload.IncidentLink, wantLink)
-	}
 }
 
 // TestSNIncidentService_CreateIncident_ShortDescriptionFallsBackToSubject
@@ -95,7 +93,7 @@ func TestSNIncidentService_CreateIncident_PublishesIncidentCreated(t *testing.T)
 func TestSNIncidentService_CreateIncident_ShortDescriptionFallsBackToSubject(t *testing.T) {
 	client := newTestCreateIncidentClient(t, testIncidentSysid)
 	publisher := &mockEventPublisher{}
-	svc := NewServiceNowIncidentService(client, publisher, "https://csm.example")
+	svc := NewServiceNowIncidentService(client, publisher)
 
 	req := validCreateIncidentRequest()
 	req.Subject = "Payment gateway down"
@@ -116,29 +114,11 @@ func TestSNIncidentService_CreateIncident_ShortDescriptionFallsBackToSubject(t *
 	}
 }
 
-// TestSNIncidentService_CreateIncident_SkipsPublishWhenPortalBaseURLUnset
-// verifies that incident.created is not published at all when
-// CSM_PORTAL_WEB_BASE_URL isn't configured — a Chat alert with no working
-// "Open in Portal" link would defeat its own purpose.
-func TestSNIncidentService_CreateIncident_SkipsPublishWhenPortalBaseURLUnset(t *testing.T) {
-	client := newTestCreateIncidentClient(t, testIncidentSysid)
-	publisher := &mockEventPublisher{}
-	svc := NewServiceNowIncidentService(client, publisher, "")
-
-	req := validCreateIncidentRequest()
-	if _, err := svc.CreateIncident(contextWithUserIDToken("token"), req); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(publisher.calls) != 0 {
-		t.Fatalf("expected no publish call with an unconfigured portal base URL, got %d", len(publisher.calls))
-	}
-}
-
 // TestSNIncidentService_CreateIncident_NoPublisherConfigured verifies that a
 // nil publisher is a silent no-op, not a panic.
 func TestSNIncidentService_CreateIncident_NoPublisherConfigured(t *testing.T) {
 	client := newTestCreateIncidentClient(t, testIncidentSysid)
-	svc := NewServiceNowIncidentService(client, nil, "https://csm.example")
+	svc := NewServiceNowIncidentService(client, nil)
 
 	req := validCreateIncidentRequest()
 	if _, err := svc.CreateIncident(contextWithUserIDToken("token"), req); err != nil {
@@ -152,7 +132,7 @@ func TestSNIncidentService_CreateIncident_NoPublisherConfigured(t *testing.T) {
 func TestSNIncidentService_CreateIncident_PublishFailureDoesNotFailCreateIncident(t *testing.T) {
 	client := newTestCreateIncidentClient(t, testIncidentSysid)
 	publisher := &mockEventPublisher{err: errors.New("event hub unreachable")}
-	svc := NewServiceNowIncidentService(client, publisher, "https://csm.example")
+	svc := NewServiceNowIncidentService(client, publisher)
 
 	req := validCreateIncidentRequest()
 	resp, err := svc.CreateIncident(contextWithUserIDToken("token"), req)

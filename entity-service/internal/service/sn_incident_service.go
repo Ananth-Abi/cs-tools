@@ -187,17 +187,13 @@ type snIncidentService struct {
 	// publisher is nil when Event Hub is not configured — every call site
 	// must check before using it. See publishIncidentCreated.
 	publisher EventPublisherService
-	// csmPortalBaseURL builds publishIncidentCreated's IncidentLink
-	// (<csmPortalBaseURL>/operations/incidents/{id}) — empty when
-	// config.Config.CSMPortalWebBaseURL is unset.
-	csmPortalBaseURL string
 }
 
 // NewServiceNowIncidentService constructs an IncidentService backed by the
-// Choreo API. publisher/csmPortalBaseURL may be nil/empty (see
-// snIncidentService's doc comments on those fields).
-func NewServiceNowIncidentService(client *integrationservice.Client, publisher EventPublisherService, csmPortalBaseURL string) IncidentService {
-	return &snIncidentService{client: client, publisher: publisher, csmPortalBaseURL: csmPortalBaseURL}
+// Choreo API. publisher may be nil (see snIncidentService.publisher's doc
+// comment).
+func NewServiceNowIncidentService(client *integrationservice.Client, publisher EventPublisherService) IncidentService {
+	return &snIncidentService{client: client, publisher: publisher}
 }
 
 func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.SearchIncidentsRequest) (domain.SearchIncidentsResponse, error) {
@@ -755,12 +751,15 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 // and events.Validate on the receiving side requires ShortDescription
 // non-empty.
 //
-// Product/CallTo are left unset — this service has no product→Chat-space
-// mapping or on-call number of its own; csm-notification-service substitutes
-// its own configured defaults (see events.IncidentCreatedPayload's doc
-// comment). IncidentLink requires csmPortalBaseURL to be configured; without
-// it, publishing is skipped entirely (logged), since a Chat alert with no
-// working "Open in Portal" link defeats its own purpose.
+// Product/CallTo/IncidentLink are all left unset — this service only
+// publishes the fact that an incident was created; it has no
+// product→Chat-space mapping or on-call number of its own (Product/CallTo),
+// and doesn't know csm-notification-service's own portal URL configuration
+// either (IncidentLink, unlike an earlier version of this payload, isn't a
+// field at all — that service builds its own portal link from EntityID, the
+// same way it already does for case.created). csm-notification-service
+// substitutes its own configured Product/CallTo defaults when they're
+// absent — see events.IncidentCreatedPayload's doc comment.
 //
 // Runs synchronously, bounded by publishIncidentCreatedTimeout — see
 // publishCaseCreated's doc comment for why (same reasoning applies here).
@@ -768,10 +767,6 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 // incident already exists in ServiceNow by this point.
 func (s *snIncidentService) publishIncidentCreated(ctx context.Context, req domain.CreateIncidentRequest, incidentID string) {
 	if s.publisher == nil {
-		return
-	}
-	if s.csmPortalBaseURL == "" {
-		slog.WarnContext(ctx, "sn create incident: incident.created not published, CSM_PORTAL_WEB_BASE_URL is not configured", "incidentId", incidentID)
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, publishIncidentCreatedTimeout)
@@ -785,7 +780,6 @@ func (s *snIncidentService) publishIncidentCreated(ctx context.Context, req doma
 	payload, err := json.Marshal(events.IncidentCreatedPayload{
 		Title:            req.Subject,
 		ShortDescription: shortDescription,
-		IncidentLink:     s.csmPortalBaseURL + "/operations/incidents/" + incidentID,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "sn create incident: encode incident.created payload failed", "incidentId", incidentID, "error", err)

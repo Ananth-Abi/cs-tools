@@ -91,6 +91,12 @@ func (m *mockLinkResolver) CSMLink(caseID string) string {
 	return "https://csm.example/cases/" + caseID
 }
 
+// IncidentLink mirrors recipientlinks.Resolver.IncidentLink's own shape
+// closely enough for tests that check the Google Chat alert's portal link.
+func (m *mockLinkResolver) IncidentLink(incidentID string) string {
+	return "https://csm.example/operations/incidents/" + incidentID
+}
+
 func (m *mockLinkResolver) ResolveLinks(ctx context.Context, emails []string, projectID, caseID string) ([]recipientlinks.RecipientLink, error) {
 	m.gotEmails = emails
 	m.gotProjectID = projectID
@@ -459,7 +465,7 @@ func TestDispatcher_Handle_SendFailurePropagates(t *testing.T) {
 	}
 }
 
-const validIncidentRecord = `{"type":"incident.created","entityId":"INC-1","payload":{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}}`
+const validIncidentRecord = `{"type":"incident.created","entityId":"INC-1","payload":{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","callTo":"+15551234567"}}`
 
 func TestDispatcher_Handle_IncidentCreated(t *testing.T) {
 	chat := &mockGoogleChatSender{}
@@ -476,7 +482,7 @@ func TestDispatcher_Handle_IncidentCreated(t *testing.T) {
 	}
 	gotChat := chat.calls[0]
 	if gotChat.product != "api-manager" || gotChat.title != "P1 outage" ||
-		gotChat.shortDescription != "Everything is down" || gotChat.portalURL != "https://x/INC-1" {
+		gotChat.shortDescription != "Everything is down" || gotChat.portalURL != "https://csm.example/operations/incidents/INC-1" {
 		t.Errorf("unexpected SendIncidentAlert args: %+v", gotChat)
 	}
 	if len(call.calls) != 1 {
@@ -599,7 +605,7 @@ func TestDispatcher_Handle_IncidentCreated_UsesDefaultsWhenOmitted(t *testing.T)
 	call := &mockCallSender{}
 	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, false, nil, true, "api-manager", "+15559998888")
 
-	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1"}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"title":"P1 outage","shortDescription":"Everything is down"}}`)}
 
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -622,7 +628,7 @@ func TestDispatcher_Handle_IncidentCreated_SkipsChatWhenNoProduct(t *testing.T) 
 	call := &mockCallSender{}
 	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, false, nil, true, "", "")
 
-	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1","callTo":"+15551234567"}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"title":"P1 outage","shortDescription":"Everything is down","callTo":"+15551234567"}}`)}
 
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -645,7 +651,7 @@ func TestDispatcher_Handle_IncidentCreated_SkipsCallWhenNoCallTo(t *testing.T) {
 	call := &mockCallSender{}
 	d := NewDispatcher(&mockEmailSender{}, chat, call, &mockLinkResolver{}, false, nil, true, "", "")
 
-	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down","incidentLink":"https://x/INC-1"}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"incident.created","entityId":"INC-1","payload":{"product":"api-manager","title":"P1 outage","shortDescription":"Everything is down"}}`)}
 
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)

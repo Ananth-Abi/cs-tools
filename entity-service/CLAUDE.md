@@ -39,7 +39,6 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `EVENT_HUB_BROKER` | no | — | Kafka-compatible bootstrap address; feature-gates `EventPublisherService` (see "Event Hub publishing" below) |
 | `EVENT_HUB_CONNECTION_STRING` | no* | — | Event Hub namespace Shared Access Policy connection string. *Required once `EVENT_HUB_BROKER` is set |
 | `EVENT_HUB_TOPIC` | no* | — | Event Hub (Kafka topic) name. *Required once `EVENT_HUB_BROKER` is set |
-| `CSM_PORTAL_WEB_BASE_URL` | no | — | CSM portal base URL; builds `incident.created`'s `IncidentLink`. Unset means `incident.created` is never published, even with Event Hub configured |
 
 `CSM_TEAM_REGISTRY` and `CSM_USER_ROLES` are **not read here**. The team registry
 and the assignable-role allow-list are organisation vocabulary and live in the CSM
@@ -104,15 +103,21 @@ there is no Postgres-backed equivalent for either):
   `publishIncidentCreated`, called the same way. No enrichment round trip is
   needed here: `req.Subject`/`req.AdditionalComments` already carry
   everything the payload needs (`Title`/`ShortDescription`, the latter
-  falling back to `Subject` when `AdditionalComments` is absent).
-  `IncidentLink` is built from `cfg.CSMPortalWebBaseURL` + `/operations/incidents/{id}`;
-  publishing is skipped entirely (logged) when that config is unset, since a
-  Chat alert with no working "Open in Portal" link would defeat its own
-  purpose. Neither `Product` (which Google Chat space) nor `CallTo` (on-call
-  number) is ever set from this service — per explicit decision, that
-  resolution belongs entirely in `csm-notification-service`, which
-  substitutes its own configured defaults (`DEFAULT_CHAT_PRODUCT`/
-  `INCIDENT_DEFAULT_CALL_TO`) when either is absent from the payload.
+  falling back to `Subject` when `AdditionalComments` is absent). This
+  service does not build or send an `IncidentLink` at all — this stays
+  strictly a publisher of the fact that an incident was created, nothing
+  more; `csm-notification-service` builds its own "Open in Portal" link
+  from the event's `EntityID` (`recipientlinks.Resolver.IncidentLink`), the
+  same way it already builds `case.created`'s portal link rather than
+  trusting a caller-supplied one — see that service's own `CLAUDE.md`.
+  Likewise, neither `Product` (which Google Chat space) nor `CallTo`
+  (on-call number) is ever set from this service — per explicit decision,
+  all notification-routing resolution belongs entirely in
+  `csm-notification-service`, which substitutes its own configured defaults
+  (`DEFAULT_CHAT_PRODUCT`/`INCIDENT_DEFAULT_CALL_TO`) when either is absent
+  from the payload. Consuming events and sending emails/Chat alerts/calls is
+  never this service's job — only publishing the raw fact that something
+  happened is.
 
 Both helpers run **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`

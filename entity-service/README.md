@@ -141,15 +141,18 @@ Currently published, both ServiceNow-data-source-only: `case.created` (from
 name/watch-list emails — `Recipients` is the watch list's emails only, and publishing is
 skipped for a case with no watchers) and `incident.created` (from
 `snIncidentService.CreateIncident`, built directly from the request — no enrichment call
-needed). See entity-service's `CLAUDE.md` ("Event Hub publishing") for the full reasoning,
-including why both publish synchronously with a bounded timeout rather than async.
+needed). This service only publishes the fact that a case/incident was created — it builds
+no portal link for either; `incident.created`'s "Open in Portal" button target is built by
+csm-notification-service itself from the event's own entity id, the same way it already
+builds case.created's portal link. See entity-service's `CLAUDE.md` ("Event Hub publishing")
+for the full reasoning, including why both publish synchronously with a bounded timeout
+rather than async.
 
 | Variable | Description |
 |---|---|
 | `EVENT_HUB_BROKER` | Kafka bootstrap address: `<namespace>.servicebus.windows.net:9093` — the feature gate (optional) |
 | `EVENT_HUB_CONNECTION_STRING` | The namespace's Shared Access Policy connection string — must be namespace-scoped (no `EntityPath`), not scoped to a single Event Hub (required once `EVENT_HUB_BROKER` is set) |
 | `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (required once `EVENT_HUB_BROKER` is set) |
-| `CSM_PORTAL_WEB_BASE_URL` | CSM portal base URL; builds `incident.created`'s `IncidentLink`. Unset means `incident.created` is never published, even with Event Hub configured (optional) |
 
 ### SLA clocks
 
