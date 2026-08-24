@@ -41,7 +41,9 @@ func BuildEntityCaseTimeCardSearchRequest(projectID string, req CaseTimeCardSear
 	if req.Filters != nil {
 		filters.StartDate = req.Filters.StartDate
 		filters.EndDate = req.Filters.EndDate
-		filters.States = req.Filters.States
+		// Translated, never forwarded — same reason as the sibling
+		// BuildEntitySearchTimeCardsRequest. See timeCardStatesToEnums.
+		filters.States = timeCardStatesToEnums(req.Filters.States)
 	}
 	return entity.SearchTimeCardsRequest{Filters: filters, Pagination: req.Pagination}
 }

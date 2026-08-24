@@ -156,7 +156,10 @@ func BuildEntitySearchTimeCardsRequest(projectID string, req TimeCardSearchReque
 			ProjectIDs: []string{projectID},
 			StartDate:  req.Filters.StartDate,
 			EndDate:    req.Filters.EndDate,
-			States:     req.Filters.States,
+			// Translated, never forwarded: the frontend sends ServiceNow
+			// choice-list values ("Approved"), which entity-service rejects
+			// with a 400. See timeCardStatesToEnums.
+			States: timeCardStatesToEnums(req.Filters.States),
 		},
 		SortBy:     req.SortBy,
 		Pagination: req.Pagination,
