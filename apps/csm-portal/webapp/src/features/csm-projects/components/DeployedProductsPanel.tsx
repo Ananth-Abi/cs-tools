@@ -68,9 +68,9 @@ interface Feedback {
   severity: "success" | "error";
 }
 
-/** SN sizing fields arrive as strings; treat null/blank uniformly as "—". */
-function sizingValue(value?: string | null): string {
-  return value?.trim() ? value : "—";
+/** SN sizing fields are numeric; null/undefined render as "—". */
+function sizingValue(value?: number | null): string {
+  return value === null || value === undefined ? "—" : String(value);
 }
 
 /**

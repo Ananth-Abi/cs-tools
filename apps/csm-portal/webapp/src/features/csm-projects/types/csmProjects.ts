@@ -111,3 +111,20 @@ export interface SearchProjectsResponse {
   offset: number;
   hasMore: boolean;
 }
+
+/**
+ * A file attached to a deployment (`referenceType: "deployment"` on the
+ * shared, reference-generic `/attachments*` endpoints — see
+ * `BeAttachment` in `@api/backend/types`).
+ */
+export interface DeploymentAttachment {
+  id: string;
+  name: string;
+  /** MIME type (e.g. image/png, application/pdf). */
+  contentType: string;
+  sizeBytes: number;
+  description?: string | null;
+  uploadedBy: string;
+  uploadedOn: string;
+  downloadUrl?: string | null;
+}

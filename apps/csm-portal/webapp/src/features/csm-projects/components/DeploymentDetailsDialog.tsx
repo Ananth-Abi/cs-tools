@@ -30,6 +30,7 @@ import {
   formatDeploymentDate,
 } from "@features/csm-projects/utils/deployments";
 import DeployedProductsPanel from "@features/csm-projects/components/DeployedProductsPanel";
+import DeploymentAttachmentsPanel from "@features/csm-projects/components/DeploymentAttachmentsPanel";
 
 interface DeploymentDetailsDialogProps {
   deployment: BeDeployment;
@@ -135,6 +136,10 @@ export default function DeploymentDetailsDialog({
           )}
 
           <DeployedProductsPanel deploymentId={deployment.id} projectId={deployment.projectId} />
+
+          <Divider />
+
+          <DeploymentAttachmentsPanel deploymentId={deployment.id} />
         </Box>
         <Divider />
         <Box sx={{ display: "flex", justifyContent: "flex-end", p: 2 }}>
