@@ -103,6 +103,11 @@ import LinkCaseDialog, {
 import SetFixEtaDialog, {
   type FixEtaSavePayload,
 } from "@features/csm-cases/components/SetFixEtaDialog";
+import RequestUpdateDialog, {
+  type RequestUpdateSavePayload,
+} from "@features/csm-cases/components/RequestUpdateDialog";
+import { useRequestCaseUpdate } from "@features/csm-cases/api/useRequestCaseUpdate";
+import { deriveCaseUpdateRequestCategory } from "@features/csm-cases/utils/caseUpdateRequests";
 import CreateTaskDialog from "@features/csm-cases/components/CreateTaskDialog";
 import AddTagDialog from "@features/csm-cases/components/AddTagDialog";
 import { useCreateCaseTask } from "@features/csm-cases/api/useCreateCaseTask";
@@ -509,6 +514,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const createTask = useCreateCaseTask(caseId);
   const addTag = useAddCaseTag(caseId);
   const removeTag = useRemoveCaseTag(caseId);
+  const requestCaseUpdate = useRequestCaseUpdate();
   const findMyOngoingCases = useFindMyOngoingCases();
   const recordView = useRecordRecentView();
   const claims = useIdTokenClaims();
@@ -555,6 +561,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const [editDetailsOpen, setEditDetailsOpen] = useState(false);
   const [createTaskOpen, setCreateTaskOpen] = useState(false);
   const [fixEtaOpen, setFixEtaOpen] = useState(false);
+  const [requestUpdateOpen, setRequestUpdateOpen] = useState(false);
   const [addTagOpen, setAddTagOpen] = useState(false);
   // ISSU-026: closing or proposing a solution opens this instead of PATCHing
   // immediately — it collects the Post Resolution Activity and doubles as
@@ -603,6 +610,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // during render (React's recommended pattern for resetting state when a
   // prop changes) rather than in an effect, to avoid an extra render pass.
   const [prevCaseId, setPrevCaseId] = useState(caseId);
+  // Distinguishes this render's view of the page from every prior one, even
+  // a return visit to the same caseId (A -> B -> A) — a plain caseId
+  // comparison can't tell those apart, which is exactly what let a stale
+  // mutation callback from the first visit to A slip through on the second.
+  // Bumped inside the reset block below, once per genuine transition.
+  const caseViewTokenRef = useRef(0);
   if (caseId !== prevCaseId) {
     setPrevCaseId(caseId);
     setFeedback(null);
@@ -628,7 +641,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setEditDetailsOpen(false);
     setCreateTaskOpen(false);
     setFixEtaOpen(false);
+    setRequestUpdateOpen(false);
     setAddTagOpen(false);
+    // A new view of the page, distinct from every prior one even if it's a
+    // return visit to the same caseId (A -> B -> A) — see caseViewTokenRef
+    // below, which onRequestUpdate compares against instead of caseId itself.
+    caseViewTokenRef.current += 1;
     // The permalink-fragment-triggered force to Activities (for both this
     // case-change and a same-case fragment change) lives in one effect below
     // — see `permalinkForceRef` — rather than here, since `setActiveTab` now
@@ -1127,6 +1145,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
         return;
       }
 
+      // Request update opens the reminder-template dialog; the POST happens
+      // in onRequestUpdate once a stage (or custom message) is confirmed.
+      if (action.secondary === "request_update") {
+        setRequestUpdateOpen(true);
+        return;
+      }
+
       // Pause / resume the work sub-state via PATCH { workState }. Only for an
       // in-progress case assigned to the current user. Pausing is a direct
       // single-field patch. Resuming sets this case `ongoing`, so it runs the
@@ -1550,6 +1575,46 @@ export default function CsmCaseDetailPage(): JSX.Element {
       });
     },
     [patchCase, showError],
+  );
+
+  const onRequestUpdate = useCallback(
+    (payload: RequestUpdateSavePayload) => {
+      if (!caseId) return;
+      // Compared against caseViewTokenRef in the callbacks below, not caseId
+      // itself: a plain caseId comparison can't tell a still-pending request
+      // from *this* view of the case apart from one left over from an
+      // earlier visit to the same case (A -> B -> A), since the id is
+      // identical in both. The token bumps on every transition, including a
+      // return to a previously-visited case, so it can.
+      const submittedViewToken = caseViewTokenRef.current;
+      requestCaseUpdate.mutate(
+        { caseId, ...payload },
+        {
+          onSuccess: () => {
+            if (caseViewTokenRef.current !== submittedViewToken) return;
+            setRequestUpdateOpen(false);
+            setFeedback({
+              message: "Update request posted.",
+              severity: "success",
+              sticky: false,
+            });
+          },
+          onError: (err) => {
+            if (caseViewTokenRef.current !== submittedViewToken) return;
+            // 403 (not the assigned engineer) / 409 (case moved out of the
+            // eligible state since the dialog opened) both carry an
+            // actionable, specific backend message — surface it instead of a
+            // generic fallback, same treatment as every other 4xx on this page.
+            const msg =
+              err instanceof BackendApiError && err.status < 500 && err.message
+                ? err.message
+                : "Could not post the update request.";
+            showError(msg, err);
+          },
+        },
+      );
+    },
+    [caseId, requestCaseUpdate, showError],
   );
 
   const onAddTag = useCallback(
@@ -2615,6 +2680,15 @@ export default function CsmCaseDetailPage(): JSX.Element {
           isSaving={patchCase.isPending}
           onClose={() => setFixEtaOpen(false)}
           onSave={onSetFixEta}
+        />
+      )}
+
+      {requestUpdateOpen && (
+        <RequestUpdateDialog
+          category={deriveCaseUpdateRequestCategory(c)}
+          isSaving={requestCaseUpdate.isPending}
+          onClose={() => setRequestUpdateOpen(false)}
+          onSave={onRequestUpdate}
         />
       )}
 

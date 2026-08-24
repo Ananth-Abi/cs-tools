@@ -71,6 +71,15 @@ export interface CsmCaseRow {
    */
   caseType?: BeCaseType;
   /**
+   * Engagement type (e.g. "Migration"), only meaningful when `caseType` is
+   * `"engagement"`. Carried through unmodified from the backend's raw display
+   * label (not normalized/lowercased) — see `detailFromBeCase` in
+   * `useGetCsmCaseDetail.ts`. Consumers that need to test for "is this a
+   * migration engagement" must compare case-insensitively, matching the
+   * backend's own `strings.EqualFold` check in `RequestCaseUpdate`.
+   */
+  engagementType?: string;
+  /**
    * Work sub-state of an in-progress case (`ongoing` / `paused`); `null` when
    * the case is not `work_in_progress`. Drives the comment gate and the paused
    * indicator. See {@link commentGateReason}.

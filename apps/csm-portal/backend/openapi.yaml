@@ -274,6 +274,117 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /cases/{id}/request-update:
+    post:
+      summary: >
+        Post a customer-visible "request update" nudge comment on a case. Only
+        the case's assigned engineer may call this, and only while the case is
+        awaiting_info or solution_proposed. The message is one of three fixed
+        reminder templates (first/second/final), automatically drawn from a
+        generic or migration wording set depending on the case's own
+        type/engagementType, or a caller-supplied custom message. The
+        category is always server-determined; it is never accepted from the
+        caller.
+      operationId: postCasesIdRequestUpdate
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the case.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        description: Request-update payload.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RequestCaseUpdatePayload'
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseComment'
+        "400":
+          description: BadRequest — malformed body, an unrecognized stage, missing customContent for stage=custom, or customContent supplied alongside a fixed-template stage.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden — the caller is not the case's assigned engineer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "409":
+          description: Conflict — an update can only be requested while the case is awaiting_info or solution_proposed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /case-update-request-templates:
+    get:
+      summary: >
+        List the fixed "request update" reminder message templates, by
+        category (generic, migration) and stage (first, second, final). No
+        case-specific logic; a category has no "custom" entry since that
+        content is supplied by the caller of POST /cases/{id}/request-update.
+      operationId: getCaseUpdateRequestTemplates
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseUpdateRequestTemplates'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /cases/{id}/comments/search:
     post:
       summary: Search comments on a case.
@@ -8705,6 +8816,49 @@ components:
         content:
           type: string
           description: Comment text
+
+    RequestCaseUpdatePayload:
+      type: object
+      required:
+        - stage
+      description: >
+        The category (generic vs. migration) is never accepted here — it is
+        always resolved server-side from the case's own type/engagementType.
+      properties:
+        stage:
+          type: string
+          enum: [first, second, final, custom]
+          description: >
+            One of the three fixed reminder templates, or "custom" to supply
+            customContent instead.
+        customContent:
+          type: string
+          description: >
+            Required and non-empty when stage is "custom"; rejected (must be
+            absent) for every other stage.
+
+    CaseUpdateRequestTemplates:
+      type: object
+      description: >
+        Both categories' full stage->message maps. Neither category includes
+        a "custom" entry.
+      properties:
+        generic:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            first: "<p>Hi Team,</p>..."
+            second: "<p>Hi Team,</p>..."
+            final: "<p>Hi Team,</p>..."
+        migration:
+          type: object
+          additionalProperties:
+            type: string
+          example:
+            first: "<p>Hi Team,</p>..."
+            second: "<p>Hi Team,</p>..."
+            final: "<p>Hi Team,</p>..."
 
     SnCommentCreatePayload:
       type: object

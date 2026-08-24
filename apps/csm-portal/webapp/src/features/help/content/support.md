@@ -81,6 +81,12 @@ Comments in the timeline are color/role-tagged (Customer, WSO2, System, AI Agent
 scan who said what at a glance, and each has a permalink (click the timestamp) for referencing
 a specific comment.
 
+**Request update…**, in the case's **More** menu, posts a customer-visible comment nudging the
+customer for a response — pick a first, second, or final reminder (each shown as a read-only
+preview of the exact wording that will be posted) or write a custom message instead. It's only
+offered while the case is **Awaiting info** or has a **Solution proposed**, since those are the
+states where a reply from the customer is actually expected.
+
 ## Attachments
 
 Click an image or PDF attachment to preview it: images open inline in a dialog; PDFs open in a

@@ -565,6 +565,71 @@ describe("CaseActionBar — Set fix ETA", () => {
   });
 });
 
+describe("CaseActionBar — Request update (enabled only in Awaiting info / Solution proposed)", () => {
+  it("dispatches request_update when the case is awaiting info", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("awaiting_info", ["waiting_on_wso2"])}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /request update/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "request_update" });
+  });
+
+  it("dispatches request_update when the case has a proposed solution", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("solution_proposed", ["closed"])}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /request update/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "request_update" });
+  });
+
+  it.each<CaseState>(["work_in_progress", "waiting_on_wso2", "open", "closed"])(
+    "disables request_update while the case is %s, with an explanatory tooltip",
+    (state) => {
+      const onAction = vi.fn();
+      render(
+        <CaseActionBar caseDetail={caseInState(state, [])} onAction={onAction} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /more/i }));
+      const item = screen.getByRole("menuitem", { name: /request update/i });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(item);
+      expect(onAction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("disables request_update in an eligible state when the caller isn't the assigned engineer", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...caseInState("awaiting_info", ["waiting_on_wso2"]),
+          assigneeIsMe: false,
+        }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /request update/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+});
+
 describe("CaseActionBar — advisory close-gate (open task)", () => {
   it("disables the single-button Close transition with a tooltip when closeBlockedReason is set", () => {
     const onAction = vi.fn();

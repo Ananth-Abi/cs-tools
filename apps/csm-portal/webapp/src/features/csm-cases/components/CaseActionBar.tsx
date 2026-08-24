@@ -37,6 +37,7 @@ import {
   GitPullRequest,
   Inbox,
   Link as LinkIcon,
+  MessageCircleQuestion,
   PauseCircle,
   Pencil,
   Play,
@@ -48,6 +49,7 @@ import type {
   CaseLifecycleAction,
   CsmCaseDetail,
 } from "@features/csm-cases/types/csmCases";
+import { canRequestCaseUpdate } from "@features/csm-cases/utils/caseUpdateRequests";
 import type {
   CaseState,
   SeverityOrUnset,
@@ -221,6 +223,11 @@ interface SecondaryItem {
  *   - Link to incident               → ISSU-021 (PATCH /cases/{id} { parentId }, see
  *                                       LinkIncidentDialog.tsx)
  *   - Raise Git issue                → ISSU-020
+ *   - Request update…                → nudge the customer for a response using a fixed
+ *                                       reminder template or a custom message. Only offered
+ *                                       while the case is Awaiting info or Solution proposed
+ *                                       — see `POST /cases/{id}/request-update` and
+ *                                       RequestUpdateDialog.tsx.
  *   - Create change request          → service-request-only. Navigates to the change-request
  *                                       create form pre-filled with this service request as the
  *                                       "Originating service request" (POST /change-requests, then
@@ -309,6 +316,18 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
     caseDetail.state,
   );
 
+  // Opposite shape to the git-issue gate above: "Request update" is only
+  // meaningful while the ball is meant to be in the customer's court, so it's
+  // enabled ONLY in those two states rather than blocked in a few — mirrors
+  // the backend's own state gate in `RequestCaseUpdate` (409 outside these
+  // states). Also requires `assigneeIsMe`: the backend separately rejects a
+  // non-assignee with 403 (same ownership rule `CreateCaseComment` already
+  // enforces for public comments), so gating on state alone would let anyone
+  // open the dialog and fill it in only to hit a confusing 403 on submit.
+  const requestUpdateStateAllowed = canRequestCaseUpdate(caseDetail);
+  const requestUpdateAllowed =
+    requestUpdateStateAllowed && caseDetail.assigneeIsMe;
+
   // Only a service request can be the "Originating service request" a change
   // request links back to (see the create form's picker), so the action is
   // offered only there — mirrors the same `caseType === "service_request"`
@@ -335,6 +354,18 @@ function buildSecondaryItems(caseDetail: CsmCaseDetail): SecondaryItem[] {
         ? "This case is closed — it's read-only."
         : gitIssueStateBlocked
           ? "Git issues can only be raised while the case is Open, Work in progress, Waiting on WSO2, or Reopened."
+          : undefined,
+    },
+    {
+      key: "request_update",
+      label: "Request update…",
+      icon: <MessageCircleQuestion size={16} />,
+      divider: true,
+      disabled: !requestUpdateAllowed,
+      tooltip: !requestUpdateStateAllowed
+        ? "Requesting an update is only available while the case is Awaiting info or has a proposed solution."
+        : !requestUpdateAllowed
+          ? "Only the assigned engineer can request an update on this case."
           : undefined,
     },
     {

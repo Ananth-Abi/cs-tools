@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import {
@@ -138,6 +138,14 @@ const useGetCsmCaseDetailMock = vi.fn();
 vi.mock("@features/csm-cases/api/useGetCsmCaseDetail", () => ({
   useGetCsmCaseDetail: (id: string | undefined) => useGetCsmCaseDetailMock(id),
 }));
+
+// A real (non-vi.fn-per-render) mock so a test can capture the onSuccess/
+// onError options passed to `.mutate()` and invoke them later, simulating a
+// response that arrives after the page has navigated elsewhere.
+const requestCaseUpdateMutateMock = vi.fn();
+afterEach(() => {
+  requestCaseUpdateMutateMock.mockClear();
+});
 function defaultCaseDetailImpl(id: string | undefined): unknown {
   return {
     data: id ? buildCase(id) : undefined,
@@ -270,6 +278,12 @@ vi.mock("@features/csm-cases/api/useCaseTags", () => ({
 vi.mock("@features/csm-cases/api/useCsmCaseGithubIssue", () => ({
   usePostCaseGithubIssue: () => ({ mutate: vi.fn(), isPending: false }),
 }));
+vi.mock("@features/csm-cases/api/useRequestCaseUpdate", () => ({
+  useRequestCaseUpdate: () => ({
+    mutate: requestCaseUpdateMutateMock,
+    isPending: false,
+  }),
+}));
 vi.mock("@features/csm-timecards/api/useTimeCards", () => ({
   usePostTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
@@ -279,15 +293,20 @@ vi.mock("@features/csm-timecards/api/useTimeCards", () => ({
 vi.mock("@features/csm-cases/components/CsmCaseCommentInput", () => ({
   default: () => null,
 }));
-// Probe, not `null`: the change_case_type test below needs a way to open
-// ChangeCaseTypeDialog the same way a real user would (via the action bar's
-// menu). CaseActionBar's own rendering/gating is covered in
+// Probe, not `null`: the change_case_type and request_update tests below
+// need a way to open their dialogs the same way a real user would (via the
+// action bar's menu). CaseActionBar's own rendering/gating is covered in
 // CaseActionBar.test.tsx.
 vi.mock("@features/csm-cases/components/CaseActionBar", () => ({
   default: ({ onAction }: { onAction: (action: { secondary: string }) => void }) => (
-    <button type="button" onClick={() => onAction({ secondary: "change_case_type" })}>
-      stub open change case type
-    </button>
+    <>
+      <button type="button" onClick={() => onAction({ secondary: "change_case_type" })}>
+        stub open change case type
+      </button>
+      <button type="button" onClick={() => onAction({ secondary: "request_update" })}>
+        stub open request update
+      </button>
+    </>
   ),
   canAcknowledge: () => false,
 }));
@@ -351,6 +370,16 @@ vi.mock("@features/csm-cases/components/CreateTaskDialog", () => ({
 }));
 vi.mock("@features/csm-cases/components/AddTagDialog", () => ({
   default: () => null,
+}));
+// Probe, not `null`: the stale-callback regression test below needs a way to
+// submit the dialog the same way a real user would (its own template-preview/
+// custom-message UI is covered in RequestUpdateDialog.test.tsx).
+vi.mock("@features/csm-cases/components/RequestUpdateDialog", () => ({
+  default: ({ onSave }: { onSave: (payload: { stage: string }) => void }) => (
+    <button type="button" onClick={() => onSave({ stage: "first" })}>
+      stub save request update
+    </button>
+  ),
 }));
 vi.mock("@features/csm-cases/components/ChildCasesWidget", () => ({
   ChildCasesWidget: () => null,
@@ -835,6 +864,78 @@ describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () 
     // page has already moved on to case-2.
     expect(
       screen.queryByTestId("log-time-card-dialog-probe"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+// Fires real navigate() calls between case-1 and case-2, both directions —
+// the A -> B -> A regression below needs a return trip, unlike
+// NavigateToCaseTwoButton (one-way, used by the simpler dialog-reset tests).
+function NavigateBetweenCasesButtons(): JSX.Element {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button type="button" onClick={() => navigate("/cases/case-2")}>
+        Go to case 2
+      </button>
+      <button type="button" onClick={() => navigate("/cases/case-1")}>
+        Go to case 1
+      </button>
+    </>
+  );
+}
+
+describe("CsmCaseDetailPage — request-update stale-callback guard", () => {
+  it("ignores a request-update response that arrives after navigating away and back to the same case", () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/cases/case-1"]}>
+          <NavigateBetweenCasesButtons />
+          <LocationProbe />
+          <Routes>
+            <Route path="/cases/:caseId" element={<CsmCaseDetailPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    // Open the dialog and submit while still on case-1; capture the mutate
+    // options instead of letting the mock resolve immediately, so the
+    // response can be replayed later — simulating a slow network response.
+    fireEvent.click(screen.getByRole("button", { name: /stub open request update/i }));
+    fireEvent.click(screen.getByRole("button", { name: /stub save request update/i }));
+    expect(requestCaseUpdateMutateMock).toHaveBeenCalledTimes(1);
+    const [, mutateOptions] = requestCaseUpdateMutateMock.mock.calls[0] as [
+      unknown,
+      { onSuccess: () => void },
+    ];
+
+    // Navigate away and back to case-1 — a real round trip, not a no-op:
+    // caseId is identical before and after, which is exactly what a plain
+    // caseId comparison in the mutation guard can't tell apart from "never
+    // left". The view token (bumped on every transition, including this
+    // return trip) is what makes the guard correctly treat the pending
+    // request as stale here.
+    fireEvent.click(screen.getByRole("button", { name: /go to case 2/i }));
+    fireEvent.click(screen.getByRole("button", { name: /go to case 1/i }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/cases/case-1",
+    );
+
+    // The delayed response for the *original* case-1 visit arrives now.
+    act(() => {
+      mutateOptions.onSuccess();
+    });
+
+    // A caseId-only guard would treat this as still current (case-1 ==
+    // case-1) and show the success toast; the view-token guard correctly
+    // drops it since this is a different visit to case-1 than the one that
+    // submitted the request.
+    expect(
+      screen.queryByText(/update request posted/i),
     ).not.toBeInTheDocument();
   });
 });
