@@ -4718,6 +4718,12 @@ type CaseTimeCardCaseRef struct {
 	Name      string     `json:"name"`
 	UpdatedOn string     `json:"updatedOn"`
 	Project   *EntityRef `json:"project"`
+	// Audit fields the upstream supplies for the case behind a time-card
+	// rollup. Nullable rather than empty-string per the optional-field
+	// convention; UpdatedOn above predates it and is left as-is.
+	CreatedOn *string `json:"createdOn"`
+	CreatedBy *string `json:"createdBy"`
+	UpdatedBy *string `json:"updatedBy"`
 }
 
 // CaseTimeCardSummary is the time-card rollup for a single case.

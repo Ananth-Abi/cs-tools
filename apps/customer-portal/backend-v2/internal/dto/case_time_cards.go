@@ -55,6 +55,13 @@ type CaseTimeCardCaseRef struct {
 	Name      string         `json:"name"`
 	UpdatedOn string         `json:"updatedOn"`
 	Project   *ReferenceItem `json:"project"`
+	// CreatedBy is what the time-tracking card renders as
+	// "Created by <email>" (TimeTrackingCard.tsx); without it the card showed
+	// only the case number and title. createdOn/updatedBy come from the same
+	// upstream object and complete the audit set the Ballerina response carried.
+	CreatedOn *string `json:"createdOn,omitempty"`
+	CreatedBy *string `json:"createdBy,omitempty"`
+	UpdatedBy *string `json:"updatedBy,omitempty"`
 }
 
 // CaseTimeCardBillingInfo is a billable/non-billable time breakdown.
@@ -97,6 +104,9 @@ func MapCaseTimeCardSearchResponse(r entity.SearchCaseTimeCardsResponse) CaseTim
 				Number:    c.Case.Number,
 				Name:      c.Case.Name,
 				UpdatedOn: c.Case.UpdatedOn,
+				CreatedOn: c.Case.CreatedOn,
+				CreatedBy: c.Case.CreatedBy,
+				UpdatedBy: c.Case.UpdatedBy,
 			},
 			TotalTime:   c.TotalTime,
 			TotalCount:  c.TotalCount,
