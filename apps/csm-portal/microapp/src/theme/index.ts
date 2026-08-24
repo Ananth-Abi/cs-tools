@@ -38,6 +38,24 @@ const theme = extendTheme(WSO2Theme, {
         }),
       },
     },
+    // WSO2Theme's own MuiButton override sets a black `root` text color for every button, and
+    // only restores a readable color for the `outlined` variant (colored text) and `text`
+    // variant (theme.palette.text.primary) — `contained` has no override at all, so every
+    // contained button in the app (Create Case, Post, Save, filter-sheet Apply, this app's own
+    // CaseActionBar single-target button, ...) fell through to black text on its own colored
+    // background. One override here fixes all of them, keyed off whichever `color` prop the
+    // button actually uses (not just primary) so error/success/etc. contained buttons
+    // (TimeCardReviewDialog's Approve/Reject, CallRequestsTab's Cancel request) get their own
+    // matching contrastText too.
+    MuiButton: {
+      styleOverrides: {
+        contained: ({ theme, ownerState }) => {
+          const color = ownerState.color;
+          if (!color || color === "inherit") return {};
+          return { color: theme.vars.palette[color].contrastText };
+        },
+      },
+    },
   },
 }) as OxygenTheme;
 
