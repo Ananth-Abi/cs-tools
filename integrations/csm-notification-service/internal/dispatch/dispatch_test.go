@@ -20,7 +20,9 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
@@ -39,10 +41,16 @@ type mockEmailSender struct {
 	// one recipient group fail while another succeeds, to exercise
 	// sendPerGroup's per-group idempotency tracking.
 	errFor func(to []string) error
-	calls  []sentEmail
+	// mu guards calls — SendEmail is called concurrently by
+	// TestDispatcher_Handle_ConcurrentCallsClaimEachChannelOnce, unlike every
+	// other test here, which drives Handle sequentially.
+	mu    sync.Mutex
+	calls []sentEmail
 }
 
 func (m *mockEmailSender) SendEmail(ctx context.Context, to, cc, bcc, replyTo []string, subject, htmlBody string, attachments []notifications.EmailAttachment) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, sentEmail{to: to, subject: subject, htmlBody: htmlBody})
 	if m.errFor != nil {
 		return m.errFor(to)
@@ -55,11 +63,15 @@ type sentChatAlert struct {
 }
 
 type mockGoogleChatSender struct {
-	err   error
+	err error
+	// mu guards calls — see mockEmailSender.mu's doc comment.
+	mu    sync.Mutex
 	calls []sentChatAlert
 }
 
 func (m *mockGoogleChatSender) SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, sentChatAlert{product, title, shortDescription, portalURL})
 	return m.err
 }
@@ -69,11 +81,15 @@ type sentCall struct {
 }
 
 type mockCallSender struct {
-	err   error
+	err error
+	// mu guards calls — see mockEmailSender.mu's doc comment.
+	mu    sync.Mutex
 	calls []sentCall
 }
 
 func (m *mockCallSender) MakeCall(ctx context.Context, to, message string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, sentCall{to, message})
 	return m.err
 }
@@ -858,5 +874,78 @@ func TestMaskPhone(t *testing.T) {
 		if got := maskPhone(tt.phone); got != tt.want {
 			t.Errorf("maskPhone(%q) = %q, want %q", tt.phone, got, tt.want)
 		}
+	}
+}
+
+// concurrencyProbeChatSender is a googleChatSender that records the highest
+// number of SendIncidentAlert calls it ever had in flight at once — the
+// invariant TestDispatcher_Handle_ConcurrentClaimNeverOverlaps checks — by
+// sleeping briefly inside the "critical section" to widen the window a race
+// would need to land in. It deliberately does NOT check the total call
+// count: once a call completes and Dispatcher.forget releases its claim
+// (the same eager-cleanup-on-full-success behavior
+// TestDispatcher_Handle_IncidentCreated_ForgetsAfterFullSuccess already
+// pins as intentional), a later, independent Handle call legitimately
+// reclaims and resends — that is not the race being tested here.
+type concurrencyProbeChatSender struct {
+	mu        sync.Mutex
+	active    int
+	maxActive int
+	sends     int
+}
+
+func (s *concurrencyProbeChatSender) SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error {
+	s.mu.Lock()
+	s.active++
+	s.sends++
+	if s.active > s.maxActive {
+		s.maxActive = s.active
+	}
+	s.mu.Unlock()
+
+	time.Sleep(5 * time.Millisecond)
+
+	s.mu.Lock()
+	s.active--
+	s.mu.Unlock()
+	return nil
+}
+
+// TestDispatcher_Handle_ConcurrentClaimNeverOverlaps is a regression test
+// for a real race in the old alreadyDone/markDone pattern: checking "not
+// done yet" and marking "done" were two separate lock acquisitions, so two
+// Handle calls racing on the same record (e.g. during a Kafka
+// consumer-group rebalance transition, which this client's fencing isn't
+// guaranteed to make impossible) could both observe an unclaimed channel
+// and both attempt the same outbound call before either one recorded it as
+// claimed. claim() closes this by checking-and-setting in one lock
+// acquisition, so at most one caller is ever inside the send at once —
+// concurrencyProbeChatSender's maxActive is what this test actually
+// verifies, deliberately not the total send count (see its own doc
+// comment for why that's a separate, already-accepted behavior).
+func TestDispatcher_Handle_ConcurrentClaimNeverOverlaps(t *testing.T) {
+	chat := &concurrencyProbeChatSender{}
+	d := NewDispatcher(&mockEmailSender{}, chat, &mockCallSender{}, &mockLinkResolver{}, false, nil, true, "", "")
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(validIncidentRecord)}
+
+	const concurrency = 20
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			_ = d.Handle(context.Background(), record)
+		}()
+	}
+	wg.Wait()
+
+	chat.mu.Lock()
+	defer chat.mu.Unlock()
+	if chat.maxActive > 1 {
+		t.Errorf("maxActive = %d, want at most 1 (two Handle calls were inside SendIncidentAlert at the same time — claim() failed to serialize them)", chat.maxActive)
+	}
+	if chat.sends < 1 {
+		t.Error("expected at least one Chat alert to have been sent")
 	}
 }

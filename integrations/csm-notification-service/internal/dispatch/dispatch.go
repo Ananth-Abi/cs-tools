@@ -141,23 +141,37 @@ func NewDispatcher(email emailSender, googleChat googleChatSender, call callSend
 	}
 }
 
-// alreadyDone reports whether key has previously succeeded, without marking
-// anything.
-func (d *Dispatcher) alreadyDone(key string) bool {
+// claim atomically reserves key for the current attempt, returning true
+// only if it wasn't already claimed — a single lock acquisition, unlike the
+// separate check-then-later-mark pattern this replaced (alreadyDone,
+// checked before an outbound call, followed by a separate markDone only
+// after that call succeeds): two Handle calls racing on the same record
+// (e.g. during a Kafka consumer-group rebalance transition — normally
+// exclusive per partition, but not something this client's fencing is
+// guaranteed to enforce down to the microsecond) could otherwise both
+// observe an unclaimed key and both attempt the same outbound call before
+// either one marks it done.
+//
+// Every call site must release a claim it doesn't end up keeping: call
+// forget(key) immediately if the outbound call this claim was reserved for
+// fails, so a genuine retry can reclaim it. A successful call leaves the
+// claim in place — the caller's own full-record-succeeded-or-final-attempt
+// check (see handleCaseCreated/handleIncidentCreated/sendPerGroup) is what
+// eventually calls forget to release it for good.
+func (d *Dispatcher) claim(key string) bool {
 	d.doneMu.Lock()
 	defer d.doneMu.Unlock()
-	return d.done[key]
-}
-
-// markDone records key as succeeded.
-func (d *Dispatcher) markDone(key string) {
-	d.doneMu.Lock()
-	defer d.doneMu.Unlock()
+	if d.done[key] {
+		return false
+	}
 	d.done[key] = true
+	return true
 }
 
-// forget removes key — called once every channel for a record has
-// succeeded, so the map doesn't hold onto entries forever.
+// forget removes key — called either to release a claim whose outbound
+// call just failed (see claim's doc comment), or once every channel for a
+// record has fully succeeded (or record.IsFinalAttempt is true), so the map
+// doesn't hold onto a successful claim forever.
 func (d *Dispatcher) forget(key string) {
 	d.doneMu.Lock()
 	defer d.doneMu.Unlock()
@@ -228,10 +242,9 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 // DEFAULT_CHAT_PRODUCT both unset), the Chat alert is skipped (logged) the
 // same way handleIncidentCreated skips its own Chat alert in that case,
 // rather than calling SendIncidentAlert with an empty product — that would
-// return a real "no space configured" error, which (unlike
-// handleIncidentCreated) would retry this email alongside the Chat attempt
-// every time, since case.created's email step has no idempotency tracking
-// of its own (see below).
+// return a real "no space configured" error and, without the idempotency
+// tracking described below, retry every already-succeeded email group
+// alongside the Chat attempt every time.
 //
 // Every reaction here — each email group and the Chat alert — has
 // per-record idempotency tracking, the same mechanism handleIncidentCreated
@@ -287,22 +300,42 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		}
 	}
 
-	if !d.alreadyDone(chatKey) {
+	chatOwned := d.claim(chatKey)
+	if chatOwned {
 		product := p.Product
 		if product == "" {
 			product = d.defaultChatProduct
 		}
 		if product == "" {
 			slog.WarnContext(ctx, "dispatch: no product for case.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
-			d.markDone(chatKey)
-		} else if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr == nil {
-			d.markDone(chatKey)
-		} else {
+		} else if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr != nil {
 			errs = append(errs, chatErr)
+			d.forget(chatKey)
+			chatOwned = false
 		}
 	}
 
-	if len(errs) == 0 || record.IsFinalAttempt {
+	// record.IsFinalAttempt always forgets, regardless of ownership — see
+	// handleIncidentCreated's matching comment for why. Otherwise, only
+	// forget chatKey when this call actually owns it (chatOwned) — a call
+	// that lost the claim never touches it, so gating on len(errs) == 0
+	// alone (without checking ownership) would let a losing call, whose
+	// own contribution to errs is nil either way, forget a key a different
+	// concurrent call is actively relying on staying claimed.
+	//
+	// forgetEmailGroups is not similarly ownership-gated — each group's own
+	// claim is checked inside sendPerGroup, but this call site doesn't know
+	// which specific groups it actually won versus lost. Under the same
+	// concurrent-Handle-calls scenario handleIncidentCreated's comment
+	// describes, a losing call could still release a group it doesn't own.
+	// Narrower and lower-impact than the Chat case (one email group
+	// resending is cheap, matching sendPerGroup's own accepted-duplication
+	// precedent for other failure modes) — flagged here rather than fully
+	// plumbing per-group ownership back through sendPerGroup's return value.
+	if record.IsFinalAttempt {
+		d.forget(chatKey)
+		d.forgetEmailGroups(baseKey, groups)
+	} else if chatOwned && len(errs) == 0 {
 		d.forget(chatKey)
 		d.forgetEmailGroups(baseKey, groups)
 	}
@@ -459,7 +492,7 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups ma
 	var errs []error
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
 		key := baseKey + "/email/" + caseLink
-		if d.alreadyDone(key) {
+		if !d.claim(key) {
 			continue
 		}
 		to := groups[caseLink]
@@ -467,7 +500,6 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups ma
 			if len(d.emailDebugRecipients) == 0 {
 				slog.WarnContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true but EMAIL_DEBUG_RECIPIENTS is empty; not sending",
 					"subject", subject)
-				d.markDone(key)
 				continue
 			}
 			slog.InfoContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true; redirecting email to configured debug recipients",
@@ -476,8 +508,7 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups ma
 		}
 		if err := d.email.SendEmail(ctx, to, nil, nil, nil, subject, render(caseLink), nil); err != nil {
 			errs = append(errs, err)
-		} else {
-			d.markDone(key)
+			d.forget(key)
 		}
 	}
 	return errors.Join(errs...)
@@ -560,37 +591,53 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 	}
 
 	var chatErr error
-	if !d.alreadyDone(chatKey) {
+	chatOwned := d.claim(chatKey)
+	if chatOwned {
 		if product == "" {
 			slog.WarnContext(ctx, "dispatch: no product for incident.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
-			d.markDone(chatKey)
 		} else {
 			chatErr = d.googleChat.SendIncidentAlert(ctx, product, p.Title, p.ShortDescription, d.links.IncidentLink(entityID))
-			if chatErr == nil {
-				d.markDone(chatKey)
+			if chatErr != nil {
+				d.forget(chatKey)
+				chatOwned = false
 			}
 		}
 	}
 
 	var callErr error
-	if !d.alreadyDone(callKey) {
+	callOwned := d.claim(callKey)
+	if callOwned {
 		switch {
 		case !d.callSendingEnabled:
 			slog.InfoContext(ctx, "dispatch: call sending disabled (CALL_SENDING_ENABLED=false); not calling", "to", maskPhone(callTo))
-			d.markDone(callKey)
 		case callTo == "":
 			slog.WarnContext(ctx, "dispatch: no callTo for incident.created (payload and INCIDENT_DEFAULT_CALL_TO both empty); skipping call")
-			d.markDone(callKey)
 		default:
 			message := fmt.Sprintf("New incident: %s. %s", p.Title, p.ShortDescription)
 			callErr = d.call.MakeCall(ctx, callTo, message)
-			if callErr == nil {
-				d.markDone(callKey)
+			if callErr != nil {
+				d.forget(callKey)
+				callOwned = false
 			}
 		}
 	}
 
-	if (chatErr == nil && callErr == nil) || record.IsFinalAttempt {
+	// record.IsFinalAttempt always forgets both, regardless of ownership —
+	// eventbus.Consumer is done retrying this record either way, so nothing
+	// forgets these keys later if we don't do it now. Otherwise, only
+	// forget when THIS call actually owns both channels (chatOwned/
+	// callOwned — won their claim and resolved them this round): gating on
+	// chatErr/callErr being nil alone, without checking ownership, was the
+	// exact bug a concurrent Handle call for the same record could trigger
+	// — a call that lost a claim never touches that channel, so its own
+	// error variable for it stays its zero value (nil), indistinguishable
+	// from "I actually succeeded." Without the ownership check, that losing
+	// call would forget a key a different, still in-flight call is
+	// actively relying on staying claimed.
+	if record.IsFinalAttempt {
+		d.forget(chatKey)
+		d.forget(callKey)
+	} else if chatOwned && callOwned {
 		d.forget(chatKey)
 		d.forget(callKey)
 	}
