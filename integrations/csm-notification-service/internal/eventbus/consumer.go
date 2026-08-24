@@ -65,14 +65,17 @@ type Record struct {
 	// property a Handle implementation actually wants when deciding whether
 	// it's safe to release content-keyed idempotency state.
 	IsFinalAttempt bool
-	// NoMoreRetries is true only when IsFinalAttempt is true AND there is
-	// no further tier of retries coming for this event's content — i.e.
-	// onExhausted is nil, so processRecord will log and drop rather than
-	// dead-letter. The DLQ topic's own Consumer always has onExhausted=nil
-	// (see cmd/server/main.go), so this is true on its final attempt; the
-	// main topic's Consumer has onExhausted set (dead-letter), so its final
-	// attempt leaves this false — one more tier of attempts is coming, on
-	// the DLQ topic, for the identical content under new Kafka coordinates.
+	// NoMoreRetries is true only when there is no further tier of retries
+	// coming for this event's content, on any topic. It's set two ways:
+	// on IsFinalAttempt when onExhausted is nil (the DLQ topic's own
+	// Consumer always has onExhausted=nil — see cmd/server/main.go — so
+	// this is true on its final attempt; the main topic's Consumer has
+	// onExhausted set, so its own final attempt leaves this false, since
+	// one more tier of attempts is coming on the DLQ topic); or on the
+	// extra cleanup call processRecord makes when onExhausted itself
+	// fails (the dead-letter publish didn't go through, so the DLQ tier
+	// that would otherwise be coming never will — this really is the end
+	// of the line for this content, not just this topic's own attempts).
 	//
 	// A Handle that keys its own idempotency tracking off event content
 	// rather than Kafka coordinates (see dispatch.recordBaseKey) must gate
@@ -215,6 +218,23 @@ func processRecord(ctx context.Context, record Record, handle Handle, onExhauste
 		if dlqErr := onExhausted(ctx, record, err); dlqErr != nil {
 			slog.ErrorContext(ctx, "eventbus: dead-letter publish also failed; record is now unrecoverable outside Event Hub's retention window",
 				"topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "handleErr", err, "onExhaustedErr", dlqErr)
+			// The DLQ publish itself failed, so — unlike the ordinary
+			// exhaustion case below NoMoreRetries deliberately stays false
+			// for — there is truly no future delivery of this content
+			// coming on any topic; this record is being dropped for good.
+			// Call handle once more with NoMoreRetries now true, purely so
+			// a Handle that tracks content-keyed idempotency state (see
+			// dispatch.Dispatcher) gets a chance to release it — without
+			// this, it would never learn this record is done and would
+			// leak that state forever. Any channel already claimed is a
+			// no-op here (claim() rejects a key already held); this call's
+			// own error changes nothing about the commit decision below
+			// (the record is being dropped either way) but is still logged.
+			record.NoMoreRetries = true
+			if cleanupErr := handle(ctx, record); cleanupErr != nil {
+				slog.ErrorContext(ctx, "eventbus: final cleanup handle call after dead-letter failure returned an error (ignored — record is being dropped)",
+					"topic", record.Topic, "partition", record.Partition, "offset", record.Offset, "err", cleanupErr)
+			}
 		}
 		return true
 	}

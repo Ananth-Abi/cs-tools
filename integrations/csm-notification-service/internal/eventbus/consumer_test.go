@@ -115,6 +115,40 @@ func TestProcessRecord_OnExhaustedFailure_StillCommits(t *testing.T) {
 	}
 }
 
+// TestProcessRecord_OnExhaustedFailure_MakesCleanupCallWithNoMoreRetries is a
+// regression test for a real gap CodeRabbit flagged: when the dead-letter
+// publish itself fails, there is truly no future delivery of this record's
+// content coming on any topic — but without an extra call, a Handle that
+// tracks content-keyed idempotency state (see dispatch.Dispatcher) would
+// never learn that and would leak its tracking forever. processRecord must
+// call handle one more time, with NoMoreRetries set, purely so that
+// cleanup can happen.
+func TestProcessRecord_OnExhaustedFailure_MakesCleanupCallWithNoMoreRetries(t *testing.T) {
+	var calls []Record
+	handle := func(ctx context.Context, r Record) error {
+		calls = append(calls, r)
+		return errors.New("persistent failure")
+	}
+	onExhausted := func(ctx context.Context, record Record, handleErr error) error {
+		return errors.New("dead-letter topic unreachable")
+	}
+	ok := processRecord(context.Background(), Record{}, handle, onExhausted, 3, testRetryDelay)
+	if !ok {
+		t.Error("processRecord() = false, want true")
+	}
+	if len(calls) != 4 {
+		t.Fatalf("handle called %d times, want 4 (3 retries + 1 cleanup call after the dead-letter publish itself failed)", len(calls))
+	}
+	for i, c := range calls[:3] {
+		if c.NoMoreRetries {
+			t.Errorf("attempt %d: NoMoreRetries = true, want false (onExhausted hadn't been tried yet)", i+1)
+		}
+	}
+	if !calls[3].NoMoreRetries {
+		t.Error("cleanup call: NoMoreRetries = false, want true (the dead-letter publish failed — nothing will ever redeliver this content)")
+	}
+}
+
 func TestProcessRecord_ContextCanceledMidRetry_DoesNotCommit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	calls := 0
