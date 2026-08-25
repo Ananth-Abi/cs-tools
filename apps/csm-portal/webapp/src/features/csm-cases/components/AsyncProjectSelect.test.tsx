@@ -34,7 +34,7 @@ afterEach(() => {
 const MANAGED_CLOUD_PROJECT: BeProject = {
   id: "proj-managed",
   name: "Managed Cloud Co",
-  subscriptionType: "managed_cloud",
+  subscriptionType: "managed_cloud_subscription",
 };
 const SUBSCRIPTION_PROJECT: BeProject = {
   id: "proj-subscription",
@@ -43,7 +43,7 @@ const SUBSCRIPTION_PROJECT: BeProject = {
 };
 
 const isManagedCloudProject = (p: BeProject): boolean =>
-  p.subscriptionType === "managed_cloud";
+  p.subscriptionType === "managed_cloud_subscription";
 
 describe("AsyncProjectSelect — filterProject pagination", () => {
   it("keeps loading pages when the current page's matches are all filtered out", async () => {
