@@ -557,7 +557,7 @@ func TestSNCaseService_UpdateCase_PublishesStatusChanged(t *testing.T) {
 		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
 		"deployment": {"id": "", "name": ""},
 		"deployedProduct": {"id": "", "name": "", "version": ""},
-		"state": {"id": 10, "label": "Work In Progress"},
+		"state": {"id": 1, "label": "Open"},
 		"watchList": [
 			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
 		]
@@ -628,7 +628,7 @@ func TestSNCaseService_UpdateCase_SkipsPublishWhenNoWatchers(t *testing.T) {
 		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
 		"deployment": {"id": "", "name": ""},
 		"deployedProduct": {"id": "", "name": "", "version": ""},
-		"state": {"id": 10, "label": "Work In Progress"}
+		"state": {"id": 1, "label": "Open"}
 	}`
 	updateCaseBody := `{
 		"message": "Case updated successfully",
@@ -647,6 +647,55 @@ func TestSNCaseService_UpdateCase_SkipsPublishWhenNoWatchers(t *testing.T) {
 	}
 	if len(publisher.calls) != 0 {
 		t.Fatalf("expected no publish call for a case with no watchers, got %d", len(publisher.calls))
+	}
+}
+
+// TestSNCaseService_UpdateCase_SkipsPublishWhenStateUnchanged is a
+// regression test for a real false-positive-notification bug CodeRabbit
+// flagged: a PATCH that re-sends the case's own current state (e.g. a
+// caller resubmitting a resolution code without actually changing state)
+// must not send every watcher a false "status changed" email. UpdateCase
+// itself must still succeed — only the publish is skipped.
+func TestSNCaseService_UpdateCase_SkipsPublishWhenStateUnchanged(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	watcherSysid := sysid32('c')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-026",
+		"number": "CS0026001",
+		"title": "Same state re-PATCH",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 10, "label": "Work In Progress"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "state": {"id": 10, "label": "Work In Progress"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	newState := domain.CaseStateWorkInProgress
+	req := domain.UpdateCaseRequest{ID: caseID, State: &newState}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call when the state didn't actually change, got %d", len(publisher.calls))
 	}
 }
 

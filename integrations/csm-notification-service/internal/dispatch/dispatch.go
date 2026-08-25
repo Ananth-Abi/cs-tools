@@ -121,6 +121,24 @@ type Dispatcher struct {
 	// handling of one record.
 	doneMu sync.Mutex
 	done   map[string]bool
+
+	// recordsMu/records track, per baseKey (recordBaseKey — one entry per
+	// distinct event content, shared by every concurrent Handle call
+	// currently processing it), how many calls are currently in flight and
+	// whether any of them has hit an error. handleCaseCreated/
+	// handleIncidentCreated use this (via beginRecord) to decide whether
+	// it's safe to eagerly release their claimed channels before
+	// record.NoMoreRetries — see beginRecord's own doc comment for the real
+	// bug this closed.
+	recordsMu sync.Mutex
+	records   map[string]*recordState
+}
+
+// recordState is recordsMu/records' per-baseKey bookkeeping — see
+// beginRecord's doc comment.
+type recordState struct {
+	refcount  int
+	unhealthy bool
 }
 
 // NewDispatcher constructs a Dispatcher. See Dispatcher.emailDebugMode's and
@@ -139,6 +157,60 @@ func NewDispatcher(email emailSender, googleChat googleChatSender, call callSend
 		defaultChatProduct:   defaultChatProduct,
 		defaultOnCallNumber:  defaultOnCallNumber,
 		done:                 make(map[string]bool),
+		records:              make(map[string]*recordState),
+	}
+}
+
+// beginRecord registers that a call is starting work on baseKey and returns
+// a func to call exactly once, when that call is about to return, passing
+// whether this call's own attempt hit any error. The returned func's result
+// is true only for whichever call happens to be the last one still active
+// for baseKey (refcount reaches 0) AND neither it nor any sibling that ran
+// concurrently with it ever reported an error — i.e. only then is it
+// provably safe to eagerly release baseKey's claimed channels before
+// record.NoMoreRetries.
+//
+// This exists because a plain "am I the only one in flight right now"
+// check, taken on its own right before returning, has a real gap: two
+// concurrent calls finishing at close enough to the same instant can each
+// observe the other still in flight and neither release anything, even
+// though refcount is about to hit 0 — silently leaking that baseKey's
+// claims forever (nothing will revisit them: NoMoreRetries only ever fires
+// on a record that eventually exhausts every attempt, never one that
+// succeeds first). Deciding under the same lock that performs the
+// decrement — so exactly one caller ever observes "I just brought this to
+// 0" — closes that gap.
+//
+// It also closes the specific bug CodeRabbit flagged in handleCaseCreated:
+// a call that lost the claim race for every email group attempts nothing
+// for email, so its own error is nil either way; the old release condition
+// (chatOwned && no local errors) treated that as "fully done" and released
+// chatKey while a different, still in-flight call was genuinely mid-
+// SendEmail for that same record. Gating on refcount instead of on this
+// call's own narrow view removes that false signal: a losing call's
+// sibling is still counted as in flight until it actually returns.
+func (d *Dispatcher) beginRecord(baseKey string) func(hadError bool) bool {
+	d.recordsMu.Lock()
+	st, ok := d.records[baseKey]
+	if !ok {
+		st = &recordState{}
+		d.records[baseKey] = st
+	}
+	st.refcount++
+	d.recordsMu.Unlock()
+
+	return func(hadError bool) bool {
+		d.recordsMu.Lock()
+		defer d.recordsMu.Unlock()
+		if hadError {
+			st.unhealthy = true
+		}
+		st.refcount--
+		if st.refcount > 0 {
+			return false
+		}
+		delete(d.records, baseKey)
+		return !st.unhealthy
 	}
 }
 
@@ -286,9 +358,9 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 
 	baseKey := recordBaseKey(record)
 	chatKey := baseKey + "/chat"
+	endRecord := d.beginRecord(baseKey)
 
 	var errs []error
-	var owned []string
 
 	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
@@ -296,7 +368,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 	} else {
 		subject := fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle)
 		var emailErr error
-		owned, emailErr = d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
+		_, emailErr = d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 			return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
 				ReporterName:              p.ReporterName,
 				ProjectName:               p.ProjectName,
@@ -332,41 +404,39 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		}
 	}
 
-	// record.NoMoreRetries always forgets, regardless of ownership — see
+	// record.NoMoreRetries always forgets every key unconditionally,
+	// regardless of ownership or concurrent siblings — see
 	// handleIncidentCreated's matching comment for why (and why this must
 	// not be record.IsFinalAttempt: a record dead-lettered off the main
 	// topic gets a fresh attempt cycle on the DLQ topic under the exact
 	// same content key — see recordBaseKey — so releasing on the main
 	// topic's own final attempt would reopen an already-succeeded channel
-	// to being reclaimed and resent there). Otherwise, only forget chatKey
-	// when this call actually owns it (chatOwned) — a call that lost the
-	// claim never touches it, so gating on len(errs) == 0 alone (without
-	// checking ownership) would let a losing call, whose own contribution
-	// to errs is nil either way, forget a key a different concurrent call
-	// is actively relying on staying claimed.
+	// to being reclaimed and resent there). Safe because there is no future
+	// retry left to ever reclaim-and-resend a key regardless of who
+	// currently holds it.
 	//
-	// record.NoMoreRetries forgets every group unconditionally (via the
-	// original groups map, not owned — see below for why that's the correct
-	// one here), the same as chatKey: there is no future retry left to ever
-	// reclaim-and-resend a key regardless of who currently holds it, so
-	// blanket-forgetting is always safe on this branch specifically.
-	//
-	// The other branch is where ownership actually matters: gating on
-	// chatOwned && len(errs) == 0 alone (without also restricting which
-	// email keys get forgotten) was the exact bug a concurrent Handle call
-	// for the same record could trigger — a call that lost a claim race on
-	// some group never touches that group's key, so releasing anything
-	// wider than owned (sendPerGroup's own return value — exactly the
-	// groups THIS call claimed) would let a losing call release a key a
-	// different, still in-flight call actively relies on staying claimed.
-	// See forgetEmailGroups' doc comment for the live duplicate-email bug
-	// this closed.
-	if record.NoMoreRetries {
+	// Otherwise, only release once endRecord reports it's safe to — i.e.
+	// this is the last call still in flight for baseKey, and neither it nor
+	// any sibling that ran concurrently with it ever hit an error. Gating
+	// on chatOwned && len(errs) == 0 alone (this function's own narrow
+	// view, checked before beginRecord existed) was a real bug: a call
+	// that lost the claim race for every email group attempts nothing for
+	// email, so its own errs stays nil regardless — that let a losing call
+	// release chatKey while a different, still in-flight call was
+	// genuinely mid-SendEmail for the very same record. See beginRecord's
+	// own doc comment for the full reasoning. Once endRecord confirms it's
+	// safe, every group in the original groups map is released directly
+	// (not just whatever this call itself happened to claim) — same
+	// reasoning as the NoMoreRetries branch: confirmed safe regardless of
+	// exact ownership.
+	// endRecord must run exactly once per call — it decrements beginRecord's
+	// refcount — so it's called unconditionally here rather than only
+	// inside the else-if, even though its result is ignored on the
+	// NoMoreRetries branch.
+	safeToRelease := endRecord(len(errs) > 0)
+	if record.NoMoreRetries || safeToRelease {
 		d.forget(chatKey)
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
-	} else if chatOwned && len(errs) == 0 {
-		d.forget(chatKey)
-		d.forgetEmailGroups(baseKey, owned)
 	}
 
 	return errors.Join(errs...)
@@ -644,6 +714,7 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 
 	base := recordBaseKey(record)
 	chatKey, callKey := base+"/chat", base+"/call"
+	endRecord := d.beginRecord(base)
 
 	product := p.Product
 	if product == "" {
@@ -686,24 +757,34 @@ func (d *Dispatcher) handleIncidentCreated(ctx context.Context, record eventbus.
 		}
 	}
 
-	// record.NoMoreRetries always forgets both, regardless of ownership —
-	// there is truly no future retry left for this event's content either
-	// way (see NoMoreRetries' own doc comment for why this must not be
-	// record.IsFinalAttempt), so nothing forgets these keys later if we
-	// don't do it now. Otherwise, only forget when THIS call actually owns
-	// both channels (chatOwned/callOwned — won their claim and resolved
-	// them this round): gating on chatErr/callErr being nil alone, without
-	// checking ownership, was the exact bug a concurrent Handle call for
-	// the same record could trigger — a call that lost a claim never
-	// touches that channel, so its own error variable for it stays its
-	// zero value (nil), indistinguishable from "I actually succeeded."
-	// Without the ownership check, that losing call would forget a key a
-	// different, still in-flight call is actively relying on staying
-	// claimed.
-	if record.NoMoreRetries {
-		d.forget(chatKey)
-		d.forget(callKey)
-	} else if chatOwned && callOwned {
+	// record.NoMoreRetries always forgets both, regardless of ownership or
+	// concurrent siblings — there is truly no future retry left for this
+	// event's content either way (see NoMoreRetries' own doc comment for
+	// why this must not be record.IsFinalAttempt), so nothing forgets these
+	// keys later if we don't do it now.
+	//
+	// Otherwise, release only once endRecord confirms it's safe to — this
+	// is the last call still in flight for this record, and neither it nor
+	// any sibling that ran concurrently with it ever hit an error. An
+	// earlier version of this gated on chatOwned && callOwned instead
+	// (requiring this same call to have won both claims) — safer than
+	// gating on chatErr/callErr being nil alone (a call that loses a claim
+	// never touches that channel, so its own error variable stays nil,
+	// indistinguishable from "I actually succeeded"), but still had a real
+	// gap: two concurrent calls can legitimately split ownership (one wins
+	// chat, the other wins call), in which case *neither* call ever
+	// satisfies "I own both," even though both channels genuinely
+	// succeeded — that combination would never release until
+	// NoMoreRetries, for every future retry of a record that has already
+	// fully succeeded. beginRecord/endRecord (see its own doc comment)
+	// tracks completion across every concurrent call for this record
+	// directly, instead of inferring it from what any single call happened
+	// to own.
+	// endRecord must run exactly once per call — it decrements beginRecord's
+	// refcount — so it's called unconditionally here rather than only
+	// inside the branch that uses its result.
+	safeToRelease := endRecord(chatErr != nil || callErr != nil)
+	if record.NoMoreRetries || safeToRelease {
 		d.forget(chatKey)
 		d.forget(callKey)
 	}

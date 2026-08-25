@@ -1057,3 +1057,72 @@ func TestDispatcher_Handle_LosingConcurrentCallDoesNotReleaseWinnersClaim(t *tes
 		t.Errorf("done map should be empty after the winning call finished successfully, has %d entries", len(d.done))
 	}
 }
+
+// TestDispatcher_Handle_CaseCreated_ConcurrentBlockedEmailDoesNotDuplicateChat
+// is a regression test for CodeRabbit's "heavy lift" finding: a call that
+// loses the email claim race attempts nothing for email, so its own errs
+// stays empty regardless of whether the record is actually done. The old
+// release condition (chatOwned && no local errors) read that as "the whole
+// record succeeded" and released chatKey while a different, still
+// in-flight call was genuinely mid-SendEmail for the very same record —
+// letting that call's own eventual success reclaim and resend the Chat
+// alert. Here the winner claims email and blocks in SendEmail; the loser
+// (a second, concurrent Handle call for the exact same record) only gets
+// to attempt Chat. The loser must not release chatKey while the winner is
+// still blocked, and the whole record must end up with exactly one Chat
+// send once both calls have finished.
+func TestDispatcher_Handle_CaseCreated_ConcurrentBlockedEmailDoesNotDuplicateChat(t *testing.T) {
+	email := &blockingEmailSender{proceed: make(chan struct{})}
+	chat := &mockGoogleChatSender{}
+	d := NewDispatcher(email, chat, &mockCallSender{}, &mockLinkResolver{}, false, nil, true, "", "")
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","product":"api-manager","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`)}
+	baseKey := recordBaseKey(record)
+
+	winnerDone := make(chan struct{})
+	go func() {
+		defer close(winnerDone)
+		if err := d.Handle(context.Background(), record); err != nil {
+			t.Errorf("winner: Handle() error = %v, want nil", err)
+		}
+	}()
+
+	// Wait until the winner has actually claimed the email group and is
+	// blocked inside SendEmail before running the loser.
+	for atomic.LoadInt32(&email.calls) == 0 {
+		runtime.Gosched()
+	}
+
+	// The loser: a second, concurrent Handle call for the exact same
+	// record. It loses the email claim (the winner already holds it) and
+	// so is the one that gets to attempt the Chat alert.
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("loser: Handle() error = %v, want nil", err)
+	}
+
+	chat.mu.Lock()
+	sentSoFar := len(chat.calls)
+	chat.mu.Unlock()
+	if sentSoFar != 1 {
+		t.Fatalf("chat sent %d times before the winner finished, want exactly 1", sentSoFar)
+	}
+
+	// The bug this guards against: the loser releasing chatKey here (having
+	// seen a "clean" record with no errors of its own) would let a later
+	// attempt reclaim and resend it while the winner is still working.
+	d.doneMu.Lock()
+	chatStillClaimed := d.done[baseKey+"/chat"]
+	d.doneMu.Unlock()
+	if !chatStillClaimed {
+		t.Fatal("chatKey was released while the winner was still mid-SendEmail")
+	}
+
+	close(email.proceed)
+	<-winnerDone
+
+	chat.mu.Lock()
+	defer chat.mu.Unlock()
+	if len(chat.calls) != 1 {
+		t.Errorf("chat sent %d times total, want exactly 1", len(chat.calls))
+	}
+}

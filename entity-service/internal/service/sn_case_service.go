@@ -48,8 +48,10 @@ const publishCaseCreatedTimeout = 5 * time.Second
 // publishCaseCreatedTimeout.
 const publishCommentAddedTimeout = 5 * time.Second
 
-// publishStatusChangedTimeout bounds publishStatusChanged's enrichment
-// (GetCaseByID) + publish — same reasoning as publishCaseCreatedTimeout.
+// publishStatusChangedTimeout bounds two separate things that share the
+// same reasoning as publishCaseCreatedTimeout: UpdateCase's own pre-PATCH
+// GetCaseByID enrichment/no-op check, and publishStatusChanged's own
+// Publish call afterward.
 const publishStatusChangedTimeout = 5 * time.Second
 
 // watchListEmails extracts the non-empty emails from a case's watch list —
@@ -929,9 +931,13 @@ const resolveCommentAuthorNameSearchLimit = 20
 // itself fails; either way the caller logs and skips publishing rather
 // than sending an event with a fabricated or missing author name.
 func (s *snCaseService) resolveCommentAuthorName(ctx context.Context, caseID, commentID string) string {
+	pagination := domain.Pagination{Limit: resolveCommentAuthorNameSearchLimit}
+	if err := normalizePagination(&pagination); err != nil {
+		return ""
+	}
 	resp, err := s.SearchCaseComments(ctx, domain.SearchCaseCommentsRequest{
 		CaseID:     caseID,
-		Pagination: domain.Pagination{Limit: resolveCommentAuthorNameSearchLimit},
+		Pagination: pagination,
 	})
 	if err != nil {
 		return ""
@@ -1017,34 +1023,36 @@ func (s *snCaseService) publishCommentAdded(ctx context.Context, req domain.Crea
 // enum conversion (snCaseStateLabelToEnum), which silently leaves the
 // domain value unset on a label it doesn't recognize.
 //
+// before is the case as it was fetched by UpdateCase *before* issuing the
+// PATCH — the caller has already used it to confirm the case's state is
+// actually transitioning (a caller re-PATCHing the current state must not
+// trigger a false "status changed" notification to every watcher; see
+// UpdateCase's own comment at that fetch), and this reuses the exact same
+// enrichment for Recipients/ProjectID rather than issuing a second
+// GetCaseByID call after the PATCH: neither value depends on the update
+// that just happened.
+//
 // Recipients is the case's WatchList emails only — see publishCaseCreated's
 // own doc comment for why, and why an empty list silently skips
-// publishing. A fresh GetCaseByID call is needed for both Recipients and
-// ProjectID: snUpdateCaseResponse's own WatchList lacks nothing, but it has
-// no project reference at all.
+// publishing.
 //
 // Runs synchronously, bounded by publishStatusChangedTimeout — see
 // publishCaseCreated's own doc comment for why (same reasoning).
-func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newStatus string) {
+func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newStatus string, before domain.CaseView) {
 	if s.publisher == nil || newStatus == "" {
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, publishStatusChangedTimeout)
 	defer cancel()
 
-	cv, err := s.GetCaseByID(ctx, caseID)
-	if err != nil {
-		slog.ErrorContext(ctx, "sn update case: enrich case for case.status_changed publish failed", "caseId", caseID)
-		return
-	}
-	recipients := watchListEmails(cv.WatchList)
+	recipients := watchListEmails(before.WatchList)
 	if len(recipients) == 0 {
 		slog.InfoContext(ctx, "sn update case: case.status_changed not published, case has no watchers to email", "caseId", caseID)
 		return
 	}
 
 	payload, err := json.Marshal(events.StatusChangedPayload{
-		ProjectID:  cv.ProjectDetails.ID,
+		ProjectID:  before.ProjectDetails.ID,
 		CaseID:     caseID,
 		NewStatus:  newStatus,
 		Recipients: recipients,
@@ -1925,6 +1933,37 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		payload.PublicTicket = req.PublicTicket
 	}
 
+	// A state-change PATCH is only worth publishing case.status_changed for
+	// if the state is actually transitioning — a caller re-PATCHing the
+	// case's own current state (a no-op as far as ServiceNow is concerned)
+	// must not send every watcher a false "status changed" notification.
+	// Fetching the case's state now, before the PATCH below, both answers
+	// that question and supplies publishStatusChanged's own enrichment
+	// (ProjectID/Recipients) — a single GetCaseByID call either way, just
+	// moved earlier instead of adding a second one after the PATCH. Bounded
+	// by its own derived context (publishStatusChangedTimeout), same as
+	// every other publish helper's enrichment call, so a slow ServiceNow
+	// round trip here can't eat into this request's own deadline — unlike
+	// those helpers, this one sits in UpdateCase's critical path (before
+	// the PATCH, not fired off after success), so a failure here is caught
+	// and simply skips publishing rather than failing UpdateCase itself.
+	var caseBeforeUpdate domain.CaseView
+	publishStatusChange := false
+	if req.State != nil && s.publisher != nil {
+		enrichCtx, cancel := context.WithTimeout(ctx, publishStatusChangedTimeout)
+		cv, err := s.GetCaseByID(enrichCtx, req.ID)
+		cancel()
+		switch {
+		case err != nil:
+			slog.ErrorContext(ctx, "sn update case: enrich case for case.status_changed publish failed", "caseId", req.ID)
+		case cv.State == *req.State:
+			slog.InfoContext(ctx, "sn update case: case.status_changed not published, state is unchanged", "caseId", req.ID)
+		default:
+			caseBeforeUpdate = cv
+			publishStatusChange = true
+		}
+	}
+
 	raw, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(req.ID), token, payload)
 	if err != nil {
 		return domain.UpdateCaseResponse{}, err
@@ -2029,8 +2068,8 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		resp.Case.WorstCaseFixEta = snResp.Case.WorstCaseFixEta
 	}
 
-	if req.State != nil && snResp.Case.State != nil {
-		s.publishStatusChanged(ctx, req.ID, snResp.Case.State.Label)
+	if publishStatusChange && snResp.Case.State != nil {
+		s.publishStatusChanged(ctx, req.ID, snResp.Case.State.Label, caseBeforeUpdate)
 	}
 
 	return resp, nil
