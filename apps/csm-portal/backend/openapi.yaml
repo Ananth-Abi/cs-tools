@@ -956,6 +956,115 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
 
   /attachments/{id}:
+    get:
+      summary: Get a case attachment's metadata.
+      operationId: getAttachment
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the attachment.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+    patch:
+      summary: Update a case attachment's name and/or description.
+      operationId: updateAttachment
+      requestBody:
+        description: At least one of name or description must be provided (enforced upstream by the entity service).
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachmentUpdatePayload'
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the attachment.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachmentUpdateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "409":
+          description: Conflict — upstream rejected the update (e.g. neither name nor description provided).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
     delete:
       summary: Delete a case attachment (ServiceNow data source only).
       operationId: deleteCaseAttachment
@@ -6238,6 +6347,8 @@ components:
             - taskSLABusinessElapsedPercent
             - escalationLevel
             - escalation
+            - slaBreached
+            - accountEscalationActive
             - number
             - internalId
         op:
@@ -6335,6 +6446,16 @@ components:
         - **escalation** (isEmpty / isNotEmpty): values ignored; isEmpty
           matches cases with no active escalation, isNotEmpty matches cases
           with an active escalation.
+        - **slaBreached** (eq): "true"/"false". Matches cases with a
+          currently-breached SLA against ServiceNow's own named SLA
+          definition set (task_sla.has_breached + stage=in_progress). Only
+          applied by the ServiceNow data source.
+        - **accountEscalationActive** (eq): "true"/"false". Matches cases
+          whose ACCOUNT currently has an active escalation
+          (active_account_escalation.state in Requested/Escalated) --
+          distinct from **escalation** above, which is a case-level flag.
+          The two are independent and may both be queried. Only applied by
+          the ServiceNow data source.
         - **number** (eq): a single case number (e.g. "CS0441174"); matches
           exactly. Routed as a first-class filter rather than through the
           free-text searchQuery scan.
@@ -9178,6 +9299,41 @@ components:
         - deployment
         - incident
 
+    AttachmentUpdatePayload:
+      type: object
+      required: [referenceId, referenceType]
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+          description: UUID of the reference entity (case, change request, etc.)
+        referenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        name:
+          type: string
+          description: New file name. At least one of name or description is required.
+        description:
+          type: string
+          nullable: true
+          description: New description. At least one of name or description is required.
+
+    AttachmentUpdateResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        attachment:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            updatedOn:
+              type: string
+              format: date-time
+            updatedBy:
+              type: string
+
     AttachmentSearchPayload:
       type: object
       required: [referenceId, referenceType]
@@ -10652,6 +10808,41 @@ components:
                 A single incident number (e.g. "INC0010001"); matches
                 exactly. Routed as a first-class filter rather than through
                 the free-text searchQuery scan.
+            state:
+              type: array
+              items:
+                type: string
+              description: >-
+                Incident state keys (e.g. "NEW", "IN_PROGRESS", "CLOSED",
+                "CANCELLED"). Already accepted by the entity-service today;
+                documented here to catch this schema up to what the code
+                actually accepts.
+            businessServiceId:
+              type: array
+              items:
+                type: string
+                format: uuid
+              description: >-
+                Business-service UUIDs. Already accepted by the
+                entity-service today; documented here to catch this schema
+                up to what the code actually accepts.
+            slaViolated:
+              type: boolean
+              description: >-
+                Whether the incident has a breached SLA, derived from
+                task_sla.has_breached (a related-list join), not from
+                ServiceNow's raw made_sla field -- deliberately more
+                reliable than made_sla, which catches only a small fraction
+                of actually-breached incidents on this instance. Prefer
+                this field for correctness-sensitive SLA-breach filtering.
+            madeSla:
+              type: boolean
+              description: >-
+                ServiceNow's raw made_sla field on the incident. Different
+                from, and less reliable than, slaViolated above -- kept
+                only for exact parity with ServiceNow dashboards/reports
+                that filter on this raw field directly. Do not use this for
+                general SLA-breach filtering; use slaViolated instead.
         sortBy:
           type: object
           properties:

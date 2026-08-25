@@ -165,8 +165,9 @@ type DeployedProductService interface {
 	// CreateDeployedProduct creates a new deployed product in ServiceNow.
 	// Supported by the ServiceNow data source only.
 	CreateDeployedProduct(ctx context.Context, req domain.CreateDeployedProductRequest) (domain.CreateDeployedProductResponse, error)
-	// UpdateDeployedProduct updates a deployed product's cores, tps, description, or deactivates it.
-	// Either detail fields or Active=false must be provided, but not both.
+	// UpdateDeployedProduct updates a deployed product's cores, tps, description, update-level
+	// history, or deactivates it. Either detail fields (which now include Updates, a whole-array
+	// replace of the update-level history) or Active=false must be provided, but not both.
 	// Supported by the ServiceNow data source only.
 	UpdateDeployedProduct(ctx context.Context, req domain.UpdateDeployedProductRequest) (domain.UpdateDeployedProductResponse, error)
 }
@@ -221,6 +222,20 @@ type CaseService interface {
 	// DeleteCaseAttachment removes the attachment identified by req.AttachmentID from the case.
 	// A NotFoundError is returned if the attachment does not exist.
 	DeleteCaseAttachment(ctx context.Context, req domain.DeleteAttachmentRequest) (domain.DeleteAttachmentResponse, error)
+	// GetAttachment returns the metadata for the attachment identified by attachmentID,
+	// regardless of which reference type (case, deployment, ...) it is linked to.
+	// The backing ServiceNow response for a single attachment fetch does not carry
+	// referenceType (unlike the search response, which echoes back the caller's
+	// request filter), so the returned domain.Attachment's ReferenceType field is
+	// always the zero value; callers that need it already know it from context
+	// (e.g. the request that led them to the attachment id).
+	// A NotFoundError is returned if the attachment does not exist.
+	GetAttachment(ctx context.Context, attachmentID string) (domain.Attachment, error)
+	// UpdateAttachment updates the name and/or description of the attachment identified by
+	// req.AttachmentID, regardless of which reference type it is linked to. At least one of
+	// Name or Description must be provided. A NotFoundError is returned if the attachment
+	// does not exist.
+	UpdateAttachment(ctx context.Context, req domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error)
 	// AddCaseTag attaches a free-text label to the case identified by caseID.
 	// A ValidationError is returned for invalid input (e.g. malformed UUID, empty label).
 	AddCaseTag(ctx context.Context, caseID, label string) (domain.Tag, error)

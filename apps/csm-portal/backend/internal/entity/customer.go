@@ -384,6 +384,18 @@ func (c *CustomerEntityClient) DeleteCaseAttachment(ctx context.Context, attachm
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/attachments/%s", url.PathEscape(attachmentID)), nil)
 }
 
+// GetAttachment calls GET /attachments/{attachmentId} on the entity service.
+// Response is returned as raw JSON.
+func (c *CustomerEntityClient) GetAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/attachments/%s", url.PathEscape(attachmentID)), nil)
+}
+
+// UpdateAttachment calls PATCH /attachments/{attachmentId} on the entity service.
+// Response is returned as raw JSON.
+func (c *CustomerEntityClient) UpdateAttachment(ctx context.Context, attachmentID string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/attachments/%s", url.PathEscape(attachmentID)), body)
+}
+
 // SearchCatalogs calls POST /catalogs/search on the entity service.
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) SearchCatalogs(ctx context.Context, body []byte) ([]byte, error) {

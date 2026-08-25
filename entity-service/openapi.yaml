@@ -1362,6 +1362,90 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
 
   /attachments/{id}:
+    get:
+      summary: Get an attachment's metadata by id.
+      operationId: getAttachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Attachment UUID.
+      responses:
+        "200":
+          description: Attachment metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attachment'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Attachment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Update an attachment's name and/or description (ServiceNow data source only).
+      operationId: updateAttachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Attachment UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAttachmentRequest'
+      responses:
+        "200":
+          description: Attachment updated successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateAttachmentResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Attachment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
     delete:
       summary: Delete a case attachment (ServiceNow data source only).
       operationId: deleteCaseAttachment
@@ -4735,20 +4819,39 @@ components:
           allOf:
             - $ref: '#/components/schemas/DeployedProductVersionRef'
         cores:
-          type: string
+          type: integer
           nullable: true
         tps:
-          type: string
+          type: number
           nullable: true
         category:
           type: string
           nullable: true
+        updates:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/ProductUpdateEntry'
+          description: Update-level history recorded against this deployed product.
         createdOn:
           type: string
           format: date-time
         updatedOn:
           type: string
           format: date-time
+
+    ProductUpdateEntry:
+      type: object
+      required: [updateLevel, date]
+      properties:
+        updateLevel:
+          type: integer
+        date:
+          type: string
+          format: date
+        details:
+          type: string
+          nullable: true
 
     SearchDeployedProductsResponse:
       type: object
@@ -4818,7 +4921,7 @@ components:
 
     UpdateDeployedProductRequest:
       oneOf:
-        - description: Update deployed product detail fields. At least one of cores, tps, or description must be provided.
+        - description: Update deployed product detail fields. At least one of cores, tps, description, or updates must be provided.
           type: object
           minProperties: 1
           additionalProperties: false
@@ -4839,6 +4942,13 @@ components:
               type: string
               nullable: true
               description: Description of the deployed product.
+            updates:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProductUpdateEntry'
+              description: >-
+                Whole-array replace of the deployed product's update-level history: fetch the
+                current array, mutate it client-side, and PATCH the full array back.
         - description: Deactivate the deployed product. active must be false; no other fields may be present.
           type: object
           required: [active]
@@ -4873,6 +4983,12 @@ components:
           format: date-time
         updatedBy:
           type: string
+        updates:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/ProductUpdateEntry'
+          description: The deployed product's update-history array as it stands after the write.
 
     UpdateCaseRequest:
       type: object
@@ -6539,6 +6655,49 @@ components:
       properties:
         message:
           type: string
+
+    UpdateAttachmentRequest:
+      type: object
+      required: [referenceId, referenceType]
+      description: >-
+        At least one of name or description must be provided. referenceId/referenceType scope
+        the update the same way SearchAttachmentsRequest does. description is nullable: an
+        explicit null clears it, distinct from an omitted field (which leaves it unchanged).
+      properties:
+        referenceId:
+          type: string
+          format: uuid
+        referenceType:
+          $ref: '#/components/schemas/ReferenceType'
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+      anyOf:
+        - required: [name]
+        - required: [description]
+
+    UpdatedAttachment:
+      type: object
+      required: [id, updatedOn, updatedBy]
+      properties:
+        id:
+          type: string
+          format: uuid
+        updatedOn:
+          type: string
+          format: date-time
+        updatedBy:
+          type: string
+
+    UpdateAttachmentResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        attachment:
+          $ref: '#/components/schemas/UpdatedAttachment'
 
     ChangeRequestFieldFilter:
       type: object

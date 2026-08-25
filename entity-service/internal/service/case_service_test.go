@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -306,5 +307,34 @@ func TestCaseService_UpdateCase_RejectsTypeTransferFields(t *testing.T) {
 				t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
 			}
 		})
+	}
+}
+
+// TestCaseService_GetAttachment_ServiceUnavailable and
+// TestCaseService_UpdateAttachment_ServiceUnavailable prove the Postgres data
+// source reports the documented 503 for attachment reads/writes -- there is no
+// Postgres-backed attachment store, so the route must not silently succeed or
+// 404, it must say the operation is unsupported on this data source.
+func TestCaseService_GetAttachment_ServiceUnavailable(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{})
+
+	_, err := svc.GetAttachment(context.Background(), "11111111-1111-1111-1111-111111111111")
+	var sue *apierror.ServiceUnavailableError
+	if !errors.As(err, &sue) {
+		t.Fatalf("GetAttachment error = %v (%T), want *apierror.ServiceUnavailableError", err, err)
+	}
+}
+
+func TestCaseService_UpdateAttachment_ServiceUnavailable(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{})
+
+	_, err := svc.UpdateAttachment(context.Background(), domain.UpdateAttachmentRequest{
+		AttachmentID:  "11111111-1111-1111-1111-111111111111",
+		ReferenceID:   "22222222-2222-2222-2222-222222222222",
+		ReferenceType: domain.ReferenceTypeDeployment,
+	})
+	var sue *apierror.ServiceUnavailableError
+	if !errors.As(err, &sue) {
+		t.Fatalf("UpdateAttachment error = %v (%T), want *apierror.ServiceUnavailableError", err, err)
 	}
 }

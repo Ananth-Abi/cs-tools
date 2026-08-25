@@ -2284,6 +2284,118 @@ func (s *snCaseService) DeleteCaseAttachment(ctx context.Context, req domain.Del
 	return domain.DeleteAttachmentResponse{Message: snResp.Message}, nil
 }
 
+// GetAttachment implements CaseService.GetAttachment for the ServiceNow data source.
+// The GET /attachments/{id} response does not carry referenceType (mirroring the
+// /attachments/search response's snAttachment shape), so the returned domain.Attachment's
+// ReferenceType is left as the zero value -- callers that need it already know it from
+// context (e.g. the request that led them to the attachment id).
+func (s *snCaseService) GetAttachment(ctx context.Context, attachmentID string) (domain.Attachment, error) {
+	if err := validateUUIDs("id", []string{attachmentID}); err != nil {
+		return domain.Attachment{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	raw, err := s.client.Get(ctx, "/attachments/"+uuidToSysid(attachmentID), token)
+	if err != nil {
+		return domain.Attachment{}, err
+	}
+
+	var a snAttachment
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return domain.Attachment{}, fmt.Errorf("sn get attachment: parse response: %w", err)
+	}
+
+	createdOn, err := time.Parse(snCreatedOnLayout, a.CreatedOn)
+	if err != nil {
+		return domain.Attachment{}, fmt.Errorf("sn get attachment: parse createdOn %q: %w", a.CreatedOn, err)
+	}
+
+	return domain.Attachment{
+		ID:          sysidToUUID(a.ID),
+		ReferenceID: sysidToUUID(a.ReferenceID),
+		Name:        a.Name,
+		Type:        a.Type,
+		SizeBytes:   a.SizeBytes,
+		Description: a.Description,
+		CreatedBy:   snUserReference(a.CreatedByUser, a.CreatedBy, a.CreatedByFullName),
+		CreatedOn:   createdOn,
+		DownloadURL: a.DownloadURL,
+		PreviewURL:  a.PreviewURL,
+	}, nil
+}
+
+// snUpdateAttachmentPayload is the Choreo PATCH /attachments/{id} request body.
+// referenceType "deployment" requires at least one of name/description; referenceType "case"
+// requires name and forbids description -- both enforced upstream, not re-validated here.
+// Description is json.RawMessage so an explicit null can be distinguished from an omitted field.
+type snUpdateAttachmentPayload struct {
+	ReferenceID   string          `json:"referenceId"`
+	ReferenceType string          `json:"referenceType"`
+	Name          *string         `json:"name,omitempty"`
+	Description   json.RawMessage `json:"description,omitempty"`
+}
+
+type snUpdateAttachmentResponse struct {
+	Message    string `json:"message"`
+	Attachment struct {
+		ID        string `json:"id"`
+		UpdatedOn string `json:"updatedOn"`
+		UpdatedBy string `json:"updatedBy"`
+	} `json:"attachment"`
+}
+
+// UpdateAttachment implements CaseService.UpdateAttachment for the ServiceNow data source.
+func (s *snCaseService) UpdateAttachment(ctx context.Context, req domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error) {
+	if err := validateUUIDs("id", []string{req.AttachmentID}); err != nil {
+		return domain.UpdateAttachmentResponse{}, err
+	}
+	if err := validateUUIDs("referenceId", []string{req.ReferenceID}); err != nil {
+		return domain.UpdateAttachmentResponse{}, err
+	}
+	if _, ok := validReferenceTypes[req.ReferenceType]; !ok {
+		return domain.UpdateAttachmentResponse{}, &apierror.ValidationError{Msg: "referenceType is invalid: " + string(req.ReferenceType)}
+	}
+	if req.Name == nil && len(req.Description) == 0 {
+		return domain.UpdateAttachmentResponse{}, &apierror.ValidationError{Msg: "at least one of name or description must be provided"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snUpdateAttachmentPayload{
+		ReferenceID:   uuidToSysid(req.ReferenceID),
+		ReferenceType: string(req.ReferenceType),
+		Name:          req.Name,
+	}
+	if len(req.Description) > 0 {
+		payload.Description = req.Description
+	}
+
+	raw, err := s.client.Patch(ctx, "/attachments/"+uuidToSysid(req.AttachmentID), token, payload)
+	if err != nil {
+		return domain.UpdateAttachmentResponse{}, err
+	}
+
+	var snResp snUpdateAttachmentResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.UpdateAttachmentResponse{}, fmt.Errorf("sn update attachment: parse response: %w", err)
+	}
+
+	updatedOn, err := time.Parse(snCreatedOnLayout, snResp.Attachment.UpdatedOn)
+	if err != nil {
+		return domain.UpdateAttachmentResponse{}, fmt.Errorf("sn update attachment: parse updatedOn %q: %w", snResp.Attachment.UpdatedOn, err)
+	}
+
+	return domain.UpdateAttachmentResponse{
+		Message: snResp.Message,
+		Attachment: domain.UpdatedAttachment{
+			ID:        sysidToUUID(snResp.Attachment.ID),
+			UpdatedOn: updatedOn,
+			UpdatedBy: snResp.Attachment.UpdatedBy,
+		},
+	}, nil
+}
+
 // validateOrGroupEnums validates one AnyOf branch's enum-valued fields
 // against the same validXxx maps the top-level (AND-only) filters use,
 // mirroring that validation exactly (unrecognized values would otherwise be

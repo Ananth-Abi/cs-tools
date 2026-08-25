@@ -44,6 +44,16 @@ environment), each with its own type, description, and the products deployed to 
 Deployments tab lists a project's deployments and lets you create one, edit its details, or
 deactivate it. Deactivating a deployment marks it inactive rather than deleting it.
 
+Opening a deployment shows its deployed products and attachments:
+
+- **Deployed products**: create, edit, or deactivate a product deployed to that
+  environment. Editing a deployed product has two tabs, each saving independently:
+  **Details** (cores, TPS, description), saved with a **Save changes** action, and
+  **Update History**, where each add, edit (of the latest entry), or delete of a
+  version-update entry (update level, date, and optional details) saves immediately.
+- **Attachments**: upload, list, edit the name/description of, download, or delete
+  documents attached to the deployment.
+
 ### Project contacts
 
 The Project contacts tab lists the people registered on a project (name, email, roles, and

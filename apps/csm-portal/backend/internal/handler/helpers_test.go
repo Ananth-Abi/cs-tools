@@ -107,6 +107,8 @@ type mockEntityCaseClient struct {
 	searchCaseAttachmentsFn    func(ctx context.Context, body []byte) ([]byte, error)
 	getCaseAttachmentContentFn func(ctx context.Context, attachmentID string) ([]byte, string, error)
 	deleteCaseAttachmentFn     func(ctx context.Context, attachmentID string) ([]byte, error)
+	getAttachmentFn            func(ctx context.Context, attachmentID string) ([]byte, error)
+	updateAttachmentFn         func(ctx context.Context, attachmentID string, body []byte) ([]byte, error)
 	createCallRequestFn        func(ctx context.Context, body []byte) ([]byte, error)
 	searchCallRequestsFn       func(ctx context.Context, body []byte) ([]byte, error)
 	searchAllCallRequestsFn    func(ctx context.Context, body []byte) ([]byte, error)
@@ -210,6 +212,20 @@ func (m *mockEntityCaseClient) DeleteCaseAttachment(ctx context.Context, attachm
 		return m.deleteCaseAttachmentFn(ctx, attachmentID)
 	}
 	return []byte(`{"message":"Attachment deleted successfully."}`), nil
+}
+
+func (m *mockEntityCaseClient) GetAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	if m.getAttachmentFn != nil {
+		return m.getAttachmentFn(ctx, attachmentID)
+	}
+	return []byte(`{}`), nil
+}
+
+func (m *mockEntityCaseClient) UpdateAttachment(ctx context.Context, attachmentID string, body []byte) ([]byte, error) {
+	if m.updateAttachmentFn != nil {
+		return m.updateAttachmentFn(ctx, attachmentID, body)
+	}
+	return []byte(`{}`), nil
 }
 
 func (m *mockEntityCaseClient) CreateCallRequest(ctx context.Context, body []byte) ([]byte, error) {
