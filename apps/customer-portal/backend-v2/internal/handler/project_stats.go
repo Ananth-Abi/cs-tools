@@ -251,7 +251,13 @@ func (h *ProjectStatsHandler) GetProjectTimeCardStats(w http.ResponseWriter, r *
 		return
 	}
 
-	result, err := h.entity.GetProjectTimeCardStats(r.Context(), id, r.URL.Query().Get("startDate"), r.URL.Query().Get("endDate"))
+	startDate := r.URL.Query().Get("startDate")
+	endDate := r.URL.Query().Get("endDate")
+	if !validateDateParams(w, dateParam{"startDate", startDate}, dateParam{"endDate", endDate}) {
+		return
+	}
+
+	result, err := h.entity.GetProjectTimeCardStats(r.Context(), id, startDate, endDate)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetProjectTimeCardStats failed", "userID", user.UserID, "projectID", id, "err", summarizeErr(err))
 		mapUpstreamError(w, err, "Failed to retrieve time card statistics.")
@@ -309,6 +315,15 @@ func (h *ProjectStatsHandler) SearchProjectCaseTimeCards(w http.ResponseWriter, 
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
+	}
+
+	if req.Filters != nil {
+		if !validateDateParams(w,
+			dateParam{"filters.startDate", derefString(req.Filters.StartDate)},
+			dateParam{"filters.endDate", derefString(req.Filters.EndDate)},
+		) {
+			return
+		}
 	}
 
 	result, err := h.entity.SearchCaseTimeCards(r.Context(), dto.BuildEntityCaseTimeCardSearchRequest(id, req))

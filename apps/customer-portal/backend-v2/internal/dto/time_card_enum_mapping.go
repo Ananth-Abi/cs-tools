@@ -46,6 +46,7 @@ var timeCardStateToEnum = map[string]string{
 	"approved":  "approved",
 	"rejected":  "rejected",
 	"processed": "processed",
+	"recalled":  "recalled",
 }
 
 // timeCardStatesToEnums translates the portal's time-card state filter values

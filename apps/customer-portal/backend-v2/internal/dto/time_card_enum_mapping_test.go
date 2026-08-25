@@ -33,7 +33,7 @@ func TestTimeCardStatesToEnums_TranslatesServiceNowLabels(t *testing.T) {
 		want []string
 	}{
 		"the failing case":  {[]string{"Approved"}, []string{"approved"}},
-		"all five labels":   {[]string{"Pending", "Submitted", "Approved", "Rejected", "Processed"}, []string{"pending", "submitted", "approved", "rejected", "processed"}},
+		"all six labels":    {[]string{"Pending", "Submitted", "Approved", "Rejected", "Processed", "Recalled"}, []string{"pending", "submitted", "approved", "rejected", "processed", "recalled"}},
 		"already enum":      {[]string{"approved"}, []string{"approved"}},
 		"mixed case":        {[]string{"aPpRoVeD"}, []string{"approved"}},
 		"surrounding space": {[]string{"  Approved  "}, []string{"approved"}},
@@ -102,8 +102,11 @@ func TestTimeCardStatesToEnums_KeepsKnownDropsUnknown(t *testing.T) {
 // whichever filter value maps to the new state.
 func TestTimeCardStateTableCoversEntityServiceEnum(t *testing.T) {
 	// Verbatim from validTimeCardStates in
-	// entity-service/internal/service/sn_time_card_service.go.
-	entityServiceEnum := []string{"pending", "submitted", "approved", "rejected", "processed"}
+	// entity-service/internal/service/sn_time_card_service.go. "recalled" was
+	// missed on the first pass; with unknown values now forwarded rather than
+	// dropped, omitting a state entity-service actually accepts would turn a
+	// legitimate filter into a 400.
+	entityServiceEnum := []string{"pending", "submitted", "approved", "rejected", "processed", "recalled"}
 
 	for _, want := range entityServiceEnum {
 		got, ok := timeCardStateToEnum[want]
