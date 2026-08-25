@@ -79,6 +79,17 @@ type Dispatcher struct {
 	call       callSender
 	links      linkResolver
 
+	// emailSendingEnabled (EMAIL_SENDING_ENABLED, the disable-entirely
+	// `!= "false"` convention CALL_SENDING_ENABLED below also uses) is
+	// checked first, before emailDebugMode: when false, sendPerGroup logs
+	// instead of calling SendEmail at all, for every group, regardless of
+	// emailDebugMode/emailDebugRecipients — a stronger switch than debug
+	// mode's redirect-to-a-test-list, for temporarily silencing email
+	// entirely (e.g. while investigating a delivery issue) without also
+	// having to stop exercising the rest of the pipeline (link resolution,
+	// Chat, Twilio). Does not affect Google Chat or Twilio.
+	emailSendingEnabled bool
+
 	// emailDebugMode/emailDebugRecipients (EMAIL_DEBUG_MODE/
 	// EMAIL_DEBUG_RECIPIENTS) redirect sendPerGroup's actual SendEmail calls
 	// for the four case.* types to emailDebugRecipients instead of each
@@ -90,7 +101,8 @@ type Dispatcher struct {
 	// recipientlinks/entity-service path — only the final recipient list is
 	// swapped. If emailDebugMode is true but emailDebugRecipients is empty
 	// (misconfigured), sendPerGroup logs and skips that group rather than
-	// calling SendEmail with zero recipients.
+	// calling SendEmail with zero recipients. Only consulted when
+	// emailSendingEnabled is true.
 	emailDebugMode       bool
 	emailDebugRecipients []string
 
@@ -141,16 +153,18 @@ type recordState struct {
 	unhealthy bool
 }
 
-// NewDispatcher constructs a Dispatcher. See Dispatcher.emailDebugMode's and
-// Dispatcher.callSendingEnabled's doc comments for what those two
-// controls do, and Dispatcher.defaultChatProduct/defaultOnCallNumber's doc
-// comment for the Google Chat/call fallback values.
-func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailDebugMode bool, emailDebugRecipients []string, callSendingEnabled bool, defaultChatProduct, defaultOnCallNumber string) *Dispatcher {
+// NewDispatcher constructs a Dispatcher. See Dispatcher.emailSendingEnabled's,
+// Dispatcher.emailDebugMode's, and Dispatcher.callSendingEnabled's doc
+// comments for what those three controls do, and
+// Dispatcher.defaultChatProduct/defaultOnCallNumber's doc comment for the
+// Google Chat/call fallback values.
+func NewDispatcher(email emailSender, googleChat googleChatSender, call callSender, links linkResolver, emailSendingEnabled bool, emailDebugMode bool, emailDebugRecipients []string, callSendingEnabled bool, defaultChatProduct, defaultOnCallNumber string) *Dispatcher {
 	return &Dispatcher{
 		email:                email,
 		googleChat:           googleChat,
 		call:                 call,
 		links:                links,
+		emailSendingEnabled:  emailSendingEnabled,
 		emailDebugMode:       emailDebugMode,
 		emailDebugRecipients: emailDebugRecipients,
 		callSendingEnabled:   callSendingEnabled,
@@ -362,17 +376,18 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 
 	var errs []error
 
-	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	groups, groupUserIDs, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
 		errs = append(errs, err)
 	} else {
-		subject := fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle)
+		caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
+		subject := fmt.Sprintf("[%s] %s", caseRef, p.CaseTitle)
 		var emailErr error
-		_, emailErr = d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
+		_, emailErr = d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 			return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
 				ReporterName:              p.ReporterName,
 				ProjectName:               p.ProjectName,
-				CaseID:                    p.CaseID,
+				CaseNumber:                caseRef,
 				CaseTitle:                 p.CaseTitle,
 				CaseType:                  p.CaseType,
 				Priority:                  p.Priority,
@@ -451,14 +466,14 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.comment_added payload: %w", err)
 	}
-	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	groups, groupUserIDs, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
 		return err
 	}
 	baseKey := recordBaseKey(record)
 	subject := "Re: " + p.CaseTitle
-	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
-		return notifications.RenderCommentAddedEmail(p.Name, p.ProjectID, p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
+	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
+		return notifications.RenderCommentAddedEmail(p.Name, displayCaseRef(p.CaseNumber, p.CaseID), p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
 	})
 	if record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
@@ -475,14 +490,15 @@ func (d *Dispatcher) handleStatusChanged(ctx context.Context, record eventbus.Re
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.status_changed payload: %w", err)
 	}
-	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	groups, groupUserIDs, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
 		return err
 	}
 	baseKey := recordBaseKey(record)
-	subject := fmt.Sprintf("[%s] Status changed to %s", p.CaseID, p.NewStatus)
-	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
-		return notifications.RenderStatusChangedEmail(p.CaseID, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
+	caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
+	subject := fmt.Sprintf("[%s] Status changed to %s", caseRef, p.NewStatus)
+	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
+		return notifications.RenderStatusChangedEmail(caseRef, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
 	})
 	if record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
@@ -499,14 +515,15 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return fmt.Errorf("dispatch: decode case.assigned payload: %w", err)
 	}
-	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
+	groups, groupUserIDs, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
 		return err
 	}
 	baseKey := recordBaseKey(record)
-	subject := fmt.Sprintf("[%s] Case assigned", p.CaseID)
-	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
-		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, p.CaseID, caseLink, commentLinkFor(caseLink, ""))
+	caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
+	subject := fmt.Sprintf("[%s] Case assigned", caseRef)
+	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
+		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, caseRef, caseLink, commentLinkFor(caseLink, ""))
 	})
 	if record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
@@ -525,19 +542,30 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 // fixed/configured list. An empty Recipients slice should have been
 // rejected already by events.Validate; the explicit check here is a
 // defensive backstop, not the primary guard.
-func (d *Dispatcher) groupByLink(ctx context.Context, recipients []string, projectID, caseID string) (map[string][]string, error) {
+// groupByLink also returns groupUserIDs, a parallel map from the same
+// caseLink keys to each group's recipients' entity-service user ids (empty
+// string entries omitted) — purely for logging (see sendPerGroup), never
+// used to build a SendEmail call. This repo's own convention is to never
+// log a raw recipient email address (see internal/entity's do() doc
+// comment); a user id lets a delivery still be traced back to a specific
+// recipient without one.
+func (d *Dispatcher) groupByLink(ctx context.Context, recipients []string, projectID, caseID string) (groups map[string][]string, groupUserIDs map[string][]string, err error) {
 	if len(recipients) == 0 {
-		return nil, fmt.Errorf("dispatch: event payload has no recipients")
+		return nil, nil, fmt.Errorf("dispatch: event payload has no recipients")
 	}
 	links, err := d.links.ResolveLinks(ctx, recipients, projectID, caseID)
 	if err != nil {
-		return nil, fmt.Errorf("dispatch: resolve recipient links: %w", err)
+		return nil, nil, fmt.Errorf("dispatch: resolve recipient links: %w", err)
 	}
-	groups := make(map[string][]string, 2)
+	groups = make(map[string][]string, 2)
+	groupUserIDs = make(map[string][]string, 2)
 	for _, l := range links {
 		groups[l.CaseLink] = append(groups[l.CaseLink], l.Email)
+		if l.UserID != "" {
+			groupUserIDs[l.CaseLink] = append(groupUserIDs[l.CaseLink], l.UserID)
+		}
 	}
-	return groups, nil
+	return groups, groupUserIDs, nil
 }
 
 // commentLinkFor appends the comment permalink fragment to a resolved case
@@ -551,6 +579,18 @@ func commentLinkFor(caseLink, commentID string) string {
 		return caseLink
 	}
 	return caseLink + "#" + url.PathEscape(commentID)
+}
+
+// displayCaseRef returns caseNumber (the case's human-readable reference,
+// e.g. "CS0023001") when the publisher supplied one, falling back to
+// caseID (a UUID, meaningless to an end user) only so a subject/body line
+// is never blank while every publisher is on a version of the schema that
+// carries CaseNumber — see CaseCreatedPayload.CaseNumber's own doc comment.
+func displayCaseRef(caseNumber, caseID string) string {
+	if caseNumber != "" {
+		return caseNumber
+	}
+	return caseID
 }
 
 // maskPhone redacts all but the last 4 characters of an E.164 phone number
@@ -593,7 +633,7 @@ func maskPhone(phone string) string {
 // true but emailDebugRecipients is empty — sending to zero recipients would
 // either be rejected by the email provider or silently do nothing, neither
 // of which is better than not calling it at all.
-func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups map[string][]string, subject string, render func(caseLink string) string) ([]string, error) {
+func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups, groupUserIDs map[string][]string, subject string, render func(caseLink string) string) ([]string, error) {
 	var errs []error
 	var owned []string
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
@@ -602,6 +642,11 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups ma
 			continue
 		}
 		to := groups[caseLink]
+		if !d.emailSendingEnabled {
+			slog.InfoContext(ctx, "dispatch: email sending disabled (EMAIL_SENDING_ENABLED=false); not sending", "subject", subject)
+			owned = append(owned, caseLink)
+			continue
+		}
 		if d.emailDebugMode {
 			if len(d.emailDebugRecipients) == 0 {
 				slog.WarnContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true but EMAIL_DEBUG_RECIPIENTS is empty; not sending",
@@ -618,6 +663,11 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups ma
 			d.forget(key)
 			continue
 		}
+		// Log the recipients' entity-service user ids, never the email
+		// addresses themselves (this repo's own "no recipient emails in
+		// logs" convention — see internal/entity's do() doc comment) —
+		// still traceable to a specific recipient without raw PII.
+		slog.InfoContext(ctx, "dispatch: email sent", "subject", subject, "recipientCount", len(to), "recipientUserIds", groupUserIDs[caseLink])
 		owned = append(owned, caseLink)
 	}
 	return owned, errors.Join(errs...)

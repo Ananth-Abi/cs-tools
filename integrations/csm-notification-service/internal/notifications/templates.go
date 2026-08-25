@@ -20,6 +20,7 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"html"
+	"regexp"
 	"strings"
 )
 
@@ -54,11 +55,41 @@ var (
 	caseCreatedTemplate   = bakeLogo(caseCreatedTemplateRaw)
 )
 
+// htmlBlockBoundary matches the tags plainTextFromHTML treats as line
+// breaks — everything else just disappears when stripped, which would
+// otherwise run a rich-text source's separate paragraphs together into one
+// unreadable line.
+var htmlBlockBoundary = regexp.MustCompile(`(?i)</p>|</h[1-6]>|<br\s*/?>|</div>|</li>`)
+
+// htmlTag matches any remaining tag, stripped unconditionally — this is a
+// blunt strip-everything approach, not a sanitizer with an allow-list, but
+// that's what makes it safe: no tag ever survives to be interpreted, so
+// there's no allow-list to get wrong.
+var htmlTag = regexp.MustCompile(`<[^>]*>`)
+
+// plainTextFromHTML converts s from rich-text HTML (as ServiceNow returns
+// case descriptions and comments — e.g.
+// `<p><span style="white-space: pre-wrap;">some text</span></p>`) to plain
+// text, so escapeMultiline below doesn't end up HTML-escaping the source's
+// own tags into literal, visible "<p>" clutter in the rendered email. Runs
+// before escaping, not instead of it: the result is still plain text that
+// itself might contain "<"/"&" (e.g. someone literally typed "<3" in a
+// comment), which escapeMultiline still needs to escape safely.
+//
+// s that was never HTML in the first place (no tags present) passes through
+// unchanged other than entity-decoding, which is a no-op for plain text.
+func plainTextFromHTML(s string) string {
+	s = htmlBlockBoundary.ReplaceAllString(s, "\n")
+	s = htmlTag.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	return strings.TrimSpace(s)
+}
+
 // escapeMultiline HTML-escapes s and converts its newlines to <br>, so
 // free-text fields (a comment, a case description) keep their original line
 // breaks when dropped into HTML.
 func escapeMultiline(s string) string {
-	return strings.ReplaceAll(html.EscapeString(s), "\n", "<br>")
+	return strings.ReplaceAll(html.EscapeString(plainTextFromHTML(s)), "\n", "<br>")
 }
 
 // applyOptionalBlock handles a template section wrapped in
@@ -82,14 +113,18 @@ func applyOptionalBlock(tmpl, name, value string) string {
 }
 
 // RenderCommentAddedEmail fills in the "comment added" HTML email template.
-// name, projectID, and caseTitle are HTML-escaped as-is; caseComment is
-// HTML-escaped with newlines converted to <br> so the commenter's original
-// line breaks are preserved. commentLink is the "Add Comment" call-to-action
-// target; caseLink is the "View Case" link and the case-title link target.
-func RenderCommentAddedEmail(name, projectID, caseTitle, caseComment, commentLink, caseLink string) string {
+// name and caseTitle are HTML-escaped as-is; caseComment is escaped via
+// escapeMultiline, which also strips any rich-text HTML markup the source
+// comment carries down to plain text first (see plainTextFromHTML) so raw
+// tags never show up as literal clutter in the rendered email. commentLink
+// is the "Add Comment" call-to-action target; caseLink is the "View Case"
+// link and the case-title link target. caseNumber is the case's
+// human-readable reference (e.g. "CS0023001") — display-only, distinct from
+// the caseLink URL, which already carries whatever id the portal needs.
+func RenderCommentAddedEmail(name, caseNumber, caseTitle, caseComment, commentLink, caseLink string) string {
 	replacer := strings.NewReplacer(
 		"<!-- [NAME] -->", html.EscapeString(name),
-		"<!-- [PROJECT_ID] -->", html.EscapeString(projectID),
+		"<!-- [CASE_NUMBER] -->", html.EscapeString(caseNumber),
 		"<!-- [CASE_TITLE] -->", html.EscapeString(caseTitle),
 		"<!-- [CASE_COMMENT] -->", escapeMultiline(caseComment),
 		"<!-- [COMMENT_LINK] -->", html.EscapeString(commentLink),
@@ -99,12 +134,13 @@ func RenderCommentAddedEmail(name, projectID, caseTitle, caseComment, commentLin
 }
 
 // RenderStatusChangedEmail fills in the "case status changed" HTML email
-// template. caseLink is used both for the case-ID link in the strap line and
-// the "View Case" link; commentLink is the "Add Comment" call-to-action
-// target.
-func RenderStatusChangedEmail(caseID, newStatus, caseLink, commentLink string) string {
+// template. caseLink is used both for the case-number link in the strap
+// line and the "View Case" link; commentLink is the "Add Comment"
+// call-to-action target. caseNumber — see RenderCommentAddedEmail's own doc
+// comment.
+func RenderStatusChangedEmail(caseNumber, newStatus, caseLink, commentLink string) string {
 	replacer := strings.NewReplacer(
-		"<!-- [CASE_ID] -->", html.EscapeString(caseID),
+		"<!-- [CASE_NUMBER] -->", html.EscapeString(caseNumber),
 		"<!-- [NEW_STATUS] -->", html.EscapeString(newStatus),
 		"<!-- [CASE_LINK] -->", html.EscapeString(caseLink),
 		"<!-- [COMMENT_LINK] -->", html.EscapeString(commentLink),
@@ -114,11 +150,12 @@ func RenderStatusChangedEmail(caseID, newStatus, caseLink, commentLink string) s
 
 // RenderCaseAssignedEmail fills in the "case assigned" HTML email template.
 // assignerEmail is rendered both as a mailto: link and as plain text.
-func RenderCaseAssignedEmail(assignerName, assignerEmail, caseID, caseLink, commentLink string) string {
+// caseNumber — see RenderCommentAddedEmail's own doc comment.
+func RenderCaseAssignedEmail(assignerName, assignerEmail, caseNumber, caseLink, commentLink string) string {
 	replacer := strings.NewReplacer(
 		"<!-- [ASSIGNER_NAME] -->", html.EscapeString(assignerName),
 		"<!-- [ASSIGNER_EMAIL] -->", html.EscapeString(assignerEmail),
-		"<!-- [CASE_ID] -->", html.EscapeString(caseID),
+		"<!-- [CASE_NUMBER] -->", html.EscapeString(caseNumber),
 		"<!-- [CASE_LINK] -->", html.EscapeString(caseLink),
 		"<!-- [COMMENT_LINK] -->", html.EscapeString(commentLink),
 	)
@@ -131,9 +168,11 @@ func RenderCaseAssignedEmail(assignerName, assignerEmail, caseID, caseLink, comm
 // placeholder like "null" or "N/A" for cases that don't have one (e.g.
 // non-Incident case types).
 type CaseCreatedEmailData struct {
-	ReporterName              string
-	ProjectName               string
-	CaseID                    string
+	ReporterName string
+	ProjectName  string
+	// CaseNumber is the case's human-readable reference (e.g. "CS0023001")
+	// — display-only, distinct from CaseLink's URL.
+	CaseNumber                string
 	CaseTitle                 string
 	CaseType                  string
 	Priority                  string
@@ -151,7 +190,7 @@ func RenderCaseCreatedEmail(data CaseCreatedEmailData) string {
 	replacer := strings.NewReplacer(
 		"<!-- [REPORTER_NAME] -->", html.EscapeString(data.ReporterName),
 		"<!-- [PROJECT_NAME] -->", html.EscapeString(data.ProjectName),
-		"<!-- [CASE_ID] -->", html.EscapeString(data.CaseID),
+		"<!-- [CASE_NUMBER] -->", html.EscapeString(data.CaseNumber),
 		"<!-- [CASE_TITLE] -->", html.EscapeString(data.CaseTitle),
 		"<!-- [CASE_TYPE] -->", html.EscapeString(data.CaseType),
 		"<!-- [PRIORITY] -->", html.EscapeString(data.Priority),

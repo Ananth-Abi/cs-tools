@@ -148,6 +148,11 @@ func (c *CustomerEntityClient) do(ctx context.Context, method, path string, body
 // a fallback signal. An email not found on the entity service is simply
 // absent from SearchUsersByEmail's result.
 type UserRoleInfo struct {
+	// ID is entity-service's own user id — logged (never the email address
+	// itself, which is PII) by dispatch when an email actually sends, so a
+	// support engineer can trace a delivery back to a specific recipient
+	// without raw addresses ever appearing in logs.
+	ID       string   `json:"id"`
 	Email    string   `json:"email"`
 	Roles    []string `json:"roles"`
 	UserType string   `json:"userType"`

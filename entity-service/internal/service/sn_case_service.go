@@ -938,6 +938,7 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 		ProjectName:  cv.ProjectDetails.Name,
 		ProjectID:    cv.ProjectDetails.ID,
 		CaseID:       caseID,
+		CaseNumber:   cv.Number,
 		CaseTitle:    cv.Subject,
 		CaseType:     strings.ToUpper(req.Type),
 		Priority:     strings.ToUpper(string(cv.Severity)),
@@ -1040,6 +1041,7 @@ func (s *snCaseService) publishCommentAdded(ctx context.Context, req domain.Crea
 		Name:        authorName,
 		ProjectID:   cv.ProjectDetails.ID,
 		CaseID:      req.CaseID,
+		CaseNumber:  cv.Number,
 		CaseTitle:   cv.Subject,
 		CaseComment: req.Content,
 		CommentID:   commentID,
@@ -1095,6 +1097,7 @@ func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newSta
 	payload, err := json.Marshal(events.StatusChangedPayload{
 		ProjectID:  before.ProjectDetails.ID,
 		CaseID:     caseID,
+		CaseNumber: before.Number,
 		NewStatus:  newStatus,
 		Recipients: recipients,
 	})

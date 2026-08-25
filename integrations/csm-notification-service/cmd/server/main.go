@@ -174,6 +174,18 @@ func main() {
 		slog.Warn("EMAIL_DEBUG_MODE=true; case.* emails will be redirected to EMAIL_DEBUG_RECIPIENTS", "recipientCount", len(emailDebugRecipients))
 	}
 
+	// Temporary killswitch for case.* email sending entirely — checked
+	// before EMAIL_DEBUG_MODE above, so it silences email regardless of
+	// debug mode. Matches this repo's own AUTH_TOKEN_VALIDATOR_ENABLED
+	// disable-entirely convention (apps/csm-portal/backend), the same as
+	// CALL_SENDING_ENABLED below. Meant for temporarily silencing email
+	// while investigating a delivery issue without also having to stop
+	// exercising the rest of the pipeline (link resolution, Chat, Twilio).
+	emailSendingEnabled := os.Getenv("EMAIL_SENDING_ENABLED") != "false"
+	if !emailSendingEnabled {
+		slog.Warn("EMAIL_SENDING_ENABLED=false; case.* emails will be logged, not sent")
+	}
+
 	// Temporary killswitch, matching this repo's own AUTH_TOKEN_VALIDATOR_ENABLED
 	// convention (apps/csm-portal/backend), for incident.created's Twilio
 	// call specifically — doesn't affect the Google Chat alert. Unlike
@@ -192,7 +204,7 @@ func main() {
 	defaultChatProduct := os.Getenv("DEFAULT_CHAT_PRODUCT")
 	defaultOnCallNumber := os.Getenv("INCIDENT_DEFAULT_CALL_TO")
 
-	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailDebugMode, emailDebugRecipients, callSendingEnabled, defaultChatProduct, defaultOnCallNumber)
+	dispatcher := dispatch.NewDispatcher(emailClient, googleChatClient, twilioClient, linkResolver, emailSendingEnabled, emailDebugMode, emailDebugRecipients, callSendingEnabled, defaultChatProduct, defaultOnCallNumber)
 
 	// The main consumer's OnExhausted: publish the exhausted record to the
 	// dead-letter topic instead of just logging and dropping it. The DLQ's
