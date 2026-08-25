@@ -1493,6 +1493,15 @@ type CaseView struct {
 	EngagementStartDate   *string    `json:"engagementStartDate"`
 	EngagementEndDate     *string    `json:"engagementEndDate"`
 	EngagementPaymentType *string    `json:"engagementPaymentType"`
+	// Duration is the upstream's own humanised elapsed-time string
+	// (e.g. "247 Days 4 Hours 31 Minutes"), passed through rather than parsed —
+	// it is display text, not a computable interval.
+	Duration *string `json:"duration"`
+	// EscalationLevel is the level id ("0".."5"), the same vocabulary the
+	// escalationLevel request filter accepts, so the value round-trips. Rendering
+	// it as a label is the caller's concern.
+	EscalationLevel *string `json:"escalationLevel"`
+	IsEscalated     *bool   `json:"isEscalated"`
 }
 
 // Tag is a free-text label attached to a case via ServiceNow's generic

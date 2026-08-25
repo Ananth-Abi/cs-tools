@@ -371,6 +371,14 @@ type CaseDetails struct {
 	EngagementStartDate *string   `json:"engagementStartDate,omitempty"`
 	EngagementEndDate   *string   `json:"engagementEndDate,omitempty"`
 	Tags                []CaseTag `json:"tags,omitempty"`
+	// Duration is the upstream's humanised elapsed time, rendered as-is.
+	Duration *string `json:"duration,omitempty"`
+	// EscalationLevel is an {id, label} ref because that is what the frontend
+	// reads (CaseDetailsContent: data?.escalationLevel?.id). entity-service
+	// exposes only the level id, per its no-{id,label} response convention, so
+	// the label is built here — the same split as case status and severity.
+	EscalationLevel *IDLabelRef `json:"escalationLevel,omitempty"`
+	IsEscalated     *bool       `json:"isEscalated,omitempty"`
 }
 
 // MapCaseDetails builds the portal response from entity-service's CaseView.
@@ -465,6 +473,9 @@ func MapCaseDetails(c entity.CaseView) CaseDetails {
 		EngagementStartDate:   c.EngagementStartDate,
 		EngagementEndDate:     c.EngagementEndDate,
 		Tags:                  tags,
+		Duration:              c.Duration,
+		EscalationLevel:       caseEscalationLevelRef(c.EscalationLevel),
+		IsEscalated:           c.IsEscalated,
 	}
 }
 
