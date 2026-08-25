@@ -676,7 +676,6 @@ func maskPhone(phone string) string {
 func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups, groupUserIDs map[string][]string, subject string, render func(caseLink string) string) ([]string, error) {
 	var errs []error
 	var owned []string
-	var debugBatch []debugGroupSend
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
 		key := baseKey + "/email/" + caseLink
 		if !d.claim(key) {
@@ -695,12 +694,9 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups, g
 				owned = append(owned, caseLink)
 				continue
 			}
-			// Deferred to sendDebugBatch below rather than sent here — see
-			// its own doc comment for why every group sharing this baseKey
-			// must land in the tester's inbox as one email, not one per
-			// group.
-			debugBatch = append(debugBatch, debugGroupSend{caseLink: caseLink, key: key, body: render(caseLink)})
-			continue
+			slog.InfoContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true; redirecting email to configured debug recipients",
+				"subject", subject, "realRecipientCount", len(to), "debugRecipientCount", len(d.emailDebugRecipients))
+			to = d.emailDebugRecipients
 		}
 		if err := d.email.SendEmail(ctx, to, nil, nil, nil, subject, render(caseLink), nil); err != nil {
 			errs = append(errs, err)
@@ -714,58 +710,7 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups, g
 		slog.InfoContext(ctx, "dispatch: email sent", "subject", subject, "recipientCount", len(to), "recipientUserIds", groupUserIDs[caseLink])
 		owned = append(owned, caseLink)
 	}
-	if len(debugBatch) > 0 {
-		batchOwned, err := d.sendDebugBatch(ctx, subject, debugBatch, groupUserIDs)
-		owned = append(owned, batchOwned...)
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
 	return owned, errors.Join(errs...)
-}
-
-// debugGroupSend holds one role-based group's already-rendered body,
-// deferred by sendPerGroup's EMAIL_DEBUG_MODE branch until every group
-// sharing the same event has been resolved — see sendDebugBatch.
-type debugGroupSend struct {
-	caseLink string
-	key      string
-	body     string
-}
-
-// sendDebugBatch sends every group sendPerGroup deferred as a single
-// combined email instead of one per group. In production, N per-role
-// groups (see groupByLink) correctly means N separate emails to N
-// different real audiences — a customer watcher and a CSM watcher must
-// never see each other's portal link. But EMAIL_DEBUG_MODE redirects
-// every group's send to the same configured inbox regardless of role, so
-// a tester watching that inbox previously received what looked like N
-// duplicate emails for one logical event, one per role group. Merging
-// into a single email removes that false impression of duplication while
-// still surfacing every group's own resolved link, each in its own
-// labeled section, so nothing about the per-role link resolution is lost
-// to the tester.
-func (d *Dispatcher) sendDebugBatch(ctx context.Context, subject string, batch []debugGroupSend, groupUserIDs map[string][]string) ([]string, error) {
-	sections := make([]string, 0, len(batch))
-	var allUserIDs []string
-	for _, g := range batch {
-		sections = append(sections, fmt.Sprintf("<p><strong>Role-based recipient link:</strong> %s</p>%s", g.caseLink, g.body))
-		allUserIDs = append(allUserIDs, groupUserIDs[g.caseLink]...)
-	}
-	body := strings.Join(sections, "<hr>")
-	if err := d.email.SendEmail(ctx, d.emailDebugRecipients, nil, nil, nil, subject, body, nil); err != nil {
-		for _, g := range batch {
-			d.forget(g.key)
-		}
-		return nil, err
-	}
-	slog.InfoContext(ctx, "dispatch: email sent (EMAIL_DEBUG_MODE; role groups merged into one)",
-		"subject", subject, "groupCount", len(batch), "recipientCount", len(d.emailDebugRecipients), "recipientUserIds", allUserIDs)
-	owned := make([]string, 0, len(batch))
-	for _, g := range batch {
-		owned = append(owned, g.caseLink)
-	}
-	return owned, nil
 }
 
 // forgetEmailGroups releases sendPerGroup's per-group idempotency tracking

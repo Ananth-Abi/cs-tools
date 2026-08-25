@@ -116,7 +116,7 @@ Backs `internal/recipientlinks`'s per-recipient role lookup (`POST /users/search
 | `CUSTOMER_ROLES` | Comma-separated role names classified customer (optional) |
 | `CSM_ROLES` | Comma-separated role names classified CSM (optional) |
 
-Classification isn't just "role in `CUSTOMER_ROLES`" — it's a fallback chain, since neither role list needs to be exhaustive: a role in `CUSTOMER_ROLES` → customer; else a role in `CSM_ROLES` → CSM; else the recipient's entity-service `userType` (`customer`/`external` → customer, anything else → CSM); else — including when entity-service has no record for the recipient at all — CSM, as the last-resort default. See `Resolver.ResolveLinks`'s doc comment for the full reasoning.
+Classification isn't just "role in `CUSTOMER_ROLES`" — it's a fallback chain, since neither role list needs to be exhaustive: a role in `CUSTOMER_ROLES` → customer; else a role in `CSM_ROLES` → CSM; else — including when entity-service has no record for the recipient at all — the recipient's email domain (`@wso2.com` → CSM, anything else → customer). See `Resolver.linkFor`'s doc comment for the full reasoning.
 
 ### Event bus (Azure Event Hub)
 

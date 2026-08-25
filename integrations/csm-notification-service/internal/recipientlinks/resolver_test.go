@@ -96,25 +96,12 @@ func TestResolveLinks_MixedRolesOneEvent(t *testing.T) {
 	}
 }
 
-func TestResolveLinks_UnmatchedRole_FallsBackToUserType(t *testing.T) {
+// TestResolveLinks_UnmatchedRole_Wso2Domain_ResolvesToCSM verifies the
+// email-domain fallback: a recipient whose roles match neither list, but
+// whose email is on WSO2's own domain, is routed to the CSM portal.
+func TestResolveLinks_UnmatchedRole_Wso2Domain_ResolvesToCSM(t *testing.T) {
 	client := &fakeEntityClient{users: []entity.UserRoleInfo{
-		{Email: "external@acme.com", Roles: []string{"some_new_role"}, UserType: "external"},
-	}}
-	r := New(client, testConfig())
-
-	links, err := r.ResolveLinks(t.Context(), []string{"external@acme.com"}, "PROJ-1", "CASE-1")
-	if err != nil {
-		t.Fatalf("ResolveLinks() error = %v", err)
-	}
-	want := "https://customer.example.com/projects/PROJ-1/support/cases/CASE-1"
-	if len(links) != 1 || links[0].CaseLink != want {
-		t.Errorf("links = %+v, want userType fallback to customer link %q", links, want)
-	}
-}
-
-func TestResolveLinks_UnmatchedRoleAndUserType_DefaultsToCSM(t *testing.T) {
-	client := &fakeEntityClient{users: []entity.UserRoleInfo{
-		{Email: "mystery@wso2.com", Roles: []string{"some_new_role"}, UserType: "system"},
+		{Email: "mystery@wso2.com", Roles: []string{"some_new_role"}, UserType: "external"},
 	}}
 	r := New(client, testConfig())
 
@@ -124,21 +111,77 @@ func TestResolveLinks_UnmatchedRoleAndUserType_DefaultsToCSM(t *testing.T) {
 	}
 	want := "https://csm.example.com/cases/CASE-1"
 	if len(links) != 1 || links[0].CaseLink != want {
-		t.Errorf("links = %+v, want default CSM link %q", links, want)
+		t.Errorf("links = %+v, want domain fallback to CSM link %q", links, want)
 	}
 }
 
-func TestResolveLinks_RecipientNotFound_DefaultsToCSM(t *testing.T) {
-	client := &fakeEntityClient{users: nil} // entity-service has no record for the recipient
+// TestResolveLinks_UnmatchedRole_ExternalDomain_ResolvesToCustomer mirrors
+// the case above for a non-WSO2 domain.
+func TestResolveLinks_UnmatchedRole_ExternalDomain_ResolvesToCustomer(t *testing.T) {
+	client := &fakeEntityClient{users: []entity.UserRoleInfo{
+		{Email: "mystery@acme.com", Roles: []string{"some_new_role"}, UserType: "internal"},
+	}}
+	r := New(client, testConfig())
+
+	links, err := r.ResolveLinks(t.Context(), []string{"mystery@acme.com"}, "PROJ-1", "CASE-1")
+	if err != nil {
+		t.Fatalf("ResolveLinks() error = %v", err)
+	}
+	want := "https://customer.example.com/projects/PROJ-1/support/cases/CASE-1"
+	if len(links) != 1 || links[0].CaseLink != want {
+		t.Errorf("links = %+v, want domain fallback to customer link %q", links, want)
+	}
+}
+
+// TestResolveLinks_RecipientNotFound_Wso2Domain_ResolvesToCSM verifies the
+// domain fallback also applies when entity-service has no record for the
+// recipient at all, not just when roles are merely unmatched.
+func TestResolveLinks_RecipientNotFound_Wso2Domain_ResolvesToCSM(t *testing.T) {
+	client := &fakeEntityClient{users: nil}
+	r := New(client, testConfig())
+
+	links, err := r.ResolveLinks(t.Context(), []string{"ghost@wso2.com"}, "PROJ-1", "CASE-1")
+	if err != nil {
+		t.Fatalf("ResolveLinks() error = %v", err)
+	}
+	want := "https://csm.example.com/cases/CASE-1"
+	if len(links) != 1 || links[0].CaseLink != want {
+		t.Errorf("links = %+v, want domain fallback to CSM link %q", links, want)
+	}
+}
+
+// TestResolveLinks_RecipientNotFound_ExternalDomain_ResolvesToCustomer
+// mirrors the case above for a not-found recipient on a non-WSO2 domain.
+func TestResolveLinks_RecipientNotFound_ExternalDomain_ResolvesToCustomer(t *testing.T) {
+	client := &fakeEntityClient{users: nil}
 	r := New(client, testConfig())
 
 	links, err := r.ResolveLinks(t.Context(), []string{"ghost@example.com"}, "PROJ-1", "CASE-1")
 	if err != nil {
 		t.Fatalf("ResolveLinks() error = %v", err)
 	}
+	want := "https://customer.example.com/projects/PROJ-1/support/cases/CASE-1"
+	if len(links) != 1 || links[0].CaseLink != want {
+		t.Errorf("links = %+v, want domain fallback to customer link %q", links, want)
+	}
+}
+
+// TestResolveLinks_MatchedRole_TakesPriorityOverDomain verifies role
+// classification still wins over the domain fallback when both are
+// available — domain is only consulted once role classification fails.
+func TestResolveLinks_MatchedRole_TakesPriorityOverDomain(t *testing.T) {
+	client := &fakeEntityClient{users: []entity.UserRoleInfo{
+		{Email: "agent@acme.com", Roles: []string{"csm_agent"}, UserType: "internal"},
+	}}
+	r := New(client, testConfig())
+
+	links, err := r.ResolveLinks(t.Context(), []string{"agent@acme.com"}, "PROJ-1", "CASE-1")
+	if err != nil {
+		t.Fatalf("ResolveLinks() error = %v", err)
+	}
 	want := "https://csm.example.com/cases/CASE-1"
 	if len(links) != 1 || links[0].CaseLink != want {
-		t.Errorf("links = %+v, want default CSM link %q", links, want)
+		t.Errorf("links = %+v, want role match (CSM) even though email domain isn't internal, got %q", links, want)
 	}
 }
 

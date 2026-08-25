@@ -49,6 +49,14 @@ type entityClient interface {
 	SearchUsersByEmail(ctx context.Context, emails []string) ([]entity.UserRoleInfo, error)
 }
 
+// wso2EmailDomain is WSO2's own corporate domain — mirrors
+// apps/csm-portal/backend's own wso2EmailDomain constant (see that
+// package's user_external_account.go), used the same way here: linkFor's
+// fallback classifier when a recipient's roles (from the same
+// SearchUsersByEmail response ResolveLinks already calls) match neither
+// CustomerRoles nor CSMRoles.
+const wso2EmailDomain = "wso2.com"
+
 // Config holds the role classification and portal base URLs Resolver needs.
 // CustomerRoles and CSMRoles need not be exhaustive of every role in the
 // system — see ResolveLinks' doc comment for what happens when a
@@ -107,18 +115,13 @@ type RecipientLink struct {
 // (<CustomerBaseURL>/projects/{projectID}/support/cases/{caseID}); anyone
 // else gets the CSM portal's link (<CSMBaseURL>/cases/{caseID}).
 //
-// A recipient whose roles match neither CustomerRoles nor CSMRoles falls
-// back to their entity-service userType (customer/external -> customer
-// portal, anything else -> CSM portal) and logs a warning — the role lists
-// are operator-curated and may not be exhaustive, but userType is always
-// present. A recipient entity-service has no record for at all logs a
-// warning and defaults to the CSM portal link: every real recipient should
-// already exist there (case reporters/watchers/assignees are entity-service
-// user references before they ever become a plain email address), so a
-// miss here is a data anomaly worth surfacing, not an expected case — and
-// the CSM link is the safer default of the two to hand someone in that
-// situation, versus routing an actual CSM user to a portal they may have no
-// account on at all.
+// A recipient whose roles match neither CustomerRoles nor CSMRoles — or
+// whom entity-service has no record for at all — falls back to their email
+// domain instead: wso2EmailDomain gets the CSM portal link, anything else
+// gets the customer portal link, and a warning is logged either way. The
+// role lists are operator-curated and may not be exhaustive, and
+// incomplete/test entity-service data frequently leaves roles empty — an
+// email domain is always present.
 //
 // The returned links are the bare case link only — appending a
 // comment-specific anchor/fragment is internal/dispatch's job (see
@@ -147,33 +150,38 @@ func (r *Resolver) ResolveLinks(ctx context.Context, emails []string, projectID,
 		user, found := byEmail[strings.ToLower(email)]
 		links = append(links, RecipientLink{
 			Email:    email,
-			CaseLink: r.linkFor(ctx, user, found, projectID, caseID),
+			CaseLink: r.linkFor(ctx, user, found, email, projectID, caseID),
 			UserID:   user.ID,
 		})
 	}
 	return links, nil
 }
 
-// linkFor does not take the recipient's email — logging it would put PII
-// (an email address) in the logs, which this repo's own convention
-// disallows. caseID identifies which notification a warning belongs to
-// without identifying who it's about.
-func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found bool, projectID, caseID string) string {
+// linkFor takes the recipient's email only for its own domain comparison
+// against wso2EmailDomain — never logged, same PII reasoning as everywhere
+// else in this package (an email address in the logs is what this repo's
+// own convention disallows). caseID identifies which notification a
+// warning belongs to without identifying who it's about.
+//
+// Classification order: role first (CustomerRoles/CSMRoles — from the same
+// SearchUsersByEmail response ResolveLinks already has, the operator-
+// curated, most specific signal); when a recipient's roles match neither
+// list — including when entity-service has no record for them at all —
+// their email domain decides instead: wso2EmailDomain gets the CSM portal
+// link, anything else gets the customer portal link. A domain is always
+// present, unlike roles, which incomplete/test entity-service data
+// frequently leaves empty.
+func (r *Resolver) linkFor(ctx context.Context, user entity.UserRoleInfo, found bool, email, projectID, caseID string) string {
 	isCustomer := false
 	switch {
-	case !found:
-		slog.WarnContext(ctx, "recipientlinks: recipient not found on entity-service; defaulting to CSM portal link", "caseID", caseID)
-	case r.matchesAny(user.Roles, r.customerRoles):
+	case found && r.matchesAny(user.Roles, r.customerRoles):
 		isCustomer = true
-	case r.matchesAny(user.Roles, r.csmRoles):
+	case found && r.matchesAny(user.Roles, r.csmRoles):
 		// isCustomer already false.
-	case user.UserType == "customer" || user.UserType == "external":
-		isCustomer = true
-		slog.WarnContext(ctx, "recipientlinks: recipient's roles matched neither CUSTOMER_ROLES nor CSM_ROLES; used userType as a fallback",
-			"caseID", caseID, "roles", user.Roles, "userType", user.UserType)
 	default:
-		slog.WarnContext(ctx, "recipientlinks: recipient's roles matched neither CUSTOMER_ROLES nor CSM_ROLES; defaulting to CSM portal link",
-			"caseID", caseID, "roles", user.Roles, "userType", user.UserType)
+		isCustomer = !strings.EqualFold(emailDomain(email), wso2EmailDomain)
+		slog.WarnContext(ctx, "recipientlinks: recipient's roles did not resolve a portal; used email domain as a fallback",
+			"caseID", caseID, "found", found, "isCustomer", isCustomer)
 	}
 
 	if isCustomer {
@@ -201,6 +209,17 @@ func (r *Resolver) CSMLink(caseID string) string {
 // link — see dispatch.handleIncidentCreated.
 func (r *Resolver) IncidentLink(incidentID string) string {
 	return fmt.Sprintf("%s/operations/incidents/%s", r.csmBase, url.PathEscape(incidentID))
+}
+
+// emailDomain returns the part of email after its last "@", lowercased —
+// "" for an address with no "@" at all, which wso2EmailDomain will simply
+// never match (see linkFor).
+func emailDomain(email string) string {
+	i := strings.LastIndex(email, "@")
+	if i < 0 {
+		return ""
+	}
+	return strings.ToLower(email[i+1:])
 }
 
 func (r *Resolver) matchesAny(roles []string, set map[string]bool) bool {

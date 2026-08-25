@@ -345,15 +345,17 @@ func TestDispatcher_Handle_EmailDebugMode_RedirectsToConfiguredRecipients(t *tes
 	}
 }
 
-// TestDispatcher_Handle_EmailDebugMode_MultipleGroups_SendsOneMergedEmail
-// verifies the fix for a real reported bug: a case with recipients spanning
-// two portals (customer-role + CSM-role) resolves to two groups via
-// groupByLink, and in production that's correct — two separate emails to two
-// different real audiences. But EMAIL_DEBUG_MODE redirects every group to
-// the same configured inbox, so a tester previously saw what looked like two
-// duplicate emails for one event. sendPerGroup must merge every group into
-// one email in debug mode, while still surfacing each group's own link.
-func TestDispatcher_Handle_EmailDebugMode_MultipleGroups_SendsOneMergedEmail(t *testing.T) {
+// TestDispatcher_Handle_EmailDebugMode_MultipleGroups_SendsOnePerGroup
+// verifies that a case with recipients spanning two portals (customer-role +
+// CSM-role) still sends one real, separately-rendered email per group even
+// in EMAIL_DEBUG_MODE, each redirected to the configured debug recipients
+// independently — mirroring exactly what production would send to the two
+// real, different audiences. An earlier attempt at this service merged every
+// group's already-fully-rendered HTML document into one email body, which
+// produced invalid HTML (multiple concatenated <html> documents) and broke
+// the logo image — reverted in favor of this simpler, correct-by-mirroring
+// behavior instead.
+func TestDispatcher_Handle_EmailDebugMode_MultipleGroups_SendsOnePerGroup(t *testing.T) {
 	mock := &mockEmailSender{}
 	links := &mockLinkResolver{
 		linkFor: func(email string) string {
@@ -371,11 +373,13 @@ func TestDispatcher_Handle_EmailDebugMode_MultipleGroups_SendsOneMergedEmail(t *
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
-	if len(mock.calls) != 1 {
-		t.Fatalf("expected exactly 1 merged email in debug mode despite 2 role groups, got %d", len(mock.calls))
+	if len(mock.calls) != 2 {
+		t.Fatalf("expected 2 separate emails (one per real group) in debug mode, got %d", len(mock.calls))
 	}
-	if !strings.Contains(mock.calls[0].htmlBody, "customer.example") || !strings.Contains(mock.calls[0].htmlBody, "csm.example") {
-		t.Errorf("expected merged body to contain both groups' links, got: %s", mock.calls[0].htmlBody)
+	for _, call := range mock.calls {
+		if len(call.to) != 2 || call.to[0] != "debug-1@example.com" || call.to[1] != "debug-2@example.com" {
+			t.Errorf("to = %v, want the configured debug recipients", call.to)
+		}
 	}
 }
 
