@@ -129,7 +129,7 @@ func MapSearchCases(r entity.SearchCasesResponse) SearchCasesResponse {
 			CaseTypes:        caseTypeRef(c.Type),
 			CreatedOn:        c.CreatedOn,
 			UpdatedOn:        c.UpdatedOn,
-			CreatedBy:        c.CreatedBy,
+			CreatedBy:        userRefIdentity(c.CreatedBy),
 		})
 	}
 	return SearchCasesResponse{
@@ -803,14 +803,20 @@ func MapSearchCaseActivities(r entity.SearchCaseActivitiesResponse) SearchCaseAc
 		}
 
 		items = append(items, CaseActivity{
-			ID:                 a.ID,
-			Type:               string(a.Type),
-			Content:            a.Content,
-			CreatedOn:          a.CreatedOn,
-			CreatedBy:          a.CreatedByFullName,
+			ID:        a.ID,
+			Type:      string(a.Type),
+			Content:   a.Content,
+			CreatedOn: a.CreatedOn,
+			// Both carry the display name, which is what this mapper did before
+			// entity-service replaced its string createdBy plus separate
+			// createdByFullName with one UserReference. Keeping createdBy as the
+			// name preserves the portal's existing output rather than quietly
+			// switching it to an email; CommentBubble falls back to createdBy
+			// when createdByFullName is empty, so both must resolve the same way.
+			CreatedBy:          userRefDisplayName(a.CreatedBy),
 			CreatedByFirstName: a.CreatedByFirstName,
 			CreatedByLastName:  a.CreatedByLastName,
-			CreatedByFullName:  a.CreatedByFullName,
+			CreatedByFullName:  userRefDisplayName(a.CreatedBy),
 			CommentType:        commentType,
 			FileName:           a.FileName,
 			ContentType:        a.ContentType,
