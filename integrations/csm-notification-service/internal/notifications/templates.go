@@ -59,7 +59,7 @@ var (
 // breaks — everything else just disappears when stripped, which would
 // otherwise run a rich-text source's separate paragraphs together into one
 // unreadable line.
-var htmlBlockBoundary = regexp.MustCompile(`(?i)</p>|<br\s*/?>|</div>|</li>`)
+var htmlBlockBoundary = regexp.MustCompile(`(?i)</p>|</h[1-6]>|<br\s*/?>|</div>|</li>`)
 
 // htmlTag matches any remaining tag, stripped unconditionally — this is a
 // blunt strip-everything approach, not a sanitizer with an allow-list, but

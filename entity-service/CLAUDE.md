@@ -138,7 +138,9 @@ there is no Postgres-backed equivalent for any of them):
   send something `events.Validate` would reject" precedent as an empty
   `Recipients` list.
 
-All three call sites above also set `CaseNumber` (`cv.Number`, the case's
+`publishCaseCreated`, `publishCommentAdded`, and `publishStatusChanged` —
+every `case.*` publisher above, not `snIncidentService.CreateIncident` —
+also set `CaseNumber` (`cv.Number`/`before.Number`, the case's
 human-readable ServiceNow reference, e.g. `"CS0023001"`) alongside `CaseID`
 (the UUID) — `csm-notification-service` displays `CaseNumber` in every
 subject line and template slot instead of the UUID, which is meaningless to

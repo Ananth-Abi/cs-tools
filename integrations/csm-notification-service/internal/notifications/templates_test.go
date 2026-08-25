@@ -49,6 +49,11 @@ func TestPlainTextFromHTML(t *testing.T) {
 			want:  "Line one\nLine two\nLine three",
 		},
 		{
+			name:  "heading followed by a paragraph stays separated",
+			input: "<h2>Summary</h2><p>Details</p>",
+			want:  "Summary\nDetails",
+		},
+		{
 			name:  "plain text with no markup passes through unchanged",
 			input: "just plain text, no html here",
 			want:  "just plain text, no html here",

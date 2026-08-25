@@ -110,9 +110,10 @@ type CaseCreatedPayload struct {
 	// CaseNumber is the case's human-readable reference (e.g. "CS0023001")
 	// — purely for display in the email body/subject; CaseID (the UUID)
 	// remains what's used for link construction and the caseId/entityId
-	// match Validate enforces. Optional: a publisher that can't supply one
-	// simply omits it, and templates render without it rather than
-	// falling back to the UUID, which is meaningless to an end user.
+	// match Validate enforces. Optional: internal/dispatch's
+	// displayCaseRef falls back to CaseID (the UUID, meaningless to an end
+	// user, but better than a blank subject/body) when a publisher hasn't
+	// been updated to send CaseNumber yet.
 	CaseNumber                string   `json:"caseNumber,omitempty"`
 	CaseTitle                 string   `json:"caseTitle"`
 	CaseType                  string   `json:"caseType"`
