@@ -2472,6 +2472,11 @@ type SearchChangeRequestsFilters struct {
 	//     inclusive "on or after", lte is inclusive "on or before". A lte
 	//     bound earlier than its own gte bound is rejected.
 	//   - "assignmentGroupId" (op in): sys_user_group UUIDs.
+	//   - "approval" (op eq): ServiceNow's raw task.approval rollup on the
+	//     change request. One of "not requested", "requested", "approved",
+	//     "rejected". Distinct from approvedBy/approvedOn on
+	//     ChangeRequestDetail, which are derived from a narrower
+	//     Customer-Approval-stage record, not this CR-wide field.
 	// See service.ParseChangeRequestFieldFilters.
 	Filters []ChangeRequestFieldFilter `json:"filters,omitempty"`
 }
