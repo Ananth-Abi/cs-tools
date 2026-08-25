@@ -299,3 +299,397 @@ func TestSNCaseService_CreateCase_NoPublisherConfigured(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// newTestCommentClient stubs the three requests publishCommentAdded can
+// trigger after a successful comment create: the POST /comments create
+// call itself, the GetCaseByID enrichment (GET /cases/{id} + its always-
+// issued GET /cases/{id}/tags, stubbed empty here), and the
+// SearchCaseComments lookup (POST /comments/search) resolveCommentAuthorName
+// uses to find the new comment's author display name.
+func newTestCommentClient(t *testing.T, getCaseBody, createCommentBody, searchCommentsBody string) *integrationservice.Client {
+	t.Helper()
+	return newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/comments":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(createCommentBody))
+		case r.Method == http.MethodPost && r.URL.Path == "/comments/search":
+			_, _ = w.Write([]byte(searchCommentsBody))
+		case strings.HasSuffix(r.URL.Path, "/tags"):
+			_, _ = w.Write([]byte(`{"tags":[]}`))
+		default:
+			_, _ = w.Write([]byte(getCaseBody))
+		}
+	})
+}
+
+// TestSNCaseService_CreateCaseComment_PublishesCommentAdded verifies the
+// happy path: after a successful comment create, publishCommentAdded
+// enriches the case via GetCaseByID, resolves the author's display name via
+// resolveCommentAuthorName's SearchCaseComments lookup (ServiceNow's create-
+// comment response has no resolved name of its own — see
+// publishCommentAdded's own doc comment), and publishes case.comment_added
+// with every field csm-notification-service's events.Validate requires.
+func TestSNCaseService_CreateCaseComment_PublishesCommentAdded(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	watcherSysid := sysid32('c')
+	commentSysid := sysid32('d')
+	caseID := sysidToUUID(caseSysid)
+	commentID := sysidToUUID(commentSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-020",
+		"number": "CS0020001",
+		"title": "Login is broken",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	createCommentBody := `{
+		"message": "Comment created successfully",
+		"comment": {"id": "` + commentSysid + `", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith"}
+	}`
+	searchCommentsBody := `{
+		"comments": [
+			{"id": "` + commentSysid + `", "referenceId": "` + caseSysid + `", "content": "Working on it", "type": "comments", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith", "createdByFullName": "Agent Smith"}
+		],
+		"offset": 0, "limit": 20, "totalRecords": 1
+	}`
+
+	client := newTestCommentClient(t, getCaseBody, createCommentBody, searchCommentsBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	req := domain.CreateCaseCommentRequest{
+		CaseID:  caseID,
+		Type:    domain.CommentTypeComment,
+		Content: "Working on it",
+	}
+
+	resp, err := svc.CreateCaseComment(contextWithUserIDToken("token"), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Comment.ID != commentID {
+		t.Fatalf("unexpected comment id: %s", resp.Comment.ID)
+	}
+
+	if len(publisher.calls) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(publisher.calls))
+	}
+	call := publisher.calls[0]
+	if call.eventType != events.TypeCommentAdded {
+		t.Errorf("eventType = %q, want %q", call.eventType, events.TypeCommentAdded)
+	}
+	if call.entityID != caseID {
+		t.Errorf("entityID = %q, want %q", call.entityID, caseID)
+	}
+
+	var payload events.CommentAddedPayload
+	if err := json.Unmarshal(call.payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if payload.Name != "Agent Smith" {
+		t.Errorf("name = %q, want %q", payload.Name, "Agent Smith")
+	}
+	wantProjectID := sysidToUUID(projectSysid)
+	if payload.ProjectID != wantProjectID {
+		t.Errorf("projectId = %q, want %q", payload.ProjectID, wantProjectID)
+	}
+	if payload.CaseID != caseID {
+		t.Errorf("caseId = %q, want %q", payload.CaseID, caseID)
+	}
+	if payload.CaseTitle != "Login is broken" {
+		t.Errorf("caseTitle = %q, want %q", payload.CaseTitle, "Login is broken")
+	}
+	if payload.CaseComment != "Working on it" {
+		t.Errorf("caseComment = %q, want %q", payload.CaseComment, "Working on it")
+	}
+	if payload.CommentID != commentID {
+		t.Errorf("commentId = %q, want %q", payload.CommentID, commentID)
+	}
+	if len(payload.Recipients) != 1 || payload.Recipients[0] != "john.roe@example.com" {
+		t.Errorf("recipients = %v, want [john.roe@example.com]", payload.Recipients)
+	}
+}
+
+// TestSNCaseService_CreateCaseComment_SkipsPublishWhenNoWatchers mirrors
+// TestSNCaseService_CreateCase_SkipsPublishWhenNoWatchers for
+// case.comment_added.
+func TestSNCaseService_CreateCaseComment_SkipsPublishWhenNoWatchers(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	commentSysid := sysid32('d')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-021",
+		"number": "CS0021001",
+		"title": "No watchers here",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"}
+	}`
+	createCommentBody := `{
+		"message": "Comment created successfully",
+		"comment": {"id": "` + commentSysid + `", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith"}
+	}`
+
+	client := newTestCommentClient(t, getCaseBody, createCommentBody, `{"comments":[],"offset":0,"limit":20,"totalRecords":0}`)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	req := domain.CreateCaseCommentRequest{CaseID: caseID, Type: domain.CommentTypeComment, Content: "hi"}
+	if _, err := svc.CreateCaseComment(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call for a case with no watchers, got %d", len(publisher.calls))
+	}
+}
+
+// TestSNCaseService_CreateCaseComment_SkipsPublishWhenAuthorNameUnresolved
+// verifies that publishCommentAdded skips publishing (rather than sending an
+// event with an empty Name, which events.Validate would reject anyway) when
+// the new comment isn't found in resolveCommentAuthorName's bounded search —
+// e.g. because the search backend hasn't indexed it yet.
+func TestSNCaseService_CreateCaseComment_SkipsPublishWhenAuthorNameUnresolved(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	watcherSysid := sysid32('c')
+	commentSysid := sysid32('d')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-022",
+		"number": "CS0022001",
+		"title": "Author unresolved",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	createCommentBody := `{
+		"message": "Comment created successfully",
+		"comment": {"id": "` + commentSysid + `", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith"}
+	}`
+	// The search results simply don't include the just-created comment.
+	searchCommentsBody := `{"comments":[],"offset":0,"limit":20,"totalRecords":0}`
+
+	client := newTestCommentClient(t, getCaseBody, createCommentBody, searchCommentsBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	req := domain.CreateCaseCommentRequest{CaseID: caseID, Type: domain.CommentTypeComment, Content: "hi"}
+	if _, err := svc.CreateCaseComment(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call when the author's name can't be resolved, got %d", len(publisher.calls))
+	}
+}
+
+// newTestUpdateCaseClient stubs the two requests publishStatusChanged can
+// trigger after a successful update: the PATCH /cases/{id} call itself, and
+// the GetCaseByID enrichment (GET /cases/{id} + its always-issued
+// GET /cases/{id}/tags, stubbed empty here) publishStatusChanged uses for
+// Recipients/ProjectID (snUpdateCaseResponse itself has no project
+// reference — see publishStatusChanged's own doc comment).
+func newTestUpdateCaseClient(t *testing.T, getCaseBody, updateCaseBody string) *integrationservice.Client {
+	t.Helper()
+	return newTestCaseClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPatch:
+			_, _ = w.Write([]byte(updateCaseBody))
+		case strings.HasSuffix(r.URL.Path, "/tags"):
+			_, _ = w.Write([]byte(`{"tags":[]}`))
+		default:
+			_, _ = w.Write([]byte(getCaseBody))
+		}
+	})
+}
+
+// TestSNCaseService_UpdateCase_PublishesStatusChanged verifies the happy
+// path: a State-only PATCH publishes case.status_changed with the updated
+// state's raw ServiceNow label, the enriched case's project id, and the
+// watch list's emails as Recipients.
+func TestSNCaseService_UpdateCase_PublishesStatusChanged(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	watcherSysid := sysid32('c')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-023",
+		"number": "CS0023001",
+		"title": "State change test",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 10, "label": "Work In Progress"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "state": {"id": 10, "label": "Work In Progress"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	newState := domain.CaseStateWorkInProgress
+	req := domain.UpdateCaseRequest{ID: caseID, State: &newState}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(publisher.calls) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(publisher.calls))
+	}
+	call := publisher.calls[0]
+	if call.eventType != events.TypeStatusChanged {
+		t.Errorf("eventType = %q, want %q", call.eventType, events.TypeStatusChanged)
+	}
+	if call.entityID != caseID {
+		t.Errorf("entityID = %q, want %q", call.entityID, caseID)
+	}
+
+	var payload events.StatusChangedPayload
+	if err := json.Unmarshal(call.payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if payload.NewStatus != "Work In Progress" {
+		t.Errorf("newStatus = %q, want %q", payload.NewStatus, "Work In Progress")
+	}
+	wantProjectID := sysidToUUID(projectSysid)
+	if payload.ProjectID != wantProjectID {
+		t.Errorf("projectId = %q, want %q", payload.ProjectID, wantProjectID)
+	}
+	if payload.CaseID != caseID {
+		t.Errorf("caseId = %q, want %q", payload.CaseID, caseID)
+	}
+	if len(payload.Recipients) != 1 || payload.Recipients[0] != "john.roe@example.com" {
+		t.Errorf("recipients = %v, want [john.roe@example.com]", payload.Recipients)
+	}
+}
+
+// TestSNCaseService_UpdateCase_SkipsPublishWhenNoWatchers mirrors
+// TestSNCaseService_CreateCase_SkipsPublishWhenNoWatchers for
+// case.status_changed.
+func TestSNCaseService_UpdateCase_SkipsPublishWhenNoWatchers(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-024",
+		"number": "CS0024001",
+		"title": "No watchers here",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 10, "label": "Work In Progress"}
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "state": {"id": 10, "label": "Work In Progress"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	newState := domain.CaseStateWorkInProgress
+	req := domain.UpdateCaseRequest{ID: caseID, State: &newState}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call for a case with no watchers, got %d", len(publisher.calls))
+	}
+}
+
+// TestSNCaseService_UpdateCase_DoesNotPublishStatusChangedForOtherFields
+// verifies that a PATCH not touching State (e.g. assigneeEmail) never
+// triggers publishStatusChanged at all — status_changed is specifically a
+// State-change event, not a catch-all "case updated" one.
+func TestSNCaseService_UpdateCase_DoesNotPublishStatusChangedForOtherFields(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	assigneeSysid := sysid32('e')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-025",
+		"number": "CS0025001",
+		"title": "Assignee change test",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"}
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "assignedTo": {"id": "` + assigneeSysid + `", "name": "Alex Assignee"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	assigneeEmail := "alex@example.com"
+	req := domain.UpdateCaseRequest{ID: caseID, AssigneeEmail: &assigneeEmail}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call for a non-State update, got %d", len(publisher.calls))
+	}
+}

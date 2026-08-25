@@ -48,18 +48,38 @@ type Envelope struct {
 	Payload  json.RawMessage `json:"payload"`
 }
 
-// CommentAddedPayload is the Payload shape for TypeCommentAdded.
-// Deliberately minimal: no comment body, no author — Envelope already
-// carries EntityID (the case), so this is only what search/replay by
-// timestamp needs.
+// CommentAddedPayload is the Payload shape for TypeCommentAdded — mirrors
+// csm-notification-service's own CommentAddedPayload (its internal/events/
+// validate.go is the schema authority; keep this in sync by hand the same
+// way Envelope is kept in sync). An earlier version of this struct was
+// {Timestamp string} only — deliberately minimal, on the assumption that
+// Envelope's own EntityID plus a timestamp was all a consumer would need —
+// but csm-notification-service's actual schema requires every field below
+// (see its events.Validate), so that version was never actually
+// publishable: csm-notification-service would reject it outright. Name is
+// the comment author's resolved display name (see
+// snCaseService.publishCommentAdded's own doc comment for how this service
+// obtains it, since ServiceNow's create-comment response doesn't carry
+// one), not the case reporter.
 type CommentAddedPayload struct {
-	Timestamp string `json:"timestamp"`
+	Name        string   `json:"name"`
+	ProjectID   string   `json:"projectId"`
+	CaseID      string   `json:"caseId"`
+	CaseTitle   string   `json:"caseTitle"`
+	CaseComment string   `json:"caseComment"`
+	CommentID   string   `json:"commentId"`
+	Recipients  []string `json:"recipients"`
 }
 
-// StatusChangedPayload is the Payload shape for TypeStatusChanged.
+// StatusChangedPayload is the Payload shape for TypeStatusChanged — mirrors
+// csm-notification-service's own StatusChangedPayload, same reasoning as
+// CommentAddedPayload above (an earlier {Timestamp, NewStatus} version was
+// similarly never actually publishable).
 type StatusChangedPayload struct {
-	Timestamp string `json:"timestamp"`
-	NewStatus string `json:"newStatus"`
+	ProjectID  string   `json:"projectId"`
+	CaseID     string   `json:"caseId"`
+	NewStatus  string   `json:"newStatus"`
+	Recipients []string `json:"recipients"`
 }
 
 // CaseCreatedPayload is the Payload shape for TypeCaseCreated — mirrors

@@ -42,6 +42,31 @@ import (
 // rather than detached.
 const publishCaseCreatedTimeout = 5 * time.Second
 
+// publishCommentAddedTimeout bounds publishCommentAdded's enrichment
+// (GetCaseByID plus a bounded SearchCaseComments lookup for the comment
+// author's resolved display name) + publish — same reasoning as
+// publishCaseCreatedTimeout.
+const publishCommentAddedTimeout = 5 * time.Second
+
+// publishStatusChangedTimeout bounds publishStatusChanged's enrichment
+// (GetCaseByID) + publish — same reasoning as publishCaseCreatedTimeout.
+const publishStatusChangedTimeout = 5 * time.Second
+
+// watchListEmails extracts the non-empty emails from a case's watch list —
+// Recipients for every case.* event this file publishes is the case's
+// WatchList emails only (an explicit, deliberate decision — this service
+// has no other notion of who should be emailed for a case; see
+// publishCaseCreated's own doc comment).
+func watchListEmails(watchList []domain.WatchListUser) []string {
+	recipients := make([]string, 0, len(watchList))
+	for _, w := range watchList {
+		if w.Email != "" {
+			recipients = append(recipients, w.Email)
+		}
+	}
+	return recipients
+}
+
 // snCasesResponse mirrors the Choreo POST /cases/search response.
 type snCasesResponse struct {
 	Cases        []snCase `json:"cases"`
@@ -854,12 +879,7 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 		return
 	}
 
-	recipients := make([]string, 0, len(cv.WatchList))
-	for _, w := range cv.WatchList {
-		if w.Email != "" {
-			recipients = append(recipients, w.Email)
-		}
-	}
+	recipients := watchListEmails(cv.WatchList)
 	if len(recipients) == 0 {
 		slog.InfoContext(ctx, "sn create case: case.created not published, case has no watchers to email", "caseId", caseID)
 		return
@@ -892,6 +912,151 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 		// the full error is already durably recorded in
 		// event_publish_failures by Publish itself).
 		slog.ErrorContext(ctx, "sn create case: publish case.created failed", "caseId", caseID)
+	}
+}
+
+// resolveCommentAuthorNameSearchLimit bounds resolveCommentAuthorName's
+// lookup — the new comment is essentially certain to be within this many
+// of the case's most recent comments regardless of SearchCaseComments' own
+// sort order (undocumented, not controllable by this service), since it
+// was just created moments before this call runs.
+const resolveCommentAuthorNameSearchLimit = 20
+
+// resolveCommentAuthorName looks up commentID's author display name via
+// SearchCaseComments — see publishCommentAdded's doc comment for why this
+// re-fetch is needed at all. Returns "" if the comment isn't found in the
+// first resolveCommentAuthorNameSearchLimit results, or if the search
+// itself fails; either way the caller logs and skips publishing rather
+// than sending an event with a fabricated or missing author name.
+func (s *snCaseService) resolveCommentAuthorName(ctx context.Context, caseID, commentID string) string {
+	resp, err := s.SearchCaseComments(ctx, domain.SearchCaseCommentsRequest{
+		CaseID:     caseID,
+		Pagination: domain.Pagination{Limit: resolveCommentAuthorNameSearchLimit},
+	})
+	if err != nil {
+		return ""
+	}
+	for _, c := range resp.Comments {
+		if c.ID == commentID && c.CreatedBy != nil {
+			return c.CreatedBy.Name
+		}
+	}
+	return ""
+}
+
+// publishCommentAdded best-effort publishes a case.comment_added event
+// after a new comment is created. Recipients is the case's WatchList
+// emails only — see publishCaseCreated's own doc comment for why, and why
+// an empty list silently skips publishing rather than sending a payload
+// csm-notification-service's events.Validate would reject anyway.
+//
+// events.CommentAddedPayload.Name requires the comment author's resolved
+// display name, which snCreateCommentResponse doesn't carry (only a raw
+// CreatedBy string, unresolved — see snCreateCommentResponse) — every
+// other place in this file that needs a resolved author name gets it from
+// a GET/search response, never a bare create-acknowledgment response, so
+// this re-fetches via resolveCommentAuthorName (SearchCaseComments)
+// instead of trusting the create response, mirroring publishCaseCreated's
+// own "re-fetch rather than trust the create response" precedent. If the
+// author name can't be resolved that way, publishing is skipped (logged)
+// rather than sending an event with an empty or fabricated name — see
+// resolveCommentAuthorName's own doc comment for when that happens.
+//
+// Runs synchronously, bounded by publishCommentAddedTimeout — see
+// publishCaseCreated's own doc comment for why (same reasoning).
+func (s *snCaseService) publishCommentAdded(ctx context.Context, req domain.CreateCaseCommentRequest, commentID string) {
+	if s.publisher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishCommentAddedTimeout)
+	defer cancel()
+
+	cv, err := s.GetCaseByID(ctx, req.CaseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "sn create comment: enrich case for case.comment_added publish failed", "caseId", req.CaseID)
+		return
+	}
+
+	recipients := watchListEmails(cv.WatchList)
+	if len(recipients) == 0 {
+		slog.InfoContext(ctx, "sn create comment: case.comment_added not published, case has no watchers to email", "caseId", req.CaseID)
+		return
+	}
+
+	authorName := s.resolveCommentAuthorName(ctx, req.CaseID, commentID)
+	if authorName == "" {
+		slog.InfoContext(ctx, "sn create comment: case.comment_added not published, could not resolve comment author's display name", "caseId", req.CaseID)
+		return
+	}
+
+	payload, err := json.Marshal(events.CommentAddedPayload{
+		Name:        authorName,
+		ProjectID:   cv.ProjectDetails.ID,
+		CaseID:      req.CaseID,
+		CaseTitle:   cv.Subject,
+		CaseComment: req.Content,
+		CommentID:   commentID,
+		Recipients:  recipients,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn create comment: encode case.comment_added payload failed", "caseId", req.CaseID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeCommentAdded, req.CaseID, payload); err != nil {
+		// Not logging err itself — see publishCaseCreated's matching log
+		// line for why.
+		slog.ErrorContext(ctx, "sn create comment: publish case.comment_added failed", "caseId", req.CaseID)
+	}
+}
+
+// publishStatusChanged best-effort publishes a case.status_changed event
+// after UpdateCase changes a case's state. newStatus is the raw SN state
+// label (e.g. "Open", "Work In Progress") rather than domain.CaseState's
+// own enum conversion — mirrors CreateCase's own stateLabel handling, and
+// is always available whenever snResp.Case.State is non-nil, unlike the
+// enum conversion (snCaseStateLabelToEnum), which silently leaves the
+// domain value unset on a label it doesn't recognize.
+//
+// Recipients is the case's WatchList emails only — see publishCaseCreated's
+// own doc comment for why, and why an empty list silently skips
+// publishing. A fresh GetCaseByID call is needed for both Recipients and
+// ProjectID: snUpdateCaseResponse's own WatchList lacks nothing, but it has
+// no project reference at all.
+//
+// Runs synchronously, bounded by publishStatusChangedTimeout — see
+// publishCaseCreated's own doc comment for why (same reasoning).
+func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newStatus string) {
+	if s.publisher == nil || newStatus == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishStatusChangedTimeout)
+	defer cancel()
+
+	cv, err := s.GetCaseByID(ctx, caseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: enrich case for case.status_changed publish failed", "caseId", caseID)
+		return
+	}
+	recipients := watchListEmails(cv.WatchList)
+	if len(recipients) == 0 {
+		slog.InfoContext(ctx, "sn update case: case.status_changed not published, case has no watchers to email", "caseId", caseID)
+		return
+	}
+
+	payload, err := json.Marshal(events.StatusChangedPayload{
+		ProjectID:  cv.ProjectDetails.ID,
+		CaseID:     caseID,
+		NewStatus:  newStatus,
+		Recipients: recipients,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: encode case.status_changed payload failed", "caseId", caseID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeStatusChanged, caseID, payload); err != nil {
+		// Not logging err itself — see publishCaseCreated's matching log
+		// line for why.
+		slog.ErrorContext(ctx, "sn update case: publish case.status_changed failed", "caseId", caseID)
 	}
 }
 
@@ -1181,14 +1346,16 @@ func (s *snCaseService) CreateCaseComment(ctx context.Context, req domain.Create
 		return domain.CreateCaseCommentResponse{}, fmt.Errorf("sn create comment: parse createdOn %q: %w", snResp.Comment.CreatedOn, err)
 	}
 
-	return domain.CreateCaseCommentResponse{
+	result := domain.CreateCaseCommentResponse{
 		Message: snResp.Message,
 		Comment: domain.CaseCommentDetail{
 			ID:        sysidToUUID(snResp.Comment.ID),
 			CreatedOn: createdOn,
 			CreatedBy: snResp.Comment.CreatedBy,
 		},
-	}, nil
+	}
+	s.publishCommentAdded(ctx, req, result.Comment.ID)
+	return result, nil
 }
 
 type snCommentFilters struct {
@@ -1860,6 +2027,10 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	}
 	if snResp.Case.WorstCaseFixEta != nil && *snResp.Case.WorstCaseFixEta != "" {
 		resp.Case.WorstCaseFixEta = snResp.Case.WorstCaseFixEta
+	}
+
+	if req.State != nil && snResp.Case.State != nil {
+		s.publishStatusChanged(ctx, req.ID, snResp.Case.State.Label)
 	}
 
 	return resp, nil
