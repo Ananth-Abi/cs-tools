@@ -247,7 +247,7 @@ func MapSearchConversations(r entity.SearchConversationsResponse) SearchConversa
 			Case:         entityRefToIDLabel(c.Case),
 			State:        conversationStateRef(c.State),
 			CreatedOn:    c.CreatedOn,
-			CreatedBy:    c.CreatedBy,
+			CreatedBy:    userRefIdentity(c.CreatedBy),
 		}
 		if c.ID != nil {
 			summary.ID = *c.ID

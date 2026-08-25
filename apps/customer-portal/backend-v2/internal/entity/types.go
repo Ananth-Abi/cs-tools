@@ -514,6 +514,18 @@ type DeployedProductRef struct {
 }
 
 // UserRef is a reference to a user with key display fields.
+// UserReference is entity-service's canonical person reference. It replaced the
+// former string createdBy plus sibling createdByUser/assignedEngineerUser fields
+// (see its "one canonical person reference per response field" change), so every
+// mirrored response field named createdBy is now an object. Declaring it as a
+// string made json.Unmarshal fail with "cannot unmarshal object into Go value of
+// type string", aborting the whole decode.
+type UserReference struct {
+	ID    *string `json:"id"`
+	Email string  `json:"email"`
+	Name  string  `json:"name"`
+}
+
 type UserRef struct {
 	ID     string `json:"id,omitempty"`
 	Name   string `json:"name,omitempty"`
@@ -535,7 +547,7 @@ type SearchCaseView struct {
 	Number           string               `json:"number"`
 	CreatedOn        string               `json:"createdOn"`
 	UpdatedOn        string               `json:"updatedOn"`
-	CreatedBy        string               `json:"createdBy"`
+	CreatedBy        *UserReference       `json:"createdBy"`
 	Subject          *string              `json:"subject"`
 	Description      *string              `json:"description"`
 	IssueType        *string              `json:"issueType"`
@@ -1078,20 +1090,19 @@ type FieldChange struct {
 // field changes). Field types/omitempty here mirror entity-service's struct
 // exactly (see its doc comment) — do not change to pointers.
 type CaseActivity struct {
-	ID                 string        `json:"id"`
-	Type               ActivityType  `json:"type"`
-	Content            string        `json:"content"`
-	CreatedOn          time.Time     `json:"createdOn"`
-	CreatedBy          string        `json:"createdBy"`
-	CreatedByFirstName string        `json:"createdByFirstName"`
-	CreatedByLastName  string        `json:"createdByLastName"`
-	CreatedByFullName  string        `json:"createdByFullName"`
-	CommentType        *CommentType  `json:"commentType,omitempty"`
-	FileName           string        `json:"fileName,omitempty"`
-	ContentType        string        `json:"contentType,omitempty"`
-	SizeBytes          int           `json:"sizeBytes,omitempty"`
-	DownloadURL        string        `json:"downloadUrl,omitempty"`
-	Changes            []FieldChange `json:"changes,omitempty"`
+	ID                 string         `json:"id"`
+	Type               ActivityType   `json:"type"`
+	Content            string         `json:"content"`
+	CreatedOn          time.Time      `json:"createdOn"`
+	CreatedBy          *UserReference `json:"createdBy"`
+	CreatedByFirstName string         `json:"createdByFirstName"`
+	CreatedByLastName  string         `json:"createdByLastName"`
+	CommentType        *CommentType   `json:"commentType,omitempty"`
+	FileName           string         `json:"fileName,omitempty"`
+	ContentType        string         `json:"contentType,omitempty"`
+	SizeBytes          int            `json:"sizeBytes,omitempty"`
+	DownloadURL        string         `json:"downloadUrl,omitempty"`
+	Changes            []FieldChange  `json:"changes,omitempty"`
 }
 
 // SearchCaseActivitiesRequest is the input for POST /cases/{id}/activities/search.
@@ -1461,15 +1472,15 @@ type SearchConversationsRequest struct {
 
 // SearchConversationView is the conversation representation returned in search results.
 type SearchConversationView struct {
-	ID             *string    `json:"id"`
-	Number         *string    `json:"number"`
-	InitialMessage *string    `json:"initialMessage"`
-	MessageCount   int        `json:"messageCount"`
-	Project        *EntityRef `json:"project"`
-	Case           *EntityRef `json:"case"`
-	State          *string    `json:"state"`
-	CreatedOn      string     `json:"createdOn"`
-	CreatedBy      string     `json:"createdBy"`
+	ID             *string        `json:"id"`
+	Number         *string        `json:"number"`
+	InitialMessage *string        `json:"initialMessage"`
+	MessageCount   int            `json:"messageCount"`
+	Project        *EntityRef     `json:"project"`
+	Case           *EntityRef     `json:"case"`
+	State          *string        `json:"state"`
+	CreatedOn      string         `json:"createdOn"`
+	CreatedBy      *UserReference `json:"createdBy"`
 }
 
 // SearchConversationsResponse is entity-service's response for POST /conversations/search.

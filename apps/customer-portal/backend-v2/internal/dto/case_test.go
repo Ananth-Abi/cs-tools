@@ -189,7 +189,7 @@ func TestMapSearchCases_MatchesFrontendCaseListItemShape(t *testing.T) {
 				Number:           "CS0440883",
 				CreatedOn:        "2026-07-27 08:39:48",
 				UpdatedOn:        "2026-08-01 10:00:00",
-				CreatedBy:        "customer@example.com",
+				CreatedBy:        &entity.UserReference{Email: "customer@example.com", Name: "A Customer"},
 				Subject:          &subject,
 				Description:      &description,
 				State:            "Work In Progress",
