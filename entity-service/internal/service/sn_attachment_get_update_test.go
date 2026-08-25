@@ -174,7 +174,7 @@ func TestSNCaseService_UpdateAttachment_HappyPath(t *testing.T) {
 		ReferenceID:   refUUID,
 		ReferenceType: domain.ReferenceTypeDeployment,
 		Name:          &newName,
-		Description:   &newDescription,
+		Description:   json.RawMessage(`"` + newDescription + `"`),
 	}
 
 	resp, err := svc.UpdateAttachment(contextWithUserIDToken("token"), req)
@@ -203,6 +203,92 @@ func TestSNCaseService_UpdateAttachment_HappyPath(t *testing.T) {
 	}
 	if resp.Attachment.UpdatedBy != "jane.doe@example.com" {
 		t.Errorf("Attachment.UpdatedBy = %q, want jane.doe@example.com", resp.Attachment.UpdatedBy)
+	}
+}
+
+// TestSNCaseService_UpdateAttachment_DescriptionThreeStates proves the three states a
+// caller can express for description are preserved onto the outbound payload: omitted
+// (field absent, name alone satisfies "at least one field"), explicit null (clears it),
+// and a value (sets it). Before this fix, description was a plain *string, so omitted
+// and explicit-null were indistinguishable.
+func TestSNCaseService_UpdateAttachment_DescriptionThreeStates(t *testing.T) {
+	attachmentUUID := sysidToUUID(testAttachmentSysid)
+	refUUID := sysidToUUID(testAttachmentRefSysid)
+	name := "renamed.txt"
+
+	cases := []struct {
+		name           string
+		req            domain.UpdateAttachmentRequest
+		wantHasBodyKey bool
+		wantBodyValue  any
+	}{
+		{
+			name: "description omitted",
+			req: domain.UpdateAttachmentRequest{
+				AttachmentID:  attachmentUUID,
+				ReferenceID:   refUUID,
+				ReferenceType: domain.ReferenceTypeDeployment,
+				Name:          &name,
+			},
+			wantHasBodyKey: false,
+		},
+		{
+			name: "description explicit null",
+			req: domain.UpdateAttachmentRequest{
+				AttachmentID:  attachmentUUID,
+				ReferenceID:   refUUID,
+				ReferenceType: domain.ReferenceTypeDeployment,
+				Description:   json.RawMessage(`null`),
+			},
+			wantHasBodyKey: true,
+			wantBodyValue:  nil,
+		},
+		{
+			name: "description set to a value",
+			req: domain.UpdateAttachmentRequest{
+				AttachmentID:  attachmentUUID,
+				ReferenceID:   refUUID,
+				ReferenceType: domain.ReferenceTypeDeployment,
+				Description:   json.RawMessage(`"Updated description"`),
+			},
+			wantHasBodyKey: true,
+			wantBodyValue:  "Updated description",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotBody map[string]any
+			mux := http.NewServeMux()
+			mux.HandleFunc("/attachments/"+testAttachmentSysid, func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				_, _ = w.Write([]byte(`{
+					"message": "updated",
+					"attachment": {
+						"id": "` + testAttachmentSysid + `",
+						"updatedOn": "2026-02-01 00:00:00",
+						"updatedBy": "jane.doe@example.com"
+					}
+				}`))
+			})
+
+			client := newTestSNClient(t, mux)
+			svc := NewServiceNowCaseService(client, nil)
+
+			if _, err := svc.UpdateAttachment(contextWithUserIDToken("token"), tc.req); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			gotValue, gotHasKey := gotBody["description"]
+			if gotHasKey != tc.wantHasBodyKey {
+				t.Fatalf("outbound body has %q key = %v, want %v (body: %v)", "description", gotHasKey, tc.wantHasBodyKey, gotBody)
+			}
+			if gotHasKey && gotValue != tc.wantBodyValue {
+				t.Errorf("outbound description = %v, want %v", gotValue, tc.wantBodyValue)
+			}
+		})
 	}
 }
 

@@ -224,6 +224,11 @@ type CaseService interface {
 	DeleteCaseAttachment(ctx context.Context, req domain.DeleteAttachmentRequest) (domain.DeleteAttachmentResponse, error)
 	// GetAttachment returns the metadata for the attachment identified by attachmentID,
 	// regardless of which reference type (case, deployment, ...) it is linked to.
+	// The backing ServiceNow response for a single attachment fetch does not carry
+	// referenceType (unlike the search response, which echoes back the caller's
+	// request filter), so the returned domain.Attachment's ReferenceType field is
+	// always the zero value; callers that need it already know it from context
+	// (e.g. the request that led them to the attachment id).
 	// A NotFoundError is returned if the attachment does not exist.
 	GetAttachment(ctx context.Context, attachmentID string) (domain.Attachment, error)
 	// UpdateAttachment updates the name and/or description of the attachment identified by

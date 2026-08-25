@@ -98,6 +98,7 @@ export default function UpdateHistoryPanel({
   );
 
   const currentUpdateLevel = sortedUpdates.length > 0 ? sortedUpdates[0].u.updateLevel : null;
+  const latestOriginalIndex = sortedUpdates.length > 0 ? sortedUpdates[0].originalIndex : null;
 
   const formLevelNum = form.updateLevel.trim() === "" ? null : Number(form.updateLevel);
   const formLevelError =
@@ -250,10 +251,10 @@ export default function UpdateHistoryPanel({
           />
           <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
             {sortedUpdates.map(({ u, originalIndex }) => {
-              const isLatest = u.updateLevel === currentUpdateLevel;
+              const isLatest = originalIndex === latestOriginalIndex;
               const isEditingThis = editingIndex === originalIndex;
               return (
-                <Box key={`${u.updateLevel}-${u.date}`} sx={{ position: "relative", display: "flex", gap: 2 }}>
+                <Box key={originalIndex} sx={{ position: "relative", display: "flex", gap: 2 }}>
                   <Box sx={{ position: "relative", zIndex: 1, flexShrink: 0 }}>
                     <Box
                       sx={{

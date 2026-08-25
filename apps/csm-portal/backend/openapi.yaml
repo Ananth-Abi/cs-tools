@@ -1028,7 +1028,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Attachment'
+                $ref: '#/components/schemas/AttachmentUpdateResponse'
         "400":
           description: BadRequest
           content:
@@ -9316,6 +9316,23 @@ components:
           type: string
           nullable: true
           description: New description. At least one of name or description is required.
+
+    AttachmentUpdateResponse:
+      type: object
+      properties:
+        message:
+          type: string
+        attachment:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            updatedOn:
+              type: string
+              format: date-time
+            updatedBy:
+              type: string
 
     AttachmentSearchPayload:
       type: object

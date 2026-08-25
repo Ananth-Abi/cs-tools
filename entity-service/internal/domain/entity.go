@@ -2280,12 +2280,15 @@ type DeleteAttachmentResponse struct {
 // ReferenceID and ReferenceType scope the update the same way SearchAttachmentsRequest does
 // (an IDOR guard: the caller asserts which entity it believes the attachment belongs to).
 // At least one of Name or Description must be provided.
+// Description uses json.RawMessage to preserve three states: nil/empty = omit, "null" = clear,
+// `"value"` = set -- mirroring UpdateDeployedProductRequest.Description, since a plain *string
+// cannot tell an omitted field apart from an explicit null.
 type UpdateAttachmentRequest struct {
-	AttachmentID  string        `json:"-"`
-	ReferenceID   string        `json:"referenceId"`
-	ReferenceType ReferenceType `json:"referenceType"`
-	Name          *string       `json:"name,omitempty"`
-	Description   *string       `json:"description,omitempty"`
+	AttachmentID  string          `json:"-"`
+	ReferenceID   string          `json:"referenceId"`
+	ReferenceType ReferenceType   `json:"referenceType"`
+	Name          *string         `json:"name,omitempty"`
+	Description   json.RawMessage `json:"description,omitempty"`
 }
 
 // UpdateAttachmentResponse is the response for PATCH /attachments/{attachmentId}.

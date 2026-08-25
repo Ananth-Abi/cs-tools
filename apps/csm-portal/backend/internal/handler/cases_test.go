@@ -2101,6 +2101,46 @@ func TestUpdateAttachment(t *testing.T) {
 		assertContentType(t, w, "application/json")
 	})
 
+	invalidBodies := []struct {
+		name string
+		body string
+	}{
+		{"null body", `null`},
+		{"array body", `[]`},
+		{"empty object", `{}`},
+		{"missing referenceId", `{"referenceType":"case","name":"renamed.png"}`},
+		{"invalid referenceId", `{"referenceId":"not-a-uuid","referenceType":"case","name":"renamed.png"}`},
+		{"invalid referenceType", `{"referenceId":"11111111-1111-1111-1111-111111111111","referenceType":"bogus","name":"renamed.png"}`},
+		{"neither name nor description", `{"referenceId":"11111111-1111-1111-1111-111111111111","referenceType":"case"}`},
+	}
+	for _, tc := range invalidBodies {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			h := NewCaseHandler(&mockEntityCaseClient{})
+			r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/"+testAttachmentID, strings.NewReader(tc.body)))
+			r.SetPathValue("id", testAttachmentID)
+			w := httptest.NewRecorder()
+			h.UpdateAttachment(w, r)
+			assertStatus(t, w, http.StatusBadRequest)
+			assertErrorMessage(t, w, ErrMsgBadRequest)
+			assertContentType(t, w, "application/json")
+		})
+	}
+
+	t.Run("accepts description-only update with explicit null (clear)", func(t *testing.T) {
+		const payload = `{"referenceId":"11111111-1111-1111-1111-111111111111","referenceType":"deployment","description":null}`
+		client := &mockEntityCaseClient{
+			updateAttachmentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				return []byte(`{}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/attachments/"+testAttachmentID, strings.NewReader(payload)))
+		r.SetPathValue("id", testAttachmentID)
+		w := httptest.NewRecorder()
+		h.UpdateAttachment(w, r)
+		assertStatus(t, w, http.StatusOK)
+	})
+
 	t.Run("forwards attachment ID and body, returns 200 with upstream response", func(t *testing.T) {
 		var capturedID string
 		var capturedBody []byte
@@ -2132,7 +2172,7 @@ func TestUpdateAttachment(t *testing.T) {
 	})
 
 	t.Run("maps upstream errors", func(t *testing.T) {
-		for _, tc := range upstreamErrors("Failed to update attachment.") {
+		for _, tc := range upstreamErrorsGeneric("Failed to update attachment.") {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				client := &mockEntityCaseClient{

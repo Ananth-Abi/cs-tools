@@ -71,6 +71,22 @@ func toSNProductUpdates(updates []domain.ProductUpdateEntry) []snProductUpdate {
 	return out
 }
 
+// validateProductUpdates rejects an update-history array containing a negative
+// updateLevel or a malformed date before it is ever forwarded to the backing data
+// source. It stops at (and reports) the first invalid entry rather than partially
+// processing the array. A nil or empty Updates is valid (nothing to check).
+func validateProductUpdates(updates []domain.ProductUpdateEntry) error {
+	for i, u := range updates {
+		if u.UpdateLevel < 0 {
+			return &apierror.ValidationError{Msg: fmt.Sprintf("updates[%d].updateLevel must not be negative", i)}
+		}
+		if err := validateDateOnly(fmt.Sprintf("updates[%d].date", i), u.Date); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // fromSNProductUpdates converts the wire update-history array to its domain shape.
 func fromSNProductUpdates(updates []snProductUpdate) []domain.ProductUpdateEntry {
 	if updates == nil {
@@ -137,12 +153,16 @@ type snCreateDeployedProductResponse struct {
 // snUpdateDeployedProductPayload is the Choreo PATCH /deployed-products/{id} request body.
 // Description is json.RawMessage so an explicit null can be distinguished from an omitted field.
 // Updates, when present, whole-array-replaces the deployed product's update-level history.
+// Updates is a pointer so that a caller-supplied empty array (clear all history) can be told
+// apart from an absent field: encoding/json's omitempty treats a zero-length slice the same as
+// nil regardless of nil-ness, so only a non-nil *pointer* to an empty slice serialises as "[]"
+// on the wire instead of being dropped.
 type snUpdateDeployedProductPayload struct {
-	Cores       *int              `json:"cores,omitempty"`
-	TPS         *float64          `json:"tps,omitempty"` // Ballerina decimal?
-	Description json.RawMessage   `json:"description,omitempty"`
-	Updates     []snProductUpdate `json:"updates,omitempty"`
-	Active      *bool             `json:"active,omitempty"`
+	Cores       *int               `json:"cores,omitempty"`
+	TPS         *float64           `json:"tps,omitempty"` // Ballerina decimal?
+	Description json.RawMessage    `json:"description,omitempty"`
+	Updates     *[]snProductUpdate `json:"updates,omitempty"`
+	Active      *bool              `json:"active,omitempty"`
 }
 
 type snUpdateDeployedProductResponse struct {
@@ -228,6 +248,9 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 	if req.Active != nil && hasDetailFields {
 		return domain.UpdateDeployedProductResponse{}, &apierror.ValidationError{Msg: "cores, tps, and description must not be provided when deactivating"}
 	}
+	if err := validateProductUpdates(req.Updates); err != nil {
+		return domain.UpdateDeployedProductResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -277,7 +300,8 @@ func (s *snDeployedProductService) UpdateDeployedProduct(ctx context.Context, re
 		payload.Description = req.Description
 	}
 	if req.Updates != nil {
-		payload.Updates = toSNProductUpdates(req.Updates)
+		updates := toSNProductUpdates(req.Updates)
+		payload.Updates = &updates
 	}
 
 	raw, err := s.client.Patch(ctx, "/deployed-products/"+uuidToSysid(req.ID), token, payload)

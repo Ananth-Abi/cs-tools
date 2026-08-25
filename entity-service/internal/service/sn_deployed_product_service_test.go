@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 )
 
@@ -299,5 +300,113 @@ func TestSNDeployedProductService_UpdateDeployedProduct_UpdatesAloneSatisfiesDet
 	}
 	if _, err := svc.UpdateDeployedProduct(contextWithUserIDToken("token"), req); err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestSNDeployedProductService_UpdateDeployedProduct_EmptyUpdatesArrayClearsHistory proves
+// a request carrying Updates set to a non-nil empty slice (the caller's way of clearing all
+// update history) actually serialises as "updates":[] on the wire. Before this fix, the wire
+// field's plain (non-pointer) slice type meant encoding/json's omitempty dropped an empty
+// slice from the outgoing JSON regardless of nil-ness, so an explicit clear silently no-opped.
+func TestSNDeployedProductService_UpdateDeployedProduct_EmptyUpdatesArrayClearsHistory(t *testing.T) {
+	productUUID := sysidToUUID(testDeployedProductSysid)
+
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/deployed-products/"+testDeployedProductSysid, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "updated",
+			"deployedProduct": map[string]any{
+				"id":        testDeployedProductSysid,
+				"updatedOn": "2026-02-01 00:00:00",
+				"updatedBy": "jane.doe@example.com",
+			},
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowDeployedProductService(client)
+
+	req := domain.UpdateDeployedProductRequest{
+		ID:      productUUID,
+		Updates: []domain.ProductUpdateEntry{},
+	}
+	if _, err := svc.UpdateDeployedProduct(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gotUpdates, hasKey := gotBody["updates"]
+	if !hasKey {
+		t.Fatalf("outbound payload has no %q key, want an explicit empty array (body: %v)", "updates", gotBody)
+	}
+	arr, ok := gotUpdates.([]any)
+	if !ok || len(arr) != 0 {
+		t.Fatalf("outbound payload updates = %v (%T), want []", gotUpdates, gotUpdates)
+	}
+}
+
+// TestSNDeployedProductService_UpdateDeployedProduct_ValidatesUpdateEntries proves each
+// entry in Updates is validated before the request ever reaches the backing service: a
+// negative updateLevel and a malformed date are both rejected, and a well-formed array
+// passes through untouched.
+func TestSNDeployedProductService_UpdateDeployedProduct_ValidatesUpdateEntries(t *testing.T) {
+	productUUID := sysidToUUID(testDeployedProductSysid)
+
+	cases := []struct {
+		name      string
+		updates   []domain.ProductUpdateEntry
+		wantValid bool
+	}{
+		{
+			name:      "negative updateLevel rejected",
+			updates:   []domain.ProductUpdateEntry{{UpdateLevel: -1, Date: "2026-01-01"}},
+			wantValid: false,
+		},
+		{
+			name:      "malformed date rejected",
+			updates:   []domain.ProductUpdateEntry{{UpdateLevel: 1, Date: "01/01/2026"}},
+			wantValid: false,
+		},
+		{
+			name:      "valid entries pass through unchanged",
+			updates:   []domain.ProductUpdateEntry{{UpdateLevel: 1, Date: "2026-01-01"}},
+			wantValid: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newTestSNClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if !tc.wantValid {
+					t.Fatalf("unexpected call to backing service for an invalid request")
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"message": "updated",
+					"deployedProduct": map[string]any{
+						"id":        testDeployedProductSysid,
+						"updatedOn": "2026-02-01 00:00:00",
+						"updatedBy": "jane.doe@example.com",
+					},
+				})
+			}))
+			svc := NewServiceNowDeployedProductService(client)
+
+			req := domain.UpdateDeployedProductRequest{ID: productUUID, Updates: tc.updates}
+			_, err := svc.UpdateDeployedProduct(contextWithUserIDToken("token"), req)
+
+			if tc.wantValid {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			var ve *apierror.ValidationError
+			if !asValidationError(err, &ve) {
+				t.Fatalf("error = %v (%T), want ValidationError", err, err)
+			}
+		})
 	}
 }

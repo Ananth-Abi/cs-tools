@@ -2328,11 +2328,12 @@ func (s *snCaseService) GetAttachment(ctx context.Context, attachmentID string) 
 // snUpdateAttachmentPayload is the Choreo PATCH /attachments/{id} request body.
 // referenceType "deployment" requires at least one of name/description; referenceType "case"
 // requires name and forbids description -- both enforced upstream, not re-validated here.
+// Description is json.RawMessage so an explicit null can be distinguished from an omitted field.
 type snUpdateAttachmentPayload struct {
-	ReferenceID   string  `json:"referenceId"`
-	ReferenceType string  `json:"referenceType"`
-	Name          *string `json:"name,omitempty"`
-	Description   *string `json:"description,omitempty"`
+	ReferenceID   string          `json:"referenceId"`
+	ReferenceType string          `json:"referenceType"`
+	Name          *string         `json:"name,omitempty"`
+	Description   json.RawMessage `json:"description,omitempty"`
 }
 
 type snUpdateAttachmentResponse struct {
@@ -2355,7 +2356,7 @@ func (s *snCaseService) UpdateAttachment(ctx context.Context, req domain.UpdateA
 	if _, ok := validReferenceTypes[req.ReferenceType]; !ok {
 		return domain.UpdateAttachmentResponse{}, &apierror.ValidationError{Msg: "referenceType is invalid: " + string(req.ReferenceType)}
 	}
-	if req.Name == nil && req.Description == nil {
+	if req.Name == nil && len(req.Description) == 0 {
 		return domain.UpdateAttachmentResponse{}, &apierror.ValidationError{Msg: "at least one of name or description must be provided"}
 	}
 
@@ -2365,7 +2366,9 @@ func (s *snCaseService) UpdateAttachment(ctx context.Context, req domain.UpdateA
 		ReferenceID:   uuidToSysid(req.ReferenceID),
 		ReferenceType: string(req.ReferenceType),
 		Name:          req.Name,
-		Description:   req.Description,
+	}
+	if len(req.Description) > 0 {
+		payload.Description = req.Description
 	}
 
 	raw, err := s.client.Patch(ctx, "/attachments/"+uuidToSysid(req.AttachmentID), token, payload)

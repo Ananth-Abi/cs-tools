@@ -692,10 +692,61 @@ func (h *CaseHandler) GetAttachment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+// validAttachmentReferenceTypes mirrors the entity service's own
+// validReferenceTypes allowlist for attachment operations (sn_case_service.go),
+// so an obviously invalid referenceType is rejected at this boundary instead
+// of reaching the entity service.
+var validAttachmentReferenceTypes = map[string]bool{
+	"case":           true,
+	"conversation":   true,
+	"change_request": true,
+	"deployment":     true,
+	"incident":       true,
+}
+
+// updateAttachmentRequest mirrors the entity service's domain.UpdateAttachmentRequest
+// shape. Description uses json.RawMessage (rather than *string) so an explicit
+// JSON null (clear the description) can be distinguished from an absent field,
+// matching the entity service's own tri-state semantics for this field.
+type updateAttachmentRequest struct {
+	ReferenceID   string          `json:"referenceId"`
+	ReferenceType string          `json:"referenceType"`
+	Name          *string         `json:"name,omitempty"`
+	Description   json.RawMessage `json:"description,omitempty"`
+}
+
+// validateUpdateAttachmentBody rejects a non-object body (including null and
+// arrays), a missing/invalid referenceId, an invalid referenceType, and a body
+// where neither name nor description is present, so obviously invalid requests
+// are rejected before reaching the entity service.
+func validateUpdateAttachmentBody(body []byte) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return false
+	}
+	if len(fields) == 0 {
+		return false
+	}
+
+	var req updateAttachmentRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return false
+	}
+	if req.ReferenceID == "" || !uuidRe.MatchString(req.ReferenceID) {
+		return false
+	}
+	if !validAttachmentReferenceTypes[req.ReferenceType] {
+		return false
+	}
+	if req.Name == nil && len(req.Description) == 0 {
+		return false
+	}
+	return true
+}
+
 // UpdateAttachment handles PATCH /attachments/{id}.
 // Accepts referenceId, referenceType, and optionally name/description; the body
-// is forwarded verbatim, since the requirement that at least one of
-// name/description is present is validated upstream by the entity service.
+// is forwarded verbatim once validated.
 func (h *CaseHandler) UpdateAttachment(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -725,10 +776,15 @@ func (h *CaseHandler) UpdateAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validateUpdateAttachmentBody(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
 	result, err := h.entity.UpdateAttachment(r.Context(), attachmentID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity UpdateAttachment failed", "userID", user.UserID, "attachmentID", attachmentID, "err", err)
-		mapUpstreamError(w, err, "Failed to update attachment.")
+		mapUpstreamErrorGeneric(w, err, "Failed to update attachment.")
 		return
 	}
 
