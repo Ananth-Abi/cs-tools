@@ -83,8 +83,8 @@ the constructed `EventPublisherService` (nil if unconfigured) alongside the
 threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
 it during shutdown, after `srv.Shutdown`.
 
-Two call sites publish today, both ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
-there is no Postgres-backed equivalent for either):
+Four call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
+there is no Postgres-backed equivalent for any of them):
 
 - **`snCaseService.CreateCase`** publishes `case.created` via a private
   `publishCaseCreated` helper, called after the SN create call succeeds.
@@ -118,21 +118,77 @@ there is no Postgres-backed equivalent for either):
   from the payload. Consuming events and sending emails/Chat alerts/calls is
   never this service's job — only publishing the raw fact that something
   happened is.
+- **`snCaseService.CreateCaseComment`** publishes `case.comment_added` via
+  `publishCommentAdded`, called after the SN comment-create call succeeds.
+  Enriches via `GetCaseByID` for `ProjectID`/`CaseTitle`/`Recipients`, the
+  same as `publishCaseCreated`. `events.CommentAddedPayload.Name` (the
+  comment author's resolved display name) is the one field that call can't
+  supply: ServiceNow's create-comment response (`snCreateCommentResponse`)
+  carries only a raw, unresolved `CreatedBy` string, and every other
+  resolved-author-name lookup in this file goes through a GET/search
+  response, never a bare create-acknowledgment one. `publishCommentAdded`
+  resolves it via a second call, `resolveCommentAuthorName`
+  (`SearchCaseComments`, matching the just-created comment by id in a
+  bounded first page — `resolveCommentAuthorNameSearchLimit`, currently 20;
+  the new comment is essentially certain to be within that many of the
+  case's most recent regardless of `SearchCaseComments`' own sort order,
+  which this service doesn't control). If that lookup doesn't find it (an
+  unlikely ordering edge case), publishing is skipped rather than sending an
+  event with an empty or fabricated author name — same "skip rather than
+  send something `events.Validate` would reject" precedent as an empty
+  `Recipients` list.
+- **`snCaseService.UpdateCase`** publishes `case.status_changed` via
+  `publishStatusChanged`, called only when the PATCH's own `req.State` was
+  set (a `nil` `State` — e.g. an `assigneeEmail`-only PATCH — never
+  triggers this; `State`/`Severity`/`WorkState`/`WatchList`/`AssigneeEmail`/
+  `ParentID`/`Acknowledge` are already mutually exclusive per request, so a
+  single `UpdateCase` call can never be both a status change and something
+  else). `NewStatus` is the raw ServiceNow state label from the update
+  response (`snResp.Case.State.Label`, e.g. `"Work In Progress"`) rather
+  than `domain.CaseState`'s own enum conversion
+  (`snCaseStateLabelToEnum`) — the enum conversion silently leaves the
+  domain value unset on an unrecognized label, while the raw label is
+  always present whenever `snResp.Case.State` is non-nil. `Recipients`/
+  `ProjectID` need a fresh `GetCaseByID` call regardless:
+  `snUpdateCaseResponse`'s own `WatchList` has emails but no project
+  reference at all.
 
-Both helpers run **synchronously** (not detached/async the way
+`case.assigned` is **not published anywhere yet** — `events.CaseAssignedPayload`
+doesn't even exist in this service's `internal/events/events.go` (unlike
+`csm-notification-service`'s own copy, which already has it). The blocker
+isn't wiring — `UpdateCase`'s `req.AssigneeEmail` path is right there, in
+the same function `publishStatusChanged` hooks into — it's data:
+`csm-notification-service`'s `CaseAssignedPayload` requires a non-empty
+`AssignerName`/`AssignerEmail` (the person who *performed* the assignment,
+not the new assignee — see that service's `RenderCaseAssignedEmail`, which
+renders `assignerEmail` as a `mailto:` link), and this service has no way to
+resolve that today: it has no inbound-auth/identity layer at all (the
+`x-user-id-token` header `middleware.UserIDTokenFromContext` forwards is
+opaque, just a pass-through to ServiceNow, not a decodable identity), and
+`snUpdateCaseResponse.Case.UpdatedBy` is a bare string with no accompanying
+email. Publishing something with a fabricated or missing assigner would be
+actively misleading in the notification email, not just an incomplete
+event, so this needs its own decision (e.g. resolving the caller's identity
+some other way) before it can be added — flagging here rather than
+guessing.
+
+Every helper above runs **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`
-is), bounded by a 5s `context.WithTimeout` (`publishCaseCreatedTimeout`/
-`publishIncidentCreatedTimeout`) so a slow ServiceNow or Event Hub round trip
-can't consume this service's own 30s request timeout — a deliberate
-simplicity trade-off over the async+`WaitGroup`-drain pattern, made because
-this service (unlike that backend) has no existing per-handler struct to
-hold a drain hook, and adding one purely for this would be a larger change
-than the added latency (typically well under a second) justifies. Revisit if
-that latency turns out to matter in practice. Either helper's failure —
-enrichment or the publish call itself — is logged (`slog.Error`/`slog.Warn`)
-and does **not** fail `CreateCase`/`CreateIncident`'s own response: the
-case/incident already exists in ServiceNow by that point, so a
-notification-side hiccup must not be reported to the caller as a failed
+is), each bounded by its own 5s `context.WithTimeout`
+(`publishCaseCreatedTimeout`/`publishIncidentCreatedTimeout`/
+`publishCommentAddedTimeout`/`publishStatusChangedTimeout`) so a slow
+ServiceNow or Event Hub round trip can't consume this service's own 30s
+request timeout — a deliberate simplicity trade-off over the async+
+`WaitGroup`-drain pattern, made because this service (unlike that backend)
+has no existing per-handler struct to hold a drain hook, and adding one
+purely for this would be a larger change than the added latency (typically
+well under a second) justifies. Revisit if that latency turns out to matter
+in practice. Every helper's failure — enrichment or the publish call itself
+— is logged (`slog.Error`/`slog.Warn`) and does **not** fail
+`CreateCase`/`CreateCaseComment`/`UpdateCase`/`CreateIncident`'s own
+response: the case/comment/incident already exists in ServiceNow by that
+point, so a notification-side hiccup must not be reported to the caller as a
+failed
 create.
 
 ## SLA clocks
