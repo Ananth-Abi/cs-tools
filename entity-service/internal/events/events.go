@@ -62,9 +62,11 @@ type Envelope struct {
 // obtains it, since ServiceNow's create-comment response doesn't carry
 // one), not the case reporter.
 type CommentAddedPayload struct {
-	Name        string   `json:"name"`
-	ProjectID   string   `json:"projectId"`
-	CaseID      string   `json:"caseId"`
+	Name       string `json:"name"`
+	ProjectID  string `json:"projectId"`
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+
 	CaseTitle   string   `json:"caseTitle"`
 	CaseComment string   `json:"caseComment"`
 	CommentID   string   `json:"commentId"`
@@ -78,6 +80,7 @@ type CommentAddedPayload struct {
 type StatusChangedPayload struct {
 	ProjectID  string   `json:"projectId"`
 	CaseID     string   `json:"caseId"`
+	CaseNumber string   `json:"caseNumber,omitempty"`
 	NewStatus  string   `json:"newStatus"`
 	Recipients []string `json:"recipients"`
 }
@@ -95,6 +98,7 @@ type CaseCreatedPayload struct {
 	ProjectName  string   `json:"projectName"`
 	ProjectID    string   `json:"projectId"`
 	CaseID       string   `json:"caseId"`
+	CaseNumber   string   `json:"caseNumber,omitempty"`
 	CaseTitle    string   `json:"caseTitle"`
 	CaseType     string   `json:"caseType"`
 	Priority     string   `json:"priority"`

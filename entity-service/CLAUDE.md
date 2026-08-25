@@ -137,6 +137,13 @@ there is no Postgres-backed equivalent for any of them):
   event with an empty or fabricated author name — same "skip rather than
   send something `events.Validate` would reject" precedent as an empty
   `Recipients` list.
+
+All three call sites above also set `CaseNumber` (`cv.Number`, the case's
+human-readable ServiceNow reference, e.g. `"CS0023001"`) alongside `CaseID`
+(the UUID) — `csm-notification-service` displays `CaseNumber` in every
+subject line and template slot instead of the UUID, which is meaningless to
+an end user (a real, reported bug before this field existed at all); `CaseID`
+is unchanged for anything link-related.
 - **`snCaseService.UpdateCase`** publishes `case.status_changed` via
   `publishStatusChanged`, called only when the PATCH's own `req.State` was
   set (a `nil` `State` — e.g. an `assigneeEmail`-only PATCH — never

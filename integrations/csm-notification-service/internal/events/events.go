@@ -103,10 +103,17 @@ func (t Type) IsKnown() bool {
 // separate, purely-display value shown in the email body, not used for link
 // construction.
 type CaseCreatedPayload struct {
-	ReporterName              string   `json:"reporterName"`
-	ProjectName               string   `json:"projectName"`
-	ProjectID                 string   `json:"projectId"`
-	CaseID                    string   `json:"caseId"`
+	ReporterName string `json:"reporterName"`
+	ProjectName  string `json:"projectName"`
+	ProjectID    string `json:"projectId"`
+	CaseID       string `json:"caseId"`
+	// CaseNumber is the case's human-readable reference (e.g. "CS0023001")
+	// — purely for display in the email body/subject; CaseID (the UUID)
+	// remains what's used for link construction and the caseId/entityId
+	// match Validate enforces. Optional: a publisher that can't supply one
+	// simply omits it, and templates render without it rather than
+	// falling back to the UUID, which is meaningless to an end user.
+	CaseNumber                string   `json:"caseNumber,omitempty"`
 	CaseTitle                 string   `json:"caseTitle"`
 	CaseType                  string   `json:"caseType"`
 	Priority                  string   `json:"priority"`
@@ -127,9 +134,11 @@ type CaseCreatedPayload struct {
 // directly) — the customer portal has no such fragment handling today, so
 // the same suffix is simply inert there, not an error.
 type CommentAddedPayload struct {
-	Name        string   `json:"name"`
-	ProjectID   string   `json:"projectId"`
-	CaseID      string   `json:"caseId"`
+	Name      string `json:"name"`
+	ProjectID string `json:"projectId"`
+	CaseID    string `json:"caseId"`
+	// CaseNumber — see CaseCreatedPayload's own doc comment.
+	CaseNumber  string   `json:"caseNumber,omitempty"`
 	CaseTitle   string   `json:"caseTitle"`
 	CaseComment string   `json:"caseComment"`
 	CommentID   string   `json:"commentId"`
@@ -137,11 +146,12 @@ type CommentAddedPayload struct {
 }
 
 // StatusChangedPayload is TypeStatusChanged's payload. See
-// CaseCreatedPayload's doc comment for why Recipients is here, and for why
-// ProjectID is required.
+// CaseCreatedPayload's doc comment for why Recipients is here, why
+// ProjectID is required, and for CaseNumber.
 type StatusChangedPayload struct {
 	ProjectID  string   `json:"projectId"`
 	CaseID     string   `json:"caseId"`
+	CaseNumber string   `json:"caseNumber,omitempty"`
 	NewStatus  string   `json:"newStatus"`
 	Recipients []string `json:"recipients"`
 }
@@ -153,6 +163,7 @@ type CaseAssignedPayload struct {
 	AssignerEmail string   `json:"assignerEmail"`
 	ProjectID     string   `json:"projectId"`
 	CaseID        string   `json:"caseId"`
+	CaseNumber    string   `json:"caseNumber,omitempty"`
 	Recipients    []string `json:"recipients"`
 }
 

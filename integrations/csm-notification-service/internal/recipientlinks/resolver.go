@@ -93,6 +93,12 @@ func toSet(values []string) map[string]bool {
 type RecipientLink struct {
 	Email    string
 	CaseLink string
+	// UserID is the recipient's entity-service user id, "" when entity-service
+	// has no record for this email (linkFor's "not found" fallback path) —
+	// dispatch logs this instead of the email address itself when a
+	// notification actually sends, so a delivery is traceable without a raw
+	// address ever appearing in logs.
+	UserID string
 }
 
 // ResolveLinks looks up each of emails' roles via entity-service and
@@ -142,6 +148,7 @@ func (r *Resolver) ResolveLinks(ctx context.Context, emails []string, projectID,
 		links = append(links, RecipientLink{
 			Email:    email,
 			CaseLink: r.linkFor(ctx, user, found, projectID, caseID),
+			UserID:   user.ID,
 		})
 	}
 	return links, nil
