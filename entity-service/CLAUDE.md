@@ -145,7 +145,12 @@ human-readable ServiceNow reference, e.g. `"CS0023001"`) alongside `CaseID`
 (the UUID) — `csm-notification-service` displays `CaseNumber` in every
 subject line and template slot instead of the UUID, which is meaningless to
 an end user (a real, reported bug before this field existed at all); `CaseID`
-is unchanged for anything link-related.
+is unchanged for anything link-related. `publishStatusChanged` additionally
+sets `CaseTitle` (`before.Subject`) — `case.status_changed` didn't
+originally carry one at all, needed once `csm-notification-service`
+started requiring every `case.*` email's subject to follow one explicit
+standard format, `"[WSO2 Support] (<case number>/<case id>) <title>"` (see
+that service's own `CLAUDE.md`, `dispatch.subjectLine`).
 - **`snCaseService.UpdateCase`** publishes `case.status_changed` via
   `publishStatusChanged`, called only when the PATCH's own `req.State` was
   set (a `nil` `State` — e.g. an `assigneeEmail`-only PATCH — never

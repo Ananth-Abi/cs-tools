@@ -150,9 +150,13 @@ type CommentAddedPayload struct {
 // CaseCreatedPayload's doc comment for why Recipients is here, why
 // ProjectID is required, and for CaseNumber.
 type StatusChangedPayload struct {
-	ProjectID  string   `json:"projectId"`
-	CaseID     string   `json:"caseId"`
-	CaseNumber string   `json:"caseNumber,omitempty"`
+	ProjectID  string `json:"projectId"`
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// CaseTitle is used only for the email subject line (dispatch's
+	// subjectLine) — optional, same as CaseNumber, so an older publisher
+	// still produces a valid (just less descriptive) subject.
+	CaseTitle  string   `json:"caseTitle,omitempty"`
 	NewStatus  string   `json:"newStatus"`
 	Recipients []string `json:"recipients"`
 }
@@ -160,12 +164,14 @@ type StatusChangedPayload struct {
 // CaseAssignedPayload is TypeCaseAssigned's payload. See CaseCreatedPayload's
 // doc comment for why Recipients is here, and for why ProjectID is required.
 type CaseAssignedPayload struct {
-	AssignerName  string   `json:"assignerName"`
-	AssignerEmail string   `json:"assignerEmail"`
-	ProjectID     string   `json:"projectId"`
-	CaseID        string   `json:"caseId"`
-	CaseNumber    string   `json:"caseNumber,omitempty"`
-	Recipients    []string `json:"recipients"`
+	AssignerName  string `json:"assignerName"`
+	AssignerEmail string `json:"assignerEmail"`
+	ProjectID     string `json:"projectId"`
+	CaseID        string `json:"caseId"`
+	CaseNumber    string `json:"caseNumber,omitempty"`
+	// CaseTitle — see StatusChangedPayload's own doc comment.
+	CaseTitle  string   `json:"caseTitle,omitempty"`
+	Recipients []string `json:"recipients"`
 }
 
 // IncidentCreatedPayload is TypeIncidentCreated's payload. Unlike the case.*

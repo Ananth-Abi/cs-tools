@@ -381,7 +381,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		errs = append(errs, err)
 	} else {
 		caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
-		subject := fmt.Sprintf("[%s] %s", caseRef, p.CaseTitle)
+		subject := subjectLine(p.CaseNumber, p.CaseID, p.CaseTitle)
 		var emailErr error
 		_, emailErr = d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 			return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
@@ -471,7 +471,7 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 		return err
 	}
 	baseKey := recordBaseKey(record)
-	subject := "Re: " + p.CaseTitle
+	subject := subjectLine(p.CaseNumber, p.CaseID, p.CaseTitle)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 		return notifications.RenderCommentAddedEmail(p.Name, displayCaseRef(p.CaseNumber, p.CaseID), p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
 	})
@@ -496,7 +496,13 @@ func (d *Dispatcher) handleStatusChanged(ctx context.Context, record eventbus.Re
 	}
 	baseKey := recordBaseKey(record)
 	caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
-	subject := fmt.Sprintf("[%s] Status changed to %s", caseRef, p.NewStatus)
+	title := p.CaseTitle
+	if title == "" {
+		// A publisher that hasn't been updated to send CaseTitle yet still
+		// gets a meaningful subject rather than a blank title slot.
+		title = "Status changed to " + p.NewStatus
+	}
+	subject := subjectLine(p.CaseNumber, p.CaseID, title)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 		return notifications.RenderStatusChangedEmail(caseRef, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
 	})
@@ -521,7 +527,13 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 	}
 	baseKey := recordBaseKey(record)
 	caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
-	subject := fmt.Sprintf("[%s] Case assigned", caseRef)
+	title := p.CaseTitle
+	if title == "" {
+		// A publisher that hasn't been updated to send CaseTitle yet still
+		// gets a meaningful subject rather than a blank title slot.
+		title = "Case assigned"
+	}
+	subject := subjectLine(p.CaseNumber, p.CaseID, title)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, caseRef, caseLink, commentLinkFor(caseLink, ""))
 	})
@@ -591,6 +603,18 @@ func displayCaseRef(caseNumber, caseID string) string {
 		return caseNumber
 	}
 	return caseID
+}
+
+// subjectLine builds every case.* email's subject in this service's one
+// standard format: "[WSO2 Support] (<case number>/<case id>) <title>" — the
+// first slot is displayCaseRef(caseNumber, caseID) (falls back to the UUID
+// only if a publisher hasn't sent CaseNumber yet), the second is always the
+// raw caseID. title is empty for a publisher that hasn't been updated to
+// send CaseTitle yet (case.status_changed/case.assigned did not originally
+// carry one) — still a valid, if less descriptive, subject rather than a
+// missing one.
+func subjectLine(caseNumber, caseID, title string) string {
+	return fmt.Sprintf("[WSO2 Support] (%s/%s) %s", displayCaseRef(caseNumber, caseID), caseID, title)
 }
 
 // maskPhone redacts all but the last 4 characters of an E.164 phone number

@@ -1098,6 +1098,7 @@ func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newSta
 		ProjectID:  before.ProjectDetails.ID,
 		CaseID:     caseID,
 		CaseNumber: before.Number,
+		CaseTitle:  before.Subject,
 		NewStatus:  newStatus,
 		Recipients: recipients,
 	})

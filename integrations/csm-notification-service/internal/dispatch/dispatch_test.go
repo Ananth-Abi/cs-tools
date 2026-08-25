@@ -1150,3 +1150,52 @@ func TestDispatcher_Handle_CaseCreated_ConcurrentBlockedEmailDoesNotDuplicateCha
 		t.Errorf("chat sent %d times total, want exactly 1", len(chat.calls))
 	}
 }
+
+// TestDispatcher_Handle_SubjectLine_StandardFormat verifies every case.*
+// event type's email uses this service's one standard subject format:
+// "[WSO2 Support] (<case number>/<case id>) <title>" — a real,
+// explicitly-requested requirement, not a preference.
+func TestDispatcher_Handle_SubjectLine_StandardFormat(t *testing.T) {
+	tests := []struct {
+		name   string
+		record string
+		want   string
+	}{
+		{
+			name:   "case.created",
+			record: `{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+		},
+		{
+			name:   "case.comment_added",
+			record: `{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+		},
+		{
+			name:   "case.status_changed",
+			record: `{"type":"case.status_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","newStatus":"Open","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+		},
+		{
+			name:   "case.assigned",
+			record: `{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"Assigner","assignerEmail":"assigner@example.com","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockEmailSender{}
+			d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
+			record := eventbus.Record{Value: []byte(tt.record)}
+			if err := d.Handle(context.Background(), record); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			if len(mock.calls) != 1 {
+				t.Fatalf("expected 1 email sent, got %d", len(mock.calls))
+			}
+			if mock.calls[0].subject != tt.want {
+				t.Errorf("subject = %q, want %q", mock.calls[0].subject, tt.want)
+			}
+		})
+	}
+}

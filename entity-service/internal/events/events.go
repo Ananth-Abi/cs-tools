@@ -81,6 +81,7 @@ type StatusChangedPayload struct {
 	ProjectID  string   `json:"projectId"`
 	CaseID     string   `json:"caseId"`
 	CaseNumber string   `json:"caseNumber,omitempty"`
+	CaseTitle  string   `json:"caseTitle,omitempty"`
 	NewStatus  string   `json:"newStatus"`
 	Recipients []string `json:"recipients"`
 }
