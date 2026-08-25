@@ -19,8 +19,10 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -982,5 +984,76 @@ func TestDispatcher_Handle_ConcurrentClaimNeverOverlaps(t *testing.T) {
 	}
 	if chat.sends < 1 {
 		t.Error("expected at least one Chat alert to have been sent")
+	}
+}
+
+// blockingEmailSender's SendEmail blocks on proceed until the test closes
+// it, so a test can deterministically pause a Handle call mid-send instead
+// of relying on a fixed sleep to widen a race window.
+type blockingEmailSender struct {
+	proceed chan struct{}
+	calls   int32
+}
+
+func (s *blockingEmailSender) SendEmail(ctx context.Context, to, cc, bcc, replyTo []string, subject, htmlBody string, attachments []notifications.EmailAttachment) error {
+	atomic.AddInt32(&s.calls, 1)
+	<-s.proceed
+	return nil
+}
+
+// TestDispatcher_Handle_LosingConcurrentCallDoesNotReleaseWinnersClaim is a
+// regression test for a real bug in forgetEmailGroups: it used to release
+// every caseLink in the caller's own groups map, not just the ones
+// sendPerGroup actually claimed this call. A second, concurrent Handle
+// call for the exact same record loses the claim race (claim() correctly
+// rejects the already-held key), attempts nothing, and so returns
+// sendErr == nil — which used to be read as "the whole call succeeded,
+// release every group" and would release the first call's still in-flight
+// claim right out from under it. A third attempt (e.g. the next retry)
+// could then reclaim and resend an email the first call hadn't even
+// finished sending yet — the exact duplicate-email incident this was
+// fixed in response to. sendPerGroup now returns which groups THIS call
+// actually claimed (owned), and the caller releases only that set on this
+// branch, so the losing call here must leave the winner's claim untouched.
+func TestDispatcher_Handle_LosingConcurrentCallDoesNotReleaseWinnersClaim(t *testing.T) {
+	mock := &blockingEmailSender{proceed: make(chan struct{})}
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, &mockLinkResolver{}, false, nil, true, "", "")
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["agent@wso2.com"]}}`)}
+	key := recordBaseKey(record) + "/email/https://csm.example/cases/CASE-1"
+
+	winnerDone := make(chan struct{})
+	go func() {
+		defer close(winnerDone)
+		if err := d.Handle(context.Background(), record); err != nil {
+			t.Errorf("winner: Handle() error = %v, want nil", err)
+		}
+	}()
+
+	// Wait until the winner has actually claimed the key and is blocked
+	// inside SendEmail before running the loser.
+	for atomic.LoadInt32(&mock.calls) == 0 {
+		runtime.Gosched()
+	}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("loser: Handle() error = %v, want nil (it should see nothing left to do)", err)
+	}
+
+	d.doneMu.Lock()
+	stillClaimed := d.done[key]
+	d.doneMu.Unlock()
+	if !stillClaimed {
+		t.Fatal("the losing concurrent call released the key while the winning call was still mid-send")
+	}
+
+	close(mock.proceed)
+	<-winnerDone
+
+	if calls := atomic.LoadInt32(&mock.calls); calls != 1 {
+		t.Errorf("SendEmail called %d times, want exactly 1", calls)
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after the winning call finished successfully, has %d entries", len(d.done))
 	}
 }

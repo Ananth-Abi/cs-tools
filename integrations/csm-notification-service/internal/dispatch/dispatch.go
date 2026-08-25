@@ -272,10 +272,12 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 // Handle is about to return nil — no more retries coming) or
 // record.NoMoreRetries is true (no further retry coming at all, on this
 // topic or the dead-letter one — see its doc comment) — never on an
-// individual channel's own success alone, which
-// would release it while other channels in this same call are still
-// failing and eventbus.Consumer keeps retrying, immediately re-arming that
-// channel to resend on the very next attempt.
+// individual channel's own success alone, which would release it while
+// other channels in this same call are still failing and
+// eventbus.Consumer keeps retrying, immediately re-arming that channel to
+// resend on the very next attempt. Releasing is also ownership-gated for
+// both kinds — see forgetEmailGroups' doc comment for the live duplicate-
+// email bug that closed.
 func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
 	var p events.CaseCreatedPayload
 	if err := json.Unmarshal(raw, &p); err != nil {
@@ -286,13 +288,15 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 	chatKey := baseKey + "/chat"
 
 	var errs []error
+	var owned []string
 
 	groups, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
 	if err != nil {
 		errs = append(errs, err)
 	} else {
 		subject := fmt.Sprintf("[%s] %s", p.CaseID, p.CaseTitle)
-		emailErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
+		var emailErr error
+		owned, emailErr = d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 			return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
 				ReporterName:              p.ReporterName,
 				ProjectName:               p.ProjectName,
@@ -341,21 +345,28 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 	// to errs is nil either way, forget a key a different concurrent call
 	// is actively relying on staying claimed.
 	//
-	// forgetEmailGroups is not similarly ownership-gated — each group's own
-	// claim is checked inside sendPerGroup, but this call site doesn't know
-	// which specific groups it actually won versus lost. Under the same
-	// concurrent-Handle-calls scenario handleIncidentCreated's comment
-	// describes, a losing call could still release a group it doesn't own.
-	// Narrower and lower-impact than the Chat case (one email group
-	// resending is cheap, matching sendPerGroup's own accepted-duplication
-	// precedent for other failure modes) — flagged here rather than fully
-	// plumbing per-group ownership back through sendPerGroup's return value.
+	// record.NoMoreRetries forgets every group unconditionally (via the
+	// original groups map, not owned — see below for why that's the correct
+	// one here), the same as chatKey: there is no future retry left to ever
+	// reclaim-and-resend a key regardless of who currently holds it, so
+	// blanket-forgetting is always safe on this branch specifically.
+	//
+	// The other branch is where ownership actually matters: gating on
+	// chatOwned && len(errs) == 0 alone (without also restricting which
+	// email keys get forgotten) was the exact bug a concurrent Handle call
+	// for the same record could trigger — a call that lost a claim race on
+	// some group never touches that group's key, so releasing anything
+	// wider than owned (sendPerGroup's own return value — exactly the
+	// groups THIS call claimed) would let a losing call release a key a
+	// different, still in-flight call actively relies on staying claimed.
+	// See forgetEmailGroups' doc comment for the live duplicate-email bug
+	// this closed.
 	if record.NoMoreRetries {
 		d.forget(chatKey)
-		d.forgetEmailGroups(baseKey, groups)
+		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
 	} else if chatOwned && len(errs) == 0 {
 		d.forget(chatKey)
-		d.forgetEmailGroups(baseKey, groups)
+		d.forgetEmailGroups(baseKey, owned)
 	}
 
 	return errors.Join(errs...)
@@ -376,11 +387,13 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 	}
 	baseKey := recordBaseKey(record)
 	subject := "Re: " + p.CaseTitle
-	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
+	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderCommentAddedEmail(p.Name, p.ProjectID, p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
 	})
-	if sendErr == nil || record.NoMoreRetries {
-		d.forgetEmailGroups(baseKey, groups)
+	if record.NoMoreRetries {
+		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
+	} else if sendErr == nil {
+		d.forgetEmailGroups(baseKey, owned)
 	}
 	return sendErr
 }
@@ -398,11 +411,13 @@ func (d *Dispatcher) handleStatusChanged(ctx context.Context, record eventbus.Re
 	}
 	baseKey := recordBaseKey(record)
 	subject := fmt.Sprintf("[%s] Status changed to %s", p.CaseID, p.NewStatus)
-	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
+	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderStatusChangedEmail(p.CaseID, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
 	})
-	if sendErr == nil || record.NoMoreRetries {
-		d.forgetEmailGroups(baseKey, groups)
+	if record.NoMoreRetries {
+		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
+	} else if sendErr == nil {
+		d.forgetEmailGroups(baseKey, owned)
 	}
 	return sendErr
 }
@@ -420,11 +435,13 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 	}
 	baseKey := recordBaseKey(record)
 	subject := fmt.Sprintf("[%s] Case assigned", p.CaseID)
-	sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
+	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, subject, func(caseLink string) string {
 		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, p.CaseID, caseLink, commentLinkFor(caseLink, ""))
 	})
-	if sendErr == nil || record.NoMoreRetries {
-		d.forgetEmailGroups(baseKey, groups)
+	if record.NoMoreRetries {
+		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
+	} else if sendErr == nil {
+		d.forgetEmailGroups(baseKey, owned)
 	}
 	return sendErr
 }
@@ -506,8 +523,9 @@ func maskPhone(phone string) string {
 // true but emailDebugRecipients is empty — sending to zero recipients would
 // either be rejected by the email provider or silently do nothing, neither
 // of which is better than not calling it at all.
-func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups map[string][]string, subject string, render func(caseLink string) string) error {
+func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups map[string][]string, subject string, render func(caseLink string) string) ([]string, error) {
 	var errs []error
+	var owned []string
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
 		key := baseKey + "/email/" + caseLink
 		if !d.claim(key) {
@@ -518,6 +536,7 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups ma
 			if len(d.emailDebugRecipients) == 0 {
 				slog.WarnContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true but EMAIL_DEBUG_RECIPIENTS is empty; not sending",
 					"subject", subject)
+				owned = append(owned, caseLink)
 				continue
 			}
 			slog.InfoContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true; redirecting email to configured debug recipients",
@@ -527,21 +546,43 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups ma
 		if err := d.email.SendEmail(ctx, to, nil, nil, nil, subject, render(caseLink), nil); err != nil {
 			errs = append(errs, err)
 			d.forget(key)
+			continue
 		}
+		owned = append(owned, caseLink)
 	}
-	return errors.Join(errs...)
+	return owned, errors.Join(errs...)
 }
 
 // forgetEmailGroups releases sendPerGroup's per-group idempotency tracking
-// for every group in groups. Call once the caller knows no further retry is
-// coming for this record — see handleCaseCreated/handleCommentAdded/
-// handleStatusChanged/handleCaseAssigned for the exact release condition
-// each uses (and handleCaseCreated's own doc comment for why it must be the
-// whole call's outcome, not any single channel's own success). Ranging
-// over a nil groups map (e.g. handleCaseCreated's groupByLink failed this
-// attempt) is a safe no-op.
-func (d *Dispatcher) forgetEmailGroups(baseKey string, groups map[string][]string) {
-	for caseLink := range groups {
+// for every caseLink in caseLinks. Every caller (handleCaseCreated/
+// handleCommentAdded/handleStatusChanged/handleCaseAssigned) uses this two
+// different ways depending on which release condition just triggered:
+//
+//   - record.NoMoreRetries (no further retry coming at all, ever) passes
+//     every caseLink in the original groups map — safe precisely because
+//     there is no future retry left to ever reclaim-and-resend a key
+//     regardless of who currently holds it, the same reasoning
+//     handleIncidentCreated's own NoMoreRetries branch uses for chatKey/
+//     callKey directly.
+//   - the whole call succeeding this round (sendErr == nil, or
+//     chatOwned && len(errs) == 0 for handleCaseCreated) passes owned —
+//     sendPerGroup's own return value, i.e. exactly the groups THIS call
+//     actually claimed. This is the one that must stay ownership-gated: a
+//     future retry IS still coming on this branch, so releasing a group
+//     this call never claimed (some other, still in-flight call already
+//     owns it — see claim's doc comment for when two Handle calls can race
+//     on the very same record) would let that other call's key get
+//     reclaimed and resent by the next retry while the original call is
+//     still mid-send. This was a real, live-observed duplicate-email bug
+//     before sendPerGroup returned owned at all (every group in the
+//     caller's groups map was released together, regardless of which ones
+//     this call actually sent).
+//
+// Ranging over a nil/empty caseLinks slice (e.g. handleCaseCreated's
+// groupByLink failed this attempt, so sendPerGroup was never even called)
+// is a safe no-op.
+func (d *Dispatcher) forgetEmailGroups(baseKey string, caseLinks []string) {
+	for _, caseLink := range caseLinks {
 		d.forget(baseKey + "/email/" + caseLink)
 	}
 }
