@@ -1679,21 +1679,25 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // real comment already carries it and no extra entry is needed. When it
   // doesn't (see `descriptionEchoedInOriginComment` above — content-based,
   // covers cases created by internal automation and cases with no origin
-  // comment at all) a synthetic comment-shaped entry is appended here so the
+  // comment at all, and today always covers announcements too since their
+  // description is submitted through a path that never creates an origin
+  // comment) a synthetic comment-shaped entry is appended here so the
   // Activities tab always shows the description inline in the timeline,
   // attributed to the case creator, rather than as a visually distinct card.
-  // It carries `synthetic: true` so `CsmCaseCommentBubble` suppresses the
-  // author-role chip — the creator's real role isn't known on the frontend
-  // (see the field's doc comment), so nothing is claimed about it. This is
-  // folded into `safeComments` itself (not a separate prop) so the "N
-  // entries" count and the feed's own chronological sort both pick it up
-  // naturally. The Details tab keeps its own separate, pre-existing fallback
-  // card for the same content — unrelated to this and left untouched.
+  // Deliberately just `descriptionEchoedInOriginComment` — not `isAnnouncement
+  // || !descriptionEchoedInOriginComment` — so this stays correct even if
+  // announcement creation ever starts producing a real echoed origin comment;
+  // an unconditional carve-out would silently start double-rendering the
+  // description at that point instead of adapting. It carries `synthetic:
+  // true` so `CsmCaseCommentBubble` suppresses the author-role chip — the
+  // creator's real role isn't known on the frontend (see the field's doc
+  // comment), so nothing is claimed about it. This is folded into
+  // `safeComments` itself (not a separate prop) so the "N entries" count and
+  // the feed's own chronological sort both pick it up naturally. The Details
+  // tab keeps its own separate, pre-existing fallback card for the same
+  // content — unrelated to this and left untouched.
   const safeComments = useMemo(() => {
-    if (
-      isBlankHtml(data?.description ?? "") ||
-      (!isAnnouncement && descriptionEchoedInOriginComment)
-    ) {
+    if (isBlankHtml(data?.description ?? "") || descriptionEchoedInOriginComment) {
       return mergedComments;
     }
     const synthetic: CsmCaseComment = {
@@ -1712,7 +1716,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
       synthetic: true,
     };
     return [...mergedComments, synthetic];
-  }, [data, isAnnouncement, descriptionEchoedInOriginComment, mergedComments]);
+  }, [data, descriptionEchoedInOriginComment, mergedComments]);
 
   const onUploadAttachment = useCallback(
     (file: File) => {

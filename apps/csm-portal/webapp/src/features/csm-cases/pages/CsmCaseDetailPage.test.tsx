@@ -1089,6 +1089,39 @@ describe("CsmCaseDetailPage — announcement description rendering", () => {
     expect(screen.getAllByText("Long advisory content")).toHaveLength(1);
   });
 
+  it("does not inject a synthetic entry for an announcement whose origin comment already echoes the description", () => {
+    // Regression guard: `safeComments` gates purely on
+    // `descriptionEchoedInOriginComment`, with no separate `isAnnouncement`
+    // carve-out — if announcement creation ever starts producing a real
+    // echoed origin comment (it doesn't today), this must still suppress the
+    // synthetic entry rather than always appending it for announcements.
+    useGetCsmCaseCommentsMock.mockImplementation(() => ({
+      data: [
+        {
+          id: "comment-1",
+          caseId: "case-1",
+          authorName: "Jane Doe",
+          authorRole: "customer",
+          bodyHtml: "<p>Long advisory content</p>",
+          createdAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+      isFetching: false,
+    }));
+
+    renderCaseDetailPage(
+      "/announcements/case-1",
+      "/announcements/:caseId",
+      "announcement",
+      "<p>Long advisory content</p>",
+    );
+
+    expect(screen.getAllByText("Long advisory content")).toHaveLength(1);
+  });
+
   it("renders nothing when an announcement has a blank description", () => {
     renderCaseDetailPage(
       "/announcements/case-1",
