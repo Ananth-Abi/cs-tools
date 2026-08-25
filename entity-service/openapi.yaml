@@ -6661,7 +6661,8 @@ components:
       required: [referenceId, referenceType]
       description: >-
         At least one of name or description must be provided. referenceId/referenceType scope
-        the update the same way SearchAttachmentsRequest does.
+        the update the same way SearchAttachmentsRequest does. description is nullable: an
+        explicit null clears it, distinct from an omitted field (which leaves it unchanged).
       properties:
         referenceId:
           type: string
@@ -6672,6 +6673,10 @@ components:
           type: string
         description:
           type: string
+          nullable: true
+      anyOf:
+        - required: [name]
+        - required: [description]
 
     UpdatedAttachment:
       type: object

@@ -2112,6 +2112,7 @@ func TestUpdateAttachment(t *testing.T) {
 		{"invalid referenceId", `{"referenceId":"not-a-uuid","referenceType":"case","name":"renamed.png"}`},
 		{"invalid referenceType", `{"referenceId":"11111111-1111-1111-1111-111111111111","referenceType":"bogus","name":"renamed.png"}`},
 		{"neither name nor description", `{"referenceId":"11111111-1111-1111-1111-111111111111","referenceType":"case"}`},
+		{"unknown field", `{"referenceId":"11111111-1111-1111-1111-111111111111","referenceType":"case","name":"renamed.png","extra":"nope"}`},
 	}
 	for _, tc := range invalidBodies {
 		t.Run("rejects "+tc.name, func(t *testing.T) {

@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -729,7 +730,9 @@ func validateUpdateAttachmentBody(body []byte) bool {
 	}
 
 	var req updateAttachmentRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
 		return false
 	}
 	if req.ReferenceID == "" || !uuidRe.MatchString(req.ReferenceID) {
