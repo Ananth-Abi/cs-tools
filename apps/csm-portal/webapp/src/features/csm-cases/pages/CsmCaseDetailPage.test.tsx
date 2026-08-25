@@ -31,6 +31,7 @@ import "@testing-library/jest-dom/vitest";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import type { BeCaseState, BeCaseType } from "@api/backend/types";
+import { sanitizeDescriptionHtml } from "@utils/sanitizeHtml";
 
 // `@api/backend/client` -> `useAuthApiClient` -> `@config/apiConfig`, which
 // throws at module load when `window.config` isn't set — not present under
@@ -429,7 +430,7 @@ vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
           {!c.synthetic && c.authorRole !== "wso2_engineer" && (
             <span>{c.authorRole === "customer" ? "Customer" : c.authorRole}</span>
           )}
-          <span dangerouslySetInnerHTML={{ __html: c.bodyHtml }} />
+          <span dangerouslySetInnerHTML={{ __html: sanitizeDescriptionHtml(c.bodyHtml) }} />
         </div>
       ))}
     </div>
