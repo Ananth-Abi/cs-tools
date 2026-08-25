@@ -143,7 +143,7 @@ every `case.*` publisher above, not `snIncidentService.CreateIncident` —
 also set `CaseNumber` (`cv.Number`/`before.Number`, the case's
 human-readable ServiceNow reference, e.g. `"CS0023001"`) and `WSO2CaseID`
 (`cv.InternalID`/`before.InternalID`, ServiceNow's `u_wso2_case_id` custom
-field — the CSM portal's own case identifier, e.g. `"CPPSUB-175"`, distinct
+field — the CSM portal's own case identifier, e.g. `"WSO2-1000"`, distinct
 from `CaseNumber`) alongside `CaseID` (the UUID) — `csm-notification-service`
 displays `WSO2CaseID`/`CaseNumber` in every subject line and template slot
 instead of the UUID, which is meaningless to an end user (a real, reported

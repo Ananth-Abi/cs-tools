@@ -1197,23 +1197,23 @@ func TestDispatcher_Handle_SubjectLine_StandardFormat(t *testing.T) {
 	}{
 		{
 			name:   "case.created",
-			record: `{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"CPPSUB-175","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CPPSUB-175/CS0001001) Something broke",
+			record: `{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
 			name:   "case.comment_added",
-			record: `{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"CPPSUB-175","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CPPSUB-175/CS0001001) Something broke",
+			record: `{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
 			name:   "case.status_changed",
-			record: `{"type":"case.status_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"CPPSUB-175","caseTitle":"Something broke","newStatus":"Open","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CPPSUB-175/CS0001001) Something broke",
+			record: `{"type":"case.status_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","newStatus":"Open","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
 			name:   "case.assigned",
-			record: `{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"Assigner","assignerEmail":"assigner@example.com","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"CPPSUB-175","caseTitle":"Something broke","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CPPSUB-175/CS0001001) Something broke",
+			record: `{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"Assigner","assignerEmail":"assigner@example.com","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
 			name:   "case.status_changed without wso2CaseId falls back to raw case id",

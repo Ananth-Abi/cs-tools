@@ -116,7 +116,7 @@ type CaseCreatedPayload struct {
 	// been updated to send CaseNumber yet.
 	CaseNumber string `json:"caseNumber,omitempty"`
 	// WSO2CaseID is the CSM portal's own case identifier (e.g.
-	// "CPPSUB-175" — ServiceNow's u_wso2_case_id custom field), distinct
+	// "WSO2-1000" — ServiceNow's u_wso2_case_id custom field), distinct
 	// from both CaseNumber (ServiceNow's own "CS..." number) and CaseID
 	// (the raw UUID) — matches the "<wso2CaseId>/<caseNumber>" pairing the
 	// CSM portal frontend already shows (see caseIdentity.ts's

@@ -67,7 +67,7 @@ type CommentAddedPayload struct {
 	CaseID     string `json:"caseId"`
 	CaseNumber string `json:"caseNumber,omitempty"`
 	// WSO2CaseID is ServiceNow's u_wso2_case_id custom field (domain.CaseView.
-	// InternalID) — the CSM portal's own case identifier (e.g. "CPPSUB-175"),
+	// InternalID) — the CSM portal's own case identifier (e.g. "WSO2-1000"),
 	// distinct from CaseNumber ("CS..."). Mirrors csm-notification-service's
 	// own WSO2CaseID field, used in its subjectLine.
 	WSO2CaseID string `json:"wso2CaseId,omitempty"`
