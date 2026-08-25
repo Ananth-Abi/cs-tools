@@ -308,3 +308,39 @@ func caseTypeRef(caseType string) *IDLabelRef {
 	}
 	return &IDLabelRef{ID: id, Label: label}
 }
+
+// caseEscalationLevelIDs maps entity-service's escalation-level id to the label
+// the portal displays. Mirrors validEscalationLevel in entity-service's
+// sn_case_service.go, which accepts exactly "0".."5".
+//
+// entity-service returns the id alone, per its convention of never emitting
+// {id, label} objects; the frontend reads escalationLevel.id and renders the
+// label, so the pair is assembled here — the same split already used for case
+// status and severity.
+var caseEscalationLevelIDs = map[string]string{
+	"0": "EL0",
+	"1": "EL1",
+	"2": "EL2",
+	"3": "EL3",
+	"4": "EL4",
+	"5": "EL5",
+}
+
+// caseEscalationLevelRef builds the {id, label} escalation-level reference.
+//
+// An unrecognised id passes through as its own label rather than blanking the
+// field, the same tolerance caseStatusRef and caseSeverityRef apply.
+func caseEscalationLevelRef(id *string) *IDLabelRef {
+	if id == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*id)
+	if trimmed == "" {
+		return nil
+	}
+	label, ok := caseEscalationLevelIDs[trimmed]
+	if !ok {
+		label = trimmed
+	}
+	return &IDLabelRef{ID: trimmed, Label: label}
+}

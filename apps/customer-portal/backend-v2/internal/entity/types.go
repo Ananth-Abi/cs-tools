@@ -771,6 +771,11 @@ type CaseView struct {
 	AcknowledgedBy        *EntityRef `json:"acknowledgedBy"`
 	EngagementPaymentType *string    `json:"engagementPaymentType"`
 	Tags                  []Tag      `json:"tags"`
+	// Duration is upstream display text; EscalationLevel is the level id
+	// ("0".."5") that entity-service exposes rather than the "EL0" label.
+	Duration        *string `json:"duration"`
+	EscalationLevel *string `json:"escalationLevel"`
+	IsEscalated     *bool   `json:"isEscalated"`
 }
 
 // --- deployments ---

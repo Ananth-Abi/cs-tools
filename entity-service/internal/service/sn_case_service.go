@@ -145,6 +145,15 @@ type snCase struct {
 	EngagementStartDate   *string          `json:"engagementStartDate"`
 	EngagementEndDate     *string          `json:"engagementEndDate"`
 	EngagementPaymentType *snCaseLabel     `json:"engagementPaymentType"`
+	// Duration/EscalationLevel/IsEscalated are response fields Choreo already
+	// sends. Note escalationLevel appears twice in this file for different
+	// purposes: as a []string request filter on the search payload, and as this
+	// single choice-list value on the response. Only the filter was declared, so
+	// encoding/json discarded all three on the way back and the portal had no
+	// escalation state or duration to render.
+	Duration        *string                `json:"duration"`
+	EscalationLevel *snCaseEscalationLevel `json:"escalationLevel"`
+	IsEscalated     *bool                  `json:"isEscalated"`
 }
 
 // snWatchListUser mirrors the watch-list user shape ServiceNow/Ballerina returns on both
@@ -222,6 +231,16 @@ type snCaseLabel struct {
 	Label string `json:"label"`
 }
 
+// snCaseEscalationLevel is the escalation-level choice list on a case response,
+// e.g. {"id": "0", "label": "EL0"}. snCaseLabel cannot be reused because it
+// carries no id, and the id is the part that round-trips into the
+// escalationLevel request filter. json.Number because Choreo has sent choice ids
+// both quoted and bare elsewhere in this API.
+type snCaseEscalationLevel struct {
+	ID    json.Number `json:"id"`
+	Label string      `json:"label"`
+}
+
 type snCaseIssueType struct {
 	ID    json.Number `json:"id"`
 	Label string      `json:"label"`
@@ -256,6 +275,28 @@ var snCaseTypeMap = map[string]string{
 	"hosting":                  "hosting",
 	"hosting_query":            "hosting_query",
 	"hosting_task":             "hosting_task",
+}
+
+// snEscalationLevelToDomain reduces Choreo's escalation-level choice list to the
+// plain nullable string this service exposes for enum-valued fields.
+//
+// It keeps the level id ("0".."5", the same vocabulary validEscalationLevel
+// accepts on the request side) rather than the display label ("EL0"), so the
+// value round-trips: a caller can feed what it reads back into the
+// escalationLevel filter. Building the {id, label} pair the portal renders is
+// the BFF's job, not this service's.
+//
+// An id outside the known set yields nil rather than passing an unrecognised
+// value through, matching how the other snXxxToEnum helpers here behave.
+func snEscalationLevelToDomain(l *snCaseEscalationLevel) *string {
+	if l == nil {
+		return nil
+	}
+	id := strings.TrimSpace(l.ID.String())
+	if id == "" || !validEscalationLevel[id] {
+		return nil
+	}
+	return &id
 }
 
 // snCaseTypeSysidMap maps ServiceNow caseType sysids to domain case type values.
@@ -926,19 +967,22 @@ func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.Case
 	}
 
 	cv := domain.CaseView{
-		ID:             sysidToUUID(c.ID),
-		Number:         c.Number,
-		InternalID:     c.InternalID,
-		Subject:        c.Title,
-		Description:    c.Description,
-		Severity:       snSeverityToSeverity(c.Severity),
-		IssueType:      snIssueTypeToEnum(c.IssueType),
-		State:          state,
-		WorkState:      snWorkStateLabelToEnum(c.WorkState),
-		Type:           snCaseTypeToDomain(c.CaseType),
-		EngagementType: snLabelStr(c.EngagementType),
-		CreatedOn:      createdOn,
-		UpdatedOn:      updatedOn,
+		ID:              sysidToUUID(c.ID),
+		Number:          c.Number,
+		InternalID:      c.InternalID,
+		Subject:         c.Title,
+		Duration:        c.Duration,
+		EscalationLevel: snEscalationLevelToDomain(c.EscalationLevel),
+		IsEscalated:     c.IsEscalated,
+		Description:     c.Description,
+		Severity:        snSeverityToSeverity(c.Severity),
+		IssueType:       snIssueTypeToEnum(c.IssueType),
+		State:           state,
+		WorkState:       snWorkStateLabelToEnum(c.WorkState),
+		Type:            snCaseTypeToDomain(c.CaseType),
+		EngagementType:  snLabelStr(c.EngagementType),
+		CreatedOn:       createdOn,
+		UpdatedOn:       updatedOn,
 		// The case read carries no id for the creator, only the email and full
 		// name, so the canonical reference is emitted with a null id.
 		CreatedBy:      domain.NewUserReference("", c.CreatedBy, c.CreatedByFullName),
