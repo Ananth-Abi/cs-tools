@@ -36,8 +36,8 @@ type ProjectSummary struct {
 	// Type is what the frontend actually reads (project.type.label); see
 	// projectTypeRef. subscriptionType is kept for existing consumers.
 	Type         *IDLabelRef `json:"type,omitempty"`
-	StartDate    *time.Time  `json:"startDate,omitempty"`
-	EndDate      *time.Time  `json:"endDate,omitempty"`
+	StartDate    *string     `json:"startDate,omitempty"`
+	EndDate      *string     `json:"endDate,omitempty"`
 	CreatedOn    time.Time   `json:"createdOn"`
 	ClosureState *string     `json:"closureState,omitempty"`
 	// No omitempty: the frontend's ProjectListItem types activeCasesCount as a
@@ -66,8 +66,8 @@ func MapSearchProjects(r entity.SearchProjectsResponse) SearchProjectsResponse {
 			Key:              p.Key,
 			SubscriptionType: p.SubscriptionType,
 			Type:             projectTypeRef(p.SubscriptionType),
-			StartDate:        p.StartDate,
-			EndDate:          p.EndDate,
+			StartDate:        DateOnly(p.StartDate),
+			EndDate:          DateOnly(p.EndDate),
 			CreatedOn:        p.CreatedOn,
 			ClosureState:     p.ClosureState,
 			ActiveCasesCount: p.ActiveCasesCount,
@@ -113,18 +113,18 @@ func BuildEntitySearchProjectsRequest(req SearchProjectsRequest) entity.SearchPr
 // project.account?.hasAgent) — not actually internal-only despite this
 // struct's earlier doc comment claiming so.
 type ProjectAccount struct {
-	ID              string     `json:"id"`
-	Name            string     `json:"name"`
-	SupportTier     string     `json:"supportTier"`
-	Region          *string    `json:"region,omitempty"`
-	HasAgent        bool       `json:"hasAgent"`
-	HasKbReferences bool       `json:"hasKbReferences"`
-	ActivationDate  *time.Time `json:"activationDate,omitempty"`
+	ID              string  `json:"id"`
+	Name            string  `json:"name"`
+	SupportTier     string  `json:"supportTier"`
+	Region          *string `json:"region,omitempty"`
+	HasAgent        bool    `json:"hasAgent"`
+	HasKbReferences bool    `json:"hasKbReferences"`
+	ActivationDate  *string `json:"activationDate,omitempty"`
 	// The owning and technical contacts belong to the account, matching the
 	// frontend's ProjectDetailsAccount type.
-	DeactivationDate    *time.Time `json:"deactivationDate,omitempty"`
-	OwnerEmail          *string    `json:"ownerEmail,omitempty"`
-	TechnicalOwnerEmail *string    `json:"technicalOwnerEmail,omitempty"`
+	DeactivationDate    *string `json:"deactivationDate,omitempty"`
+	OwnerEmail          *string `json:"ownerEmail,omitempty"`
+	TechnicalOwnerEmail *string `json:"technicalOwnerEmail,omitempty"`
 }
 
 // ProjectDetails is the portal's response for GET /projects/{id}.
@@ -141,8 +141,8 @@ type ProjectDetails struct {
 	// Type is what the frontend actually reads (project.type.label); see
 	// projectTypeRef. subscriptionType is kept for existing consumers.
 	Type         *IDLabelRef `json:"type,omitempty"`
-	StartDate    time.Time   `json:"startDate"`
-	EndDate      time.Time   `json:"endDate"`
+	StartDate    *string     `json:"startDate,omitempty"`
+	EndDate      *string     `json:"endDate,omitempty"`
 	CreatedOn    time.Time   `json:"createdOn"`
 	UpdatedOn    time.Time   `json:"updatedOn"`
 	ClosureState *string     `json:"closureState,omitempty"`
@@ -156,16 +156,16 @@ type ProjectDetails struct {
 	// omitempty on a pointer omits only nil, so a genuine zero balance still
 	// serialises: "tracked, none remaining" stays distinguishable from
 	// "not tracked".
-	TotalQueryHours          *float64   `json:"totalQueryHours,omitempty"`
-	ConsumedQueryHours       *float64   `json:"consumedQueryHours,omitempty"`
-	RemainingQueryHours      *float64   `json:"remainingQueryHours,omitempty"`
-	TotalOnboardingHours     *float64   `json:"totalOnboardingHours,omitempty"`
-	ConsumedOnboardingHours  *float64   `json:"consumedOnboardingHours,omitempty"`
-	RemainingOnboardingHours *float64   `json:"remainingOnboardingHours,omitempty"`
-	GoLiveDate               *time.Time `json:"goLiveDate,omitempty"`
-	GoLivePlanDate           *time.Time `json:"goLivePlanDate,omitempty"`
-	OnboardingExpiryDate     *time.Time `json:"onboardingExpiryDate,omitempty"`
-	OnboardingStatus         *string    `json:"onboardingStatus,omitempty"`
+	TotalQueryHours          *float64 `json:"totalQueryHours,omitempty"`
+	ConsumedQueryHours       *float64 `json:"consumedQueryHours,omitempty"`
+	RemainingQueryHours      *float64 `json:"remainingQueryHours,omitempty"`
+	TotalOnboardingHours     *float64 `json:"totalOnboardingHours,omitempty"`
+	ConsumedOnboardingHours  *float64 `json:"consumedOnboardingHours,omitempty"`
+	RemainingOnboardingHours *float64 `json:"remainingOnboardingHours,omitempty"`
+	GoLiveDate               *string  `json:"goLiveDate,omitempty"`
+	GoLivePlanDate           *string  `json:"goLivePlanDate,omitempty"`
+	OnboardingExpiryDate     *string  `json:"onboardingExpiryDate,omitempty"`
+	OnboardingStatus         *string  `json:"onboardingStatus,omitempty"`
 }
 
 // MapProjectDetails builds the portal response from entity-service's ProjectDetailsView.
@@ -179,9 +179,9 @@ func MapProjectDetails(p entity.ProjectDetailsView) ProjectDetails {
 			Region:          p.Account.Region,
 			HasAgent:        p.Account.AgentEnabled,
 			HasKbReferences: p.Account.KbReferencesEnabled,
-			ActivationDate:  p.Account.ActivationDate,
+			ActivationDate:  DateOnly(p.Account.ActivationDate),
 
-			DeactivationDate:    p.Account.DeactivationDate,
+			DeactivationDate:    DateOnly(p.Account.DeactivationDate),
 			OwnerEmail:          p.Account.OwnerEmail,
 			TechnicalOwnerEmail: p.Account.TechnicalOwnerEmail,
 		},
@@ -189,8 +189,8 @@ func MapProjectDetails(p entity.ProjectDetailsView) ProjectDetails {
 		Key:              p.Key,
 		SubscriptionType: p.SubscriptionType,
 		Type:             projectTypeRef(p.SubscriptionType),
-		StartDate:        p.StartDate,
-		EndDate:          p.EndDate,
+		StartDate:        DateOnlyValue(p.StartDate),
+		EndDate:          DateOnlyValue(p.EndDate),
 		CreatedOn:        p.CreatedOn,
 		UpdatedOn:        p.UpdatedOn,
 		ClosureState:     p.ClosureState,
@@ -201,9 +201,9 @@ func MapProjectDetails(p entity.ProjectDetailsView) ProjectDetails {
 		TotalOnboardingHours:     p.TotalOnboardingHours,
 		ConsumedOnboardingHours:  p.ConsumedOnboardingHours,
 		RemainingOnboardingHours: p.RemainingOnboardingHours,
-		GoLiveDate:               p.GoLiveDate,
-		GoLivePlanDate:           p.GoLivePlanDate,
-		OnboardingExpiryDate:     p.OnboardingExpiryDate,
+		GoLiveDate:               DateOnly(p.GoLiveDate),
+		GoLivePlanDate:           DateOnly(p.GoLivePlanDate),
+		OnboardingExpiryDate:     DateOnly(p.OnboardingExpiryDate),
 		OnboardingStatus:         p.OnboardingStatus,
 	}
 }

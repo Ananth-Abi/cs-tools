@@ -6383,7 +6383,7 @@ components:
           description: Email of the account technical owner.
         deactivationDate:
           type: string
-          format: date-time
+          format: date
           description: Date the account was deactivated.
         id:
           type: string
@@ -6423,15 +6423,15 @@ components:
           description: Onboarding hours remaining. Omitted when not tracked; 0 means none remaining.
         goLiveDate:
           type: string
-          format: date-time
+          format: date
           description: Actual go-live date.
         goLivePlanDate:
           type: string
-          format: date-time
+          format: date
           description: Planned go-live date.
         onboardingExpiryDate:
           type: string
-          format: date-time
+          format: date
           description: Date the onboarding entitlement expires.
         onboardingStatus:
           type: string
