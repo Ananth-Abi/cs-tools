@@ -1005,11 +1005,40 @@ describe("CsmCaseDetailPage — announcement description rendering", () => {
     ).toBeTruthy();
   });
 
-  it("does not render the announcement-only description card for a non-announcement case", () => {
-    // This card is gated on isAnnouncement specifically — a plain case never
-    // gets it here regardless of the Details-tab dedupe fallback (covered in
-    // its own describe block below), since it stays on the default
-    // Activities tab in this render.
+  it("also renders the fallback card on the Activities tab for a non-announcement case whose description isn't echoed anywhere", () => {
+    // A plain case reaches the same card via `descriptionEchoedInOriginComment`
+    // rather than the isAnnouncement carve-out — with no comments loaded
+    // (the default mock), there's no origin comment to echo the description,
+    // so the fallback must still show it here instead of leaving it
+    // findable only on the Details tab.
+    renderCaseDetailPage(
+      "/cases/case-1",
+      "/cases/:caseId",
+      "case",
+      "<p>Long advisory content</p>",
+    );
+
+    expect(screen.getByText("Long advisory content")).toBeInTheDocument();
+  });
+
+  it("hides the fallback card on the Activities tab for a non-announcement case whose origin comment already echoes the description", () => {
+    useGetCsmCaseCommentsMock.mockImplementation(() => ({
+      data: [
+        {
+          id: "comment-1",
+          caseId: "case-1",
+          authorName: "Jane Doe",
+          authorRole: "customer",
+          bodyHtml: "<p>Long advisory content</p>",
+          createdAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+      isFetching: false,
+    }));
+
     renderCaseDetailPage(
       "/cases/case-1",
       "/cases/:caseId",

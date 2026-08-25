@@ -2259,33 +2259,39 @@ export default function CsmCaseDetailPage(): JSX.Element {
           {/* An announcement's own body is never echoed as the feed's opening
               comment the way it is for every other case type (see the note
               near `safeComments`) — only replies posted via the composer
-              above show up there. Render the body directly below the
-              timeline instead — the only place an announcement's actual
-              content is shown. */}
-          {isAnnouncement && !isBlankHtml(c.description) && (
-            <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
-              <Typography variant="subtitle2">Description</Typography>
-              <Box
-                sx={{
-                  typography: "body2",
-                  color: "text.primary",
-                  minWidth: 0,
-                  maxWidth: "100%",
-                  contain: "inline-size",
-                  overflowX: "auto",
-                  "& p": { mb: 0.5 },
-                  "& p:last-child": { mb: 0 },
-                }}
-                dangerouslySetInnerHTML={{
-                  __html: sanitizeDescriptionHtml(
-                    isDarkMode
-                      ? stripLightModeInlineStyles(c.description)
-                      : c.description,
-                  ),
-                }}
-              />
-            </Card>
-          )}
+              above show up there, so the card below is unconditional for
+              announcements. Every other case type reaches the same card via
+              `descriptionEchoedInOriginComment`, which is content-based
+              rather than "did comments fail to load" — it's false whenever
+              the origin comment doesn't actually reproduce the description
+              (common for cases created by internal automation, and for
+              cases with no origin comment at all), so the description isn't
+              silently missing from this tab in that case either. */}
+          {!isBlankHtml(c.description) &&
+            (isAnnouncement || !descriptionEchoedInOriginComment) && (
+              <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
+                <Typography variant="subtitle2">Description</Typography>
+                <Box
+                  sx={{
+                    typography: "body2",
+                    color: "text.primary",
+                    minWidth: 0,
+                    maxWidth: "100%",
+                    contain: "inline-size",
+                    overflowX: "auto",
+                    "& p": { mb: 0.5 },
+                    "& p:last-child": { mb: 0 },
+                  }}
+                  dangerouslySetInnerHTML={{
+                    __html: sanitizeDescriptionHtml(
+                      isDarkMode
+                        ? stripLightModeInlineStyles(c.description)
+                        : c.description,
+                    ),
+                  }}
+                />
+              </Card>
+            )}
         </Box>
       )}
 
@@ -2340,18 +2346,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
               </MetaCell>
             </Box>
           </Card>
-          {/* The case description usually doesn't need its own card — it
-              already renders as the opening entry in the Activities tab's
-              feed (see the note near `safeComments` above), and editing it is
-              still available via the action bar's "Edit case details…" item
-              (EditCaseDetailsDialog).
-
-              But that's only true when the origin comment actually
-              reproduces the description. It often doesn't for cases created
-              by internal automation — sometimes there's no origin comment at
-              all — so `descriptionEchoedInOriginComment` (content-based, not
-              just "did comments/search error") decides here rather than
-              assuming the feed already covered it. */}
+          {/* Duplicates the fallback card also rendered on the Activities
+              tab (below the timeline) whenever the description isn't
+              genuinely present elsewhere — see `descriptionEchoedInOriginComment`
+              and the note next to that card. Kept here too, next to the
+              action bar's "Edit case details…" item (EditCaseDetailsDialog),
+              so the description is visible while editing without switching
+              tabs. */}
           {!isBlankHtml(c.description) && !descriptionEchoedInOriginComment && (
             <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
               <Typography variant="subtitle2">Description</Typography>
