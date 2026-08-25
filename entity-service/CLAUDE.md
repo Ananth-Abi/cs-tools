@@ -141,16 +141,19 @@ there is no Postgres-backed equivalent for any of them):
 `publishCaseCreated`, `publishCommentAdded`, and `publishStatusChanged` —
 every `case.*` publisher above, not `snIncidentService.CreateIncident` —
 also set `CaseNumber` (`cv.Number`/`before.Number`, the case's
-human-readable ServiceNow reference, e.g. `"CS0023001"`) alongside `CaseID`
-(the UUID) — `csm-notification-service` displays `CaseNumber` in every
-subject line and template slot instead of the UUID, which is meaningless to
-an end user (a real, reported bug before this field existed at all); `CaseID`
-is unchanged for anything link-related. `publishStatusChanged` additionally
-sets `CaseTitle` (`before.Subject`) — `case.status_changed` didn't
-originally carry one at all, needed once `csm-notification-service`
-started requiring every `case.*` email's subject to follow one explicit
-standard format, `"[WSO2 Support] (<case number>/<case id>) <title>"` (see
-that service's own `CLAUDE.md`, `dispatch.subjectLine`).
+human-readable ServiceNow reference, e.g. `"CS0023001"`) and `WSO2CaseID`
+(`cv.InternalID`/`before.InternalID`, ServiceNow's `u_wso2_case_id` custom
+field — the CSM portal's own case identifier, e.g. `"WSO2-1000"`, distinct
+from `CaseNumber`) alongside `CaseID` (the UUID) — `csm-notification-service`
+displays `WSO2CaseID`/`CaseNumber` in every subject line and template slot
+instead of the UUID, which is meaningless to an end user (a real, reported
+bug before these fields existed at all); `CaseID` is unchanged for anything
+link-related. `publishStatusChanged` additionally sets `CaseTitle`
+(`before.Subject`) — `case.status_changed` didn't originally carry one at
+all, needed once `csm-notification-service` started requiring every
+`case.*` email's subject to follow one explicit standard format,
+`"[WSO2 Support] (<wso2 case id>/<case number>) <title>"` (see that
+service's own `CLAUDE.md`, `dispatch.subjectLine`).
 - **`snCaseService.UpdateCase`** publishes `case.status_changed` via
   `publishStatusChanged`, called only when the PATCH's own `req.State` was
   set (a `nil` `State` — e.g. an `assigneeEmail`-only PATCH — never

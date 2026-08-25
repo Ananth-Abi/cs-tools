@@ -345,6 +345,40 @@ func TestDispatcher_Handle_EmailDebugMode_RedirectsToConfiguredRecipients(t *tes
 	}
 }
 
+// TestDispatcher_Handle_EmailDebugMode_MultipleGroups_SendsOneMergedEmail
+// verifies the fix for a real reported bug: a case with recipients spanning
+// two portals (customer-role + CSM-role) resolves to two groups via
+// groupByLink, and in production that's correct — two separate emails to two
+// different real audiences. But EMAIL_DEBUG_MODE redirects every group to
+// the same configured inbox, so a tester previously saw what looked like two
+// duplicate emails for one event. sendPerGroup must merge every group into
+// one email in debug mode, while still surfacing each group's own link.
+func TestDispatcher_Handle_EmailDebugMode_MultipleGroups_SendsOneMergedEmail(t *testing.T) {
+	mock := &mockEmailSender{}
+	links := &mockLinkResolver{
+		linkFor: func(email string) string {
+			if email == "customer@example.com" {
+				return "https://customer.example/projects/PROJ-1/support/cases/CASE-1"
+			}
+			return "https://csm.example/cases/CASE-1"
+		},
+	}
+	debugRecipients := []string{"debug-1@example.com", "debug-2@example.com"}
+	d := NewDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{}, links, true, true, debugRecipients, true, "", "")
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["customer@example.com","csm-agent@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected exactly 1 merged email in debug mode despite 2 role groups, got %d", len(mock.calls))
+	}
+	if !strings.Contains(mock.calls[0].htmlBody, "customer.example") || !strings.Contains(mock.calls[0].htmlBody, "csm.example") {
+		t.Errorf("expected merged body to contain both groups' links, got: %s", mock.calls[0].htmlBody)
+	}
+}
+
 // TestDispatcher_Handle_EmailDebugMode_NoRecipientsConfigured_SkipsSend
 // verifies that EMAIL_DEBUG_MODE=true with an empty EMAIL_DEBUG_RECIPIENTS
 // (misconfigured) skips SendEmail entirely rather than calling it with zero
@@ -1153,7 +1187,7 @@ func TestDispatcher_Handle_CaseCreated_ConcurrentBlockedEmailDoesNotDuplicateCha
 
 // TestDispatcher_Handle_SubjectLine_StandardFormat verifies every case.*
 // event type's email uses this service's one standard subject format:
-// "[WSO2 Support] (<case number>/<case id>) <title>" — a real,
+// "[WSO2 Support] (<wso2 case id>/<case number>) <title>" — a real,
 // explicitly-requested requirement, not a preference.
 func TestDispatcher_Handle_SubjectLine_StandardFormat(t *testing.T) {
 	tests := []struct {
@@ -1163,23 +1197,28 @@ func TestDispatcher_Handle_SubjectLine_StandardFormat(t *testing.T) {
 	}{
 		{
 			name:   "case.created",
-			record: `{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+			record: `{"type":"case.created","entityId":"CASE-1","payload":{"reporterName":"Reporter","projectName":"Proj","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","caseType":"Incident","priority":"P3","createdAt":"2026-01-01","description":"desc","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
 			name:   "case.comment_added",
-			record: `{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+			record: `{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Commenter","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","caseComment":"fixed it","commentId":"C-1","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
 			name:   "case.status_changed",
-			record: `{"type":"case.status_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","newStatus":"Open","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+			record: `{"type":"case.status_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","newStatus":"Open","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
 			name:   "case.assigned",
-			record: `{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"Assigner","assignerEmail":"assigner@example.com","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","recipients":["test-recipient@example.com"]}}`,
-			want:   "[WSO2 Support] (CS0001001/CASE-1) Something broke",
+			record: `{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"Assigner","assignerEmail":"assigner@example.com","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
+		},
+		{
+			name:   "case.status_changed without wso2CaseId falls back to raw case id",
+			record: `{"type":"case.status_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","caseTitle":"Something broke","newStatus":"Open","recipients":["test-recipient@example.com"]}}`,
+			want:   "[WSO2 Support] (CASE-1/CS0001001) Something broke",
 		},
 	}
 	for _, tt := range tests {

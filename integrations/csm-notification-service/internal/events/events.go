@@ -114,7 +114,16 @@ type CaseCreatedPayload struct {
 	// displayCaseRef falls back to CaseID (the UUID, meaningless to an end
 	// user, but better than a blank subject/body) when a publisher hasn't
 	// been updated to send CaseNumber yet.
-	CaseNumber                string   `json:"caseNumber,omitempty"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID is the CSM portal's own case identifier (e.g.
+	// "WSO2-1000" — ServiceNow's u_wso2_case_id custom field), distinct
+	// from both CaseNumber (ServiceNow's own "CS..." number) and CaseID
+	// (the raw UUID) — matches the "<wso2CaseId>/<caseNumber>" pairing the
+	// CSM portal frontend already shows (see caseIdentity.ts's
+	// caseIdLabel). internal/dispatch's subjectLine uses this in the
+	// subject's first slot, falling back to CaseID only when a publisher
+	// hasn't sent it yet.
+	WSO2CaseID                string   `json:"wso2CaseId,omitempty"`
 	CaseTitle                 string   `json:"caseTitle"`
 	CaseType                  string   `json:"caseType"`
 	Priority                  string   `json:"priority"`
@@ -139,7 +148,9 @@ type CommentAddedPayload struct {
 	ProjectID string `json:"projectId"`
 	CaseID    string `json:"caseId"`
 	// CaseNumber — see CaseCreatedPayload's own doc comment.
-	CaseNumber  string   `json:"caseNumber,omitempty"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CaseCreatedPayload's own doc comment.
+	WSO2CaseID  string   `json:"wso2CaseId,omitempty"`
 	CaseTitle   string   `json:"caseTitle"`
 	CaseComment string   `json:"caseComment"`
 	CommentID   string   `json:"commentId"`
@@ -153,6 +164,8 @@ type StatusChangedPayload struct {
 	ProjectID  string `json:"projectId"`
 	CaseID     string `json:"caseId"`
 	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CaseCreatedPayload's own doc comment.
+	WSO2CaseID string `json:"wso2CaseId,omitempty"`
 	// CaseTitle is used only for the email subject line (dispatch's
 	// subjectLine) — optional, same as CaseNumber, so an older publisher
 	// still produces a valid (just less descriptive) subject.
@@ -169,6 +182,8 @@ type CaseAssignedPayload struct {
 	ProjectID     string `json:"projectId"`
 	CaseID        string `json:"caseId"`
 	CaseNumber    string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CaseCreatedPayload's own doc comment.
+	WSO2CaseID string `json:"wso2CaseId,omitempty"`
 	// CaseTitle — see StatusChangedPayload's own doc comment.
 	CaseTitle  string   `json:"caseTitle,omitempty"`
 	Recipients []string `json:"recipients"`

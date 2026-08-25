@@ -66,6 +66,11 @@ type CommentAddedPayload struct {
 	ProjectID  string `json:"projectId"`
 	CaseID     string `json:"caseId"`
 	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID is ServiceNow's u_wso2_case_id custom field (domain.CaseView.
+	// InternalID) — the CSM portal's own case identifier (e.g. "WSO2-1000"),
+	// distinct from CaseNumber ("CS..."). Mirrors csm-notification-service's
+	// own WSO2CaseID field, used in its subjectLine.
+	WSO2CaseID string `json:"wso2CaseId,omitempty"`
 
 	CaseTitle   string   `json:"caseTitle"`
 	CaseComment string   `json:"caseComment"`
@@ -78,9 +83,11 @@ type CommentAddedPayload struct {
 // CommentAddedPayload above (an earlier {Timestamp, NewStatus} version was
 // similarly never actually publishable).
 type StatusChangedPayload struct {
-	ProjectID  string   `json:"projectId"`
-	CaseID     string   `json:"caseId"`
-	CaseNumber string   `json:"caseNumber,omitempty"`
+	ProjectID  string `json:"projectId"`
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CommentAddedPayload's own doc comment.
+	WSO2CaseID string   `json:"wso2CaseId,omitempty"`
 	CaseTitle  string   `json:"caseTitle,omitempty"`
 	NewStatus  string   `json:"newStatus"`
 	Recipients []string `json:"recipients"`
@@ -95,17 +102,19 @@ type StatusChangedPayload struct {
 // yet — omitting an optional field and encoding it empty are equivalent on
 // the wire (see the notification service's decodeStrict).
 type CaseCreatedPayload struct {
-	ReporterName string   `json:"reporterName"`
-	ProjectName  string   `json:"projectName"`
-	ProjectID    string   `json:"projectId"`
-	CaseID       string   `json:"caseId"`
-	CaseNumber   string   `json:"caseNumber,omitempty"`
-	CaseTitle    string   `json:"caseTitle"`
-	CaseType     string   `json:"caseType"`
-	Priority     string   `json:"priority"`
-	CreatedAt    string   `json:"createdAt"`
-	Description  string   `json:"description"`
-	Recipients   []string `json:"recipients"`
+	ReporterName string `json:"reporterName"`
+	ProjectName  string `json:"projectName"`
+	ProjectID    string `json:"projectId"`
+	CaseID       string `json:"caseId"`
+	CaseNumber   string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CommentAddedPayload's own doc comment.
+	WSO2CaseID  string   `json:"wso2CaseId,omitempty"`
+	CaseTitle   string   `json:"caseTitle"`
+	CaseType    string   `json:"caseType"`
+	Priority    string   `json:"priority"`
+	CreatedAt   string   `json:"createdAt"`
+	Description string   `json:"description"`
+	Recipients  []string `json:"recipients"`
 }
 
 // IncidentCreatedPayload is the Payload shape for TypeIncidentCreated —

@@ -381,7 +381,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		errs = append(errs, err)
 	} else {
 		caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
-		subject := subjectLine(p.CaseNumber, p.CaseID, p.CaseTitle)
+		subject := subjectLine(p.WSO2CaseID, p.CaseNumber, p.CaseID, p.CaseTitle)
 		var emailErr error
 		_, emailErr = d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 			return notifications.RenderCaseCreatedEmail(notifications.CaseCreatedEmailData{
@@ -471,7 +471,7 @@ func (d *Dispatcher) handleCommentAdded(ctx context.Context, record eventbus.Rec
 		return err
 	}
 	baseKey := recordBaseKey(record)
-	subject := subjectLine(p.CaseNumber, p.CaseID, p.CaseTitle)
+	subject := subjectLine(p.WSO2CaseID, p.CaseNumber, p.CaseID, p.CaseTitle)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 		return notifications.RenderCommentAddedEmail(p.Name, displayCaseRef(p.CaseNumber, p.CaseID), p.CaseTitle, p.CaseComment, commentLinkFor(caseLink, p.CommentID), caseLink)
 	})
@@ -502,7 +502,7 @@ func (d *Dispatcher) handleStatusChanged(ctx context.Context, record eventbus.Re
 		// gets a meaningful subject rather than a blank title slot.
 		title = "Status changed to " + p.NewStatus
 	}
-	subject := subjectLine(p.CaseNumber, p.CaseID, title)
+	subject := subjectLine(p.WSO2CaseID, p.CaseNumber, p.CaseID, title)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 		return notifications.RenderStatusChangedEmail(caseRef, p.NewStatus, caseLink, commentLinkFor(caseLink, ""))
 	})
@@ -533,7 +533,7 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 		// gets a meaningful subject rather than a blank title slot.
 		title = "Case assigned"
 	}
-	subject := subjectLine(p.CaseNumber, p.CaseID, title)
+	subject := subjectLine(p.WSO2CaseID, p.CaseNumber, p.CaseID, title)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
 		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, caseRef, caseLink, commentLinkFor(caseLink, ""))
 	})
@@ -605,16 +605,32 @@ func displayCaseRef(caseNumber, caseID string) string {
 	return caseID
 }
 
+// displayInternalRef returns wso2CaseID (the CSM portal's own case
+// identifier, e.g. "WSO2-1000" — ServiceNow's u_wso2_case_id custom field,
+// see events.CaseCreatedPayload.WSO2CaseID's own doc comment) when the
+// publisher supplied one, falling back to caseID (the raw UUID, meaningless
+// to an end user) only so the subject is never blank while a publisher
+// hasn't been updated to send it yet.
+func displayInternalRef(wso2CaseID, caseID string) string {
+	if wso2CaseID != "" {
+		return wso2CaseID
+	}
+	return caseID
+}
+
 // subjectLine builds every case.* email's subject in this service's one
-// standard format: "[WSO2 Support] (<case number>/<case id>) <title>" — the
-// first slot is displayCaseRef(caseNumber, caseID) (falls back to the UUID
-// only if a publisher hasn't sent CaseNumber yet), the second is always the
-// raw caseID. title is empty for a publisher that hasn't been updated to
+// standard format: "[WSO2 Support] (<wso2 case id>/<case number>) <title>" —
+// matching the CSM portal frontend's own "wso2CaseId / caseNumber" pairing
+// (see caseIdentity.ts's caseIdLabel). The first slot is
+// displayInternalRef(wso2CaseID, caseID) (falls back to the raw UUID only if
+// a publisher hasn't sent WSO2CaseID yet), the second is
+// displayCaseRef(caseNumber, caseID) (same fallback reasoning for
+// CaseNumber). title is empty for a publisher that hasn't been updated to
 // send CaseTitle yet (case.status_changed/case.assigned did not originally
 // carry one) — still a valid, if less descriptive, subject rather than a
 // missing one.
-func subjectLine(caseNumber, caseID, title string) string {
-	return fmt.Sprintf("[WSO2 Support] (%s/%s) %s", displayCaseRef(caseNumber, caseID), caseID, title)
+func subjectLine(wso2CaseID, caseNumber, caseID, title string) string {
+	return fmt.Sprintf("[WSO2 Support] (%s/%s) %s", displayInternalRef(wso2CaseID, caseID), displayCaseRef(caseNumber, caseID), title)
 }
 
 // maskPhone redacts all but the last 4 characters of an E.164 phone number
@@ -660,6 +676,7 @@ func maskPhone(phone string) string {
 func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups, groupUserIDs map[string][]string, subject string, render func(caseLink string) string) ([]string, error) {
 	var errs []error
 	var owned []string
+	var debugBatch []debugGroupSend
 	for _, caseLink := range slices.Sorted(maps.Keys(groups)) {
 		key := baseKey + "/email/" + caseLink
 		if !d.claim(key) {
@@ -678,9 +695,12 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups, g
 				owned = append(owned, caseLink)
 				continue
 			}
-			slog.InfoContext(ctx, "dispatch: EMAIL_DEBUG_MODE=true; redirecting email to configured debug recipients",
-				"subject", subject, "realRecipientCount", len(to), "debugRecipientCount", len(d.emailDebugRecipients))
-			to = d.emailDebugRecipients
+			// Deferred to sendDebugBatch below rather than sent here — see
+			// its own doc comment for why every group sharing this baseKey
+			// must land in the tester's inbox as one email, not one per
+			// group.
+			debugBatch = append(debugBatch, debugGroupSend{caseLink: caseLink, key: key, body: render(caseLink)})
+			continue
 		}
 		if err := d.email.SendEmail(ctx, to, nil, nil, nil, subject, render(caseLink), nil); err != nil {
 			errs = append(errs, err)
@@ -694,7 +714,58 @@ func (d *Dispatcher) sendPerGroup(ctx context.Context, baseKey string, groups, g
 		slog.InfoContext(ctx, "dispatch: email sent", "subject", subject, "recipientCount", len(to), "recipientUserIds", groupUserIDs[caseLink])
 		owned = append(owned, caseLink)
 	}
+	if len(debugBatch) > 0 {
+		batchOwned, err := d.sendDebugBatch(ctx, subject, debugBatch, groupUserIDs)
+		owned = append(owned, batchOwned...)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
 	return owned, errors.Join(errs...)
+}
+
+// debugGroupSend holds one role-based group's already-rendered body,
+// deferred by sendPerGroup's EMAIL_DEBUG_MODE branch until every group
+// sharing the same event has been resolved — see sendDebugBatch.
+type debugGroupSend struct {
+	caseLink string
+	key      string
+	body     string
+}
+
+// sendDebugBatch sends every group sendPerGroup deferred as a single
+// combined email instead of one per group. In production, N per-role
+// groups (see groupByLink) correctly means N separate emails to N
+// different real audiences — a customer watcher and a CSM watcher must
+// never see each other's portal link. But EMAIL_DEBUG_MODE redirects
+// every group's send to the same configured inbox regardless of role, so
+// a tester watching that inbox previously received what looked like N
+// duplicate emails for one logical event, one per role group. Merging
+// into a single email removes that false impression of duplication while
+// still surfacing every group's own resolved link, each in its own
+// labeled section, so nothing about the per-role link resolution is lost
+// to the tester.
+func (d *Dispatcher) sendDebugBatch(ctx context.Context, subject string, batch []debugGroupSend, groupUserIDs map[string][]string) ([]string, error) {
+	sections := make([]string, 0, len(batch))
+	var allUserIDs []string
+	for _, g := range batch {
+		sections = append(sections, fmt.Sprintf("<p><strong>Role-based recipient link:</strong> %s</p>%s", g.caseLink, g.body))
+		allUserIDs = append(allUserIDs, groupUserIDs[g.caseLink]...)
+	}
+	body := strings.Join(sections, "<hr>")
+	if err := d.email.SendEmail(ctx, d.emailDebugRecipients, nil, nil, nil, subject, body, nil); err != nil {
+		for _, g := range batch {
+			d.forget(g.key)
+		}
+		return nil, err
+	}
+	slog.InfoContext(ctx, "dispatch: email sent (EMAIL_DEBUG_MODE; role groups merged into one)",
+		"subject", subject, "groupCount", len(batch), "recipientCount", len(d.emailDebugRecipients), "recipientUserIds", allUserIDs)
+	owned := make([]string, 0, len(batch))
+	for _, g := range batch {
+		owned = append(owned, g.caseLink)
+	}
+	return owned, nil
 }
 
 // forgetEmailGroups releases sendPerGroup's per-group idempotency tracking
