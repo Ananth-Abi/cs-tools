@@ -161,59 +161,61 @@ func main() {
 	}()
 	slog.Info("health server started", "addr", healthLn.Addr().String())
 
-	// Stream server (:9092) — only if Event Hub is configured (activityHub != nil).
-	// The SSE connection must stay open indefinitely, so WriteTimeout/IdleTimeout
-	// are disabled; mirror of the sibling csm-portal-activity-stream-service's
-	// own stream listener.
-	var streamSrv *http.Server
+	// Stream listener (:9092) always binds and serves the route, regardless
+	// of whether Event Hub is configured — StreamCaseActivities itself
+	// returns 503 when activityHub is nil, which is the documented
+	// degraded-mode response. Binding only conditionally would instead
+	// fail the connection before the handler ever runs, since Choreo's
+	// component config always exposes this port. Only the consumer/hub
+	// machinery above is conditional. The SSE connection must stay open
+	// indefinitely, so WriteTimeout/IdleTimeout are disabled; mirror of the
+	// sibling csm-portal-activity-stream-service's own stream listener.
+	streamMux := http.NewServeMux()
+	streamMux.HandleFunc("GET /cases/{id}/activities/stream", streamHandler.StreamCaseActivities)
+
+	streamAddr := ":" + mustPort("STREAM_PORT", "9092")
 	var streamLn net.Listener
-	if activityHub != nil {
-		streamMux := http.NewServeMux()
-		streamMux.HandleFunc("GET /cases/{id}/activities/stream", streamHandler.StreamCaseActivities)
+	streamLn, err = (&net.ListenConfig{}).Listen(ctx, "tcp", streamAddr)
+	if err != nil {
+		slog.Error("failed to bind stream listener", "addr", streamAddr, "err", err)
+		os.Exit(1)
+	}
 
-		streamAddr := ":" + mustPort("STREAM_PORT", "9092")
-		streamLn, err = (&net.ListenConfig{}).Listen(ctx, "tcp", streamAddr)
-		if err != nil {
-			slog.Error("failed to bind stream listener", "addr", streamAddr, "err", err)
-			os.Exit(1)
-		}
-
-		streamSrv = &http.Server{
-			// SecurityHeaders must stay outermost so its headers are present
-			// on every response, including a CORS preflight — CORS runs
-			// next, still ahead of Auth: a browser preflight carries no
-			// x-jwt-assertion header, so Auth must never see it first. See
-			// middleware.CORS's doc comment.
-			// STREAM_CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
-			// unset denies all cross-origin requests (fail-closed — see
-			// middleware.CORS's doc comment for why).
-			Handler: middleware.SecurityHeaders(
-				middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
-					middleware.CorrelationID(
-						authMiddleware(
-							middleware.Logger(streamMux),
-						),
+	streamSrv := &http.Server{
+		// SecurityHeaders must stay outermost so its headers are present
+		// on every response, including a CORS preflight — CORS runs
+		// next, still ahead of Auth: a browser preflight carries no
+		// x-jwt-assertion header, so Auth must never see it first. See
+		// middleware.CORS's doc comment.
+		// STREAM_CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
+		// unset denies all cross-origin requests (fail-closed — see
+		// middleware.CORS's doc comment for why).
+		Handler: middleware.SecurityHeaders(
+			middleware.CORS(splitComma(os.Getenv("STREAM_CORS_ALLOWED_ORIGINS")))(
+				middleware.CorrelationID(
+					authMiddleware(
+						middleware.Logger(streamMux),
 					),
 				),
 			),
-			ReadHeaderTimeout: 10 * time.Second,
-			ReadTimeout:       30 * time.Second,
-			WriteTimeout:      0,
-			IdleTimeout:       0,
-		}
+		),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      0,
+		IdleTimeout:       0,
+	}
 
-		go func() {
-			if err := streamSrv.Serve(streamLn); err != nil && err != http.ErrServerClosed {
-				slog.Error("stream server exited", "err", err)
-				os.Exit(1)
-			}
-		}()
-		slog.Info("case-activity stream server started", "addr", streamLn.Addr().String())
-
-		if caseEventsConsumer != nil {
-			go caseEventsConsumer.Run(ctx, caseevents.NewHandler(activityHub).Handle)
-			slog.Info("case-events consumer started")
+	go func() {
+		if err := streamSrv.Serve(streamLn); err != nil && err != http.ErrServerClosed {
+			slog.Error("stream server exited", "err", err)
+			os.Exit(1)
 		}
+	}()
+	slog.Info("case-activity stream server started", "addr", streamLn.Addr().String())
+
+	if caseEventsConsumer != nil {
+		go caseEventsConsumer.Run(ctx, caseevents.NewHandler(activityHub).Handle)
+		slog.Info("case-events consumer started")
 	}
 
 	<-ctx.Done()
@@ -225,13 +227,11 @@ func main() {
 	// Both listeners get the shutdown goroutine's own use of shutdownCtx,
 	// running concurrently rather than one after the other.
 	var wg sync.WaitGroup
-	if streamSrv != nil {
-		wg.Go(func() {
-			if err := streamSrv.Shutdown(shutdownCtx); err != nil {
-				slog.Error("stream server graceful shutdown failed", "err", err)
-			}
-		})
-	}
+	wg.Go(func() {
+		if err := streamSrv.Shutdown(shutdownCtx); err != nil {
+			slog.Error("stream server graceful shutdown failed", "err", err)
+		}
+	})
 	var healthSrvErr error
 	wg.Go(func() {
 		healthSrvErr = healthSrv.Shutdown(shutdownCtx)
