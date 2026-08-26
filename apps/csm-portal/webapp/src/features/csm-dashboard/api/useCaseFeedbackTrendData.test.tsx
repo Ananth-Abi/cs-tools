@@ -58,7 +58,7 @@ describe("useCaseFeedbackTrendData", () => {
 
     expect(postMock).toHaveBeenCalledTimes(1);
     expect(postMock).toHaveBeenCalledWith(
-      "/cases/feedback/aggregate",
+      "/cases/feedbacks/aggregate",
       { filters: { accountIds: ["acc-1"] }, bucket: "month" },
       { signal: expect.any(AbortSignal) },
     );
