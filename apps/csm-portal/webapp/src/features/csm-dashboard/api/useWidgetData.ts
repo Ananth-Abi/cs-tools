@@ -157,22 +157,35 @@ export function useWidgetData(
       // actually abort this specific in-flight request, not just start a
       // timer nothing observes.
       return withWidgetFetchSlot(async (signal) => {
-        const res = await api.post<
-          {
-            filters: Record<string, unknown>;
-            pagination: { offset: number; limit: number };
-            sortBy?: Record<string, unknown>;
-          },
-          Record<string, unknown>
-        >(
+        // Most resourceTypes' own search contract takes
+        // `{filters, pagination:{offset,limit}, sortBy?}` and returns
+        // `{total, [itemsKey]: [...]}` — `config.buildSearchRequestBody`/
+        // `config.parseSearchResponse` exist only for the resourceType(s)
+        // whose real contract diverges from that (today: `case_feedback`'s
+        // flat `page`/`pageSize` request and `totalRecords`/`results`
+        // response — see `WidgetResourceConfig`'s own doc comments). Both
+        // are omitted for every other resourceType, so this stays the exact
+        // request/response shape it always was for them.
+        const body = config.buildSearchRequestBody
+          ? config.buildSearchRequestBody({
+              filters: resolvedFilters,
+              offset: effectiveOffset,
+              limit,
+              sortBy: effectiveSortBy,
+            })
+          : {
+              filters: resolvedFilters,
+              pagination: { offset: effectiveOffset, limit },
+              ...(effectiveSortBy ? { sortBy: effectiveSortBy } : {}),
+            };
+        const res = await api.post<Record<string, unknown>, Record<string, unknown>>(
           config.searchEndpoint,
-          {
-            filters: resolvedFilters,
-            pagination: { offset: effectiveOffset, limit },
-            ...(effectiveSortBy ? { sortBy: effectiveSortBy } : {}),
-          },
+          body,
           { signal },
         );
+        if (config.parseSearchResponse) {
+          return config.parseSearchResponse(res);
+        }
         const total = typeof res.total === "number" ? res.total : 0;
         const rawItems = res[config.itemsKey];
         const items = Array.isArray(rawItems)

@@ -3245,7 +3245,8 @@ export type BeWidgetResourceType =
   | "security_report_analysis"
   | "announcement"
   | "engagement"
-  | "incident_task";
+  | "incident_task"
+  | "case_feedback";
 
 /**
  * How a widget's resolved data should be rendered. `pie` and `bar` both
@@ -3290,13 +3291,27 @@ export interface BeDashboardPieSlice {
  * the backend enforces exactly one of the two at config-load time. */
 export interface BeDashboardGroupByConfig {
   /** The field to aggregate on — forwarded verbatim as that request's
-   * `groupBy` key. */
-  field: string;
+   * `groupBy` key. Mutually exclusive with `bucket` (backend-enforced at
+   * config-load time): a widget sets exactly one. Optional (rather than
+   * required) only because of that mutual exclusivity — a `bucket`-configured
+   * widget carries no `field` at all. */
+  field?: string;
+  /** Date-bucketed grouping instead of field-value grouping — the shape a
+   * `case_feedback` trend widget uses (`shape: "bar"`). Mutually exclusive
+   * with `field`. Resolved by `useCaseFeedbackTrendData`, a dedicated hook
+   * (not `useWidgetGroupByData`, whose `POST {resourceType}/aggregate`
+   * request/response shape this doesn't match) that calls `POST
+   * /cases/feedback/aggregate` with this value and maps its date-bucketed
+   * response into the same per-slice `PieSliceResult[]` shape every other
+   * pie/bar widget already renders. */
+  bucket?: "day" | "week" | "month";
   /** Caps the number of returned buckets; anything beyond that rolls up
-   * into the response's `othersCount`. */
+   * into the response's `othersCount`. Meaningless when `bucket` is set — a
+   * date-bucketed aggregation has no "Others" folding. */
   maxGroups?: number;
   /** Label for the synthetic "everything else" bucket built from
-   * `othersCount`. Defaults to `"Others"` when omitted. */
+   * `othersCount`. Defaults to `"Others"` when omitted. Meaningless when
+   * `bucket` is set, same as `maxGroups`. */
   othersLabel?: string;
 }
 
@@ -3313,6 +3328,71 @@ export interface BeGroupByBucket {
 export interface BeGroupByResponse {
   groups: BeGroupByBucket[];
   othersCount: number;
+  totalRecords: number;
+}
+
+/**
+ * A single case-feedback (satisfaction rating) record, as returned by both
+ * `POST /cases/feedback/search`'s `results` array and, opaquely, read by the
+ * `case_feedback` widget resourceType's `columns`-driven list renderer (see
+ * `widgetResourceConfig.ts`'s `case_feedback` entry). Distinct id space from
+ * `BeCaseSearchView` — `caseId` is the only link back to a real case (there
+ * is no `number`/`subject` on this view; the entity service does not join
+ * the owning case's own fields into this response).
+ */
+export interface BeCaseFeedback {
+  instanceId: string;
+  caseId: string;
+  rating: number;
+  ratingLabel: string;
+  /** `null` for feedback submitted without a comment. */
+  comment: string | null;
+  submittedAt: string;
+}
+
+/** Body of `POST /cases/feedback/search` — deliberately NOT the
+ * `{ pagination: { offset, limit } }` shape every other resourceType's
+ * search endpoint takes (see `BeDashboardWidget.query`'s sibling contracts);
+ * this one takes flat `page`/`pageSize` instead, mirrored on `WidgetResourceConfig`'s
+ * `case_feedback` entry via `buildSearchRequestBody`. */
+export interface BeCaseFeedbackSearchFilters {
+  /** Restrict results to a single case. Not accepted by
+   * `/cases/feedback/aggregate` — see {@link BeCaseFeedbackAggregateFilters}. */
+  caseId?: string;
+  accountIds?: string[];
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface BeCaseFeedbackSearchResponse {
+  results: BeCaseFeedback[];
+  totalRecords: number;
+}
+
+/** Narrower than {@link BeCaseFeedbackSearchFilters} — `/cases/feedback/
+ * aggregate` is the many-cases trend endpoint, not scoped to a single case,
+ * so `caseId` is not accepted here. */
+export interface BeCaseFeedbackAggregateFilters {
+  accountIds?: string[];
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface BeCaseFeedbackAggregatePayload {
+  filters?: BeCaseFeedbackAggregateFilters;
+  bucket: "day" | "week" | "month";
+}
+
+/** One aggregated time bucket in a `POST /cases/feedback/aggregate`
+ * response. */
+export interface BeFeedbackBucket {
+  bucketStart: string;
+  avgRating: number;
+  count: number;
+}
+
+export interface BeCaseFeedbackAggregateResponse {
+  buckets: BeFeedbackBucket[];
   totalRecords: number;
 }
 
