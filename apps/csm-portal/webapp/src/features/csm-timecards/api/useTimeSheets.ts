@@ -414,7 +414,14 @@ function readPersistedRecentApprovers(engineerId: string): RecentApprover[] | un
     ) {
       return undefined;
     }
-    if (Date.now() - parsed.cachedAt > RECENT_APPROVERS_TTL_MS) return undefined;
+    const now = Date.now();
+    if (
+      !Number.isFinite(parsed.cachedAt) ||
+      parsed.cachedAt > now ||
+      now - parsed.cachedAt > RECENT_APPROVERS_TTL_MS
+    ) {
+      return undefined;
+    }
     return parsed.approvers;
   } catch {
     return undefined;

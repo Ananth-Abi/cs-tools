@@ -360,6 +360,29 @@ describe("useRecentApprovers persisted cache", () => {
     expect(postMock).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores a persisted entry with a future cachedAt and refetches", async () => {
+    window.localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        approvers: [{ id: "old-approver", name: "Old Approver" }],
+        cachedAt: Date.now() + 60 * 60 * 1000, // 1h in the future
+      }),
+    );
+    postMock.mockResolvedValue(
+      bePage(
+        [cardWithApprovers("a", "2026-08-20", [{ id: "appr-5", name: "Eve Approver" }])],
+        1,
+        0,
+        20,
+      ),
+    );
+
+    const { result } = renderHook(() => useRecentApprovers(true), { wrapper });
+
+    await waitFor(() => expect(result.current.data).toEqual([{ id: "appr-5", name: "Eve Approver" }]));
+    expect(postMock).toHaveBeenCalledTimes(1);
+  });
+
   it("ignores a malformed/garbage persisted entry and refetches instead of crashing", async () => {
     window.localStorage.setItem(storageKey, "{not json");
     postMock.mockResolvedValue(
