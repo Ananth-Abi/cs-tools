@@ -361,4 +361,24 @@ describe("CsmCaseCommentBubble", () => {
     expect(screen.getByText(/Commented by/)).toBeInTheDocument();
     expect(screen.getByText("Jane Doe")).toBeInTheDocument();
   });
+
+  it("suppresses the role chip for a synthetic (client-injected) comment even though authorRole is 'customer'", () => {
+    // `synthetic` is used for entries the frontend fabricates itself (e.g.
+    // the case description echoed into the activity feed) — the real
+    // author's role is unknown in that case, so no chip should claim one,
+    // regardless of what placeholder `authorRole` the entry carries.
+    renderWithProviders(
+      <CsmCaseCommentBubble
+        comment={makeComment({ authorRole: "customer", synthetic: true })}
+      />,
+    );
+    expect(screen.queryByText("Customer")).not.toBeInTheDocument();
+  });
+
+  it("still shows the role chip for a non-synthetic customer comment", () => {
+    renderWithProviders(
+      <CsmCaseCommentBubble comment={makeComment({ authorRole: "customer" })} />,
+    );
+    expect(screen.getByText("Customer")).toBeInTheDocument();
+  });
 });

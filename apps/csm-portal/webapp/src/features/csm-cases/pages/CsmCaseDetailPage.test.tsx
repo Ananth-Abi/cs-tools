@@ -31,6 +31,7 @@ import "@testing-library/jest-dom/vitest";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import type { BeCaseState, BeCaseType } from "@api/backend/types";
+import { sanitizeDescriptionHtml } from "@utils/sanitizeHtml";
 
 // `@api/backend/client` -> `useAuthApiClient` -> `@config/apiConfig`, which
 // throws at module load when `window.config` isn't set — not present under
@@ -405,8 +406,35 @@ vi.mock("@features/csm-cases/components/LinkedChangeRequestsWidget", () => ({
 vi.mock("@features/csm-cases/components/CreateGithubIssueDialog", () => ({
   CreateGithubIssueDialog: () => null,
 }));
+// Probe, not `null`: several tests below assert on the comments the page
+// hands this feed (including the synthetic description entry — see
+// `safeComments` in CsmCaseDetailPage), which needs the passed-through
+// author name / body / role-chip-suppression to actually render. The feed's
+// own layout/filtering/sorting is covered in CaseActivitiesFeed.test.tsx.
 vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
-  default: () => null,
+  default: ({
+    comments,
+  }: {
+    comments: Array<{
+      id: string;
+      authorName: string;
+      authorRole: string;
+      bodyHtml: string;
+      synthetic?: boolean;
+    }>;
+  }) => (
+    <div data-testid="case-activities-feed-probe">
+      {comments.map((c) => (
+        <div key={c.id} data-testid={`comment-${c.id}`}>
+          <span>{c.authorName}</span>
+          {!c.synthetic && c.authorRole !== "wso2_engineer" && (
+            <span>{c.authorRole === "customer" ? "Customer" : c.authorRole}</span>
+          )}
+          <span dangerouslySetInnerHTML={{ __html: sanitizeDescriptionHtml(c.bodyHtml) }} />
+        </div>
+      ))}
+    </div>
+  ),
 }));
 vi.mock("@features/csm-cases/components/CaseMetaBand", () => ({
   default: () => null,
@@ -986,7 +1014,7 @@ function renderCaseDetailPage(
 }
 
 describe("CsmCaseDetailPage — announcement description rendering", () => {
-  it("renders the case description below the activity timeline for an announcement", () => {
+  it("renders the case description inline in the activity timeline for an announcement, attributed to the creator with no role chip", () => {
     renderCaseDetailPage(
       "/announcements/case-1",
       "/announcements/:caseId",
@@ -995,21 +1023,31 @@ describe("CsmCaseDetailPage — announcement description rendering", () => {
     );
 
     expect(screen.getByText("Long advisory content")).toBeInTheDocument();
-    // Not just presence — the description card must render below the
-    // Activity timeline, not above or interleaved with it.
+    // Not just presence — the synthetic entry must render below the
+    // Activity timeline heading, not above or interleaved with it.
     expect(
       screen
         .getByText("Activity timeline")
         .compareDocumentPosition(screen.getByText("Long advisory content")) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    // Rendered as a comment-like bubble attributed to the case creator
+    // (falls back to the customer context's primary contact in this
+    // fixture), not a visually distinct "Description" card.
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+    expect(screen.queryByText("Description")).not.toBeInTheDocument();
+    // The synthetic entry carries `authorRole: "customer"` only to pick the
+    // neutral avatar styling — the real role is unknown, so no role chip
+    // ("Customer"/"WSO2"/etc.) should render for it.
+    expect(screen.queryByText("Customer")).not.toBeInTheDocument();
   });
 
-  it("does not render the announcement-only description card for a non-announcement case", () => {
-    // This card is gated on isAnnouncement specifically — a plain case never
-    // gets it here regardless of the Details-tab dedupe fallback (covered in
-    // its own describe block below), since it stays on the default
-    // Activities tab in this render.
+  it("also injects the description as a synthetic comment entry on the Activities tab for a non-announcement case whose description isn't echoed anywhere", () => {
+    // A plain case reaches the same synthetic entry via
+    // `descriptionEchoedInOriginComment` rather than the isAnnouncement
+    // carve-out — with no comments loaded (the default mock), there's no
+    // origin comment to echo the description, so it must still show up here
+    // instead of leaving it findable only on the Details tab.
     renderCaseDetailPage(
       "/cases/case-1",
       "/cases/:caseId",
@@ -1017,7 +1055,71 @@ describe("CsmCaseDetailPage — announcement description rendering", () => {
       "<p>Long advisory content</p>",
     );
 
-    expect(screen.queryByText("Long advisory content")).not.toBeInTheDocument();
+    expect(screen.getByText("Long advisory content")).toBeInTheDocument();
+    expect(screen.queryByText("Description")).not.toBeInTheDocument();
+  });
+
+  it("does not inject a synthetic entry on the Activities tab for a non-announcement case whose origin comment already echoes the description", () => {
+    useGetCsmCaseCommentsMock.mockImplementation(() => ({
+      data: [
+        {
+          id: "comment-1",
+          caseId: "case-1",
+          authorName: "Jane Doe",
+          authorRole: "customer",
+          bodyHtml: "<p>Long advisory content</p>",
+          createdAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+      isFetching: false,
+    }));
+
+    renderCaseDetailPage(
+      "/cases/case-1",
+      "/cases/:caseId",
+      "case",
+      "<p>Long advisory content</p>",
+    );
+
+    // Only the real comment's copy of the content renders, not a second
+    // (synthetic) copy — the real comment already covers it.
+    expect(screen.getAllByText("Long advisory content")).toHaveLength(1);
+  });
+
+  it("does not inject a synthetic entry for an announcement whose origin comment already echoes the description", () => {
+    // Regression guard: `safeComments` gates purely on
+    // `descriptionEchoedInOriginComment`, with no separate `isAnnouncement`
+    // carve-out — if announcement creation ever starts producing a real
+    // echoed origin comment (it doesn't today), this must still suppress the
+    // synthetic entry rather than always appending it for announcements.
+    useGetCsmCaseCommentsMock.mockImplementation(() => ({
+      data: [
+        {
+          id: "comment-1",
+          caseId: "case-1",
+          authorName: "Jane Doe",
+          authorRole: "customer",
+          bodyHtml: "<p>Long advisory content</p>",
+          createdAt: "2026-01-01T00:00:00Z",
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+      isFetching: false,
+    }));
+
+    renderCaseDetailPage(
+      "/announcements/case-1",
+      "/announcements/:caseId",
+      "announcement",
+      "<p>Long advisory content</p>",
+    );
+
+    expect(screen.getAllByText("Long advisory content")).toHaveLength(1);
   });
 
   it("renders nothing when an announcement has a blank description", () => {

@@ -175,6 +175,7 @@ import type {
   CreateIncidentFromCaseNavState,
   CreateRelatedCaseNavState,
   CreateServiceRequestFromCaseNavState,
+  CsmCaseComment,
 } from "@features/csm-cases/types/csmCases";
 import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import { useNavTransition } from "@hooks/useNavTransition";
@@ -1674,6 +1675,49 @@ export default function CsmCaseDetailPage(): JSX.Element {
     originComment?.bodyHtml,
   );
 
+  // The case description usually arrives as the opening comment too, so the
+  // real comment already carries it and no extra entry is needed. When it
+  // doesn't (see `descriptionEchoedInOriginComment` above — content-based,
+  // covers cases created by internal automation and cases with no origin
+  // comment at all, and today always covers announcements too since their
+  // description is submitted through a path that never creates an origin
+  // comment) a synthetic comment-shaped entry is appended here so the
+  // Activities tab always shows the description inline in the timeline,
+  // attributed to the case creator, rather than as a visually distinct card.
+  // Deliberately just `descriptionEchoedInOriginComment` — not `isAnnouncement
+  // || !descriptionEchoedInOriginComment` — so this stays correct even if
+  // announcement creation ever starts producing a real echoed origin comment;
+  // an unconditional carve-out would silently start double-rendering the
+  // description at that point instead of adapting. It carries `synthetic:
+  // true` so `CsmCaseCommentBubble` suppresses the author-role chip — the
+  // creator's real role isn't known on the frontend (see the field's doc
+  // comment), so nothing is claimed about it. This is folded into
+  // `safeComments` itself (not a separate prop) so the "N entries" count and
+  // the feed's own chronological sort both pick it up naturally. The Details
+  // tab keeps its own separate, pre-existing fallback card for the same
+  // content — unrelated to this and left untouched.
+  const safeComments = useMemo(() => {
+    if (isBlankHtml(data?.description ?? "") || descriptionEchoedInOriginComment) {
+      return mergedComments;
+    }
+    const synthetic: CsmCaseComment = {
+      id: `case-description-${data?.id}`,
+      caseId: data?.id ?? "",
+      authorName: data?.createdBy ?? data?.customerContext?.primaryContact ?? "—",
+      authorEmail: data?.createdByEmail,
+      authorUser: data?.createdByUser,
+      // Not a claim that the creator is actually a customer — "customer" is
+      // simply the enum value that renders the neutral grey avatar with no
+      // engineer styling, and the real role is unknowable here.
+      authorRole: "customer",
+      bodyHtml: data?.description ?? "",
+      createdAt: data?.createdAt ?? "",
+      internal: false,
+      synthetic: true,
+    };
+    return [...mergedComments, synthetic];
+  }, [data, descriptionEchoedInOriginComment, mergedComments]);
+
   const onUploadAttachment = useCallback(
     (file: File) => {
       if (!caseId) return;
@@ -1834,14 +1878,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const closeBlockedReason = hasOpenTask
     ? "This case has an open task. Closing may be rejected until it's resolved or closed."
     : undefined;
-  // The case description usually arrives as the opening comment too, so the
-  // stream renders that directly rather than injecting a synthetic entry —
-  // but not always (see `descriptionEchoedInOriginComment` above): the
-  // Details tab below carries a fallback card for whenever it doesn't. The
-  // linked chat transcript (if any) is appended; the feed sorts
-  // chronologically, so the chat — being oldest — sinks below the case
-  // comments in the default newest-first view.
-  const safeComments = mergedComments;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
@@ -2255,37 +2291,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
               </>
             )}
           </Card>
-
-          {/* An announcement's own body is never echoed as the feed's opening
-              comment the way it is for every other case type (see the note
-              near `safeComments`) — only replies posted via the composer
-              above show up there. Render the body directly below the
-              timeline instead — the only place an announcement's actual
-              content is shown. */}
-          {isAnnouncement && !isBlankHtml(c.description) && (
-            <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
-              <Typography variant="subtitle2">Description</Typography>
-              <Box
-                sx={{
-                  typography: "body2",
-                  color: "text.primary",
-                  minWidth: 0,
-                  maxWidth: "100%",
-                  contain: "inline-size",
-                  overflowX: "auto",
-                  "& p": { mb: 0.5 },
-                  "& p:last-child": { mb: 0 },
-                }}
-                dangerouslySetInnerHTML={{
-                  __html: sanitizeDescriptionHtml(
-                    isDarkMode
-                      ? stripLightModeInlineStyles(c.description)
-                      : c.description,
-                  ),
-                }}
-              />
-            </Card>
-          )}
         </Box>
       )}
 
@@ -2340,18 +2345,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
               </MetaCell>
             </Box>
           </Card>
-          {/* The case description usually doesn't need its own card — it
-              already renders as the opening entry in the Activities tab's
-              feed (see the note near `safeComments` above), and editing it is
-              still available via the action bar's "Edit case details…" item
-              (EditCaseDetailsDialog).
-
-              But that's only true when the origin comment actually
-              reproduces the description. It often doesn't for cases created
-              by internal automation — sometimes there's no origin comment at
-              all — so `descriptionEchoedInOriginComment` (content-based, not
-              just "did comments/search error") decides here rather than
-              assuming the feed already covered it. */}
+          {/* Duplicates the fallback card also rendered on the Activities
+              tab (below the timeline) whenever the description isn't
+              genuinely present elsewhere — see `descriptionEchoedInOriginComment`
+              and the note next to that card. Kept here too, next to the
+              action bar's "Edit case details…" item (EditCaseDetailsDialog),
+              so the description is visible while editing without switching
+              tabs. */}
           {!isBlankHtml(c.description) && !descriptionEchoedInOriginComment && (
             <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
               <Typography variant="subtitle2">Description</Typography>

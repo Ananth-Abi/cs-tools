@@ -361,7 +361,7 @@ export default function CsmCaseCommentBubble({
               userId={comment.authorUser?.id}
             />
           </Typography>
-          {comment.authorRole !== "wso2_engineer" && (
+          {!comment.synthetic && comment.authorRole !== "wso2_engineer" && (
             <Chip
               size="small"
               label={ROLE_LABEL[comment.authorRole]}

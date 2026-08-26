@@ -142,6 +142,12 @@ export interface CsmCaseComment {
    * `sn_customerservice_case.work_notes` vs `comments` distinction.
    */
   internal?: boolean;
+  /** True for a client-synthesized entry (e.g. the case description echoed
+   * into the feed when the backing data source never actually created a
+   * comment for it). Suppresses the author-role chip in the rendered bubble —
+   * the real creator's role isn't known on the frontend, so nothing should be
+   * claimed about it. */
+  synthetic?: boolean;
 }
 
 export interface CaseAttachment {
