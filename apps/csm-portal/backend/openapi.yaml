@@ -2031,6 +2031,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: Upstream service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
 
   /cases/feedback/aggregate:
     post:
@@ -2092,6 +2098,12 @@ paths:
                 $ref: '#/components/schemas/ErrorPayload'
         "500":
           description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: Upstream service unavailable.
           content:
             application/json:
               schema:
