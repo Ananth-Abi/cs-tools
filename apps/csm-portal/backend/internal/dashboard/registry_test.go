@@ -833,6 +833,24 @@ func TestLoadDir_RejectsInvalidWidgets(t *testing.T) {
 			 "query": {}, "groupBy": {"field": ""}}`,
 			want: `widget "w": "groupBy.field" is empty`,
 		},
+		{
+			name: "bar widget groupBy with both field and bucket",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 3,
+			 "query": {}, "groupBy": {"field": "account", "bucket": "day"}}`,
+			want: `widget "w": "groupBy" carries both "field" and "bucket"`,
+		},
+		{
+			name: "bar widget groupBy with an unknown bucket",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 3,
+			 "query": {}, "groupBy": {"bucket": "quarter"}}`,
+			want: `widget "w": unknown "groupBy.bucket" "quarter"`,
+		},
+		{
+			name: "bar widget with neither slices nor groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 3,
+			 "query": {}}`,
+			want: `widget "w": shape "bar" needs either "slices" or "groupBy"`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -854,6 +872,42 @@ func TestLoadDir_RejectsInvalidWidgets(t *testing.T) {
 				t.Errorf("err = %q, want it to name the offending file", err.Error())
 			}
 		})
+	}
+}
+
+// A "bar" widget grouped by date bucket (case-feedback trend) loads clean,
+// same as a field-grouped pie/bar widget always has -- the new
+// GroupByConfig.Bucket branch is additive, not a narrowing of what already
+// loaded.
+func TestLoadDir_AcceptsBarWidgetWithBucketGroupBy(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "d.json", `{
+	  "id": "d", "displayName": "D", "type": "cs",
+	  "widgets": [
+	    {"id": "feedback-trend", "displayName": "Feedback Trend", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 6,
+	     "query": {}, "groupBy": {"bucket": "week"}}
+	  ]
+	}`)
+
+	dashboards, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(dashboards) != 1 || len(dashboards[0].Widgets) != 1 {
+		t.Fatalf("unexpected loaded dashboards: %+v", dashboards)
+	}
+	w := dashboards[0].Widgets[0]
+	if w.ResourceType != ResourceCaseFeedback {
+		t.Errorf("resourceType = %q, want %q", w.ResourceType, ResourceCaseFeedback)
+	}
+	if w.Shape != ShapeBar {
+		t.Errorf("shape = %q, want %q", w.Shape, ShapeBar)
+	}
+	if w.GroupBy == nil || w.GroupBy.Bucket != "day" && w.GroupBy.Bucket != "week" && w.GroupBy.Bucket != "month" {
+		t.Fatalf("groupBy = %+v, want a valid bucket", w.GroupBy)
+	}
+	if w.GroupBy.Field != "" {
+		t.Errorf("groupBy.field = %q, want empty for a bucket-mode groupBy", w.GroupBy.Field)
 	}
 }
 

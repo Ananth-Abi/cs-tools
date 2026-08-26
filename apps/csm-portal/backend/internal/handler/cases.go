@@ -78,6 +78,8 @@ type entityCaseClient interface {
 	SearchCaseActivities(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	SearchCases(ctx context.Context, body []byte) ([]byte, error)
 	AggregateCases(ctx context.Context, body []byte) ([]byte, error)
+	SearchFeedback(ctx context.Context, body []byte) ([]byte, error)
+	AggregateFeedback(ctx context.Context, body []byte) ([]byte, error)
 	GetCase(ctx context.Context, caseID string) ([]byte, error)
 	CreateCaseAttachment(ctx context.Context, body []byte) ([]byte, error)
 	SearchCaseAttachments(ctx context.Context, body []byte) ([]byte, error)
@@ -511,6 +513,83 @@ func (h *CaseHandler) AggregateCases(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity AggregateCases failed", "userID", user.UserID, "err", err)
 		mapUpstreamErrorGeneric(w, err, "Failed to aggregate cases.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// SearchFeedback handles POST /cases/feedback/search.
+// Search of case-feedback (satisfaction rating) records across cases,
+// filterable by case, accounts, and submission date range. Backs the
+// case-feedback dashboard's list view. This is a plain forward-and-return
+// proxy: filters/pagination validation is the entity service's job, this
+// layer only enforces auth, a body size cap, and valid JSON.
+func (h *CaseHandler) SearchFeedback(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.SearchFeedback(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchFeedback failed", "userID", user.UserID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to search case feedback.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// AggregateFeedback handles POST /cases/feedback/aggregate.
+// Date-bucketed rating aggregation of case-feedback records across cases.
+// Backs the case-feedback dashboard's rating-trend chart. Same
+// forward-and-return proxy contract as SearchFeedback: the bucket enum and
+// filters are validated upstream by the entity service.
+func (h *CaseHandler) AggregateFeedback(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	result, err := h.entity.AggregateFeedback(r.Context(), body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity AggregateFeedback failed", "userID", user.UserID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to aggregate case feedback.")
 		return
 	}
 

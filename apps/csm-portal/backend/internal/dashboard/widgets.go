@@ -62,6 +62,17 @@ const (
 	ResourceSecurityReportAnalysis ResourceType = "security_report_analysis"
 	ResourceAnnouncement           ResourceType = "announcement"
 	ResourceEngagement             ResourceType = "engagement"
+	// ResourceCaseFeedback identifies a widget whose data is case-feedback
+	// (satisfaction rating) records rather than cases themselves. Like every
+	// other ResourceType, this layer only validates that the value is a known
+	// enum member -- it does not know, and does not need to know, that a
+	// "bar"+GroupBy.Bucket widget with this resourceType resolves via the
+	// webapp's own hook calling POST /cases/feedback/aggregate (see
+	// GroupByConfig.Bucket's doc comment). There is no
+	// resourceType->endpoint mapping anywhere server-side; the frontend picks
+	// the endpoint from resourceType entirely on its own, same as every other
+	// ResourceType here.
+	ResourceCaseFeedback ResourceType = "case_feedback"
 )
 
 // Shape is how a widget's resolved data should be rendered.
@@ -88,14 +99,27 @@ type GroupByConfig struct {
 	// Field is which field to group by. Each ResourceType enforces its own
 	// small allowlist server-side (see the corresponding SN Utils script
 	// include's group{X}By method) -- an unsupported value is rejected by
-	// that call with a 400, not caught here.
-	Field string `json:"field"`
+	// that call with a 400, not caught here. Mutually exclusive with Bucket
+	// (enforced at directory-load time): a widget sets exactly one.
+	Field string `json:"field,omitempty"`
+	// Bucket configures date-bucketed grouping instead of field-value
+	// grouping -- "day", "week", or "month" (enforced at directory-load
+	// time). Mutually exclusive with Field. This is the shape a case-feedback
+	// trend widget uses (ResourceCaseFeedback, Shape "bar"): the frontend's
+	// own hook calls POST /cases/feedback/aggregate with this bucket value
+	// and maps its date-bucketed response into the same per-slice shape
+	// Slices/field-grouping already produce, same client-side-resolution
+	// philosophy as the rest of this type -- this layer never calls that
+	// endpoint itself, it only validates and forwards the config.
+	Bucket string `json:"bucket,omitempty"`
 	// MaxGroups is the top-N cutoff by count, descending; the remainder is
 	// summed into one "Others" bucket. Omitted/zero defers to the backing
-	// group-by endpoint's own default (12).
+	// group-by endpoint's own default (12). Meaningless when Bucket is set --
+	// a date-bucketed aggregation has no "Others" folding.
 	MaxGroups int `json:"maxGroups,omitempty"`
 	// OthersLabel overrides the default "Others" label for the summed
-	// remainder bucket. Omitted uses "Others".
+	// remainder bucket. Omitted uses "Others". Meaningless when Bucket is
+	// set, same as MaxGroups.
 	OthersLabel string `json:"othersLabel,omitempty"`
 }
 
