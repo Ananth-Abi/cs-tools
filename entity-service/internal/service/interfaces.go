@@ -269,6 +269,20 @@ type CatalogService interface {
 	GetCatalogItemVariables(ctx context.Context, catalogID, catalogItemID string) (domain.GetCatalogItemVariablesResponse, error)
 }
 
+// FeedbackService defines the operations available on the case-feedback (satisfaction
+// rating) entity, for the case-feedback dashboard's list and rating-trend views.
+// All methods require the ServiceNow data source; there is no Postgres fallback.
+type FeedbackService interface {
+	// SearchFeedback returns a paginated list of case-feedback records, optionally
+	// filtered by case, accounts, and submission date range. A ValidationError is
+	// returned for invalid input.
+	SearchFeedback(ctx context.Context, req domain.SearchFeedbackRequest) (domain.SearchFeedbackResponse, error)
+	// AggregateFeedback returns date-bucketed average-rating aggregates across cases,
+	// optionally filtered by accounts and submission date range. Bucket is required.
+	// A ValidationError is returned for invalid input.
+	AggregateFeedback(ctx context.Context, req domain.AggregateFeedbackRequest) (domain.AggregateFeedbackResponse, error)
+}
+
 // CallRequestService defines the operations available on the call_requests entity.
 // All methods require the ServiceNow data source; there is no Postgres fallback.
 type CallRequestService interface {
