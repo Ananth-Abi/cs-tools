@@ -37,21 +37,21 @@ func TestSubscriptionService_GetUserFolderList(t *testing.T) {
 				IsValidCustomer: true,
 				ProjectKeys:     []string{"PROJ1", "proj2"},
 			}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		case "novalidprojects@example.com":
 			// Fix #8: a legitimate customer with no project-specific folders
 			// yet must still come back as FolderLookupAuthorized (with an
 			// empty list), not the same status as an explicit denial.
 			resp := models.FolderResponse{IsValidCustomer: true, ProjectKeys: nil}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		case "invalid@example.com":
 			resp := models.FolderResponse{IsValidCustomer: false}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		case "servererror@example.com":
 			w.WriteHeader(http.StatusInternalServerError)
 		case "badbody@example.com":
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte("not json"))
+			_, _ = w.Write([]byte("not json"))
 		default:
 			http.NotFound(w, r)
 		}

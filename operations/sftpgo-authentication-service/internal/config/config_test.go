@@ -150,6 +150,21 @@ func TestLoad_RejectsNonHTTPSSFTPGoAPIBase(t *testing.T) {
 	}
 }
 
+// TestLoad_RejectsOpaqueHTTPSURL proves requireHTTPS rejects a host-less,
+// opaque URL such as "https:sftpgo.example.com" (missing the "//" prefix).
+// Go's net/url parses this as scheme "https" with no host, which would
+// otherwise pass the scheme check and fail much later, and more confusingly,
+// deep inside http.Client with "no Host in request URL".
+func TestLoad_RejectsOpaqueHTTPSURL(t *testing.T) {
+	setAllCriticalEnvVars(t)
+	t.Setenv("SFTPGO_API_BASE", "https:sftpgo.example.com")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Expected error for opaque/host-less SFTPGO_API_BASE, got nil")
+	}
+}
+
 // Fix #11 (empty AUTH_AUDIENCE must not silently accept any audience) is
 // enforced in service.NewJWTAuthService rather than here: like a JWKS-fetch
 // failure, a misconfigured external-auth-hook must disable that hook and keep

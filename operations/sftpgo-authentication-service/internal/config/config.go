@@ -290,6 +290,9 @@ func requireHTTPS(name, value string) error {
 	if u.Scheme != "https" {
 		return fmt.Errorf("%s must use https (got %q)", name, value)
 	}
+	if u.Opaque != "" || u.Hostname() == "" {
+		return fmt.Errorf("%s: invalid URL %q: missing host", name, value)
+	}
 	return nil
 }
 
