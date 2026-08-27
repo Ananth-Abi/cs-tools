@@ -72,10 +72,17 @@ type CommentAddedPayload struct {
 	// own WSO2CaseID field, used in its subjectLine.
 	WSO2CaseID string `json:"wso2CaseId,omitempty"`
 
-	CaseTitle   string   `json:"caseTitle"`
-	CaseComment string   `json:"caseComment"`
-	CommentID   string   `json:"commentId"`
-	Recipients  []string `json:"recipients"`
+	CaseTitle   string `json:"caseTitle"`
+	CaseComment string `json:"caseComment"`
+	CommentID   string `json:"commentId"`
+	// IsInternalNote is true when this comment is a work note
+	// (domain.CommentTypeWorkNote) — never customer-visible, and Recipients
+	// is already filtered to wso2.com addresses only for this case (see
+	// snCaseService.publishCommentAdded's own doc comment). Mirrors
+	// csm-notification-service's own IsInternalNote field, which renders a
+	// distinct email layout for it.
+	IsInternalNote bool     `json:"isInternalNote,omitempty"`
+	Recipients     []string `json:"recipients"`
 }
 
 // StatusChangedPayload is the Payload shape for TypeStatusChanged — mirrors

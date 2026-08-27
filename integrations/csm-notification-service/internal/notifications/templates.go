@@ -36,6 +36,9 @@ var caseAssignedTemplateRaw string
 //go:embed templates/case_created.html
 var caseCreatedTemplateRaw string
 
+//go:embed templates/internal_note.html
+var internalNoteTemplateRaw string
+
 // wso2LogoURL is WSO2's own official logo asset, served from wso2.cachefly.net
 // (WSO2's public CDN for site assets — not third-party hosting). An earlier
 // version embedded the logo as an inline base64 data: URI instead, avoiding
@@ -63,6 +66,7 @@ var (
 	statusChangedTemplate = bakeLogo(statusChangedTemplateRaw)
 	caseAssignedTemplate  = bakeLogo(caseAssignedTemplateRaw)
 	caseCreatedTemplate   = bakeLogo(caseCreatedTemplateRaw)
+	internalNoteTemplate  = bakeLogo(internalNoteTemplateRaw)
 )
 
 // htmlBlockBoundary matches the tags plainTextFromHTML treats as line
@@ -165,6 +169,28 @@ func RenderCommentAddedEmail(name, caseNumber, caseTitle, caseComment, commentLi
 		"<!-- [CASE_LINK] -->", escapeHTML(caseLink),
 	)
 	return replacer.Replace(commentAddedTemplate)
+}
+
+// RenderInternalNoteEmail fills in the "internal note" HTML email
+// template — used instead of RenderCommentAddedEmail for a work note (see
+// events.CommentAddedPayload.IsInternalNote), matching an existing
+// internal WSO2-support email format recipients (always wso2.com staff —
+// see that field's own doc comment) are already used to: no "Re: <title>"
+// strap (an internal note isn't "about" the case title the way a reply
+// is), and caseNumber here is expected to be the case's WSO2CaseID
+// (dispatch.handleCommentAdded's own concern which value to pass), not
+// the ServiceNow CaseNumber every other template uses — the internal case
+// reference is the one this audience actually recognizes.
+func RenderInternalNoteEmail(name, caseNumber, caseTitle, caseComment, commentLink, caseLink string) string {
+	replacer := strings.NewReplacer(
+		"<!-- [NAME] -->", escapeHTML(name),
+		"<!-- [CASE_NUMBER] -->", escapeHTML(caseNumber),
+		"<!-- [CASE_TITLE] -->", escapeHTML(caseTitle),
+		"<!-- [CASE_COMMENT] -->", escapeMultiline(caseComment),
+		"<!-- [COMMENT_LINK] -->", escapeHTML(commentLink),
+		"<!-- [CASE_LINK] -->", escapeHTML(caseLink),
+	)
+	return replacer.Replace(internalNoteTemplate)
 }
 
 // RenderStatusChangedEmail fills in the "case status changed" HTML email

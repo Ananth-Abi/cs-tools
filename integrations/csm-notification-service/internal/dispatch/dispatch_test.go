@@ -418,6 +418,42 @@ func TestDispatcher_Handle_CommentAdded(t *testing.T) {
 	}
 }
 
+// TestDispatcher_Handle_CommentAdded_InternalNote_UsesInternalNoteLayout
+// verifies that isInternalNote:true routes through RenderInternalNoteEmail
+// instead of RenderCommentAddedEmail: the "added work note" wording (not
+// "commented on case"), no "Re: <title>" strap, and wso2CaseId (not
+// caseNumber) as the case reference — see
+// events.CommentAddedPayload.IsInternalNote's own doc comment for why.
+func TestDispatcher_Handle_CommentAdded_InternalNote_UsesInternalNoteLayout(t *testing.T) {
+	mock := &mockEmailSender{}
+	d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.comment_added","entityId":"CASE-1","payload":{"name":"Agent","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","caseComment":"internal only","commentId":"C-1","isInternalNote":true,"recipients":["agent@wso2.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 email sent, got %d", len(mock.calls))
+	}
+	body := mock.calls[0].htmlBody
+	if !strings.Contains(body, "added work note") {
+		t.Error("htmlBody does not use the internal-note wording")
+	}
+	if strings.Contains(body, "Re: Something broke") {
+		t.Error("htmlBody carries the regular layout's \"Re: <title>\" strap, which the internal-note layout must not have")
+	}
+	if !strings.Contains(body, "WSO2-1000") {
+		t.Error("htmlBody does not use wso2CaseId as the case reference")
+	}
+	if strings.Contains(body, "CS0001001") {
+		t.Error("htmlBody uses caseNumber as the case reference, want wso2CaseId for an internal note")
+	}
+	if !strings.Contains(body, "internal only") {
+		t.Error("htmlBody does not contain the note's own content")
+	}
+}
+
 // TestDispatcher_Handle_CommentAdded_LinksToCommentFragment verifies
 // commentLinkFor's suffix actually reaches the rendered email: the "Add
 // Comment" CTA must link to <resolved case link>#<commentId>, matching the
