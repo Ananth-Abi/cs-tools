@@ -20,7 +20,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
@@ -28,7 +27,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/models"
 
-	_ "github.com/go-sql-driver/mysql" // MySQL driver
+	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (database/sql compatible)
 )
 
 // ErrSessionNotFound is returned when a requested session is not found or has expired.
@@ -44,16 +43,7 @@ type DBService struct {
 
 // NewDBService creates a new DBService and establishes a database connection.
 func NewDBService(cfg *config.Config, logger *log.AppLogger) (*DBService, error) {
-	connStr := cfg.DBConnString
-	if !strings.Contains(connStr, "parseTime=true") {
-		if strings.Contains(connStr, "?") {
-			connStr += "&parseTime=true"
-		} else {
-			connStr += "?parseTime=true"
-		}
-	}
-
-	db, err := sql.Open("mysql", connStr)
+	db, err := sql.Open("pgx", cfg.DBConnString)
 	if err != nil {
 		return nil, logger.Errorf("failed to open database connection: %v", err)
 	}
@@ -67,7 +57,7 @@ func NewDBService(cfg *config.Config, logger *log.AppLogger) (*DBService, error)
 	db.SetMaxIdleConns(cfg.DBMaxIdleConns)
 	db.SetConnMaxLifetime(cfg.DBConnMaxLifetime)
 
-	logger.Info("Successfully connected to the MySQL database.")
+	logger.Info("Successfully connected to the PostgreSQL database.")
 	return &DBService{db: db, logger: logger}, nil
 }
 
@@ -85,8 +75,8 @@ func (s *DBService) SaveSession(requestID string, data models.SessionData) error
 
 	expiresAt := time.Now().Add(15 * time.Minute)
 	query := `INSERT INTO sessions (request_id, session_data, expires_at)
-              VALUES (?, ?, ?)
-              ON DUPLICATE KEY UPDATE session_data = VALUES(session_data), expires_at = VALUES(expires_at), updated_at = NOW()`
+              VALUES ($1, $2, $3)
+              ON CONFLICT (request_id) DO UPDATE SET session_data = EXCLUDED.session_data, expires_at = EXCLUDED.expires_at, updated_at = now()`
 
 	_, err = s.db.Exec(query, requestID, jsonData, expiresAt)
 	if err != nil {
@@ -107,7 +97,7 @@ func (s *DBService) GetSession(requestID string) (models.SessionData, error) {
 	var expiresAt time.Time
 	data := models.SessionData{}
 
-	query := `SELECT session_data, expires_at FROM sessions WHERE request_id = ?`
+	query := `SELECT session_data, expires_at FROM sessions WHERE request_id = $1`
 	row := s.db.QueryRow(query, requestID)
 
 	if err := row.Scan(&jsonData, &expiresAt); err != nil {
@@ -134,7 +124,7 @@ func (s *DBService) DeleteSession(requestID string) error {
 	if s.db == nil {
 		return nil
 	}
-	query := `DELETE FROM sessions WHERE request_id = ?`
+	query := `DELETE FROM sessions WHERE request_id = $1`
 	_, err := s.db.Exec(query, requestID)
 	if err != nil {
 		return s.logger.Errorf("failed to delete session: %v", err)

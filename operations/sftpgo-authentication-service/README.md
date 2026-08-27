@@ -31,7 +31,7 @@ This project provides a secure, individual-account-based authentication and prov
                                │                      │   (External)    │
                                ▼                      └─────────────────┘
                         ┌──────────────┐
-                        │   MySQL DB   │
+                        │ PostgreSQL DB│
                         │  (Sessions)  │
                         └──────────────┘
 ```
@@ -66,7 +66,7 @@ This project provides a secure, individual-account-based authentication and prov
 ### Prerequisites
 
 - Go 1.24+
-- MySQL database
+- PostgreSQL database
 - Two Asgardeo organizations (for internal and external users)
 - SFTPGo server with admin API access
 
@@ -119,7 +119,7 @@ DIR_PATH="/path/on/sftpgo/server"
 
 #### Database Configuration
 ```bash
-DB_CONN_STRING="user:password@tcp(127.0.0.1:3306)/sftpgo_sessions"
+DB_CONN_STRING="postgres://user:password@127.0.0.1:5432/sftpgo_sessions?sslmode=disable"
 DB_MAX_OPEN_CONNS="25"         # Optional, default: 25
 DB_MAX_IDLE_CONNS="25"         # Optional, default: 25
 DB_CONN_MAX_LIFETIME="5m"      # Optional, default: 5m
@@ -150,7 +150,7 @@ AUTH_TOKEN_VALIDATOR_ENABLED="true"   # Optional, default true; "false" skips si
 Apply the migration to create the sessions table:
 
 ```bash
-mysql -u youruser -p yourdatabase < db/migrations/001_create_sessions_table.up.sql
+psql "postgres://youruser:yourpassword@127.0.0.1:5432/yourdatabase" -f db/migrations/001_create_sessions_table.up.sql
 ```
 
 ### Install Dependencies
@@ -328,8 +328,8 @@ go vet ./...
 ### Common Issues
 
 **Database connection fails:**
-- Verify `DB_CONN_STRING` format: `user:password@tcp(host:port)/dbname`
-- Check MySQL is running and accessible
+- Verify `DB_CONN_STRING` format: `postgres://user:password@host:port/dbname?sslmode=disable`
+- Check PostgreSQL is running and accessible
 - Ensure sessions table exists
 
 **Authentication fails:**

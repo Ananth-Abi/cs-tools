@@ -85,7 +85,7 @@ type Config struct {
 	// ProjectAPI is the endpoint for validating a project's existence and details.
 	ProjectAPI string
 
-	// DBConnString is the DSN for the MySQL database connection.
+	// DBConnString is the DSN for the PostgreSQL database connection.
 	DBConnString string
 	// DBMaxOpenConns is the maximum number of open connections to the database.
 	DBMaxOpenConns int
