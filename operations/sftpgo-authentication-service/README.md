@@ -147,11 +147,48 @@ AUTH_TOKEN_VALIDATOR_ENABLED="true"   # Optional, default true; "false" skips si
 
 ### Database Setup
 
-Apply the migration to create the `sftpgo_auth_sessions` table:
+Apply the migrations to create the `sftpgo_auth_sessions` table and the session
+cleanup procedure:
 
 ```bash
 psql "postgres://youruser:yourpassword@127.0.0.1:5432/yourdatabase" -f db/migrations/001_create_sftpgo_auth_sessions_table.up.sql
+psql "postgres://youruser:yourpassword@127.0.0.1:5432/yourdatabase" -f db/migrations/002_add_session_cleanup_procedure.up.sql
 ```
+
+### Session Cleanup
+
+Rows in `sftpgo_auth_sessions` are only ever removed lazily: `GetSession`
+opportunistically deletes a session if it happens to read back that exact,
+already-expired `request_id`. An abandoned keyboard-interactive login (or any
+session no caller ever reads again) otherwise stays in the table forever.
+
+Migration `002_add_session_cleanup_procedure.up.sql` adds a stored procedure,
+`sftpgo_auth_cleanup_expired_sessions(batch_size INT DEFAULT 1000)`, that
+deletes expired rows (`expires_at < now()`) in small batches, committing after
+each batch so cleanup never holds one long-running lock over the whole table.
+
+This procedure is not run from the Go service (no ticker/background
+goroutine) -- it is scheduled to run **inside the database**, which keeps
+working across service restarts and stays correct with multiple service
+instances running at once:
+
+- **If the `pg_cron` extension is already installed and enabled** on the
+  target Postgres instance, the migration self-schedules the cleanup to run
+  once daily via `cron.schedule(...)` (08:00 IST / 02:30 UTC, expressed as UTC
+  since pg_cron runs on the server's configured timezone). No extra step is
+  needed.
+- **If `pg_cron` is not installed**, the migration does *not* attempt to
+  install it (`CREATE EXTENSION pg_cron` requires superuser and isn't
+  available on every managed Postgres instance, so trying it in a migration
+  would break deployments that lack that access). In that case the
+  scheduling step is silently skipped, and it becomes an **operational
+  requirement** for whoever runs this service to schedule the cleanup
+  externally -- e.g. a cron job on the host running:
+  ```bash
+  psql "$DB_CONN_STRING" -c "CALL sftpgo_auth_cleanup_expired_sessions();"
+  ```
+  or an equivalent job on a managed scheduler. Without either the pg_cron
+  schedule or an external one, expired sessions accumulate indefinitely.
 
 ### Install Dependencies
 
