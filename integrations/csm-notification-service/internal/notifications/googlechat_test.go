@@ -415,3 +415,62 @@ func TestSendCaseAcknowledgedAlert_RejectsMissingRequiredArgs(t *testing.T) {
 		t.Fatal("expected error for empty acknowledgerName, got nil")
 	}
 }
+
+func TestSendSeverityChangedAlert_SendsExpectedCard(t *testing.T) {
+	var capturedBody chatCardMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: srv.URL}}})
+
+	err := c.SendSeverityChangedAlert(context.Background(), "api-manager",
+		"High (P2)", "Low (P4)", "#6B7280", "CS0001002", "WSO2-1001", "https://csm.example.com/cases/CASE-1")
+	if err != nil {
+		t.Fatalf("SendSeverityChangedAlert returned error: %v", err)
+	}
+
+	card := capturedBody.CardsV2[0].Card
+	if card.Header != nil {
+		t.Errorf("Header = %+v, want nil", card.Header)
+	}
+	text := card.Sections[0].Widgets[0].TextParagraph.Text
+	want := `<font color="#6B7280"><b>Low (P4)</b></font> <a href="https://csm.example.com/cases/CASE-1">CS0001002</a> WSO2-1001: Severity changed from High (P2) to Low (P4)`
+	if text != want {
+		t.Errorf("card text = %q, want %q", text, want)
+	}
+}
+
+func TestSendSeverityChangedAlert_OmitsEmptyWSO2CaseID(t *testing.T) {
+	var capturedBody chatCardMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: srv.URL}}})
+
+	err := c.SendSeverityChangedAlert(context.Background(), "api-manager",
+		"Medium (P3)", "Critical (P1)", "#DC2626", "CS0001003", "", "https://csm.example.com/cases/CASE-1")
+	if err != nil {
+		t.Fatalf("SendSeverityChangedAlert returned error: %v", err)
+	}
+
+	text := capturedBody.CardsV2[0].Card.Sections[0].Widgets[0].TextParagraph.Text
+	want := `<font color="#DC2626"><b>Critical (P1)</b></font> <a href="https://csm.example.com/cases/CASE-1">CS0001003</a>: Severity changed from Medium (P3) to Critical (P1)`
+	if text != want {
+		t.Errorf("card text = %q, want %q", text, want)
+	}
+}
+
+func TestSendSeverityChangedAlert_RejectsMissingCaseNumber(t *testing.T) {
+	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: "https://example.com"}}})
+	if err := c.SendSeverityChangedAlert(context.Background(), "api-manager", "High (P2)", "Low (P4)", "#6B7280", "", "WSO2-1000", "https://example.com/cases/1"); err == nil {
+		t.Fatal("expected error for empty caseNumber, got nil")
+	}
+}

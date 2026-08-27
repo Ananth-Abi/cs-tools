@@ -39,6 +39,9 @@ var caseCreatedTemplateRaw string
 //go:embed templates/internal_note.html
 var internalNoteTemplateRaw string
 
+//go:embed templates/severity_changed.html
+var severityChangedTemplateRaw string
+
 // wso2LogoURL is WSO2's own official logo asset, served from wso2.cachefly.net
 // (WSO2's public CDN for site assets — not third-party hosting). An earlier
 // version embedded the logo as an inline base64 data: URI instead, avoiding
@@ -62,11 +65,12 @@ func bakeLogo(raw string) string {
 }
 
 var (
-	commentAddedTemplate  = bakeLogo(commentAddedTemplateRaw)
-	statusChangedTemplate = bakeLogo(statusChangedTemplateRaw)
-	caseAssignedTemplate  = bakeLogo(caseAssignedTemplateRaw)
-	caseCreatedTemplate   = bakeLogo(caseCreatedTemplateRaw)
-	internalNoteTemplate  = bakeLogo(internalNoteTemplateRaw)
+	commentAddedTemplate    = bakeLogo(commentAddedTemplateRaw)
+	statusChangedTemplate   = bakeLogo(statusChangedTemplateRaw)
+	caseAssignedTemplate    = bakeLogo(caseAssignedTemplateRaw)
+	caseCreatedTemplate     = bakeLogo(caseCreatedTemplateRaw)
+	internalNoteTemplate    = bakeLogo(internalNoteTemplateRaw)
+	severityChangedTemplate = bakeLogo(severityChangedTemplateRaw)
 )
 
 // htmlBlockBoundary matches the tags plainTextFromHTML treats as line
@@ -206,6 +210,25 @@ func RenderStatusChangedEmail(caseNumber, newStatus, caseLink, commentLink strin
 		"<!-- [COMMENT_LINK] -->", escapeHTML(commentLink),
 	)
 	return replacer.Replace(statusChangedTemplate)
+}
+
+// RenderSeverityChangedEmail fills in the "case severity changed" HTML
+// email template — structurally identical to RenderStatusChangedEmail
+// (same strap-line-above-a-mostly-empty-card layout, same Add
+// Comment/View Case links), just with oldSeverity/newSeverity in place of
+// a single newStatus. oldSeverity/newSeverity are expected to already be
+// display-formatted (e.g. "High (P2)") — dispatch.severityLabelAndColor's
+// concern, not this function's — matching the Chat card's own severity
+// labels so an email and its matching Chat alert read consistently.
+func RenderSeverityChangedEmail(caseNumber, oldSeverity, newSeverity, caseLink, commentLink string) string {
+	replacer := strings.NewReplacer(
+		"<!-- [CASE_NUMBER] -->", escapeHTML(caseNumber),
+		"<!-- [OLD_SEVERITY] -->", escapeHTML(oldSeverity),
+		"<!-- [NEW_SEVERITY] -->", escapeHTML(newSeverity),
+		"<!-- [CASE_LINK] -->", escapeHTML(caseLink),
+		"<!-- [COMMENT_LINK] -->", escapeHTML(commentLink),
+	)
+	return replacer.Replace(severityChangedTemplate)
 }
 
 // RenderCaseAssignedEmail fills in the "case assigned" HTML email template.
