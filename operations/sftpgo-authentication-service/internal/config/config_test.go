@@ -43,6 +43,8 @@ func setAllCriticalEnvVars(t *testing.T) {
 	t.Setenv("CHECK_ROLE", "internal")
 	t.Setenv("SCIM_SCOPE", "scope")
 	t.Setenv("DB_CONN_STRING", "db_conn")
+	// Not a secret: base64("BasicAuthenticator:LOCAL"), the standard username/password
+	// authenticator identifier in the WSO2 identity platform.
 	t.Setenv("BASIC_AUTHENTICATOR_ID", "QmFzaWNBdXRoZW50aWNhdG9yOkxPQ0FM")
 }
 
