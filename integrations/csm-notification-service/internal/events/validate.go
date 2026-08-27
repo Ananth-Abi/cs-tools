@@ -118,7 +118,7 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if err := decodeStrict(raw, &p); err != nil {
 			return err
 		}
-		if p.AssignerName == "" || p.AssignerEmail == "" || p.ProjectID == "" || p.CaseID == "" ||
+		if p.AssigneeName == "" || p.AssigneeEmail == "" || p.ProjectID == "" || p.CaseID == "" ||
 			!validRecipients(p.Recipients) {
 			return fmt.Errorf("events: missing required field for %s", t)
 		}

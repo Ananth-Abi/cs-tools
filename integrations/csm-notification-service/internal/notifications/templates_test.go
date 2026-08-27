@@ -96,6 +96,30 @@ func TestEscapeMultiline_StripsSourceHTMLThenEscapes(t *testing.T) {
 	}
 }
 
+// TestEscapeHTML_EncodesNonASCIIAsNumericEntity verifies the fix for a real
+// reported bug: entity-service sometimes returns a display name with a
+// trailing marker like "Jane Doe Ⓦ" — a browser renders that raw UTF-8
+// rune fine, but the external email-sending service this client calls
+// doesn't reliably preserve non-ASCII bytes through its own send path, so it
+// arrived as a literal "?" in the recipient's inbox. escapeHTML must convert
+// it to a numeric HTML character reference instead, which survives as plain
+// ASCII regardless and still renders as "Ⓦ" in any HTML-capable mail client.
+func TestEscapeHTML_EncodesNonASCIIAsNumericEntity(t *testing.T) {
+	got := escapeHTML("Jane Doe Ⓦ")
+	want := "Jane Doe &#9420;"
+	if got != want {
+		t.Errorf("escapeHTML(...) = %q, want %q", got, want)
+	}
+
+	// Ordinary ASCII and the standard HTML-escaped characters must still
+	// come out exactly as html.EscapeString alone would produce them.
+	got = escapeHTML(`Tom & Jerry <script>`)
+	want = "Tom &amp; Jerry &lt;script&gt;"
+	if got != want {
+		t.Errorf("escapeHTML(...) = %q, want %q", got, want)
+	}
+}
+
 // TestRenderCommentAddedEmail_UsesCaseNumberNotRawID verifies the "commented
 // on" strap line renders caseNumber (a human-readable reference like
 // "CS0023001"), not some other, meaningless identifier — a real bug this

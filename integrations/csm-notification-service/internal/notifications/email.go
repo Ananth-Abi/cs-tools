@@ -49,8 +49,7 @@ type EmailConfig struct {
 	FromAddress string
 }
 
-// EmailClient is an HTTP client for the email notification service
-// (https://github.com/wso2-open-operations/infra-operations/tree/main/operations/email-service),
+// EmailClient is an HTTP client for an internal email notification service,
 // authenticated via the OAuth2 client credentials grant. Tokens are acquired
 // and refreshed automatically; callers need not manage them.
 //

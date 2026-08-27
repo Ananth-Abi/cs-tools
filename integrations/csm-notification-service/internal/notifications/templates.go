@@ -18,14 +18,11 @@ package notifications
 
 import (
 	_ "embed"
-	"encoding/base64"
 	"html"
 	"regexp"
+	"strconv"
 	"strings"
 )
-
-//go:embed templates/wso2-logo.png
-var wso2LogoPNG []byte
 
 //go:embed templates/comment_added.html
 var commentAddedTemplateRaw string
@@ -39,13 +36,26 @@ var caseAssignedTemplateRaw string
 //go:embed templates/case_created.html
 var caseCreatedTemplateRaw string
 
-// bakeLogo substitutes the constant WSO2 logo — as an inline base64 data URI
-// — into raw's <!-- [LOGO_SRC] --> placeholder. Done once per template at
-// package init rather than on every Render* call, since the logo never
-// varies between emails.
+// wso2LogoURL is WSO2's own official logo asset, served from wso2.cachefly.net
+// (WSO2's public CDN for site assets — not third-party hosting). An earlier
+// version embedded the logo as an inline base64 data: URI instead, avoiding
+// any external fetch — but Gmail (and most major webmail clients) strip
+// data: URI images from received HTML mail as a security measure, which is
+// why the logo showed as a broken image regardless of how it was encoded.
+// A cid:-referenced inline MIME attachment would avoid the external fetch
+// too, but the internal email-sending service this client calls only
+// supports plain Content-Disposition: attachment, not inline/Content-ID —
+// so a real, fetchable URL is the only option that actually renders today.
+// This CDN URL, not a self-hosted endpoint, was the explicit choice made
+// over hosting the same bytes from this service's own endpoint, which
+// isn't reachable from outside WSO2's network.
+const wso2LogoURL = "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.png"
+
+// bakeLogo substitutes wso2LogoURL into raw's <!-- [LOGO_SRC] --> placeholder.
+// Done once per template at package init rather than on every Render* call,
+// since the logo never varies between emails.
 func bakeLogo(raw string) string {
-	return strings.Replace(raw, "<!-- [LOGO_SRC] -->",
-		"data:image/png;base64,"+base64.StdEncoding.EncodeToString(wso2LogoPNG), 1)
+	return strings.Replace(raw, "<!-- [LOGO_SRC] -->", wso2LogoURL, 1)
 }
 
 var (
@@ -85,11 +95,35 @@ func plainTextFromHTML(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// escapeMultiline HTML-escapes s and converts its newlines to <br>, so
-// free-text fields (a comment, a case description) keep their original line
-// breaks when dropped into HTML.
+// escapeHTML HTML-escapes s and additionally converts every non-ASCII rune
+// to a numeric HTML character reference (e.g. "Ⓦ" -> "&#9424;"). A browser
+// renders raw UTF-8 (e.g. a display name entity-service returns with a
+// trailing "Ⓦ" marker) just fine, but the external email-sending service
+// this client calls (a separate service, in another repo, reached over
+// HTTP — see EmailClient) doesn't reliably preserve non-ASCII bytes through
+// its own send path: a raw multi-byte character in the outgoing email
+// arrives as "?" in the recipient's inbox. A numeric character reference is
+// pure ASCII on the wire, so it survives regardless, and any HTML-capable
+// mail client decodes it back to the original character on display.
+func escapeHTML(s string) string {
+	var b strings.Builder
+	for _, r := range html.EscapeString(s) {
+		if r > 127 {
+			b.WriteString("&#")
+			b.WriteString(strconv.Itoa(int(r)))
+			b.WriteByte(';')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// escapeMultiline HTML-escapes s (see escapeHTML) and converts its newlines
+// to <br>, so free-text fields (a comment, a case description) keep their
+// original line breaks when dropped into HTML.
 func escapeMultiline(s string) string {
-	return strings.ReplaceAll(html.EscapeString(plainTextFromHTML(s)), "\n", "<br>")
+	return strings.ReplaceAll(escapeHTML(plainTextFromHTML(s)), "\n", "<br>")
 }
 
 // applyOptionalBlock handles a template section wrapped in
@@ -123,12 +157,12 @@ func applyOptionalBlock(tmpl, name, value string) string {
 // the caseLink URL, which already carries whatever id the portal needs.
 func RenderCommentAddedEmail(name, caseNumber, caseTitle, caseComment, commentLink, caseLink string) string {
 	replacer := strings.NewReplacer(
-		"<!-- [NAME] -->", html.EscapeString(name),
-		"<!-- [CASE_NUMBER] -->", html.EscapeString(caseNumber),
-		"<!-- [CASE_TITLE] -->", html.EscapeString(caseTitle),
+		"<!-- [NAME] -->", escapeHTML(name),
+		"<!-- [CASE_NUMBER] -->", escapeHTML(caseNumber),
+		"<!-- [CASE_TITLE] -->", escapeHTML(caseTitle),
 		"<!-- [CASE_COMMENT] -->", escapeMultiline(caseComment),
-		"<!-- [COMMENT_LINK] -->", html.EscapeString(commentLink),
-		"<!-- [CASE_LINK] -->", html.EscapeString(caseLink),
+		"<!-- [COMMENT_LINK] -->", escapeHTML(commentLink),
+		"<!-- [CASE_LINK] -->", escapeHTML(caseLink),
 	)
 	return replacer.Replace(commentAddedTemplate)
 }
@@ -140,24 +174,24 @@ func RenderCommentAddedEmail(name, caseNumber, caseTitle, caseComment, commentLi
 // comment.
 func RenderStatusChangedEmail(caseNumber, newStatus, caseLink, commentLink string) string {
 	replacer := strings.NewReplacer(
-		"<!-- [CASE_NUMBER] -->", html.EscapeString(caseNumber),
-		"<!-- [NEW_STATUS] -->", html.EscapeString(newStatus),
-		"<!-- [CASE_LINK] -->", html.EscapeString(caseLink),
-		"<!-- [COMMENT_LINK] -->", html.EscapeString(commentLink),
+		"<!-- [CASE_NUMBER] -->", escapeHTML(caseNumber),
+		"<!-- [NEW_STATUS] -->", escapeHTML(newStatus),
+		"<!-- [CASE_LINK] -->", escapeHTML(caseLink),
+		"<!-- [COMMENT_LINK] -->", escapeHTML(commentLink),
 	)
 	return replacer.Replace(statusChangedTemplate)
 }
 
 // RenderCaseAssignedEmail fills in the "case assigned" HTML email template.
-// assignerEmail is rendered both as a mailto: link and as plain text.
+// assigneeEmail is rendered both as a mailto: link and as plain text.
 // caseNumber — see RenderCommentAddedEmail's own doc comment.
-func RenderCaseAssignedEmail(assignerName, assignerEmail, caseNumber, caseLink, commentLink string) string {
+func RenderCaseAssignedEmail(assigneeName, assigneeEmail, caseNumber, caseLink, commentLink string) string {
 	replacer := strings.NewReplacer(
-		"<!-- [ASSIGNER_NAME] -->", html.EscapeString(assignerName),
-		"<!-- [ASSIGNER_EMAIL] -->", html.EscapeString(assignerEmail),
-		"<!-- [CASE_NUMBER] -->", html.EscapeString(caseNumber),
-		"<!-- [CASE_LINK] -->", html.EscapeString(caseLink),
-		"<!-- [COMMENT_LINK] -->", html.EscapeString(commentLink),
+		"<!-- [ASSIGNEE_NAME] -->", escapeHTML(assigneeName),
+		"<!-- [ASSIGNEE_EMAIL] -->", escapeHTML(assigneeEmail),
+		"<!-- [CASE_NUMBER] -->", escapeHTML(caseNumber),
+		"<!-- [CASE_LINK] -->", escapeHTML(caseLink),
+		"<!-- [COMMENT_LINK] -->", escapeHTML(commentLink),
 	)
 	return replacer.Replace(caseAssignedTemplate)
 }
@@ -188,18 +222,18 @@ type CaseCreatedEmailData struct {
 func RenderCaseCreatedEmail(data CaseCreatedEmailData) string {
 	tmpl := applyOptionalBlock(caseCreatedTemplate, "IMPACT", data.IncidentImpactDescription)
 	replacer := strings.NewReplacer(
-		"<!-- [REPORTER_NAME] -->", html.EscapeString(data.ReporterName),
-		"<!-- [PROJECT_NAME] -->", html.EscapeString(data.ProjectName),
-		"<!-- [CASE_NUMBER] -->", html.EscapeString(data.CaseNumber),
-		"<!-- [CASE_TITLE] -->", html.EscapeString(data.CaseTitle),
-		"<!-- [CASE_TYPE] -->", html.EscapeString(data.CaseType),
-		"<!-- [PRIORITY] -->", html.EscapeString(data.Priority),
-		"<!-- [PRODUCT] -->", html.EscapeString(data.Product),
-		"<!-- [CREATED_AT] -->", html.EscapeString(data.CreatedAt),
+		"<!-- [REPORTER_NAME] -->", escapeHTML(data.ReporterName),
+		"<!-- [PROJECT_NAME] -->", escapeHTML(data.ProjectName),
+		"<!-- [CASE_NUMBER] -->", escapeHTML(data.CaseNumber),
+		"<!-- [CASE_TITLE] -->", escapeHTML(data.CaseTitle),
+		"<!-- [CASE_TYPE] -->", escapeHTML(data.CaseType),
+		"<!-- [PRIORITY] -->", escapeHTML(data.Priority),
+		"<!-- [PRODUCT] -->", escapeHTML(data.Product),
+		"<!-- [CREATED_AT] -->", escapeHTML(data.CreatedAt),
 		"<!-- [DESCRIPTION] -->", escapeMultiline(data.Description),
 		"<!-- [INCIDENT_IMPACT_DESCRIPTION] -->", escapeMultiline(data.IncidentImpactDescription),
-		"<!-- [CASE_LINK] -->", html.EscapeString(data.CaseLink),
-		"<!-- [COMMENT_LINK] -->", html.EscapeString(data.CommentLink),
+		"<!-- [CASE_LINK] -->", escapeHTML(data.CaseLink),
+		"<!-- [COMMENT_LINK] -->", escapeHTML(data.CommentLink),
 	)
 	return replacer.Replace(tmpl)
 }
