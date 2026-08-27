@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"path"
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
@@ -36,6 +37,16 @@ import (
 // are never created eagerly.
 const shareTTL = 5 * time.Minute
 
+// uploadShareTTL bounds how long a write-scoped upload share (minted by
+// MintUploadToken) stays valid. Deliberately much longer than shareTTL: an
+// upload share has to stay open for the entire duration of the browser's
+// direct TUS upload to SFTPGo — including retries/resumes of a large or
+// slow file — not just long enough to redeem a single GET. 45 minutes is a
+// documented, reasonable choice rather than a value verified against any
+// real-world upload-duration data; revisit if large attachments start
+// failing with an expired-share error near the end of a long upload.
+const uploadShareTTL = 45 * time.Minute
+
 // jwtAssertionHeader mirrors the unexported constant of the same name in
 // internal/middleware/auth.go — that package does not export it, so it is
 // duplicated here rather than introducing a cross-package export for a
@@ -46,21 +57,23 @@ const jwtAssertionHeader = "x-jwt-assertion"
 // allowing the handler to be tested without a live SFTPGo instance.
 type sftpgoClient interface {
 	MintToken(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error)
-	CreateShare(ctx context.Context, accessToken, storageKey string, ttl time.Duration) (string, error)
+	CreateShare(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error)
 	PublicShareURL(shareID string) string
 	BaseURL() string
 }
 
 // AttachmentStorageHandler implements the SFTPGo-backed attachment-storage
-// endpoints: minting a short-lived SFTPGo access token before an upload, and
-// creating a short-lived public download share for an already-stored
-// attachment. It never touches attachment bytes itself — uploads and
-// downloads go directly between the browser and SFTPGo using the
-// credentials this handler mints; see package sftpgo's doc comment. Its
-// routes are only registered (and therefore only reachable) when
-// SFTPGO_ATTACHMENT_STORAGE_ENABLED is on — see cmd/server/main.go. The
-// existing streaming attachment endpoints on CaseHandler are completely
-// unaffected by this handler and by the flag.
+// endpoints: minting a write-scoped SFTPGo share before an upload, and
+// creating a short-lived read-scoped public download share for an
+// already-stored attachment. It never touches attachment bytes itself —
+// uploads and downloads go directly between the browser and SFTPGo, and the
+// browser never sees a bearer credential of any kind: a Share is scoped to
+// exactly one storage path and one direction (read or write), so the worst
+// a leaked share id can do is read or write that single path — see package
+// sftpgo's doc comment. Its routes are only registered (and therefore only
+// reachable) when SFTPGO_ATTACHMENT_STORAGE_ENABLED is on — see
+// cmd/server/main.go. The existing streaming attachment endpoints on
+// CaseHandler are completely unaffected by this handler and by the flag.
 type AttachmentStorageHandler struct {
 	entity entityCaseClient
 	sftpgo sftpgoClient
@@ -75,26 +88,51 @@ func NewAttachmentStorageHandler(entity entityCaseClient, sftpgo sftpgoClient) *
 // uploadTokenResponse is the response body of
 // POST /cases/{id}/attachments/upload-token.
 type uploadTokenResponse struct {
-	SftpgoAccessToken string          `json:"sftpgoAccessToken"`
-	ExpiresAt         json.RawMessage `json:"expiresAt"`
-	SftpgoBaseURL     string          `json:"sftpgoBaseUrl"`
-	// StorageKey is the exact SFTPGo path the frontend must upload the file
-	// to (as the TUS/chunked-upload target) and must later send back
-	// unchanged as CreateAttachmentRequest.storageKey when it creates the
-	// attachment metadata row. Minted here, server-side, rather than left for
-	// the frontend to invent, so the id embedded in it is guaranteed to match
-	// no other attachment. See buildStorageKey for the path convention.
+	// ShareID is a write-scoped, passwordless SFTPGo share id, restricted to
+	// StorageKey's parent directory (see the CreateShare call in
+	// MintUploadToken for why it is the directory and not the file itself —
+	// SFTPGo's shares-chunked-uploads endpoint always resolves the TUS
+	// "path" metadata relative to the share's own scoped path, confirmed
+	// empirically against a real instance; scoping the share to the exact
+	// file, rather than its directory, made every upload fail). The frontend
+	// embeds this id as the "share_id" key in the TUS Upload-Metadata header
+	// it sends to SFTPGo's POST /shares-chunked-uploads, and MUST send only
+	// StorageKey's final path segment (everything after the last "/") as
+	// the "path" key — NOT the full StorageKey — since the share's own root
+	// already covers the directory portion; sending the full StorageKey as
+	// "path" would double it up (e.g. ".../case-1/case-1/<id>") and fail.
+	// That share id is the entire credential; no bearer token or
+	// Authorization header is ever involved in the upload. The frontend must
+	// also set "mkdir_parents" to "true" in the same Upload-Metadata header:
+	// this directory is not guaranteed to already exist (e.g. a case's first
+	// attachment ever), and SFTPGo does not create it implicitly otherwise.
+	// The share's own server-side expiry governs how long the upload window
+	// stays open; the frontend does not need that value, it either works or
+	// the share is gone.
+	ShareID       string `json:"shareId"`
+	SftpgoBaseURL string `json:"sftpgoBaseUrl"`
+	// StorageKey is the exact SFTPGo path the uploaded file must end up at,
+	// and must later be sent back unchanged as
+	// CreateAttachmentRequest.storageKey when the frontend creates the
+	// attachment metadata row. Minted here, server-side, rather than left
+	// for the frontend to invent, so the id embedded in it is guaranteed to
+	// match no other attachment. See buildStorageKey for the path
+	// convention, and ShareID's doc comment above for how the frontend must
+	// derive the TUS upload's "path" metadata from this value.
 	StorageKey string `json:"storageKey"`
 }
 
-// MintUploadToken handles POST /cases/{id}/attachments/upload-token. It mints
-// a short-lived SFTPGo access token scoped to the caller's own identity (the
-// gateway-validated email claim) for the browser to use directly against
-// SFTPGo's chunked/TUS upload endpoint — this backend never sees the
-// uploaded bytes. Requires write access to the target case, checked via the
-// same guard CaseHandler.CreateCaseAttachment already applies (case exists
-// and is not closed): a token is never minted for a case the caller could
-// not otherwise attach a file to.
+// MintUploadToken handles POST /cases/{id}/attachments/upload-token. It
+// mints a write-scoped, passwordless SFTPGo share restricted to a single,
+// freshly generated storage path, for the browser to use directly against
+// SFTPGo's share-authenticated chunked/TUS upload endpoint
+// (POST /shares-chunked-uploads) — this backend never sees the uploaded
+// bytes, and no bearer credential of any kind reaches the browser: a
+// write-scoped share can do nothing but write to the one path it names.
+// Requires write access to the target case, checked via the same guard
+// CaseHandler.CreateCaseAttachment already applies (case exists and is not
+// closed): a share is never minted for a case the caller could not otherwise
+// attach a file to.
 func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -122,6 +160,10 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// MintToken is still needed here even though the resulting access token
+	// is never returned to the frontend: this backend still has to
+	// authenticate its own server-side call to POST /api/v2/user/shares
+	// below, on the caller's behalf.
 	token, err := h.sftpgo.MintToken(r.Context(), user.Email, jwtAssertion)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "sftpgo MintToken failed", "userID", user.UserID, "caseID", caseID, "err", summarizeErr(err))
@@ -135,11 +177,30 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 	attachmentID := newAttachmentID()
 	storageKey := buildStorageKey(projectID, caseID, attachmentID)
 
+	// The share is scoped to storageKey's parent DIRECTORY, not storageKey
+	// itself — confirmed empirically against a real SFTPGo instance that a
+	// write-scope share used with POST /shares-chunked-uploads always
+	// resolves the TUS "path" metadata relative to the share's own path, so
+	// a share scoped to the exact file (rather than its directory) makes
+	// every upload against it fail with "unable to write to file". Scoping
+	// to the directory still keeps the share unable to touch any other
+	// case's files: buildStorageKey gives every case (and, when known,
+	// every project) its own directory, so the worst a leaked share id can
+	// do is write within this one case's attachment directory. See
+	// uploadTokenResponse.ShareID's doc comment for the corresponding
+	// frontend-side contract.
+	shareDir := path.Dir(storageKey)
+	shareID, err := h.sftpgo.CreateShare(r.Context(), token.AccessToken, shareDir, sftpgo.ShareScopeWrite, uploadShareTTL)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "sftpgo CreateShare (write) failed", "userID", user.UserID, "caseID", caseID, "err", summarizeErr(err))
+		writeError(w, http.StatusBadGateway, "Failed to obtain an upload token.")
+		return
+	}
+
 	writeJSONValue(w, http.StatusOK, uploadTokenResponse{
-		SftpgoAccessToken: token.AccessToken,
-		ExpiresAt:         token.ExpiresAt,
-		SftpgoBaseURL:     h.sftpgo.BaseURL(),
-		StorageKey:        storageKey,
+		ShareID:       shareID,
+		SftpgoBaseURL: h.sftpgo.BaseURL(),
+		StorageKey:    storageKey,
 	})
 }
 
@@ -231,9 +292,9 @@ func (h *AttachmentStorageHandler) CreateAttachmentShare(w http.ResponseWriter, 
 		return
 	}
 
-	shareID, err := h.sftpgo.CreateShare(r.Context(), token.AccessToken, *meta.StorageKey, shareTTL)
+	shareID, err := h.sftpgo.CreateShare(r.Context(), token.AccessToken, *meta.StorageKey, sftpgo.ShareScopeRead, shareTTL)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "sftpgo CreateShare failed", "userID", user.UserID, "attachmentID", attachmentID, "err", summarizeErr(err))
+		slog.ErrorContext(r.Context(), "sftpgo CreateShare (read) failed", "userID", user.UserID, "attachmentID", attachmentID, "err", summarizeErr(err))
 		writeError(w, http.StatusBadGateway, "Failed to create a share for this attachment.")
 		return
 	}

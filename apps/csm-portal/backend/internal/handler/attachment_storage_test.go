@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -33,12 +34,13 @@ import (
 
 type mockSftpgoClient struct {
 	mintTokenFn    func(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error)
-	createShareFn  func(ctx context.Context, accessToken, storageKey string, ttl time.Duration) (string, error)
+	createShareFn  func(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error)
 	publicShareURL func(shareID string) string
 	baseURL        string
 
-	mintTokenCalls   []string // records the jwtAssertion passed on each call
-	createShareCalls []string // records the storageKey passed on each call
+	mintTokenCalls    []string // records the jwtAssertion passed on each call
+	createShareCalls  []string // records the storageKey passed on each call
+	createShareScopes []int    // records the scope passed on each CreateShare call
 }
 
 func (m *mockSftpgoClient) MintToken(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error) {
@@ -49,10 +51,11 @@ func (m *mockSftpgoClient) MintToken(ctx context.Context, email, jwtAssertion st
 	return &sftpgo.Token{AccessToken: "mock-access-token", ExpiresAt: json.RawMessage(`"2026-08-27T12:00:00Z"`)}, nil
 }
 
-func (m *mockSftpgoClient) CreateShare(ctx context.Context, accessToken, storageKey string, ttl time.Duration) (string, error) {
+func (m *mockSftpgoClient) CreateShare(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error) {
 	m.createShareCalls = append(m.createShareCalls, storageKey)
+	m.createShareScopes = append(m.createShareScopes, scope)
 	if m.createShareFn != nil {
-		return m.createShareFn(ctx, accessToken, storageKey, ttl)
+		return m.createShareFn(ctx, accessToken, storageKey, scope, ttl)
 	}
 	return "mock-share-id", nil
 }
@@ -182,12 +185,34 @@ func TestMintUploadTokenSuccess(t *testing.T) {
 		t.Fatalf("mintTokenCalls = %v, want exactly one call with the raw x-jwt-assertion value", sftpgoMock.mintTokenCalls)
 	}
 
+	rawBody := w.Body.String()
 	resp := decodeJSON[uploadTokenResponse](t, w)
-	if resp.SftpgoAccessToken != "mock-access-token" {
-		t.Errorf("SftpgoAccessToken = %q, want mock-access-token", resp.SftpgoAccessToken)
+	if resp.ShareID != "mock-share-id" {
+		t.Errorf("ShareID = %q, want mock-share-id", resp.ShareID)
 	}
 	if resp.SftpgoBaseURL != "https://sftpgo.example.com" {
 		t.Errorf("SftpgoBaseURL = %q, want https://sftpgo.example.com", resp.SftpgoBaseURL)
+	}
+	// The share must be scoped to storageKey's parent directory, NOT
+	// storageKey itself — confirmed against a real SFTPGo instance that a
+	// share scoped to the exact file makes every shares-chunked-uploads call
+	// against it fail (see MintUploadToken's doc comment on shareDir).
+	wantShareDir := path.Dir(resp.StorageKey)
+	if len(sftpgoMock.createShareCalls) != 1 || sftpgoMock.createShareCalls[0] != wantShareDir {
+		t.Fatalf("createShareCalls = %v, want exactly [%q] (storageKey's parent directory)", sftpgoMock.createShareCalls, wantShareDir)
+	}
+	if len(sftpgoMock.createShareScopes) != 1 || sftpgoMock.createShareScopes[0] != sftpgo.ShareScopeWrite {
+		t.Errorf("createShareScopes = %v, want exactly [%d] (write)", sftpgoMock.createShareScopes, sftpgo.ShareScopeWrite)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(rawBody), &raw); err != nil {
+		t.Fatalf("decode raw response: %v; raw: %s", err, rawBody)
+	}
+	if _, hasToken := raw["sftpgoAccessToken"]; hasToken {
+		t.Errorf("response body carried sftpgoAccessToken, want no bearer credential exposed to the frontend")
+	}
+	if _, hasExpiry := raw["expiresAt"]; hasExpiry {
+		t.Errorf("response body carried expiresAt, want none — the share's own server-side expiry is not surfaced to the frontend")
 	}
 	// The case fixture above carries no "projectId", so this must fall back
 	// to the project-less path shape rather than emitting a malformed
@@ -289,6 +314,37 @@ func TestMintUploadTokenPropagatesSftpgoFailure(t *testing.T) {
 	h.MintUploadToken(w, req)
 
 	assertStatus(t, w, http.StatusBadGateway)
+}
+
+// TestMintUploadTokenPropagatesCreateShareFailure verifies a failure from the
+// write-share creation call (as opposed to the token mint) also surfaces as
+// a 502, and that the response never leaks a partially-built token/share.
+func TestMintUploadTokenPropagatesCreateShareFailure(t *testing.T) {
+	t.Parallel()
+	entity := &mockEntityCaseClient{
+		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
+			return []byte(`{"state":"work_in_progress"}`), nil
+		},
+	}
+	sftpgoMock := &mockSftpgoClient{
+		createShareFn: func(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error) {
+			return "", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: "boom"}
+		},
+	}
+	h := NewAttachmentStorageHandler(entity, sftpgoMock)
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req.SetPathValue("id", caseID)
+	req.Header.Set("x-jwt-assertion", "raw-jwt")
+	w := httptest.NewRecorder()
+
+	h.MintUploadToken(w, req)
+
+	assertStatus(t, w, http.StatusBadGateway)
+	if len(sftpgoMock.mintTokenCalls) != 1 {
+		t.Errorf("MintToken was called %d times; want 1 (still needed to authenticate the CreateShare call)", len(sftpgoMock.mintTokenCalls))
+	}
 }
 
 // ----- CreateAttachmentShare -----
@@ -399,9 +455,12 @@ func TestCreateAttachmentShareSuccess(t *testing.T) {
 		},
 	}
 	sftpgoMock := &mockSftpgoClient{
-		createShareFn: func(ctx context.Context, accessToken, gotStorageKey string, ttl time.Duration) (string, error) {
+		createShareFn: func(ctx context.Context, accessToken, gotStorageKey string, scope int, ttl time.Duration) (string, error) {
 			if ttl != shareTTL {
 				t.Errorf("ttl = %v, want %v", ttl, shareTTL)
+			}
+			if scope != sftpgo.ShareScopeRead {
+				t.Errorf("scope = %d, want %d (read) — this download-share path must stay read-only", scope, sftpgo.ShareScopeRead)
 			}
 			return "share-xyz", nil
 		},
@@ -441,7 +500,7 @@ func TestCreateAttachmentSharePropagatesSftpgoFailure(t *testing.T) {
 		},
 	}
 	sftpgoMock := &mockSftpgoClient{
-		createShareFn: func(ctx context.Context, accessToken, gotStorageKey string, ttl time.Duration) (string, error) {
+		createShareFn: func(ctx context.Context, accessToken, gotStorageKey string, scope int, ttl time.Duration) (string, error) {
 			return "", &apierror.Error{StatusCode: http.StatusInternalServerError, Body: "boom"}
 		},
 	}

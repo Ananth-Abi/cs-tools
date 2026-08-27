@@ -133,7 +133,7 @@ func TestCreateShareSendsCorrectRequestShape(t *testing.T) {
 	client := NewClient(Config{BaseURL: srv.URL})
 
 	before := time.Now()
-	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/00000000-0000-0000-0000-000000000000", 5*time.Minute)
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/00000000-0000-0000-0000-000000000000", ShareScopeRead, 5*time.Minute)
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
 	}
@@ -156,8 +156,11 @@ func TestCreateShareSendsCorrectRequestShape(t *testing.T) {
 	if len(paths) != 1 || paths[0] != "/attachments/00000000-0000-0000-0000-000000000000" {
 		t.Errorf("paths = %v, want a single-element array with the storage key", gotBody["paths"])
 	}
-	if scope, _ := gotBody["scope"].(float64); scope != shareScopeRead {
-		t.Errorf("scope = %v, want %d (read-only)", gotBody["scope"], shareScopeRead)
+	if scope, _ := gotBody["scope"].(float64); scope != ShareScopeRead {
+		t.Errorf("scope = %v, want %d (read-only)", gotBody["scope"], ShareScopeRead)
+	}
+	if _, hasPassword := gotBody["password"]; hasPassword {
+		t.Errorf("request body carried a password field, want none")
 	}
 	expiresAtMs, _ := gotBody["expires_at"].(float64)
 	wantMin := float64(before.Add(5 * time.Minute).UnixMilli())
@@ -178,7 +181,7 @@ func TestCreateShareFallsBackToJSONBodyWhenHeaderMissing(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute)
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute)
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
 	}
@@ -198,7 +201,7 @@ func TestCreateSharePrefersHeaderOverBody(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute)
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute)
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)
 	}
@@ -217,7 +220,7 @@ func TestCreateShareErrorsWhenNoIDFound(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	if _, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute); err == nil {
+	if _, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute); err == nil {
 		t.Fatal("expected error when neither header nor body carry an id, got nil")
 	}
 }
@@ -232,7 +235,7 @@ func TestCreateSharePropagatesUpstreamError(t *testing.T) {
 
 	client := NewClient(Config{BaseURL: srv.URL})
 
-	_, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", time.Minute)
+	_, err := client.CreateShare(context.Background(), "access-tok", "/attachments/x", ShareScopeRead, time.Minute)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -242,6 +245,40 @@ func TestCreateSharePropagatesUpstreamError(t *testing.T) {
 	}
 	if apiErr.StatusCode != http.StatusForbidden {
 		t.Errorf("StatusCode = %d, want 403", apiErr.StatusCode)
+	}
+}
+
+func TestCreateShareSendsWriteScopeAndNoPassword(t *testing.T) {
+	t.Parallel()
+
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &gotBody)
+		w.Header().Set("X-Object-Id", "write-share-abc")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	client := NewClient(Config{BaseURL: srv.URL})
+
+	shareID, err := client.CreateShare(context.Background(), "access-tok", "/attachments/upload-target", ShareScopeWrite, 45*time.Minute)
+	if err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	if shareID != "write-share-abc" {
+		t.Errorf("shareID = %q, want write-share-abc", shareID)
+	}
+
+	paths, _ := gotBody["paths"].([]any)
+	if len(paths) != 1 || paths[0] != "/attachments/upload-target" {
+		t.Errorf("paths = %v, want a single-element array with the storage key", gotBody["paths"])
+	}
+	if scope, _ := gotBody["scope"].(float64); scope != ShareScopeWrite {
+		t.Errorf("scope = %v, want %d (write)", gotBody["scope"], ShareScopeWrite)
+	}
+	if _, hasPassword := gotBody["password"]; hasPassword {
+		t.Errorf("request body carried a password field, want none — a server-minted upload share must have no password")
 	}
 }
 

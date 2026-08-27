@@ -17,10 +17,14 @@
 // Package sftpgo is an HTTP client for the small subset of SFTPGo's REST API
 // this backend calls when the SFTPGo-backed attachment-storage feature flag
 // (SFTPGO_ATTACHMENT_STORAGE_ENABLED) is on: minting a short-lived per-user
-// access token, and creating a short-lived public download share. This
+// access token (used only server-side, to authenticate this backend's own
+// calls into SFTPGo's REST API — never handed to the browser), and creating
+// short-lived shares scoped to a single storage path, either read-only
+// (public download/inline-image shares) or write-only (upload shares). This
 // package never touches attachment bytes: uploads and downloads always go
-// directly between the browser and SFTPGo using the credentials it mints
-// here — see internal/handler.AttachmentStorageHandler for the call sites.
+// directly between the browser and SFTPGo, authenticated with nothing more
+// than the share id a Share.Scope-limited share carries — never a bearer
+// token — see internal/handler.AttachmentStorageHandler for the call sites.
 package sftpgo
 
 import (
@@ -134,11 +138,15 @@ func (c *Client) MintToken(ctx context.Context, email, jwtAssertion string) (*To
 	return &tok, nil
 }
 
-// shareScopeRead is SFTPGo's Share.Scope value for a read-only (download)
-// share. Not verified against a live instance for this change — flagged
-// explicitly in the PR description alongside the other SFTPGo API-shape
-// assumptions this client makes.
-const shareScopeRead = 1
+// ShareScopeRead and ShareScopeWrite are SFTPGo's Share.Scope values for a
+// read-only (download) share and a write-only (upload) share, respectively.
+// Verified against SFTPGo's own OpenAPI spec for this change (unlike several
+// other SFTPGo API shapes elsewhere in this file, which remain unverified
+// assumptions — see their own doc comments).
+const (
+	ShareScopeRead  = 1
+	ShareScopeWrite = 2
+)
 
 // shareCreateRequest is the request body of POST /api/v2/user/shares.
 type shareCreateRequest struct {
@@ -157,17 +165,23 @@ type shareCreateResponseBody struct {
 }
 
 // CreateShare calls SFTPGo's POST /api/v2/user/shares, authenticated as the
-// caller via accessToken (minted by MintToken), to create a short-lived,
-// read-only public share for a single storage path. ttl controls how soon
-// the share expires; callers should keep this short since a share is created
-// fresh on every request that needs one (see
-// AttachmentStorageHandler.CreateAttachmentShare — this is a lazy,
-// per-attachment, per-request operation, never an eager batch one). Returns
-// the created share's id.
-func (c *Client) CreateShare(ctx context.Context, accessToken, storageKey string, ttl time.Duration) (string, error) {
+// caller via accessToken (minted by MintToken), to create a short-lived
+// share for a single storage path with the given scope (ShareScopeRead or
+// ShareScopeWrite). No password is ever set on the created share: for the
+// read-only download-share path (AttachmentStorageHandler.CreateAttachmentShare)
+// the share URL itself is the only credential handed out, and for the
+// write-only upload-share path (AttachmentStorageHandler.MintUploadToken) the
+// share id is only ever used server-to-server-adjacent, ambient in the TUS
+// Upload-Metadata the browser sends — never paired with a bearer token or
+// password. ttl controls how soon the share expires; callers should keep
+// this short since a share is created fresh on every request that needs one
+// (see CreateAttachmentShare and MintUploadToken — this is always a lazy,
+// per-request operation, never an eager batch one). Returns the created
+// share's id.
+func (c *Client) CreateShare(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error) {
 	reqBody, err := json.Marshal(shareCreateRequest{
 		Paths:     []string{storageKey},
-		Scope:     shareScopeRead,
+		Scope:     scope,
 		ExpiresAt: time.Now().Add(ttl).UnixMilli(),
 	})
 	if err != nil {
