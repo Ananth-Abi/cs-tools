@@ -20,9 +20,11 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -485,10 +487,48 @@ func loadSftpgoConfig() (bool, sftpgo.Config) {
 	}
 
 	slog.Info("SFTPGO_ATTACHMENT_STORAGE_ENABLED is on: the SFTPGo-backed attachment-storage endpoints are active")
-	return true, sftpgo.Config{
-		BaseURL:       mustEnv("SFTPGO_BASE_URL"),
-		PublicBaseURL: os.Getenv("SFTPGO_PUBLIC_BASE_URL"),
+	baseURL := mustHTTPSURL("SFTPGO_BASE_URL", mustEnv("SFTPGO_BASE_URL"))
+	publicBaseURL := baseURL
+	if raw := os.Getenv("SFTPGO_PUBLIC_BASE_URL"); raw != "" {
+		publicBaseURL = mustHTTPSURL("SFTPGO_PUBLIC_BASE_URL", raw)
 	}
+	return true, sftpgo.Config{
+		BaseURL:       baseURL,
+		PublicBaseURL: publicBaseURL,
+	}
+}
+
+// mustHTTPSURL validates value via validateHTTPSURL, exiting the process with
+// a logged error if it is invalid. Both SFTPGO_BASE_URL and
+// SFTPGO_PUBLIC_BASE_URL are used to build requests/URLs that carry the
+// caller's email and raw gateway JWT (see internal/sftpgo.Client.MintToken)
+// or are handed to end users as a public download link (see
+// internal/sftpgo.Client.PublicShareURL), so a non-HTTPS or spoofed-looking
+// value here is a credential-leak/MITM risk, not just a misconfiguration —
+// refuse to start rather than proceed with it.
+func mustHTTPSURL(key, value string) string {
+	if err := validateHTTPSURL(value); err != nil {
+		slog.Error("invalid environment variable", "key", key, "value", value, "err", err)
+		os.Exit(1)
+	}
+	return value
+}
+
+// validateHTTPSURL reports an error unless value parses as a URL with scheme
+// "https" and no embedded userinfo (e.g. "https://user:pass@host/...", which
+// could indicate a misconfigured or spoofed URL).
+func validateHTTPSURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("not a valid URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("must use the https scheme, got %q", parsed.Scheme)
+	}
+	if parsed.User != nil {
+		return errors.New("must not contain embedded userinfo (e.g. \"https://user:pass@host/...\")")
+	}
+	return nil
 }
 
 func mustEnv(key string) string {
