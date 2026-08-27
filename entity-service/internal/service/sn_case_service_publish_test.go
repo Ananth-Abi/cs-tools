@@ -702,7 +702,11 @@ func TestSNCaseService_UpdateCase_SkipsPublishWhenStateUnchanged(t *testing.T) {
 // TestSNCaseService_UpdateCase_DoesNotPublishStatusChangedForOtherFields
 // verifies that a PATCH not touching State (e.g. assigneeEmail) never
 // triggers publishStatusChanged at all — status_changed is specifically a
-// State-change event, not a catch-all "case updated" one.
+// State-change event, not a catch-all "case updated" one. This fixture's
+// case has no watchList, so its own case.assigned publish (see the
+// dedicated tests below) is skipped too, but for an unrelated reason —
+// not proof status_changed and case.assigned are mutually exclusive in
+// general, just that this particular assigneeEmail PATCH triggers neither.
 func TestSNCaseService_UpdateCase_DoesNotPublishStatusChangedForOtherFields(t *testing.T) {
 	caseSysid := sysid32('a')
 	projectSysid := sysid32('b')
@@ -740,5 +744,179 @@ func TestSNCaseService_UpdateCase_DoesNotPublishStatusChangedForOtherFields(t *t
 	}
 	if len(publisher.calls) != 0 {
 		t.Fatalf("expected no publish call for a non-State update, got %d", len(publisher.calls))
+	}
+}
+
+// TestSNCaseService_UpdateCase_PublishesCaseAssigned verifies the happy
+// path: an AssigneeEmail-only PATCH publishes case.assigned with the new
+// assignee's own name (resolved by ServiceNow in the PATCH response) and
+// email (the exact value the caller requested — see publishCaseAssigned's
+// own doc comment for why this service has no way to resolve who
+// performed the assignment instead), the enriched case's project id, and
+// the watch list's emails as Recipients.
+func TestSNCaseService_UpdateCase_PublishesCaseAssigned(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	watcherSysid := sysid32('c')
+	assigneeSysid := sysid32('e')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-027",
+		"number": "CS0027001",
+		"title": "Assignee change test",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "assignedTo": {"id": "` + assigneeSysid + `", "name": "Alex Assignee"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	assigneeEmail := "alex@example.com"
+	req := domain.UpdateCaseRequest{ID: caseID, AssigneeEmail: &assigneeEmail}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(publisher.calls) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(publisher.calls))
+	}
+	call := publisher.calls[0]
+	if call.eventType != events.TypeCaseAssigned {
+		t.Errorf("eventType = %q, want %q", call.eventType, events.TypeCaseAssigned)
+	}
+	if call.entityID != caseID {
+		t.Errorf("entityID = %q, want %q", call.entityID, caseID)
+	}
+
+	var payload events.CaseAssignedPayload
+	if err := json.Unmarshal(call.payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if payload.AssigneeName != "Alex Assignee" {
+		t.Errorf("assigneeName = %q, want %q", payload.AssigneeName, "Alex Assignee")
+	}
+	if payload.AssigneeEmail != assigneeEmail {
+		t.Errorf("assigneeEmail = %q, want %q", payload.AssigneeEmail, assigneeEmail)
+	}
+	wantProjectID := sysidToUUID(projectSysid)
+	if payload.ProjectID != wantProjectID {
+		t.Errorf("projectId = %q, want %q", payload.ProjectID, wantProjectID)
+	}
+	if payload.CaseID != caseID {
+		t.Errorf("caseId = %q, want %q", payload.CaseID, caseID)
+	}
+	if len(payload.Recipients) != 1 || payload.Recipients[0] != "john.roe@example.com" {
+		t.Errorf("recipients = %v, want [john.roe@example.com]", payload.Recipients)
+	}
+}
+
+// TestSNCaseService_UpdateCase_SkipsPublishCaseAssignedWhenNoWatchers
+// mirrors TestSNCaseService_UpdateCase_SkipsPublishWhenNoWatchers for
+// case.assigned.
+func TestSNCaseService_UpdateCase_SkipsPublishCaseAssignedWhenNoWatchers(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	assigneeSysid := sysid32('e')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-028",
+		"number": "CS0028001",
+		"title": "No watchers here",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"}
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "assignedTo": {"id": "` + assigneeSysid + `", "name": "Alex Assignee"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	assigneeEmail := "alex@example.com"
+	req := domain.UpdateCaseRequest{ID: caseID, AssigneeEmail: &assigneeEmail}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call for a case with no watchers, got %d", len(publisher.calls))
+	}
+}
+
+// TestSNCaseService_UpdateCase_SkipsPublishCaseAssignedWhenAssigneeUnchanged
+// is the assigneeEmail-path mirror of
+// TestSNCaseService_UpdateCase_SkipsPublishWhenStateUnchanged: a PATCH
+// re-sending the case's own current assignee must not send every watcher a
+// false "case assigned" email. UpdateCase itself must still succeed — only
+// the publish is skipped.
+func TestSNCaseService_UpdateCase_SkipsPublishCaseAssignedWhenAssigneeUnchanged(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	watcherSysid := sysid32('c')
+	assigneeSysid := sysid32('e')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-029",
+		"number": "CS0029001",
+		"title": "Same assignee re-PATCH",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"assignedEngineer": {"id": "` + assigneeSysid + `", "name": "Alex Assignee", "email": "alex@example.com"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "assignedTo": {"id": "` + assigneeSysid + `", "name": "Alex Assignee"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	assigneeEmail := "alex@example.com"
+	req := domain.UpdateCaseRequest{ID: caseID, AssigneeEmail: &assigneeEmail}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call when the assignee didn't actually change, got %d", len(publisher.calls))
 	}
 }
