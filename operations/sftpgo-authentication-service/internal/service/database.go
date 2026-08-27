@@ -74,7 +74,7 @@ func (s *DBService) SaveSession(requestID string, data models.SessionData) error
 	}
 
 	expiresAt := time.Now().Add(15 * time.Minute)
-	query := `INSERT INTO sessions (request_id, session_data, expires_at)
+	query := `INSERT INTO sftpgo_auth_sessions (request_id, session_data, expires_at)
               VALUES ($1, $2, $3)
               ON CONFLICT (request_id) DO UPDATE SET session_data = EXCLUDED.session_data, expires_at = EXCLUDED.expires_at, updated_at = now()`
 
@@ -97,7 +97,7 @@ func (s *DBService) GetSession(requestID string) (models.SessionData, error) {
 	var expiresAt time.Time
 	data := models.SessionData{}
 
-	query := `SELECT session_data, expires_at FROM sessions WHERE request_id = $1`
+	query := `SELECT session_data, expires_at FROM sftpgo_auth_sessions WHERE request_id = $1`
 	row := s.db.QueryRow(query, requestID)
 
 	if err := row.Scan(&jsonData, &expiresAt); err != nil {
@@ -124,7 +124,7 @@ func (s *DBService) DeleteSession(requestID string) error {
 	if s.db == nil {
 		return nil
 	}
-	query := `DELETE FROM sessions WHERE request_id = $1`
+	query := `DELETE FROM sftpgo_auth_sessions WHERE request_id = $1`
 	_, err := s.db.Exec(query, requestID)
 	if err != nil {
 		return s.logger.Errorf("failed to delete session: %v", err)

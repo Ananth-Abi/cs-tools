@@ -147,10 +147,10 @@ AUTH_TOKEN_VALIDATOR_ENABLED="true"   # Optional, default true; "false" skips si
 
 ### Database Setup
 
-Apply the migration to create the sessions table:
+Apply the migration to create the `sftpgo_auth_sessions` table:
 
 ```bash
-psql "postgres://youruser:yourpassword@127.0.0.1:5432/yourdatabase" -f db/migrations/001_create_sessions_table.up.sql
+psql "postgres://youruser:yourpassword@127.0.0.1:5432/yourdatabase" -f db/migrations/001_create_sftpgo_auth_sessions_table.up.sql
 ```
 
 ### Install Dependencies
@@ -330,7 +330,7 @@ go vet ./...
 **Database connection fails:**
 - Verify `DB_CONN_STRING` format: `postgres://user:password@host:port/dbname?sslmode=disable`
 - Check PostgreSQL is running and accessible
-- Ensure sessions table exists
+- Ensure `sftpgo_auth_sessions` table exists
 
 **Authentication fails:**
 - Check appropriate org credentials (INTERNAL vs EXTERNAL)
