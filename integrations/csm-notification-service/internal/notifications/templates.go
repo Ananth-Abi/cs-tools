@@ -43,13 +43,12 @@ var caseCreatedTemplateRaw string
 // data: URI images from received HTML mail as a security measure, which is
 // why the logo showed as a broken image regardless of how it was encoded.
 // A cid:-referenced inline MIME attachment would avoid the external fetch
-// too, but the SMTP client this service's email-sending API is built on
-// (infra-operations/operations/email-service) only supports plain
-// Content-Disposition: attachment, not inline/Content-ID — so a real,
-// fetchable URL is the only option that actually renders today. This CDN
-// URL, not a self-hosted endpoint, was the explicit choice made over
-// hosting the same bytes from this service's own (Organization-only
-// visibility) Choreo endpoint.
+// too, but the internal email-sending service this client calls only
+// supports plain Content-Disposition: attachment, not inline/Content-ID —
+// so a real, fetchable URL is the only option that actually renders today.
+// This CDN URL, not a self-hosted endpoint, was the explicit choice made
+// over hosting the same bytes from this service's own endpoint, which
+// isn't reachable from outside WSO2's network.
 const wso2LogoURL = "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.png"
 
 // bakeLogo substitutes wso2LogoURL into raw's <!-- [LOGO_SRC] --> placeholder.
