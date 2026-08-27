@@ -424,6 +424,134 @@ func TestSNCaseService_CreateCaseComment_PublishesCommentAdded(t *testing.T) {
 	}
 }
 
+// TestSNCaseService_CreateCaseComment_WorkNote_FiltersRecipientsToWso2Domain
+// verifies that an internal note (CommentTypeWorkNote — never meant for a
+// customer's eyes) only notifies watchers on WSO2's own domain, even when
+// the case's watch list also has non-wso2.com watchers.
+func TestSNCaseService_CreateCaseComment_WorkNote_FiltersRecipientsToWso2Domain(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	internalWatcherSysid := sysid32('c')
+	customerWatcherSysid := sysid32('f')
+	commentSysid := sysid32('d')
+	caseID := sysidToUUID(caseSysid)
+	commentID := sysidToUUID(commentSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-030",
+		"number": "CS0030001",
+		"title": "Login is broken",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + internalWatcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@wso2.com"},
+			{"id": "` + customerWatcherSysid + `", "userName": "csmith", "name": "Cara Smith", "email": "cara.smith@acme.com"}
+		]
+	}`
+	createCommentBody := `{
+		"message": "Comment created successfully",
+		"comment": {"id": "` + commentSysid + `", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith"}
+	}`
+	searchCommentsBody := `{
+		"comments": [
+			{"id": "` + commentSysid + `", "referenceId": "` + caseSysid + `", "content": "Internal only", "type": "work_notes", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith", "createdByFullName": "Agent Smith"}
+		],
+		"offset": 0, "limit": 20, "totalRecords": 1
+	}`
+
+	client := newTestCommentClient(t, getCaseBody, createCommentBody, searchCommentsBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	req := domain.CreateCaseCommentRequest{
+		CaseID:  caseID,
+		Type:    domain.CommentTypeWorkNote,
+		Content: "Internal only",
+	}
+
+	if _, err := svc.CreateCaseComment(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(publisher.calls) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(publisher.calls))
+	}
+	var payload events.CommentAddedPayload
+	if err := json.Unmarshal(publisher.calls[0].payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if payload.CommentID != commentID {
+		t.Errorf("commentId = %q, want %q", payload.CommentID, commentID)
+	}
+	if len(payload.Recipients) != 1 || payload.Recipients[0] != "john.roe@wso2.com" {
+		t.Errorf("recipients = %v, want only [john.roe@wso2.com] — the customer watcher must not be notified of an internal note", payload.Recipients)
+	}
+}
+
+// TestSNCaseService_CreateCaseComment_WorkNote_SkipsPublishWhenNoWso2Watchers
+// verifies that an internal note with no wso2.com watchers on the case
+// skips publishing entirely, rather than notifying customer watchers as a
+// fallback.
+func TestSNCaseService_CreateCaseComment_WorkNote_SkipsPublishWhenNoWso2Watchers(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	customerWatcherSysid := sysid32('f')
+	commentSysid := sysid32('d')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-031",
+		"number": "CS0031001",
+		"title": "Login is broken",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + customerWatcherSysid + `", "userName": "csmith", "name": "Cara Smith", "email": "cara.smith@acme.com"}
+		]
+	}`
+	createCommentBody := `{
+		"message": "Comment created successfully",
+		"comment": {"id": "` + commentSysid + `", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith"}
+	}`
+	searchCommentsBody := `{
+		"comments": [
+			{"id": "` + commentSysid + `", "referenceId": "` + caseSysid + `", "content": "Internal only", "type": "work_notes", "createdOn": "2026-01-02 11:00:00", "createdBy": "agent.smith", "createdByFullName": "Agent Smith"}
+		],
+		"offset": 0, "limit": 20, "totalRecords": 1
+	}`
+
+	client := newTestCommentClient(t, getCaseBody, createCommentBody, searchCommentsBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	req := domain.CreateCaseCommentRequest{
+		CaseID:  caseID,
+		Type:    domain.CommentTypeWorkNote,
+		Content: "Internal only",
+	}
+
+	if _, err := svc.CreateCaseComment(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call when no wso2.com watcher is on the case, got %d", len(publisher.calls))
+	}
+}
+
 // TestSNCaseService_CreateCaseComment_SkipsPublishWhenNoWatchers mirrors
 // TestSNCaseService_CreateCase_SkipsPublishWhenNoWatchers for
 // case.comment_added.
