@@ -34,7 +34,7 @@ func NewFeedbackHandler(svc service.FeedbackService) *FeedbackHandler {
 	return &FeedbackHandler{svc: svc}
 }
 
-// SearchFeedback handles POST /cases/feedbacks/search.
+// SearchFeedback handles POST /cases/feedback/search.
 func (h *FeedbackHandler) SearchFeedback(w http.ResponseWriter, r *http.Request) {
 	var req domain.SearchFeedbackRequest
 	if !decodeRequest(w, r, &req) {
@@ -49,7 +49,7 @@ func (h *FeedbackHandler) SearchFeedback(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// AggregateFeedback handles POST /cases/feedbacks/aggregate.
+// AggregateFeedback handles POST /cases/feedback/aggregate.
 func (h *FeedbackHandler) AggregateFeedback(w http.ResponseWriter, r *http.Request) {
 	var req domain.AggregateFeedbackRequest
 	if !decodeRequest(w, r, &req) {

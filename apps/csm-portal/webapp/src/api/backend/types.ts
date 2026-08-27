@@ -3301,7 +3301,7 @@ export interface BeDashboardGroupByConfig {
    * with `field`. Resolved by `useCaseFeedbackTrendData`, a dedicated hook
    * (not `useWidgetGroupByData`, whose `POST {resourceType}/aggregate`
    * request/response shape this doesn't match) that calls `POST
-   * /cases/feedbacks/aggregate` with this value and maps its date-bucketed
+   * /cases/feedback/aggregate` with this value and maps its date-bucketed
    * response into the same per-slice `PieSliceResult[]` shape every other
    * pie/bar widget already renders. */
   bucket?: "day" | "week" | "month";
@@ -3333,7 +3333,7 @@ export interface BeGroupByResponse {
 
 /**
  * A single case-feedback (satisfaction rating) record, as returned by both
- * `POST /cases/feedbacks/search`'s `results` array and, opaquely, read by the
+ * `POST /cases/feedback/search`'s `results` array and, opaquely, read by the
  * `case_feedback` widget resourceType's `columns`-driven list renderer (see
  * `widgetResourceConfig.ts`'s `case_feedback` entry). Distinct id space from
  * `BeCaseSearchView` — `caseId` is the only link back to a real case (there
@@ -3350,14 +3350,14 @@ export interface BeCaseFeedback {
   submittedAt: string;
 }
 
-/** Body of `POST /cases/feedbacks/search` — deliberately NOT the
+/** Body of `POST /cases/feedback/search` — deliberately NOT the
  * `{ pagination: { offset, limit } }` shape every other resourceType's
  * search endpoint takes (see `BeDashboardWidget.query`'s sibling contracts);
  * this one takes flat `page`/`pageSize` instead, mirrored on `WidgetResourceConfig`'s
  * `case_feedback` entry via `buildSearchRequestBody`. */
 export interface BeCaseFeedbackSearchFilters {
   /** Restrict results to a single case. Not accepted by
-   * `/cases/feedbacks/aggregate` — see {@link BeCaseFeedbackAggregateFilters}. */
+   * `/cases/feedback/aggregate` — see {@link BeCaseFeedbackAggregateFilters}. */
   caseId?: string;
   accountIds?: string[];
   dateFrom?: string;
@@ -3369,7 +3369,7 @@ export interface BeCaseFeedbackSearchResponse {
   totalRecords: number;
 }
 
-/** Narrower than {@link BeCaseFeedbackSearchFilters} — `/cases/feedbacks/
+/** Narrower than {@link BeCaseFeedbackSearchFilters} — `/cases/feedback/
  * aggregate` is the many-cases trend endpoint, not scoped to a single case,
  * so `caseId` is not accepted here. */
 export interface BeCaseFeedbackAggregateFilters {
@@ -3383,7 +3383,7 @@ export interface BeCaseFeedbackAggregatePayload {
   bucket: "day" | "week" | "month";
 }
 
-/** One aggregated time bucket in a `POST /cases/feedbacks/aggregate`
+/** One aggregated time bucket in a `POST /cases/feedback/aggregate`
  * response. */
 export interface BeFeedbackBucket {
   bucketStart: string;

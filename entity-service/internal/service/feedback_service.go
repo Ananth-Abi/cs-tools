@@ -28,7 +28,7 @@ import (
 )
 
 // validFeedbackBuckets is the closed set of bucket granularities the backing
-// data source accepts for POST /cases/feedbacks/aggregate.
+// data source accepts for POST /cases/feedback/aggregate.
 var validFeedbackBuckets = map[domain.FeedbackBucket]bool{
 	domain.FeedbackBucketDay:   true,
 	domain.FeedbackBucketWeek:  true,
@@ -36,7 +36,7 @@ var validFeedbackBuckets = map[domain.FeedbackBucket]bool{
 }
 
 // snFeedbackFilters mirrors the "filters" object accepted by the Choreo
-// POST /cases/feedbacks/search and POST /cases/feedbacks/aggregate endpoints.
+// POST /cases/feedback/search and POST /cases/feedback/aggregate endpoints.
 // The aggregate endpoint's closed-record binding rejects a caseId field, so
 // this struct -- shared by both outbound payloads -- deliberately never sets
 // CaseID for an aggregate call (see snAggregateFeedbackPayload).
@@ -47,7 +47,7 @@ type snFeedbackFilters struct {
 	DateTo     string   `json:"dateTo,omitempty"`
 }
 
-// snSearchFeedbackPayload is the Choreo POST /cases/feedbacks/search request body.
+// snSearchFeedbackPayload is the Choreo POST /cases/feedback/search request body.
 type snSearchFeedbackPayload struct {
 	Filters  snFeedbackFilters `json:"filters"`
 	Page     int               `json:"page,omitempty"`
@@ -64,13 +64,13 @@ type snFeedbackRow struct {
 	SubmittedAt string  `json:"submittedAt"`
 }
 
-// snSearchFeedbackResponse mirrors the Choreo POST /cases/feedbacks/search response.
+// snSearchFeedbackResponse mirrors the Choreo POST /cases/feedback/search response.
 type snSearchFeedbackResponse struct {
 	Results      []snFeedbackRow `json:"results"`
 	TotalRecords int             `json:"totalRecords"`
 }
 
-// snAggregateFeedbackPayload is the Choreo POST /cases/feedbacks/aggregate request
+// snAggregateFeedbackPayload is the Choreo POST /cases/feedback/aggregate request
 // body. Filters never carries CaseID: the aggregate endpoint's closed-record
 // binding rejects it with a 400 (it is the many-cases trend endpoint, not
 // scoped to one case).
@@ -86,7 +86,7 @@ type snFeedbackBucketRow struct {
 	Count       int     `json:"count"`
 }
 
-// snAggregateFeedbackResponse mirrors the Choreo POST /cases/feedbacks/aggregate response.
+// snAggregateFeedbackResponse mirrors the Choreo POST /cases/feedback/aggregate response.
 type snAggregateFeedbackResponse struct {
 	Buckets      []snFeedbackBucketRow `json:"buckets"`
 	TotalRecords int                   `json:"totalRecords"`
@@ -102,7 +102,7 @@ func NewServiceNowFeedbackService(client *integrationservice.Client) FeedbackSer
 }
 
 // SearchFeedback implements FeedbackService by calling the Choreo
-// POST /cases/feedbacks/search endpoint.
+// POST /cases/feedback/search endpoint.
 func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.SearchFeedbackRequest) (domain.SearchFeedbackResponse, error) {
 	if req.Page < 0 {
 		return domain.SearchFeedbackResponse{}, &apierror.ValidationError{Msg: "page must not be negative"}
@@ -137,7 +137,7 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 		PageSize: req.PageSize,
 	}
 
-	raw, err := s.client.Post(ctx, "/cases/feedbacks/search", token, payload)
+	raw, err := s.client.Post(ctx, "/cases/feedback/search", token, payload)
 	if err != nil {
 		return domain.SearchFeedbackResponse{}, err
 	}
@@ -166,7 +166,7 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 }
 
 // AggregateFeedback implements FeedbackService by calling the Choreo
-// POST /cases/feedbacks/aggregate endpoint.
+// POST /cases/feedback/aggregate endpoint.
 func (s *snFeedbackService) AggregateFeedback(ctx context.Context, req domain.AggregateFeedbackRequest) (domain.AggregateFeedbackResponse, error) {
 	if !validFeedbackBuckets[req.Bucket] {
 		return domain.AggregateFeedbackResponse{}, &apierror.ValidationError{Msg: "bucket must be one of: day, week, month"}
@@ -186,7 +186,7 @@ func (s *snFeedbackService) AggregateFeedback(ctx context.Context, req domain.Ag
 		Bucket: req.Bucket,
 	}
 
-	raw, err := s.client.Post(ctx, "/cases/feedbacks/aggregate", token, payload)
+	raw, err := s.client.Post(ctx, "/cases/feedback/aggregate", token, payload)
 	if err != nil {
 		return domain.AggregateFeedbackResponse{}, err
 	}

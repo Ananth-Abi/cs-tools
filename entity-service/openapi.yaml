@@ -870,7 +870,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /cases/feedbacks/search:
+  /cases/feedback/search:
     post:
       summary: >-
         Search case-feedback (satisfaction rating) records across cases
@@ -879,7 +879,7 @@ paths:
         Backs the case-feedback dashboard's list view. Distinct from any
         single-case feedback lookup: this is filterable by case, accounts,
         and submission date range, and is paginated.
-      operationId: searchCaseFeedbacks
+      operationId: searchCaseFeedback
       requestBody:
         required: true
         content:
@@ -924,7 +924,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
-  /cases/feedbacks/aggregate:
+  /cases/feedback/aggregate:
     post:
       summary: >-
         Date-bucketed rating aggregation of case-feedback records across
@@ -932,8 +932,8 @@ paths:
       description: >-
         Backs the case-feedback dashboard's rating-trend chart. This is the
         many-cases trend endpoint, not scoped to one case, so filters.caseId
-        is not accepted here (unlike POST /cases/feedbacks/search).
-      operationId: aggregateCaseFeedbacks
+        is not accepted here (unlike POST /cases/feedback/search).
+      operationId: aggregateCaseFeedback
       requestBody:
         required: true
         content:

@@ -125,7 +125,7 @@ export function useWidgetGroupByData(
       // `groupBy.bucket` widget (date-bucketed grouping; see that field's own
       // doc comment on `BeDashboardGroupByConfig`) never reaches this hook at
       // all: `DashboardWidgetTile` calls `useCaseFeedbackTrendData` instead,
-      // whose own `POST /cases/feedbacks/aggregate` request/response shape
+      // whose own `POST /cases/feedback/aggregate` request/response shape
       // this hook's `groupBy`/`BeGroupByResponse` types don't match. This
       // check is therefore normally dead — it exists only so a
       // misconfigured/future caller that reaches here with a bucket-only

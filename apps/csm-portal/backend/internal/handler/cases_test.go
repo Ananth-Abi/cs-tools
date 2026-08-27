@@ -3053,7 +3053,7 @@ func TestAggregateCases(t *testing.T) {
 func TestSearchFeedback(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := httptest.NewRequest(http.MethodPost, "/cases/feedbacks/search", strings.NewReader(`{}`))
+		r := httptest.NewRequest(http.MethodPost, "/cases/feedback/search", strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
 		h.SearchFeedback(w, r)
 		assertStatus(t, w, http.StatusUnauthorized)
@@ -3063,7 +3063,7 @@ func TestSearchFeedback(t *testing.T) {
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/search", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/search", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		w := httptest.NewRecorder()
 		h.SearchFeedback(w, r)
 		assertStatus(t, w, http.StatusRequestEntityTooLarge)
@@ -3073,7 +3073,7 @@ func TestSearchFeedback(t *testing.T) {
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/search", strings.NewReader(`not-json`)))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/search", strings.NewReader(`not-json`)))
 		w := httptest.NewRecorder()
 		h.SearchFeedback(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
@@ -3091,7 +3091,7 @@ func TestSearchFeedback(t *testing.T) {
 			},
 		}
 		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/search", strings.NewReader(reqPayload)))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/search", strings.NewReader(reqPayload)))
 		w := httptest.NewRecorder()
 		h.SearchFeedback(w, r)
 
@@ -3116,7 +3116,7 @@ func TestSearchFeedback(t *testing.T) {
 					},
 				}
 				h := NewCaseHandler(client)
-				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/search", strings.NewReader(`{}`)))
+				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/search", strings.NewReader(`{}`)))
 				w := httptest.NewRecorder()
 				h.SearchFeedback(w, r)
 				assertStatus(t, w, tc.wantCode)
@@ -3130,7 +3130,7 @@ func TestSearchFeedback(t *testing.T) {
 func TestAggregateFeedback(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := httptest.NewRequest(http.MethodPost, "/cases/feedbacks/aggregate", strings.NewReader(`{}`))
+		r := httptest.NewRequest(http.MethodPost, "/cases/feedback/aggregate", strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
 		h.AggregateFeedback(w, r)
 		assertStatus(t, w, http.StatusUnauthorized)
@@ -3140,7 +3140,7 @@ func TestAggregateFeedback(t *testing.T) {
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/aggregate", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/aggregate", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		w := httptest.NewRecorder()
 		h.AggregateFeedback(w, r)
 		assertStatus(t, w, http.StatusRequestEntityTooLarge)
@@ -3150,7 +3150,7 @@ func TestAggregateFeedback(t *testing.T) {
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
 		h := NewCaseHandler(&mockEntityCaseClient{})
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/aggregate", strings.NewReader(`not-json`)))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/aggregate", strings.NewReader(`not-json`)))
 		w := httptest.NewRecorder()
 		h.AggregateFeedback(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
@@ -3168,7 +3168,7 @@ func TestAggregateFeedback(t *testing.T) {
 			},
 		}
 		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/aggregate", strings.NewReader(reqPayload)))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/aggregate", strings.NewReader(reqPayload)))
 		w := httptest.NewRecorder()
 		h.AggregateFeedback(w, r)
 
@@ -3193,7 +3193,7 @@ func TestAggregateFeedback(t *testing.T) {
 					},
 				}
 				h := NewCaseHandler(client)
-				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedbacks/aggregate", strings.NewReader(`{}`)))
+				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/feedback/aggregate", strings.NewReader(`{}`)))
 				w := httptest.NewRecorder()
 				h.AggregateFeedback(w, r)
 				assertStatus(t, w, tc.wantCode)
