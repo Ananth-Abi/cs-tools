@@ -153,3 +153,21 @@ func TestRenderInternalNoteEmail_NoReplyStrapAndUsesWorkNoteWording(t *testing.T
 		t.Error("rendered email doesn't contain the note's own content")
 	}
 }
+
+// TestRenderSeverityChangedEmail_ContainsOldAndNewSeverity verifies both
+// severities render, distinctly, in the output — a real bug the analogous
+// RenderCommentAddedEmail test above caught for a different placeholder,
+// so this checks the same class of mistake can't happen here (e.g. the
+// old severity accidentally substituted into the new severity's slot).
+func TestRenderSeverityChangedEmail_ContainsOldAndNewSeverity(t *testing.T) {
+	out := RenderSeverityChangedEmail("CS0023001", "High (P2)", "Low (P4)", "https://x/case", "https://x/comment")
+	if !strings.Contains(out, "CS0023001") {
+		t.Error("rendered email doesn't contain the case number")
+	}
+	if !strings.Contains(out, "High (P2)") {
+		t.Error("rendered email doesn't contain the old severity")
+	}
+	if !strings.Contains(out, "Low (P4)") {
+		t.Error("rendered email doesn't contain the new severity")
+	}
+}

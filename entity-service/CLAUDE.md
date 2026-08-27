@@ -83,7 +83,7 @@ the constructed `EventPublisherService` (nil if unconfigured) alongside the
 threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
 it during shutdown, after `srv.Shutdown`.
 
-Six call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
+Seven call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
 there is no Postgres-backed equivalent for any of them):
 
 - **`snCaseService.CreateCase`** publishes `case.created` via a private
@@ -226,10 +226,35 @@ service's own `CLAUDE.md`, `dispatch.subjectLine`).
   `csm-notification-service`'s Chat alert needs to display (see that
   service's own `CLAUDE.md` for the card's exact shape).
 
+- **`snCaseService.UpdateCase`** also publishes `case.severity_changed` via
+  `publishSeverityChanged`, called only when `req.Severity` was set AND
+  actually differs from the case's prior severity — the same pre-PATCH
+  `GetCaseByID` no-op guard `case.status_changed`/`case.assigned` use
+  (`req.State`/`req.Severity`/`req.AssigneeEmail` are already mutually
+  exclusive per request, so this and the status/assignee blocks never both
+  fire for the same call). Unlike `case.acknowledged`, this has both an
+  email reaction (`Recipients`, the same watch-list-emails audience as
+  `case.status_changed`/`case.assigned`) and a Chat alert (`Product`, same
+  `caseProductName(before)` reasoning as `publishCaseCreated`/
+  `publishCaseAcknowledged`) — `csm-notification-service`'s `dispatch`
+  package fans this one payload out to both channels. `OldSeverity` comes
+  from the pre-PATCH `GetCaseByID` enrichment (`before.Severity`);
+  `NewSeverity` from the PATCH response's own echoed severity
+  (`resp.Case.Severity`, only set when `snResp.Case.Severity != nil`) — no
+  second `GetCaseByID` needed the way `publishCaseAcknowledged` needs one,
+  since `UpdateCase`'s existing pre-PATCH enrichment already supplies
+  everything this payload needs (`CaseNumber`/`WSO2CaseID`/`CaseTitle`/
+  `Product`/`Recipients` all come from that same `before` `CaseView`). Same
+  "empty `Recipients` list skips the whole publish" precedent as
+  `publishCaseCreated` — including the Chat alert, since this event has no
+  Chat-only path the way `case.acknowledged` does; a severity change with
+  no watchers has nobody to notify by design.
+
 `caseProductName(cv)` (a small shared helper) resolves
 `cv.DeployedProductDetails.Product.Name` (e.g. `"WSO2 API Manager"`, `""`
-when the case has no deployed product) — used by both `publishCaseCreated`
-and `publishCaseAcknowledged` to populate their payloads' `Product` field.
+when the case has no deployed product) — used by `publishCaseCreated`,
+`publishCaseAcknowledged`, and `publishSeverityChanged` to populate their
+payloads' `Product` field.
 `CaseCreatedPayload.Product` was previously never populated at all ("this
 service has no data source for it yet"); now it doubles as both a display
 value in `csm-notification-service`'s redesigned `case.created` Chat card
@@ -260,7 +285,8 @@ Every helper above runs **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`
 is), each bounded by its own 5s `context.WithTimeout`
 (`publishCaseCreatedTimeout`/`publishIncidentCreatedTimeout`/
-`publishCommentAddedTimeout`/`publishStatusChangedTimeout`) so a slow
+`publishCommentAddedTimeout`/`publishStatusChangedTimeout`/
+`publishSeverityChangedTimeout`) so a slow
 ServiceNow or Event Hub round trip can't consume this service's own 30s
 request timeout — a deliberate simplicity trade-off over the async+
 `WaitGroup`-drain pattern, made because this service (unlike that backend)

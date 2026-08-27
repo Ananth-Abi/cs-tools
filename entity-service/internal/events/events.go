@@ -35,6 +35,7 @@ const (
 	TypeStatusChanged    Type = "case.status_changed"
 	TypeCaseAssigned     Type = "case.assigned"
 	TypeCaseAcknowledged Type = "case.acknowledged"
+	TypeSeverityChanged  Type = "case.severity_changed"
 	TypeIncidentCreated  Type = "incident.created"
 )
 
@@ -141,6 +142,30 @@ type CaseAcknowledgedPayload struct {
 	// space as its case.created alert did.
 	Product          string `json:"product,omitempty"`
 	AcknowledgerName string `json:"acknowledgerName"`
+}
+
+// SeverityChangedPayload is the Payload shape for TypeSeverityChanged —
+// mirrors csm-notification-service's own SeverityChangedPayload, same
+// reasoning as CommentAddedPayload above. Unlike CaseAcknowledgedPayload,
+// this one does carry Recipients: a severity change has both an email
+// reaction (same audience as case.status_changed/case.assigned — the
+// case's watch list) and a Google Chat alert, so it needs both an audience
+// and a routing Product, same as CaseCreatedPayload's own doc comment for
+// why Product is here.
+type SeverityChangedPayload struct {
+	ProjectID  string `json:"projectId"`
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CommentAddedPayload's own doc comment.
+	WSO2CaseID string `json:"wso2CaseId,omitempty"`
+	CaseTitle  string `json:"caseTitle,omitempty"`
+	// OldSeverity/NewSeverity are raw uppercase severity strings (e.g.
+	// "CRITICAL"), the same convention as CaseAcknowledgedPayload.Severity.
+	OldSeverity string `json:"oldSeverity"`
+	NewSeverity string `json:"newSeverity"`
+	// Product — see CaseCreatedPayload's own doc comment.
+	Product    string   `json:"product,omitempty"`
+	Recipients []string `json:"recipients"`
 }
 
 // CaseCreatedPayload is the Payload shape for TypeCaseCreated — mirrors

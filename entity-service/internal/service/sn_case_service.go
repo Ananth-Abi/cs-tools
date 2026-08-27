@@ -64,6 +64,14 @@ const publishCaseAssignedTimeout = 5 * time.Second
 // doc comment for why.
 const publishCaseAcknowledgedTimeout = 5 * time.Second
 
+// publishSeverityChangedTimeout bounds publishSeverityChanged's own publish
+// call — see publishStatusChangedTimeout's doc comment for why. Unlike
+// publishCaseAcknowledgedTimeout, this doesn't need to also bound a
+// GetCaseByID call: UpdateCase's own pre-PATCH enrichment (mirroring its
+// status-change block) already supplies the "before" CaseView this publish
+// needs.
+const publishSeverityChangedTimeout = 5 * time.Second
+
 // watchListEmails extracts the non-empty emails from a case's watch list —
 // Recipients for every case.* event this file publishes is the case's
 // WatchList emails only (an explicit, deliberate decision — this service
@@ -1170,6 +1178,67 @@ func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newSta
 	}
 }
 
+// publishSeverityChanged best-effort publishes a case.severity_changed
+// event after UpdateCase changes a case's severity — called only when the
+// PATCH's own req.Severity was set AND actually differs from the case's
+// prior severity (the same no-op guard as publishStatusChanged's own call
+// site: a caller re-PATCHing the case's current severity must not send
+// every watcher a false "severity changed" notification). Unlike
+// publishCaseAcknowledged, this has both an email reaction (Recipients,
+// same watch-list-emails audience as publishStatusChanged/
+// publishCaseAssigned) and a Google Chat alert (Product, same
+// caseProductName(before) reasoning as publishCaseCreated/
+// publishCaseAcknowledged) — csm-notification-service's dispatch package
+// decides how to route each.
+//
+// before is the case as it was fetched by UpdateCase *before* issuing the
+// PATCH — same reuse-the-enrichment reasoning as publishStatusChanged's own
+// doc comment.
+//
+// Recipients is the case's WatchList emails only — see publishCaseCreated's
+// own doc comment for why, and why an empty list silently skips publishing
+// (both the email AND the Chat alert — csm-notification-service has no
+// separate "chat only, no recipients" event type for this the way
+// case.acknowledged is; a severity change with no watchers has nobody to
+// notify by design).
+//
+// Runs synchronously, bounded by publishSeverityChangedTimeout — see
+// publishCaseCreated's own doc comment for why (same reasoning).
+func (s *snCaseService) publishSeverityChanged(ctx context.Context, caseID, oldSeverity, newSeverity string, before domain.CaseView) {
+	if s.publisher == nil || newSeverity == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishSeverityChangedTimeout)
+	defer cancel()
+
+	recipients := watchListEmails(before.WatchList)
+	if len(recipients) == 0 {
+		slog.InfoContext(ctx, "sn update case: case.severity_changed not published, case has no watchers to email", "caseId", caseID)
+		return
+	}
+
+	payload, err := json.Marshal(events.SeverityChangedPayload{
+		ProjectID:   before.ProjectDetails.ID,
+		CaseID:      caseID,
+		CaseNumber:  before.Number,
+		WSO2CaseID:  before.InternalID,
+		CaseTitle:   before.Subject,
+		OldSeverity: strings.ToUpper(oldSeverity),
+		NewSeverity: strings.ToUpper(newSeverity),
+		Product:     caseProductName(before),
+		Recipients:  recipients,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: encode case.severity_changed payload failed", "caseId", caseID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeSeverityChanged, caseID, payload); err != nil {
+		// Not logging err itself — see publishCaseCreated's matching log
+		// line for why.
+		slog.ErrorContext(ctx, "sn update case: publish case.severity_changed failed", "caseId", caseID)
+	}
+}
+
 // publishCaseAssigned best-effort publishes a case.assigned event after
 // UpdateCase changes a case's assignee. assigneeName/assigneeEmail
 // identify who the case is now assigned *to* — not who performed the
@@ -2175,6 +2244,29 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		}
 	}
 
+	// Same reasoning as the state-change block above, applied to severity
+	// instead: a caller re-PATCHing the case's current severity (a no-op as
+	// far as ServiceNow is concerned) must not send every watcher a false
+	// "severity changed" notification. req.State and req.Severity are
+	// mutually exclusive per request (see exclusiveCount above), so this and
+	// the block above never both fire for the same call.
+	var caseBeforeSeverity domain.CaseView
+	publishSeverityChange := false
+	if req.Severity != nil && s.publisher != nil {
+		enrichCtx, cancel := context.WithTimeout(ctx, publishSeverityChangedTimeout)
+		cv, err := s.GetCaseByID(enrichCtx, req.ID)
+		cancel()
+		switch {
+		case err != nil:
+			slog.ErrorContext(ctx, "sn update case: enrich case for case.severity_changed publish failed", "caseId", req.ID)
+		case cv.Severity == *req.Severity:
+			slog.InfoContext(ctx, "sn update case: case.severity_changed not published, severity is unchanged", "caseId", req.ID)
+		default:
+			caseBeforeSeverity = cv
+			publishSeverityChange = true
+		}
+	}
+
 	// Same reasoning as the state-change block above, applied to
 	// assigneeEmail instead: a caller re-PATCHing the case's current
 	// assignee (a no-op as far as ServiceNow is concerned) must not send
@@ -2319,6 +2411,17 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	// former is a real event worth a Chat alert.
 	if req.Acknowledge != nil && *req.Acknowledge && (resp.Case.AlreadyAcknowledged == nil || !*resp.Case.AlreadyAcknowledged) && resp.Case.AcknowledgedBy != nil {
 		s.publishCaseAcknowledged(ctx, req.ID, resp.Case.AcknowledgedBy.Name)
+	}
+	// resp.Case.Severity != caseBeforeSeverity.Severity is a second guard on
+	// top of publishSeverityChange itself: that flag only confirms the
+	// PATCH *request* asked for a different severity than the pre-PATCH
+	// GetCaseByID observed — it says nothing about what the PATCH response
+	// actually echoes back. If ServiceNow's response reports the
+	// pre-update severity (e.g. a stale echo), publishing anyway would
+	// send a false case.severity_changed event with identical old/new
+	// values.
+	if publishSeverityChange && resp.Case.Severity != "" && resp.Case.Severity != caseBeforeSeverity.Severity {
+		s.publishSeverityChanged(ctx, req.ID, string(caseBeforeSeverity.Severity), string(resp.Case.Severity), caseBeforeSeverity)
 	}
 
 	return resp, nil

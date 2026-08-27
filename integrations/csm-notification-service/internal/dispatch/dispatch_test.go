@@ -72,6 +72,10 @@ type sentCaseAcknowledgedAlert struct {
 	product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string
 }
 
+type sentSeverityChangedAlert struct {
+	product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, caseLink string
+}
+
 type mockGoogleChatSender struct {
 	err error
 	// mu guards calls — see mockEmailSender.mu's doc comment.
@@ -79,6 +83,7 @@ type mockGoogleChatSender struct {
 	calls                 []sentChatAlert
 	caseCreatedCalls      []sentCaseCreatedAlert
 	caseAcknowledgedCalls []sentCaseAcknowledgedAlert
+	severityChangedCalls  []sentSeverityChangedAlert
 }
 
 func (m *mockGoogleChatSender) SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error {
@@ -99,6 +104,13 @@ func (m *mockGoogleChatSender) SendCaseAcknowledgedAlert(ctx context.Context, pr
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.caseAcknowledgedCalls = append(m.caseAcknowledgedCalls, sentCaseAcknowledgedAlert{product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName})
+	return m.err
+}
+
+func (m *mockGoogleChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, caseLink string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.severityChangedCalls = append(m.severityChangedCalls, sentSeverityChangedAlert{product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, caseLink})
 	return m.err
 }
 
@@ -657,6 +669,129 @@ func TestDispatcher_Handle_CaseAcknowledged_RetryAfterChatFailureResends(t *test
 	}
 }
 
+func TestDispatcher_Handle_SeverityChanged(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.severity_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","oldSeverity":"HIGH","newSeverity":"LOW","product":"api-manager","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+
+	if len(mock.calls) != 1 {
+		t.Fatalf("expected 1 email sent, got %d", len(mock.calls))
+	}
+	gotEmail := mock.calls[0]
+	if len(gotEmail.to) != 1 || gotEmail.to[0] != testRecipient {
+		t.Errorf("to = %v, want [%s]", gotEmail.to, testRecipient)
+	}
+	if !strings.Contains(gotEmail.htmlBody, "High (P2)") || !strings.Contains(gotEmail.htmlBody, "Low (P4)") {
+		t.Error("htmlBody does not contain both the old and new severity labels")
+	}
+
+	if len(chat.severityChangedCalls) != 1 {
+		t.Fatalf("expected 1 Google Chat alert sent, got %d", len(chat.severityChangedCalls))
+	}
+	gotChat := chat.severityChangedCalls[0]
+	if gotChat.oldSeverityLabel != "High (P2)" || gotChat.newSeverityLabel != "Low (P4)" || gotChat.caseLink != "https://csm.example/cases/CASE-1" {
+		t.Errorf("unexpected SendSeverityChangedAlert args: %+v", gotChat)
+	}
+}
+
+// TestDispatcher_Handle_SeverityChanged_ChatUsesDefaultProduct mirrors
+// TestDispatcher_Handle_CaseCreated_ChatUsesDefaultProduct.
+func TestDispatcher_Handle_SeverityChanged_ChatUsesDefaultProduct(t *testing.T) {
+	chat := &mockGoogleChatSender{}
+	d := NewDispatcher(&mockEmailSender{}, chat, &mockCallSender{}, &mockLinkResolver{}, true, false, nil, true, "api-manager", "")
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.severity_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","oldSeverity":"HIGH","newSeverity":"LOW","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(chat.severityChangedCalls) != 1 || chat.severityChangedCalls[0].product != "api-manager" {
+		t.Fatalf("expected the chat alert to use the default product, got %+v", chat.severityChangedCalls)
+	}
+}
+
+// TestDispatcher_Handle_SeverityChanged_SkipsChatWhenNoProduct mirrors
+// TestDispatcher_Handle_CaseCreated_SkipsChatWhenNoProduct — the email still
+// sends independently of the skipped Chat alert.
+func TestDispatcher_Handle_SeverityChanged_SkipsChatWhenNoProduct(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.severity_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","oldSeverity":"HIGH","newSeverity":"LOW","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(chat.severityChangedCalls) != 0 {
+		t.Errorf("expected no Google Chat alert with no product resolved, got %d calls", len(chat.severityChangedCalls))
+	}
+	if len(mock.calls) != 1 {
+		t.Errorf("expected the email to still be sent independently, got %d calls", len(mock.calls))
+	}
+}
+
+// TestDispatcher_Handle_SeverityChanged_ChatFailureStillSendsEmail verifies
+// the two reactions are independent, mirroring
+// TestDispatcher_Handle_CaseCreated_ChatFailureStillSendsEmail.
+func TestDispatcher_Handle_SeverityChanged_ChatFailureStillSendsEmail(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{err: errors.New("webhook unreachable")}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.severity_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","oldSeverity":"HIGH","newSeverity":"LOW","product":"api-manager","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err == nil {
+		t.Fatal("expected the chat error to propagate")
+	}
+	if len(mock.calls) != 1 {
+		t.Fatal("expected the email to still be sent despite the chat failure")
+	}
+}
+
+// TestDispatcher_Handle_SeverityChanged_EmailFailureStillSendsChat is the
+// mirror image of ChatFailureStillSendsEmail above — a failing email
+// (groupByLink itself, here) must not suppress the independent Chat alert,
+// same "both attempted even if one fails" reasoning handleCaseCreated's
+// own Chat block uses.
+func TestDispatcher_Handle_SeverityChanged_EmailFailureStillSendsChat(t *testing.T) {
+	chat := &mockGoogleChatSender{}
+	links := &mockLinkResolver{err: errors.New("entity-service unreachable")}
+	d := NewDispatcher(&mockEmailSender{}, chat, &mockCallSender{}, links, true, false, nil, true, "", "")
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.severity_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","oldSeverity":"HIGH","newSeverity":"LOW","product":"api-manager","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err == nil {
+		t.Fatal("expected the link-resolution error to propagate")
+	}
+	if len(chat.severityChangedCalls) != 1 {
+		t.Fatalf("expected the chat alert to still be sent despite the email failure, got %d calls", len(chat.severityChangedCalls))
+	}
+}
+
+// TestDispatcher_Handle_SeverityChanged_ForgetsAfterFullSuccess mirrors
+// TestDispatcher_Handle_CaseCreated_ForgetsAfterFullSuccess.
+func TestDispatcher_Handle_SeverityChanged_ForgetsAfterFullSuccess(t *testing.T) {
+	mock := &mockEmailSender{}
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(mock, chat, &mockCallSender{})
+
+	record := eventbus.Record{Topic: "case-events", Partition: 1, Offset: 42, Value: []byte(`{"type":"case.severity_changed","entityId":"CASE-1","payload":{"projectId":"PROJ-1","caseId":"CASE-1","oldSeverity":"HIGH","newSeverity":"LOW","product":"api-manager","recipients":["test-recipient@example.com"]}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(d.done) != 0 {
+		t.Errorf("done map should be empty after full success, has %d entries", len(d.done))
+	}
+}
+
 // TestDispatcher_Handle_TwoRecipientsTwoLinks_SendsTwoEmails is the core
 // regression test for the recipientlinks migration: a comment-added event
 // with two recipients that resolve to two different portal links must
@@ -1212,6 +1347,10 @@ func (s *concurrencyProbeChatSender) SendCaseAcknowledgedAlert(ctx context.Conte
 	return nil
 }
 
+func (s *concurrencyProbeChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, caseLink string) error {
+	return nil
+}
+
 // TestDispatcher_Handle_ConcurrentClaimNeverOverlaps is a regression test
 // for a real race in the old alreadyDone/markDone pattern: checking "not
 // done yet" and marking "done" were two separate lock acquisitions, so two
@@ -1270,6 +1409,10 @@ func (s *blockingCaseAcknowledgedChatSender) SendCaseCreatedAlert(ctx context.Co
 func (s *blockingCaseAcknowledgedChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error {
 	atomic.AddInt32(&s.calls, 1)
 	<-s.proceed
+	return nil
+}
+
+func (s *blockingCaseAcknowledgedChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, caseLink string) error {
 	return nil
 }
 

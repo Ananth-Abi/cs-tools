@@ -328,9 +328,43 @@ func (c *GoogleChatClient) SendCaseAcknowledgedAlert(ctx context.Context, produc
 	return c.sendCard(ctx, product, msg)
 }
 
+// SendSeverityChangedAlert posts a single-line card message announcing a
+// case's severity changed, to the same Google Chat space as its
+// case.created alert — matching SendCaseAcknowledgedAlert's own format:
+// "<new severity (Pn)> <caseNumber> <wso2CaseID>: Severity changed from
+// <old label> to <new label>". The colored badge reflects the new
+// severity (the case's current state), not the old one — same
+// current-state-wins reasoning as every other Chat card in this file.
+// wso2CaseID is dropped from the line entirely when the publisher didn't
+// send one, same reasoning as SendCaseCreatedAlert.
+func (c *GoogleChatClient) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, caseLink string) error {
+	if caseNumber == "" {
+		return fmt.Errorf("notifications: caseNumber is required")
+	}
+	text := caseAlertLine(`<font color="%s"><b>%s</b></font> <a href="%s">%s</a>`, newSeverityColor, newSeverityLabel, caseLink, caseNumber)
+	if wso2CaseID != "" {
+		text += " " + caseAlertLine(`%s`, wso2CaseID)
+	}
+	text += caseAlertLine(`: Severity changed from %s to %s`, oldSeverityLabel, newSeverityLabel)
+
+	msg := chatCardMessage{
+		CardsV2: []chatCardWrapper{
+			{
+				CardID: "case-severity-changed-alert",
+				Card: chatCard{
+					Sections: []chatCardSection{
+						{Widgets: []chatCardWidget{{TextParagraph: &chatTextParagraph{Text: text}}}},
+					},
+				},
+			},
+		},
+	}
+	return c.sendCard(ctx, product, msg)
+}
+
 // sendCard marshals msg and posts it to the webhook configured for
 // product, shared by SendIncidentAlert/SendCaseCreatedAlert/
-// SendCaseAcknowledgedAlert.
+// SendCaseAcknowledgedAlert/SendSeverityChangedAlert.
 func (c *GoogleChatClient) sendCard(ctx context.Context, product string, msg chatCardMessage) error {
 	webhookURL, ok := c.webhookURLsByProduct[normalizeProduct(product)]
 	if !ok || webhookURL == "" {

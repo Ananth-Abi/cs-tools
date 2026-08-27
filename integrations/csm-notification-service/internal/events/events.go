@@ -45,6 +45,7 @@ const (
 	TypeStatusChanged    Type = "case.status_changed"
 	TypeCaseAssigned     Type = "case.assigned"
 	TypeCaseAcknowledged Type = "case.acknowledged"
+	TypeSeverityChanged  Type = "case.severity_changed"
 	TypeIncidentCreated  Type = "incident.created"
 
 	// TypeSLAClockRegister and TypeSLATierReached belong to internal/slaengine,
@@ -60,7 +61,7 @@ const (
 // checked — used both for request validation and for generating docs/errors
 // that enumerate valid values.
 var KnownTypes = []Type{
-	TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeCaseAcknowledged, TypeIncidentCreated,
+	TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeCaseAcknowledged, TypeSeverityChanged, TypeIncidentCreated,
 	TypeSLAClockRegister, TypeSLATierReached,
 }
 
@@ -219,6 +220,29 @@ type CaseAcknowledgedPayload struct {
 	Severity         string `json:"severity,omitempty"`
 	Product          string `json:"product,omitempty"`
 	AcknowledgerName string `json:"acknowledgerName"`
+}
+
+// SeverityChangedPayload is TypeSeverityChanged's payload. Unlike
+// CaseAcknowledgedPayload, this carries Recipients — a severity change has
+// both an email reaction (same audience/link-resolution shape as
+// StatusChangedPayload/CaseAssignedPayload) and a Google Chat alert
+// (Product, same routing convention as CaseCreatedPayload.Product), so
+// dispatch.handleSeverityChanged is a two-channel handler like
+// handleCaseCreated, not a one-channel handler like handleCaseAcknowledged.
+// OldSeverity/NewSeverity are the raw uppercase severity strings (e.g.
+// "CRITICAL"), the same convention CaseAcknowledgedPayload.Severity uses —
+// dispatch.severityLabelAndColor maps each to its own display label/color.
+type SeverityChangedPayload struct {
+	ProjectID  string `json:"projectId"`
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CaseCreatedPayload's own doc comment.
+	WSO2CaseID  string   `json:"wso2CaseId,omitempty"`
+	CaseTitle   string   `json:"caseTitle,omitempty"`
+	OldSeverity string   `json:"oldSeverity"`
+	NewSeverity string   `json:"newSeverity"`
+	Product     string   `json:"product,omitempty"`
+	Recipients  []string `json:"recipients"`
 }
 
 // IncidentCreatedPayload is TypeIncidentCreated's payload. Unlike the case.*
