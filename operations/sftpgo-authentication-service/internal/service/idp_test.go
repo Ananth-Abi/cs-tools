@@ -17,9 +17,14 @@
 package service
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
 )
 
 func TestIsInternalUser(t *testing.T) {
@@ -82,5 +87,62 @@ func TestIsInternalUser(t *testing.T) {
 				t.Errorf("isInternalUser(%q) = %v, want %v", tt.username, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestGetAsgardeoUser_SCIMFilterEscaping proves fix #4: backslashes are
+// escaped before quotes, so a username containing a literal `\"` cannot
+// terminate the SCIM filter's string literal early. If the escaping order
+// were reversed (quotes first, then backslashes), the attacker-supplied `\"`
+// would itself be escaped into `\\"`, which closes the filter's string
+// literal one character early -- this test fails loudly if that regresses.
+func TestGetAsgardeoUser_SCIMFilterEscaping(t *testing.T) {
+	var capturedFilter string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "test-token"})
+		case "/scim2/Users":
+			capturedFilter = r.URL.Query().Get("filter")
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"Resources": []any{}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		InternalUserSuffix:   "@wso2.com",
+		IdPTokenEndPoint:     server.URL + "/token",
+		IdPSCIMUsersEndPoint: server.URL + "/scim2/Users",
+		InternalClientID:     "client",
+		InternalClientSecret: "secret",
+	}
+	s := NewIdPService(cfg, log.NewAppLogger("ERROR"))
+
+	// Malicious username attempting to break out of the SCIM filter's string
+	// literal via an unescaped-looking `\"` sequence. Ends in the configured
+	// internal suffix so it routes through the internal org endpoints set up
+	// above.
+	maliciousUsername := `attacker\" or userName eq "admin@wso2.com`
+
+	// GetAsgardeoUser is expected to return an error (no matching resource),
+	// but the important assertion is on the filter string it sent upstream.
+	_, _ = s.GetAsgardeoUser(maliciousUsername)
+
+	decoded, err := url.QueryUnescape(capturedFilter)
+	if err != nil {
+		t.Fatalf("failed to decode captured filter: %v", err)
+	}
+
+	// Backslashes must be doubled BEFORE quotes are escaped, so the filter's
+	// string literal spans the entire username unbroken.
+	wantUsername := `attacker\\\" or userName eq \"admin@wso2.com`
+	want := `userName eq "DEFAULT/` + wantUsername + `"`
+	if decoded != want {
+		t.Errorf("SCIM filter = %q, want %q", decoded, want)
 	}
 }

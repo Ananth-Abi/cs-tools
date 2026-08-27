@@ -108,7 +108,13 @@ func (s *DBService) GetSession(requestID string) (models.SessionData, error) {
 	}
 
 	if time.Now().After(expiresAt) {
-		_ = s.DeleteSession(requestID)
+		// Delete only the row we just read as expired, conditioned on
+		// expires_at still matching that value. Without this, a concurrent
+		// SaveSession could upsert a fresh, non-expired row for the same
+		// request_id between our read above and this delete; an unconditional
+		// `DELETE ... WHERE request_id = $1` would remove that fresh row
+		// instead of the stale one we actually observed.
+		_ = s.deleteExpiredSession(requestID, expiresAt)
 		return data, ErrSessionNotFound
 	}
 
@@ -119,7 +125,9 @@ func (s *DBService) GetSession(requestID string) (models.SessionData, error) {
 	return data, nil
 }
 
-// DeleteSession removes a session from the database.
+// DeleteSession removes a session from the database. Used when a caller
+// already holds the session's identity (the auth flow completed or failed)
+// and unconditionally wants that request_id's row gone.
 func (s *DBService) DeleteSession(requestID string) error {
 	if s.db == nil {
 		return nil
@@ -130,5 +138,24 @@ func (s *DBService) DeleteSession(requestID string) error {
 		return s.logger.Errorf("failed to delete session: %v", err)
 	}
 	s.logger.Debug("Session %s deleted successfully.", requestID)
+	return nil
+}
+
+// deleteExpiredSession removes a session row only if its expires_at still
+// matches expiresAt, the value GetSession just read as expired. This closes a
+// race where a concurrent SaveSession upserts a fresh row for the same
+// request_id between GetSession's read and this delete: an unconditional
+// delete by request_id alone could remove that fresh row instead of the
+// stale one actually observed.
+func (s *DBService) deleteExpiredSession(requestID string, expiresAt time.Time) error {
+	if s.db == nil {
+		return nil
+	}
+	query := `DELETE FROM sftpgo_auth_sessions WHERE request_id = $1 AND expires_at = $2`
+	_, err := s.db.Exec(query, requestID, expiresAt)
+	if err != nil {
+		return s.logger.Errorf("failed to delete expired session: %v", err)
+	}
+	s.logger.Debug("Expired session %s deleted successfully.", requestID)
 	return nil
 }

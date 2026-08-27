@@ -29,27 +29,27 @@ func TestSanitizeUsername(t *testing.T) {
 		{
 			name:     "Email with @ and dot",
 			username: "user@example.com",
-			want:     "user_example_com",
+			want:     "user_40example_2ecom",
 		},
 		{
 			name:     "Email with subdomain",
 			username: "john.doe@mail.example.com",
-			want:     "john_doe_mail_example_com",
+			want:     "john_2edoe_40mail_2eexample_2ecom",
 		},
 		{
 			name:     "Username with forward slash",
 			username: "DEFAULT/user@example.com",
-			want:     "DEFAULT_user_example_com",
+			want:     "DEFAULT_2fuser_40example_2ecom",
 		},
 		{
 			name:     "Username with plus",
 			username: "user+tag@example.com",
-			want:     "user_tag_example_com",
+			want:     "user_2btag_40example_2ecom",
 		},
 		{
-			name:     "Already sanitized",
+			name:     "Literal underscore is escaped too (it is the escape marker)",
 			username: "user_example_com",
-			want:     "user_example_com",
+			want:     "user_5fexample_5fcom",
 		},
 		{
 			name:     "Empty string",
@@ -59,7 +59,12 @@ func TestSanitizeUsername(t *testing.T) {
 		{
 			name:     "Multiple special chars",
 			username: "user@name.with+slash/test",
-			want:     "user_name_with_slash_test",
+			want:     "user_40name_2ewith_2bslash_2ftest",
+		},
+		{
+			name:     "Hyphen passes through unescaped",
+			username: "user-name",
+			want:     "user-name",
 		},
 	}
 
@@ -70,6 +75,28 @@ func TestSanitizeUsername(t *testing.T) {
 				t.Errorf("SanitizeUsername(%q) = %q, want %q", tt.username, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestSanitizeUsername_NoCollision proves fix #9: two distinct valid usernames
+// that collided under the old lossy substitution ("a.b@example.com" and
+// "a_b@example.com" both sanitized to "a_b@example.com") now sanitize to
+// different strings, since a literal '_' is itself escaped.
+func TestSanitizeUsername_NoCollision(t *testing.T) {
+	inputs := []string{
+		"a.b@example.com",
+		"a_b@example.com",
+		"a/b@example.com",
+		"a+b@example.com",
+	}
+
+	seen := make(map[string]string, len(inputs))
+	for _, in := range inputs {
+		out := SanitizeUsername(in)
+		if prior, ok := seen[out]; ok {
+			t.Errorf("collision: SanitizeUsername(%q) and SanitizeUsername(%q) both produced %q", prior, in, out)
+		}
+		seen[out] = in
 	}
 }
 
@@ -215,6 +242,18 @@ func TestValidateFolderName(t *testing.T) {
 		{
 			name:       "Folder with trailing slash",
 			folderName: "folder/",
+			wantError:  true,
+		},
+		{
+			// filepath.Join(basePath, ".") resolves to basePath itself, so a
+			// bare "." must be rejected explicitly, not just ".." and slashes.
+			name:       "Single dot",
+			folderName: ".",
+			wantError:  true,
+		},
+		{
+			name:       "Double dot",
+			folderName: "..",
 			wantError:  true,
 		},
 	}

@@ -109,8 +109,13 @@ func (s *IdPService) GetAsgardeoUser(username string) (*models.AsgardeoUser, err
 	if !strings.Contains(username, "/") {
 		asgUser = "DEFAULT/" + username
 	}
-	// Security: Escape quotes in username to prevent SCIM filter injection
-	safeUsername := strings.ReplaceAll(asgUser, `"`, `\"`)
+	// Security: escape backslashes before quotes to prevent SCIM filter injection.
+	// A username containing a literal `\"` would otherwise let the quote-escaping
+	// pass appear as an already-escaped quote, terminating the SCIM string
+	// literal early. Backslashes must be escaped first so the quote-escaping
+	// step below cannot be neutralized by attacker-controlled backslashes.
+	safeUsername := strings.ReplaceAll(asgUser, `\`, `\\`)
+	safeUsername = strings.ReplaceAll(safeUsername, `"`, `\"`)
 	filter := fmt.Sprintf(`userName eq "%s"`, safeUsername)
 	params := url.Values{}
 	params.Set("filter", filter)

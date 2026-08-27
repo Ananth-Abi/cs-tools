@@ -50,9 +50,47 @@ func init() {
 	_ = InitEmailRegex("")
 }
 
-// SanitizeUsername replaces special characters in a username with underscores.
+// usernameEscape is the marker byte SanitizeUsername uses to introduce an
+// escape sequence. It is deliberately excluded from isSafeUsernameByte so
+// that a literal occurrence of it is always escaped too -- see SanitizeUsername.
+const usernameEscape = '_'
+
+// SanitizeUsername converts u into a string containing only ASCII letters,
+// digits, and hyphens, safe to use as a single filesystem path segment (an
+// SFTPGo HomeDir).
+//
+// Every byte that is not in that safe set -- including a literal usernameEscape
+// byte itself -- is replaced with a 3-character escape sequence: usernameEscape
+// followed by the two lowercase hex digits of the byte's value (e.g. "@"
+// becomes "_40"). Because the escape marker is always escaped when it occurs
+// literally, every usernameEscape byte in the output is guaranteed to begin
+// an escape sequence, never a passed-through literal. That makes the mapping
+// injective: no two distinct inputs can ever sanitize to the same output.
+//
+// The previous implementation replaced every disallowed character with a
+// fixed placeholder ('_'), which was lossy: "a.b@example.com" and
+// "a_b@example.com" both sanitized to "a_b@example.com", so two distinct,
+// valid usernames could be granted the same HomeDir (a real IDOR risk). This
+// encoding closes that.
 func SanitizeUsername(u string) string {
-	return strings.NewReplacer("@", "_", ".", "_", "/", "_", "+", "_").Replace(u)
+	var b strings.Builder
+	b.Grow(len(u))
+	for i := 0; i < len(u); i++ {
+		c := u[i]
+		if isSafeUsernameByte(c) {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "%c%02x", usernameEscape, c)
+		}
+	}
+	return b.String()
+}
+
+// isSafeUsernameByte reports whether c may appear unescaped in a sanitized
+// username. usernameEscape itself is intentionally excluded so it always
+// signals the start of an escape sequence.
+func isSafeUsernameByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-'
 }
 
 // IsLikelyEmail checks if a string broadly resembles an email address.
@@ -75,6 +113,11 @@ func IsInternalUser(username, suffix string) bool {
 func ValidateFolderName(name string) error {
 	if name == "" {
 		return io.ErrShortBuffer // Reusing generic error for empty
+	}
+	// "." resolves via filepath.Join(basePath, ".") to basePath itself, so it
+	// must be rejected explicitly alongside ".." and path separators.
+	if name == "." || name == ".." {
+		return fmt.Errorf("invalid folder name '%s': must not be '.' or '..'", name)
 	}
 	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return fmt.Errorf("invalid folder name '%s': contains illegal characters (.., /, or \\)", name)

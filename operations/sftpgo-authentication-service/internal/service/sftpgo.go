@@ -214,12 +214,30 @@ func (s *SFTPGoService) createFolder(name, token string) error {
 		return s.logger.Errorf("failed to send SFTPGo folder creation request for '%s': %v", name, err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return s.logger.Errorf("SFTPGo folder creation failed for '%s': status %d, body: %s", name, resp.StatusCode, body)
+
+	if resp.StatusCode == http.StatusCreated {
+		s.logger.Debug("Successfully created SFTPGo folder '%s'.", name)
+		return nil
 	}
-	s.logger.Debug("Successfully created SFTPGo folder '%s'.", name)
-	return nil
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusBadRequest {
+		// Two concurrent pre-login requests can both observe the folder as
+		// missing (checkFolderExists) and race to create it; SFTPGo returns
+		// 400 for the loser, since a folder with that name already exists.
+		// A 400 is also SFTPGo's response for other validation errors, so we
+		// must not blanket-treat every 400 as success -- re-confirm the
+		// folder actually exists before doing so.
+		exists, checkErr := s.checkFolderExists(name, token)
+		if checkErr == nil && exists {
+			s.logger.Debug("SFTPGo folder '%s' already exists (concurrent creation), treating as success.", name)
+			return nil
+		}
+		return s.logger.Errorf("SFTPGo folder creation failed for '%s': status %d, body: %s (folder still does not exist after re-check: %v)", name, resp.StatusCode, body, checkErr)
+	}
+
+	return s.logger.Errorf("SFTPGo folder creation failed for '%s': status %d, body: %s", name, resp.StatusCode, body)
 }
 
 // sanitizeUsername is a helper function specific to this service's needs.

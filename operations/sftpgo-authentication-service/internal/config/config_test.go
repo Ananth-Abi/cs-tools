@@ -17,32 +17,39 @@
 package config
 
 import (
-	"os"
-	"strings"
 	"testing"
 )
 
-func TestLoad_Success(t *testing.T) {
-	// Setup environment variables
-	os.Setenv("INTERNAL_CLIENT_ID", "test_client_id")
-	os.Setenv("INTERNAL_CLIENT_SECRET", "test_client_secret")
-	os.Setenv("OAUTH_CALLBACK_URL", "http://localhost/callback")
-	os.Setenv("INTERNAL_IDP_BASE_PATH", "http://idp.example.com")
-	os.Setenv("SUBSCRIPTION_API", "http://sub.example.com")
-	os.Setenv("PROJECT_API", "http://proj.example.com")
-	os.Setenv("SFTPGO_API_BASE", "http://sftpgo.example.com")
-	os.Setenv("ADMIN_USER", "admin")
-	os.Setenv("ADMIN_KEY", "secret")
-	os.Setenv("FOLDER_PATH", "/tmp/sftpgo")
-	os.Setenv("DIR_PATH", "/tmp/data")
-	os.Setenv("CHECK_ROLE", "internal")
-	os.Setenv("SCIM_SCOPE", "scope")
-	os.Setenv("DB_CONN_STRING", "db_conn")
-	os.Setenv("HTTP_TIMEOUT", "20")
-	os.Setenv("HOOK_API_KEY", "test_hook_key")
-	os.Setenv("BASIC_AUTHENTICATOR_ID", "QmFzaWNBdXRoZW50aWNhdG9yOkxPQ0FM")
+// setAllCriticalEnvVars sets every critical environment variable Load()
+// requires to succeed, using t.Setenv so each is automatically restored when
+// the test (or subtest) ends. Individual tests override or unset specific
+// variables afterwards to exercise a single missing/invalid case at a time.
+func setAllCriticalEnvVars(t *testing.T) {
+	t.Helper()
 
-	defer os.Clearenv()
+	t.Setenv("INTERNAL_CLIENT_ID", "test_client_id")
+	t.Setenv("INTERNAL_CLIENT_SECRET", "test_client_secret")
+	t.Setenv("OAUTH_CALLBACK_URL", "http://localhost/callback")
+	t.Setenv("INTERNAL_IDP_BASE_PATH", "http://idp.example.com")
+	t.Setenv("SUBSCRIPTION_API", "http://sub.example.com")
+	t.Setenv("PROJECT_API", "http://proj.example.com")
+	// SFTPGO_API_BASE must be HTTPS (fix #7): the admin API bearer token is
+	// sent on every request to it, so an HTTP endpoint would leak it.
+	t.Setenv("SFTPGO_API_BASE", "https://sftpgo.example.com")
+	t.Setenv("ADMIN_USER", "admin")
+	t.Setenv("ADMIN_KEY", "secret")
+	t.Setenv("FOLDER_PATH", "/tmp/sftpgo")
+	t.Setenv("DIR_PATH", "/tmp/data")
+	t.Setenv("CHECK_ROLE", "internal")
+	t.Setenv("SCIM_SCOPE", "scope")
+	t.Setenv("DB_CONN_STRING", "db_conn")
+	t.Setenv("BASIC_AUTHENTICATOR_ID", "QmFzaWNBdXRoZW50aWNhdG9yOkxPQ0FM")
+}
+
+func TestLoad_Success(t *testing.T) {
+	setAllCriticalEnvVars(t)
+	t.Setenv("HTTP_TIMEOUT", "20")
+	t.Setenv("HOOK_API_KEY", "test_hook_key")
 
 	cfg, err := Load()
 	if err != nil {
@@ -59,28 +66,16 @@ func TestLoad_Success(t *testing.T) {
 	if cfg.HTTPTimeout != 20 {
 		t.Errorf("Expected HTTPTimeout 20, got %d", cfg.HTTPTimeout)
 	}
-	if cfg.AdminTokenEndPoint != "http://sftpgo.example.com/token" {
-		t.Errorf("Expected AdminTokenEP 'http://sftpgo.example.com/token', got '%s'", cfg.AdminTokenEndPoint)
+	if cfg.AdminTokenEndPoint != "https://sftpgo.example.com/token" {
+		t.Errorf("Expected AdminTokenEP 'https://sftpgo.example.com/token', got '%s'", cfg.AdminTokenEndPoint)
 	}
 }
 
 func TestLoad_MissingCritical(t *testing.T) {
-	// Snapshot current environment
-	oldEnv := os.Environ()
-	defer func() {
-		// Restore environment
-		os.Clearenv()
-		for _, e := range oldEnv {
-			parts := strings.SplitN(e, "=", 2)
-			if len(parts) == 2 {
-				os.Setenv(parts[0], parts[1])
-			}
-		}
-	}()
-
-	os.Clearenv()
-	// Only set one, missing others
-	os.Setenv("INTERNAL_CLIENT_ID", "test_client_id")
+	// Only INTERNAL_CLIENT_ID is set; every other critical variable is
+	// missing, so Load() must fail. t.Setenv restores the environment
+	// automatically at the end of the test.
+	t.Setenv("INTERNAL_CLIENT_ID", "test_client_id")
 
 	_, err := Load()
 	if err == nil {
@@ -89,28 +84,7 @@ func TestLoad_MissingCritical(t *testing.T) {
 }
 
 func TestLoad_Defaults(t *testing.T) {
-	// Setup minimal critical variables
-	os.Setenv("INTERNAL_CLIENT_ID", "test_client_id")
-	os.Setenv("INTERNAL_CLIENT_SECRET", "test_client_secret")
-	os.Setenv("OAUTH_CALLBACK_URL", "u")
-	os.Setenv("INTERNAL_IDP_BASE_PATH", "u")
-	os.Setenv("SUBSCRIPTION_API", "u")
-	os.Setenv("PROJECT_API", "u")
-	os.Setenv("SFTPGO_API_BASE", "u")
-	os.Setenv("ADMIN_USER", "u")
-	os.Setenv("ADMIN_KEY", "u")
-	os.Setenv("FOLDER_PATH", "u")
-	os.Setenv("DIR_PATH", "u")
-	os.Setenv("CHECK_ROLE", "u")
-	os.Setenv("SCIM_SCOPE", "u")
-	os.Setenv("DB_CONN_STRING", "u")
-	os.Setenv("BASIC_AUTHENTICATOR_ID", "u")
-
-	// Unset optional ones that have defaults
-	os.Unsetenv("PORT")
-	os.Unsetenv("HTTP_TIMEOUT")
-
-	defer os.Clearenv()
+	setAllCriticalEnvVars(t)
 
 	cfg, err := Load()
 	if err != nil {
@@ -126,26 +100,58 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_InvalidLogLevel(t *testing.T) {
-	os.Setenv("INTERNAL_CLIENT_ID", "test_client_id")
-	os.Setenv("INTERNAL_CLIENT_SECRET", "test_client_secret")
-	os.Setenv("OAUTH_CALLBACK_URL", "u")
-	os.Setenv("INTERNAL_IDP_BASE_PATH", "u")
-	os.Setenv("SUBSCRIPTION_API", "u")
-	os.Setenv("PROJECT_API", "u")
-	os.Setenv("SFTPGO_API_BASE", "u")
-	os.Setenv("ADMIN_USER", "u")
-	os.Setenv("ADMIN_KEY", "u")
-	os.Setenv("FOLDER_PATH", "u")
-	os.Setenv("DIR_PATH", "u")
-	os.Setenv("CHECK_ROLE", "u")
-	os.Setenv("SCIM_SCOPE", "u")
-	os.Setenv("DB_CONN_STRING", "u")
-	os.Setenv("BASIC_AUTHENTICATOR_ID", "u")
-	os.Setenv("LOG_LEVEL", "INVALID")
-	defer os.Clearenv()
+	setAllCriticalEnvVars(t)
+	t.Setenv("LOG_LEVEL", "INVALID")
 
 	_, err := Load()
 	if err == nil {
 		t.Fatal("Expected error for invalid LOG_LEVEL, got nil")
 	}
 }
+
+// TestLoad_RejectsNonHTTPSJWKSEndpoint proves fix #1: AUTH_JWKS_ENDPOINT must
+// be HTTPS when configured (the default HTTP client follows redirects, and an
+// HTTP JWKS endpoint is a man-in-the-middle risk for the keys that establish
+// trust for the external-auth-hook path).
+func TestLoad_RejectsNonHTTPSJWKSEndpoint(t *testing.T) {
+	setAllCriticalEnvVars(t)
+	t.Setenv("AUTH_JWKS_ENDPOINT", "http://idp.example.com/jwks")
+	t.Setenv("AUTH_ISSUER", "https://idp.example.com/oauth2/token")
+	t.Setenv("AUTH_AUDIENCE", "test-audience")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Expected error for non-HTTPS AUTH_JWKS_ENDPOINT, got nil")
+	}
+}
+
+// TestLoad_AllowsHTTPSJWKSEndpoint proves the HTTPS check does not reject a
+// correctly-configured HTTPS endpoint.
+func TestLoad_AllowsHTTPSJWKSEndpoint(t *testing.T) {
+	setAllCriticalEnvVars(t)
+	t.Setenv("AUTH_JWKS_ENDPOINT", "https://idp.example.com/jwks")
+	t.Setenv("AUTH_ISSUER", "https://idp.example.com/oauth2/token")
+	t.Setenv("AUTH_AUDIENCE", "test-audience")
+
+	if _, err := Load(); err != nil {
+		t.Fatalf("Expected no error for HTTPS AUTH_JWKS_ENDPOINT, got %v", err)
+	}
+}
+
+// TestLoad_RejectsNonHTTPSSFTPGoAPIBase proves fix #7: SFTPGO_API_BASE must be
+// HTTPS, since the admin API bearer token is sent on every request to it.
+func TestLoad_RejectsNonHTTPSSFTPGoAPIBase(t *testing.T) {
+	setAllCriticalEnvVars(t)
+	t.Setenv("SFTPGO_API_BASE", "http://sftpgo.example.com")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Expected error for non-HTTPS SFTPGO_API_BASE, got nil")
+	}
+}
+
+// Fix #11 (empty AUTH_AUDIENCE must not silently accept any audience) is
+// enforced in service.NewJWTAuthService rather than here: like a JWKS-fetch
+// failure, a misconfigured external-auth-hook must disable that hook and keep
+// the pre-login/keyboard-interactive hooks running, not crash the whole
+// service. See internal/service/jwtauth_test.go for that coverage.

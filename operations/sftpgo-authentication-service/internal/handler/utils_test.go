@@ -43,8 +43,10 @@ func TestValidateUsername(t *testing.T) {
 }
 
 func TestSanitizeUsername(t *testing.T) {
+	// @ and . are hex-escaped (fix #9: injective encoding, see
+	// util.SanitizeUsername), not replaced with a lossy fixed placeholder.
 	input := "user@email.com"
-	expected := "user_email_com" // Both @ and . are replaced with _
+	expected := "user_40email_2ecom"
 
 	got := sanitizeUsername(input)
 	if got != expected {

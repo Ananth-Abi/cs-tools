@@ -17,8 +17,12 @@
 package service
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/util"
 )
 
@@ -87,5 +91,67 @@ func TestValidateFolderName(t *testing.T) {
 				t.Errorf("util.ValidateFolderName(%q) error = %v, wantError %v", tt.folderName, err, tt.wantError)
 			}
 		})
+	}
+}
+
+// TestCreateFolder_ConcurrentCreation_TreatedAsSuccess proves fix #6: when
+// SFTPGo responds 400 to a folder-creation request because a concurrent
+// pre-login request already created it, createFolder must treat that as
+// success after re-confirming the folder actually exists.
+func TestCreateFolder_ConcurrentCreation_TreatedAsSuccess(t *testing.T) {
+	var folderCheckCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/folders":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error": "folder already exists"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/folders/proj1":
+			folderCheckCalls++
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		SFTPGoFoldersEndPoint: server.URL + "/folders",
+	}
+	s := NewSFTPGoService(cfg, log.NewAppLogger("ERROR"))
+
+	if err := s.createFolder("proj1", "test-token"); err != nil {
+		t.Fatalf("expected createFolder to treat a 400-because-it-already-exists as success, got error: %v", err)
+	}
+	if folderCheckCalls != 1 {
+		t.Errorf("expected createFolder to re-check folder existence exactly once, got %d calls", folderCheckCalls)
+	}
+}
+
+// TestCreateFolder_OtherValidationError_NotTreatedAsSuccess proves the fix
+// does not blanket-treat every 400 as success: if the folder still does not
+// exist after the re-check, the original validation error must surface.
+func TestCreateFolder_OtherValidationError_NotTreatedAsSuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/folders":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error": "invalid mapped_path"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/folders/proj1":
+			// The folder genuinely does not exist: this 400 was a real
+			// validation error, not a concurrent-creation race.
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := &config.Config{
+		SFTPGoFoldersEndPoint: server.URL + "/folders",
+	}
+	s := NewSFTPGoService(cfg, log.NewAppLogger("ERROR"))
+
+	if err := s.createFolder("proj1", "test-token"); err == nil {
+		t.Fatal("expected createFolder to return an error for a genuine validation failure, got nil")
 	}
 }

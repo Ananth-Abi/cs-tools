@@ -35,11 +35,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/httpclient"
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
 )
 
@@ -83,12 +85,40 @@ func NewJWTAuthService(cfg *config.Config, logger *log.AppLogger) (*JWTAuthServi
 	if cfg.AuthIssuer == "" {
 		return nil, fmt.Errorf("AUTH_ISSUER is not configured")
 	}
+	// Fix #11: an empty AUTH_AUDIENCE would otherwise make ValidateAndExtract
+	// skip audience validation entirely (see the `if len(s.cfg.AuthAudiences) >
+	// 0` guard below), accepting any valid token from the trusted issuer
+	// regardless of its intended audience. Reject that at construction time
+	// instead of silently allowing all audiences. This is treated the same as
+	// a JWKS-fetch failure: the caller (main.go) disables the external-auth-hook
+	// path and keeps the pre-login/keyboard-interactive hooks running, rather
+	// than crashing the whole service over a misconfiguration of a path those
+	// hooks don't use.
+	if len(cfg.AuthAudiences) == 0 {
+		return nil, fmt.Errorf("AUTH_AUDIENCE is not configured: at least one accepted audience is required when AUTH_JWKS_ENDPOINT/AUTH_ISSUER are set")
+	}
 
 	svc := &JWTAuthService{cfg: cfg, logger: logger}
 
 	if cfg.AuthTokenValidatorEnabled {
-		client := &http.Client{Transport: &x5cStrippingTransport{base: http.DefaultTransport}}
-		jwks, err := keyfunc.NewDefaultOverrideCtx(context.Background(), []string{cfg.AuthJWKSEndpoint}, keyfunc.Override{Client: client})
+		// CheckRedirect refuses a redirect to a non-HTTPS destination (see
+		// httpclient.RefuseInsecureRedirect): this client's response is used
+		// as-is to establish cryptographic trust for the external-auth-hook
+		// path, so a downgraded, MITM-able HTTP fetch of the JWKS document
+		// must never be silently followed.
+		client := &http.Client{
+			Transport:     &x5cStrippingTransport{base: http.DefaultTransport},
+			Timeout:       time.Duration(cfg.HTTPTimeout) * time.Second,
+			CheckRedirect: httpclient.RefuseInsecureRedirect,
+		}
+		// Override.HTTPTimeout governs jwkset's synchronous initial JWKS fetch
+		// during this call; left unset, jwkset defaults to 60s regardless of
+		// this service's own HTTP_TIMEOUT (default 15s), which could block
+		// startup for a minute if the endpoint stalls.
+		jwks, err := keyfunc.NewDefaultOverrideCtx(context.Background(), []string{cfg.AuthJWKSEndpoint}, keyfunc.Override{
+			Client:      client,
+			HTTPTimeout: time.Duration(cfg.HTTPTimeout) * time.Second,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("initialise JWKS from %s: %w", cfg.AuthJWKSEndpoint, err)
 		}

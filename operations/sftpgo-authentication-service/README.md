@@ -20,7 +20,7 @@ This project provides a secure, individual-account-based authentication and prov
 
 ## Architecture
 
-```
+```text
 ┌─────────────┐         ┌──────────────────┐         ┌─────────────────┐
 │   SFTPGo    │────────▶│  Auth Service    │────────▶│   Asgardeo      │
 │   Server    │◀────────│  (This Service)  │◀────────│   (Internal)    │
@@ -38,7 +38,7 @@ This project provides a secure, individual-account-based authentication and prov
 
 ## Project Structure
 
-```
+```text
 .
 ├── cmd/server/main.go              # Application entry point
 ├── internal/

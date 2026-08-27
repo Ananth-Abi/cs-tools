@@ -51,40 +51,68 @@ func NewSubscriptionService(cfg *config.Config, logger *log.AppLogger) *Subscrip
 	}
 }
 
-// GetUserFolderList retrieves a custom folder list for a user.
-func (s *SubscriptionService) GetUserFolderList(username string) []string {
+// FolderLookupStatus distinguishes why GetUserFolderList returned the folder
+// list it did, since an empty/nil list is ambiguous on its own: it can mean
+// "this is a legitimate customer with no project-specific folders yet",
+// "this user was explicitly denied", or "the lookup itself failed". Callers
+// must only apply a broader fallback (e.g. SFTPFolders) for
+// FolderLookupAuthorized; an explicit denial or a failed lookup must never be
+// treated the same as "nothing case-specific to show".
+type FolderLookupStatus int
+
+const (
+	// FolderLookupAuthorized means the subscription API confirmed the user is
+	// a valid customer. Folders may still be empty (a legitimate customer
+	// with no project-specific folders provisioned yet) -- that is the only
+	// state in which a broader fallback folder list is safe to apply.
+	FolderLookupAuthorized FolderLookupStatus = iota
+	// FolderLookupDenied means the subscription API explicitly reported the
+	// user is not a valid customer. Must not receive any fallback folders.
+	FolderLookupDenied
+	// FolderLookupFailed means the lookup itself could not be completed
+	// (request construction error, network/timeout error, non-2xx response,
+	// or an undecodable body) -- this says nothing about the user's actual
+	// entitlement and must not receive any fallback folders either.
+	FolderLookupFailed
+)
+
+// GetUserFolderList retrieves a custom folder list for a user, along with a
+// FolderLookupStatus explaining why. See FolderLookupStatus for why the
+// distinction matters: a subscription-lookup failure and an explicit denial
+// must never grant the same access as "nothing project-specific to show".
+func (s *SubscriptionService) GetUserFolderList(username string) ([]string, FolderLookupStatus) {
 	s.logger.Debug("Attempting to retrieve custom folder list for user: %s", username)
 	apiURL := fmt.Sprintf(s.cfg.SubscriptionAPI, url.QueryEscape(username))
 
 	req, err := http.NewRequest(http.MethodGet, apiURL, nil)
 	if err != nil {
 		s.logger.Error("Folder list request creation error for user %s: %v", username, err)
-		return nil
+		return nil, FolderLookupFailed
 	}
 	req.Header.Set(constants.HeaderAccept, constants.MIMEApplicationJSON)
 
 	resp, err := s.client.Do(req)
 	if err != nil {
 		s.logger.Error("Failed to send folder list request for user %s: %v", username, err)
-		return nil
+		return nil, FolderLookupFailed
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		s.logger.Warn("Folder list API for user %s returned status %d, body: %s", username, resp.StatusCode, body)
-		return nil
+		return nil, FolderLookupFailed
 	}
 
 	var folderResp models.FolderResponse
 	if err := json.NewDecoder(resp.Body).Decode(&folderResp); err != nil {
 		s.logger.Error("Failed to decode custom folder list for user %s: %v", username, err)
-		return nil
+		return nil, FolderLookupFailed
 	}
 
 	if !folderResp.IsValidCustomer {
 		s.logger.Debug("User %s is not a valid customer. No project keys returned.", username)
-		return nil
+		return nil, FolderLookupDenied
 	}
 
 	var lowercaseKeys []string
@@ -93,7 +121,7 @@ func (s *SubscriptionService) GetUserFolderList(username string) []string {
 	}
 
 	s.logger.Debug("Successfully retrieved %d custom folders for user %s.", len(lowercaseKeys), username)
-	return lowercaseKeys
+	return lowercaseKeys, FolderLookupAuthorized
 }
 
 // IsValidProjectKey checks if the provided project key is valid.

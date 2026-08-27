@@ -17,8 +17,7 @@
 package httpclient
 
 import (
-	"bytes"
-	"io"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -56,56 +55,31 @@ func (t *LoggingTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 }
 
 // logRequest logs the standard details of an outgoing HTTP request.
+//
+// Request/response bodies are deliberately never logged, even at TRACE: this
+// client also carries IdPService.PostToAuthnEndpoint, whose request bodies
+// include keyboard-interactive answers -- which can be the user's password.
+// There is no generic, safe way to redact "the sensitive field" from an
+// arbitrary JSON payload here, so the body is not logged at all rather than
+// risk leaking credentials into logs. Headers are still logged at TRACE
+// (with Authorization redacted by sanitizeHeaders).
 func (t *LoggingTransport) logRequest(req *http.Request) {
 	t.Logger.Debug("OUTGOING REQUEST: method=%s url=%s", req.Method, req.URL.String())
 
 	if t.Logger.IsTraceEnabled() {
 		t.Logger.Trace("OUTGOING REQUEST HEADERS: %v", sanitizeHeaders(req.Header))
-
-		if req.Body != nil {
-			const logLimit = 10240
-			prefix := make([]byte, logLimit)
-			n, err := io.ReadFull(req.Body, prefix)
-
-			switch {
-			case err == io.EOF || err == io.ErrUnexpectedEOF:
-				t.Logger.Trace("OUTGOING REQUEST BODY: %s", string(prefix[:n]))
-				req.Body = io.NopCloser(bytes.NewReader(prefix[:n]))
-			case err == nil:
-				t.Logger.Trace("OUTGOING REQUEST BODY (truncated, showing first %d bytes): %s", logLimit, string(prefix))
-				req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), req.Body))
-			default:
-				t.Logger.Trace("OUTGOING REQUEST BODY (partial read, error: %v): %s", err, string(prefix[:n]))
-				req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix[:n]), req.Body))
-			}
-		}
 	}
 }
 
 // logResponse logs the details of an incoming HTTP response, including duration.
+//
+// As with logRequest, the response body is never logged -- see logRequest's
+// comment for why.
 func (t *LoggingTransport) logResponse(resp *http.Response, duration time.Duration) {
 	t.Logger.Debug("INCOMING RESPONSE: status=%s duration=%v", resp.Status, duration)
 
 	if t.Logger.IsTraceEnabled() {
 		t.Logger.Trace("INCOMING RESPONSE HEADERS: %v", sanitizeHeaders(resp.Header))
-
-		if resp.Body != nil {
-			const logLimit = 10240
-			prefix := make([]byte, logLimit)
-			n, err := io.ReadFull(resp.Body, prefix)
-
-			switch {
-			case err == io.EOF || err == io.ErrUnexpectedEOF:
-				t.Logger.Trace("INCOMING RESPONSE BODY: %s", string(prefix[:n]))
-				resp.Body = io.NopCloser(bytes.NewReader(prefix[:n]))
-			case err == nil:
-				t.Logger.Trace("INCOMING RESPONSE BODY (truncated, showing first %d bytes): %s", logLimit, string(prefix))
-				resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), resp.Body))
-			default:
-				t.Logger.Trace("INCOMING RESPONSE BODY (partial read, error: %v): %s", err, string(prefix[:n]))
-				resp.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix[:n]), resp.Body))
-			}
-		}
 	}
 }
 
@@ -118,7 +92,9 @@ func sanitizeHeaders(h http.Header) http.Header {
 	return sanitized
 }
 
-// NewLoggingClient returns an http.Client configured with the LoggingTransport.
+// NewLoggingClient returns an http.Client configured with the LoggingTransport
+// and RefuseInsecureRedirect, so no outgoing call this service makes can be
+// redirected to a non-HTTPS destination.
 func NewLoggingClient(timeout time.Duration, logger *log.AppLogger) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
@@ -126,5 +102,24 @@ func NewLoggingClient(timeout time.Duration, logger *log.AppLogger) *http.Client
 			Transport: http.DefaultTransport,
 			Logger:    logger,
 		},
+		CheckRedirect: RefuseInsecureRedirect,
 	}
+}
+
+// RefuseInsecureRedirect is an http.Client CheckRedirect function that aborts
+// any redirect whose destination is not HTTPS.
+//
+// Go's default redirect handling only strips sensitive headers (Authorization,
+// Cookie, etc.) when a redirect crosses to a different host; a same-host
+// HTTPS -> HTTP downgrade keeps those headers intact. Every client this
+// service builds carries a bearer token or admin credential in its
+// Authorization header (the SFTPGo admin API client, the JWKS-fetching
+// client, the IdP client), so an attacker-controlled or misconfigured
+// same-host redirect to plain HTTP would otherwise leak that credential in
+// cleartext. Use this on every http.Client this service constructs.
+func RefuseInsecureRedirect(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("refusing redirect to non-HTTPS URL: %s", req.URL)
+	}
+	return nil
 }

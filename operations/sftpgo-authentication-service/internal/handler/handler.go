@@ -172,6 +172,14 @@ func (h *Handler) PreLoginHook(w http.ResponseWriter, r *http.Request) {
 
 	perms["/"] = []string{PermissionList}
 	folders := []string{}
+	// allowSFTPFoldersFallback gates the asgUser.CustomUserExtension.SFTPFolders
+	// fallback below. It defaults to true (the internal-user branch's
+	// pre-existing, unconditional behavior) and is only turned off for an
+	// external user whose subscription lookup was explicitly denied or
+	// outright failed -- see the FolderLookupStatus handling below for why
+	// those two must not receive the same fallback as "legitimate customer,
+	// nothing project-specific to show".
+	allowSFTPFoldersFallback := true
 	if isInternalRole {
 		h.logger.Debug("User '%s' identified as internal user. Checking provided project key.", u.Username)
 		if providedProjectKey != "" {
@@ -188,9 +196,24 @@ func (h *Handler) PreLoginHook(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		h.logger.Debug("User '%s' identified as external user. Checking subscription folders.", u.Username)
-		folders = h.subscription.GetUserFolderList(u.Username)
+		var folderStatus service.FolderLookupStatus
+		folders, folderStatus = h.subscription.GetUserFolderList(u.Username)
+
+		switch folderStatus {
+		case service.FolderLookupDenied:
+			h.logger.Debug("User '%s' was explicitly denied by the subscription API. Not applying the SFTPFolders fallback.", u.Username)
+			allowSFTPFoldersFallback = false
+		case service.FolderLookupFailed:
+			h.logger.Warn("Subscription lookup failed for user '%s'. Not applying the SFTPFolders fallback (a lookup failure must not grant the same access as a legitimate no-projects-yet customer).", u.Username)
+			allowSFTPFoldersFallback = false
+		case service.FolderLookupAuthorized:
+			// The only state in which the fallback below is safe: the
+			// subscription API confirmed this is a legitimate customer, it
+			// just has no project-specific folders yet.
+		}
 	}
-	if len(folders) == 0 && asgUser.CustomUserExtension.SFTPFolders != "" {
+
+	if allowSFTPFoldersFallback && len(folders) == 0 && asgUser.CustomUserExtension.SFTPFolders != "" {
 		folders = strings.Split(strings.ToLower(asgUser.CustomUserExtension.SFTPFolders), ",")
 		h.logger.Debug("User '%s' has custom folders: %v", u.Username, folders)
 	}

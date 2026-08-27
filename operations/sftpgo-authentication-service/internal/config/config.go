@@ -18,6 +18,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -275,6 +276,23 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
+// requireHTTPS returns an error if value is set and is not a well-formed
+// https:// URL. An empty value is not an error here; callers are responsible
+// for enforcing presence separately (via the critical-variable check).
+func requireHTTPS(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("%s: invalid URL %q: %w", name, value, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("%s must use https (got %q)", name, value)
+	}
+	return nil
+}
+
 // validateEnvVars checks if all critical environment variables are set.
 func validateEnvVars(cfg *Config) error {
 	envVars := []EnvVar{
@@ -331,6 +349,21 @@ func validateEnvVars(cfg *Config) error {
 
 	if len(missingCriticalVars) > 0 {
 		return fmt.Errorf("missing critical environment variables: %s", strings.Join(missingCriticalVars, ", "))
+	}
+
+	// SFTPGO_API_BASE carries the SFTPGo admin bearer token on every request,
+	// and the default HTTP client follows redirects (see
+	// httpclient.RefuseInsecureRedirect for the corresponding per-request
+	// guard). Requiring HTTPS here closes the config-time half of that gap.
+	if err := requireHTTPS("SFTPGO_API_BASE", cfg.SFTPGoBasePath); err != nil {
+		return err
+	}
+	// AUTH_JWKS_ENDPOINT establishes cryptographic trust for the
+	// external-auth-hook path; it is optional (deployments that only use the
+	// pre-login/keyboard-interactive hooks don't set it), but when it is set
+	// it must be HTTPS.
+	if err := requireHTTPS("AUTH_JWKS_ENDPOINT", cfg.AuthJWKSEndpoint); err != nil {
+		return err
 	}
 
 	if cfg.LogLevel != "" {

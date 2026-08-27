@@ -177,3 +177,74 @@ func TestValidateAndExtract_NoneAlgorithm_Rejected(t *testing.T) {
 		t.Fatal("expected none-algorithm token to be rejected, got no error")
 	}
 }
+
+// TestNewJWTAuthService_RejectsEmptyAudience proves fix #11: constructing a
+// JWTAuthService with AUTH_JWKS_ENDPOINT/AUTH_ISSUER set but no
+// AUTH_AUDIENCE must fail, rather than silently accepting a token with any
+// audience. This complements TestExternalAuthHook_WrongAudience_DeniesWithEmptyUsername
+// in external_auth_test.go, which only covers a configured, non-empty
+// allowlist rejecting the wrong value.
+func TestNewJWTAuthService_RejectsEmptyAudience(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	srv := newJWKSTestServer(t, key, "key-1")
+	defer srv.Close()
+
+	cfg := &config.Config{
+		AuthJWKSEndpoint:          srv.URL,
+		AuthIssuer:                jwtTestIssuer,
+		AuthAudiences:             nil, // deliberately empty
+		AuthTokenValidatorEnabled: true,
+	}
+	if _, err := NewJWTAuthService(cfg, log.NewAppLogger("ERROR")); err == nil {
+		t.Fatal("expected NewJWTAuthService to reject an empty AUTH_AUDIENCE, got no error")
+	}
+}
+
+// TestNewJWTAuthService_RefusesInsecureRedirect proves fix #1: the
+// JWKS-fetching HTTP client refuses to follow a redirect to a non-HTTPS
+// destination. The underlying jwkset library tolerates the resulting first-
+// fetch failure at construction time (NewDefaultOverrideCtx's
+// NoErrorReturnFirstHTTPReq defaults to true, so it can keep retrying in the
+// background), so the observable effect is that no key ever gets loaded and
+// every subsequent ValidateAndExtract call fails -- not a construction error.
+func TestNewJWTAuthService_RefusesInsecureRedirect(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate RSA key: %v", err)
+	}
+	insecure := newJWKSTestServer(t, key, "key-1")
+	defer insecure.Close()
+
+	redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Real IdPs never do this; this simulates a misconfigured or
+		// attacker-controlled endpoint trying to downgrade the JWKS fetch to
+		// plain HTTP.
+		http.Redirect(w, r, insecure.URL, http.StatusFound)
+	}))
+	defer redirecting.Close()
+
+	cfg := &config.Config{
+		AuthJWKSEndpoint:          redirecting.URL,
+		AuthIssuer:                jwtTestIssuer,
+		AuthAudiences:             []string{jwtTestAudience},
+		AuthTokenValidatorEnabled: true,
+	}
+	svc, err := NewJWTAuthService(cfg, log.NewAppLogger("ERROR"))
+	if err != nil {
+		t.Fatalf("unexpected construction error: %v", err)
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, baseTestClaims())
+	token.Header["kid"] = "key-1"
+	signed, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("failed to sign token: %v", err)
+	}
+
+	if _, err := svc.ValidateAndExtract(signed); err == nil {
+		t.Fatal("expected validation to fail because the insecure redirect was refused and no key was ever loaded, got no error")
+	}
+}
