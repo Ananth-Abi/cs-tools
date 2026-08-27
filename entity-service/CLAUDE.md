@@ -136,7 +136,14 @@ there is no Postgres-backed equivalent for any of them):
   unlikely ordering edge case), publishing is skipped rather than sending an
   event with an empty or fabricated author name — same "skip rather than
   send something `events.Validate` would reject" precedent as an empty
-  `Recipients` list.
+  `Recipients` list. When `req.Type` is `domain.CommentTypeWorkNote` (an
+  internal note — never meant for a customer to see), `Recipients` is
+  filtered down to `wso2EmailDomain` (`@wso2.com`) addresses only via
+  `filterWso2Emails`, regardless of who else is on the case's watch list —
+  a case's watch list can include customer watchers, and an internal note
+  must never notify them just because they happen to be watching the case.
+  `wso2EmailDomain` mirrors `apps/csm-portal/backend`'s own constant of the
+  same name.
 
 `publishCaseCreated`, `publishCommentAdded`, `publishStatusChanged`, and
 `publishCaseAssigned` — every `case.*` publisher above, not

@@ -74,6 +74,28 @@ func watchListEmails(watchList []domain.WatchListUser) []string {
 	return recipients
 }
 
+// wso2EmailDomain is WSO2's own corporate domain — mirrors
+// apps/csm-portal/backend's own wso2EmailDomain constant (see that
+// package's user_external_account.go).
+const wso2EmailDomain = "@wso2.com"
+
+// filterWso2Emails returns only the emails in emails on wso2EmailDomain,
+// preserving order. Used for CommentTypeWorkNote (an internal note, never
+// meant for a customer's eyes) — a case's watch list can contain both
+// internal and customer emails, so publishing an internal note's
+// case.comment_added event with the full, unfiltered watch list would
+// notify customer watchers about a note that was never meant for them,
+// regardless of how that watch list was populated.
+func filterWso2Emails(emails []string) []string {
+	filtered := make([]string, 0, len(emails))
+	for _, e := range emails {
+		if strings.HasSuffix(strings.ToLower(e), wso2EmailDomain) {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
+}
+
 // snCasesResponse mirrors the Choreo POST /cases/search response.
 type snCasesResponse struct {
 	Cases        []snCase `json:"cases"`
@@ -1002,7 +1024,11 @@ func (s *snCaseService) resolveCommentAuthorName(ctx context.Context, caseID, co
 // after a new comment is created. Recipients is the case's WatchList
 // emails only — see publishCaseCreated's own doc comment for why, and why
 // an empty list silently skips publishing rather than sending a payload
-// csm-notification-service's events.Validate would reject anyway.
+// csm-notification-service's events.Validate would reject anyway. When
+// req.Type is CommentTypeWorkNote (an internal note — never meant for a
+// customer to see), Recipients is filtered down to wso2.com addresses
+// only via filterWso2Emails, regardless of who else is on the case's
+// watch list.
 //
 // events.CommentAddedPayload.Name requires the comment author's resolved
 // display name, which snCreateCommentResponse doesn't carry (only a raw
@@ -1032,6 +1058,9 @@ func (s *snCaseService) publishCommentAdded(ctx context.Context, req domain.Crea
 	}
 
 	recipients := watchListEmails(cv.WatchList)
+	if req.Type == domain.CommentTypeWorkNote {
+		recipients = filterWso2Emails(recipients)
+	}
 	if len(recipients) == 0 {
 		slog.InfoContext(ctx, "sn create comment: case.comment_added not published, case has no watchers to email", "caseId", req.CaseID)
 		return
