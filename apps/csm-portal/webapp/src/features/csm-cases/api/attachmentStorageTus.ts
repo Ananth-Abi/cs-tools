@@ -74,6 +74,19 @@ export async function uploadFileViaTus({
   onProgress,
   signal,
 }: UploadFileViaTusInput): Promise<void> {
+  let parsedBaseUrl: URL;
+  try {
+    parsedBaseUrl = new URL(sftpgoBaseUrl);
+  } catch {
+    throw new Error(`sftpgoBaseUrl is not a valid URL: "${sftpgoBaseUrl}".`);
+  }
+  if (parsedBaseUrl.protocol !== "https:") {
+    throw new Error(
+      `sftpgoBaseUrl must be an https:// URL, got "${sftpgoBaseUrl}".`,
+    );
+  }
+  const trustedOrigin = parsedBaseUrl.origin;
+
   const createEndpoint = `${sftpgoBaseUrl.replace(/\/+$/, "")}/api/v2/user/files/chunked-upload`;
   const uploadMetadata = [
     `path ${toBase64(storageKey)}`,
@@ -97,11 +110,20 @@ export async function uploadFileViaTus({
   }
 
   // The TUS spec returns the upload's URL via `Location`, which may be
-  // relative to the create endpoint's origin.
+  // relative to the create endpoint's origin, or an absolute URL. Either
+  // way, the resolved URL's origin must match the configured SFTPGo
+  // origin before the bearer token is attached and sent there — otherwise
+  // a misconfigured or compromised SFTPGo instance could redirect the
+  // upload (and the token) to an attacker-controlled host.
   const location = createResponse.headers.get("Location");
   const uploadUrl = location
     ? new URL(location, createEndpoint).toString()
     : createEndpoint;
+  if (new URL(uploadUrl).origin !== trustedOrigin) {
+    throw new Error(
+      `Refusing to upload to an untrusted origin returned by the SFTPGo Location header: "${uploadUrl}".`,
+    );
+  }
 
   await patchWithProgress({
     url: uploadUrl,

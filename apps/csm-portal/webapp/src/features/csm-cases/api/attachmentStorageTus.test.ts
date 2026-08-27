@@ -190,4 +190,71 @@ describe("uploadFileViaTus", () => {
       }),
     ).rejects.toThrow(/500/);
   });
+
+  it("rejects a non-https sftpgoBaseUrl before opening any request", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      uploadFileViaTus({
+        sftpgoBaseUrl: "http://sftpgo.example.com",
+        sftpgoAccessToken: "tok-1",
+        storageKey: "/attachments/cases/case-1/att-1",
+        file,
+      }),
+    ).rejects.toThrow(/https/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(FakeXhr.instances).toHaveLength(0);
+  });
+
+  it("rejects a Location header pointing at a foreign origin before the PATCH is opened", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(null, {
+          status: 201,
+          headers: { Location: "https://evil.example.com/steal-the-token" },
+        }),
+      ),
+    );
+
+    await expect(
+      uploadFileViaTus({
+        sftpgoBaseUrl: "https://sftpgo.example.com",
+        sftpgoAccessToken: "tok-1",
+        storageKey: "/attachments/cases/case-1/att-1",
+        file,
+      }),
+    ).rejects.toThrow(/untrusted origin/i);
+
+    expect(FakeXhr.instances).toHaveLength(0);
+  });
+
+  it("accepts a same-origin absolute Location header", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(null, {
+          status: 201,
+          headers: {
+            Location:
+              "https://sftpgo.example.com/api/v2/user/files/chunked-upload/abc123",
+          },
+        }),
+      ),
+    );
+
+    await uploadFileViaTus({
+      sftpgoBaseUrl: "https://sftpgo.example.com",
+      sftpgoAccessToken: "tok-1",
+      storageKey: "/attachments/cases/case-1/att-1",
+      file,
+    });
+
+    expect(FakeXhr.instances).toHaveLength(1);
+    expect(FakeXhr.instances[0].url).toBe(
+      "https://sftpgo.example.com/api/v2/user/files/chunked-upload/abc123",
+    );
+  });
 });

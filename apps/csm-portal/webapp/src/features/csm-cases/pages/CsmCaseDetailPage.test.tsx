@@ -15,7 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import {
   MemoryRouter,
@@ -187,6 +187,19 @@ vi.mock("@features/csm-cases/api/useCsmCaseActivities", () => ({
     isFetching: false,
   }),
 }));
+// A vi.fn() (rather than a plain arrow function) so individual tests — the
+// cross-case upload-scoping regression below — can override its return value
+// per case, the same convention as `useGetCsmCaseDetailMock` above.
+const usePostCsmCaseAttachmentMock = vi.fn();
+usePostCsmCaseAttachmentMock.mockReturnValue({
+  mutate: vi.fn(),
+  mutateAsync: vi.fn(),
+  isPending: false,
+  isError: false,
+  error: null,
+  variables: undefined,
+  uploadProgress: null,
+});
 vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
   useGetCsmCaseAttachments: () => ({
     data: undefined,
@@ -196,12 +209,7 @@ vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
     isFetching: false,
     dataUpdatedAt: 0,
   }),
-  usePostCsmCaseAttachment: () => ({
-    mutateAsync: vi.fn(),
-    isPending: false,
-    isError: false,
-    error: null,
-  }),
+  usePostCsmCaseAttachment: () => usePostCsmCaseAttachmentMock(),
   useDownloadCsmCaseAttachment: () => vi.fn(),
   useDeleteCsmCaseAttachment: () => ({ mutate: vi.fn(), isPending: false }),
   useGetCsmCaseAttachmentContent: () => vi.fn(),
@@ -310,8 +318,21 @@ vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
 vi.mock("@features/csm-cases/components/CaseMetaBand", () => ({
   default: () => null,
 }));
+// AttachmentsWidget renders as a probe (not a stub returning null) so the
+// cross-case upload-scoping regression below can assert on the actual
+// `uploading`/`uploadProgress` props this page passes down.
 vi.mock("@features/csm-cases/components/CaseDetailWidgets", () => ({
-  AttachmentsWidget: () => null,
+  AttachmentsWidget: ({
+    uploading,
+    uploadProgress,
+  }: {
+    uploading?: boolean;
+    uploadProgress?: number | null;
+  }) => (
+    <div data-testid="attachments-widget-probe">
+      {`uploading=${String(!!uploading)} uploadProgress=${String(uploadProgress ?? "null")}`}
+    </div>
+  ),
   CustomerContextWidget: () => null,
   ProductContextWidget: () => null,
   TagsWidget: () => null,
@@ -748,5 +769,62 @@ describe("CsmCaseDetailPage — time-card edit dialog reset on case change", () 
     expect(
       screen.queryByTestId("log-time-card-dialog-probe"),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to", () => {
+  afterEach(() => {
+    // Restore the shared mock's default (idle) return value so later tests
+    // in this file aren't affected by an override left behind here.
+    usePostCsmCaseAttachmentMock.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+      isError: false,
+      error: null,
+      variables: undefined,
+      uploadProgress: null,
+    });
+  });
+
+  it("does not show a case-1 upload in progress once the page has navigated to case-2", () => {
+    // `postAttachment` is a single mutation object shared across renders of
+    // this page — it doesn't know or care which case's AttachmentsWidget is
+    // currently on screen. Simulate an upload still in flight for case-1
+    // by returning pending state whose `variables.caseId` is "case-1".
+    usePostCsmCaseAttachmentMock.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: true,
+      isError: false,
+      error: null,
+      variables: { caseId: "case-1", file: new File([], "x.txt") },
+      uploadProgress: 42,
+    });
+
+    renderPage();
+
+    // Switch to the Attachments tab on case-1: the in-flight upload belongs
+    // here, so the widget should show it.
+    fireEvent.click(screen.getByRole("tab", { name: /^attachments$/i }));
+    expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
+      "uploading=true uploadProgress=42",
+    );
+
+    // Navigate to case-2 through a real router transition (same route, only
+    // :caseId changes — this page stays mounted, and `postAttachment`'s
+    // pending state is still for case-1's upload). Re-select the
+    // Attachments tab, since the tab lives in the URL's `?tab=` and a plain
+    // `/cases/case-2` navigation (no `?tab=`) resets it to the default.
+    fireEvent.click(screen.getByRole("button", { name: /go to case 2/i }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/cases/case-2",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /^attachments$/i }));
+
+    // Case-1's still-pending upload must not leak into case-2's widget.
+    expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
+      "uploading=false uploadProgress=null",
+    );
   });
 });
