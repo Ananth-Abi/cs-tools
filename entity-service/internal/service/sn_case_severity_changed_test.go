@@ -206,3 +206,59 @@ func TestSNCaseService_UpdateCase_SkipsPublishSeverityChangedWhenUnchanged(t *te
 		t.Fatalf("expected no publish call when the severity didn't actually change, got %d", len(publisher.calls))
 	}
 }
+
+// TestSNCaseService_UpdateCase_SkipsPublishSeverityChangedWhenPATCHResponseEchoesStaleSeverity
+// is a regression test for a CodeRabbit-flagged edge case: the pre-PATCH
+// GetCaseByID enrichment confirms the request asks for a genuinely
+// different severity (so publishSeverityChange is true), but if
+// ServiceNow's PATCH response itself echoes back the pre-update severity
+// (e.g. a stale read), publishing anyway would send a false
+// case.severity_changed event with identical oldSeverity/newSeverity. The
+// PATCH response here deliberately echoes the case's OLD severity ("2 -
+// High") even though the request asked for Low, simulating that stale
+// response.
+func TestSNCaseService_UpdateCase_SkipsPublishSeverityChangedWhenPATCHResponseEchoesStaleSeverity(t *testing.T) {
+	caseSysid := sysid32('a')
+	projectSysid := sysid32('b')
+	watcherSysid := sysid32('c')
+	caseID := sysidToUUID(caseSysid)
+
+	getCaseBody := `{
+		"id": "` + caseSysid + `",
+		"internalId": "WSO2-033",
+		"number": "CS0033001",
+		"title": "Stale PATCH response",
+		"description": "d",
+		"createdOn": "2026-01-02 10:00:00",
+		"createdBy": "jane.doe@example.com",
+		"createdByFullName": "Jane Doe",
+		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
+		"deployment": {"id": "", "name": ""},
+		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"severity": {"id": 11, "label": "2 - High"},
+		"state": {"id": 1, "label": "Open"},
+		"watchList": [
+			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
+		]
+	}`
+	// The request asks for Low, but the PATCH response echoes back the
+	// case's pre-update severity (High) unchanged.
+	updateCaseBody := `{
+		"message": "Case updated successfully",
+		"case": {"id": "` + caseSysid + `", "updatedOn": "2026-01-02 12:00:00", "updatedBy": "jane.doe", "severity": {"id": 11, "label": "2 - High"}}
+	}`
+
+	client := newTestUpdateCaseClient(t, getCaseBody, updateCaseBody)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	newSeverity := domain.CaseSeverityLow
+	req := domain.UpdateCaseRequest{ID: caseID, Severity: &newSeverity}
+
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call when the PATCH response echoes the pre-update severity unchanged, got %d", len(publisher.calls))
+	}
+}

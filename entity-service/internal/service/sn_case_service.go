@@ -2412,7 +2412,15 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 	if req.Acknowledge != nil && *req.Acknowledge && (resp.Case.AlreadyAcknowledged == nil || !*resp.Case.AlreadyAcknowledged) && resp.Case.AcknowledgedBy != nil {
 		s.publishCaseAcknowledged(ctx, req.ID, resp.Case.AcknowledgedBy.Name)
 	}
-	if publishSeverityChange && resp.Case.Severity != "" {
+	// resp.Case.Severity != caseBeforeSeverity.Severity is a second guard on
+	// top of publishSeverityChange itself: that flag only confirms the
+	// PATCH *request* asked for a different severity than the pre-PATCH
+	// GetCaseByID observed — it says nothing about what the PATCH response
+	// actually echoes back. If ServiceNow's response reports the
+	// pre-update severity (e.g. a stale echo), publishing anyway would
+	// send a false case.severity_changed event with identical old/new
+	// values.
+	if publishSeverityChange && resp.Case.Severity != "" && resp.Case.Severity != caseBeforeSeverity.Severity {
 		s.publishSeverityChanged(ctx, req.ID, string(caseBeforeSeverity.Severity), string(resp.Case.Severity), caseBeforeSeverity)
 	}
 
