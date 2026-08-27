@@ -150,11 +150,23 @@ type CommentAddedPayload struct {
 	// CaseNumber — see CaseCreatedPayload's own doc comment.
 	CaseNumber string `json:"caseNumber,omitempty"`
 	// WSO2CaseID — see CaseCreatedPayload's own doc comment.
-	WSO2CaseID  string   `json:"wso2CaseId,omitempty"`
-	CaseTitle   string   `json:"caseTitle"`
-	CaseComment string   `json:"caseComment"`
-	CommentID   string   `json:"commentId"`
-	Recipients  []string `json:"recipients"`
+	WSO2CaseID  string `json:"wso2CaseId,omitempty"`
+	CaseTitle   string `json:"caseTitle"`
+	CaseComment string `json:"caseComment"`
+	CommentID   string `json:"commentId"`
+	// IsInternalNote is true when this comment is an internal note — never
+	// customer-visible, and the publisher is expected to have already
+	// restricted Recipients accordingly (see entity-service's own
+	// CommentAddedPayload.IsInternalNote doc comment; this service doesn't
+	// re-check the recipient list itself, since it has no notion of who
+	// counts as "internal" beyond what the publisher already decided).
+	// dispatch.handleCommentAdded renders a distinct layout for it —
+	// RenderInternalNoteEmail instead of RenderCommentAddedEmail — dropping
+	// the "Re: <title>" strap and using WSO2CaseID instead of CaseNumber as
+	// the case reference, matching an existing internal WSO2-support email
+	// format recipients are already used to.
+	IsInternalNote bool     `json:"isInternalNote,omitempty"`
+	Recipients     []string `json:"recipients"`
 }
 
 // StatusChangedPayload is TypeStatusChanged's payload. See

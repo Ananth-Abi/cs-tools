@@ -419,6 +419,9 @@ func TestSNCaseService_CreateCaseComment_PublishesCommentAdded(t *testing.T) {
 	if payload.CommentID != commentID {
 		t.Errorf("commentId = %q, want %q", payload.CommentID, commentID)
 	}
+	if payload.IsInternalNote {
+		t.Error("isInternalNote = true, want false for a customer-visible comment")
+	}
 	if len(payload.Recipients) != 1 || payload.Recipients[0] != "john.roe@example.com" {
 		t.Errorf("recipients = %v, want [john.roe@example.com]", payload.Recipients)
 	}
@@ -489,6 +492,9 @@ func TestSNCaseService_CreateCaseComment_WorkNote_FiltersRecipientsToWso2Domain(
 	}
 	if payload.CommentID != commentID {
 		t.Errorf("commentId = %q, want %q", payload.CommentID, commentID)
+	}
+	if !payload.IsInternalNote {
+		t.Error("isInternalNote = false, want true for a work_note comment")
 	}
 	if len(payload.Recipients) != 1 || payload.Recipients[0] != "john.roe@wso2.com" {
 		t.Errorf("recipients = %v, want only [john.roe@wso2.com] — the customer watcher must not be notified of an internal note", payload.Recipients)

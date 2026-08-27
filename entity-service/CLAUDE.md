@@ -143,7 +143,11 @@ there is no Postgres-backed equivalent for any of them):
   a case's watch list can include customer watchers, and an internal note
   must never notify them just because they happen to be watching the case.
   `wso2EmailDomain` mirrors `apps/csm-portal/backend`'s own constant of the
-  same name.
+  same name. `events.CommentAddedPayload.IsInternalNote` is set to
+  `req.Type == domain.CommentTypeWorkNote` on every publish — `csm-notification-service`
+  renders a distinct email layout for it (`RenderInternalNoteEmail`, see
+  that service's own `CLAUDE.md`), so it needs to know the comment's type,
+  not just receive an already-filtered recipient list.
 
 `publishCaseCreated`, `publishCommentAdded`, `publishStatusChanged`, and
 `publishCaseAssigned` — every `case.*` publisher above, not

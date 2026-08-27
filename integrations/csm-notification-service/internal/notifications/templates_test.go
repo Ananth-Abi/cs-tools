@@ -131,3 +131,25 @@ func TestRenderCommentAddedEmail_UsesCaseNumberNotRawID(t *testing.T) {
 		t.Error("rendered email doesn't contain the case number")
 	}
 }
+
+// TestRenderInternalNoteEmail_NoReplyStrapAndUsesWorkNoteWording verifies
+// the internal-note layout doesn't carry RenderCommentAddedEmail's
+// "Re: <title>" strap (an internal note isn't "about" the case title the
+// way a reply is) and uses "added work note" wording instead of
+// "commented on case" — matching an existing internal WSO2-support email
+// format recipients (always wso2.com staff) are already used to.
+func TestRenderInternalNoteEmail_NoReplyStrapAndUsesWorkNoteWording(t *testing.T) {
+	out := RenderInternalNoteEmail("Jane Doe", "WSO2-1000", "Something broke", "Internal only", "https://x/comment", "https://x/case")
+	if !strings.Contains(out, "added work note") {
+		t.Error("rendered email doesn't use the internal-note wording")
+	}
+	if strings.Contains(out, "Re: Something broke") {
+		t.Error("rendered email carries a \"Re: <title>\" strap, which the internal-note layout must not have")
+	}
+	if !strings.Contains(out, "WSO2-1000") {
+		t.Error("rendered email doesn't contain the case reference")
+	}
+	if !strings.Contains(out, "Internal only") {
+		t.Error("rendered email doesn't contain the note's own content")
+	}
+}

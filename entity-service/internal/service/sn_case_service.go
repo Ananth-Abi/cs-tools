@@ -1073,15 +1073,16 @@ func (s *snCaseService) publishCommentAdded(ctx context.Context, req domain.Crea
 	}
 
 	payload, err := json.Marshal(events.CommentAddedPayload{
-		Name:        authorName,
-		ProjectID:   cv.ProjectDetails.ID,
-		CaseID:      req.CaseID,
-		CaseNumber:  cv.Number,
-		WSO2CaseID:  cv.InternalID,
-		CaseTitle:   cv.Subject,
-		CaseComment: req.Content,
-		CommentID:   commentID,
-		Recipients:  recipients,
+		Name:           authorName,
+		ProjectID:      cv.ProjectDetails.ID,
+		CaseID:         req.CaseID,
+		CaseNumber:     cv.Number,
+		WSO2CaseID:     cv.InternalID,
+		CaseTitle:      cv.Subject,
+		CaseComment:    req.Content,
+		CommentID:      commentID,
+		IsInternalNote: req.Type == domain.CommentTypeWorkNote,
+		Recipients:     recipients,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "sn create comment: encode case.comment_added payload failed", "caseId", req.CaseID, "error", err)
