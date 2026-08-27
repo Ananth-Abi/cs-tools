@@ -272,48 +272,77 @@ func chatMetaLine(parts ...string) string {
 	return strings.Join(kept, " · ")
 }
 
+// teamPart formats team (italic, muted gray) for a case.*-card's meta
+// line — visually distinct from severity (colored, bold) and product
+// (plain), so team doesn't blend into either. Returns "" (not a styled
+// empty string) when team is empty, so chatMetaLine drops it entirely.
+func teamPart(team string) string {
+	if team == "" {
+		return ""
+	}
+	return caseAlertLine(`<font color="#5F6368"><i>%s</i></font>`, team)
+}
+
 // SendCaseCreatedAlert posts a card message announcing a newly created
 // case, to the Google Chat space configured for product. The case's own
-// identifiers (caseNumber/wso2CaseID) lead the card as the header title;
-// title (the case subject) is the header subtitle. The body is a single
-// "New case" line — the one that distinguishes this alert from
-// SendCaseAcknowledgedAlert/SendSeverityChangedAlert's cards, which don't
-// carry it — followed by one more line combining severity (colored),
-// productName, and team, each entirely omitted (not a blank slot) when the
-// publisher didn't send it. "Open in CSM" and "Acknowledge" are real
-// button widgets, not markup links; both still point at the same caseLink
-// for now — dispatch.handleCaseCreated has no interactive card action to
-// send "acknowledge" to yet, so this is a view link like the other one
-// rather than a dead end. There is deliberately no team/codename line
-// above the header — an earlier version of this alert had one, discarded
-// per explicit product decision; the case reference now leads instead.
+// identifiers (caseNumber/wso2CaseID) lead the card as the header title,
+// prefixed with a "🆕" marker — the one thing that distinguishes this
+// alert from SendCaseAcknowledgedAlert/SendSeverityChangedAlert's cards,
+// which don't carry it. It's folded into the header rather than its own
+// body line (an earlier version had one) specifically to cost no extra
+// height: Google Chat's card schema has no free-floating corner-badge
+// widget the way arbitrary CSS can — a header only has a left-aligned
+// title/subtitle plus an optional icon image, which would need a hosted
+// asset this service doesn't have. title (the case subject) is the header
+// subtitle. The body is three plain-text lines, deliberately with no
+// leading icon or glyph on any of them — a decorative icon here (Chat's
+// native decoratedText icon, or an inline emoji, both tried and dropped)
+// only ate into the width each line needs to stay readable on a narrow
+// (mobile) screen, without adding any information the 🆕 header marker
+// doesn't already carry: severity (colored) alone on its own line; team
+// (teamPart — italic, muted gray, so it doesn't blend into severity's
+// color) and productName (bold, so it doesn't blend into team's italic
+// style) together on the next, each omitted (not a blank slot) when
+// empty; and "Acknowledge"/
+// "Open in CSM" — in that order, Acknowledge first since it's the more
+// actionable of the two — together on their own final line, kept
+// separate from the facts above them rather than trailing the same line.
+// Both are real `<a href>` text, not buttons: neither is a genuine action
+// from this card today (Acknowledge still just opens caseLink, the exact
+// same destination as Open in CSM — there's no interactive card action
+// wired up yet to actually acknowledge from Chat, see
+// dispatch.handleCaseCreated), so styling either as a button would
+// overstate what it does. If that changes, Acknowledge is the one to
+// promote back to a real button. There is deliberately no team/codename
+// line above the header — an earlier version of this alert had one,
+// discarded per explicit product decision; the case reference now leads
+// instead.
 func (c *GoogleChatClient) SendCaseCreatedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, team, caseLink string) error {
 	if caseNumber == "" {
 		return fmt.Errorf("notifications: caseNumber is required")
 	}
-	sevPart := ""
+	var lines []string
 	if severityLabel != "" {
-		sevPart = caseAlertLine(`<font color="%s"><b>%s</b></font>`, severityColor, severityLabel)
+		lines = append(lines, caseAlertLine(`<font color="%s"><b>%s</b></font>`, severityColor, severityLabel))
 	}
-	lines := []string{`<b>New case</b>`}
-	if meta := chatMetaLine(sevPart, caseAlertLine(`%s`, productName), caseAlertLine(`%s`, team)); meta != "" {
-		lines = append(lines, meta)
+	productPart := ""
+	if productName != "" {
+		productPart = caseAlertLine(`<b>%s</b>`, productName)
 	}
+	if factsLine := chatMetaLine(teamPart(team), productPart); factsLine != "" {
+		lines = append(lines, factsLine)
+	}
+	ackLink := caseAlertLine(`<a href="%s">Acknowledge</a>`, caseLink)
+	openLink := caseAlertLine(`<a href="%s">Open in CSM</a>`, caseLink)
+	lines = append(lines, chatMetaLine(ackLink, openLink))
+	text := strings.Join(lines, "<br>")
 	msg := chatCardMessage{
 		CardsV2: []chatCardWrapper{
 			{
 				CardID: "case-created-alert",
 				Card: chatCard{
-					Header: &chatCardHeader{Title: chatHeaderCaseRef(caseNumber, wso2CaseID), Subtitle: title},
-					Sections: []chatCardSection{
-						{Widgets: []chatCardWidget{
-							{TextParagraph: &chatTextParagraph{Text: strings.Join(lines, "<br>")}},
-							{ButtonList: &chatButtonList{Buttons: []chatButton{
-								{Text: "Open in CSM", OnClick: chatOnClick{OpenLink: chatOpenLink{URL: caseLink}}},
-								{Text: "Acknowledge", OnClick: chatOnClick{OpenLink: chatOpenLink{URL: caseLink}}},
-							}}},
-						}},
-					},
+					Header:   &chatCardHeader{Title: "🆕 " + chatHeaderCaseRef(caseNumber, wso2CaseID), Subtitle: title},
+					Sections: []chatCardSection{{Widgets: []chatCardWidget{{TextParagraph: &chatTextParagraph{Text: text}}}}},
 				},
 			},
 		},
@@ -321,36 +350,44 @@ func (c *GoogleChatClient) SendCaseCreatedAlert(ctx context.Context, product, se
 	return c.sendCard(ctx, product, msg)
 }
 
-// SendCaseAcknowledgedAlert posts a card message announcing that a case was
-// acknowledged, to the same Google Chat space as its case.created alert.
-// The case reference leads the header, same as every other case.* card;
-// who acknowledged it is the header subtitle ("Ack by <name>"). The body
-// is just team, entirely omitted (no body section at all) when the
-// publisher didn't send one — the shortest of the three case.* cards. A
-// single "View case" button links to caseLink, an addition over this
-// alert's earlier link-free version.
-func (c *GoogleChatClient) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName, team string) error {
+// SendCaseAcknowledgedAlert posts a three-line card message announcing
+// that a case was acknowledged, to the same Google Chat space as its
+// case.created alert — no header, no button, and deliberately no leading
+// icon/glyph on any line (see SendCaseCreatedAlert's own doc comment for
+// why): severity alone on its own line; "<caseNumber> · <wso2CaseID>" on
+// the next — the same "·" separator chatHeaderCaseRef uses for the case
+// reference on the other two cards, for a consistent look; then
+// "Ack by <name> · View case" on the final line. caseNumber is plain
+// text, not a link — an earlier version linked it directly, which read
+// inconsistently next to SendCaseCreatedAlert's/SendSeverityChangedAlert's
+// own explicit "View case"/"Open in CSM" link text; "View case" now plays
+// that same role here too, this card's only navigation affordance
+// (there's no genuine action to take from an acknowledgment — see
+// SendCaseCreatedAlert's own doc comment for the fuller link-vs-button
+// reasoning). wso2CaseID is dropped from its line entirely when the
+// publisher didn't send one. Unlike SendCaseCreatedAlert/
+// SendSeverityChangedAlert, this card deliberately doesn't show team at
+// all — kept to exactly these three lines per explicit product direction.
+func (c *GoogleChatClient) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error {
 	if caseNumber == "" || acknowledgerName == "" {
 		return fmt.Errorf("notifications: caseNumber and acknowledgerName are required")
 	}
-	sections := []chatCardSection{}
-	if team != "" {
-		sections = append(sections, chatCardSection{Widgets: []chatCardWidget{
-			{TextParagraph: &chatTextParagraph{Text: caseAlertLine(`%s`, team)}},
-		}})
+	sevLine := caseAlertLine(`<font color="%s"><b>%s</b></font>`, severityColor, severityLabel)
+	caseRefLine := caseAlertLine(`%s`, caseNumber)
+	if wso2CaseID != "" {
+		caseRefLine += " · " + caseAlertLine(`%s`, wso2CaseID)
 	}
-	sections = append(sections, chatCardSection{Widgets: []chatCardWidget{
-		{ButtonList: &chatButtonList{Buttons: []chatButton{
-			{Text: "View case", OnClick: chatOnClick{OpenLink: chatOpenLink{URL: caseLink}}},
-		}}},
-	}})
+	closeLine := caseAlertLine(`Ack by %s`, acknowledgerName) + " · " + caseAlertLine(`<a href="%s">View case</a>`, caseLink)
+	text := strings.Join([]string{sevLine, caseRefLine, closeLine}, "<br>")
+
 	msg := chatCardMessage{
 		CardsV2: []chatCardWrapper{
 			{
 				CardID: "case-acknowledged-alert",
 				Card: chatCard{
-					Header:   &chatCardHeader{Title: chatHeaderCaseRef(caseNumber, wso2CaseID), Subtitle: "Ack by " + acknowledgerName},
-					Sections: sections,
+					Sections: []chatCardSection{
+						{Widgets: []chatCardWidget{{TextParagraph: &chatTextParagraph{Text: text}}}},
+					},
 				},
 			},
 		},
@@ -362,19 +399,27 @@ func (c *GoogleChatClient) SendCaseAcknowledgedAlert(ctx context.Context, produc
 // severity changed, to the same Google Chat space as its case.created
 // alert. The case reference leads the header, same as every other case.*
 // card; title (the case subject) is the header subtitle, omitted when the
-// publisher didn't send one. The body is a single line: old severity, an
-// arrow, new severity (colored — the case's current state, not the old
-// one), and team, each entirely omitted when empty. A single "View case"
-// button links to caseLink.
-func (c *GoogleChatClient) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
+// publisher didn't send one. The body is two plain-text lines,
+// deliberately with no leading icon/glyph on either (see
+// SendCaseCreatedAlert's own doc comment for why): old severity and new
+// severity — each colored by its own resolved color, not just the new
+// one, so a severity reads the same way here as it does on the other two
+// cards — separated by an arrow, on their own line; then team (teamPart)
+// and a visible "View case" link together on the next line. No button:
+// there's no genuine action to take from this card, only navigation,
+// which the link already covers — see SendCaseCreatedAlert's own doc
+// comment for the fuller button-vs-link reasoning.
+func (c *GoogleChatClient) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
 	if caseNumber == "" {
 		return fmt.Errorf("notifications: caseNumber is required")
 	}
-	transition := ""
-	if oldSeverityLabel != "" || newSeverityLabel != "" {
-		transition = caseAlertLine(`%s → <font color="%s"><b>%s</b></font>`, oldSeverityLabel, newSeverityColor, newSeverityLabel)
+	var lines []string
+	if oldSeverityLabel != "" && newSeverityLabel != "" {
+		lines = append(lines, caseAlertLine(`<font color="%s"><b>%s</b></font> → <font color="%s"><b>%s</b></font>`, oldSeverityColor, oldSeverityLabel, newSeverityColor, newSeverityLabel))
 	}
-	text := chatMetaLine(transition, caseAlertLine(`%s`, team))
+	viewLink := caseAlertLine(`<a href="%s">View case</a>`, caseLink)
+	lines = append(lines, chatMetaLine(teamPart(team), viewLink))
+	text := strings.Join(lines, "<br>")
 
 	msg := chatCardMessage{
 		CardsV2: []chatCardWrapper{
@@ -383,12 +428,7 @@ func (c *GoogleChatClient) SendSeverityChangedAlert(ctx context.Context, product
 				Card: chatCard{
 					Header: &chatCardHeader{Title: chatHeaderCaseRef(caseNumber, wso2CaseID), Subtitle: title},
 					Sections: []chatCardSection{
-						{Widgets: []chatCardWidget{
-							{TextParagraph: &chatTextParagraph{Text: text}},
-							{ButtonList: &chatButtonList{Buttons: []chatButton{
-								{Text: "View case", OnClick: chatOnClick{OpenLink: chatOpenLink{URL: caseLink}}},
-							}}},
-						}},
+						{Widgets: []chatCardWidget{{TextParagraph: &chatTextParagraph{Text: text}}}},
 					},
 				},
 			},

@@ -49,8 +49,8 @@ type emailSender interface {
 type googleChatSender interface {
 	SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error
 	SendCaseCreatedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, team, caseLink string) error
-	SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName, team string) error
-	SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error
+	SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error
+	SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error
 }
 
 // callSender abstracts notifications.TwilioClient's MakeCall for testability.
@@ -594,7 +594,7 @@ func (d *Dispatcher) handleCaseAcknowledged(ctx context.Context, record eventbus
 		} else {
 			severityLabel, severityColor := severityLabelAndColor(p.Severity)
 			caseLink := d.links.CSMLink(p.CaseID)
-			chatErr = d.googleChat.SendCaseAcknowledgedAlert(ctx, product, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, caseLink, p.AcknowledgerName, p.Team)
+			chatErr = d.googleChat.SendCaseAcknowledgedAlert(ctx, product, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, caseLink, p.AcknowledgerName)
 			if chatErr != nil {
 				d.forget(chatKey)
 				chatOwned = false
@@ -648,7 +648,7 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 	var errs []error
 
 	caseRef := displayCaseRef(p.CaseNumber, p.CaseID)
-	oldLabel, _ := severityLabelAndColor(p.OldSeverity)
+	oldLabel, oldColor := severityLabelAndColor(p.OldSeverity)
 	newLabel, newColor := severityLabelAndColor(p.NewSeverity)
 
 	groups, groupUserIDs, err := d.groupByLink(ctx, p.Recipients, p.ProjectID, p.CaseID)
@@ -689,7 +689,7 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 		} else {
 			caseLink := d.links.CSMLink(p.CaseID)
 			title := truncateTitle(p.CaseTitle, maxChatTitleLength)
-			if chatErr := d.googleChat.SendSeverityChangedAlert(ctx, product, oldLabel, newLabel, newColor, caseRef, p.WSO2CaseID, title, p.Team, caseLink); chatErr != nil {
+			if chatErr := d.googleChat.SendSeverityChangedAlert(ctx, product, oldLabel, oldColor, newLabel, newColor, caseRef, p.WSO2CaseID, title, p.Team, caseLink); chatErr != nil {
 				errs = append(errs, chatErr)
 				d.forget(chatKey)
 			}
