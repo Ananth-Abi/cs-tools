@@ -2374,6 +2374,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
             isRefreshing={isFetchingAttachments}
             refreshedAt={attachmentsUpdatedAt}
             uploading={postAttachment.isPending}
+            uploadProgress={postAttachment.uploadProgress}
             uploadError={
               postAttachment.isError
                 ? (postAttachment.error?.message ??
