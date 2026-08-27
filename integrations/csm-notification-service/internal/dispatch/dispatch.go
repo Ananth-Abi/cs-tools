@@ -48,6 +48,8 @@ type emailSender interface {
 // googleChatSender abstracts notifications.GoogleChatClient for testability.
 type googleChatSender interface {
 	SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error
+	SendCaseCreatedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, caseLink string) error
+	SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error
 }
 
 // callSender abstracts notifications.TwilioClient's MakeCall for testability.
@@ -311,6 +313,8 @@ func (d *Dispatcher) Handle(ctx context.Context, record eventbus.Record) error {
 		return d.handleStatusChanged(ctx, record, env.Payload)
 	case events.TypeCaseAssigned:
 		return d.handleCaseAssigned(ctx, record, env.Payload)
+	case events.TypeCaseAcknowledged:
+		return d.handleCaseAcknowledged(ctx, record, env.Payload)
 	case events.TypeIncidentCreated:
 		return d.handleIncidentCreated(ctx, record, env.EntityID, env.Payload)
 	case events.TypeSLAClockRegister, events.TypeSLATierReached:
@@ -412,10 +416,15 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		}
 		if product == "" {
 			slog.WarnContext(ctx, "dispatch: no product for case.created (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
-		} else if chatErr := d.googleChat.SendIncidentAlert(ctx, product, p.CaseTitle, p.Description, d.links.CSMLink(p.CaseID)); chatErr != nil {
-			errs = append(errs, chatErr)
-			d.forget(chatKey)
-			chatOwned = false
+		} else {
+			severityLabel, severityColor := severityLabelAndColor(p.Priority)
+			caseLink := d.links.CSMLink(p.CaseID)
+			title := truncateTitle(p.CaseTitle, maxChatTitleLength)
+			if chatErr := d.googleChat.SendCaseCreatedAlert(ctx, product, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, p.Product, title, caseLink); chatErr != nil {
+				errs = append(errs, chatErr)
+				d.forget(chatKey)
+				chatOwned = false
+			}
 		}
 	}
 
@@ -553,6 +562,50 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 	return sendErr
 }
 
+// handleCaseAcknowledged has exactly one reaction, unlike every other
+// case.* handler above: a Google Chat alert only — see
+// events.CaseAcknowledgedPayload's own doc comment for why there's no
+// email/Recipients concept here at all. With only one channel, there's no
+// cross-channel release race to guard against the way beginRecord/endRecord
+// does for handleCaseCreated/handleIncidentCreated — this call's own
+// chatOwned already fully determines whether it's safe to release: true
+// means this call either just sent successfully or found nothing to do
+// (no configured product), either way a real, complete outcome; false
+// means it lost the claim race entirely and touched nothing, so it must
+// never release a key a different, still in-flight call might rely on.
+func (d *Dispatcher) handleCaseAcknowledged(ctx context.Context, record eventbus.Record, raw json.RawMessage) error {
+	var p events.CaseAcknowledgedPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return fmt.Errorf("dispatch: decode case.acknowledged payload: %w", err)
+	}
+
+	chatKey := recordBaseKey(record) + "/chat"
+	chatOwned := d.claim(chatKey)
+	var chatErr error
+	if chatOwned {
+		product := p.Product
+		if product == "" {
+			product = d.defaultChatProduct
+		}
+		if product == "" {
+			slog.WarnContext(ctx, "dispatch: no product for case.acknowledged (payload and DEFAULT_CHAT_PRODUCT both empty); skipping Google Chat alert")
+		} else {
+			severityLabel, severityColor := severityLabelAndColor(p.Severity)
+			caseLink := d.links.CSMLink(p.CaseID)
+			chatErr = d.googleChat.SendCaseAcknowledgedAlert(ctx, product, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, caseLink, p.AcknowledgerName)
+			if chatErr != nil {
+				d.forget(chatKey)
+				chatOwned = false
+			}
+		}
+	}
+
+	if record.NoMoreRetries || chatOwned {
+		d.forget(chatKey)
+	}
+	return chatErr
+}
+
 // groupByLink resolves each recipient's own case link (see
 // recipientlinks.Resolver.ResolveLinks) and buckets recipients by the link
 // they resolved to — at most two buckets today, customer portal vs CSM
@@ -599,6 +652,51 @@ func commentLinkFor(caseLink, commentID string) string {
 		return caseLink
 	}
 	return caseLink + "#" + url.PathEscape(commentID)
+}
+
+// severityDisplay maps a case's raw severity (as entity-service sends it —
+// see events.CaseCreatedPayload.Priority's own doc comment, an uppercase
+// string like "CRITICAL") to the label/color the case.created and
+// case.acknowledged Chat cards use — matching an existing internal
+// WSO2-support Chat format: S0-catastrophic, S1-critical, S2-high,
+// S3-medium. LOW (S4) is this service's own extrapolation to keep the map
+// total over every domain.CaseSeverity value — the reference format never
+// showed one, since low-severity cases don't usually get a Chat alert in
+// practice.
+var severityDisplay = map[string]struct{ label, color string }{
+	"CATASTROPHIC": {"Catastrophic (P0)", "#7F1D1D"},
+	"CRITICAL":     {"Critical (P1)", "#DC2626"},
+	"HIGH":         {"High (P2)", "#EA580C"},
+	"MEDIUM":       {"Medium (P3)", "#7C3AED"},
+	"LOW":          {"Low (P4)", "#6B7280"},
+}
+
+// severityLabelAndColor resolves severity to its Chat display label/color
+// (case/whitespace-insensitive), falling back to the raw value itself in a
+// neutral gray for a severity this service doesn't recognize — never
+// blank, so an unrecognized value still renders something readable
+// instead of an empty line.
+func severityLabelAndColor(severity string) (label, color string) {
+	if d, ok := severityDisplay[strings.ToUpper(strings.TrimSpace(severity))]; ok {
+		return d.label, d.color
+	}
+	return severity, "#6B7280"
+}
+
+// maxChatTitleLength bounds truncateTitle's output — long enough to still
+// be informative in a Chat card, short enough that a card doesn't dominate
+// the space with one case's title.
+const maxChatTitleLength = 140
+
+// truncateTitle shortens title to at most max runes, appending "..." when
+// it had to cut — rune-based (not byte-based) so a multi-byte character
+// never gets split mid-encoding.
+func truncateTitle(title string, max int) string {
+	r := []rune(title)
+	if len(r) <= max {
+		return title
+	}
+	return string(r[:max]) + "..."
 }
 
 // displayCaseRef returns caseNumber (the case's human-readable reference,

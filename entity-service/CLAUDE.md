@@ -83,7 +83,7 @@ the constructed `EventPublisherService` (nil if unconfigured) alongside the
 threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
 it during shutdown, after `srv.Shutdown`.
 
-Five call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
+Six call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
 there is no Postgres-backed equivalent for any of them):
 
 - **`snCaseService.CreateCase`** publishes `case.created` via a private
@@ -207,6 +207,38 @@ service's own `CLAUDE.md`, `dispatch.subjectLine`).
   the case's own current assignee must not send every watcher a false
   "case assigned" email — compares `cv.AssignedEngineer.Email` against
   `*req.AssigneeEmail` before the PATCH, same as `cv.State` there.
+
+- **`snCaseService.UpdateCase`** also publishes `case.acknowledged` via
+  `publishCaseAcknowledged`, called only when `req.Acknowledge` was true and
+  the acknowledge genuinely claimed the case for the first time —
+  `resp.Case.AlreadyAcknowledged` distinguishes that from a repeat
+  `Acknowledge:true` call that succeeded without changing anything (see
+  `UpdateCaseRequest.Acknowledge`'s own doc comment); only the former is a
+  real event worth a Chat alert. Chat-only, like `case.assigned` used to be
+  blocked and now isn't — but `case.acknowledged` has no email reaction at
+  all, ever, so its own `events.CaseAcknowledgedPayload` has no
+  `Recipients`/watch-list concept whatsoever, unlike every other `case.*`
+  payload. Re-fetches via `GetCaseByID` rather than trusting the PATCH
+  response, same "re-fetch rather than trust a narrow response" precedent
+  as `publishCaseCreated`: `snUpdateCaseResponse`'s acknowledge path only
+  ever echoes `Number`/`AlreadyAcknowledged`/`AcknowledgedBy`, none of which
+  cover `CaseNumber`/`WSO2CaseID`/`Severity`/`Product` — everything
+  `csm-notification-service`'s Chat alert needs to display (see that
+  service's own `CLAUDE.md` for the card's exact shape).
+
+`caseProductName(cv)` (a small shared helper) resolves
+`cv.DeployedProductDetails.Product.Name` (e.g. `"WSO2 API Manager"`, `""`
+when the case has no deployed product) — used by both `publishCaseCreated`
+and `publishCaseAcknowledged` to populate their payloads' `Product` field.
+`CaseCreatedPayload.Product` was previously never populated at all ("this
+service has no data source for it yet"); now it doubles as both a display
+value in `csm-notification-service`'s redesigned `case.created` Chat card
+and that service's own Chat-space routing key (`GoogleChatConfig.Spaces`
+matches on it, falling back to `DEFAULT_CHAT_PRODUCT` when empty) — an
+operator's `GOOGLE_CHAT_SPACES` config needs a `Product` entry matching
+each deployed product's actual display name for per-product routing to
+take effect; until then, every case routes to `DEFAULT_CHAT_PRODUCT`'s
+space same as before this field was populated.
 
 Every helper above runs **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`

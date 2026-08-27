@@ -20,10 +20,12 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
 )
 
 // Case acknowledgement: a first-write-wins claim that an engineer has picked the
@@ -179,6 +181,126 @@ func TestSNCaseService_UpdateCase_AcknowledgeAlreadyAcknowledgedIsNotAnError(t *
 	}
 	if resp.Case.AcknowledgedBy == nil || resp.Case.AcknowledgedBy.Name != "Jane Doe" {
 		t.Fatalf("AcknowledgedBy = %+v, want the existing acknowledger", resp.Case.AcknowledgedBy)
+	}
+}
+
+// TestSNCaseService_UpdateCase_AcknowledgePublishesCaseAcknowledged verifies
+// the happy path: a first-time acknowledge publishes case.acknowledged with
+// the acknowledger's name, enriched via a follow-up GetCaseByID for
+// CaseNumber/WSO2CaseID/Severity — none of which the acknowledge PATCH
+// response itself carries.
+func TestSNCaseService_UpdateCase_AcknowledgePublishesCaseAcknowledged(t *testing.T) {
+	ackSysid := sysid32('9')
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPatch {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"message": "Case acknowledged successfully",
+				"case": map[string]any{
+					"id": testCaseSysid, "updatedOn": "2026-01-01 00:00:00",
+					"number":              "CS0001001",
+					"alreadyAcknowledged": false,
+					"acknowledgedBy": map[string]any{
+						"id": ackSysid, "name": "Jane Doe", "email": "jane.doe@example.com",
+					},
+				},
+			})
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/tags") {
+			_, _ = w.Write([]byte(`{"tags":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"id": "` + testCaseSysid + `",
+			"internalId": "WSO2-050",
+			"number": "CS0001001",
+			"title": "Case subject",
+			"description": "d",
+			"createdOn": "2026-01-01 10:00:00",
+			"createdBy": "reporter@example.com",
+			"project": {"id": "` + testProjectSysid + `", "name": "Project A"},
+			"deployment": {"id": "", "name": ""},
+			"deployedProduct": {"id": "", "name": "", "version": ""},
+			"product": {"id": "` + sysid32('7') + `", "name": "WSO2 API Manager"},
+			"severity": {"id": 1, "label": "1 - Critical"},
+			"state": {"id": 1, "label": "Open"}
+		}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	acknowledge := true
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{ID: testCaseUUID, Acknowledge: &acknowledge}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(publisher.calls) != 1 {
+		t.Fatalf("expected 1 publish call, got %d", len(publisher.calls))
+	}
+	call := publisher.calls[0]
+	if call.eventType != events.TypeCaseAcknowledged {
+		t.Errorf("eventType = %q, want %q", call.eventType, events.TypeCaseAcknowledged)
+	}
+	if call.entityID != testCaseUUID {
+		t.Errorf("entityID = %q, want %q", call.entityID, testCaseUUID)
+	}
+
+	var payload events.CaseAcknowledgedPayload
+	if err := json.Unmarshal(call.payload, &payload); err != nil {
+		t.Fatalf("decode published payload: %v", err)
+	}
+	if payload.AcknowledgerName != "Jane Doe" {
+		t.Errorf("acknowledgerName = %q, want %q", payload.AcknowledgerName, "Jane Doe")
+	}
+	if payload.CaseNumber != "CS0001001" {
+		t.Errorf("caseNumber = %q, want %q", payload.CaseNumber, "CS0001001")
+	}
+	if payload.WSO2CaseID != "WSO2-050" {
+		t.Errorf("wso2CaseId = %q, want %q", payload.WSO2CaseID, "WSO2-050")
+	}
+	if payload.Severity != "CRITICAL" {
+		t.Errorf("severity = %q, want %q", payload.Severity, "CRITICAL")
+	}
+	if payload.Product != "WSO2 API Manager" {
+		t.Errorf("product = %q, want %q", payload.Product, "WSO2 API Manager")
+	}
+}
+
+// TestSNCaseService_UpdateCase_AcknowledgeAlreadyAcknowledgedSkipsPublish
+// verifies a repeat acknowledge (AlreadyAcknowledged: true) never publishes
+// case.acknowledged — it's a no-op as far as the case is concerned, and
+// publishing would send a false "just acknowledged" Chat alert.
+func TestSNCaseService_UpdateCase_AcknowledgeAlreadyAcknowledgedSkipsPublish(t *testing.T) {
+	ackSysid := sysid32('9')
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/"+testCaseSysid, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": "Case is already acknowledged",
+			"case": map[string]any{
+				"id": testCaseSysid, "updatedOn": "2026-01-01 00:00:00",
+				"number":              "CS0001001",
+				"alreadyAcknowledged": true,
+				"acknowledgedBy": map[string]any{
+					"id": ackSysid, "name": "Jane Doe", "email": "jane.doe@example.com",
+				},
+			},
+		})
+	})
+
+	client := newTestSNClient(t, mux)
+	publisher := &mockEventPublisher{}
+	svc := NewServiceNowCaseService(client, nil, publisher)
+
+	acknowledge := true
+	if _, err := svc.UpdateCase(contextWithUserIDToken("token"), domain.UpdateCaseRequest{ID: testCaseUUID, Acknowledge: &acknowledge}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(publisher.calls) != 0 {
+		t.Fatalf("expected no publish call for an already-acknowledged case, got %d", len(publisher.calls))
 	}
 }
 
