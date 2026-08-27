@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -116,8 +117,13 @@ type chatCardWrapper struct {
 	Card   chatCard `json:"card"`
 }
 
+// Header is a pointer, unlike every other field on this type, so a card
+// with no header (case.created/case.acknowledged — see
+// SendCaseCreatedAlert/SendCaseAcknowledgedAlert) can omit it from the wire
+// entirely (omitempty) instead of sending an empty title. SendIncidentAlert
+// always sets it, so its own output is unchanged by this.
 type chatCard struct {
-	Header   chatCardHeader    `json:"header"`
+	Header   *chatCardHeader   `json:"header,omitempty"`
 	Sections []chatCardSection `json:"sections"`
 }
 
@@ -165,17 +171,12 @@ func (c *GoogleChatClient) SendIncidentAlert(ctx context.Context, product, title
 	if title == "" {
 		return fmt.Errorf("notifications: title is required")
 	}
-	webhookURL, ok := c.webhookURLsByProduct[normalizeProduct(product)]
-	if !ok || webhookURL == "" {
-		return fmt.Errorf("notifications: no google chat space configured for product %q", product)
-	}
-
 	msg := chatCardMessage{
 		CardsV2: []chatCardWrapper{
 			{
 				CardID: "incident-alert",
 				Card: chatCard{
-					Header: chatCardHeader{Title: title},
+					Header: &chatCardHeader{Title: title},
 					Sections: []chatCardSection{
 						{
 							Header: "Short Description",
@@ -201,6 +202,115 @@ func (c *GoogleChatClient) SendIncidentAlert(ctx context.Context, product, title
 				},
 			},
 		},
+	}
+	return c.sendCard(ctx, product, msg)
+}
+
+// caseAlertLine builds one <br>-joined line of a case.created/
+// case.acknowledged Chat card's single TextParagraph, HTML-escaping label
+// (the dynamic value) but not the markup surrounding it — mirrors
+// internal/notifications' own escapeHTML reasoning for email templates:
+// Google Chat's card text interprets a limited HTML subset (<b>, <font
+// color="...">, <a href="...">), so a dynamic value that happened to
+// contain "<" or "&" must not be allowed to break out of the tag it's
+// placed in.
+func caseAlertLine(format string, args ...any) string {
+	escaped := make([]any, len(args))
+	for i, a := range args {
+		escaped[i] = html.EscapeString(fmt.Sprint(a))
+	}
+	return fmt.Sprintf(format, escaped...)
+}
+
+// SendCaseCreatedAlert posts a card message announcing a newly created case
+// — like SendIncidentAlert, but a case.created-specific layout matching an
+// existing internal WSO2-support Chat format that predates this service: a
+// colored severity/priority line, the case number (linked) and WSO2 case
+// reference, the case's product, its title, and two more links ("Open in
+// CSM", "ACKNOWLEDGE CASE"). All three links point at the same caseLink for
+// now — dispatch.handleCaseCreated doesn't yet have anywhere more specific
+// to send "acknowledge" to from Chat (there's no interactive card action
+// wired up), so it's a view link like the other two rather than a dead
+// end. wso2CaseID/productName/title are each dropped from the card
+// entirely (not rendered as an empty line) when the publisher didn't send
+// one. There is deliberately no card header — an earlier version of this
+// alert included a top-line team/codename, discarded per explicit product
+// decision (no field in this service's data model corresponds to it,
+// and Google Chat already shows the sending app's own name above the card).
+func (c *GoogleChatClient) SendCaseCreatedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, caseLink string) error {
+	if caseNumber == "" {
+		return fmt.Errorf("notifications: caseNumber is required")
+	}
+	lines := []string{
+		caseAlertLine(`<font color="%s"><b>%s</b></font>`, severityColor, severityLabel),
+		caseAlertLine(`<a href="%s">%s</a>`, caseLink, caseNumber),
+	}
+	if wso2CaseID != "" {
+		lines = append(lines, caseAlertLine(`<b>%s</b>`, wso2CaseID))
+	}
+	if productName != "" {
+		lines = append(lines, caseAlertLine(`<b>%s</b>`, productName))
+	}
+	if title != "" {
+		lines = append(lines, caseAlertLine(`%s`, title))
+	}
+	lines = append(lines,
+		caseAlertLine(`<a href="%s">Open in CSM</a>`, caseLink),
+		caseAlertLine(`<a href="%s">ACKNOWLEDGE CASE</a>`, caseLink),
+	)
+	msg := chatCardMessage{
+		CardsV2: []chatCardWrapper{
+			{
+				CardID: "case-created-alert",
+				Card: chatCard{
+					Sections: []chatCardSection{
+						{Widgets: []chatCardWidget{{TextParagraph: &chatTextParagraph{Text: strings.Join(lines, "<br>")}}}},
+					},
+				},
+			},
+		},
+	}
+	return c.sendCard(ctx, product, msg)
+}
+
+// SendCaseAcknowledgedAlert posts a single-line card message announcing
+// that a case was acknowledged, to the same Google Chat space as its
+// case.created alert — matching an existing internal WSO2-support Chat
+// format: "<severity (Pn)> <caseNumber> <wso2CaseID>: Ack by <name>".
+// wso2CaseID is dropped from the line entirely when the publisher didn't
+// send one, same reasoning as SendCaseCreatedAlert.
+func (c *GoogleChatClient) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error {
+	if caseNumber == "" || acknowledgerName == "" {
+		return fmt.Errorf("notifications: caseNumber and acknowledgerName are required")
+	}
+	text := caseAlertLine(`<font color="%s"><b>%s</b></font> <a href="%s">%s</a>`, severityColor, severityLabel, caseLink, caseNumber)
+	if wso2CaseID != "" {
+		text += " " + caseAlertLine(`%s`, wso2CaseID)
+	}
+	text += caseAlertLine(`: Ack by %s`, acknowledgerName)
+
+	msg := chatCardMessage{
+		CardsV2: []chatCardWrapper{
+			{
+				CardID: "case-acknowledged-alert",
+				Card: chatCard{
+					Sections: []chatCardSection{
+						{Widgets: []chatCardWidget{{TextParagraph: &chatTextParagraph{Text: text}}}},
+					},
+				},
+			},
+		},
+	}
+	return c.sendCard(ctx, product, msg)
+}
+
+// sendCard marshals msg and posts it to the webhook configured for
+// product, shared by SendIncidentAlert/SendCaseCreatedAlert/
+// SendCaseAcknowledgedAlert.
+func (c *GoogleChatClient) sendCard(ctx context.Context, product string, msg chatCardMessage) error {
+	webhookURL, ok := c.webhookURLsByProduct[normalizeProduct(product)]
+	if !ok || webhookURL == "" {
+		return fmt.Errorf("notifications: no google chat space configured for product %q", product)
 	}
 
 	body, err := json.Marshal(msg)

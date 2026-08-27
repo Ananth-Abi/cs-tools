@@ -40,11 +40,12 @@ import "encoding/json"
 type Type string
 
 const (
-	TypeCaseCreated     Type = "case.created"
-	TypeCommentAdded    Type = "case.comment_added"
-	TypeStatusChanged   Type = "case.status_changed"
-	TypeCaseAssigned    Type = "case.assigned"
-	TypeIncidentCreated Type = "incident.created"
+	TypeCaseCreated      Type = "case.created"
+	TypeCommentAdded     Type = "case.comment_added"
+	TypeStatusChanged    Type = "case.status_changed"
+	TypeCaseAssigned     Type = "case.assigned"
+	TypeCaseAcknowledged Type = "case.acknowledged"
+	TypeIncidentCreated  Type = "incident.created"
 
 	// TypeSLAClockRegister and TypeSLATierReached belong to internal/slaengine,
 	// not internal/dispatch — see SLAClockRegisterPayload/SLATierReachedPayload
@@ -59,7 +60,7 @@ const (
 // checked — used both for request validation and for generating docs/errors
 // that enumerate valid values.
 var KnownTypes = []Type{
-	TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeIncidentCreated,
+	TypeCaseCreated, TypeCommentAdded, TypeStatusChanged, TypeCaseAssigned, TypeCaseAcknowledged, TypeIncidentCreated,
 	TypeSLAClockRegister, TypeSLATierReached,
 }
 
@@ -199,6 +200,25 @@ type CaseAssignedPayload struct {
 	// CaseTitle — see StatusChangedPayload's own doc comment.
 	CaseTitle  string   `json:"caseTitle,omitempty"`
 	Recipients []string `json:"recipients"`
+}
+
+// CaseAcknowledgedPayload is TypeCaseAcknowledged's payload — Chat-only,
+// unlike every other case.* payload above: acknowledging a case has no
+// email reaction, so there's no Recipients/watch-list concept here at all
+// (see entity-service's own CaseAcknowledgedPayload doc comment). Severity
+// is the raw uppercase severity string (e.g. "CRITICAL"), the same value
+// CaseCreatedPayload.Priority carries — dispatch.severityDisplay maps it to
+// a display label/color for the Chat card. Product routes this alert to
+// the same Google Chat space as the case's own case.created alert, same
+// convention as CaseCreatedPayload.Product.
+type CaseAcknowledgedPayload struct {
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CaseCreatedPayload's own doc comment.
+	WSO2CaseID       string `json:"wso2CaseId,omitempty"`
+	Severity         string `json:"severity,omitempty"`
+	Product          string `json:"product,omitempty"`
+	AcknowledgerName string `json:"acknowledgerName"`
 }
 
 // IncidentCreatedPayload is TypeIncidentCreated's payload. Unlike the case.*
