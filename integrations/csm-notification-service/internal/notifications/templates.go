@@ -184,12 +184,12 @@ func RenderStatusChangedEmail(caseNumber, newStatus, caseLink, commentLink strin
 }
 
 // RenderCaseAssignedEmail fills in the "case assigned" HTML email template.
-// assignerEmail is rendered both as a mailto: link and as plain text.
+// assigneeEmail is rendered both as a mailto: link and as plain text.
 // caseNumber — see RenderCommentAddedEmail's own doc comment.
-func RenderCaseAssignedEmail(assignerName, assignerEmail, caseNumber, caseLink, commentLink string) string {
+func RenderCaseAssignedEmail(assigneeName, assigneeEmail, caseNumber, caseLink, commentLink string) string {
 	replacer := strings.NewReplacer(
-		"<!-- [ASSIGNER_NAME] -->", escapeHTML(assignerName),
-		"<!-- [ASSIGNER_EMAIL] -->", escapeHTML(assignerEmail),
+		"<!-- [ASSIGNEE_NAME] -->", escapeHTML(assigneeName),
+		"<!-- [ASSIGNEE_EMAIL] -->", escapeHTML(assigneeEmail),
 		"<!-- [CASE_NUMBER] -->", escapeHTML(caseNumber),
 		"<!-- [CASE_LINK] -->", escapeHTML(caseLink),
 		"<!-- [COMMENT_LINK] -->", escapeHTML(commentLink),

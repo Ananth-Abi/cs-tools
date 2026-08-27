@@ -535,7 +535,7 @@ func (d *Dispatcher) handleCaseAssigned(ctx context.Context, record eventbus.Rec
 	}
 	subject := subjectLine(p.WSO2CaseID, p.CaseNumber, p.CaseID, title)
 	owned, sendErr := d.sendPerGroup(ctx, baseKey, groups, groupUserIDs, subject, func(caseLink string) string {
-		return notifications.RenderCaseAssignedEmail(p.AssignerName, p.AssignerEmail, caseRef, caseLink, commentLinkFor(caseLink, ""))
+		return notifications.RenderCaseAssignedEmail(p.AssigneeName, p.AssigneeEmail, caseRef, caseLink, commentLinkFor(caseLink, ""))
 	})
 	if record.NoMoreRetries {
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))

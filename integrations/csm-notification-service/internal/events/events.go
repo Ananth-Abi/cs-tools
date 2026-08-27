@@ -177,8 +177,8 @@ type StatusChangedPayload struct {
 // CaseAssignedPayload is TypeCaseAssigned's payload. See CaseCreatedPayload's
 // doc comment for why Recipients is here, and for why ProjectID is required.
 type CaseAssignedPayload struct {
-	AssignerName  string `json:"assignerName"`
-	AssignerEmail string `json:"assignerEmail"`
+	AssigneeName  string `json:"assigneeName"`
+	AssigneeEmail string `json:"assigneeEmail"`
 	ProjectID     string `json:"projectId"`
 	CaseID        string `json:"caseId"`
 	CaseNumber    string `json:"caseNumber,omitempty"`

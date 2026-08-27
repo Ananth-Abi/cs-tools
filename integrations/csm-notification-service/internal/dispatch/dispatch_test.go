@@ -456,13 +456,13 @@ func TestDispatcher_Handle_CaseAssigned(t *testing.T) {
 	mock := &mockEmailSender{}
 	d := newTestDispatcher(mock, &mockGoogleChatSender{}, &mockCallSender{})
 
-	record := eventbus.Record{Value: []byte(`{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"Assigner","assignerEmail":"assigner@example.com","projectId":"PROJ-1","caseId":"CASE-1","recipients":["test-recipient@example.com"]}}`)}
+	record := eventbus.Record{Value: []byte(`{"type":"case.assigned","entityId":"CASE-1","payload":{"assigneeName":"Assignee","assigneeEmail":"assignee@example.com","projectId":"PROJ-1","caseId":"CASE-1","recipients":["test-recipient@example.com"]}}`)}
 
 	if err := d.Handle(context.Background(), record); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
-	if !strings.Contains(mock.calls[0].htmlBody, "assigner@example.com") {
-		t.Error("htmlBody does not contain the assigner's email")
+	if !strings.Contains(mock.calls[0].htmlBody, "assignee@example.com") {
+		t.Error("htmlBody does not contain the assignee's email")
 	}
 }
 
@@ -1216,7 +1216,7 @@ func TestDispatcher_Handle_SubjectLine_StandardFormat(t *testing.T) {
 		},
 		{
 			name:   "case.assigned",
-			record: `{"type":"case.assigned","entityId":"CASE-1","payload":{"assignerName":"Assigner","assignerEmail":"assigner@example.com","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","recipients":["test-recipient@example.com"]}}`,
+			record: `{"type":"case.assigned","entityId":"CASE-1","payload":{"assigneeName":"Assignee","assigneeEmail":"assignee@example.com","projectId":"PROJ-1","caseId":"CASE-1","caseNumber":"CS0001001","wso2CaseId":"WSO2-1000","caseTitle":"Something broke","recipients":["test-recipient@example.com"]}}`,
 			want:   "[WSO2 Support] (WSO2-1000/CS0001001) Something broke",
 		},
 		{
