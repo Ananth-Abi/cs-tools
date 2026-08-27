@@ -7750,7 +7750,14 @@ components:
 
     CreateAttachmentRequest:
       type: object
-      required: [referenceId, referenceType, name, type, file]
+      description: >
+        The two data sources populate mutually exclusive fields. ServiceNow requires file
+        (a base64 data URI) and computes sizeBytes from the decoded bytes. The CSM-native
+        (Postgres) data source instead requires storageKey (the file was already uploaded to
+        SFTPGo out of band, referenced by this key) and sizeBytes, since this service never
+        sees the file bytes for that data source -- there is no base64-payload alternative
+        there.
+      required: [referenceId, referenceType, name, type]
       properties:
         referenceId:
           type: string
@@ -7766,10 +7773,24 @@ components:
           description: MIME type of the file (e.g. image/png, application/pdf).
         file:
           type: string
-          description: Base64 data URI of the file content (e.g. data:image/png;base64,...). Maximum decoded size is 10 MB.
+          description: >
+            Base64 data URI of the file content (e.g. data:image/png;base64,...). Maximum
+            decoded size is 10 MB. Required for the ServiceNow data source; not accepted by
+            the CSM-native (Postgres) data source.
         description:
           type: string
           nullable: true
+        storageKey:
+          type: string
+          description: >
+            Reference to file bytes already uploaded to SFTPGo. Required for the CSM-native
+            (Postgres) data source; not accepted by ServiceNow.
+        sizeBytes:
+          type: integer
+          description: >
+            File size in bytes. Required for the CSM-native (Postgres) data source (this
+            service cannot compute it there); ignored for ServiceNow, which computes it from
+            the decoded file payload.
 
     AttachmentDetail:
       type: object
@@ -7786,6 +7807,10 @@ components:
           type: string
         downloadUrl:
           type: string
+        storageKey:
+          type: string
+          nullable: true
+          description: Set only for CSM-native (Postgres) data source attachments. See Attachment.storageKey.
 
     CreateAttachmentResponse:
       type: object
@@ -7827,6 +7852,13 @@ components:
         previewUrl:
           type: string
           nullable: true
+        storageKey:
+          type: string
+          nullable: true
+          description: >
+            Reference to the file's location in external object storage (SFTPGo), set only for
+            CSM-native (Postgres) data source attachments. Null for ServiceNow-sourced
+            attachments, whose bytes are held by ServiceNow itself.
 
     ReferenceType:
       type: string
@@ -11734,7 +11766,9 @@ components:
       description: >
         The response for GET /attachments/{id}. Distinct from GET /attachments/{id}/content,
         which streams the raw binary — this endpoint returns JSON metadata plus the content
-        as a base64 data URI.
+        as a base64 data URI. For a CSM-native (Postgres) data source attachment, content is
+        always "" and storageKey is populated instead: this service holds no bytes for that
+        data source, so content must be resolved externally via storageKey.
       required: [id, referenceId, name, type, sizeBytes, createdBy, createdOn, content]
       properties:
         id:
@@ -11766,6 +11800,10 @@ components:
         content:
           type: string
           description: Base64 data URI of the attachment content (e.g. data:image/png;base64,...).
+        storageKey:
+          type: string
+          nullable: true
+          description: Set only for CSM-native (Postgres) data source attachments. See Attachment.storageKey.
 
     UpdateAttachmentRequest:
       type: object
