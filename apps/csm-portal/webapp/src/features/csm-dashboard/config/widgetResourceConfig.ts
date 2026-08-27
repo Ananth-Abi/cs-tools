@@ -121,7 +121,7 @@ export interface WidgetResourceConfig {
   /** Only meaningful for shape "list". Overrides the default request body
    * `useWidgetData` POSTs to `searchEndpoint` (`{ filters, pagination: {
    * offset, limit }, sortBy? }`) — every resourceType's own search contract
-   * uses that shape EXCEPT `case_feedback`'s `POST /cases/feedbacks/search`,
+   * uses that shape EXCEPT `case_feedback`'s `POST /cases/feedback/search`,
    * which takes flat `page`/`pageSize` instead of `pagination.offset/limit`
    * (see that entry's own comment for why). Omitted (every other
    * resourceType) keeps `useWidgetData`'s existing request shape untouched. */
@@ -878,7 +878,7 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     },
   },
   // Satisfaction-rating survey responses across cases (`POST
-  // /cases/feedbacks/search` / `POST /cases/feedbacks/aggregate`) — its own
+  // /cases/feedback/search` / `POST /cases/feedback/aggregate`) — its own
   // resourceType, not a case `type` variant like `service_request` etc.
   // above, because a feedback record isn't a case row at all (no
   // `number`/`subject`/`state`; see `BeCaseFeedback`). Its own two-endpoint
@@ -892,8 +892,8 @@ export const WIDGET_RESOURCE_CONFIG: Record<
   // `buildHref`/`previewSlug` have nowhere real to land — same situation
   // `task` is in above, same fallback.
   case_feedback: {
-    searchEndpoint: "/cases/feedbacks/search",
-    groupByEndpoint: "/cases/feedbacks/aggregate",
+    searchEndpoint: "/cases/feedback/search",
+    groupByEndpoint: "/cases/feedback/aggregate",
     itemsKey: "results",
     buildSearchRequestBody: ({ filters, offset, limit }) => {
       // `case_feedback` has no sortable columns exposed by its own search

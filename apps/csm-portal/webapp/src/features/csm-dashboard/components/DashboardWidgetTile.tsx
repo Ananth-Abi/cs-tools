@@ -370,7 +370,7 @@ export default function DashboardWidgetTile({
   // `groupBy.bucket` (date-bucketed grouping — only `case_feedback`'s own
   // trend widget uses this today) resolves via `useCaseFeedbackTrendData`
   // instead of `useWidgetGroupByData`: its request/response contract (`POST
-  // /cases/feedbacks/aggregate`) is unrelated to `BeGroupByResponse` (see
+  // /cases/feedback/aggregate`) is unrelated to `BeGroupByResponse` (see
   // `BeDashboardGroupByConfig.bucket`'s own doc comment) — passing a
   // `bucket`-configured `groupBy` into `useWidgetGroupByData` would throw
   // (see that hook's own field-presence guard), so it's withheld here

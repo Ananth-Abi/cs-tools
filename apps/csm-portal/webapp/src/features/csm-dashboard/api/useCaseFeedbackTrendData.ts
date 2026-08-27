@@ -57,7 +57,7 @@ function formatBucketLabel(bucketStart: string, bucket: "day" | "week" | "month"
 
 /**
  * Resolves a `shape: "bar"` `case_feedback` widget's date-bucketed rating
- * trend via a single `POST /cases/feedbacks/aggregate` call — the
+ * trend via a single `POST /cases/feedback/aggregate` call — the
  * `groupBy.bucket` counterpart of `useWidgetGroupByData`'s `groupBy.field`
  * (see that field's own doc comment on `BeDashboardGroupByConfig` for why
  * this is a dedicated hook rather than a branch inside that one: the

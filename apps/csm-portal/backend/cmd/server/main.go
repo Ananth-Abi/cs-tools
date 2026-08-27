@@ -164,8 +164,8 @@ func main() {
 	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
-	mux.HandleFunc("POST /cases/feedbacks/search", caseHandler.SearchFeedback)
-	mux.HandleFunc("POST /cases/feedbacks/aggregate", caseHandler.AggregateFeedback)
+	mux.HandleFunc("POST /cases/feedback/search", caseHandler.SearchFeedback)
+	mux.HandleFunc("POST /cases/feedback/aggregate", caseHandler.AggregateFeedback)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)
 	// Registered before the {dashboardId} wildcard purely for readability —
 	// net/http's ServeMux resolves by specificity, not registration order,

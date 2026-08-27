@@ -292,8 +292,8 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
 	if feedbackHandler != nil {
-		mux.HandleFunc("POST /cases/feedbacks/search", feedbackHandler.SearchFeedback)
-		mux.HandleFunc("POST /cases/feedbacks/aggregate", feedbackHandler.AggregateFeedback)
+		mux.HandleFunc("POST /cases/feedback/search", feedbackHandler.SearchFeedback)
+		mux.HandleFunc("POST /cases/feedback/aggregate", feedbackHandler.AggregateFeedback)
 	}
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)

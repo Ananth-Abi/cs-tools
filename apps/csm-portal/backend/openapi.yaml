@@ -1972,15 +1972,15 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /cases/feedbacks/search:
+  /cases/feedback/search:
     post:
       summary: Search case-feedback (satisfaction rating) records across cases.
       description: >-
         Plain forward-and-return proxy to the entity service's own POST
-        /cases/feedbacks/search: filterable by case, accounts, and submission
+        /cases/feedback/search: filterable by case, accounts, and submission
         date range, and paginated. Backs the case-feedback dashboard's list
         view. Distinct from any single-case feedback lookup.
-      operationId: postCasesFeedbacksSearch
+      operationId: postCasesFeedbackSearch
       requestBody:
         description: Case-feedback search payload
         content:
@@ -2038,20 +2038,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /cases/feedbacks/aggregate:
+  /cases/feedback/aggregate:
     post:
       summary: >-
         Date-bucketed rating aggregation of case-feedback records across
         cases.
       description: >-
         Plain forward-and-return proxy to the entity service's own POST
-        /cases/feedbacks/aggregate. Backs the case-feedback dashboard's
+        /cases/feedback/aggregate. Backs the case-feedback dashboard's
         rating-trend chart (a shape "bar" widget with resourceType
         "case_feedback" and a "groupBy.bucket" — see DashboardWidget). This
         is the many-cases trend endpoint, not scoped to one case, so
         filters.caseId is not accepted here (unlike
-        /cases/feedbacks/search).
-      operationId: postCasesFeedbacksAggregate
+        /cases/feedback/search).
+      operationId: postCasesFeedbackAggregate
       requestBody:
         description: Case-feedback aggregate payload
         content:
@@ -6880,7 +6880,7 @@ components:
             POST /cases/search. case_feedback is case-feedback (satisfaction
             rating) records, not cases themselves — a shape "bar" widget with
             this resourceType and a "groupBy.bucket" (see below) is resolved
-            by the caller against POST /cases/feedbacks/aggregate instead;
+            by the caller against POST /cases/feedback/aggregate instead;
             there is no server-side resourceType-to-endpoint mapping, the
             caller picks the endpoint from resourceType on its own, same as
             every other value here.
@@ -6943,7 +6943,7 @@ components:
               description: >
                 Date-bucket granularity instead of field-value grouping.
                 This is the mode a case_feedback trend widget uses: the
-                caller resolves it by calling POST /cases/feedbacks/aggregate
+                caller resolves it by calling POST /cases/feedback/aggregate
                 with this value as that endpoint's own "bucket" (see
                 AggregateFeedbackRequest), not the generic
                 POST /{resourceType}/aggregate this groupBy block otherwise

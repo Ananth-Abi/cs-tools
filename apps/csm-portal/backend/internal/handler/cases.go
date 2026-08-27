@@ -519,7 +519,7 @@ func (h *CaseHandler) AggregateCases(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// SearchFeedback handles POST /cases/feedbacks/search.
+// SearchFeedback handles POST /cases/feedback/search.
 // Search of case-feedback (satisfaction rating) records across cases,
 // filterable by case, accounts, and submission date range. Backs the
 // case-feedback dashboard's list view. This is a plain forward-and-return
@@ -558,7 +558,7 @@ func (h *CaseHandler) SearchFeedback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-// AggregateFeedback handles POST /cases/feedbacks/aggregate.
+// AggregateFeedback handles POST /cases/feedback/aggregate.
 // Date-bucketed rating aggregation of case-feedback records across cases.
 // Backs the case-feedback dashboard's rating-trend chart. Same
 // forward-and-return proxy contract as SearchFeedback: the bucket enum and

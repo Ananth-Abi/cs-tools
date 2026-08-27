@@ -67,7 +67,7 @@ const (
 	// other ResourceType, this layer only validates that the value is a known
 	// enum member -- it does not know, and does not need to know, that a
 	// "bar"+GroupBy.Bucket widget with this resourceType resolves via the
-	// webapp's own hook calling POST /cases/feedbacks/aggregate (see
+	// webapp's own hook calling POST /cases/feedback/aggregate (see
 	// GroupByConfig.Bucket's doc comment). There is no
 	// resourceType->endpoint mapping anywhere server-side; the frontend picks
 	// the endpoint from resourceType entirely on its own, same as every other
@@ -106,7 +106,7 @@ type GroupByConfig struct {
 	// grouping -- "day", "week", or "month" (enforced at directory-load
 	// time). Mutually exclusive with Field. This is the shape a case-feedback
 	// trend widget uses (ResourceCaseFeedback, Shape "bar"): the frontend's
-	// own hook calls POST /cases/feedbacks/aggregate with this bucket value
+	// own hook calls POST /cases/feedback/aggregate with this bucket value
 	// and maps its date-bucketed response into the same per-slice shape
 	// Slices/field-grouping already produce, same client-side-resolution
 	// philosophy as the rest of this type -- this layer never calls that

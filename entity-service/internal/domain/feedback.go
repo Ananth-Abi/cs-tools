@@ -38,7 +38,7 @@ type SearchFeedbackFilters struct {
 	DateTo     string   `json:"dateTo,omitempty"`
 }
 
-// SearchFeedbackRequest is the input for POST /cases/feedbacks/search.
+// SearchFeedbackRequest is the input for POST /cases/feedback/search.
 // Page and PageSize are 1-based/optional; omitted values let the backing
 // data source apply its own defaults.
 type SearchFeedbackRequest struct {
@@ -54,7 +54,7 @@ type SearchFeedbackResponse struct {
 }
 
 // FeedbackBucket is the enum of supported date-bucket granularities for
-// POST /cases/feedbacks/aggregate.
+// POST /cases/feedback/aggregate.
 type FeedbackBucket string
 
 const (
@@ -72,7 +72,7 @@ type AggregateFeedbackFilters struct {
 	DateTo     string   `json:"dateTo,omitempty"`
 }
 
-// AggregateFeedbackRequest is the input for POST /cases/feedbacks/aggregate.
+// AggregateFeedbackRequest is the input for POST /cases/feedback/aggregate.
 type AggregateFeedbackRequest struct {
 	Filters AggregateFeedbackFilters `json:"filters"`
 	// Bucket selects the date-bucket granularity. Required; one of "day", "week", "month".
