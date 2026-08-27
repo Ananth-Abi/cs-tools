@@ -141,11 +141,10 @@ type chatCardWrapper struct {
 	Card   chatCard `json:"card"`
 }
 
-// Header is a pointer, unlike every other field on this type, so a card
-// with no header (case.created/case.acknowledged — see
-// SendCaseCreatedAlert/SendCaseAcknowledgedAlert) can omit it from the wire
-// entirely (omitempty) instead of sending an empty title. SendIncidentAlert
-// always sets it, so its own output is unchanged by this.
+// Header is a pointer, unlike every other field on this type — every
+// case.*/incident.created card sets it today, but a pointer keeps a
+// header-less card representable (omitempty) rather than requiring an
+// empty title on the wire, should a future card need one.
 type chatCard struct {
 	Header   *chatCardHeader   `json:"header,omitempty"`
 	Sections []chatCardSection `json:"sections"`
