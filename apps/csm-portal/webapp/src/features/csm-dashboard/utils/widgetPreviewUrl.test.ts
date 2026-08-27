@@ -42,6 +42,26 @@ describe("widgetPreviewUrl", () => {
     expect(params.get("f")).toBeNull();
   });
 
+  it("encodes a plain numeric filter value, not just string/string[]", () => {
+    // Regression: the rating-distribution pie's slice query is
+    // `{ rating: Math.round(avgRating) }` (see useCaseFeedbackTrendData) — a
+    // number, not a string. Before this branch existed, a numeric filter
+    // value was silently dropped from the URL entirely, so clicking a
+    // rating slice landed on the unfiltered feedback list.
+    const href = buildWidgetPreviewHref({
+      previewSlug: "case-feedback",
+      widgetId: "feedback_rating_distribution",
+      displayName: "Rating Distribution",
+      filters: { rating: 5 },
+    });
+
+    const params = new URLSearchParams(href.split("?")[1]);
+    expect(params.get("rating")).toBe("5");
+
+    const { filters } = parseWidgetPreviewFilters(params);
+    expect(filters.rating).toEqual(["5"]);
+  });
+
   it("masks the current user's own id to @me instead of embedding it verbatim", () => {
     const href = buildWidgetPreviewHref({
       previewSlug: "cases",

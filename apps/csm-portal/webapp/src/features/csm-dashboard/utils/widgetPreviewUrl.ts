@@ -189,6 +189,14 @@ export function buildWidgetPreviewHref(params: {
       q.set(key, masked.join(","));
     } else if (typeof value === "string") {
       q.set(key, value === params.currentUserId ? CURRENT_USER_SENTINEL : value);
+    } else if (typeof value === "number" && Number.isFinite(value)) {
+      // A slice's own `query` can carry a plain number (e.g. the rating pie's
+      // `{ rating: 5 }`, from `Math.round(avgRating)` — see
+      // `useCaseFeedbackTrendData`), not just the string/string[] shape every
+      // other widget's filters use. Dropped silently before this branch
+      // existed: a rating-pie click-through landed on the unfiltered list
+      // with no `rating` param in the URL at all.
+      q.set(key, String(value));
     }
   }
   if (usesCaseFieldFilterShape) q.set(CASE_FILTER_MARKER, "1");
