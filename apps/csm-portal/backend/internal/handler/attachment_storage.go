@@ -18,7 +18,9 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -76,6 +78,13 @@ type uploadTokenResponse struct {
 	SftpgoAccessToken string          `json:"sftpgoAccessToken"`
 	ExpiresAt         json.RawMessage `json:"expiresAt"`
 	SftpgoBaseURL     string          `json:"sftpgoBaseUrl"`
+	// StorageKey is the exact SFTPGo path the frontend must upload the file
+	// to (as the TUS/chunked-upload target) and must later send back
+	// unchanged as CreateAttachmentRequest.storageKey when it creates the
+	// attachment metadata row. Minted here, server-side, rather than left for
+	// the frontend to invent, so the id embedded in it is guaranteed to match
+	// no other attachment. See buildStorageKey for the path convention.
+	StorageKey string `json:"storageKey"`
 }
 
 // MintUploadToken handles POST /cases/{id}/attachments/upload-token. It mints
@@ -99,7 +108,8 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 		return
 	}
 
-	if !h.canWriteCase(w, r, caseID) {
+	projectID, ok := h.canWriteCase(w, r, caseID)
+	if !ok {
 		return
 	}
 
@@ -119,10 +129,17 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Generated here, server-side, rather than left for the frontend to
+	// invent: the frontend has no way to guarantee id uniqueness or apply the
+	// storage-key convention, and both are this backend's responsibility.
+	attachmentID := newAttachmentID()
+	storageKey := buildStorageKey(projectID, caseID, attachmentID)
+
 	writeJSONValue(w, http.StatusOK, uploadTokenResponse{
 		SftpgoAccessToken: token.AccessToken,
 		ExpiresAt:         token.ExpiresAt,
 		SftpgoBaseURL:     h.sftpgo.BaseURL(),
+		StorageKey:        storageKey,
 	})
 }
 
@@ -227,27 +244,71 @@ func (h *AttachmentStorageHandler) CreateAttachmentShare(w http.ResponseWriter, 
 // canWriteCase mirrors CaseHandler.CreateCaseAttachment's closed-case guard —
 // the same check that gates whether a case may receive a new attachment
 // today — reused here so an upload token is never minted for a case an
-// upload could not proceed against anyway.
-func (h *AttachmentStorageHandler) canWriteCase(w http.ResponseWriter, r *http.Request, caseID string) bool {
+// upload could not proceed against anyway. projectID is the case's
+// projectId as reported by the entity service (see domain.Case.ProjectID),
+// used by MintUploadToken to build the storage key; it is "" when the
+// upstream response omits it, which buildStorageKey treats as "no project
+// concept for this case" rather than an error.
+func (h *AttachmentStorageHandler) canWriteCase(w http.ResponseWriter, r *http.Request, caseID string) (projectID string, ok bool) {
 	current, err := h.entity.GetCase(r.Context(), caseID)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity GetCase failed during attachment-storage write guard", "caseID", caseID, "err", summarizeErr(err))
 		mapUpstreamErrorGeneric(w, err, "Failed to validate case access.")
-		return false
+		return "", false
 	}
 	var currentCase struct {
-		State string `json:"state"`
+		State     string `json:"state"`
+		ProjectID string `json:"projectId"`
 	}
 	if err := json.Unmarshal(current, &currentCase); err != nil {
 		slog.ErrorContext(r.Context(), "failed to parse case state for attachment-storage write guard", "caseID", caseID, "err", err)
 		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
-		return false
+		return "", false
 	}
 	if currentCase.State == "closed" {
 		writeError(w, http.StatusConflict, ErrMsgAttachmentOnClosedCase)
-		return false
+		return "", false
 	}
-	return true
+	return currentCase.ProjectID, true
+}
+
+// newAttachmentID generates a random UUID v4 for a not-yet-created
+// attachment. Mirrors middleware.newCorrelationID's approach (that helper is
+// unexported in a different package, so it is duplicated here rather than
+// exporting a single-purpose helper across a package boundary for it).
+func newAttachmentID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("attachment_storage: failed to read random bytes: " + err.Error())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant bits
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+// buildStorageKey computes the SFTPGo path an attachment's bytes live under:
+// "/attachments/project-<projectId>/cases/<caseId>/<attachmentId>". SFTPGo
+// permissions are granted per project, so the project segment is
+// load-bearing whenever a project is known.
+//
+// projectID is "" when the case's own record carries no project reference.
+// Cases in this Postgres/CSM-native data source are NOT guaranteed to have a
+// project: domain.Case.ProjectID exists on the schema, but nothing in
+// entity-service enforces it is always populated for a CSM-native case
+// (unlike ServiceNow-sourced cases, which are always project-scoped). Rather
+// than block minting a token over a missing project reference, this falls
+// back to a project-less path shape,
+// "/attachments/cases/<caseId>/<attachmentId>", which still uniquely
+// identifies the file. This fallback path cannot be granted SFTPGo
+// permissions per-project the way the documented convention can; it is
+// accepted here as a deliberate, narrower scope (case-only) rather than a
+// blocker, and should be revisited if/when CSM-native cases gain a
+// guaranteed project reference.
+func buildStorageKey(projectID, caseID, attachmentID string) string {
+	if projectID == "" {
+		return fmt.Sprintf("/attachments/cases/%s/%s", caseID, attachmentID)
+	}
+	return fmt.Sprintf("/attachments/project-%s/cases/%s/%s", projectID, caseID, attachmentID)
 }
 
 // canReadCase confirms the caller can view the target case at all — mirrors

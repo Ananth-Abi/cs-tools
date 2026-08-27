@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -187,6 +188,81 @@ func TestMintUploadTokenSuccess(t *testing.T) {
 	}
 	if resp.SftpgoBaseURL != "https://sftpgo.example.com" {
 		t.Errorf("SftpgoBaseURL = %q, want https://sftpgo.example.com", resp.SftpgoBaseURL)
+	}
+	// The case fixture above carries no "projectId", so this must fall back
+	// to the project-less path shape rather than emitting a malformed
+	// "project-" segment.
+	wantKey := "/attachments/cases/" + caseID + "/"
+	if !strings.HasPrefix(resp.StorageKey, wantKey) {
+		t.Errorf("StorageKey = %q, want prefix %q (no-project fallback)", resp.StorageKey, wantKey)
+	}
+	attachmentID := strings.TrimPrefix(resp.StorageKey, wantKey)
+	if !uuidRe.MatchString(attachmentID) {
+		t.Errorf("StorageKey %q does not end in a well-formed UUID, got %q", resp.StorageKey, attachmentID)
+	}
+}
+
+// TestMintUploadTokenStorageKeyIncludesProject verifies that when the case's
+// own record carries a projectId, the minted storageKey follows the
+// documented convention:
+// /attachments/project-<projectId>/cases/<caseId>/<attachmentId>.
+func TestMintUploadTokenStorageKeyIncludesProject(t *testing.T) {
+	t.Parallel()
+	const projectID = "22222222-2222-2222-2222-222222222222"
+	entity := &mockEntityCaseClient{
+		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
+			return []byte(`{"state":"work_in_progress","projectId":"` + projectID + `"}`), nil
+		},
+	}
+	sftpgoMock := &mockSftpgoClient{}
+	h := NewAttachmentStorageHandler(entity, sftpgoMock)
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req.SetPathValue("id", caseID)
+	req.Header.Set("x-jwt-assertion", "raw-jwt")
+	w := httptest.NewRecorder()
+
+	h.MintUploadToken(w, req)
+
+	assertStatus(t, w, http.StatusOK)
+	resp := decodeJSON[uploadTokenResponse](t, w)
+
+	wantPrefix := "/attachments/project-" + projectID + "/cases/" + caseID + "/"
+	if !strings.HasPrefix(resp.StorageKey, wantPrefix) {
+		t.Fatalf("StorageKey = %q, want prefix %q", resp.StorageKey, wantPrefix)
+	}
+	attachmentID := strings.TrimPrefix(resp.StorageKey, wantPrefix)
+	if !uuidRe.MatchString(attachmentID) {
+		t.Errorf("StorageKey %q does not end in a well-formed UUID, got %q", resp.StorageKey, attachmentID)
+	}
+}
+
+// TestMintUploadTokenStorageKeyUniquePerCall verifies each mint generates a
+// fresh attachment id, never reusing one across calls.
+func TestMintUploadTokenStorageKeyUniquePerCall(t *testing.T) {
+	t.Parallel()
+	entity := &mockEntityCaseClient{
+		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
+			return []byte(`{"state":"work_in_progress"}`), nil
+		},
+	}
+	h := NewAttachmentStorageHandler(entity, &mockSftpgoClient{})
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	seen := make(map[string]bool)
+	for i := 0; i < 5; i++ {
+		req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+		req.SetPathValue("id", caseID)
+		req.Header.Set("x-jwt-assertion", "raw-jwt")
+		w := httptest.NewRecorder()
+		h.MintUploadToken(w, req)
+		assertStatus(t, w, http.StatusOK)
+		resp := decodeJSON[uploadTokenResponse](t, w)
+		if seen[resp.StorageKey] {
+			t.Fatalf("StorageKey %q was generated twice", resp.StorageKey)
+		}
+		seen[resp.StorageKey] = true
 	}
 }
 

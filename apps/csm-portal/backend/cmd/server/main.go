@@ -137,7 +137,7 @@ func main() {
 		Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
 	}
 	scimClient := scim.NewClient(scimCfg)
-	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir)
+	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir, sftpgoAttachmentStorageEnabled)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
