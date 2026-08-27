@@ -83,7 +83,7 @@ the constructed `EventPublisherService` (nil if unconfigured) alongside the
 threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
 it during shutdown, after `srv.Shutdown`.
 
-Four call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
+Five call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
 there is no Postgres-backed equivalent for any of them):
 
 - **`snCaseService.CreateCase`** publishes `case.created` via a private
@@ -138,19 +138,21 @@ there is no Postgres-backed equivalent for any of them):
   send something `events.Validate` would reject" precedent as an empty
   `Recipients` list.
 
-`publishCaseCreated`, `publishCommentAdded`, and `publishStatusChanged` —
-every `case.*` publisher above, not `snIncidentService.CreateIncident` —
-also set `CaseNumber` (`cv.Number`/`before.Number`, the case's
-human-readable ServiceNow reference, e.g. `"CS0023001"`) and `WSO2CaseID`
-(`cv.InternalID`/`before.InternalID`, ServiceNow's `u_wso2_case_id` custom
-field — the CSM portal's own case identifier, e.g. `"WSO2-1000"`, distinct
-from `CaseNumber`) alongside `CaseID` (the UUID) — `csm-notification-service`
+`publishCaseCreated`, `publishCommentAdded`, `publishStatusChanged`, and
+`publishCaseAssigned` — every `case.*` publisher above, not
+`snIncidentService.CreateIncident` — also set `CaseNumber`
+(`cv.Number`/`before.Number`, the case's human-readable ServiceNow
+reference, e.g. `"CS0023001"`) and `WSO2CaseID` (`cv.InternalID`/
+`before.InternalID`, ServiceNow's `u_wso2_case_id` custom field — the CSM
+portal's own case identifier, e.g. `"WSO2-1000"`, distinct from
+`CaseNumber`) alongside `CaseID` (the UUID) — `csm-notification-service`
 displays `WSO2CaseID`/`CaseNumber` in every subject line and template slot
 instead of the UUID, which is meaningless to an end user (a real, reported
 bug before these fields existed at all); `CaseID` is unchanged for anything
-link-related. `publishStatusChanged` additionally sets `CaseTitle`
-(`before.Subject`) — `case.status_changed` didn't originally carry one at
-all, needed once `csm-notification-service` started requiring every
+link-related. `publishStatusChanged`/`publishCaseAssigned` additionally set
+`CaseTitle` (`before.Subject`) — neither `case.status_changed` nor
+`case.assigned` originally carried one at all, needed once
+`csm-notification-service` started requiring every
 `case.*` email's subject to follow one explicit standard format,
 `"[WSO2 Support] (<wso2 case id>/<case number>) <title>"` (see that
 service's own `CLAUDE.md`, `dispatch.subjectLine`).
@@ -170,24 +172,30 @@ service's own `CLAUDE.md`, `dispatch.subjectLine`).
   `snUpdateCaseResponse`'s own `WatchList` has emails but no project
   reference at all.
 
-`case.assigned` is **not published anywhere yet** — `events.CaseAssignedPayload`
-doesn't even exist in this service's `internal/events/events.go` (unlike
-`csm-notification-service`'s own copy, which already has it). The blocker
-isn't wiring — `UpdateCase`'s `req.AssigneeEmail` path is right there, in
-the same function `publishStatusChanged` hooks into — it's data:
-`csm-notification-service`'s `CaseAssignedPayload` requires a non-empty
-`AssignerName`/`AssignerEmail` (the person who *performed* the assignment,
-not the new assignee — see that service's `RenderCaseAssignedEmail`, which
-renders `assignerEmail` as a `mailto:` link), and this service has no way to
-resolve that today: it has no inbound-auth/identity layer at all (the
-`x-user-id-token` header `middleware.UserIDTokenFromContext` forwards is
-opaque, just a pass-through to ServiceNow, not a decodable identity), and
-`snUpdateCaseResponse.Case.UpdatedBy` is a bare string with no accompanying
-email. Publishing something with a fabricated or missing assigner would be
-actively misleading in the notification email, not just an incomplete
-event, so this needs its own decision (e.g. resolving the caller's identity
-some other way) before it can be added — flagging here rather than
-guessing.
+- **`snCaseService.UpdateCase`** also publishes `case.assigned` via
+  `publishCaseAssigned`, called only when `req.AssigneeEmail` was set (the
+  mirror image of the `case.status_changed` path above — `State`/
+  `AssigneeEmail` are mutually exclusive per request, so a single
+  `UpdateCase` call is never both). This was blocked for a while on
+  identity: `csm-notification-service`'s `CaseAssignedPayload` used to
+  require a non-empty `AssignerName`/`AssignerEmail` — the person who
+  *performed* the assignment — and this service has no inbound-auth/
+  identity layer able to resolve that (the `x-user-id-token` header
+  `middleware.UserIDTokenFromContext` forwards is opaque, just a
+  pass-through to ServiceNow, not a decodable identity). The actual
+  unblock was realizing that's the wrong question: `req.AssigneeEmail` (the
+  new assignee, not the assigner) is directly on the update request with
+  no resolution needed at all, and `csm-notification-service`'s payload was
+  renamed `AssigneeName`/`AssigneeEmail` to match — see that service's own
+  `CLAUDE.md`. `publishCaseAssigned`'s `AssigneeName` comes from
+  `snResp.Case.AssignedTo.Name` (ServiceNow's own resolved display name
+  from the PATCH response), falling back to the email if that's empty;
+  `AssigneeEmail` is `*req.AssigneeEmail` verbatim — guaranteed correct
+  since it's exactly what the caller requested. Same pre-PATCH
+  `GetCaseByID` no-op guard as `case.status_changed`: a caller re-PATCHing
+  the case's own current assignee must not send every watcher a false
+  "case assigned" email — compares `cv.AssignedEngineer.Email` against
+  `*req.AssigneeEmail` before the PATCH, same as `cv.State` there.
 
 Every helper above runs **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`

@@ -93,6 +93,26 @@ type StatusChangedPayload struct {
 	Recipients []string `json:"recipients"`
 }
 
+// CaseAssignedPayload is the Payload shape for TypeCaseAssigned — mirrors
+// csm-notification-service's own CaseAssignedPayload, same reasoning as
+// CommentAddedPayload above. AssigneeName/AssigneeEmail identify who the
+// case is now assigned *to*, not who performed the assignment: this
+// service has no inbound identity layer able to resolve the latter (see
+// snCaseService.publishCaseAssigned's own doc comment), but the new
+// assignee's email is directly available on the update request with no
+// extra lookup needed.
+type CaseAssignedPayload struct {
+	AssigneeName  string `json:"assigneeName"`
+	AssigneeEmail string `json:"assigneeEmail"`
+	ProjectID     string `json:"projectId"`
+	CaseID        string `json:"caseId"`
+	CaseNumber    string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CommentAddedPayload's own doc comment.
+	WSO2CaseID string   `json:"wso2CaseId,omitempty"`
+	CaseTitle  string   `json:"caseTitle,omitempty"`
+	Recipients []string `json:"recipients"`
+}
+
 // CaseCreatedPayload is the Payload shape for TypeCaseCreated — mirrors
 // csm-notification-service's own CaseCreatedPayload (its internal/events/
 // validate.go is the schema authority; keep this in sync by hand the same

@@ -54,6 +54,11 @@ const publishCommentAddedTimeout = 5 * time.Second
 // Publish call afterward.
 const publishStatusChangedTimeout = 5 * time.Second
 
+// publishCaseAssignedTimeout bounds the same two things as
+// publishStatusChangedTimeout, for UpdateCase's assigneeEmail path instead
+// of its state path.
+const publishCaseAssignedTimeout = 5 * time.Second
+
 // watchListEmails extracts the non-empty emails from a case's watch list —
 // Recipients for every case.* event this file publishes is the case's
 // WatchList emails only (an explicit, deliberate decision — this service
@@ -1116,6 +1121,62 @@ func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newSta
 	}
 }
 
+// publishCaseAssigned best-effort publishes a case.assigned event after
+// UpdateCase changes a case's assignee. assigneeName/assigneeEmail
+// identify who the case is now assigned *to* — not who performed the
+// assignment: this service has no inbound identity layer (the
+// x-user-id-token header it forwards is opaque, not decodable), so it has
+// no way to resolve who made the request; the new assignee's own
+// email is directly available on req.AssigneeEmail with no extra lookup,
+// and assigneeName is ServiceNow's own resolved display name for that
+// assignee from the PATCH response, falling back to the email if
+// ServiceNow's response didn't carry one.
+//
+// before is the case as it was fetched by UpdateCase *before* issuing the
+// PATCH — same reuse-the-enrichment reasoning as publishStatusChanged's
+// own doc comment (the caller has already used it to confirm the assignee
+// actually changed).
+//
+// Recipients is the case's WatchList emails only — see publishCaseCreated's
+// own doc comment for why, and why an empty list silently skips
+// publishing.
+//
+// Runs synchronously, bounded by publishCaseAssignedTimeout — see
+// publishCaseCreated's own doc comment for why (same reasoning).
+func (s *snCaseService) publishCaseAssigned(ctx context.Context, caseID, assigneeName, assigneeEmail string, before domain.CaseView) {
+	if s.publisher == nil || assigneeEmail == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishCaseAssignedTimeout)
+	defer cancel()
+
+	recipients := watchListEmails(before.WatchList)
+	if len(recipients) == 0 {
+		slog.InfoContext(ctx, "sn update case: case.assigned not published, case has no watchers to email", "caseId", caseID)
+		return
+	}
+
+	payload, err := json.Marshal(events.CaseAssignedPayload{
+		AssigneeName:  assigneeName,
+		AssigneeEmail: assigneeEmail,
+		ProjectID:     before.ProjectDetails.ID,
+		CaseID:        caseID,
+		CaseNumber:    before.Number,
+		WSO2CaseID:    before.InternalID,
+		CaseTitle:     before.Subject,
+		Recipients:    recipients,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: encode case.assigned payload failed", "caseId", caseID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeCaseAssigned, caseID, payload); err != nil {
+		// Not logging err itself — see publishCaseCreated's matching log
+		// line for why.
+		slog.ErrorContext(ctx, "sn update case: publish case.assigned failed", "caseId", caseID)
+	}
+}
+
 func (s *snCaseService) GetCaseByID(ctx context.Context, id string) (domain.CaseView, error) {
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -2015,6 +2076,30 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		}
 	}
 
+	// Same reasoning as the state-change block above, applied to
+	// assigneeEmail instead: a caller re-PATCHing the case's current
+	// assignee (a no-op as far as ServiceNow is concerned) must not send
+	// every watcher a false "case assigned" notification. req.State and
+	// req.AssigneeEmail are mutually exclusive per request (see
+	// exclusiveCount above), so this and the block above never both fire
+	// for the same call.
+	var caseBeforeAssign domain.CaseView
+	publishCaseAssign := false
+	if req.AssigneeEmail != nil && s.publisher != nil {
+		enrichCtx, cancel := context.WithTimeout(ctx, publishCaseAssignedTimeout)
+		cv, err := s.GetCaseByID(enrichCtx, req.ID)
+		cancel()
+		switch {
+		case err != nil:
+			slog.ErrorContext(ctx, "sn update case: enrich case for case.assigned publish failed", "caseId", req.ID)
+		case cv.AssignedEngineer != nil && strings.EqualFold(cv.AssignedEngineer.Email, *req.AssigneeEmail):
+			slog.InfoContext(ctx, "sn update case: case.assigned not published, assignee is unchanged", "caseId", req.ID)
+		default:
+			caseBeforeAssign = cv
+			publishCaseAssign = true
+		}
+	}
+
 	raw, err := s.client.Patch(ctx, "/cases/"+uuidToSysid(req.ID), token, payload)
 	if err != nil {
 		return domain.UpdateCaseResponse{}, err
@@ -2121,6 +2206,13 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 
 	if publishStatusChange && snResp.Case.State != nil {
 		s.publishStatusChanged(ctx, req.ID, snResp.Case.State.Label, caseBeforeUpdate)
+	}
+	if publishCaseAssign {
+		assigneeName := *req.AssigneeEmail
+		if snResp.Case.AssignedTo != nil && snResp.Case.AssignedTo.Name != "" {
+			assigneeName = snResp.Case.AssignedTo.Name
+		}
+		s.publishCaseAssigned(ctx, req.ID, assigneeName, *req.AssigneeEmail, caseBeforeAssign)
 	}
 
 	return resp, nil
