@@ -2355,6 +2355,14 @@ func (s *snCaseService) CreateCaseAttachment(ctx context.Context, req domain.Cre
 	}, nil
 }
 
+// ConfirmCaseAttachment implements CaseService. ServiceNow's /attachments API
+// only ever returns fully-uploaded files -- there is no pending/in-progress
+// upload state to confirm -- so this is a CSM-native (Postgres) data
+// source-only operation. See caseService.ConfirmCaseAttachment.
+func (s *snCaseService) ConfirmCaseAttachment(_ context.Context, _ string) (domain.ConfirmAttachmentResponse, error) {
+	return domain.ConfirmAttachmentResponse{}, &apierror.ServiceUnavailableError{Msg: "confirming an attachment is only supported for the CSM-native data source"}
+}
+
 var validReferenceTypes = map[domain.ReferenceType]struct{}{
 	domain.ReferenceTypeCase:          {},
 	domain.ReferenceTypeConversation:  {},

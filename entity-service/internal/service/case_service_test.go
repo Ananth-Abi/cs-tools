@@ -36,6 +36,7 @@ type stubCaseRepo struct {
 	getCaseAttachmentByID func(ctx context.Context, id string) (domain.Attachment, error)
 	deleteCaseAttachment  func(ctx context.Context, id string) error
 	updateAttachmentName  func(ctx context.Context, id, name, updatedBy string) (time.Time, error)
+	confirmCaseAttachment func(ctx context.Context, id string) (domain.Attachment, error)
 }
 
 func (s *stubCaseRepo) CreateCase(context.Context, domain.CreateCaseRequest) (domain.Case, error) {
@@ -86,6 +87,12 @@ func (s *stubCaseRepo) DeleteCaseAttachment(ctx context.Context, id string) erro
 func (s *stubCaseRepo) UpdateCaseAttachmentName(ctx context.Context, id, name, updatedBy string) (time.Time, error) {
 	if s.updateAttachmentName != nil {
 		return s.updateAttachmentName(ctx, id, name, updatedBy)
+	}
+	panic("not implemented")
+}
+func (s *stubCaseRepo) ConfirmCaseAttachment(ctx context.Context, id string) (domain.Attachment, error) {
+	if s.confirmCaseAttachment != nil {
+		return s.confirmCaseAttachment(ctx, id)
 	}
 	panic("not implemented")
 }
