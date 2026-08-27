@@ -423,7 +423,6 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 			if chatErr := d.googleChat.SendCaseCreatedAlert(ctx, product, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, p.Product, title, caseLink); chatErr != nil {
 				errs = append(errs, chatErr)
 				d.forget(chatKey)
-				chatOwned = false
 			}
 		}
 	}
@@ -600,7 +599,21 @@ func (d *Dispatcher) handleCaseAcknowledged(ctx context.Context, record eventbus
 		}
 	}
 
-	if record.NoMoreRetries || chatOwned {
+	// Deliberately just chatOwned, not "|| record.NoMoreRetries" the way
+	// every multi-channel handler's release condition reads: NoMoreRetries
+	// force-releases there because a *different* concurrent call may have
+	// already claimed-and-succeeded a sibling channel and returned before
+	// this call even started, leaving nothing to eventually release it. That
+	// scenario can't happen here — there's only one channel/claim total, so
+	// whichever call actually owns it (chatOwned true) is the only call
+	// that will ever release it, either here on success/skip or inline on
+	// failure above. A losing call (chatOwned false) forgetting the key
+	// just because NoMoreRetries is also true would release a claim a
+	// different, still in-flight call (genuinely mid-SendCaseAcknowledgedAlert)
+	// relies on staying held — the same class of bug beginRecord/endRecord
+	// closed for handleCaseCreated/handleIncidentCreated, see those doc
+	// comments.
+	if chatOwned {
 		d.forget(chatKey)
 	}
 	return chatErr
@@ -672,15 +685,21 @@ var severityDisplay = map[string]struct{ label, color string }{
 }
 
 // severityLabelAndColor resolves severity to its Chat display label/color
-// (case/whitespace-insensitive), falling back to the raw value itself in a
-// neutral gray for a severity this service doesn't recognize — never
-// blank, so an unrecognized value still renders something readable
-// instead of an empty line.
+// (case/whitespace-insensitive), falling back to the raw (trimmed) value
+// itself in a neutral gray for a severity this service doesn't recognize —
+// or, when severity is blank (it's an optional field on both
+// CaseCreatedPayload.Priority and CaseAcknowledgedPayload.Severity), to
+// "Unknown" — never blank, so an absent or unrecognized value still
+// renders something readable instead of an empty line.
 func severityLabelAndColor(severity string) (label, color string) {
 	if d, ok := severityDisplay[strings.ToUpper(strings.TrimSpace(severity))]; ok {
 		return d.label, d.color
 	}
-	return severity, "#6B7280"
+	label = strings.TrimSpace(severity)
+	if label == "" {
+		label = "Unknown"
+	}
+	return label, "#6B7280"
 }
 
 // maxChatTitleLength bounds truncateTitle's output — long enough to still

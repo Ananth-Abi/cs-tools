@@ -240,6 +240,22 @@ each deployed product's actual display name for per-product routing to
 take effect; until then, every case routes to `DEFAULT_CHAT_PRODUCT`'s
 space same as before this field was populated.
 
+**Known, accepted inconsistency**: `publishCaseAcknowledged` re-reads
+`caseProductName(cv)` from a fresh `GetCaseByID` at acknowledge time,
+rather than reusing whatever product `publishCaseCreated` read at create
+time — so if a case's deployed product genuinely changes between creation
+and acknowledgement, the two Chat alerts can route to different spaces.
+This service has no persisted state for a case at all (ServiceNow is the
+sole source of truth, no local DB row per case — see this file's own
+"SLA clocks" section for the one deliberate exception), so "preserving the
+creation-time product" would mean adding new durable state purely to pin a
+routing decision, not a same-service code change. It's also arguably not
+even the more correct behavior: if a case's product association is
+corrected after creation, routing its acknowledgement to the *current*
+owning team's space is arguably more useful than a stale one. Left as
+current-product routing; revisit only if the same-space guarantee turns
+out to matter in practice.
+
 Every helper above runs **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`
 is), each bounded by its own 5s `context.WithTimeout`

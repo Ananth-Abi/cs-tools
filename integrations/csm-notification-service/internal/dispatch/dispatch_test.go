@@ -554,6 +554,28 @@ func TestDispatcher_Handle_CaseAcknowledged(t *testing.T) {
 	}
 }
 
+// TestDispatcher_Handle_CaseAcknowledged_BlankSeverityRendersUnknownNotEmpty
+// is a regression test: severity is optional on CaseAcknowledgedPayload, and
+// severityLabelAndColor used to return the empty string verbatim for a blank
+// input, rendering an empty <font>...</font> element in the Chat card
+// instead of something readable.
+func TestDispatcher_Handle_CaseAcknowledged_BlankSeverityRendersUnknownNotEmpty(t *testing.T) {
+	chat := &mockGoogleChatSender{}
+	d := newTestDispatcher(&mockEmailSender{}, chat, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.acknowledged","entityId":"CASE-1","payload":{"caseId":"CASE-1","caseNumber":"CS0001001","product":"api-manager","acknowledgerName":"Jane Doe"}}`)}
+
+	if err := d.Handle(context.Background(), record); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(chat.caseAcknowledgedCalls) != 1 {
+		t.Fatalf("expected 1 Google Chat alert sent, got %d", len(chat.caseAcknowledgedCalls))
+	}
+	if got := chat.caseAcknowledgedCalls[0].severityLabel; got != "Unknown" {
+		t.Errorf("severityLabel = %q, want %q for a blank severity", got, "Unknown")
+	}
+}
+
 // TestDispatcher_Handle_CaseAcknowledged_ChatUsesDefaultProduct mirrors
 // TestDispatcher_Handle_CaseCreated_ChatUsesDefaultProduct for
 // case.acknowledged.
@@ -1226,6 +1248,82 @@ func TestDispatcher_Handle_ConcurrentClaimNeverOverlaps(t *testing.T) {
 	}
 	if chat.sends < 1 {
 		t.Error("expected at least one Chat alert to have been sent")
+	}
+}
+
+// blockingCaseAcknowledgedChatSender's SendCaseAcknowledgedAlert blocks on
+// proceed until the test closes it, mirroring blockingEmailSender below for
+// handleCaseAcknowledged's single-channel claim race.
+type blockingCaseAcknowledgedChatSender struct {
+	proceed chan struct{}
+	calls   int32
+}
+
+func (s *blockingCaseAcknowledgedChatSender) SendIncidentAlert(ctx context.Context, product, title, shortDescription, portalURL string) error {
+	return nil
+}
+
+func (s *blockingCaseAcknowledgedChatSender) SendCaseCreatedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, caseLink string) error {
+	return nil
+}
+
+func (s *blockingCaseAcknowledgedChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error {
+	atomic.AddInt32(&s.calls, 1)
+	<-s.proceed
+	return nil
+}
+
+// TestDispatcher_Handle_CaseAcknowledged_LosingConcurrentCallDoesNotReleaseWinnersClaim
+// is a regression test for the case.acknowledged analogue of
+// TestDispatcher_Handle_LosingConcurrentCallDoesNotReleaseWinnersClaim below:
+// handleCaseAcknowledged's release condition used to be
+// "record.NoMoreRetries || chatOwned", so a losing concurrent call (one that
+// never won the claim, chatOwned false) with NoMoreRetries true would force
+// -release the key anyway — right out from under a different, still
+// in-flight call genuinely blocked inside SendCaseAcknowledgedAlert. A third
+// attempt could then reclaim and send a duplicate acknowledgement alert.
+func TestDispatcher_Handle_CaseAcknowledged_LosingConcurrentCallDoesNotReleaseWinnersClaim(t *testing.T) {
+	chat := &blockingCaseAcknowledgedChatSender{proceed: make(chan struct{})}
+	d := newTestDispatcher(&mockEmailSender{}, chat, &mockCallSender{})
+
+	record := eventbus.Record{Value: []byte(`{"type":"case.acknowledged","entityId":"CASE-1","payload":{"caseId":"CASE-1","caseNumber":"CS0001001","severity":"HIGH","product":"api-manager","acknowledgerName":"Jane Doe"}}`)}
+	baseKey := recordBaseKey(record)
+
+	winnerDone := make(chan struct{})
+	go func() {
+		defer close(winnerDone)
+		if err := d.Handle(context.Background(), record); err != nil {
+			t.Errorf("winner: Handle() error = %v, want nil", err)
+		}
+	}()
+
+	for atomic.LoadInt32(&chat.calls) == 0 {
+		runtime.Gosched()
+	}
+
+	// The loser: a second, concurrent Handle call for the exact same
+	// record, with NoMoreRetries set — simulating a DLQ-exhausted delivery
+	// racing the still in-flight main-topic winner. It must lose the claim
+	// and, per the fix, must not force-release chatKey just because
+	// NoMoreRetries is true.
+	loserRecord := record
+	loserRecord.NoMoreRetries = true
+	if err := d.Handle(context.Background(), loserRecord); err != nil {
+		t.Fatalf("loser: Handle() error = %v, want nil", err)
+	}
+
+	d.doneMu.Lock()
+	chatStillClaimed := d.done[baseKey+"/chat"]
+	d.doneMu.Unlock()
+	if !chatStillClaimed {
+		t.Fatal("chatKey was released by the losing call while the winner was still mid-SendCaseAcknowledgedAlert")
+	}
+
+	close(chat.proceed)
+	<-winnerDone
+
+	if atomic.LoadInt32(&chat.calls) != 1 {
+		t.Errorf("chat sent %d times total, want exactly 1", chat.calls)
 	}
 }
 
