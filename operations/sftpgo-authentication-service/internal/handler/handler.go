@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"crypto/hmac"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -295,17 +296,30 @@ func (h *Handler) AuthHandler(w http.ResponseWriter, r *http.Request) {
 
 // authenticate checks if the request has a valid API key.
 // It returns true if authentication is successful or not configured, false otherwise.
+//
+// Fail-open when HookAPIKey is unconfigured is a deliberate design carried
+// over from PR #71 for the pre-login and keyboard-interactive hooks, so
+// dev/demo deployments that never set HOOK_API_KEY keep working. Do not
+// change that here — ExternalAuthHook uses its own stricter,
+// fail-closed check (authenticateExternalAuthHook) instead of this function.
 func (h *Handler) authenticate(r *http.Request, w http.ResponseWriter) bool {
 	if h.cfg.HookAPIKey == "" {
 		return true
 	}
 
-	apiKey := r.Header.Get(constants.HeaderAPIKey)
-	if apiKey != h.cfg.HookAPIKey {
+	if !apiKeyMatches(r, h.cfg.HookAPIKey) {
 		h.logger.Warn("Unauthorized access attempt from %s: invalid or missing API key", r.RemoteAddr)
 		h.auditLog(r, "unknown", r.URL.Path, "unauthorized", "invalid or missing api key")
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
 	return true
+}
+
+// apiKeyMatches reports whether the request's API-Key header matches want,
+// using a constant-time comparison to avoid a timing side-channel on the
+// stored HOOK_API_KEY.
+func apiKeyMatches(r *http.Request, want string) bool {
+	apiKey := r.Header.Get(constants.HeaderAPIKey)
+	return hmac.Equal([]byte(apiKey), []byte(want))
 }

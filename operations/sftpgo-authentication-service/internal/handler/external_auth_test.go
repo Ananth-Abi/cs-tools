@@ -31,16 +31,18 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/constants"
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/models"
 	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/service"
 )
 
 const (
-	testIssuer   = "https://idp.example.com/oauth2/token"
-	testAudience = "test-audience"
-	testEmail    = "jane.doe@example.com"
-	testUserID   = "00000000-0000-0000-0000-000000000000"
+	testIssuer     = "https://idp.example.com/oauth2/token"
+	testAudience   = "test-audience"
+	testEmail      = "jane.doe@example.com"
+	testUserID     = "00000000-0000-0000-0000-000000000000"
+	testHookAPIKey = "test-hook-api-key"
 )
 
 // newTestJWKSServer starts an httptest server serving the JWKS for key, and
@@ -109,6 +111,7 @@ func newTestHandler(t *testing.T, jwksURL string) *Handler {
 		AuthIssuer:                testIssuer,
 		AuthAudiences:             []string{testAudience},
 		AuthTokenValidatorEnabled: true,
+		HookAPIKey:                testHookAPIKey,
 	}
 	logger := log.NewAppLogger("ERROR")
 
@@ -129,6 +132,9 @@ func postExternalAuth(t *testing.T, h *Handler, body models.ExternalAuthHookRequ
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/external-auth-hook", bytes.NewReader(raw))
+	if h.cfg.HookAPIKey != "" {
+		req.Header.Set(constants.HeaderAPIKey, h.cfg.HookAPIKey)
+	}
 	w := httptest.NewRecorder()
 	h.ExternalAuthHook(w, req)
 	return w
@@ -306,8 +312,12 @@ func TestExternalAuthHook_NoCredential_DeniesWithEmptyUsername(t *testing.T) {
 	assertDenied(t, w)
 }
 
+// TestExternalAuthHook_ValidatorNotConfigured_ReturnsServiceUnavailable covers
+// the JWT-validator-missing path specifically (HookAPIKey IS configured and
+// presented correctly here, so the request clears authenticateExternalAuthHook
+// and the 503 comes from jwtAuth == nil, not from the API-key check).
 func TestExternalAuthHook_ValidatorNotConfigured_ReturnsServiceUnavailable(t *testing.T) {
-	cfg := &config.Config{DIRPath: "/data"}
+	cfg := &config.Config{DIRPath: "/data", HookAPIKey: testHookAPIKey}
 	h := &Handler{cfg: cfg, logger: log.NewAppLogger("ERROR"), jwtAuth: nil}
 
 	w := postExternalAuth(t, h, models.ExternalAuthHookRequest{
@@ -321,10 +331,55 @@ func TestExternalAuthHook_ValidatorNotConfigured_ReturnsServiceUnavailable(t *te
 	}
 }
 
+// TestExternalAuthHook_HookAPIKeyNotConfigured_FailsClosed proves fix #2:
+// unlike the original two hooks (see TestHandler_Authenticate and
+// TestPreLoginHookAndAuthHandler_FailOpenWhenHookAPIKeyUnset below),
+// /external-auth-hook must NOT fail open when HOOK_API_KEY is unset.
+func TestExternalAuthHook_HookAPIKeyNotConfigured_FailsClosed(t *testing.T) {
+	cfg := &config.Config{DIRPath: "/data"} // HookAPIKey deliberately empty
+	h := &Handler{cfg: cfg, logger: log.NewAppLogger("ERROR"), jwtAuth: nil}
+
+	w := postExternalAuth(t, h, models.ExternalAuthHookRequest{
+		Username: testEmail,
+		Password: "irrelevant",
+		Protocol: externalAuthProtocolHTTP,
+	})
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503 (fail closed with HOOK_API_KEY unset), got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestExternalAuthHook_WrongAPIKey_ReturnsUnauthorized proves the constant-time
+// comparison still correctly rejects a mismatched key on this route.
+func TestExternalAuthHook_WrongAPIKey_ReturnsUnauthorized(t *testing.T) {
+	cfg := &config.Config{DIRPath: "/data", HookAPIKey: testHookAPIKey}
+	h := &Handler{cfg: cfg, logger: log.NewAppLogger("ERROR"), jwtAuth: nil}
+
+	raw, err := json.Marshal(models.ExternalAuthHookRequest{
+		Username: testEmail,
+		Password: "irrelevant",
+		Protocol: externalAuthProtocolHTTP,
+	})
+	if err != nil {
+		t.Fatalf("failed to marshal request body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/external-auth-hook", bytes.NewReader(raw))
+	req.Header.Set(constants.HeaderAPIKey, "wrong-key")
+	w := httptest.NewRecorder()
+	h.ExternalAuthHook(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestExternalAuthHook_InvalidPayload_ReturnsBadRequest(t *testing.T) {
-	h := &Handler{cfg: &config.Config{}, logger: log.NewAppLogger("ERROR")}
+	cfg := &config.Config{HookAPIKey: testHookAPIKey}
+	h := &Handler{cfg: cfg, logger: log.NewAppLogger("ERROR")}
 
 	req := httptest.NewRequest(http.MethodPost, "/external-auth-hook", bytes.NewReader([]byte("not json")))
+	req.Header.Set(constants.HeaderAPIKey, testHookAPIKey)
 	w := httptest.NewRecorder()
 	h.ExternalAuthHook(w, req)
 
@@ -342,6 +397,21 @@ func TestExternalAuthHook_MethodNotAllowed(t *testing.T) {
 
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("expected status 405, got %d", w.Code)
+	}
+}
+
+// TestPreLoginHookAndAuthHandler_FailOpenWhenHookAPIKeyUnset proves fix #2 did
+// not touch the original two hooks: they must still fail open (auth passes)
+// when HOOK_API_KEY is unset, unlike /external-auth-hook.
+func TestPreLoginHookAndAuthHandler_FailOpenWhenHookAPIKeyUnset(t *testing.T) {
+	cfg := &config.Config{} // HookAPIKey deliberately empty
+	h := &Handler{cfg: cfg, logger: log.NewAppLogger("ERROR")}
+
+	req := httptest.NewRequest(http.MethodPost, "/prelogin-hook", nil)
+	w := httptest.NewRecorder()
+
+	if !h.authenticate(req, w) {
+		t.Fatalf("expected authenticate() to fail open (return true) when HOOK_API_KEY is unset")
 	}
 }
 

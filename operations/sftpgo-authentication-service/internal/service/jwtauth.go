@@ -111,7 +111,16 @@ func (s *JWTAuthService) ValidateAndExtract(tokenStr string) (*JWTUserInfo, erro
 			return nil, fmt.Errorf("decode token: %w", err)
 		}
 	} else {
+		// WithValidMethods pins the accepted signing algorithm to RS256, matching
+		// the RSA keys the platform's real JWKS endpoint publishes (same as
+		// apps/csm-portal/backend/internal/middleware/auth.go, which sources
+		// keys from the same JWKS via the same MicahParks/keyfunc client). This
+		// closes algorithm-confusion at the library-contract level instead of
+		// relying on golang-jwt/jwt/v5's implicit key-type checking (an RSA
+		// public key returned by keyFunc will not satisfy an HMAC Verify call,
+		// but that is incidental, not a documented guarantee).
 		token, err := jwt.ParseWithClaims(tokenStr, &c, s.keyFunc,
+			jwt.WithValidMethods([]string{"RS256"}),
 			jwt.WithIssuer(s.cfg.AuthIssuer),
 			jwt.WithLeeway(config.ExternalAuthClockSkew),
 			jwt.WithExpirationRequired(),

@@ -42,6 +42,9 @@ info:
     **Authentication Hook (`/auth-hook`)**:
     This hook handles SFTPGo's keyboard-interactive authentication flow. It integrates with Asgardeo's authentication API to perform multi-step authentication, including password verification and handling of multi-factor authentication (MFA) like TOTP or email OTP.
     Authentication state is managed via database sessions.
+
+    **External Auth Hook (`/external-auth-hook`)**:
+    This is SFTPGo's `external_auth_hook` contract for the web attachment access path. A caller (the CSM backend) calls SFTPGo's `GET /api/v2/user/token` with HTTP Basic auth, passing an already-validated `x-jwt-assertion` as the password. SFTPGo then POSTs the login attempt to this hook, which independently verifies that JWT's signature and claims against the identity provider's JWKS endpoint (it does not trust the caller) and, on success, returns an SFTPGo user object so SFTPGo can mint a REST API token for it. This is additive alongside `/prelogin-hook` and `/auth-hook` (the SFTP-channel flow) and does not change their behavior.
 paths:
   /prelogin-hook:
     post:
@@ -236,6 +239,92 @@ paths:
                 example: Internal server error
       security:
         - ApiKeyAuth: []
+  /external-auth-hook:
+    post:
+      summary: Handle SFTPGo's external_auth_hook for the web attachment access path
+      operationId: externalAuthHook
+      description: |
+        This is SFTPGo's `external_auth_hook` contract for the web attachment access path. A caller (the CSM
+        backend) calls SFTPGo's `GET /api/v2/user/token` with HTTP Basic auth, passing an already-validated
+        `x-jwt-assertion` as the password. SFTPGo then POSTs the login attempt to this hook, which independently
+        verifies that JWT's signature and claims against the identity provider's JWKS endpoint (it does not trust
+        the caller — SFTPGo is the one invoking this endpoint, not the CSM backend directly) and, on success,
+        returns an SFTPGo user object so SFTPGo can mint a REST API token for it.
+
+        Only `protocol: "HTTP"` is accepted; any other protocol, a missing credential, or a JWT that fails
+        signature/issuer/audience/expiration validation is denied. Per SFTPGo's own hook contract, denial is
+        signalled as HTTP 200 with a JSON body whose `username` field is empty, not a non-2xx status.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExternalAuthHookRequest'
+            examples:
+              webAttachmentLogin:
+                summary: Web attachment access path login attempt
+                value:
+                  username: jane.doe@example.com
+                  ip: "192.168.1.100"
+                  password: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  public_key: ""
+                  protocol: "HTTP"
+                  keyboard_interactive: ""
+                  tls_cert: ""
+      responses:
+        '200':
+          description: |
+            Always 200 for a well-formed request, per SFTPGo's external_auth_hook contract. A non-empty
+            `username` in the response means authentication succeeded; an empty `username` means SFTPGo should
+            treat the login as denied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MinimalSFTPGoUserResponse'
+              examples:
+                authSuccess:
+                  summary: JWT verified successfully
+                  value:
+                    username: jane.doe@example.com
+                    home_dir: /data/jane_doe_example_com
+                    permissions:
+                      /: ["list"]
+                    status: 1
+                authDenied:
+                  summary: JWT validation failed, unsupported protocol, or no credential presented
+                  value:
+                    username: ""
+                    home_dir: ""
+                    permissions: {}
+                    status: 0
+        '400':
+          description: Invalid payload in the request.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Invalid payload
+        '405':
+          description: Method Not Allowed. Only POST requests are accepted.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: Method not allowed
+        '503':
+          description: |
+            The external_auth_hook is not usable: either the JWT validator is not configured
+            (AUTH_JWKS_ENDPOINT/AUTH_ISSUER missing or unreachable), or HOOK_API_KEY is not configured on this
+            deployment. Unlike `/prelogin-hook` and `/auth-hook`, this route fails closed rather than allowing
+            unauthenticated calls when HOOK_API_KEY is unset, since a successful call here mints a full SFTPGo
+            identity from an arbitrary presented JWT.
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "Service unavailable: authentication not configured"
+      security:
+        - ApiKeyAuth: []
 
 components:
   securitySchemes:
@@ -382,3 +471,48 @@ components:
             - `-1`: Authentication failed.
             - `0`: Authentication is still in progress (more steps required).
           example: 0
+
+    ExternalAuthHookRequest:
+      type: object
+      description: |
+        Request payload SFTPGo POSTs to the external_auth_hook on every login attempt handled by that hook.
+        Field shape confirmed against SFTPGo's own dataprovider implementation (getExternalAuthResponse in
+        internal/dataprovider/dataprovider.go).
+      properties:
+        username:
+          type: string
+          description: The username the client presented.
+          example: jane.doe@example.com
+        ip:
+          type: string
+          description: The client's remote address.
+          example: "192.168.1.100"
+        password:
+          type: string
+          description: |
+            The presented credential for password-based auth (the JWT, for the web attachment path).
+            Empty for public-key or keyboard-interactive attempts.
+          example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+        public_key:
+          type: string
+          description: The presented SSH public key, empty unless the client is authenticating with a key.
+          example: ""
+        protocol:
+          type: string
+          description: |
+            The access protocol: "SSH", "FTP", "DAV", or "HTTP". The web attachment path
+            (GET /api/v2/user/token with Basic auth) is "HTTP"; this is the only protocol this hook accepts.
+          example: "HTTP"
+        keyboard_interactive:
+          type: string
+          description: |
+            "1" when the client is attempting keyboard-interactive auth, and "" otherwise. Note: this is a
+            string, not a bool, in SFTPGo's wire format.
+          example: ""
+        tls_cert:
+          type: string
+          description: The PEM-encoded client certificate, empty unless TLS client-cert auth is in use.
+          example: ""
+      required:
+        - username
+        - protocol

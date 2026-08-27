@@ -49,7 +49,7 @@ func (h *Handler) ExternalAuthHook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !h.authenticate(r, w) {
+	if !h.authenticateExternalAuthHook(r, w) {
 		return
 	}
 	defer r.Body.Close()
@@ -111,6 +111,31 @@ func (h *Handler) ExternalAuthHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSONResponse(w, http.StatusOK, res, h.logger)
+}
+
+// authenticateExternalAuthHook checks the request's API key for
+// /external-auth-hook specifically. Unlike authenticate() (used by
+// PreLoginHook/AuthHandler, which deliberately fail open when HOOK_API_KEY is
+// unconfigured — a PR #71 behavior kept unchanged for those two hooks), this
+// route fails closed: a successful call here mints a full SFTPGo identity
+// from an arbitrary presented JWT, not just SFTP-channel login state, so it
+// must never be reachable unauthenticated just because an operator forgot to
+// set HOOK_API_KEY.
+func (h *Handler) authenticateExternalAuthHook(r *http.Request, w http.ResponseWriter) bool {
+	if h.cfg.HookAPIKey == "" {
+		h.logger.Error("External-auth hook invoked but HOOK_API_KEY is not configured; refusing to serve this route unauthenticated")
+		h.auditLog(r, "unknown", "external-auth-hook", "failure", "HOOK_API_KEY not configured")
+		http.Error(w, "Service unavailable: authentication not configured", http.StatusServiceUnavailable)
+		return false
+	}
+
+	if !apiKeyMatches(r, h.cfg.HookAPIKey) {
+		h.logger.Warn("Unauthorized access attempt from %s: invalid or missing API key", r.RemoteAddr)
+		h.auditLog(r, "unknown", "external-auth-hook", "unauthorized", "invalid or missing api key")
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
 }
 
 // denyExternalAuth signals an authentication failure to SFTPGo's

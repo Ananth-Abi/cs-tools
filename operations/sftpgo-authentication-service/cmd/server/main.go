@@ -66,6 +66,15 @@ func main() {
 		jwtAuthService = nil
 	}
 
+	// 4c. /external-auth-hook fails closed per request when HOOK_API_KEY is
+	// unset (a successful call there mints a full SFTPGo identity from an
+	// arbitrary presented JWT, so it must never run unauthenticated). Warn
+	// loudly at startup too, since this is otherwise a silent per-request 503
+	// until someone notices.
+	if jwtAuthService != nil && cfg.HookAPIKey == "" {
+		logger.Warn("HOOK_API_KEY is not set: /external-auth-hook is enabled (AUTH_JWKS_ENDPOINT/AUTH_ISSUER configured) but will refuse every request with 503 until HOOK_API_KEY is configured. Set HOOK_API_KEY to enable it.")
+	}
+
 	// 5. Initialize the HTTP handler, injecting all dependencies
 	h := handler.NewHandler(cfg, logger, dbService, idpService, sftpgoService, subscriptionService, jwtAuthService)
 
