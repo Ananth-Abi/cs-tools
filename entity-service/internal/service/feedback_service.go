@@ -30,9 +30,15 @@ import (
 // validFeedbackBuckets is the closed set of bucket granularities the backing
 // data source accepts for POST /cases/feedback/aggregate.
 var validFeedbackBuckets = map[domain.FeedbackBucket]bool{
-	domain.FeedbackBucketDay:   true,
-	domain.FeedbackBucketWeek:  true,
-	domain.FeedbackBucketMonth: true,
+	domain.FeedbackBucketDay:                     true,
+	domain.FeedbackBucketWeek:                    true,
+	domain.FeedbackBucketMonth:                   true,
+	domain.FeedbackBucketRating:                  true,
+	domain.FeedbackBucketReasonsVeryDissatisfied: true,
+	domain.FeedbackBucketReasonsDissatisfied:     true,
+	domain.FeedbackBucketReasonsNeutral:          true,
+	domain.FeedbackBucketReasonsSatisfied:        true,
+	domain.FeedbackBucketReasonsVerySatisfied:    true,
 }
 
 // snFeedbackFilters mirrors the "filters" object accepted by the Choreo
@@ -43,6 +49,7 @@ var validFeedbackBuckets = map[domain.FeedbackBucket]bool{
 type snFeedbackFilters struct {
 	CaseID     string   `json:"caseId,omitempty"`
 	AccountIDs []string `json:"accountIds,omitempty"`
+	Rating     *int     `json:"rating,omitempty"`
 	DateFrom   string   `json:"dateFrom,omitempty"`
 	DateTo     string   `json:"dateTo,omitempty"`
 }
@@ -56,12 +63,16 @@ type snSearchFeedbackPayload struct {
 
 // snFeedbackRow mirrors a single row in the Choreo feedback-search response.
 type snFeedbackRow struct {
-	InstanceID  string  `json:"instanceId"`
-	CaseID      string  `json:"caseId"`
-	Rating      int     `json:"rating"`
-	RatingLabel string  `json:"ratingLabel"`
-	Comment     *string `json:"comment"`
-	SubmittedAt string  `json:"submittedAt"`
+	InstanceID     string  `json:"instanceId"`
+	CaseID         string  `json:"caseId"`
+	CaseNumber     *string `json:"caseNumber"`
+	CaseInternalID *string `json:"caseInternalId"`
+	Rating         int     `json:"rating"`
+	RatingLabel    string  `json:"ratingLabel"`
+	Comment        *string `json:"comment"`
+	SubmittedAt    string  `json:"submittedAt"`
+	SubmitterName  *string `json:"submitterName"`
+	SubmitterEmail *string `json:"submitterEmail"`
 }
 
 // snSearchFeedbackResponse mirrors the Choreo POST /cases/feedback/search response.
@@ -118,6 +129,9 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 			return domain.SearchFeedbackResponse{}, err
 		}
 	}
+	if req.Filters.Rating != nil && (*req.Filters.Rating < 1 || *req.Filters.Rating > 5) {
+		return domain.SearchFeedbackResponse{}, &apierror.ValidationError{Msg: "rating must be between 1 and 5"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -130,6 +144,7 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 		Filters: snFeedbackFilters{
 			CaseID:     uuidToSysid(req.Filters.CaseID),
 			AccountIDs: uuidsToSysids(req.Filters.AccountIDs),
+			Rating:     req.Filters.Rating,
 			DateFrom:   req.Filters.DateFrom,
 			DateTo:     req.Filters.DateTo,
 		},
@@ -150,12 +165,16 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 	results := make([]domain.CaseFeedback, 0, len(snResp.Results))
 	for _, row := range snResp.Results {
 		results = append(results, domain.CaseFeedback{
-			InstanceID:  sysidToUUID(row.InstanceID),
-			CaseID:      sysidToUUID(row.CaseID),
-			Rating:      row.Rating,
-			RatingLabel: row.RatingLabel,
-			Comment:     row.Comment,
-			SubmittedAt: row.SubmittedAt,
+			InstanceID:     sysidToUUID(row.InstanceID),
+			CaseID:         sysidToUUID(row.CaseID),
+			CaseNumber:     row.CaseNumber,
+			CaseInternalID: row.CaseInternalID,
+			Rating:         row.Rating,
+			RatingLabel:    row.RatingLabel,
+			Comment:        row.Comment,
+			SubmittedAt:    row.SubmittedAt,
+			SubmitterName:  row.SubmitterName,
+			SubmitterEmail: row.SubmitterEmail,
 		})
 	}
 
@@ -169,7 +188,7 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 // POST /cases/feedback/aggregate endpoint.
 func (s *snFeedbackService) AggregateFeedback(ctx context.Context, req domain.AggregateFeedbackRequest) (domain.AggregateFeedbackResponse, error) {
 	if !validFeedbackBuckets[req.Bucket] {
-		return domain.AggregateFeedbackResponse{}, &apierror.ValidationError{Msg: "bucket must be one of: day, week, month"}
+		return domain.AggregateFeedbackResponse{}, &apierror.ValidationError{Msg: "bucket must be one of: day, week, month, rating, reasons_very_dissatisfied, reasons_dissatisfied, reasons_neutral, reasons_satisfied, reasons_very_satisfied"}
 	}
 	if err := validateUUIDs("accountIds", req.Filters.AccountIDs); err != nil {
 		return domain.AggregateFeedbackResponse{}, err

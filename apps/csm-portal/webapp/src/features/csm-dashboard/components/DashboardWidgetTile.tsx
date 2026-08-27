@@ -367,9 +367,10 @@ export default function DashboardWidgetTile({
   // request, gated by its own `groupBy`/`slices` argument being
   // empty/undefined.
   //
-  // `groupBy.bucket` (date-bucketed grouping — only `case_feedback`'s own
-  // trend widget uses this today) resolves via `useCaseFeedbackTrendData`
-  // instead of `useWidgetGroupByData`: its request/response contract (`POST
+  // `groupBy.bucket` (date- or rating-bucketed grouping — only
+  // `case_feedback`'s own trend/distribution widgets use this today)
+  // resolves via `useCaseFeedbackTrendData` instead of `useWidgetGroupByData`:
+  // its request/response contract (`POST
   // /cases/feedback/aggregate`) is unrelated to `BeGroupByResponse` (see
   // `BeDashboardGroupByConfig.bucket`'s own doc comment) — passing a
   // `bucket`-configured `groupBy` into `useWidgetGroupByData` would throw
@@ -389,7 +390,7 @@ export default function DashboardWidgetTile({
   const feedbackTrendData = useCaseFeedbackTrendData(
     widgetId,
     filters,
-    shape === "bar" && groupBy?.bucket ? groupBy : undefined,
+    (shape === "bar" || shape === "pie") && groupBy?.bucket ? groupBy : undefined,
     isVisible,
   );
   const pieData = groupBy?.bucket ? feedbackTrendData : groupBy ? groupByData : sliceData;

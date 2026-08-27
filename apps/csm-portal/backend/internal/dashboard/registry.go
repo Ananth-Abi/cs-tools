@@ -655,11 +655,15 @@ var validWidgetShapes = map[Shape]bool{
 }
 
 // validGroupByBuckets are the legal values of GroupByConfig.Bucket -- the
-// same "day"/"week"/"month" enum POST /cases/feedback/aggregate documents on
-// the entity-service side (see AggregateFeedbackRequest.bucket in
-// openapi.yaml). Kept here rather than derived from that spec because this
-// layer never calls that endpoint; it only validates widget config shape.
-var validGroupByBuckets = map[string]bool{"day": true, "week": true, "month": true}
+// same enum POST /cases/feedback/aggregate documents on the entity-service
+// side (see AggregateFeedbackRequest.bucket in openapi.yaml). Kept here
+// rather than derived from that spec because this layer never calls that
+// endpoint; it only validates widget config shape.
+var validGroupByBuckets = map[string]bool{
+	"day": true, "week": true, "month": true, "rating": true,
+	"reasons_very_dissatisfied": true, "reasons_dissatisfied": true, "reasons_neutral": true,
+	"reasons_satisfied": true, "reasons_very_satisfied": true,
+}
 
 // validateWidgets applies the loader's own fail-loud rationale one level down.
 // Dashboard-level fields were already rejected by filename; a widget with a
@@ -721,7 +725,7 @@ func validateWidgets(d Dashboard, source string) error {
 				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy.field\" is empty",
 					source, d.ID, w.ID)
 			case hasBucket && !validGroupByBuckets[w.GroupBy.Bucket]:
-				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"groupBy.bucket\" %q; expected one of \"day\", \"week\", \"month\"",
+				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"groupBy.bucket\" %q; expected one of \"day\", \"week\", \"month\" (time buckets), \"rating\", \"reasons_very_dissatisfied\", \"reasons_dissatisfied\", \"reasons_neutral\", \"reasons_satisfied\", \"reasons_very_satisfied\" (categorical buckets)",
 					source, d.ID, w.ID, w.GroupBy.Bucket)
 			}
 		}

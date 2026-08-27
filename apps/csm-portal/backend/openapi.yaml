@@ -6722,6 +6722,18 @@ components:
           type: string
           format: uuid
           description: UUID of the case the feedback belongs to.
+        caseNumber:
+          type: string
+          nullable: true
+          description: >-
+            Human-readable case number (e.g. "CS0441331"). Null if the case
+            record could not be resolved.
+        caseInternalId:
+          type: string
+          nullable: true
+          description: >-
+            WSO2 internal case id (e.g. "SCTPSUB-88") for caseId. Null if the
+            case record could not be resolved or has no internal id assigned.
         rating:
           type: integer
           description: Numeric rating value.
@@ -6737,6 +6749,16 @@ components:
         submittedAt:
           type: string
           description: Timestamp when the feedback was submitted.
+        submitterName:
+          type: string
+          nullable: true
+          description: >-
+            Display name of the customer contact who submitted the feedback.
+            Null if the submitting user record could not be resolved.
+        submitterEmail:
+          type: string
+          nullable: true
+          description: Email of the submitting contact. Null, same as submitterName.
 
     CaseFeedbackSearchFilters:
       type: object
@@ -6751,6 +6773,11 @@ components:
             type: string
             format: uuid
           description: Restrict results to feedback on cases under these accounts.
+        rating:
+          type: integer
+          minimum: 1
+          maximum: 5
+          description: Restrict results to feedback with this exact rating value.
         dateFrom:
           type: string
           description: Start of the feedback submission date range (inclusive).
@@ -6810,19 +6837,53 @@ components:
           $ref: '#/components/schemas/CaseFeedbackAggregateFilters'
         bucket:
           type: string
-          enum: [day, week, month]
-          description: Time bucket granularity to group results by.
+          enum:
+            - day
+            - week
+            - month
+            - rating
+            - reasons_very_dissatisfied
+            - reasons_dissatisfied
+            - reasons_neutral
+            - reasons_satisfied
+            - reasons_very_satisfied
+          description: >-
+            Aggregation granularity to group results by. "day"/"week"/"month"
+            are temporal buckets by submission date. "rating" and every
+            "reasons_*" value are categorical buckets, not time ranges:
+            "rating" groups by rating value instead of time (each bucket's
+            bucketStart then carries the rating's own label, e.g. "Very
+            Satisfied", rather than a date); each "reasons_*" value groups by
+            which free-text reason was selected for that specific rating
+            level (each bucket's bucketStart then carries the reason's own
+            label, e.g. "Unhelpful support"). See FeedbackBucket for what
+            each bucket shape carries, and note categorical buckets carry no
+            ordering guarantee.
 
     FeedbackBucket:
       type: object
-      description: One aggregated time bucket in a case-feedback aggregate result.
+      description: >-
+        One bucket in a case-feedback aggregate result. Shape depends on the
+        request's "bucket" granularity: for "day"/"week"/"month" (temporal
+        buckets) this represents a time range, in ascending chronological
+        order; for "rating"/"reasons_*" (categorical buckets) it represents
+        one category instead, with no ordering guarantee across buckets.
       properties:
         bucketStart:
           type: string
-          description: Start of this bucket's time range.
+          description: >-
+            For a temporal bucket, the start of this bucket's time range
+            (e.g. "2026-08-01"). For a categorical bucket, the category's own
+            label instead (e.g. "Very Satisfied" for "rating", "Unhelpful
+            support" for a "reasons_*" bucket) — not a date.
         avgRating:
           type: number
-          description: Average rating across feedback records in this bucket.
+          description: >-
+            For a temporal or "rating" bucket, the average rating across
+            feedback records in this bucket. Meaningless for a "reasons_*"
+            bucket (every row is a categorical chip selection, not a
+            rating) — present on the wire for shape consistency but not a
+            useful value there.
         count:
           type: integer
           description: Number of feedback records in this bucket.
@@ -6939,15 +7000,30 @@ components:
                 here. Mutually exclusive with "bucket".
             bucket:
               type: string
-              enum: [day, week, month]
+              enum:
+                - day
+                - week
+                - month
+                - rating
+                - reasons_very_dissatisfied
+                - reasons_dissatisfied
+                - reasons_neutral
+                - reasons_satisfied
+                - reasons_very_satisfied
               description: >
-                Date-bucket granularity instead of field-value grouping.
-                This is the mode a case_feedback trend widget uses: the
-                caller resolves it by calling POST /cases/feedback/aggregate
-                with this value as that endpoint's own "bucket" (see
-                AggregateFeedbackRequest), not the generic
-                POST /{resourceType}/aggregate this groupBy block otherwise
-                implies. Mutually exclusive with "field".
+                Date-bucket granularity instead of field-value grouping
+                ("day"/"week"/"month", temporal — a real time range, in
+                ascending chronological order), or a categorical bucket
+                instead: "rating" groups by rating value, or a "reasons_*"
+                value groups by which reason was selected for that specific
+                rating level — categorical buckets carry no ordering
+                guarantee. This is the mode a case_feedback
+                trend/distribution widget uses: the caller resolves it by
+                calling POST /cases/feedback/aggregate with this value as
+                that endpoint's own "bucket" (see AggregateFeedbackRequest,
+                and FeedbackBucket for what each bucket shape carries), not
+                the generic POST /{resourceType}/aggregate this groupBy
+                block otherwise implies. Mutually exclusive with "field".
             maxGroups:
               type: integer
               description: >

@@ -3285,6 +3285,26 @@ export interface BeDashboardPieSlice {
   query: Record<string, unknown> | null;
 }
 
+/** Aggregation granularity for a `case_feedback` trend/distribution widget's
+ * `groupBy.bucket` and the matching `POST /cases/feedback/aggregate`
+ * `bucket` request field. `"day"`/`"week"`/`"month"` bucket by submission
+ * date; `"rating"` groups by rating value instead of time (each bucket's
+ * `bucketStart` then carries the rating's own label, e.g. "Very Satisfied",
+ * rather than a date); each `"reasons_*"` value groups by which free-text
+ * reason was selected for that specific rating level (each bucket's
+ * `bucketStart` then carries the reason's own label, e.g. "Unhelpful
+ * support"). */
+export type BeCaseFeedbackBucket =
+  | "day"
+  | "week"
+  | "month"
+  | "rating"
+  | "reasons_very_dissatisfied"
+  | "reasons_dissatisfied"
+  | "reasons_neutral"
+  | "reasons_satisfied"
+  | "reasons_very_satisfied";
+
 /** Alternative to {@link BeDashboardPieSlice}[] for shapes "pie"/"bar":
  * one server-side `POST /{resourceType}/aggregate` call instead of one
  * `search` per hand-authored slice. Mutually exclusive with `slices` —
@@ -3297,14 +3317,15 @@ export interface BeDashboardGroupByConfig {
    * widget carries no `field` at all. */
   field?: string;
   /** Date-bucketed grouping instead of field-value grouping — the shape a
-   * `case_feedback` trend widget uses (`shape: "bar"`). Mutually exclusive
-   * with `field`. Resolved by `useCaseFeedbackTrendData`, a dedicated hook
-   * (not `useWidgetGroupByData`, whose `POST {resourceType}/aggregate`
-   * request/response shape this doesn't match) that calls `POST
-   * /cases/feedback/aggregate` with this value and maps its date-bucketed
-   * response into the same per-slice `PieSliceResult[]` shape every other
-   * pie/bar widget already renders. */
-  bucket?: "day" | "week" | "month";
+   * `case_feedback` trend/distribution widget uses (`shape: "bar"` or
+   * `"pie"`). Mutually exclusive with `field`. Resolved by
+   * `useCaseFeedbackTrendData`, a dedicated hook (not `useWidgetGroupByData`,
+   * whose `POST {resourceType}/aggregate` request/response shape this
+   * doesn't match) that calls `POST /cases/feedback/aggregate` with this
+   * value and maps its bucketed response into the same per-slice
+   * `PieSliceResult[]` shape every other pie/bar widget already renders. See
+   * {@link BeCaseFeedbackBucket} for what each value means. */
+  bucket?: BeCaseFeedbackBucket;
   /** Caps the number of returned buckets; anything beyond that rolls up
    * into the response's `othersCount`. Meaningless when `bucket` is set — a
    * date-bucketed aggregation has no "Others" folding. */
@@ -3343,11 +3364,20 @@ export interface BeGroupByResponse {
 export interface BeCaseFeedback {
   instanceId: string;
   caseId: string;
+  /** `null` if the case record could not be resolved. */
+  caseNumber: string | null;
+  /** WSO2 internal case id (e.g. "SCTPSUB-88") for caseId. `null` if the case
+   * record could not be resolved or has no internal id assigned. */
+  caseInternalId: string | null;
   rating: number;
   ratingLabel: string;
   /** `null` for feedback submitted without a comment. */
   comment: string | null;
   submittedAt: string;
+  /** `null` if the submitting user record could not be resolved. */
+  submitterName: string | null;
+  /** `null`, same as submitterName. */
+  submitterEmail: string | null;
 }
 
 /** Body of `POST /cases/feedback/search` — deliberately NOT the
@@ -3360,6 +3390,8 @@ export interface BeCaseFeedbackSearchFilters {
    * `/cases/feedback/aggregate` — see {@link BeCaseFeedbackAggregateFilters}. */
   caseId?: string;
   accountIds?: string[];
+  /** Restrict results to feedback with this exact rating value (1-5). */
+  rating?: number;
   dateFrom?: string;
   dateTo?: string;
 }
@@ -3380,7 +3412,7 @@ export interface BeCaseFeedbackAggregateFilters {
 
 export interface BeCaseFeedbackAggregatePayload {
   filters?: BeCaseFeedbackAggregateFilters;
-  bucket: "day" | "week" | "month";
+  bucket: BeCaseFeedbackBucket;
 }
 
 /** One aggregated time bucket in a `POST /cases/feedback/aggregate`

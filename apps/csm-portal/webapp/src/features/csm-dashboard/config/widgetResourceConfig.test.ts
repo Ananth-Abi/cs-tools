@@ -473,3 +473,32 @@ describe("WIDGET_RESOURCE_CONFIG — case-table resourceTypes beyond `case`", ()
     expect(new Set(icons).size).toBe(icons.length);
   });
 });
+
+describe("WIDGET_RESOURCE_CONFIG.case_feedback.buildSearchRequestBody", () => {
+  // The dashboard-widget preview page's URL round-trip (parseWidgetPreviewFilters)
+  // decodes every query param as a comma-split string array — the shape every
+  // other resourceType's filters use, but not case_feedback's own flat scalar
+  // contract (dateFrom/dateTo/caseId/rating). A trend-bar or rating-pie slice's
+  // click-through arrives here exactly as that parser produces it.
+  const build = WIDGET_RESOURCE_CONFIG.case_feedback.buildSearchRequestBody!;
+
+  it("unwraps array-wrapped dateFrom/dateTo/rating back to scalars", () => {
+    const body = build({
+      filters: { dateFrom: ["2026-08-01"], dateTo: ["2026-08-31"], rating: ["5"] },
+      offset: 0,
+      limit: 10,
+    }) as { filters: Record<string, unknown> };
+
+    expect(body.filters).toEqual({ dateFrom: "2026-08-01", dateTo: "2026-08-31", rating: 5 });
+  });
+
+  it("leaves already-scalar filters untouched (a tile-level fetch, no URL round trip)", () => {
+    const body = build({
+      filters: { dateFrom: "2026-08-01", rating: 5 },
+      offset: 0,
+      limit: 10,
+    }) as { filters: Record<string, unknown> };
+
+    expect(body.filters).toEqual({ dateFrom: "2026-08-01", rating: 5 });
+  });
+});

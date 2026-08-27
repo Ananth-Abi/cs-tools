@@ -330,6 +330,20 @@ export interface CaseAuditFieldChange {
   newValue?: string;
 }
 
+/** One Case Feedback survey submission for a case, shown in its activity feed. */
+export interface CaseFeedbackEntry {
+  id: string;
+  rating: number;
+  ratingLabel: string;
+  /** `null`/absent for feedback submitted without a comment. */
+  comment?: string | null;
+  submittedAt: string;
+  /** `null`/absent if the submitting user record could not be resolved. */
+  submitterName?: string | null;
+  /** `null`/absent, same as submitterName. */
+  submitterEmail?: string | null;
+}
+
 export interface CaseAuditEntry {
   id: string;
   kind: CaseAuditKind;

@@ -16,11 +16,12 @@
 
 /* eslint-disable react-refresh/only-export-components -- this is a config module of per-resourceType render helpers (like widgetResourceConfig.ts), not a component module; none of the individual XxxWidgetList functions are exported (fast-refresh DX only) */
 
-import { Chip, IconButton, Tooltip, Typography } from "@wso2/oxygen-ui";
+import { Box, Chip, IconButton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { Eye } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useLocation } from "react-router";
 import type {
+  BeCaseFeedback,
   BeCaseSearchView,
   BeIncident,
   BeChangeRequestSearchView,
@@ -743,27 +744,16 @@ function CallRequestWidgetList({ items, isLoading }: WidgetListRendererProps): J
 }
 
 /**
- * Hardcoded renderer for `case_feedback` — the fallback for a
- * `case_feedback` widget with no `columns` configured (see
- * `DashboardWidgetTile`'s `hasColumns` branch). The real `case-feedback.json`
- * dashboard's own list widget sets `columns` (rating/comment/case/submitted
- * — matching ServiceNow's own "Case Feedback" scorecard page), so this path
- * is a fallback rather than the primary renderer, same relationship
- * `columns` has to every other hardcoded renderer here — but it still has to
- * exist and render something reasonable, since `WIDGET_LIST_RENDERERS` is
- * exhaustive over every `BeWidgetResourceType` (see that Record's own doc
- * comment) and `DashboardWidgetTile` falls back to it whenever `columns` is
- * absent/empty.
+ * Hardcoded renderer for `case_feedback` — the primary renderer for this
+ * resourceType's `shape: "list"` widget (the `case-feedback.json` dashboard's
+ * own list widget sets no `columns`, so `DashboardWidgetTile`'s
+ * `hasColumns` branch always dispatches here rather than to the generic
+ * `GenericColumnList` — a widget that *does* set `columns` would use that
+ * path instead, same relationship `columns` has to every other hardcoded
+ * renderer here). Renders rating/comment/case/submitted-by/submitted.
  */
 function CaseFeedbackWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Element {
-  const feedback = items as unknown as {
-    instanceId?: string;
-    caseId?: string;
-    rating?: number;
-    ratingLabel?: string;
-    comment?: string | null;
-    submittedAt?: string;
-  }[];
+  const feedback = items as unknown as BeCaseFeedback[];
   const dashboardReturnState = useDashboardReturnState();
   const navigate = useNavTransition();
   return (
@@ -773,7 +763,8 @@ function CaseFeedbackWidgetList({ items, isLoading }: WidgetListRendererProps): 
       columns={[
         { label: "Rating", width: "minmax(90px, 0.6fr)" },
         { label: "Comment", width: "minmax(200px, 3fr)" },
-        { label: "Case", width: "minmax(90px, 0.8fr)" },
+        { label: "Case", width: "minmax(140px, 1fr)" },
+        { label: "Submitted by", width: "minmax(140px, 1.5fr)" },
         { label: "Submitted", width: "minmax(90px, 1fr)" },
       ]}
       rows={feedback.map((f, i) => {
@@ -788,8 +779,28 @@ function CaseFeedbackWidgetList({ items, isLoading }: WidgetListRendererProps): 
             <Typography key="comment" variant="body2" noWrap title={f.comment ?? undefined}>
               {f.comment || "—"}
             </Typography>,
-            <Typography key="case" variant="body2" noWrap>
-              {f.caseId ?? "—"}
+            <Box key="case" sx={{ minWidth: 0 }}>
+              {f.caseInternalId && (
+                <Typography
+                  variant="body2"
+                  noWrap
+                  title={f.caseInternalId}
+                  sx={{ fontFamily: "monospace", fontWeight: 600 }}
+                >
+                  {f.caseInternalId}
+                </Typography>
+              )}
+              <Typography
+                variant={f.caseInternalId ? "caption" : "body2"}
+                color={f.caseInternalId ? "text.secondary" : undefined}
+                noWrap
+                sx={{ fontFamily: "monospace", display: "block" }}
+              >
+                {f.caseNumber || f.caseId || "—"}
+              </Typography>
+            </Box>,
+            <Typography key="submitter" variant="body2" noWrap title={f.submitterName ?? undefined}>
+              {f.submitterName || "Customer"}
             </Typography>,
             <Typography key="submitted" variant="caption" color="text.secondary" noWrap>
               {formatDate(f.submittedAt)}

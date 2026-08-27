@@ -74,6 +74,7 @@ import {
 } from "@features/csm-cases/api/useCsmCaseComments";
 import { useGetCsmConversationMessages } from "@features/csm-cases/api/useCsmConversationMessages";
 import { useGetCsmCaseActivities } from "@features/csm-cases/api/useCsmCaseActivities";
+import { useGetCsmCaseFeedback } from "@features/csm-cases/api/useCsmCaseFeedback";
 import {
   useGetCsmCaseAttachments,
   usePostCsmCaseAttachment,
@@ -446,6 +447,16 @@ export default function CsmCaseDetailPage(): JSX.Element {
     refetch: refetchActivities,
     isFetching: isFetchingActivities,
   } = useGetCsmCaseActivities(caseId);
+  // Case Feedback (CSAT survey) submissions for this case, if any — almost
+  // always empty for an open case (the survey goes out after closure), which
+  // is expected and renders no feedback lane rather than an error.
+  const {
+    data: caseFeedback,
+    isLoading: isFeedbackLoading,
+    isError: isFeedbackError,
+    refetch: refetchFeedback,
+    isFetching: isFetchingFeedback,
+  } = useGetCsmCaseFeedback(caseId);
   // The chat transcript the case was spawned from, when linked. Loaded lazily
   // off the case's conversation id and merged into the comment stream below so
   // it renders as the earliest activity entries — mirrors the customer portal.
@@ -693,7 +704,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // already-open tab this race has usually already settled by the time a
   // fragment link is followed, which is why the bug reads as "new tab only."
   const activitiesFeedReady =
-    !isCommentsLoading && !isChatLoading && !isActivityLoading;
+    !isCommentsLoading && !isChatLoading && !isActivityLoading && !isFeedbackLoading;
   // Forces the Activities tab exactly once per permalink — on the case or the
   // fragment actually changing, tracked by this ref rather than `activeTab`
   // itself (which would re-force every time the *effect* below re-ran, e.g.
@@ -759,13 +770,15 @@ export default function CsmCaseDetailPage(): JSX.Element {
     isFetchingActivities ||
     isFetchingChat ||
     isFetchingAttachments ||
-    isFetchingCallRequests;
+    isFetchingCallRequests ||
+    isFetchingFeedback;
   const refreshActivitiesTab = (): void => {
     void refetchComments();
     void refetchActivities();
     void refetchChat();
     void refetchAttachments();
     void refetchCallRequests();
+    void refetchFeedback();
   };
 
   // Re-runs every source the Details tab renders: the case itself plus the
@@ -2233,7 +2246,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   <Chip
                     size="small"
                     variant="outlined"
-                    label={`${safeComments.length + (activityAudit?.length ?? 0) + attachmentList.length} entries`}
+                    label={`${safeComments.length + (activityAudit?.length ?? 0) + attachmentList.length + (caseFeedback?.length ?? 0)} entries`}
                   />
                 )}
               </Box>
@@ -2244,10 +2257,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
               />
             </Box>
 
-            {isCommentsLoading || isChatLoading || isActivityLoading ? (
-              // Wait for the comments, linked chat transcript, and activity
-              // audit so nothing pops into an already-rendered timeline.
-              // isChatLoading is false for chat-less cases (query disabled).
+            {isCommentsLoading || isChatLoading || isActivityLoading || isFeedbackLoading ? (
+              // Wait for the comments, linked chat transcript, activity
+              // audit, and Case Feedback so nothing pops into an
+              // already-rendered timeline. isChatLoading is false for
+              // chat-less cases (query disabled).
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 {[0, 1, 2].map((i) => (
                   <Skeleton key={i} variant="rounded" height={56} />
@@ -2270,6 +2284,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
                     activity — reload to try again.
                   </Typography>
                 )}
+                {isFeedbackError && (
+                  <Typography variant="body2" color="error">
+                    Could not load Case Feedback. Showing the rest of the
+                    activity — reload to try again.
+                  </Typography>
+                )}
                 {isActivityError && (
                   <Typography variant="body2" color="error">
                     Could not load state changes. Showing the rest of the
@@ -2280,6 +2300,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   comments={safeComments}
                   audit={activityAudit ?? []}
                   attachments={attachmentList}
+                  feedback={caseFeedback ?? []}
                   callRequests={callRequests ?? []}
                   onDownloadAttachment={onDownloadAttachment}
                   preview={{
