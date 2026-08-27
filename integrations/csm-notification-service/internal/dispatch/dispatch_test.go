@@ -69,11 +69,11 @@ type sentCaseCreatedAlert struct {
 }
 
 type sentCaseAcknowledgedAlert struct {
-	product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName, team string
+	product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string
 }
 
 type sentSeverityChangedAlert struct {
-	product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string
+	product, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string
 }
 
 type mockGoogleChatSender struct {
@@ -100,17 +100,17 @@ func (m *mockGoogleChatSender) SendCaseCreatedAlert(ctx context.Context, product
 	return m.err
 }
 
-func (m *mockGoogleChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName, team string) error {
+func (m *mockGoogleChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.caseAcknowledgedCalls = append(m.caseAcknowledgedCalls, sentCaseAcknowledgedAlert{product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName, team})
+	m.caseAcknowledgedCalls = append(m.caseAcknowledgedCalls, sentCaseAcknowledgedAlert{product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName})
 	return m.err
 }
 
-func (m *mockGoogleChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
+func (m *mockGoogleChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.severityChangedCalls = append(m.severityChangedCalls, sentSeverityChangedAlert{product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink})
+	m.severityChangedCalls = append(m.severityChangedCalls, sentSeverityChangedAlert{product, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink})
 	return m.err
 }
 
@@ -1343,11 +1343,11 @@ func (s *concurrencyProbeChatSender) SendCaseCreatedAlert(ctx context.Context, p
 	return nil
 }
 
-func (s *concurrencyProbeChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName, team string) error {
+func (s *concurrencyProbeChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error {
 	return nil
 }
 
-func (s *concurrencyProbeChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
+func (s *concurrencyProbeChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
 	return nil
 }
 
@@ -1406,13 +1406,13 @@ func (s *blockingCaseAcknowledgedChatSender) SendCaseCreatedAlert(ctx context.Co
 	return nil
 }
 
-func (s *blockingCaseAcknowledgedChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName, team string) error {
+func (s *blockingCaseAcknowledgedChatSender) SendCaseAcknowledgedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, caseLink, acknowledgerName string) error {
 	atomic.AddInt32(&s.calls, 1)
 	<-s.proceed
 	return nil
 }
 
-func (s *blockingCaseAcknowledgedChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
+func (s *blockingCaseAcknowledgedChatSender) SendSeverityChangedAlert(ctx context.Context, product, oldSeverityLabel, oldSeverityColor, newSeverityLabel, newSeverityColor, caseNumber, wso2CaseID, title, team, caseLink string) error {
 	return nil
 }
 
