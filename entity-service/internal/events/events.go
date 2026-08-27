@@ -140,7 +140,9 @@ type CaseAcknowledgedPayload struct {
 	// Product — see CaseCreatedPayload's own doc comment. The acknowledged
 	// case's own product, so this alert routes to the same Google Chat
 	// space as its case.created alert did.
-	Product          string `json:"product,omitempty"`
+	Product string `json:"product,omitempty"`
+	// Team — see CaseCreatedPayload's own doc comment.
+	Team             string `json:"team,omitempty"`
 	AcknowledgerName string `json:"acknowledgerName"`
 }
 
@@ -164,7 +166,9 @@ type SeverityChangedPayload struct {
 	OldSeverity string `json:"oldSeverity"`
 	NewSeverity string `json:"newSeverity"`
 	// Product — see CaseCreatedPayload's own doc comment.
-	Product    string   `json:"product,omitempty"`
+	Product string `json:"product,omitempty"`
+	// Team — see CaseCreatedPayload's own doc comment.
+	Team       string   `json:"team,omitempty"`
 	Recipients []string `json:"recipients"`
 }
 
@@ -195,7 +199,15 @@ type CaseCreatedPayload struct {
 	// product's display name for per-product routing to work; otherwise
 	// dispatch.Dispatcher falls back to DEFAULT_CHAT_PRODUCT, same as before
 	// this field was populated.
-	Product     string   `json:"product,omitempty"`
+	Product string `json:"product,omitempty"`
+	// Team is the case's account's CRE team display name (e.g. "Team Nova")
+	// — cv.AccountDetails.CreTeam.Name, "" when the case has no account or
+	// the account has no CRE team assigned. A purely-display value in
+	// csm-notification-service's Chat cards, same as Product; unlike
+	// Product, it plays no role in routing. Depends on ServiceNow's
+	// case-embedded account object actually carrying creTeam/sreTeam — see
+	// caseTeamName's own doc comment for the current caveat around that.
+	Team        string   `json:"team,omitempty"`
 	CreatedAt   string   `json:"createdAt"`
 	Description string   `json:"description"`
 	Recipients  []string `json:"recipients"`
