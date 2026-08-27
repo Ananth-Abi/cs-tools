@@ -258,25 +258,11 @@ func chatHeaderCaseRef(caseNumber, wso2CaseID string) string {
 	return caseNumber + " · " + wso2CaseID
 }
 
-// chatMetaLine joins parts with " · ", skipping any empty ones — the
-// case.*-card redesign's "keep related facts on one line" convention
-// (severity/product/team, or old/new severity/team), rather than one
-// stacked row per fact.
-func chatMetaLine(parts ...string) string {
-	kept := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p != "" {
-			kept = append(kept, p)
-		}
-	}
-	return strings.Join(kept, " · ")
-}
-
-// teamPart formats team (muted gray) for a case.*-card's meta line —
+// teamPart formats team (muted gray) as a case.*-card's own body line —
 // visually distinct from severity's color and product's bold without
 // italicizing it (tried and dropped: it read as de-emphasized rather than
-// just differently colored). Returns "" (not a styled empty string) when
-// team is empty, so chatMetaLine drops it entirely.
+// just differently colored). Returns "" when team is empty, so callers
+// can skip appending it (not a blank line).
 func teamPart(team string) string {
 	if team == "" {
 		return ""
@@ -307,18 +293,18 @@ func teamPart(team string) string {
 // only ate into the width each line needs to stay readable on a narrow
 // (mobile) screen, without adding any information the 🆕 header marker
 // doesn't already carry: severity (colored) alone on its own line;
-// productName (bold) and a single visible "View case" link together on
-// the next, productName omitted (not a blank slot) when empty. "View
-// case" is a real `<a href>` text, not a button, since opening the case
-// is navigation, not a genuine one-click action. An earlier version of
-// this card had two separate links here, "Acknowledge" and "Open in CSM"
-// (there's no interactive card action wired up yet to actually
-// acknowledge from Chat — see dispatch.handleCaseCreated — so
-// "Acknowledge" pointed at the exact same destination as "Open in CSM"
-// anyway); collapsed to one consistent "View case" link, matching
-// SendCaseAcknowledgedAlert's/SendSeverityChangedAlert's own wording, and
-// folded onto the product line rather than kept as its own to save a
-// line. There is deliberately no team/codename line above the header —
+// productName (bold) alone on the next, omitted entirely (not a blank
+// line) when empty; then a single visible "View case" link on its own
+// line. "View case" is a real `<a href>` text, not a button, since
+// opening the case is navigation, not a genuine one-click action. An
+// earlier version of this card had two separate links here,
+// "Acknowledge" and "Open in CSM" (there's no interactive card action
+// wired up yet to actually acknowledge from Chat — see
+// dispatch.handleCaseCreated — so "Acknowledge" pointed at the exact
+// same destination as "Open in CSM" anyway); collapsed to one consistent
+// "View case" link, matching SendCaseAcknowledgedAlert's/
+// SendSeverityChangedAlert's own wording. There is deliberately no
+// team/codename line above the header —
 // an earlier version of this alert had one, discarded per explicit
 // product decision; the case reference now leads instead.
 func (c *GoogleChatClient) SendCaseCreatedAlert(ctx context.Context, product, severityLabel, severityColor, caseNumber, wso2CaseID, productName, title, team, caseLink string) error {
@@ -332,12 +318,10 @@ func (c *GoogleChatClient) SendCaseCreatedAlert(ctx context.Context, product, se
 	if severityLabel != "" {
 		lines = append(lines, caseAlertLine(`<font color="%s"><b>%s</b></font>`, severityColor, severityLabel))
 	}
-	productPart := ""
 	if productName != "" {
-		productPart = caseAlertLine(`<b>%s</b>`, productName)
+		lines = append(lines, caseAlertLine(`<b>%s</b>`, productName))
 	}
-	viewLink := caseAlertLine(`<a href="%s">View case</a>`, caseLink)
-	lines = append(lines, chatMetaLine(productPart, viewLink))
+	lines = append(lines, caseAlertLine(`<a href="%s">View case</a>`, caseLink))
 	text := strings.Join(lines, "<br>")
 	msg := chatCardMessage{
 		CardsV2: []chatCardWrapper{

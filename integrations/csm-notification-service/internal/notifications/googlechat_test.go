@@ -275,8 +275,9 @@ func TestSendIncidentAlert_ConstructsWithZeroValueConfig(t *testing.T) {
 // own first line — right under the header — then up to two more
 // plain-text lines, no leading icon on either (dropped for width on
 // mobile — see SendCaseCreatedAlert's own doc comment): severity alone,
-// then product (bold) and a visible "View case" link together — no
-// button, since navigating to the case isn't a genuine action.
+// then product (bold) on its own line, then a visible "View case" link
+// on its own line below it — no button, since navigating to the case
+// isn't a genuine action.
 func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -312,7 +313,7 @@ func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 1 {
 		t.Fatalf("unexpected sections/widgets shape: %+v — want a single text widget, no button", card.Sections)
 	}
-	want := `<font color="#5F6368">Team Nova</font><br><font color="#DC2626"><b>Critical (P1)</b></font><br><b>WSO2 API Manager</b> · <a href="https://csm.example.com/cases/CASE-1">View case</a>`
+	want := `<font color="#5F6368">Team Nova</font><br><font color="#DC2626"><b>Critical (P1)</b></font><br><b>WSO2 API Manager</b><br><a href="https://csm.example.com/cases/CASE-1">View case</a>`
 	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
 		t.Errorf("card text = %q, want %q", got, want)
 	}
