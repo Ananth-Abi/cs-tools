@@ -768,9 +768,13 @@ func commentLinkFor(caseLink, commentID string) string {
 var severityDisplay = map[string]struct{ label, color string }{
 	"CATASTROPHIC": {"Catastrophic (P0)", "#7F1D1D"},
 	"CRITICAL":     {"Critical (P1)", "#DC2626"},
-	"HIGH":         {"High (P2)", "#EA580C"},
-	"MEDIUM":       {"Medium (P3)", "#7C3AED"},
-	"LOW":          {"Low (P4)", "#6B7280"},
+	// HIGH's color is deliberately a distinctly orange hue (not a
+	// red-leaning orange like Tailwind's orange-600, #EA580C, used
+	// originally) — that read too close to CRITICAL's red at a glance in
+	// a real Chat card, a live-testing correction.
+	"HIGH":   {"High (P2)", "#F97316"},
+	"MEDIUM": {"Medium (P3)", "#7C3AED"},
+	"LOW":    {"Low (P4)", "#6B7280"},
 }
 
 // severityLabelAndColor resolves severity to its Chat display label/color

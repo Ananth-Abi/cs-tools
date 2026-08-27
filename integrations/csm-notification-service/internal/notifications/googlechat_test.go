@@ -270,13 +270,13 @@ func TestSendIncidentAlert_ConstructsWithZeroValueConfig(t *testing.T) {
 // TestSendCaseCreatedAlert_SendsExpectedCard verifies the redesigned
 // case.created card: the case reference leads the header, prefixed with a
 // "🆕" marker (no separate "New case" row — see SendCaseCreatedAlert's own
-// doc comment for why); the case title is the header subtitle; the body
-// is three plain-text lines, no leading icon on any of them (dropped for
-// width on mobile — see SendCaseCreatedAlert's own doc comment): severity
-// alone, team (italic, via teamPart) and product (bold) together, and
-// "Acknowledge"/"Open in CSM" together on their own final line — no
-// buttons at all, since neither link is a genuine action from this card
-// today.
+// doc comment for why); the header subtitle is the case title alone,
+// unstyled. The body leads with team (muted gray, via teamPart) as its
+// own first line — right under the header — then up to two more
+// plain-text lines, no leading icon on either (dropped for width on
+// mobile — see SendCaseCreatedAlert's own doc comment): severity alone,
+// then product (bold) and a visible "View case" link together — no
+// button, since navigating to the case isn't a genuine action.
 func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -307,21 +307,20 @@ func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "🆕 CS0001001 · WSO2-1000")
 	}
 	if card.Header.Subtitle != `Tom & Jerry <script>` {
-		t.Errorf("Header.Subtitle = %q, want the case title verbatim (headers aren't HTML)", card.Header.Subtitle)
+		t.Errorf("Header.Subtitle = %q, want the case title verbatim (headers aren't HTML, and team no longer lives here)", card.Header.Subtitle)
 	}
 	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 1 {
 		t.Fatalf("unexpected sections/widgets shape: %+v — want a single text widget, no button", card.Sections)
 	}
-	want := `<font color="#DC2626"><b>Critical (P1)</b></font><br><font color="#5F6368"><i>Team Nova</i></font> · <b>WSO2 API Manager</b><br><a href="https://csm.example.com/cases/CASE-1">Acknowledge</a> · <a href="https://csm.example.com/cases/CASE-1">Open in CSM</a>`
+	want := `<font color="#5F6368">Team Nova</font><br><font color="#DC2626"><b>Critical (P1)</b></font><br><b>WSO2 API Manager</b> · <a href="https://csm.example.com/cases/CASE-1">View case</a>`
 	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
 		t.Errorf("card text = %q, want %q", got, want)
 	}
 }
 
 // TestSendCaseCreatedAlert_OmitsEmptyOptionalParts verifies severity/
-// product/team are each dropped from the line entirely (no stray " · "
-// separators) when the caller doesn't supply one — the two links are
-// never omitted.
+// product/team are each dropped entirely (no stray " · " separators) when
+// the caller doesn't supply one — the "View case" link is never omitted.
 func TestSendCaseCreatedAlert_OmitsEmptyOptionalParts(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +341,10 @@ func TestSendCaseCreatedAlert_OmitsEmptyOptionalParts(t *testing.T) {
 	if card.Header.Title != "🆕 CS0001001" {
 		t.Errorf("Header.Title = %q, want just the 🆕 marker and case number with no WSO2CaseID separator", card.Header.Title)
 	}
-	want := `<a href="https://csm.example.com/cases/CASE-1">Acknowledge</a> · <a href="https://csm.example.com/cases/CASE-1">Open in CSM</a>`
+	if card.Header.Subtitle != "" {
+		t.Errorf("Header.Subtitle = %q, want empty when title and team are both empty", card.Header.Subtitle)
+	}
+	want := `<a href="https://csm.example.com/cases/CASE-1">View case</a>`
 	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
 		t.Errorf("card text = %q, want %q", got, want)
 	}
@@ -431,12 +433,14 @@ func TestSendCaseAcknowledgedAlert_RejectsMissingRequiredArgs(t *testing.T) {
 }
 
 // TestSendSeverityChangedAlert_SendsExpectedCard verifies the redesigned
-// case.severity_changed card: case reference in the header, the case title
-// as subtitle, and two plain-text body lines, no leading icon on either
-// (dropped for width on mobile — see SendCaseCreatedAlert's own doc
-// comment): an old→new severity transition — both severities colored, not
-// just the new one — on its own line, then team and a visible
-// "View case" link together on the next, no button.
+// case.severity_changed card: case reference in the header, the case
+// title alone as subtitle (unstyled). The body leads with team (muted
+// gray, via teamPart) as its own first line, then up to two more
+// plain-text lines, no leading icon on either (dropped for width on
+// mobile — see SendCaseCreatedAlert's own doc comment): an old→new
+// severity transition — both severities colored, not just the new one —
+// on its own line, then a visible "View case" link alone on the next, no
+// button.
 func TestSendSeverityChangedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -463,12 +467,12 @@ func TestSendSeverityChangedAlert_SendsExpectedCard(t *testing.T) {
 		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "CS0001002 · WSO2-1001")
 	}
 	if card.Header.Subtitle != "Gateway returns 502" {
-		t.Errorf("Header.Subtitle = %q, want the case title", card.Header.Subtitle)
+		t.Errorf("Header.Subtitle = %q, want the case title (team no longer lives here)", card.Header.Subtitle)
 	}
 	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 1 {
 		t.Fatalf("unexpected sections/widgets shape: %+v — want a single text widget, no button", card.Sections)
 	}
-	want := `<font color="#EA580C"><b>High (P2)</b></font> → <font color="#6B7280"><b>Low (P4)</b></font><br><font color="#5F6368"><i>Team Nova</i></font> · <a href="https://csm.example.com/cases/CASE-1">View case</a>`
+	want := `<font color="#5F6368">Team Nova</font><br><font color="#EA580C"><b>High (P2)</b></font> → <font color="#6B7280"><b>Low (P4)</b></font><br><a href="https://csm.example.com/cases/CASE-1">View case</a>`
 	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != want {
 		t.Errorf("card text = %q, want %q", got, want)
 	}
