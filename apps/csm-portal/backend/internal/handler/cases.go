@@ -88,6 +88,10 @@ type entityCaseClient interface {
 	// GetCaseAttachment resolves a single attachment's metadata — used by the
 	// SFTPGo-backed share-creation path; see AttachmentStorageHandler.
 	GetCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	// ConfirmCaseAttachment transitions a 'pending' attachment row (created by
+	// CreateCaseAttachment with status "pending") to 'complete' — used by the
+	// SFTPGo-backed upload-confirm path; see AttachmentStorageHandler.
+	ConfirmCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	CreateCallRequest(ctx context.Context, body []byte) ([]byte, error)
 	SearchCallRequests(ctx context.Context, body []byte) ([]byte, error)
 	SearchAllCallRequests(ctx context.Context, body []byte) ([]byte, error)

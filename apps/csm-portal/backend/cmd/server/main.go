@@ -170,6 +170,7 @@ func main() {
 	if attachmentStorageHandler != nil {
 		mux.HandleFunc("POST /cases/{id}/attachments/upload-token", attachmentStorageHandler.MintUploadToken)
 		mux.HandleFunc("POST /attachments/{id}/share", attachmentStorageHandler.CreateAttachmentShare)
+		mux.HandleFunc("POST /cases/{caseId}/attachments/{attachmentId}/confirm", attachmentStorageHandler.ConfirmUpload)
 	}
 	mux.HandleFunc("POST /cases/{id}/call-requests", caseHandler.CreateCallRequest)
 	mux.HandleFunc("POST /cases/{id}/call-requests/search", caseHandler.SearchCallRequests)

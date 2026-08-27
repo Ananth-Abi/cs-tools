@@ -19,6 +19,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path"
@@ -76,6 +77,25 @@ func (m *mockSftpgoClient) BaseURL() string {
 
 // ----- MintUploadToken -----
 
+// validMintUploadTokenBody returns a well-formed POST
+// /cases/{id}/attachments/upload-token request body: since MintUploadToken
+// now creates the attachment's metadata row up front, the frontend must
+// supply the file's name/mimeType/size before any bytes are uploaded.
+func validMintUploadTokenBody() io.Reader {
+	return strings.NewReader(`{"filename":"report.pdf","mimeType":"application/pdf","sizeBytes":1024}`)
+}
+
+// mockAttachmentID is the attachment id returned by a mock entity
+// CreateCaseAttachment call configured for a successful pending-row create.
+const mockAttachmentID = "33333333-3333-3333-3333-333333333333"
+
+// createCaseAttachmentFnPending returns a mockEntityCaseClient.createCaseAttachmentFn
+// that mimics the entity service's successful response to a "pending" status
+// CreateCaseAttachment call, carrying mockAttachmentID as the created row's id.
+func createCaseAttachmentFnPending(_ context.Context, _ []byte) ([]byte, error) {
+	return []byte(`{"message":"Attachment created successfully","attachment":{"id":"` + mockAttachmentID + `","status":"pending"}}`), nil
+}
+
 func TestMintUploadTokenRequiresAuth(t *testing.T) {
 	t.Parallel()
 	h := NewAttachmentStorageHandler(&mockEntityCaseClient{}, &mockSftpgoClient{})
@@ -117,7 +137,7 @@ func TestMintUploadTokenBlocksClosedCase(t *testing.T) {
 	h := NewAttachmentStorageHandler(entity, sftpgoMock)
 
 	caseID := "11111111-1111-1111-1111-111111111111"
-	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
 	req.SetPathValue("id", caseID)
 	req.Header.Set("x-jwt-assertion", "raw-jwt")
 	w := httptest.NewRecorder()
@@ -146,7 +166,7 @@ func TestMintUploadTokenRequiresJWTAssertionHeader(t *testing.T) {
 	h := NewAttachmentStorageHandler(entity, sftpgoMock)
 
 	caseID := "11111111-1111-1111-1111-111111111111"
-	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
 	req.SetPathValue("id", caseID)
 	// Deliberately no x-jwt-assertion header set.
 	w := httptest.NewRecorder()
@@ -159,21 +179,88 @@ func TestMintUploadTokenRequiresJWTAssertionHeader(t *testing.T) {
 	}
 }
 
-// TestMintUploadTokenSuccess verifies a successful mint on an open case
-// forwards the exact x-jwt-assertion header value and returns the expected
-// response shape.
-func TestMintUploadTokenSuccess(t *testing.T) {
+// TestMintUploadTokenRejectsIncompleteBody verifies a request missing any of
+// filename/mimeType/sizeBytes is rejected before any entity or SFTPGo call —
+// this backend never sees the file's bytes, so these three fields are the
+// only source of truth for the pending row's metadata.
+func TestMintUploadTokenRejectsIncompleteBody(t *testing.T) {
 	t.Parallel()
 	entity := &mockEntityCaseClient{
 		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
 			return []byte(`{"state":"work_in_progress"}`), nil
 		},
 	}
-	sftpgoMock := &mockSftpgoClient{baseURL: "https://sftpgo.example.com"}
+	sftpgoMock := &mockSftpgoClient{}
 	h := NewAttachmentStorageHandler(entity, sftpgoMock)
 
 	caseID := "11111111-1111-1111-1111-111111111111"
-	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token",
+		strings.NewReader(`{"filename":"report.pdf"}`)))
+	req.SetPathValue("id", caseID)
+	req.Header.Set("x-jwt-assertion", "raw-jwt")
+	w := httptest.NewRecorder()
+
+	h.MintUploadToken(w, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+	if len(sftpgoMock.mintTokenCalls) != 0 {
+		t.Errorf("MintToken was called %d times; want 0 — an incomplete body must be rejected before any upstream call", len(sftpgoMock.mintTokenCalls))
+	}
+}
+
+// TestMintUploadTokenSuccess verifies a successful mint on an open case
+// forwards the exact x-jwt-assertion header value and returns the expected
+// response shape.
+func TestMintUploadTokenSuccess(t *testing.T) {
+	t.Parallel()
+	const caseID = "11111111-1111-1111-1111-111111111111"
+	var createCaseAttachmentCalls int
+	entity := &mockEntityCaseClient{
+		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
+			return []byte(`{"state":"work_in_progress"}`), nil
+		},
+		createCaseAttachmentFn: func(ctx context.Context, body []byte) ([]byte, error) {
+			createCaseAttachmentCalls++
+			var req struct {
+				ReferenceID   string `json:"referenceId"`
+				ReferenceType string `json:"referenceType"`
+				Name          string `json:"name"`
+				Type          string `json:"type"`
+				StorageKey    string `json:"storageKey"`
+				SizeBytes     int    `json:"sizeBytes"`
+				Status        string `json:"status"`
+			}
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatalf("decode CreateCaseAttachment body: %v; raw: %s", err, body)
+			}
+			if req.ReferenceID != caseID {
+				t.Errorf("CreateCaseAttachment referenceId = %q, want %q", req.ReferenceID, caseID)
+			}
+			if req.ReferenceType != "case" {
+				t.Errorf("CreateCaseAttachment referenceType = %q, want %q", req.ReferenceType, "case")
+			}
+			if req.Name != "report.pdf" {
+				t.Errorf("CreateCaseAttachment name = %q, want %q", req.Name, "report.pdf")
+			}
+			if req.Type != "application/pdf" {
+				t.Errorf("CreateCaseAttachment type = %q, want %q", req.Type, "application/pdf")
+			}
+			if req.SizeBytes != 1024 {
+				t.Errorf("CreateCaseAttachment sizeBytes = %d, want 1024", req.SizeBytes)
+			}
+			if req.Status != "pending" {
+				t.Errorf("CreateCaseAttachment status = %q, want %q — the row must be created pending, before the share is minted", req.Status, "pending")
+			}
+			if req.StorageKey == "" {
+				t.Errorf("CreateCaseAttachment storageKey was empty")
+			}
+			return createCaseAttachmentFnPending(ctx, body)
+		},
+	}
+	sftpgoMock := &mockSftpgoClient{baseURL: "https://sftpgo.example.com"}
+	h := NewAttachmentStorageHandler(entity, sftpgoMock)
+
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
 	req.SetPathValue("id", caseID)
 	req.Header.Set("x-jwt-assertion", "the-raw-jwt-assertion")
 	w := httptest.NewRecorder()
@@ -181,12 +268,18 @@ func TestMintUploadTokenSuccess(t *testing.T) {
 	h.MintUploadToken(w, req)
 
 	assertStatus(t, w, http.StatusOK)
+	if createCaseAttachmentCalls != 1 {
+		t.Fatalf("CreateCaseAttachment was called %d times; want 1", createCaseAttachmentCalls)
+	}
 	if len(sftpgoMock.mintTokenCalls) != 1 || sftpgoMock.mintTokenCalls[0] != "the-raw-jwt-assertion" {
 		t.Fatalf("mintTokenCalls = %v, want exactly one call with the raw x-jwt-assertion value", sftpgoMock.mintTokenCalls)
 	}
 
 	rawBody := w.Body.String()
 	resp := decodeJSON[uploadTokenResponse](t, w)
+	if resp.ID != mockAttachmentID {
+		t.Errorf("ID = %q, want %q — the id of the pending row CreateCaseAttachment created", resp.ID, mockAttachmentID)
+	}
 	if resp.ShareID != "mock-share-id" {
 		t.Errorf("ShareID = %q, want mock-share-id", resp.ShareID)
 	}
@@ -238,12 +331,13 @@ func TestMintUploadTokenStorageKeyIncludesProject(t *testing.T) {
 		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
 			return []byte(`{"state":"work_in_progress","projectId":"` + projectID + `"}`), nil
 		},
+		createCaseAttachmentFn: createCaseAttachmentFnPending,
 	}
 	sftpgoMock := &mockSftpgoClient{}
 	h := NewAttachmentStorageHandler(entity, sftpgoMock)
 
 	caseID := "11111111-1111-1111-1111-111111111111"
-	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
 	req.SetPathValue("id", caseID)
 	req.Header.Set("x-jwt-assertion", "raw-jwt")
 	w := httptest.NewRecorder()
@@ -271,13 +365,14 @@ func TestMintUploadTokenStorageKeyUniquePerCall(t *testing.T) {
 		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
 			return []byte(`{"state":"work_in_progress"}`), nil
 		},
+		createCaseAttachmentFn: createCaseAttachmentFnPending,
 	}
 	h := NewAttachmentStorageHandler(entity, &mockSftpgoClient{})
 
 	caseID := "11111111-1111-1111-1111-111111111111"
 	seen := make(map[string]bool)
 	for i := 0; i < 5; i++ {
-		req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+		req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
 		req.SetPathValue("id", caseID)
 		req.Header.Set("x-jwt-assertion", "raw-jwt")
 		w := httptest.NewRecorder()
@@ -306,7 +401,7 @@ func TestMintUploadTokenPropagatesSftpgoFailure(t *testing.T) {
 	h := NewAttachmentStorageHandler(entity, sftpgoMock)
 
 	caseID := "11111111-1111-1111-1111-111111111111"
-	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
 	req.SetPathValue("id", caseID)
 	req.Header.Set("x-jwt-assertion", "raw-jwt")
 	w := httptest.NewRecorder()
@@ -325,6 +420,7 @@ func TestMintUploadTokenPropagatesCreateShareFailure(t *testing.T) {
 		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
 			return []byte(`{"state":"work_in_progress"}`), nil
 		},
+		createCaseAttachmentFn: createCaseAttachmentFnPending,
 	}
 	sftpgoMock := &mockSftpgoClient{
 		createShareFn: func(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error) {
@@ -334,7 +430,7 @@ func TestMintUploadTokenPropagatesCreateShareFailure(t *testing.T) {
 	h := NewAttachmentStorageHandler(entity, sftpgoMock)
 
 	caseID := "11111111-1111-1111-1111-111111111111"
-	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", nil))
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
 	req.SetPathValue("id", caseID)
 	req.Header.Set("x-jwt-assertion", "raw-jwt")
 	w := httptest.NewRecorder()
@@ -345,6 +441,80 @@ func TestMintUploadTokenPropagatesCreateShareFailure(t *testing.T) {
 	if len(sftpgoMock.mintTokenCalls) != 1 {
 		t.Errorf("MintToken was called %d times; want 1 (still needed to authenticate the CreateShare call)", len(sftpgoMock.mintTokenCalls))
 	}
+}
+
+// TestMintUploadTokenCreatesPendingRowBeforeShare verifies the call order
+// that closes the reliability gap this change exists for: the entity
+// service's CreateCaseAttachment (with status "pending") must be called
+// strictly before SFTPGo's CreateShare, recorded here via a single shared,
+// ordered call log both mocks append to.
+func TestMintUploadTokenCreatesPendingRowBeforeShare(t *testing.T) {
+	t.Parallel()
+	var calls []string
+	entity := &mockEntityCaseClient{
+		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
+			return []byte(`{"state":"work_in_progress"}`), nil
+		},
+		createCaseAttachmentFn: func(ctx context.Context, body []byte) ([]byte, error) {
+			calls = append(calls, "createCaseAttachment")
+			return createCaseAttachmentFnPending(ctx, body)
+		},
+	}
+	sftpgoMock := &mockSftpgoClient{
+		createShareFn: func(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error) {
+			calls = append(calls, "createShare")
+			return "mock-share-id", nil
+		},
+	}
+	h := NewAttachmentStorageHandler(entity, sftpgoMock)
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
+	req.SetPathValue("id", caseID)
+	req.Header.Set("x-jwt-assertion", "raw-jwt")
+	w := httptest.NewRecorder()
+
+	h.MintUploadToken(w, req)
+
+	assertStatus(t, w, http.StatusOK)
+	if got := strings.Join(calls, ","); got != "createCaseAttachment,createShare" {
+		t.Fatalf("call order = %q, want %q — the pending row must be created before the share is minted", got, "createCaseAttachment,createShare")
+	}
+}
+
+// TestMintUploadTokenSkipsShareWhenEntityCreateFails verifies that when the
+// entity service's CreateCaseAttachment call fails, MintUploadToken returns
+// an error and never mints a share: a share with no corresponding CSM
+// metadata row would recreate the exact orphan-upload gap this design
+// change closes.
+func TestMintUploadTokenSkipsShareWhenEntityCreateFails(t *testing.T) {
+	t.Parallel()
+	entity := &mockEntityCaseClient{
+		getCaseFn: func(ctx context.Context, caseID string) ([]byte, error) {
+			return []byte(`{"state":"work_in_progress"}`), nil
+		},
+		createCaseAttachmentFn: func(ctx context.Context, body []byte) ([]byte, error) {
+			return nil, &apierror.Error{StatusCode: http.StatusInternalServerError, Body: "boom"}
+		},
+	}
+	sftpgoMock := &mockSftpgoClient{}
+	h := NewAttachmentStorageHandler(entity, sftpgoMock)
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/upload-token", validMintUploadTokenBody()))
+	req.SetPathValue("id", caseID)
+	req.Header.Set("x-jwt-assertion", "raw-jwt")
+	w := httptest.NewRecorder()
+
+	h.MintUploadToken(w, req)
+
+	assertStatus(t, w, http.StatusInternalServerError)
+	if len(sftpgoMock.createShareCalls) != 0 {
+		t.Errorf("CreateShare was called %d times; want 0 — a share must never be minted when the pending row failed to create", len(sftpgoMock.createShareCalls))
+	}
+	// MintToken (the sftpgo access-token mint used to authenticate the
+	// CreateShare call) may or may not have already run by this point in the
+	// call sequence; what matters is that CreateShare itself never fires.
 }
 
 // ----- CreateAttachmentShare -----
@@ -515,4 +685,165 @@ func TestCreateAttachmentSharePropagatesSftpgoFailure(t *testing.T) {
 	h.CreateAttachmentShare(w, req)
 
 	assertStatus(t, w, http.StatusBadGateway)
+}
+
+// ----- ConfirmUpload -----
+
+func TestConfirmUploadRequiresAuth(t *testing.T) {
+	t.Parallel()
+	h := NewAttachmentStorageHandler(&mockEntityCaseClient{}, &mockSftpgoClient{})
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	attachmentID := "22222222-2222-2222-2222-222222222222"
+	req := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/"+attachmentID+"/confirm", nil)
+	req.SetPathValue("caseId", caseID)
+	req.SetPathValue("attachmentId", attachmentID)
+	w := httptest.NewRecorder()
+
+	h.ConfirmUpload(w, req)
+
+	assertStatus(t, w, http.StatusUnauthorized)
+}
+
+func TestConfirmUploadRejectsInvalidCaseID(t *testing.T) {
+	t.Parallel()
+	h := NewAttachmentStorageHandler(&mockEntityCaseClient{}, &mockSftpgoClient{})
+
+	attachmentID := "22222222-2222-2222-2222-222222222222"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/not-a-uuid/attachments/"+attachmentID+"/confirm", nil))
+	req.SetPathValue("caseId", "not-a-uuid")
+	req.SetPathValue("attachmentId", attachmentID)
+	w := httptest.NewRecorder()
+
+	h.ConfirmUpload(w, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+func TestConfirmUploadRejectsInvalidAttachmentID(t *testing.T) {
+	t.Parallel()
+	h := NewAttachmentStorageHandler(&mockEntityCaseClient{}, &mockSftpgoClient{})
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/not-a-uuid/confirm", nil))
+	req.SetPathValue("caseId", caseID)
+	req.SetPathValue("attachmentId", "not-a-uuid")
+	w := httptest.NewRecorder()
+
+	h.ConfirmUpload(w, req)
+
+	assertStatus(t, w, http.StatusBadRequest)
+}
+
+// TestConfirmUploadSuccess verifies the happy path: ConfirmUpload calls the
+// entity service's ConfirmCaseAttachment with exactly the path's attachment
+// id, and forwards its response body and 200 status to the caller unchanged.
+func TestConfirmUploadSuccess(t *testing.T) {
+	t.Parallel()
+	var gotAttachmentID string
+	entity := &mockEntityCaseClient{
+		confirmCaseAttachmentFn: func(ctx context.Context, attachmentID string) ([]byte, error) {
+			gotAttachmentID = attachmentID
+			return []byte(`{"message":"Attachment confirmed successfully","attachment":{"id":"` + attachmentID + `","status":"complete"}}`), nil
+		},
+	}
+	h := NewAttachmentStorageHandler(entity, &mockSftpgoClient{})
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	attachmentID := "22222222-2222-2222-2222-222222222222"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/"+attachmentID+"/confirm", nil))
+	req.SetPathValue("caseId", caseID)
+	req.SetPathValue("attachmentId", attachmentID)
+	w := httptest.NewRecorder()
+
+	h.ConfirmUpload(w, req)
+
+	assertStatus(t, w, http.StatusOK)
+	if gotAttachmentID != attachmentID {
+		t.Errorf("ConfirmCaseAttachment called with attachmentID = %q, want %q", gotAttachmentID, attachmentID)
+	}
+	var resp struct {
+		Attachment struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"attachment"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v; raw: %s", err, w.Body.String())
+	}
+	if resp.Attachment.ID != attachmentID || resp.Attachment.Status != "complete" {
+		t.Errorf("response attachment = %+v, want id=%q status=complete", resp.Attachment, attachmentID)
+	}
+}
+
+// TestConfirmUploadMapsNotFound verifies a 404 from the entity service (the
+// attachment id does not exist) maps to a 404 on this backend's response.
+func TestConfirmUploadMapsNotFound(t *testing.T) {
+	t.Parallel()
+	entity := &mockEntityCaseClient{
+		confirmCaseAttachmentFn: func(ctx context.Context, attachmentID string) ([]byte, error) {
+			return nil, &apierror.Error{StatusCode: http.StatusNotFound, Body: "not found"}
+		},
+	}
+	h := NewAttachmentStorageHandler(entity, &mockSftpgoClient{})
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	attachmentID := "22222222-2222-2222-2222-222222222222"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/"+attachmentID+"/confirm", nil))
+	req.SetPathValue("caseId", caseID)
+	req.SetPathValue("attachmentId", attachmentID)
+	w := httptest.NewRecorder()
+
+	h.ConfirmUpload(w, req)
+
+	assertStatus(t, w, http.StatusNotFound)
+	assertErrorMessage(t, w, ErrMsgNotFound)
+}
+
+// TestConfirmUploadMapsForbidden verifies a 403 from the entity service (the
+// caller is not the attachment's original uploader) maps to a 403 here.
+func TestConfirmUploadMapsForbidden(t *testing.T) {
+	t.Parallel()
+	entity := &mockEntityCaseClient{
+		confirmCaseAttachmentFn: func(ctx context.Context, attachmentID string) ([]byte, error) {
+			return nil, &apierror.Error{StatusCode: http.StatusForbidden, Body: "attachment was not created by the current user"}
+		},
+	}
+	h := NewAttachmentStorageHandler(entity, &mockSftpgoClient{})
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	attachmentID := "22222222-2222-2222-2222-222222222222"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/"+attachmentID+"/confirm", nil))
+	req.SetPathValue("caseId", caseID)
+	req.SetPathValue("attachmentId", attachmentID)
+	w := httptest.NewRecorder()
+
+	h.ConfirmUpload(w, req)
+
+	assertStatus(t, w, http.StatusForbidden)
+	assertErrorMessage(t, w, ErrMsgForbidden)
+}
+
+// TestConfirmUploadMapsConflict verifies a 409 from the entity service (the
+// attachment is not in "pending" status, e.g. already confirmed) maps to a
+// 409 here, since mapUpstreamErrorGeneric preserves 409 as the status code.
+func TestConfirmUploadMapsConflict(t *testing.T) {
+	t.Parallel()
+	entity := &mockEntityCaseClient{
+		confirmCaseAttachmentFn: func(ctx context.Context, attachmentID string) ([]byte, error) {
+			return nil, &apierror.Error{StatusCode: http.StatusConflict, Body: `attachment is not pending (current status: "complete")`}
+		},
+	}
+	h := NewAttachmentStorageHandler(entity, &mockSftpgoClient{})
+
+	caseID := "11111111-1111-1111-1111-111111111111"
+	attachmentID := "22222222-2222-2222-2222-222222222222"
+	req := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/attachments/"+attachmentID+"/confirm", nil))
+	req.SetPathValue("caseId", caseID)
+	req.SetPathValue("attachmentId", attachmentID)
+	w := httptest.NewRecorder()
+
+	h.ConfirmUpload(w, req)
+
+	assertStatus(t, w, http.StatusConflict)
 }

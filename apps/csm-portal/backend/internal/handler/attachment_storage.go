@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"path"
@@ -85,9 +86,41 @@ func NewAttachmentStorageHandler(entity entityCaseClient, sftpgo sftpgoClient) *
 	return &AttachmentStorageHandler{entity: entity, sftpgo: sftpgo}
 }
 
+// mintUploadTokenRequest is the request body of
+// POST /cases/{id}/attachments/upload-token. The frontend must send the
+// file's metadata up front, before it uploads any bytes: MintUploadToken now
+// creates the attachment's metadata row (in "pending" status) as part of
+// minting the upload credential, and the entity service has no other source
+// for this data — it never sees the file bytes on this data source (see
+// domain.CreateAttachmentRequest in the entity service).
+type mintUploadTokenRequest struct {
+	// Filename is the file's name including extension. Required; forwarded
+	// verbatim as the entity service's CreateAttachmentRequest.Name.
+	Filename string `json:"filename"`
+	// MimeType is the file's MIME type (e.g. "image/png", "application/pdf").
+	// Required; forwarded verbatim as CreateAttachmentRequest.Type.
+	MimeType string `json:"mimeType"`
+	// SizeBytes is the file's size in bytes, as reported by the browser
+	// before upload. Required: this backend never sees the file's bytes, so
+	// this is the only source of truth for size on this data source (mirrors
+	// CreateAttachmentRequest.SizeBytes).
+	SizeBytes int `json:"sizeBytes"`
+	// Description is an optional free-text description, forwarded verbatim.
+	// Mirrors AttachmentCreatePayload.description on the existing
+	// (non-SFTPGo) attachment-creation path.
+	Description *string `json:"description,omitempty"`
+}
+
 // uploadTokenResponse is the response body of
 // POST /cases/{id}/attachments/upload-token.
 type uploadTokenResponse struct {
+	// ID is the id of the attachment metadata row MintUploadToken creates (in
+	// "pending" status) before minting the share below. The frontend must
+	// hold onto this and send it back as the path parameter to
+	// POST /cases/{id}/attachments/{attachmentId}/confirm once the browser's
+	// direct-to-SFTPGo upload succeeds — see
+	// AttachmentStorageHandler.ConfirmUpload.
+	ID string `json:"id"`
 	// ShareID is a write-scoped, passwordless SFTPGo share id, restricted to
 	// StorageKey's parent directory (see the CreateShare call in
 	// MintUploadToken for why it is the directory and not the file itself —
@@ -123,16 +156,30 @@ type uploadTokenResponse struct {
 }
 
 // MintUploadToken handles POST /cases/{id}/attachments/upload-token. It
-// mints a write-scoped, passwordless SFTPGo share restricted to a single,
-// freshly generated storage path, for the browser to use directly against
-// SFTPGo's share-authenticated chunked/TUS upload endpoint
-// (POST /shares-chunked-uploads) — this backend never sees the uploaded
-// bytes, and no bearer credential of any kind reaches the browser: a
-// write-scoped share can do nothing but write to the one path it names.
+// registers the attachment's metadata row up front — in "pending" status,
+// via the entity service — and only then mints a write-scoped, passwordless
+// SFTPGo share restricted to a single, freshly generated storage path, for
+// the browser to use directly against SFTPGo's share-authenticated
+// chunked/TUS upload endpoint (POST /shares-chunked-uploads) — this backend
+// never sees the uploaded bytes, and no bearer credential of any kind
+// reaches the browser: a write-scoped share can do nothing but write to the
+// one path it names.
+//
+// Creating the pending row before minting the share closes a real
+// reliability gap in the previous design: a browser upload could succeed in
+// SFTPGo while CSM never learned the file existed at all, because nothing
+// durable was recorded until the frontend made a second, separate call after
+// the upload finished — a call that could simply never arrive (tab closed,
+// network drop, crash). Recording "an upload was started" first means a
+// future reconciliation job can always find and clean up an upload that
+// never got confirmed; there is no longer a window where a real file in
+// SFTPGo has zero trace in CSM. See AttachmentStorageHandler.ConfirmUpload
+// for the second half of this flow.
+//
 // Requires write access to the target case, checked via the same guard
 // CaseHandler.CreateCaseAttachment already applies (case exists and is not
-// closed): a share is never minted for a case the caller could not otherwise
-// attach a file to.
+// closed): a row is never created, and a share never minted, for a case the
+// caller could not otherwise attach a file to.
 func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *http.Request) {
 	user := middleware.UserInfoFromContext(r.Context())
 	if user == nil {
@@ -143,6 +190,34 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 	caseID := r.PathValue("id")
 	if caseID == "" || !uuidRe.MatchString(caseID) {
 		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	var req mintUploadTokenRequest
+	if err := json.Unmarshal(rawBody, &req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	// Checked here, cheaply, before any entity/SFTPGo call: these three
+	// fields are the only source of truth for this data (this backend never
+	// sees the file's bytes), and the entity service rejects their absence
+	// anyway (see domain.CreateAttachmentRequest validation) — failing fast
+	// on an obviously-incomplete request avoids a wasted GetCase + MintToken
+	// round trip. The entity service's own validation remains authoritative
+	// for anything more specific than "present."
+	if req.Filename == "" || req.MimeType == "" || req.SizeBytes <= 0 {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}
 
@@ -177,6 +252,53 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 	attachmentID := newAttachmentID()
 	storageKey := buildStorageKey(projectID, caseID, attachmentID)
 
+	// Create the attachment's metadata row BEFORE minting the upload share —
+	// see the doc comment above on why this ordering is load-bearing. If this
+	// fails, the upload must not proceed: minting a share for a file with no
+	// corresponding CSM record would recreate the exact gap this change
+	// closes.
+	attachmentBody, err := json.Marshal(struct {
+		ReferenceID   string  `json:"referenceId"`
+		ReferenceType string  `json:"referenceType"`
+		Name          string  `json:"name"`
+		Type          string  `json:"type"`
+		StorageKey    string  `json:"storageKey"`
+		SizeBytes     int     `json:"sizeBytes"`
+		Status        string  `json:"status"`
+		Description   *string `json:"description,omitempty"`
+	}{
+		ReferenceID:   caseID,
+		ReferenceType: "case",
+		Name:          req.Filename,
+		Type:          req.MimeType,
+		StorageKey:    storageKey,
+		SizeBytes:     req.SizeBytes,
+		Status:        "pending",
+		Description:   req.Description,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to marshal pending attachment request", "userID", user.UserID, "caseID", caseID, "err", err)
+		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+		return
+	}
+
+	createResult, err := h.entity.CreateCaseAttachment(r.Context(), attachmentBody)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateCaseAttachment (pending) failed", "userID", user.UserID, "caseID", caseID, "err", summarizeErr(err))
+		mapUpstreamErrorGeneric(w, err, "Failed to register the attachment.")
+		return
+	}
+	var created struct {
+		Attachment struct {
+			ID string `json:"id"`
+		} `json:"attachment"`
+	}
+	if err := json.Unmarshal(createResult, &created); err != nil || created.Attachment.ID == "" {
+		slog.ErrorContext(r.Context(), "failed to parse entity CreateCaseAttachment response", "userID", user.UserID, "caseID", caseID, "err", err)
+		writeError(w, http.StatusInternalServerError, ErrMsgInternal)
+		return
+	}
+
 	// The share is scoped to storageKey's parent DIRECTORY, not storageKey
 	// itself — confirmed empirically against a real SFTPGo instance that a
 	// write-scope share used with POST /shares-chunked-uploads always
@@ -198,10 +320,53 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 	}
 
 	writeJSONValue(w, http.StatusOK, uploadTokenResponse{
+		ID:            created.Attachment.ID,
 		ShareID:       shareID,
 		SftpgoBaseURL: h.sftpgo.BaseURL(),
 		StorageKey:    storageKey,
 	})
+}
+
+// ConfirmUpload handles POST /cases/{caseId}/attachments/{attachmentId}/confirm.
+// It is the second half of the two-step upload flow MintUploadToken starts:
+// once the browser's direct-to-SFTPGo upload has actually succeeded, the
+// frontend calls this to transition the attachment's metadata row from
+// "pending" to "complete" — see the entity service's ConfirmCaseAttachment,
+// which enforces that only the same actor who created the pending row may
+// confirm it (stricter than this data source's other attachment operations,
+// which impose no per-resource ACL beyond authentication today).
+//
+// caseId is accepted on the path for consistency with this backend's other
+// nested attachment/case routes, but is not otherwise used: the entity
+// service's confirm endpoint is addressed by attachment id alone, and the
+// actor check it performs is what actually authorizes this call — there is
+// no independent case-level guard to apply here.
+func (h *AttachmentStorageHandler) ConfirmUpload(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("caseId")
+	if caseID == "" || !uuidRe.MatchString(caseID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+	attachmentID := r.PathValue("attachmentId")
+	if attachmentID == "" || !uuidRe.MatchString(attachmentID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.ConfirmCaseAttachment(r.Context(), attachmentID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity ConfirmCaseAttachment failed", "userID", user.UserID, "caseID", caseID, "attachmentID", attachmentID, "err", summarizeErr(err))
+		mapUpstreamErrorGeneric(w, err, "Failed to confirm the attachment upload.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }
 
 // attachmentMeta is the subset of the entity service's Attachment fields this
