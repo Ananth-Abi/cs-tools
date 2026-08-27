@@ -22,7 +22,7 @@ import type { ReactNode } from "react";
 const fetchMock = vi.fn();
 
 vi.mock("@config/apiConfig", () => ({
-  apiConfig: { backendUrl: "https://backend.example.com" },
+  apiConfig: { backendUrl: "https://example.test" },
 }));
 
 vi.mock("@hooks/useAuthApiClient", () => ({
