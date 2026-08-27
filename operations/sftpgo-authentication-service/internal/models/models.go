@@ -213,3 +213,31 @@ type ErrorMessage struct {
 	// Message is the descriptive error text.
 	Message string `json:"message"`
 }
+
+// ExternalAuthHookRequest represents the JSON body SFTPGo POSTs to the
+// external_auth_hook on every login attempt handled by that hook.
+// Field shape confirmed against SFTPGo's own dataprovider implementation
+// (getExternalAuthResponse in internal/dataprovider/dataprovider.go).
+type ExternalAuthHookRequest struct {
+	// Username is the username the client presented.
+	Username string `json:"username"`
+	// IP is the client's remote address.
+	IP string `json:"ip"`
+	// Password is the presented credential for password-based auth (the JWT,
+	// for the web attachment path). Empty for public-key or keyboard-interactive
+	// attempts.
+	Password string `json:"password"`
+	// PublicKey is the presented SSH public key, empty unless the client is
+	// authenticating with a key.
+	PublicKey string `json:"public_key"`
+	// Protocol identifies the access protocol: "SSH", "FTP", "DAV", or "HTTP".
+	// The web attachment path (GET /api/v2/user/token with Basic auth) is "HTTP".
+	Protocol string `json:"protocol"`
+	// KeyboardInteractive is "1" when the client is attempting keyboard-interactive
+	// auth, and "" otherwise. Note: this is a string, not a bool, in SFTPGo's wire
+	// format.
+	KeyboardInteractive string `json:"keyboard_interactive"`
+	// TLSCert is the PEM-encoded client certificate, empty unless TLS client-cert
+	// auth is in use.
+	TLSCert string `json:"tls_cert"`
+}

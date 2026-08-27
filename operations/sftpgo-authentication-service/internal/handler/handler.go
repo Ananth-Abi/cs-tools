@@ -45,9 +45,17 @@ type Handler struct {
 	sftpgo *service.SFTPGoService
 	// subscription is the service for retrieving user folder lists.
 	subscription *service.SubscriptionService
+	// jwtAuth validates the x-jwt-assertion presented as the password on the
+	// external_auth_hook (web attachment access path). Nil when
+	// AUTH_JWKS_ENDPOINT/AUTH_ISSUER are not configured, in which case
+	// ExternalAuthHook fails closed with 503 — the pre-login and
+	// keyboard-interactive hooks do not depend on it.
+	jwtAuth *service.JWTAuthService
 }
 
-// NewHandler creates a new Handler with all its dependencies.
+// NewHandler creates a new Handler with all its dependencies. jwtAuth may be
+// nil if the external_auth_hook (web attachment access path) is not configured
+// on this deployment; the pre-login and keyboard-interactive hooks do not use it.
 func NewHandler(
 	cfg *config.Config,
 	logger *log.AppLogger,
@@ -55,6 +63,7 @@ func NewHandler(
 	idp *service.IdPService,
 	sftpgo *service.SFTPGoService,
 	subscription *service.SubscriptionService,
+	jwtAuth *service.JWTAuthService,
 ) *Handler {
 	return &Handler{
 		cfg:          cfg,
@@ -63,6 +72,7 @@ func NewHandler(
 		idp:          idp,
 		sftpgo:       sftpgo,
 		subscription: subscription,
+		jwtAuth:      jwtAuth,
 	}
 }
 

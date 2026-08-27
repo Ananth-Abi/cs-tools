@@ -131,6 +131,20 @@ SUBSCRIPTION_API="https://api.example.com/subscriptions?customerEmail=%s"
 PROJECT_API="https://api.example.com/projects?projectKey=%s"
 ```
 
+#### External-Auth Hook Configuration (web attachment access path)
+Optional. Configures JWT validation for `/external-auth-hook`, used by a web app's
+backend to obtain SFTPGo REST API tokens on behalf of its own already-authenticated
+callers, by forwarding its own gateway-issued bearer token as the HTTP Basic-auth
+password on SFTPGo's `GET /api/v2/user/token`. If unset, the service still starts
+and the pre-login/keyboard-interactive hooks keep working unchanged; only
+`/external-auth-hook` is disabled (fails closed with `503`) until configured.
+```bash
+AUTH_JWKS_ENDPOINT="https://your-idp/oauth2/jwks"
+AUTH_ISSUER="https://your-idp/oauth2/token"
+AUTH_AUDIENCE="aud-1,aud-2"           # Optional, comma-separated, OR-matched
+AUTH_TOKEN_VALIDATOR_ENABLED="true"   # Optional, default true; "false" skips signature verification (local dev only)
+```
+
 ### Database Setup
 
 Apply the migration to create the sessions table:
@@ -216,6 +230,47 @@ Requires `API-Key` header if `HOOK_API_KEY` is configured.
   "echos": [false],
   "auth_result": 0
 }
+```
+
+### POST /external-auth-hook
+SFTPGo `external_auth_hook` for the web attachment access path (distinct from the
+`/prelogin-hook` + `/auth-hook` SFTP-channel flow above). SFTPGo calls this on
+every `GET /api/v2/user/token` attempt; the `password` field carries the caller's
+JWT, which is independently verified against `AUTH_JWKS_ENDPOINT`/`AUTH_ISSUER`
+(same validation rules as the CSM backend's own gateway-token check — issuer,
+audience, expiration, clock-skew leeway). Requires `API-Key` header if
+`HOOK_API_KEY` is configured.
+
+**Request** (sent by SFTPGo, not by the caller):
+```json
+{
+  "username": "user@example.com",
+  "password": "<jwt>",
+  "protocol": "HTTP",
+  "ip": "",
+  "public_key": "",
+  "keyboard_interactive": "",
+  "tls_cert": ""
+}
+```
+
+**Response (200) on success** — same shape as `/prelogin-hook`, username set to
+the JWT's `email` claim:
+```json
+{
+  "username": "user@example.com",
+  "home_dir": "/data/user_example_com",
+  "permissions": {"/": ["list"]},
+  "status": 1
+}
+```
+
+**Response (200) on failure** — an empty-username body, per SFTPGo's own
+`external_auth_hook` contract (a non-200 status is treated as a *hook execution
+error*, not a clean denial; see `denyExternalAuth` in
+`internal/handler/external_auth.go` for the exact reasoning):
+```json
+{"username": "", "home_dir": "", "permissions": null, "status": 0}
 ```
 
 ## How It Works

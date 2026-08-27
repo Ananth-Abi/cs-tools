@@ -117,7 +117,26 @@ type Config struct {
 	ExternalIdPAuthnEndPoint string
 	// ExternalIdPAuthorizeEndPoint is the computed endpoint for external IdP authorization.
 	ExternalIdPAuthorizeEndPoint string
+
+	// AuthJWKSEndpoint is the JWKS endpoint used to validate the x-jwt-assertion bearer
+	// passed as the password on the external_auth_hook (web attachment access path).
+	// Mirrors apps/csm-portal/backend's AUTH_JWKS_ENDPOINT.
+	AuthJWKSEndpoint string
+	// AuthIssuer is the expected "iss" claim on the validated JWT.
+	// Mirrors apps/csm-portal/backend's AUTH_ISSUER.
+	AuthIssuer string
+	// AuthAudiences is the set of accepted "aud" claim values (OR-matched).
+	// Mirrors apps/csm-portal/backend's AUTH_AUDIENCE (comma-separated).
+	AuthAudiences []string
+	// AuthTokenValidatorEnabled controls whether the JWT signature is actually verified
+	// against AuthJWKSEndpoint. Only ever disabled for local development.
+	// Mirrors apps/csm-portal/backend's AUTH_TOKEN_VALIDATOR_ENABLED.
+	AuthTokenValidatorEnabled bool
 }
+
+// ExternalAuthClockSkew is the leeway applied to JWT expiration checks on the
+// external_auth_hook path, matching the CSM backend's middleware.Config.ClockSkew.
+const ExternalAuthClockSkew = 5 * time.Second
 
 // EnvVar defines a structure for checking environment variables.
 type EnvVar struct {
@@ -159,6 +178,33 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 	return fallback
 }
 
+// getEnvBool parses key as a boolean, returning fallback if unset. Mirrors the CSM
+// backend's `os.Getenv("AUTH_TOKEN_VALIDATOR_ENABLED") != "false"` convention: anything
+// other than the literal "false" is treated as enabled.
+func getEnvBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	return v != "false"
+}
+
+// splitComma splits a comma-separated env var into a trimmed, non-empty slice.
+func splitComma(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Load reads environment variables into the Config struct and validates them.
 func Load() (*Config, error) {
 	cfg := &Config{
@@ -192,6 +238,11 @@ func Load() (*Config, error) {
 		DBMaxOpenConns:       getEnvInt("DB_MAX_OPEN_CONNS", 25),
 		DBMaxIdleConns:       getEnvInt("DB_MAX_IDLE_CONNS", 25),
 		DBConnMaxLifetime:    getEnvDuration("DB_CONN_MAX_LIFETIME", 5*time.Minute),
+
+		AuthJWKSEndpoint:          os.Getenv("AUTH_JWKS_ENDPOINT"),
+		AuthIssuer:                os.Getenv("AUTH_ISSUER"),
+		AuthAudiences:             splitComma(os.Getenv("AUTH_AUDIENCE")),
+		AuthTokenValidatorEnabled: getEnvBool("AUTH_TOKEN_VALIDATOR_ENABLED", true),
 	}
 
 	// Compute endpoints
@@ -261,6 +312,14 @@ func validateEnvVars(cfg *Config) error {
 
 		// Database Configuration
 		{"DB_CONN_STRING", &cfg.DBConnString, true, true},
+
+		// JWT validation for the external_auth_hook (web attachment access path).
+		// Not critical: deployments that only use the pre-login/keyboard-interactive
+		// hooks (PR #71) do not need these set, and the service must keep starting
+		// without them. The /external-auth-hook route itself fails closed at request
+		// time if left unconfigured.
+		{"AUTH_JWKS_ENDPOINT", &cfg.AuthJWKSEndpoint, false, false},
+		{"AUTH_ISSUER", &cfg.AuthIssuer, false, false},
 	}
 
 	var missingCriticalVars []string

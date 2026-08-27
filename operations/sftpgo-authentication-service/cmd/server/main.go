@@ -54,13 +54,26 @@ func main() {
 	sftpgoService := service.NewSFTPGoService(cfg, logger)
 	subscriptionService := service.NewSubscriptionService(cfg, logger)
 
+	// 4b. Initialize the JWT validator for the external_auth_hook (web attachment
+	// access path). This is optional: deployments that only use the pre-login and
+	// keyboard-interactive hooks (the SFTP-channel flow) don't set
+	// AUTH_JWKS_ENDPOINT/AUTH_ISSUER, so a missing/unreachable JWKS here does not
+	// stop the service from starting — it just leaves /external-auth-hook
+	// disabled (it fails closed with 503 per request until configured).
+	jwtAuthService, err := service.NewJWTAuthService(cfg, logger)
+	if err != nil {
+		logger.Warn("External-auth hook (web attachment access path) is disabled: %v", err)
+		jwtAuthService = nil
+	}
+
 	// 5. Initialize the HTTP handler, injecting all dependencies
-	h := handler.NewHandler(cfg, logger, dbService, idpService, sftpgoService, subscriptionService)
+	h := handler.NewHandler(cfg, logger, dbService, idpService, sftpgoService, subscriptionService, jwtAuthService)
 
 	// 6. Set up routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/prelogin-hook", h.PreLoginHook)
 	mux.HandleFunc("/auth-hook", h.AuthHandler)
+	mux.HandleFunc("/external-auth-hook", h.ExternalAuthHook)
 
 	// 7. Start the server with graceful shutdown support
 	server := &http.Server{
