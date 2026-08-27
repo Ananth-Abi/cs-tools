@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,13 +38,36 @@ import (
 type GoogleChatSpace struct {
 	// Product identifies the product this space is dedicated to (e.g.
 	// "api-manager", "identity-server"). Matched case-insensitively against
-	// the product passed to SendIncidentAlert.
+	// the product passed to SendIncidentAlert. The reserved value
+	// "default" (see defaultChatSpaceProduct) opts a space in as sendCard's
+	// fallback for any product with no space of its own.
 	Product string `json:"product"`
 	// WebhookURL is that space's incoming webhook URL (Space settings > Apps
 	// & integrations > Webhooks). It already carries its own key/token query
 	// parameters, so no separate auth flow is needed.
 	WebhookURL string `json:"webhookUrl"`
 }
+
+// defaultChatSpaceProduct is the reserved GoogleChatSpace.Product value
+// (matched the same case/whitespace-insensitive way as any other product)
+// that sendCard falls back to when the resolved product has no matching
+// configured space at all, instead of erroring. Configure it by adding a
+// {"product":"default","webhookUrl":"..."} entry to GOOGLE_CHAT_SPACES —
+// entirely optional; with no such entry, an unmatched product still errors
+// exactly as before.
+//
+// This is distinct from Dispatcher.defaultChatProduct
+// (internal/dispatch), which only kicks in when a payload's own Product
+// field is empty in the first place — that's a business-logic fallback for
+// "the publisher didn't say," resolved before this client is ever called.
+// defaultChatSpaceProduct instead covers a non-empty, real product that
+// simply has no GOOGLE_CHAT_SPACES entry of its own (e.g. entity-service's
+// case.created now sends a deployed product's actual display name, which
+// won't match an operator's existing short config keys — like
+// "api-manager" — until GOOGLE_CHAT_SPACES is updated to match; until it
+// is, this fallback keeps every case.created/case.acknowledged alert
+// landing somewhere instead of being dropped/retried/dead-lettered).
+const defaultChatSpaceProduct = "default"
 
 // GoogleChatConfig holds the configuration for the Google Chat notification
 // channel: one space per product, since each WSO2 product has its own space.
@@ -310,7 +334,12 @@ func (c *GoogleChatClient) SendCaseAcknowledgedAlert(ctx context.Context, produc
 func (c *GoogleChatClient) sendCard(ctx context.Context, product string, msg chatCardMessage) error {
 	webhookURL, ok := c.webhookURLsByProduct[normalizeProduct(product)]
 	if !ok || webhookURL == "" {
-		return fmt.Errorf("notifications: no google chat space configured for product %q", product)
+		fallbackURL, fbOK := c.webhookURLsByProduct[defaultChatSpaceProduct]
+		if !fbOK || fallbackURL == "" {
+			return fmt.Errorf("notifications: no google chat space configured for product %q", product)
+		}
+		slog.WarnContext(ctx, "notifications: no google chat space configured for product; falling back to the default space", "product", product)
+		webhookURL = fallbackURL
 	}
 
 	body, err := json.Marshal(msg)
