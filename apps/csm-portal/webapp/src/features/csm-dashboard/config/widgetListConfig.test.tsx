@@ -234,6 +234,46 @@ describe("widgetListConfig — quick-preview icon per resourceType", () => {
     expect(screen.getByText("Unassigned")).toBeInTheDocument();
   });
 
+  it("case_feedback: renders both the internal case id and the case number, falling back to the raw caseId when neither resolved", () => {
+    const Renderer = WIDGET_LIST_RENDERERS.case_feedback;
+    renderRenderer(
+      <Renderer
+        items={[
+          {
+            instanceId: "fb-1",
+            caseId: "case-1",
+            caseNumber: "CS0440709",
+            caseInternalId: "SCTPSUB-88",
+            rating: 4,
+            ratingLabel: "Satisfied",
+            comment: null,
+            submittedAt: "2026-08-03T04:37:50Z",
+            submitterName: "Jane Customer",
+          },
+          {
+            instanceId: "fb-2",
+            caseId: "case-2",
+            caseNumber: null,
+            caseInternalId: null,
+            rating: 5,
+            ratingLabel: "Very Satisfied",
+            comment: null,
+            submittedAt: "2026-08-17T06:17:56Z",
+            submitterName: null,
+          },
+        ]}
+        isLoading={false}
+      />,
+      "/cases/:id",
+    );
+
+    expect(screen.getByText("SCTPSUB-88")).toBeInTheDocument();
+    expect(screen.getByText("CS0440709")).toBeInTheDocument();
+    expect(screen.getByText("case-2")).toBeInTheDocument();
+    expect(screen.getByText("Jane Customer")).toBeInTheDocument();
+    expect(screen.getByText("Customer")).toBeInTheDocument();
+  });
+
   it("call_request: renders the preview icon, opens the existing detail modal without navigating the owning case", () => {
     const Renderer = WIDGET_LIST_RENDERERS.call_request;
     renderRenderer(

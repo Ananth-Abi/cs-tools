@@ -23,7 +23,11 @@ type CaseFeedback struct {
 	// CaseNumber is the human-readable case number (e.g. "CS0441331").
 	// Nullable -- absent if the case record could not be resolved.
 	CaseNumber *string `json:"caseNumber"`
-	Rating     int     `json:"rating"`
+	// CaseInternalID is the WSO2 internal case id (e.g. "SCTPSUB-88") for CaseID.
+	// Nullable -- absent if the case record could not be resolved upstream or has
+	// no internal id assigned.
+	CaseInternalID *string `json:"caseInternalId"`
+	Rating         int     `json:"rating"`
 	// RatingLabel is the human-readable label for Rating (e.g. "Satisfied"),
 	// as supplied by the backing data source.
 	RatingLabel string `json:"ratingLabel"`
@@ -44,8 +48,11 @@ type CaseFeedback struct {
 type SearchFeedbackFilters struct {
 	CaseID     string   `json:"caseId,omitempty"`
 	AccountIDs []string `json:"accountIds,omitempty"`
-	DateFrom   string   `json:"dateFrom,omitempty"`
-	DateTo     string   `json:"dateTo,omitempty"`
+	// Rating is an exact-match filter (1-5). Nil means unset; the valid
+	// range never includes 0, so a plain *int (not 0-as-sentinel) is used.
+	Rating   *int   `json:"rating,omitempty"`
+	DateFrom string `json:"dateFrom,omitempty"`
+	DateTo   string `json:"dateTo,omitempty"`
 }
 
 // SearchFeedbackRequest is the input for POST /cases/feedback/search.
@@ -63,14 +70,25 @@ type SearchFeedbackResponse struct {
 	TotalRecords int            `json:"totalRecords"`
 }
 
-// FeedbackBucket is the enum of supported date-bucket granularities for
-// POST /cases/feedback/aggregate.
+// FeedbackBucket is the enum of supported aggregation granularities for
+// POST /cases/feedback/aggregate: "day"/"week"/"month" bucket by submission
+// date, "rating" groups by rating value instead of time (each bucket's
+// BucketStart then carries the rating's own label, e.g. "Very Satisfied",
+// rather than a date), and the 5 "reasons_*" values group by which free-text
+// reason was selected for that specific rating level (each bucket's
+// BucketStart then carries the reason's own label, e.g. "Unhelpful support").
 type FeedbackBucket string
 
 const (
-	FeedbackBucketDay   FeedbackBucket = "day"
-	FeedbackBucketWeek  FeedbackBucket = "week"
-	FeedbackBucketMonth FeedbackBucket = "month"
+	FeedbackBucketDay                     FeedbackBucket = "day"
+	FeedbackBucketWeek                    FeedbackBucket = "week"
+	FeedbackBucketMonth                   FeedbackBucket = "month"
+	FeedbackBucketRating                  FeedbackBucket = "rating"
+	FeedbackBucketReasonsVeryDissatisfied FeedbackBucket = "reasons_very_dissatisfied"
+	FeedbackBucketReasonsDissatisfied     FeedbackBucket = "reasons_dissatisfied"
+	FeedbackBucketReasonsNeutral          FeedbackBucket = "reasons_neutral"
+	FeedbackBucketReasonsSatisfied        FeedbackBucket = "reasons_satisfied"
+	FeedbackBucketReasonsVerySatisfied    FeedbackBucket = "reasons_very_satisfied"
 )
 
 // AggregateFeedbackFilters holds the optional filter criteria for a
@@ -85,7 +103,7 @@ type AggregateFeedbackFilters struct {
 // AggregateFeedbackRequest is the input for POST /cases/feedback/aggregate.
 type AggregateFeedbackRequest struct {
 	Filters AggregateFeedbackFilters `json:"filters"`
-	// Bucket selects the date-bucket granularity. Required; one of "day", "week", "month".
+	// Bucket selects the aggregation granularity. Required; see FeedbackBucket.
 	Bucket FeedbackBucket `json:"bucket"`
 }
 

@@ -103,14 +103,15 @@ type GroupByConfig struct {
 	// (enforced at directory-load time): a widget sets exactly one.
 	Field string `json:"field,omitempty"`
 	// Bucket configures date-bucketed grouping instead of field-value
-	// grouping -- "day", "week", or "month" (enforced at directory-load
-	// time). Mutually exclusive with Field. This is the shape a case-feedback
-	// trend widget uses (ResourceCaseFeedback, Shape "bar"): the frontend's
-	// own hook calls POST /cases/feedback/aggregate with this bucket value
-	// and maps its date-bucketed response into the same per-slice shape
-	// Slices/field-grouping already produce, same client-side-resolution
-	// philosophy as the rest of this type -- this layer never calls that
-	// endpoint itself, it only validates and forwards the config.
+	// grouping -- "day", "week", "month", or "rating" (enforced at
+	// directory-load time). Mutually exclusive with Field. This is the shape
+	// a case-feedback trend/distribution widget uses (ResourceCaseFeedback,
+	// Shape "bar" or "pie"): the frontend's own hook calls POST
+	// /cases/feedback/aggregate with this bucket value and maps its bucketed
+	// response into the same per-slice shape Slices/field-grouping already
+	// produce, same client-side-resolution philosophy as the rest of this
+	// type -- this layer never calls that endpoint itself, it only
+	// validates and forwards the config.
 	Bucket string `json:"bucket,omitempty"`
 	// MaxGroups is the top-N cutoff by count, descending; the remainder is
 	// summed into one "Others" bucket. Omitted/zero defers to the backing

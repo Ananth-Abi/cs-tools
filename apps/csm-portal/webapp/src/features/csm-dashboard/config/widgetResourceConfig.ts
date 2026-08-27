@@ -914,7 +914,31 @@ export const WIDGET_RESOURCE_CONFIG: Record<
       // `offset` is always a multiple of `limit`, either 0 for a tile or
       // `listLimit * pageIndex` for the preview page's own pager).
       const page = limit > 0 ? Math.floor(offset / limit) + 1 : 1;
-      return { filters, page, pageSize: limit };
+      // The dashboard-widget preview page's own URL round-trip
+      // (`parseWidgetPreviewFilters`) decodes every query param as a
+      // comma-split string array — the shape every other resourceType's own
+      // filters actually use (case-search-DSL field values). `case_feedback`
+      // is one of the few resourceTypes whose filters are a flat scalar
+      // object instead (`dateFrom`/`dateTo`/`caseId`/`rating`, not arrays),
+      // so a preview-page click-through (e.g. a trend-bar bucket's date
+      // range, or the rating pie's `rating` slice) arrives here as
+      // `{dateFrom: ["2026-07-01"], rating: ["5"]}` rather than the scalar
+      // values this endpoint's own contract expects — sent as-is, the
+      // backing data source rejects the array shape outright. Unwrap known
+      // scalar fields back to their real type before forwarding; a
+      // tile-level fetch (whose filters
+      // never went through that round-trip) already has scalars here and is
+      // a no-op through this same unwrap.
+      const scalarFilters = { ...filters };
+      for (const key of ["caseId", "dateFrom", "dateTo"] as const) {
+        const v = scalarFilters[key];
+        if (Array.isArray(v)) scalarFilters[key] = v[0];
+      }
+      if (Array.isArray(scalarFilters.rating)) {
+        const parsed = Number(scalarFilters.rating[0]);
+        scalarFilters.rating = Number.isNaN(parsed) ? undefined : parsed;
+      }
+      return { filters: scalarFilters, page, pageSize: limit };
     },
     parseSearchResponse: (res) => {
       const total = typeof res.totalRecords === "number" ? res.totalRecords : 0;
@@ -929,9 +953,17 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     },
     secondaryLabel: (item) => asString(item.comment) ?? undefined,
     // No standalone case-feedback list page exists (only this dashboard's
-    // own widgets) — same situation as `task`/`call_request`'s own tile-level
-    // click-through above.
-    buildHref: () => "/dashboard",
+    // own widgets), so — like `incident_task` above — every click routes
+    // through the generic dashboard-widget preview page, the only
+    // destination that can render this resourceType's own filtered result
+    // set.
+    buildHref: (filters, ctx) =>
+      buildWidgetPreviewHref({
+        previewSlug: "case-feedback",
+        widgetId: ctx?.widgetId ?? "",
+        displayName: ctx?.displayName ?? "",
+        filters,
+      }),
     icon: Star,
     iconColor: "warning",
     previewSlug: "case-feedback",

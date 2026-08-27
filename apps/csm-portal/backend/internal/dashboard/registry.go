@@ -655,11 +655,15 @@ var validWidgetShapes = map[Shape]bool{
 }
 
 // validGroupByBuckets are the legal values of GroupByConfig.Bucket -- the
-// same "day"/"week"/"month" enum POST /cases/feedback/aggregate documents on
-// the entity-service side (see AggregateFeedbackRequest.bucket in
-// openapi.yaml). Kept here rather than derived from that spec because this
-// layer never calls that endpoint; it only validates widget config shape.
-var validGroupByBuckets = map[string]bool{"day": true, "week": true, "month": true}
+// same enum POST /cases/feedback/aggregate documents on the entity-service
+// side (see AggregateFeedbackRequest.bucket in openapi.yaml). Kept here
+// rather than derived from that spec because this layer never calls that
+// endpoint; it only validates widget config shape.
+var validGroupByBuckets = map[string]bool{
+	"day": true, "week": true, "month": true, "rating": true,
+	"reasons_very_dissatisfied": true, "reasons_dissatisfied": true, "reasons_neutral": true,
+	"reasons_satisfied": true, "reasons_very_satisfied": true,
+}
 
 // validateWidgets applies the loader's own fail-loud rationale one level down.
 // Dashboard-level fields were already rejected by filename; a widget with a
