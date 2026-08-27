@@ -325,12 +325,14 @@ vi.mock("@features/csm-cases/components/CaseDetailWidgets", () => ({
   AttachmentsWidget: ({
     uploading,
     uploadProgress,
+    uploadError,
   }: {
     uploading?: boolean;
     uploadProgress?: number | null;
+    uploadError?: string | null;
   }) => (
     <div data-testid="attachments-widget-probe">
-      {`uploading=${String(!!uploading)} uploadProgress=${String(uploadProgress ?? "null")}`}
+      {`uploading=${String(!!uploading)} uploadProgress=${String(uploadProgress ?? "null")} uploadError=${String(uploadError ?? "null")}`}
     </div>
   ),
   CustomerContextWidget: () => null,
@@ -808,7 +810,7 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
     // here, so the widget should show it.
     fireEvent.click(screen.getByRole("tab", { name: /^attachments$/i }));
     expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
-      "uploading=true uploadProgress=42",
+      "uploading=true uploadProgress=42 uploadError=null",
     );
 
     // Navigate to case-2 through a real router transition (same route, only
@@ -824,7 +826,46 @@ describe("CsmCaseDetailPage — upload progress scoped to the case it belongs to
 
     // Case-1's still-pending upload must not leak into case-2's widget.
     expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
-      "uploading=false uploadProgress=null",
+      "uploading=false uploadProgress=null uploadError=null",
+    );
+  });
+
+  it("does not show a case-1 upload error once the page has navigated to case-2", () => {
+    // Same shared-mutation-object hazard as above, but for a failed upload:
+    // `postAttachment.isError` stays true (React Query keeps the last
+    // mutation's error state until the next mutate call) even after the
+    // widget on screen has moved to a different case's attachments.
+    usePostCsmCaseAttachmentMock.mockReturnValue({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(),
+      isPending: false,
+      isError: true,
+      error: new Error("Could not upload the attachment."),
+      variables: { caseId: "case-1", file: new File([], "x.txt") },
+      uploadProgress: null,
+    });
+
+    renderPage();
+
+    // Switch to the Attachments tab on case-1: the failed upload belongs
+    // here, so the widget should show the error.
+    fireEvent.click(screen.getByRole("tab", { name: /^attachments$/i }));
+    expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
+      "uploading=false uploadProgress=null uploadError=Could not upload the attachment.",
+    );
+
+    // Navigate to case-2 through a real router transition (same route, only
+    // :caseId changes — this page stays mounted, and `postAttachment`'s
+    // error state is still for case-1's failed upload).
+    fireEvent.click(screen.getByRole("button", { name: /go to case 2/i }));
+    expect(screen.getByTestId("location-probe")).toHaveTextContent(
+      "/cases/case-2",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /^attachments$/i }));
+
+    // Case-1's stale upload error must not leak into case-2's widget.
+    expect(screen.getByTestId("attachments-widget-probe")).toHaveTextContent(
+      "uploading=false uploadProgress=null uploadError=null",
     );
   });
 });

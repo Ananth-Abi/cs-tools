@@ -2386,7 +2386,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
             uploading={isUploadingForThisCase}
             uploadProgress={isUploadingForThisCase ? postAttachment.uploadProgress : null}
             uploadError={
-              postAttachment.isError
+              postAttachment.isError &&
+              postAttachment.variables?.caseId === caseId
                 ? (postAttachment.error?.message ??
                   "Could not upload the attachment.")
                 : null

@@ -508,15 +508,19 @@ func loadSftpgoConfig() (bool, sftpgo.Config) {
 // refuse to start rather than proceed with it.
 func mustHTTPSURL(key, value string) string {
 	if err := validateHTTPSURL(value); err != nil {
-		slog.Error("invalid environment variable", "key", key, "value", value, "err", err)
+		// Deliberately omit the raw value from this log line: it may carry
+		// embedded userinfo (e.g. "https://user:pass@host"), which would
+		// otherwise write a credential straight into the startup log.
+		slog.Error("invalid environment variable", "key", key, "err", err)
 		os.Exit(1)
 	}
 	return value
 }
 
 // validateHTTPSURL reports an error unless value parses as a URL with scheme
-// "https" and no embedded userinfo (e.g. "https://user:pass@host/...", which
-// could indicate a misconfigured or spoofed URL).
+// "https", a non-empty host, and no embedded userinfo (e.g.
+// "https://user:pass@host/...", which could indicate a misconfigured or
+// spoofed URL).
 func validateHTTPSURL(value string) error {
 	parsed, err := url.Parse(value)
 	if err != nil {
@@ -524,6 +528,9 @@ func validateHTTPSURL(value string) error {
 	}
 	if parsed.Scheme != "https" {
 		return fmt.Errorf("must use the https scheme, got %q", parsed.Scheme)
+	}
+	if parsed.Hostname() == "" {
+		return errors.New("must include a host (e.g. \"https://host/...\")")
 	}
 	if parsed.User != nil {
 		return errors.New("must not contain embedded userinfo (e.g. \"https://user:pass@host/...\")")

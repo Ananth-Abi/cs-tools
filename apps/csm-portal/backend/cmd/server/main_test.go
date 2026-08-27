@@ -41,6 +41,8 @@ func TestValidateHTTPSURL(t *testing.T) {
 		{name: "unparseable rejected", value: "https://%zz", wantErr: true},
 		{name: "embedded userinfo rejected", value: "https://user:pass@sftpgo.internal.example.com", wantErr: true},
 		{name: "embedded username only rejected", value: "https://user@sftpgo.internal.example.com", wantErr: true},
+		{name: "no host rejected", value: "https:///api", wantErr: true},
+		{name: "opaque no host rejected", value: "https:opaque", wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -79,7 +81,7 @@ func TestLoadSftpgoConfigRejectsBadURLs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(os.Args[0], "-test.run=^TestLoadSftpgoConfigRejectsBadURLs$")
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestLoadSftpgoConfigRejectsBadURLs$")
 			cmd.Env = append(os.Environ(),
 				"BE_LOAD_SFTPGO_CONFIG_SUBPROCESS=1",
 				"SFTPGO_ATTACHMENT_STORAGE_ENABLED=true",
