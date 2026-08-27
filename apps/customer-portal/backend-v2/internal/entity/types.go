@@ -1154,19 +1154,11 @@ type CreateCommentRequest struct {
 // "fix" this constant to "novera"; that is the read form, not the write form.
 const CreatedByAgent = "agent"
 
-// CommentUserRef holds user details embedded in a comment response.
-type CommentUserRef struct {
-	ID        string `json:"id"`
-	FirstName string `json:"firstName"`
-	LastName  string `json:"lastName"`
-	FullName  string `json:"fullName"`
-}
-
 // CommentCreated carries the fields returned after creating a comment.
 type CommentCreated struct {
 	ID        string         `json:"id"`
 	CreatedOn time.Time      `json:"createdOn"`
-	CreatedBy CommentUserRef `json:"createdBy"`
+	CreatedBy *UserReference `json:"createdBy"`
 }
 
 // CreateCommentResponse is entity-service's response for POST /comments.
@@ -1205,7 +1197,7 @@ type CommentView struct {
 	Content     string         `json:"content"`
 	Type        CommentType    `json:"type"`
 	CreatedOn   time.Time      `json:"createdOn"`
-	CreatedBy   CommentUserRef `json:"createdBy"`
+	CreatedBy   *UserReference `json:"createdBy"`
 	// Images embedded in the comment body, supplied by entity-service.
 	HasInlineAttachments bool               `json:"hasInlineAttachments"`
 	InlineAttachments    []InlineAttachment `json:"inlineAttachments"`

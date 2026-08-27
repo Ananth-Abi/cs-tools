@@ -56,7 +56,7 @@ func MapCommentCreate(r entity.CreateCommentResponse) CommentCreateResponse {
 	return CommentCreateResponse{
 		ID:        r.Comment.ID,
 		CreatedOn: r.Comment.CreatedOn,
-		CreatedBy: r.Comment.CreatedBy.FullName,
+		CreatedBy: userRefDisplayName(r.Comment.CreatedBy),
 	}
 }
 
@@ -152,13 +152,23 @@ func MapSearchComments(r entity.SearchCommentsResponse) SearchCommentsResponse {
 	comments := make([]CommentView, 0, len(r.Comments))
 	for _, c := range r.Comments {
 		comments = append(comments, CommentView{
-			ID:                   c.ID,
-			Content:              c.Content,
-			Type:                 string(c.Type),
-			CreatedOn:            c.CreatedOn,
-			CreatedBy:            c.CreatedBy.FullName,
-			CreatedByFirstName:   c.CreatedBy.FirstName,
-			CreatedByLastName:    c.CreatedBy.LastName,
+			ID:        c.ID,
+			Content:   c.Content,
+			Type:      string(c.Type),
+			CreatedOn: c.CreatedOn,
+			// The display name, not the email. entity-service replaced its
+			// CommentUserRef{firstName,lastName,fullName} with a single
+			// UserReference{id,email,name}, and Name is the direct successor of
+			// FullName — which is what this mapped before and what the portal
+			// depends on: ConversationDetailsPage decides a message came from the
+			// assistant with createdBy.toLowerCase() === "novera", and the
+			// assistant's name is "Novera". Mapping the email here instead would
+			// break that attribution for good.
+			CreatedBy: userRefDisplayName(c.CreatedBy),
+			// createdByFirstName/createdByLastName are no longer sent upstream —
+			// the same change removed them. Left empty rather than split out of
+			// Name: the frontend already falls back to createdBy for the display
+			// label, which now carries the full name, so nothing has to be guessed.
 			HasInlineAttachments: c.HasInlineAttachments,
 			InlineAttachments:    mapCommentInlineAttachments(c.InlineAttachments),
 		})
