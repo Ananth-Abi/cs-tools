@@ -1972,6 +1972,143 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
+  /cases/feedbacks/search:
+    post:
+      summary: Search case-feedback (satisfaction rating) records across cases.
+      description: >-
+        Plain forward-and-return proxy to the entity service's own POST
+        /cases/feedbacks/search: filterable by case, accounts, and submission
+        date range, and paginated. Backs the case-feedback dashboard's list
+        view. Distinct from any single-case feedback lookup.
+      operationId: postCasesFeedbacksSearch
+      requestBody:
+        description: Case-feedback search payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseFeedbackSearchPayload'
+        required: true
+      responses:
+        "200":
+          description: Case-feedback records matching the filters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseFeedbackSearchResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: Upstream service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
+  /cases/feedbacks/aggregate:
+    post:
+      summary: >-
+        Date-bucketed rating aggregation of case-feedback records across
+        cases.
+      description: >-
+        Plain forward-and-return proxy to the entity service's own POST
+        /cases/feedbacks/aggregate. Backs the case-feedback dashboard's
+        rating-trend chart (a shape "bar" widget with resourceType
+        "case_feedback" and a "groupBy.bucket" — see DashboardWidget). This
+        is the many-cases trend endpoint, not scoped to one case, so
+        filters.caseId is not accepted here (unlike
+        /cases/feedbacks/search).
+      operationId: postCasesFeedbacksAggregate
+      requestBody:
+        description: Case-feedback aggregate payload
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseFeedbackAggregatePayload'
+        required: true
+      responses:
+        "200":
+          description: Feedback ratings aggregated into date buckets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseFeedbackAggregateResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: NotFound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "413":
+          description: RequestEntityTooLarge
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: InternalServerError
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "503":
+          description: Upstream service unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+
   /dashboards:
     get:
       summary: List available dashboards.
@@ -6573,6 +6710,135 @@ components:
         totalRecords:
           type: integer
 
+    CaseFeedback:
+      type: object
+      description: A single case-feedback (satisfaction rating) record.
+      properties:
+        instanceId:
+          type: string
+          format: uuid
+          description: Unique id of the feedback record.
+        caseId:
+          type: string
+          format: uuid
+          description: UUID of the case the feedback belongs to.
+        rating:
+          type: integer
+          description: Numeric rating value.
+        ratingLabel:
+          type: string
+          description: Human-readable label for rating (e.g. "Satisfied").
+        comment:
+          type: string
+          nullable: true
+          description: >-
+            Free-text comment submitted with the feedback. Null for feedback
+            submitted without a comment.
+        submittedAt:
+          type: string
+          description: Timestamp when the feedback was submitted.
+
+    CaseFeedbackSearchFilters:
+      type: object
+      properties:
+        caseId:
+          type: string
+          format: uuid
+          description: Restrict results to a single case.
+        accountIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Restrict results to feedback on cases under these accounts.
+        dateFrom:
+          type: string
+          description: Start of the feedback submission date range (inclusive).
+        dateTo:
+          type: string
+          description: End of the feedback submission date range (inclusive).
+
+    CaseFeedbackSearchPayload:
+      type: object
+      nullable: true
+      properties:
+        filters:
+          $ref: '#/components/schemas/CaseFeedbackSearchFilters'
+        page:
+          type: integer
+          description: Page number for pagination. Optional; the backing data source applies a default when omitted.
+        pageSize:
+          type: integer
+          description: Number of records per page. Optional; the backing data source applies a default when omitted.
+
+    CaseFeedbackSearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseFeedback'
+        totalRecords:
+          type: integer
+          description: Total number of matching records across all pages.
+
+    CaseFeedbackAggregateFilters:
+      type: object
+      description: >-
+        Deliberately narrower than CaseFeedbackSearchFilters -- this is the
+        many-cases trend endpoint, not scoped to a single case, so caseId is
+        not accepted here.
+      properties:
+        accountIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Restrict results to feedback on cases under these accounts.
+        dateFrom:
+          type: string
+          description: Start of the feedback submission date range (inclusive).
+        dateTo:
+          type: string
+          description: End of the feedback submission date range (inclusive).
+
+    CaseFeedbackAggregatePayload:
+      type: object
+      required: [bucket]
+      properties:
+        filters:
+          $ref: '#/components/schemas/CaseFeedbackAggregateFilters'
+        bucket:
+          type: string
+          enum: [day, week, month]
+          description: Time bucket granularity to group results by.
+
+    FeedbackBucket:
+      type: object
+      description: One aggregated time bucket in a case-feedback aggregate result.
+      properties:
+        bucketStart:
+          type: string
+          description: Start of this bucket's time range.
+        avgRating:
+          type: number
+          description: Average rating across feedback records in this bucket.
+        count:
+          type: integer
+          description: Number of feedback records in this bucket.
+
+    CaseFeedbackAggregateResponse:
+      type: object
+      properties:
+        buckets:
+          type: array
+          items:
+            $ref: '#/components/schemas/FeedbackBucket'
+          description: Time buckets, in chronological order.
+        totalRecords:
+          type: integer
+          description: Total number of feedback records across every bucket.
+
     DashboardWidget:
       type: object
       properties:
@@ -6604,13 +6870,20 @@ components:
             - security_report_analysis
             - announcement
             - engagement
+            - case_feedback
           description: >
             Which resource's /search endpoint this widget's filters target.
             service_request, security_report_analysis, announcement and
             engagement are additional values of the case-search "type" field
             (see Case's own type enum) exposed as their own widget
             resourceType alongside case itself — all five route to the same
-            POST /cases/search.
+            POST /cases/search. case_feedback is case-feedback (satisfaction
+            rating) records, not cases themselves — a shape "bar" widget with
+            this resourceType and a "groupBy.bucket" (see below) is resolved
+            by the caller against POST /cases/feedbacks/aggregate instead;
+            there is no server-side resourceType-to-endpoint mapping, the
+            caller picks the endpoint from resourceType on its own, same as
+            every other value here.
         shape:
           type: string
           enum:
@@ -6653,7 +6926,9 @@ components:
             caller issues one POST /{resourceType}/aggregate request (filters
             = this widget's own query) and maps the response's groups/
             othersCount into the same per-slice shape "slices" already
-            produces.
+            produces. Carries exactly one of "field" (value grouping) or
+            "bucket" (date grouping) — both set, or neither set, is rejected
+            at dashboard-load time.
           properties:
             field:
               type: string
@@ -6661,19 +6936,32 @@ components:
                 Which field to group by. Each resourceType enforces its own
                 small allowlist server-side; an unsupported value is
                 rejected by the aggregate call itself with a 400, not caught
-                here.
+                here. Mutually exclusive with "bucket".
+            bucket:
+              type: string
+              enum: [day, week, month]
+              description: >
+                Date-bucket granularity instead of field-value grouping.
+                This is the mode a case_feedback trend widget uses: the
+                caller resolves it by calling POST /cases/feedbacks/aggregate
+                with this value as that endpoint's own "bucket" (see
+                AggregateFeedbackRequest), not the generic
+                POST /{resourceType}/aggregate this groupBy block otherwise
+                implies. Mutually exclusive with "field".
             maxGroups:
               type: integer
               description: >
                 Top-N cutoff by count, descending; the remainder is summed
                 into one "Others" bucket. Omitted/zero defers to the
-                aggregate endpoint's own default (12).
+                aggregate endpoint's own default (12). Meaningless when
+                "bucket" is set — a date-bucketed aggregation has no
+                "Others" folding.
             othersLabel:
               type: string
               description: >
                 Overrides the default "Others" label for the summed
-                remainder bucket.
-          required: [field]
+                remainder bucket. Meaningless when "bucket" is set, same as
+                "maxGroups".
         listLimit:
           type: integer
           description: Only meaningful for shape list; how many records to show

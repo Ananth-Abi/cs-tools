@@ -26,6 +26,7 @@ import {
   WIDGET_GRID_SX,
   groupWidgetsBySection,
 } from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
+import { resolveDateRangeFilterPlaceholder } from "@features/csm-dashboard/utils/dateRangeFilterPlaceholder";
 
 // Hides the section refresh button + its "Last refreshed" label by default
 // and reveals both together on hover/focus of an ancestor carrying this sx
@@ -116,6 +117,20 @@ export interface DashboardWidgetGridProps {
    * "Add section" entry point, or an empty section shell that has no
    * widgets in it yet. */
   trailingContent?: ReactNode;
+  /** The dashboard's own currently-selected date range (see
+   * `DateRangeFilter`, owned by `AgentsLandingPagePilot`), resolved into
+   * every widget's own `query`/base filters here — the single merge point
+   * both a `shape: "list"` grid widget and a `shape: "bar"` trend widget
+   * share, since both read their own base filters off the same
+   * `widget.query` (see `renderTile`'s `filters` prop below). `undefined`
+   * for "no range selected" (all time) or a dashboard with no widget that
+   * references the placeholder at all (see `hasDateRangeFilterPlaceholder`),
+   * in which case this is a no-op — every existing dashboard's widgets carry
+   * no `__dateRangeFrom__`/`__dateRangeTo__` value, so nothing about them
+   * changes. See `dateRangeFilterPlaceholder.ts`. */
+  dateRangeFrom?: string;
+  /** The `to` half of {@link dateRangeFrom}. */
+  dateRangeTo?: string;
 }
 
 /**
@@ -136,6 +151,8 @@ export default function DashboardWidgetGrid({
   renderWidgetAction,
   renderSectionActions,
   trailingContent,
+  dateRangeFrom,
+  dateRangeTo,
 }: DashboardWidgetGridProps): JSX.Element {
   const queryClient = useQueryClient();
   // Per-section refresh tracks its own in-flight state, keyed by section.
@@ -177,7 +194,11 @@ export default function DashboardWidgetGrid({
           // widget (see `BeDashboardWidget.query`'s doc comment) — default
           // to `{}` here too, at the source, on top of `mergeWidgetFilters`
           // and `useWidgetData`/`useWidgetPieData` already tolerating it.
-          filters={widget.query ?? {}}
+          // `resolveDateRangeFilterPlaceholder` is a no-op for every widget
+          // that doesn't carry `__dateRangeFrom__`/`__dateRangeTo__` (every
+          // widget today except `case_feedback`'s own two) — see that
+          // function's own doc comment.
+          filters={resolveDateRangeFilterPlaceholder(widget.query ?? {}, dateRangeFrom, dateRangeTo)}
           listLimit={widget.listLimit}
           slices={widget.slices}
           groupBy={widget.groupBy}

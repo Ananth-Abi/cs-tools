@@ -742,6 +742,65 @@ function CallRequestWidgetList({ items, isLoading }: WidgetListRendererProps): J
   );
 }
 
+/**
+ * Hardcoded renderer for `case_feedback` — the fallback for a
+ * `case_feedback` widget with no `columns` configured (see
+ * `DashboardWidgetTile`'s `hasColumns` branch). The real `case-feedback.json`
+ * dashboard's own list widget sets `columns` (rating/comment/case/submitted
+ * — matching ServiceNow's own "Case Feedback" scorecard page), so this path
+ * is a fallback rather than the primary renderer, same relationship
+ * `columns` has to every other hardcoded renderer here — but it still has to
+ * exist and render something reasonable, since `WIDGET_LIST_RENDERERS` is
+ * exhaustive over every `BeWidgetResourceType` (see that Record's own doc
+ * comment) and `DashboardWidgetTile` falls back to it whenever `columns` is
+ * absent/empty.
+ */
+function CaseFeedbackWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Element {
+  const feedback = items as unknown as {
+    instanceId?: string;
+    caseId?: string;
+    rating?: number;
+    ratingLabel?: string;
+    comment?: string | null;
+    submittedAt?: string;
+  }[];
+  const dashboardReturnState = useDashboardReturnState();
+  const navigate = useNavTransition();
+  return (
+    <DashboardMiniTable
+      isLoading={isLoading}
+      emptyMessage="No feedback records match this widget's filters."
+      columns={[
+        { label: "Rating", width: "minmax(90px, 0.6fr)" },
+        { label: "Comment", width: "minmax(200px, 3fr)" },
+        { label: "Case", width: "minmax(90px, 0.8fr)" },
+        { label: "Submitted", width: "minmax(90px, 1fr)" },
+      ]}
+      rows={feedback.map((f, i) => {
+        const href = f.caseId ? `/cases/${f.caseId}` : undefined;
+        return {
+          key: f.instanceId ?? `feedback-${i}`,
+          onClick: href ? () => navigate(href, { state: dashboardReturnState }) : undefined,
+          cells: [
+            <Typography key="rating" variant="body2" noWrap>
+              {f.ratingLabel || "—"}
+            </Typography>,
+            <Typography key="comment" variant="body2" noWrap title={f.comment ?? undefined}>
+              {f.comment || "—"}
+            </Typography>,
+            <Typography key="case" variant="body2" noWrap>
+              {f.caseId ?? "—"}
+            </Typography>,
+            <Typography key="submitted" variant="caption" color="text.secondary" noWrap>
+              {formatDate(f.submittedAt)}
+            </Typography>,
+          ],
+        };
+      })}
+    />
+  );
+}
+
 /** Per-resourceType renderer for a `shape: "list"` dashboard widget. Every
  * resource type is covered — `WIDGET_RESOURCE_CONFIG` (in
  * `widgetResourceConfig.ts`) is keyed the same way, so a missing entry here
@@ -770,4 +829,5 @@ export const WIDGET_LIST_RENDERERS: Record<
   product_vulnerability: ProductVulnerabilityWidgetList,
   task: TaskWidgetList,
   call_request: CallRequestWidgetList,
+  case_feedback: CaseFeedbackWidgetList,
 };

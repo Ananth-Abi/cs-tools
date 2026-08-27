@@ -28,6 +28,7 @@ import {
   Megaphone,
   Shield,
   ShieldAlert,
+  Star,
   Users,
   ListChecks,
   type LucideIcon,
@@ -117,6 +118,28 @@ export interface WidgetResourceConfig {
    * case instead, handled the same way the hardcoded `CallRequestWidgetList`
    * does) or when the item carries no usable id. */
   detailHref?: (item: WidgetItem) => string | undefined;
+  /** Only meaningful for shape "list". Overrides the default request body
+   * `useWidgetData` POSTs to `searchEndpoint` (`{ filters, pagination: {
+   * offset, limit }, sortBy? }`) — every resourceType's own search contract
+   * uses that shape EXCEPT `case_feedback`'s `POST /cases/feedbacks/search`,
+   * which takes flat `page`/`pageSize` instead of `pagination.offset/limit`
+   * (see that entry's own comment for why). Omitted (every other
+   * resourceType) keeps `useWidgetData`'s existing request shape untouched. */
+  buildSearchRequestBody?: (args: {
+    filters: Record<string, unknown>;
+    offset: number;
+    limit: number;
+    sortBy?: Record<string, unknown>;
+  }) => Record<string, unknown>;
+  /** Only meaningful for shape "list"/"count". Overrides how `useWidgetData`
+   * reads `total`/the item page off `searchEndpoint`'s own response (default:
+   * `res.total`, `res[itemsKey]`) — only `case_feedback`'s response diverges
+   * (`totalRecords`/`results`, not `total`/`itemsKey`). Omitted keeps the
+   * default reading untouched. */
+  parseSearchResponse?: (res: Record<string, unknown>) => {
+    total: number;
+    items: Record<string, unknown>[];
+  };
 }
 
 function asString(v: unknown): string | undefined {
@@ -851,6 +874,73 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     // standalone detail page of its own, so rows link to the owning case.
     detailHref: (item) => {
       const caseId = nestedID(item.case);
+      return caseId ? `/cases/${caseId}` : undefined;
+    },
+  },
+  // Satisfaction-rating survey responses across cases (`POST
+  // /cases/feedbacks/search` / `POST /cases/feedbacks/aggregate`) — its own
+  // resourceType, not a case `type` variant like `service_request` etc.
+  // above, because a feedback record isn't a case row at all (no
+  // `number`/`subject`/`state`; see `BeCaseFeedback`). Its own two-endpoint
+  // request/response contract diverges from every other resourceType's
+  // shared `{pagination:{offset,limit}} -> {total, itemsKey}` shape
+  // (`page`/`pageSize` -> `totalRecords`/`results`, no `total` field at
+  // all), which is exactly what `buildSearchRequestBody`/
+  // `parseSearchResponse` exist to adapt — see those fields' own doc
+  // comments on `WidgetResourceConfig`. There is no standalone list page for
+  // feedback records (only the dashboard's own list-shape widget), so
+  // `buildHref`/`previewSlug` have nowhere real to land — same situation
+  // `task` is in above, same fallback.
+  case_feedback: {
+    searchEndpoint: "/cases/feedbacks/search",
+    groupByEndpoint: "/cases/feedbacks/aggregate",
+    itemsKey: "results",
+    buildSearchRequestBody: ({ filters, offset, limit }) => {
+      // `case_feedback` has no sortable columns exposed by its own search
+      // contract (no `sortBy` field on `CaseFeedbackSearchPayload`) — a
+      // `sortBy` passed down from a `shape: "list"` widget config is
+      // silently dropped rather than sent, the same "config is responsible
+      // for a field valid for that resourceType's own contract" convention
+      // `useWidgetData`'s own `sortBy` doc comment already documents for
+      // every other resourceType (an invalid field there gets rejected by
+      // the search endpoint itself; here there's no such endpoint-side
+      // rejection to fall back on, since the field would just be ignored by
+      // this request body entirely).
+      //
+      // `page` is 1-based (see openapi.yaml's CaseFeedbackSearchPayload) —
+      // `offset`/`limit` (0-based, from `useWidgetData`) convert via
+      // `Math.floor(offset / limit) + 1`, matching only the offsets
+      // `useWidgetData` itself ever actually requests (page-aligned:
+      // `offset` is always a multiple of `limit`, either 0 for a tile or
+      // `listLimit * pageIndex` for the preview page's own pager).
+      const page = limit > 0 ? Math.floor(offset / limit) + 1 : 1;
+      return { filters, page, pageSize: limit };
+    },
+    parseSearchResponse: (res) => {
+      const total = typeof res.totalRecords === "number" ? res.totalRecords : 0;
+      const rawItems = res.results;
+      const items = Array.isArray(rawItems) ? (rawItems as Record<string, unknown>[]) : [];
+      return { total, items };
+    },
+    primaryLabel: (item) => {
+      const ratingLabel = asString(item.ratingLabel);
+      const submittedAt = asString(item.submittedAt);
+      return [ratingLabel, submittedAt].filter(Boolean).join(" — ") || "—";
+    },
+    secondaryLabel: (item) => asString(item.comment) ?? undefined,
+    // No standalone case-feedback list page exists (only this dashboard's
+    // own widgets) — same situation as `task`/`call_request`'s own tile-level
+    // click-through above.
+    buildHref: () => "/dashboard",
+    icon: Star,
+    iconColor: "warning",
+    previewSlug: "case-feedback",
+    // The one link this resourceType's rows DO have: back to the owning
+    // case. `caseId` is a platform UUID already (see `BeCaseFeedback`), not
+    // a nested reference to resolve via `nestedID` the way `call_request`'s
+    // `item.case` is.
+    detailHref: (item) => {
+      const caseId = asString(item.caseId);
       return caseId ? `/cases/${caseId}` : undefined;
     },
   },

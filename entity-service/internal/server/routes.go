@@ -152,6 +152,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		catalogHandler = handler.NewCatalogHandler(service.NewServiceNowCatalogService(serviceNowIntegrationServiceClient))
 	}
 
+	var feedbackHandler *handler.FeedbackHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		feedbackHandler = handler.NewFeedbackHandler(service.NewServiceNowFeedbackService(serviceNowIntegrationServiceClient))
+	}
+
 	var productVulnerabilityHandler *handler.ProductVulnerabilityHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		productVulnerabilityHandler = handler.NewProductVulnerabilityHandler(service.NewServiceNowProductVulnerabilityService(serviceNowIntegrationServiceClient))
@@ -286,6 +291,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("POST /cases", caseHandler.CreateCase)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
 	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
+	if feedbackHandler != nil {
+		mux.HandleFunc("POST /cases/feedbacks/search", feedbackHandler.SearchFeedback)
+		mux.HandleFunc("POST /cases/feedbacks/aggregate", feedbackHandler.AggregateFeedback)
+	}
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
 	mux.HandleFunc("POST /attachments", caseHandler.CreateCaseAttachment)

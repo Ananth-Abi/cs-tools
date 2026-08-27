@@ -44,6 +44,22 @@ func (c *CustomerEntityClient) AggregateCases(ctx context.Context, body []byte) 
 	return c.do(ctx, http.MethodPost, "/cases/aggregate", body)
 }
 
+// SearchFeedback calls POST /cases/feedbacks/search on the entity service:
+// search of case-feedback (satisfaction rating) records across cases,
+// filterable by case, accounts, and submission date range. Response is
+// returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) SearchFeedback(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/cases/feedbacks/search", body)
+}
+
+// AggregateFeedback calls POST /cases/feedbacks/aggregate on the entity
+// service: date-bucketed rating aggregation of case-feedback records across
+// cases. Response is returned as raw JSON; typed response structs are
+// deferred.
+func (c *CustomerEntityClient) AggregateFeedback(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/cases/feedbacks/aggregate", body)
+}
+
 // GetCase calls GET /cases/{id} on the entity service.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) GetCase(ctx context.Context, caseID string) ([]byte, error) {

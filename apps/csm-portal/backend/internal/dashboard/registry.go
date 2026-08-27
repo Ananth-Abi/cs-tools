@@ -647,11 +647,19 @@ var validWidgetResourceTypes = map[ResourceType]bool{
 	// injectImpliedTypeFilters).
 	ResourceServiceRequest: true, ResourceSecurityReportAnalysis: true,
 	ResourceAnnouncement: true, ResourceEngagement: true,
+	ResourceCaseFeedback: true,
 }
 
 var validWidgetShapes = map[Shape]bool{
 	ShapeCount: true, ShapeList: true, ShapePie: true, ShapeBar: true,
 }
+
+// validGroupByBuckets are the legal values of GroupByConfig.Bucket -- the
+// same "day"/"week"/"month" enum POST /cases/feedbacks/aggregate documents on
+// the entity-service side (see AggregateFeedbackRequest.bucket in
+// openapi.yaml). Kept here rather than derived from that spec because this
+// layer never calls that endpoint; it only validates widget config shape.
+var validGroupByBuckets = map[string]bool{"day": true, "week": true, "month": true}
 
 // validateWidgets applies the loader's own fail-loud rationale one level down.
 // Dashboard-level fields were already rejected by filename; a widget with a
@@ -702,9 +710,20 @@ func validateWidgets(d Dashboard, source string) error {
 			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: shape %q needs either \"slices\" or \"groupBy\"",
 				source, d.ID, w.ID, w.Shape)
 		}
-		if w.GroupBy != nil && strings.TrimSpace(w.GroupBy.Field) == "" {
-			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy.field\" is empty",
-				source, d.ID, w.ID)
+		if w.GroupBy != nil {
+			hasField := strings.TrimSpace(w.GroupBy.Field) != ""
+			hasBucket := strings.TrimSpace(w.GroupBy.Bucket) != ""
+			switch {
+			case hasField && hasBucket:
+				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy\" carries both \"field\" and \"bucket\"; a groupBy widget must use exactly one",
+					source, d.ID, w.ID)
+			case !hasField && !hasBucket:
+				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy.field\" is empty",
+					source, d.ID, w.ID)
+			case hasBucket && !validGroupByBuckets[w.GroupBy.Bucket]:
+				return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: unknown \"groupBy.bucket\" %q; expected one of \"day\", \"week\", \"month\"",
+					source, d.ID, w.ID, w.GroupBy.Bucket)
+			}
 		}
 	}
 

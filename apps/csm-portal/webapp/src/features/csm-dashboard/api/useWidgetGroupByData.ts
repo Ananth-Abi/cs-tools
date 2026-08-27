@@ -121,6 +121,22 @@ export function useWidgetGroupByData(
       if (!config?.groupByEndpoint) {
         throw new Error(`Unsupported group-by widget resourceType: ${resourceType}`);
       }
+      // `groupBy.field` is only set for field-based grouping — a
+      // `groupBy.bucket` widget (date-bucketed grouping; see that field's own
+      // doc comment on `BeDashboardGroupByConfig`) never reaches this hook at
+      // all: `DashboardWidgetTile` calls `useCaseFeedbackTrendData` instead,
+      // whose own `POST /cases/feedbacks/aggregate` request/response shape
+      // this hook's `groupBy`/`BeGroupByResponse` types don't match. This
+      // check is therefore normally dead — it exists only so a
+      // misconfigured/future caller that reaches here with a bucket-only
+      // `groupBy` fails loudly instead of posting `groupBy: undefined`
+      // silently.
+      if (!groupBy.field) {
+        throw new Error(
+          `useWidgetGroupByData: groupBy carries no "field" (bucket-based grouping belongs to useCaseFeedbackTrendData, not this hook) for widget "${widgetId}"`,
+        );
+      }
+      const field = groupBy.field;
       // Same shared concurrency slot (and timeout) useWidgetPieData's own
       // slice fetches use — a groupBy widget fires one call on top of every
       // other widget's own call, so it needs both at least as much.
@@ -132,7 +148,7 @@ export function useWidgetGroupByData(
           config.groupByEndpoint as string,
           {
             filters: resolvedFilters,
-            groupBy: groupBy.field,
+            groupBy: field,
             maxGroups: groupBy.maxGroups,
           },
           { signal },
@@ -164,7 +180,7 @@ export function useWidgetGroupByData(
     // `bucketQuery`'s own doc comment) — an empty `query` here would merge
     // to the widget's unfiltered base result set instead of this bucket's,
     // since `mergeWidgetFilters({...}, {})` is a no-op.
-    query: groupBy ? bucketQuery(resourceType, groupBy.field, bucket.key) : {},
+    query: groupBy?.field ? bucketQuery(resourceType, groupBy.field, bucket.key) : {},
     value: bucket.count,
   }));
   if (othersCount > 0) {

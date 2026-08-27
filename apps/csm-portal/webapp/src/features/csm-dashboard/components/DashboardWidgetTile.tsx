@@ -34,6 +34,7 @@ import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
 import { useWidgetPieData, type PieSliceResult } from "@features/csm-dashboard/api/useWidgetPieData";
 import { useWidgetGroupByData } from "@features/csm-dashboard/api/useWidgetGroupByData";
+import { useCaseFeedbackTrendData } from "@features/csm-dashboard/api/useCaseFeedbackTrendData";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
 import GenericColumnList from "@features/csm-dashboard/components/GenericColumnList";
@@ -360,21 +361,38 @@ export default function DashboardWidgetTile({
   );
   // groupBy is the alternative to slices for shapes "pie"/"bar" — mutually
   // exclusive, backend-enforced (never both, never neither for those
-  // shapes). Both hooks are called unconditionally (rules of hooks; a
-  // widget's shape/config never changes across this component's lifetime)
-  // and only one of them ever actually fires a request, gated by its own
-  // `groupBy`/`slices` argument being empty/undefined.
+  // shapes). Every one of these three hooks is called unconditionally
+  // (rules of hooks; a widget's shape/config never changes across this
+  // component's lifetime) and only one of them ever actually fires a
+  // request, gated by its own `groupBy`/`slices` argument being
+  // empty/undefined.
+  //
+  // `groupBy.bucket` (date-bucketed grouping — only `case_feedback`'s own
+  // trend widget uses this today) resolves via `useCaseFeedbackTrendData`
+  // instead of `useWidgetGroupByData`: its request/response contract (`POST
+  // /cases/feedbacks/aggregate`) is unrelated to `BeGroupByResponse` (see
+  // `BeDashboardGroupByConfig.bucket`'s own doc comment) — passing a
+  // `bucket`-configured `groupBy` into `useWidgetGroupByData` would throw
+  // (see that hook's own field-presence guard), so it's withheld here
+  // exactly the way `groupBy` itself is withheld from `useWidgetGroupByData`
+  // for a `shape` that isn't "pie"/"bar" at all.
   const groupByData = useWidgetGroupByData(
     widgetId,
     resourceType,
     filters,
-    shape === "pie" || shape === "bar" ? groupBy : undefined,
+    shape === "pie" || shape === "bar" ? (groupBy?.bucket ? undefined : groupBy) : undefined,
     selectedTeamCreGroupId,
     selectedTeamSreGroupId,
     currentUserId,
     isVisible,
   );
-  const pieData = groupBy ? groupByData : sliceData;
+  const feedbackTrendData = useCaseFeedbackTrendData(
+    widgetId,
+    filters,
+    shape === "bar" && groupBy?.bucket ? groupBy : undefined,
+    isVisible,
+  );
+  const pieData = groupBy?.bucket ? feedbackTrendData : groupBy ? groupByData : sliceData;
   // True while this widget carries a `__current_user__` filter and the
   // signed-in user's profile hasn't loaded yet. `useWidgetData`/
   // `useWidgetPieData` hold their requests in that window (see

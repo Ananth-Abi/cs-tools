@@ -102,6 +102,8 @@ type mockEntityCaseClient struct {
 	searchCaseActivitiesFn     func(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	searchCasesFn              func(ctx context.Context, body []byte) ([]byte, error)
 	aggregateCasesFn           func(ctx context.Context, body []byte) ([]byte, error)
+	searchFeedbackFn           func(ctx context.Context, body []byte) ([]byte, error)
+	aggregateFeedbackFn        func(ctx context.Context, body []byte) ([]byte, error)
 	getCaseFn                  func(ctx context.Context, caseID string) ([]byte, error)
 	createCaseAttachmentFn     func(ctx context.Context, body []byte) ([]byte, error)
 	searchCaseAttachmentsFn    func(ctx context.Context, body []byte) ([]byte, error)
@@ -177,6 +179,20 @@ func (m *mockEntityCaseClient) AggregateCases(ctx context.Context, body []byte) 
 		return m.aggregateCasesFn(ctx, body)
 	}
 	return []byte(`{"groups":[],"othersCount":0,"totalRecords":0}`), nil
+}
+
+func (m *mockEntityCaseClient) SearchFeedback(ctx context.Context, body []byte) ([]byte, error) {
+	if m.searchFeedbackFn != nil {
+		return m.searchFeedbackFn(ctx, body)
+	}
+	return []byte(`{"results":[],"totalRecords":0}`), nil
+}
+
+func (m *mockEntityCaseClient) AggregateFeedback(ctx context.Context, body []byte) ([]byte, error) {
+	if m.aggregateFeedbackFn != nil {
+		return m.aggregateFeedbackFn(ctx, body)
+	}
+	return []byte(`{"buckets":[],"totalRecords":0}`), nil
 }
 
 func (m *mockEntityCaseClient) GetCase(ctx context.Context, caseID string) ([]byte, error) {
