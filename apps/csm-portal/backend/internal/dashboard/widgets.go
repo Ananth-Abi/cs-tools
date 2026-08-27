@@ -103,8 +103,12 @@ type GroupByConfig struct {
 	// (enforced at directory-load time): a widget sets exactly one.
 	Field string `json:"field,omitempty"`
 	// Bucket configures date-bucketed grouping instead of field-value
-	// grouping -- "day", "week", "month", or "rating" (enforced at
-	// directory-load time). Mutually exclusive with Field. This is the shape
+	// grouping -- "day", "week", "month" (temporal buckets, a real time
+	// range in ascending chronological order), or one of the categorical
+	// buckets "rating", "reasons_very_dissatisfied", "reasons_dissatisfied",
+	// "reasons_neutral", "reasons_satisfied", "reasons_very_satisfied" (no
+	// ordering guarantee) -- enforced at directory-load time. Mutually
+	// exclusive with Field. This is the shape
 	// a case-feedback trend/distribution widget uses (ResourceCaseFeedback,
 	// Shape "bar" or "pie"): the frontend's own hook calls POST
 	// /cases/feedback/aggregate with this bucket value and maps its bucketed

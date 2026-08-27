@@ -21,6 +21,7 @@ import { Eye } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import { useLocation } from "react-router";
 import type {
+  BeCaseFeedback,
   BeCaseSearchView,
   BeIncident,
   BeChangeRequestSearchView,
@@ -752,17 +753,7 @@ function CallRequestWidgetList({ items, isLoading }: WidgetListRendererProps): J
  * renderer here). Renders rating/comment/case/submitted-by/submitted.
  */
 function CaseFeedbackWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Element {
-  const feedback = items as unknown as {
-    instanceId?: string;
-    caseId?: string;
-    caseNumber?: string | null;
-    caseInternalId?: string | null;
-    rating?: number;
-    ratingLabel?: string;
-    comment?: string | null;
-    submittedAt?: string;
-    submitterName?: string | null;
-  }[];
+  const feedback = items as unknown as BeCaseFeedback[];
   const dashboardReturnState = useDashboardReturnState();
   const navigate = useNavTransition();
   return (

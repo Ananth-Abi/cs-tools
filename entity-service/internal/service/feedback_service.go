@@ -188,7 +188,7 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 // POST /cases/feedback/aggregate endpoint.
 func (s *snFeedbackService) AggregateFeedback(ctx context.Context, req domain.AggregateFeedbackRequest) (domain.AggregateFeedbackResponse, error) {
 	if !validFeedbackBuckets[req.Bucket] {
-		return domain.AggregateFeedbackResponse{}, &apierror.ValidationError{Msg: "bucket must be one of: day, week, month"}
+		return domain.AggregateFeedbackResponse{}, &apierror.ValidationError{Msg: "bucket must be one of: day, week, month, rating, reasons_very_dissatisfied, reasons_dissatisfied, reasons_neutral, reasons_satisfied, reasons_very_satisfied"}
 	}
 	if err := validateUUIDs("accountIds", req.Filters.AccountIDs); err != nil {
 		return domain.AggregateFeedbackResponse{}, err
