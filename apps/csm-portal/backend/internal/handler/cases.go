@@ -85,6 +85,9 @@ type entityCaseClient interface {
 	SearchCaseAttachments(ctx context.Context, body []byte) ([]byte, error)
 	GetCaseAttachmentContent(ctx context.Context, attachmentID string) ([]byte, string, error)
 	DeleteCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
+	// GetCaseAttachment resolves a single attachment's metadata — used by the
+	// SFTPGo-backed share-creation path; see AttachmentStorageHandler.
+	GetCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error)
 	CreateCallRequest(ctx context.Context, body []byte) ([]byte, error)
 	SearchCallRequests(ctx context.Context, body []byte) ([]byte, error)
 	SearchAllCallRequests(ctx context.Context, body []byte) ([]byte, error)

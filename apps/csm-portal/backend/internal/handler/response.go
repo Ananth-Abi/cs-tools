@@ -39,6 +39,7 @@ const (
 	ErrMsgCommentNotOwnCase      = "Only the assigned engineer can add a public comment on this case."
 	ErrMsgWorkNoteOnClosedCase   = "Work notes cannot be added to a closed case."
 	ErrMsgAttachmentOnClosedCase = "Attachments cannot be added to a closed case."
+	ErrMsgAttachmentNotShareable = "This attachment is not available for direct download."
 	ErrMsgInvalidUUID            = "Invalid UUID format."
 	errMsgReadBody               = "Failed to read request body."
 )
