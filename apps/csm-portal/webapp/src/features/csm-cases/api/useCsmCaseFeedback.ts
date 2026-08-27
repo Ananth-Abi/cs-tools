@@ -24,6 +24,7 @@ import type {
 } from "@api/backend/types";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
 import type { CaseFeedbackEntry } from "@features/csm-cases/types/csmCases";
+import { normalizeBackendTimestamp } from "@utils/dateTime";
 
 function feedbackEntryFromBe(f: BeCaseFeedback): CaseFeedbackEntry {
   return {
@@ -31,7 +32,17 @@ function feedbackEntryFromBe(f: BeCaseFeedback): CaseFeedbackEntry {
     rating: f.rating,
     ratingLabel: f.ratingLabel,
     comment: f.comment,
-    submittedAt: f.submittedAt,
+    // ServiceNow returns submittedAt as a raw space-separated timestamp
+    // ("2026-08-17 06:17:56"), not ISO 8601 like every other activity-feed
+    // entry's own timestamp. CaseActivitiesFeed's compareFeedEntries sorts by
+    // a plain string compare of each entry's `at` — a raw space-separated
+    // string sorts BEFORE a same-day ISO "T"-separated one purely because
+    // " " < "T" in ASCII, regardless of actual time-of-day, which put real
+    // feedback entries out of chronological order in the feed. Normalize to
+    // ISO 8601 UTC here, at the API boundary, same as every other entry.
+    submittedAt: normalizeBackendTimestamp(f.submittedAt) ?? f.submittedAt,
+    submitterName: f.submitterName,
+    submitterEmail: f.submitterEmail,
   };
 }
 

@@ -491,8 +491,12 @@ export default function CaseActivitiesFeed({
                       }}
                     >
                       <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                        Case Feedback
+                        <UserRefLink
+                          name={e.feedback.submitterName || "Customer"}
+                          email={e.feedback.submitterEmail ?? undefined}
+                        />
                       </Typography>
+                      <Chip size="small" variant="outlined" label="Case Feedback" />
                       <Chip
                         size="small"
                         variant="outlined"

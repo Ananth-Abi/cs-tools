@@ -759,6 +759,7 @@ function CaseFeedbackWidgetList({ items, isLoading }: WidgetListRendererProps): 
   const feedback = items as unknown as {
     instanceId?: string;
     caseId?: string;
+    caseNumber?: string | null;
     rating?: number;
     ratingLabel?: string;
     comment?: string | null;
@@ -789,7 +790,7 @@ function CaseFeedbackWidgetList({ items, isLoading }: WidgetListRendererProps): 
               {f.comment || "—"}
             </Typography>,
             <Typography key="case" variant="body2" noWrap>
-              {f.caseId ?? "—"}
+              {f.caseNumber || f.caseId || "—"}
             </Typography>,
             <Typography key="submitted" variant="caption" color="text.secondary" noWrap>
               {formatDate(f.submittedAt)}

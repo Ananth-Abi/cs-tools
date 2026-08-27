@@ -20,7 +20,10 @@ package domain
 type CaseFeedback struct {
 	InstanceID string `json:"instanceId"`
 	CaseID     string `json:"caseId"`
-	Rating     int    `json:"rating"`
+	// CaseNumber is the human-readable case number (e.g. "CS0441331").
+	// Nullable -- absent if the case record could not be resolved.
+	CaseNumber *string `json:"caseNumber"`
+	Rating     int     `json:"rating"`
 	// RatingLabel is the human-readable label for Rating (e.g. "Satisfied"),
 	// as supplied by the backing data source.
 	RatingLabel string `json:"ratingLabel"`
@@ -28,6 +31,13 @@ type CaseFeedback struct {
 	// carries a null comment upstream, not an empty string.
 	Comment     *string `json:"comment"`
 	SubmittedAt string  `json:"submittedAt"`
+	// SubmitterName is the display name of the customer contact who
+	// submitted the feedback. Nullable -- absent if the submitting user
+	// record could not be resolved.
+	SubmitterName *string `json:"submitterName"`
+	// SubmitterEmail is the email of the submitting contact. Nullable, same
+	// as SubmitterName.
+	SubmitterEmail *string `json:"submitterEmail"`
 }
 
 // SearchFeedbackFilters holds the optional filter criteria for a case-feedback search.

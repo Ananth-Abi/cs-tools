@@ -56,12 +56,15 @@ type snSearchFeedbackPayload struct {
 
 // snFeedbackRow mirrors a single row in the Choreo feedback-search response.
 type snFeedbackRow struct {
-	InstanceID  string  `json:"instanceId"`
-	CaseID      string  `json:"caseId"`
-	Rating      int     `json:"rating"`
-	RatingLabel string  `json:"ratingLabel"`
-	Comment     *string `json:"comment"`
-	SubmittedAt string  `json:"submittedAt"`
+	InstanceID     string  `json:"instanceId"`
+	CaseID         string  `json:"caseId"`
+	CaseNumber     *string `json:"caseNumber"`
+	Rating         int     `json:"rating"`
+	RatingLabel    string  `json:"ratingLabel"`
+	Comment        *string `json:"comment"`
+	SubmittedAt    string  `json:"submittedAt"`
+	SubmitterName  *string `json:"submitterName"`
+	SubmitterEmail *string `json:"submitterEmail"`
 }
 
 // snSearchFeedbackResponse mirrors the Choreo POST /cases/feedback/search response.
@@ -150,12 +153,15 @@ func (s *snFeedbackService) SearchFeedback(ctx context.Context, req domain.Searc
 	results := make([]domain.CaseFeedback, 0, len(snResp.Results))
 	for _, row := range snResp.Results {
 		results = append(results, domain.CaseFeedback{
-			InstanceID:  sysidToUUID(row.InstanceID),
-			CaseID:      sysidToUUID(row.CaseID),
-			Rating:      row.Rating,
-			RatingLabel: row.RatingLabel,
-			Comment:     row.Comment,
-			SubmittedAt: row.SubmittedAt,
+			InstanceID:     sysidToUUID(row.InstanceID),
+			CaseID:         sysidToUUID(row.CaseID),
+			CaseNumber:     row.CaseNumber,
+			Rating:         row.Rating,
+			RatingLabel:    row.RatingLabel,
+			Comment:        row.Comment,
+			SubmittedAt:    row.SubmittedAt,
+			SubmitterName:  row.SubmitterName,
+			SubmitterEmail: row.SubmitterEmail,
 		})
 	}
 

@@ -6722,6 +6722,12 @@ components:
           type: string
           format: uuid
           description: UUID of the case the feedback belongs to.
+        caseNumber:
+          type: string
+          nullable: true
+          description: >-
+            Human-readable case number (e.g. "CS0441331"). Null if the case
+            record could not be resolved.
         rating:
           type: integer
           description: Numeric rating value.
@@ -6737,6 +6743,16 @@ components:
         submittedAt:
           type: string
           description: Timestamp when the feedback was submitted.
+        submitterName:
+          type: string
+          nullable: true
+          description: >-
+            Display name of the customer contact who submitted the feedback.
+            Null if the submitting user record could not be resolved.
+        submitterEmail:
+          type: string
+          nullable: true
+          description: Email of the submitting contact. Null, same as submitterName.
 
     CaseFeedbackSearchFilters:
       type: object

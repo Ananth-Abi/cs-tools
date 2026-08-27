@@ -3343,11 +3343,17 @@ export interface BeGroupByResponse {
 export interface BeCaseFeedback {
   instanceId: string;
   caseId: string;
+  /** `null` if the case record could not be resolved. */
+  caseNumber: string | null;
   rating: number;
   ratingLabel: string;
   /** `null` for feedback submitted without a comment. */
   comment: string | null;
   submittedAt: string;
+  /** `null` if the submitting user record could not be resolved. */
+  submitterName: string | null;
+  /** `null`, same as submitterName. */
+  submitterEmail: string | null;
 }
 
 /** Body of `POST /cases/feedback/search` — deliberately NOT the

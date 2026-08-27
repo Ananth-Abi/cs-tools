@@ -93,13 +93,15 @@ function CaseActivitiesFeedHarness({
 }
 
 describe("CaseActivitiesFeed — feedback lane", () => {
-  it("renders a Case Feedback entry with rating and comment", () => {
+  it("renders a Case Feedback entry with rating, comment, and submitter", () => {
     const feedback: CaseFeedbackEntry = {
       id: "fb-1",
       rating: 5,
       ratingLabel: "Very Satisfied",
       comment: "Great support, thank you!",
       submittedAt: "2026-08-17T06:17:56Z",
+      submitterName: "Jane Customer",
+      submitterEmail: "jane.customer@example.com",
     };
 
     renderWithRouter(
@@ -114,6 +116,30 @@ describe("CaseActivitiesFeed — feedback lane", () => {
     expect(screen.getByText("Case Feedback")).toBeInTheDocument();
     expect(screen.getByText("Very Satisfied (5/5)")).toBeInTheDocument();
     expect(screen.getByText("Great support, thank you!")).toBeInTheDocument();
+    expect(screen.getByText("Jane Customer")).toBeInTheDocument();
+  });
+
+  it("falls back to 'Customer' when the submitter could not be resolved", () => {
+    const feedback: CaseFeedbackEntry = {
+      id: "fb-3",
+      rating: 4,
+      ratingLabel: "Satisfied",
+      comment: null,
+      submittedAt: "2026-08-17T06:17:56Z",
+      submitterName: null,
+      submitterEmail: null,
+    };
+
+    renderWithRouter(
+      <CaseActivitiesFeed
+        comments={[]}
+        audit={[]}
+        attachments={[]}
+        feedback={[feedback]}
+      />,
+    );
+
+    expect(screen.getByText("Customer")).toBeInTheDocument();
   });
 
   it("renders no comment line when feedback has none", () => {

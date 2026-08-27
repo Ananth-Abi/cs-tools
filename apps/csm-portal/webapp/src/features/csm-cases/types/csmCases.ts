@@ -338,6 +338,10 @@ export interface CaseFeedbackEntry {
   /** `null`/absent for feedback submitted without a comment. */
   comment?: string | null;
   submittedAt: string;
+  /** `null`/absent if the submitting user record could not be resolved. */
+  submitterName?: string | null;
+  /** `null`/absent, same as submitterName. */
+  submitterEmail?: string | null;
 }
 
 export interface CaseAuditEntry {
