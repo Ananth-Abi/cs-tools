@@ -38,6 +38,7 @@ import { useGetAlert, useGetSmartAlert } from "@features/csm-cases/api/useSnLink
 import type {
   CaseAttachment,
   CaseAuditEntry,
+  CaseFeedbackEntry,
   CsmCaseComment,
 } from "@features/csm-cases/types/csmCases";
 
@@ -90,6 +91,62 @@ function CaseActivitiesFeedHarness({
     />
   );
 }
+
+describe("CaseActivitiesFeed — feedback lane", () => {
+  it("renders a Case Feedback entry with rating and comment", () => {
+    const feedback: CaseFeedbackEntry = {
+      id: "fb-1",
+      rating: 5,
+      ratingLabel: "Very Satisfied",
+      comment: "Great support, thank you!",
+      submittedAt: "2026-08-17T06:17:56Z",
+    };
+
+    renderWithRouter(
+      <CaseActivitiesFeed
+        comments={[]}
+        audit={[]}
+        attachments={[]}
+        feedback={[feedback]}
+      />,
+    );
+
+    expect(screen.getByText("Case Feedback")).toBeInTheDocument();
+    expect(screen.getByText("Very Satisfied (5/5)")).toBeInTheDocument();
+    expect(screen.getByText("Great support, thank you!")).toBeInTheDocument();
+  });
+
+  it("renders no comment line when feedback has none", () => {
+    const feedback: CaseFeedbackEntry = {
+      id: "fb-2",
+      rating: 3,
+      ratingLabel: "Neutral",
+      comment: null,
+      submittedAt: "2026-08-17T06:17:56Z",
+    };
+
+    renderWithRouter(
+      <CaseActivitiesFeed
+        comments={[]}
+        audit={[]}
+        attachments={[]}
+        feedback={[feedback]}
+      />,
+    );
+
+    expect(screen.getByText("Neutral (3/5)")).toBeInTheDocument();
+  });
+
+  it("shows no feedback lane and no filter option when feedback is empty", () => {
+    renderWithRouter(
+      <CaseActivitiesFeed comments={[]} audit={[]} attachments={[]} feedback={[]} />,
+    );
+
+    expect(screen.queryByText("Case Feedback")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Filter"));
+    expect(screen.queryByText(/^Feedback \(/)).not.toBeInTheDocument();
+  });
+});
 
 describe("CaseActivitiesFeed", () => {
   it("renders a field_change entry with old/new values", () => {

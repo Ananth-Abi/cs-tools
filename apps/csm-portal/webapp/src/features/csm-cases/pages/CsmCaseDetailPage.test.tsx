@@ -221,6 +221,15 @@ vi.mock("@features/csm-cases/api/useCsmCaseActivities", () => ({
     isFetching: false,
   }),
 }));
+vi.mock("@features/csm-cases/api/useCsmCaseFeedback", () => ({
+  useGetCsmCaseFeedback: () => ({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+    refetch: vi.fn(),
+    isFetching: false,
+  }),
+}));
 vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
   useGetCsmCaseAttachments: () => ({
     data: undefined,

@@ -74,6 +74,7 @@ import {
 } from "@features/csm-cases/api/useCsmCaseComments";
 import { useGetCsmConversationMessages } from "@features/csm-cases/api/useCsmConversationMessages";
 import { useGetCsmCaseActivities } from "@features/csm-cases/api/useCsmCaseActivities";
+import { useGetCsmCaseFeedback } from "@features/csm-cases/api/useCsmCaseFeedback";
 import {
   useGetCsmCaseAttachments,
   usePostCsmCaseAttachment,
@@ -446,6 +447,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     refetch: refetchActivities,
     isFetching: isFetchingActivities,
   } = useGetCsmCaseActivities(caseId);
+  // Case Feedback (CSAT survey) submissions for this case, if any — almost
+  // always empty for an open case (the survey goes out after closure), which
+  // is expected and renders no feedback lane rather than an error.
+  const { data: caseFeedback } = useGetCsmCaseFeedback(caseId);
   // The chat transcript the case was spawned from, when linked. Loaded lazily
   // off the case's conversation id and merged into the comment stream below so
   // it renders as the earliest activity entries — mirrors the customer portal.
@@ -2233,7 +2238,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   <Chip
                     size="small"
                     variant="outlined"
-                    label={`${safeComments.length + (activityAudit?.length ?? 0) + attachmentList.length} entries`}
+                    label={`${safeComments.length + (activityAudit?.length ?? 0) + attachmentList.length + (caseFeedback?.length ?? 0)} entries`}
                   />
                 )}
               </Box>
@@ -2280,6 +2285,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   comments={safeComments}
                   audit={activityAudit ?? []}
                   attachments={attachmentList}
+                  feedback={caseFeedback ?? []}
                   callRequests={callRequests ?? []}
                   onDownloadAttachment={onDownloadAttachment}
                   preview={{
