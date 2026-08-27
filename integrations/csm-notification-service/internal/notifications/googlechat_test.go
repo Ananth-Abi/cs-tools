@@ -101,6 +101,77 @@ func TestNewGoogleChatClient_MarksDuplicateNormalizedProductsUnconfigured(t *tes
 	}
 }
 
+// TestSendCard_FallsBackToDefaultSpaceWhenProductUnconfigured verifies the
+// opt-in "default" GOOGLE_CHAT_SPACES entry: a product with no space of its
+// own routes to the space configured under the reserved "default" key
+// instead of erroring.
+func TestSendCard_FallsBackToDefaultSpaceWhenProductUnconfigured(t *testing.T) {
+	var defaultCalled bool
+	defaultSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defaultCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer defaultSrv.Close()
+
+	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{
+		{Product: "api-manager", WebhookURL: "https://chat.example.com/apim"},
+		{Product: "default", WebhookURL: defaultSrv.URL},
+	}})
+
+	if err := c.SendIncidentAlert(context.Background(), "identity-server", "title", "desc", "https://example.com"); err != nil {
+		t.Fatalf("SendIncidentAlert returned error: %v", err)
+	}
+	if !defaultCalled {
+		t.Error("expected the alert to be posted to the default space's webhook, but it wasn't called")
+	}
+}
+
+// TestSendCard_MatchedProductTakesPriorityOverDefault verifies the default
+// space fallback never overrides a product that does have its own
+// configured space.
+func TestSendCard_MatchedProductTakesPriorityOverDefault(t *testing.T) {
+	var apimCalled, defaultCalled bool
+	apimSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apimCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer apimSrv.Close()
+	defaultSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defaultCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer defaultSrv.Close()
+
+	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{
+		{Product: "api-manager", WebhookURL: apimSrv.URL},
+		{Product: "default", WebhookURL: defaultSrv.URL},
+	}})
+
+	if err := c.SendIncidentAlert(context.Background(), "api-manager", "title", "desc", "https://example.com"); err != nil {
+		t.Fatalf("SendIncidentAlert returned error: %v", err)
+	}
+	if !apimCalled || defaultCalled {
+		t.Errorf("apimCalled = %v, defaultCalled = %v, want true, false", apimCalled, defaultCalled)
+	}
+}
+
+// TestSendCard_StillErrorsWithNoDefaultConfigured verifies the fallback is
+// opt-in: with no "default" GOOGLE_CHAT_SPACES entry at all, an unmatched
+// product still errors exactly as before this change.
+func TestSendCard_StillErrorsWithNoDefaultConfigured(t *testing.T) {
+	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{
+		{Product: "api-manager", WebhookURL: "https://chat.example.com/apim"},
+	}})
+
+	err := c.SendIncidentAlert(context.Background(), "identity-server", "title", "desc", "https://example.com")
+	if err == nil {
+		t.Fatal("expected error for an unmatched product with no default space configured, got nil")
+	}
+	if !strings.Contains(err.Error(), "no google chat space configured") {
+		t.Errorf("expected unconfigured space error, got: %v", err)
+	}
+}
+
 func TestSendIncidentAlert_RedactsWebhookURLOnNetworkFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	webhookURL := srv.URL + "/messages?key=SECRET_KEY&token=SECRET_TOKEN"

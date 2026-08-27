@@ -78,7 +78,7 @@ Copy `.env.example` to `.env` and fill in the values:
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_CHAT_SPACES` | JSON array of `{"product","webhookUrl"}` objects, one per Google Chat space. Optional — left unset or malformed, Google Chat alerts are unavailable but startup and every other endpoint work normally |
+| `GOOGLE_CHAT_SPACES` | JSON array of `{"product","webhookUrl"}` objects, one per Google Chat space. Optional — left unset or malformed, Google Chat alerts are unavailable but startup and every other endpoint work normally. An entry with `"product":"default"` is itself optional and opts in a fallback: an alert whose resolved product matches no other entry routes there instead of erroring |
 
 ### SMS and call notification channels (Twilio)
 
