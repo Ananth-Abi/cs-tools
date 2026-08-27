@@ -49,6 +49,11 @@ A few things worth knowing:
 Opening a case shows its full detail: overview fields, the comment/activity timeline,
 attachments, and any linked service requests.
 
+If a customer submits Case Feedback (a CSAT survey, typically sent once a case closes), it
+appears in the activity timeline alongside comments and status changes, in its correct
+chronological position — showing the submitter, star rating, and any free-text comment they
+left.
+
 **Linked service requests** appear in their own widget on the case, listing each linked
 request's number, name, state, and current assignee. Clicking a row navigates to that
 request's own case page (with a "back" link that returns you here). You can start a new
