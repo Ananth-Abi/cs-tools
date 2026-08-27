@@ -53,6 +53,7 @@ func TestSNCaseService_UpdateCase_PublishesSeverityChanged(t *testing.T) {
 		"product": {"id": "` + productSysid + `", "name": "WSO2 API Manager"},
 		"severity": {"id": 11, "label": "2 - High"},
 		"state": {"id": 1, "label": "Open"},
+		"account": {"id": "` + projectSysid + `", "name": "Account Zeta", "type": "customer", "creTeam": {"id": "` + sysid32('e') + `", "name": "Team Nova"}},
 		"watchList": [
 			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
 		]
@@ -96,6 +97,9 @@ func TestSNCaseService_UpdateCase_PublishesSeverityChanged(t *testing.T) {
 	}
 	if payload.Product != "WSO2 API Manager" {
 		t.Errorf("product = %q, want %q", payload.Product, "WSO2 API Manager")
+	}
+	if payload.Team != "Team Nova" {
+		t.Errorf("team = %q, want %q", payload.Team, "Team Nova")
 	}
 	wantProjectID := sysidToUUID(projectSysid)
 	if payload.ProjectID != wantProjectID {

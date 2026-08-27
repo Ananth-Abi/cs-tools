@@ -130,6 +130,7 @@ type CaseCreatedPayload struct {
 	CaseType                  string   `json:"caseType"`
 	Priority                  string   `json:"priority"`
 	Product                   string   `json:"product,omitempty"`
+	Team                      string   `json:"team,omitempty"`
 	CreatedAt                 string   `json:"createdAt"`
 	Description               string   `json:"description"`
 	IncidentImpactDescription string   `json:"incidentImpactDescription,omitempty"`
@@ -219,6 +220,7 @@ type CaseAcknowledgedPayload struct {
 	WSO2CaseID       string `json:"wso2CaseId,omitempty"`
 	Severity         string `json:"severity,omitempty"`
 	Product          string `json:"product,omitempty"`
+	Team             string `json:"team,omitempty"`
 	AcknowledgerName string `json:"acknowledgerName"`
 }
 
@@ -242,6 +244,7 @@ type SeverityChangedPayload struct {
 	OldSeverity string   `json:"oldSeverity"`
 	NewSeverity string   `json:"newSeverity"`
 	Product     string   `json:"product,omitempty"`
+	Team        string   `json:"team,omitempty"`
 	Recipients  []string `json:"recipients"`
 }
 

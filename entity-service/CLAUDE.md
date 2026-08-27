@@ -265,6 +265,20 @@ each deployed product's actual display name for per-product routing to
 take effect; until then, every case routes to `DEFAULT_CHAT_PRODUCT`'s
 space same as before this field was populated.
 
+`caseTeamName(cv)` (same shared-helper pattern) resolves
+`cv.AccountDetails.CreTeam.Name` (e.g. `"Team Nova"`, `""` when the case
+has no account or the account has no CRE team) — used by the same three
+publishers to populate their payloads' `Team` field, a purely-display
+value in `csm-notification-service`'s Chat cards (unlike `Product`, it
+plays no role in routing). `cv.AccountDetails` (and its `CreTeam`) is
+resolved by `GetCaseByID` from the case's own embedded ServiceNow account
+object at no extra request cost — but as of this field's introduction,
+that embedded object's `creTeam`/`sreTeam` are documented in
+`snCaseAccount`'s own doc comment as not yet guaranteed to be populated by
+the ServiceNow integration, even though the standalone accounts endpoint
+does return them. `Team` may therefore come back empty in practice until
+that catches up — not a bug in this service if so.
+
 **Known, accepted inconsistency**: `publishCaseAcknowledged` re-reads
 `caseProductName(cv)` from a fresh `GetCaseByID` at acknowledge time,
 rather than reusing whatever product `publishCaseCreated` read at create

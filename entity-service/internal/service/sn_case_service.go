@@ -99,6 +99,28 @@ func caseProductName(cv domain.CaseView) string {
 	return ""
 }
 
+// caseTeamName returns cv's account's CRE team display name (e.g. "Team
+// Nova"), "" when the case has no account or the account has no CRE team.
+// Shared by every publisher that needs it for a case.* payload's Team
+// field — see events.CaseCreatedPayload.Team's own doc comment.
+//
+// Reads cv.AccountDetails.CreTeam, which GetCaseByID already resolves from
+// the case's own embedded account object (see snCaseAccount's doc comment)
+// — no extra lookup needed, unlike a fresh GET /accounts/{id} call. As of
+// this field's introduction, that embedded object's creTeam/sreTeam are
+// documented ("not yet available in the backing service") as not
+// guaranteed to be populated by the ServiceNow integration yet, even
+// though the standalone accounts endpoint does return them — this helper
+// simply passes through whatever GetCaseByID resolved, so Team may come
+// back empty in practice until that catches up. If it does, the fix is on
+// the backing service, not here.
+func caseTeamName(cv domain.CaseView) string {
+	if cv.AccountDetails != nil && cv.AccountDetails.CreTeam != nil {
+		return cv.AccountDetails.CreTeam.Name
+	}
+	return ""
+}
+
 // wso2EmailDomain is WSO2's own corporate domain — mirrors
 // apps/csm-portal/backend's own wso2EmailDomain constant (see that
 // package's user_external_account.go).
@@ -997,6 +1019,7 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 		CaseType:     strings.ToUpper(req.Type),
 		Priority:     strings.ToUpper(string(cv.Severity)),
 		Product:      product,
+		Team:         caseTeamName(cv),
 		CreatedAt:    cv.CreatedOn.Format(time.RFC3339),
 		Description:  cv.Description,
 		Recipients:   recipients,
@@ -1226,6 +1249,7 @@ func (s *snCaseService) publishSeverityChanged(ctx context.Context, caseID, oldS
 		OldSeverity: strings.ToUpper(oldSeverity),
 		NewSeverity: strings.ToUpper(newSeverity),
 		Product:     caseProductName(before),
+		Team:        caseTeamName(before),
 		Recipients:  recipients,
 	})
 	if err != nil {
@@ -1332,6 +1356,7 @@ func (s *snCaseService) publishCaseAcknowledged(ctx context.Context, caseID, ack
 		WSO2CaseID:       cv.InternalID,
 		Severity:         strings.ToUpper(string(cv.Severity)),
 		Product:          product,
+		Team:             caseTeamName(cv),
 		AcknowledgerName: acknowledgerName,
 	})
 	if err != nil {

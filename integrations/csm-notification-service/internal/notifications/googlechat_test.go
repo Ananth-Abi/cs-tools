@@ -274,6 +274,12 @@ func TestSendIncidentAlert_ConstructsWithZeroValueConfig(t *testing.T) {
 // reference, product, title, then the two "Open in CSM"/"ACKNOWLEDGE CASE"
 // links — and that a dynamic value containing HTML-significant characters
 // is escaped rather than allowed to break the surrounding markup.
+// TestSendCaseCreatedAlert_SendsExpectedCard verifies the redesigned
+// case.created card: the case reference leads the header (Roboto-Mono
+// styled in the mockup this matches), the case title is the header
+// subtitle, the body is a "New case" line plus one line combining
+// severity/product/team, and "Open in CSM"/"Acknowledge" are real button
+// widgets rather than markup links.
 func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +294,7 @@ func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 
 	err := c.SendCaseCreatedAlert(context.Background(), "api-manager",
 		"Critical (P1)", "#DC2626", "CS0001001", "WSO2-1000", "WSO2 API Manager",
-		`Tom & Jerry <script>`, "https://csm.example.com/cases/CASE-1")
+		`Tom & Jerry <script>`, "Team Nova", "https://csm.example.com/cases/CASE-1")
 	if err != nil {
 		t.Fatalf("SendCaseCreatedAlert returned error: %v", err)
 	}
@@ -297,31 +303,41 @@ func TestSendCaseCreatedAlert_SendsExpectedCard(t *testing.T) {
 		t.Fatalf("CardsV2 length = %d, want 1", len(capturedBody.CardsV2))
 	}
 	card := capturedBody.CardsV2[0].Card
-	if card.Header != nil {
-		t.Errorf("Header = %+v, want nil (no header on this card)", card.Header)
+	if card.Header == nil {
+		t.Fatal("Header = nil, want a header leading with the case reference")
 	}
-	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 1 {
+	if card.Header.Title != "CS0001001 · WSO2-1000" {
+		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "CS0001001 · WSO2-1000")
+	}
+	if card.Header.Subtitle != `Tom & Jerry <script>` {
+		t.Errorf("Header.Subtitle = %q, want the case title verbatim (headers aren't HTML)", card.Header.Subtitle)
+	}
+	if len(card.Sections) != 1 || len(card.Sections[0].Widgets) != 2 {
 		t.Fatalf("unexpected sections/widgets shape: %+v", card.Sections)
 	}
 	text := card.Sections[0].Widgets[0].TextParagraph.Text
 	want := strings.Join([]string{
-		`<font color="#DC2626"><b>Critical (P1)</b></font>`,
-		`<a href="https://csm.example.com/cases/CASE-1">CS0001001</a>`,
-		`<b>WSO2-1000</b>`,
-		`<b>WSO2 API Manager</b>`,
-		`Tom &amp; Jerry &lt;script&gt;`,
-		`<a href="https://csm.example.com/cases/CASE-1">Open in CSM</a>`,
-		`<a href="https://csm.example.com/cases/CASE-1">ACKNOWLEDGE CASE</a>`,
+		`<b>New case</b>`,
+		`<font color="#DC2626"><b>Critical (P1)</b></font> · WSO2 API Manager · Team Nova`,
 	}, "<br>")
 	if text != want {
 		t.Errorf("card text =\n%q\nwant\n%q", text, want)
 	}
+	buttons := card.Sections[0].Widgets[1].ButtonList.Buttons
+	if len(buttons) != 2 || buttons[0].Text != "Open in CSM" || buttons[1].Text != "Acknowledge" {
+		t.Errorf("buttons = %+v, want [Open in CSM, Acknowledge]", buttons)
+	}
+	for _, b := range buttons {
+		if b.OnClick.OpenLink.URL != "https://csm.example.com/cases/CASE-1" {
+			t.Errorf("button %q url = %q, want the case link", b.Text, b.OnClick.OpenLink.URL)
+		}
+	}
 }
 
-// TestSendCaseCreatedAlert_OmitsEmptyOptionalLines verifies wso2CaseID/
-// productName/title are each dropped from the card entirely (not rendered
-// as an empty line) when the caller doesn't supply one.
-func TestSendCaseCreatedAlert_OmitsEmptyOptionalLines(t *testing.T) {
+// TestSendCaseCreatedAlert_OmitsEmptyOptionalParts verifies severity/
+// product/team are each dropped from the meta line entirely (no stray " · "
+// separators) when the caller doesn't supply one.
+func TestSendCaseCreatedAlert_OmitsEmptyOptionalParts(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
@@ -332,28 +348,32 @@ func TestSendCaseCreatedAlert_OmitsEmptyOptionalLines(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: srv.URL}}})
 
 	err := c.SendCaseCreatedAlert(context.Background(), "api-manager",
-		"Medium (P3)", "#7C3AED", "CS0001001", "", "", "", "https://csm.example.com/cases/CASE-1")
+		"", "", "CS0001001", "", "", "", "", "https://csm.example.com/cases/CASE-1")
 	if err != nil {
 		t.Fatalf("SendCaseCreatedAlert returned error: %v", err)
 	}
 
-	text := capturedBody.CardsV2[0].Card.Sections[0].Widgets[0].TextParagraph.Text
-	if strings.Count(text, "<br>") != 3 {
-		t.Errorf("expected exactly 4 lines (severity, case number, Open in CSM, ACKNOWLEDGE CASE), got text = %q", text)
+	card := capturedBody.CardsV2[0].Card
+	if card.Header.Title != "CS0001001" {
+		t.Errorf("Header.Title = %q, want just the case number with no WSO2CaseID separator", card.Header.Title)
+	}
+	text := card.Sections[0].Widgets[0].TextParagraph.Text
+	if text != `<b>New case</b>` {
+		t.Errorf("card text = %q, want just the New case line with no trailing separators", text)
 	}
 }
 
 func TestSendCaseCreatedAlert_RejectsEmptyCaseNumber(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: "https://example.com"}}})
-	if err := c.SendCaseCreatedAlert(context.Background(), "api-manager", "Critical (P1)", "#DC2626", "", "WSO2-1000", "WSO2 API Manager", "title", "https://example.com/cases/1"); err == nil {
+	if err := c.SendCaseCreatedAlert(context.Background(), "api-manager", "Critical (P1)", "#DC2626", "", "WSO2-1000", "WSO2 API Manager", "title", "Team Nova", "https://example.com/cases/1"); err == nil {
 		t.Fatal("expected error for empty caseNumber, got nil")
 	}
 }
 
-// TestSendCaseAcknowledgedAlert_SendsExpectedCard verifies the
-// case.acknowledged Chat card's shape: no header, a single TextParagraph
-// line matching an existing internal WSO2-support Chat format —
-// "<severity> <caseNumber> <wso2CaseID>: Ack by <name>".
+// TestSendCaseAcknowledgedAlert_SendsExpectedCard verifies the redesigned
+// case.acknowledged card: case reference in the header, "Ack by <name>" as
+// the plain-text subtitle (not HTML-escaped — headers aren't HTML), a team
+// line, and a "View case" button.
 func TestSendCaseAcknowledgedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -367,23 +387,37 @@ func TestSendCaseAcknowledgedAlert_SendsExpectedCard(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: srv.URL}}})
 
 	err := c.SendCaseAcknowledgedAlert(context.Background(), "api-manager",
-		"Critical (P1)", "#DC2626", "CS0001002", "WSO2-1001", "https://csm.example.com/cases/CASE-1", "Jane Doe")
+		"Critical (P1)", "#DC2626", "CS0001002", "WSO2-1001", "https://csm.example.com/cases/CASE-1", "Jane Doe", "Team Nova")
 	if err != nil {
 		t.Fatalf("SendCaseAcknowledgedAlert returned error: %v", err)
 	}
 
 	card := capturedBody.CardsV2[0].Card
-	if card.Header != nil {
-		t.Errorf("Header = %+v, want nil", card.Header)
+	if card.Header == nil {
+		t.Fatal("Header = nil, want a header leading with the case reference")
 	}
-	text := card.Sections[0].Widgets[0].TextParagraph.Text
-	want := `<font color="#DC2626"><b>Critical (P1)</b></font> <a href="https://csm.example.com/cases/CASE-1">CS0001002</a> WSO2-1001: Ack by Jane Doe`
-	if text != want {
-		t.Errorf("card text = %q, want %q", text, want)
+	if card.Header.Title != "CS0001002 · WSO2-1001" {
+		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "CS0001002 · WSO2-1001")
+	}
+	if card.Header.Subtitle != "Ack by Jane Doe" {
+		t.Errorf("Header.Subtitle = %q, want %q", card.Header.Subtitle, "Ack by Jane Doe")
+	}
+	if len(card.Sections) != 2 {
+		t.Fatalf("sections = %+v, want a team line section plus a button section", card.Sections)
+	}
+	if got := card.Sections[0].Widgets[0].TextParagraph.Text; got != "Team Nova" {
+		t.Errorf("team line = %q, want %q", got, "Team Nova")
+	}
+	buttons := card.Sections[1].Widgets[0].ButtonList.Buttons
+	if len(buttons) != 1 || buttons[0].Text != "View case" || buttons[0].OnClick.OpenLink.URL != "https://csm.example.com/cases/CASE-1" {
+		t.Errorf("buttons = %+v, want a single View case button to the case link", buttons)
 	}
 }
 
-func TestSendCaseAcknowledgedAlert_OmitsEmptyWSO2CaseID(t *testing.T) {
+// TestSendCaseAcknowledgedAlert_OmitsEmptyTeam verifies the card has no
+// body section at all — not an empty one — when team is empty, the
+// shortest possible card (header + button only).
+func TestSendCaseAcknowledgedAlert_OmitsEmptyTeam(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
@@ -394,28 +428,34 @@ func TestSendCaseAcknowledgedAlert_OmitsEmptyWSO2CaseID(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: srv.URL}}})
 
 	err := c.SendCaseAcknowledgedAlert(context.Background(), "api-manager",
-		"High (P2)", "#EA580C", "CS0001003", "", "https://csm.example.com/cases/CASE-1", "Jane Doe")
+		"High (P2)", "#EA580C", "CS0001003", "", "https://csm.example.com/cases/CASE-1", "Jane Doe", "")
 	if err != nil {
 		t.Fatalf("SendCaseAcknowledgedAlert returned error: %v", err)
 	}
 
-	text := capturedBody.CardsV2[0].Card.Sections[0].Widgets[0].TextParagraph.Text
-	want := `<font color="#EA580C"><b>High (P2)</b></font> <a href="https://csm.example.com/cases/CASE-1">CS0001003</a>: Ack by Jane Doe`
-	if text != want {
-		t.Errorf("card text = %q, want %q", text, want)
+	card := capturedBody.CardsV2[0].Card
+	if card.Header.Title != "CS0001003" {
+		t.Errorf("Header.Title = %q, want just the case number with no WSO2CaseID separator", card.Header.Title)
+	}
+	if len(card.Sections) != 1 {
+		t.Fatalf("sections = %+v, want just the button section (no empty team section)", card.Sections)
 	}
 }
 
 func TestSendCaseAcknowledgedAlert_RejectsMissingRequiredArgs(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: "https://example.com"}}})
-	if err := c.SendCaseAcknowledgedAlert(context.Background(), "api-manager", "Critical (P1)", "#DC2626", "", "WSO2-1000", "https://example.com/cases/1", "Jane Doe"); err == nil {
+	if err := c.SendCaseAcknowledgedAlert(context.Background(), "api-manager", "Critical (P1)", "#DC2626", "", "WSO2-1000", "https://example.com/cases/1", "Jane Doe", "Team Nova"); err == nil {
 		t.Fatal("expected error for empty caseNumber, got nil")
 	}
-	if err := c.SendCaseAcknowledgedAlert(context.Background(), "api-manager", "Critical (P1)", "#DC2626", "CS0001", "WSO2-1000", "https://example.com/cases/1", ""); err == nil {
+	if err := c.SendCaseAcknowledgedAlert(context.Background(), "api-manager", "Critical (P1)", "#DC2626", "CS0001", "WSO2-1000", "https://example.com/cases/1", "", "Team Nova"); err == nil {
 		t.Fatal("expected error for empty acknowledgerName, got nil")
 	}
 }
 
+// TestSendSeverityChangedAlert_SendsExpectedCard verifies the redesigned
+// case.severity_changed card: case reference in the header, the case title
+// as subtitle, an old→new severity transition plus team on one body line,
+// and a "View case" button.
 func TestSendSeverityChangedAlert_SendsExpectedCard(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -429,23 +469,33 @@ func TestSendSeverityChangedAlert_SendsExpectedCard(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: srv.URL}}})
 
 	err := c.SendSeverityChangedAlert(context.Background(), "api-manager",
-		"High (P2)", "Low (P4)", "#6B7280", "CS0001002", "WSO2-1001", "https://csm.example.com/cases/CASE-1")
+		"High (P2)", "Low (P4)", "#6B7280", "CS0001002", "WSO2-1001", "Gateway returns 502", "Team Nova", "https://csm.example.com/cases/CASE-1")
 	if err != nil {
 		t.Fatalf("SendSeverityChangedAlert returned error: %v", err)
 	}
 
 	card := capturedBody.CardsV2[0].Card
-	if card.Header != nil {
-		t.Errorf("Header = %+v, want nil", card.Header)
+	if card.Header == nil {
+		t.Fatal("Header = nil, want a header leading with the case reference")
+	}
+	if card.Header.Title != "CS0001002 · WSO2-1001" {
+		t.Errorf("Header.Title = %q, want %q", card.Header.Title, "CS0001002 · WSO2-1001")
+	}
+	if card.Header.Subtitle != "Gateway returns 502" {
+		t.Errorf("Header.Subtitle = %q, want the case title", card.Header.Subtitle)
 	}
 	text := card.Sections[0].Widgets[0].TextParagraph.Text
-	want := `<font color="#6B7280"><b>Low (P4)</b></font> <a href="https://csm.example.com/cases/CASE-1">CS0001002</a> WSO2-1001: Severity changed from High (P2) to Low (P4)`
+	want := `High (P2) → <font color="#6B7280"><b>Low (P4)</b></font> · Team Nova`
 	if text != want {
 		t.Errorf("card text = %q, want %q", text, want)
 	}
+	buttons := card.Sections[0].Widgets[1].ButtonList.Buttons
+	if len(buttons) != 1 || buttons[0].Text != "View case" || buttons[0].OnClick.OpenLink.URL != "https://csm.example.com/cases/CASE-1" {
+		t.Errorf("buttons = %+v, want a single View case button to the case link", buttons)
+	}
 }
 
-func TestSendSeverityChangedAlert_OmitsEmptyWSO2CaseID(t *testing.T) {
+func TestSendSeverityChangedAlert_OmitsEmptyWSO2CaseIDAndTeam(t *testing.T) {
 	var capturedBody chatCardMessage
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
@@ -456,13 +506,20 @@ func TestSendSeverityChangedAlert_OmitsEmptyWSO2CaseID(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: srv.URL}}})
 
 	err := c.SendSeverityChangedAlert(context.Background(), "api-manager",
-		"Medium (P3)", "Critical (P1)", "#DC2626", "CS0001003", "", "https://csm.example.com/cases/CASE-1")
+		"Medium (P3)", "Critical (P1)", "#DC2626", "CS0001003", "", "", "", "https://csm.example.com/cases/CASE-1")
 	if err != nil {
 		t.Fatalf("SendSeverityChangedAlert returned error: %v", err)
 	}
 
-	text := capturedBody.CardsV2[0].Card.Sections[0].Widgets[0].TextParagraph.Text
-	want := `<font color="#DC2626"><b>Critical (P1)</b></font> <a href="https://csm.example.com/cases/CASE-1">CS0001003</a>: Severity changed from Medium (P3) to Critical (P1)`
+	card := capturedBody.CardsV2[0].Card
+	if card.Header.Title != "CS0001003" {
+		t.Errorf("Header.Title = %q, want just the case number with no WSO2CaseID separator", card.Header.Title)
+	}
+	if card.Header.Subtitle != "" {
+		t.Errorf("Header.Subtitle = %q, want empty when no title was sent", card.Header.Subtitle)
+	}
+	text := card.Sections[0].Widgets[0].TextParagraph.Text
+	want := `Medium (P3) → <font color="#DC2626"><b>Critical (P1)</b></font>`
 	if text != want {
 		t.Errorf("card text = %q, want %q", text, want)
 	}
@@ -470,7 +527,7 @@ func TestSendSeverityChangedAlert_OmitsEmptyWSO2CaseID(t *testing.T) {
 
 func TestSendSeverityChangedAlert_RejectsMissingCaseNumber(t *testing.T) {
 	c := NewGoogleChatClient(GoogleChatConfig{Spaces: []GoogleChatSpace{{Product: "api-manager", WebhookURL: "https://example.com"}}})
-	if err := c.SendSeverityChangedAlert(context.Background(), "api-manager", "High (P2)", "Low (P4)", "#6B7280", "", "WSO2-1000", "https://example.com/cases/1"); err == nil {
+	if err := c.SendSeverityChangedAlert(context.Background(), "api-manager", "High (P2)", "Low (P4)", "#6B7280", "", "WSO2-1000", "title", "Team Nova", "https://example.com/cases/1"); err == nil {
 		t.Fatal("expected error for empty caseNumber, got nil")
 	}
 }
