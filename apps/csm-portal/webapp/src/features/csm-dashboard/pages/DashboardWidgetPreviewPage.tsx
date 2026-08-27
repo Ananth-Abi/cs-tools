@@ -214,6 +214,18 @@ interface CaseFamilyWidgetPreviewProps {
  * tag-catalog fetch falls back to the widget's raw, un-complemented
  * `excludeTags` (still correctly scoped, just not shown as checked items)
  * rather than silently dropping the exclusion and broadening the search.
+ *
+ * That approximation is *display-only*, though. What actually gets sent to
+ * `/cases/search` is a second, independent piece of state (`apiFilters`),
+ * seeded straight from `rawTranslated` -- the real `excludeTags` blacklist,
+ * never the catalog-derived complement -- so a fresh load or a Reset queries
+ * exactly what the dashboard tile itself queries (a case with no tags at
+ * all correctly passes a `notIn` filter here, unlike the whitelist shown in
+ * the Tags control). The two stay in sync from the moment the viewer makes
+ * their first edit through `CasesFilterBar` onward: once they're
+ * consciously picking specific tags to include, "what's displayed" and
+ * "what's queried" collapse into the same value, and stay collapsed even
+ * across a later Reset back to this baseline (see `handleReset`).
  */
 function CaseFamilyWidgetPreview({
   displayName,
@@ -290,12 +302,36 @@ function CaseFamilyWidgetPreview({
     setCasesFilters(resetBaseline);
   }
 
+  // What actually gets queried -- the widget's real `excludeTags` blacklist,
+  // never the catalog-derived complement `casesFilters` shows as checked
+  // "Tags". Seeded eagerly from `rawTranslated` alone, so it's correct from
+  // the very first render regardless of whether/when the tag catalog
+  // resolves. Stays this way until the viewer edits the filter bar
+  // themselves (`handleFiltersChange`), at which point the displayed value
+  // becomes the source of truth for both.
+  const [apiFilters, setApiFilters] = useState<CasesFilters>(() => ({
+    ...DEFAULT_CASES_FILTERS,
+    ...rawTranslated,
+  }));
+
   const [isFiltersOpen, setIsFiltersOpen] = useState(true);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
   const handleFiltersChange = (next: CasesFilters): void => {
     setCasesFilters(next);
+    setApiFilters(next);
+    setPage(0);
+  };
+
+  // Distinct from `handleFiltersChange`: a Reset must restore the *original*
+  // divergence (display shows the complement baseline, the query goes back
+  // to the widget's real blacklist) rather than collapsing them the way a
+  // manual edit does -- otherwise a single Reset after any edit would lock
+  // `apiFilters` to the complement approximation forever.
+  const handleReset = (): void => {
+    setCasesFilters(resetBaseline ?? DEFAULT_CASES_FILTERS);
+    setApiFilters({ ...DEFAULT_CASES_FILTERS, ...rawTranslated });
     setPage(0);
   };
 
@@ -305,7 +341,7 @@ function CaseFamilyWidgetPreview({
   };
 
   const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useGetCsmCases(
-    casesFilters ?? DEFAULT_CASES_FILTERS,
+    apiFilters,
     page,
     rowsPerPage,
     casesFilters !== null,
@@ -345,7 +381,7 @@ function CaseFamilyWidgetPreview({
       <CasesFilterBar
         filters={casesFilters}
         onChange={handleFiltersChange}
-        onReset={() => handleFiltersChange(resetBaseline ?? DEFAULT_CASES_FILTERS)}
+        onReset={handleReset}
         isFiltersOpen={isFiltersOpen}
         onFiltersToggle={() => setIsFiltersOpen((prev) => !prev)}
         availableAssigneeUsers={[]}

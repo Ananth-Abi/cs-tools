@@ -462,12 +462,17 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
     expect(lastCall?.[1]).toMatchObject({ filters: { searchQuery: "disk" } });
   });
 
-  // The core regression: a tag has no small, fixed universe of values (see
-  // `CaseFamilyWidgetPreview`'s own doc comment), so a widget's
-  // `tag notIn ["s_dip"]` can't be represented by a real `excludeTags`
-  // control (there isn't one here) -- it's seeded into the single "Tags"
-  // control as the complement over the currently-known tag catalog instead.
-  it("seeds the single 'Tags' control with the complement of the tag catalog for a tag notIn widget filter", async () => {
+  // The core regression (this is the fix under test): a tag has no small,
+  // fixed universe of values (see `CaseFamilyWidgetPreview`'s own doc
+  // comment), so a widget's `tag notIn ["s_dip"]` can't be represented by a
+  // real `excludeTags` control on `CasesFilterBar` (there isn't one here) --
+  // it's *shown* in the single "Tags" control as the complement over the
+  // currently-known tag catalog. But what's actually sent to
+  // `/cases/search` must stay the real `notIn` blacklist (`apiFilters`),
+  // never that catalog-derived approximation, or a case with no tags at all
+  // would be wrongly excluded and the preview page would disagree with the
+  // dashboard tile it was reached from.
+  it("queries /cases/search with the real tag notIn blacklist, even though the 'Tags' control displays the catalog complement", async () => {
     mockPost({
       tags: { tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }] },
       cases: { cases: [], total: 0, limit: 10, offset: 0 },
@@ -486,6 +491,13 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
       expect(postMock).toHaveBeenCalledWith("/tags/search", expect.anything()),
     );
 
+    // The displayed "Tags" control shows the complement (checked "other-tag").
+    await waitFor(() => {
+      expect(screen.getByText("other-tag")).toBeInTheDocument();
+    });
+
+    // But the query itself carries the real `notIn` blacklist, not an `in`
+    // whitelist derived from the (necessarily incomplete) tag catalog.
     await waitFor(() => {
       const lastCasesCall = postMock.mock.calls
         .filter((c) => c[0] === "/cases/search")
@@ -494,24 +506,75 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
       expect(lastCasesCall?.[1]).toMatchObject({
         filters: {
           filters: expect.arrayContaining([
-            { field: "tag", op: "in", values: ["other-tag"] },
+            { field: "tag", op: "notIn", values: ["s_dip"] },
           ]),
         },
       });
     });
 
-    // The excluded tag itself never appears as a selected/included value.
     const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
-    const tagEntry = (
-      lastCasesCall?.[1] as { filters: { filters: { field: string; values: string[] }[] } }
-    ).filters.filters.find((f) => f.field === "tag");
-    expect(tagEntry?.values).not.toContain("s_dip");
+    const tagEntries = (
+      lastCasesCall?.[1] as { filters: { filters: { field: string; op: string }[] } }
+    ).filters.filters.filter((f) => f.field === "tag");
+    // No complement-derived `in` entry ever reaches the API call.
+    expect(tagEntries.some((f) => f.op === "in")).toBe(false);
+  });
+
+  // Once the viewer edits the filter bar themselves, displayed and queried
+  // filters must collapse to the same value -- they're now consciously
+  // picking specific tags to include, so the approximation/blacklist
+  // divergence no longer applies.
+  it("queries exactly what's displayed once the viewer edits the filter bar themselves", async () => {
+    mockPost({
+      tags: { tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }] },
+      cases: { cases: [], total: 0, limit: 10, offset: 0 },
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "excl_tag_widget",
+        displayName: "Discussions on Going",
+        filters: { filters: [{ field: "tag", op: "notIn", values: ["s_dip"] }] },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Tags" })).toBeInTheDocument(),
+    );
+    const callsBefore = postMock.mock.calls.filter((c) => c[0] === "/cases/search").length;
+
+    fireEvent.change(screen.getByPlaceholderText(/search by case #/i), {
+      target: { value: "disk" },
+    });
+
+    await waitFor(() => {
+      const callsAfter = postMock.mock.calls.filter((c) => c[0] === "/cases/search").length;
+      expect(callsAfter).toBeGreaterThan(callsBefore);
+    });
+    const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
+    // The complement-derived `tag in [other-tag]` the bar still displays now
+    // matches what's queried -- no more real `notIn` sent underneath it.
+    expect(lastCasesCall?.[1]).toMatchObject({
+      filters: expect.objectContaining({
+        searchQuery: "disk",
+        filters: expect.arrayContaining([
+          { field: "tag", op: "in", values: ["other-tag"] },
+        ]),
+      }),
+    });
+    const tagEntries = (
+      lastCasesCall?.[1] as { filters: { filters: { field: string; op: string }[] } }
+    ).filters.filters.filter((f) => f.field === "tag");
+    expect(tagEntries.some((f) => f.op === "notIn")).toBe(false);
   });
 
   // CodeRabbit finding: overwriting `tags` with the complement would
   // silently drop a widget's own "must have one of these tags" requirement
-  // when it also excludes a tag. Intersecting instead preserves both.
-  it("intersects an existing tag-in list with the complement, rather than overwriting it, when a widget has both tag in and tag notIn", async () => {
+  // when it also excludes a tag. Intersecting instead preserves both -- this
+  // still governs what's *displayed*; the query itself uses the real,
+  // un-intersected `tag in`/`tag notIn` pair straight from the widget.
+  it("intersects an existing tag-in list with the complement for display, while the query keeps the widget's real tag in/notIn pair", async () => {
     mockPost({
       tags: {
         tags: [
@@ -538,6 +601,10 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
     );
 
     await waitFor(() => {
+      expect(screen.getByText("required-tag")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
       const lastCasesCall = postMock.mock.calls
         .filter((c) => c[0] === "/cases/search")
         .at(-1);
@@ -546,6 +613,7 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
         filters: {
           filters: expect.arrayContaining([
             { field: "tag", op: "in", values: ["required-tag"] },
+            { field: "tag", op: "notIn", values: ["s_dip"] },
           ]),
         },
       });
