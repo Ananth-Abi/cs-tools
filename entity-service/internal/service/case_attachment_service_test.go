@@ -457,8 +457,8 @@ func TestCaseService_GetAttachmentByID_ReturnsStorageKeyNotContent(t *testing.T)
 	if err != nil {
 		t.Fatalf("GetAttachmentByID returned error: %v", err)
 	}
-	if details.Content != "" {
-		t.Fatalf("expected empty Content for a Postgres-sourced attachment, got %q", details.Content)
+	if details.Content != nil {
+		t.Fatalf("expected nil Content for a Postgres-sourced attachment, got %q", *details.Content)
 	}
 	if details.StorageKey == nil || *details.StorageKey != testStorageKey {
 		t.Fatalf("expected storageKey %q, got %v", testStorageKey, details.StorageKey)

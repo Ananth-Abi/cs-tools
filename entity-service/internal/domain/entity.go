@@ -2435,7 +2435,11 @@ type AttachmentDetail struct {
 	SizeBytes   int       `json:"sizeBytes"`
 	CreatedOn   time.Time `json:"createdOn"`
 	CreatedBy   string    `json:"createdBy"`
-	DownloadURL string    `json:"downloadUrl"`
+	// DownloadURL is nil for a CSM-native (Postgres) data source attachment:
+	// this service holds no download location for it, only its storage_key --
+	// resolving storage_key to an actual download location is the downstream
+	// CSM backend's job. Always non-nil for ServiceNow-sourced attachments.
+	DownloadURL *string `json:"downloadUrl"`
 	// StorageKey is set only for CSM-native (Postgres) data source attachments.
 	// See Attachment.StorageKey.
 	StorageKey *string `json:"storageKey,omitempty"`
@@ -4549,10 +4553,12 @@ type AttachmentDetails struct {
 	CreatedOn   time.Time `json:"createdOn"`
 	DownloadURL *string   `json:"downloadUrl"`
 	PreviewURL  *string   `json:"previewUrl"`
-	Content     string    `json:"content"`
+	// Content is nil for CSM-native (Postgres) data source attachments: this
+	// service holds no bytes for them -- see CaseService.GetCaseAttachmentContent.
+	// Always non-nil for ServiceNow-sourced attachments.
+	Content *string `json:"content"`
 	// StorageKey is set only for CSM-native (Postgres) data source
-	// attachments, whose Content is always "" (this service holds no bytes
-	// for them -- see CaseService.GetCaseAttachmentContent).
+	// attachments, whose Content is always nil (see above).
 	StorageKey *string `json:"storageKey,omitempty"`
 	// Status is the upload lifecycle state -- see AttachmentStatus. Always
 	// AttachmentStatusComplete for ServiceNow-sourced attachments. A

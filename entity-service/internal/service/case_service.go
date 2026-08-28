@@ -811,7 +811,7 @@ func (s *caseService) SubmitCaseFeedback(_ context.Context, _ string, _ domain.S
 }
 
 // GetAttachmentByID implements CaseService for the CSM-native (Postgres) data
-// source. Content is always "": this service holds no bytes for a
+// source. Content is always nil: this service holds no bytes for a
 // Postgres-sourced attachment, only its storage_key -- see
 // GetCaseAttachmentContent's doc comment for why content must be resolved
 // externally via StorageKey instead.
@@ -841,7 +841,7 @@ func (s *caseService) GetAttachmentByID(ctx context.Context, id string) (domain.
 		CreatedOn:   a.CreatedOn,
 		DownloadURL: a.DownloadURL,
 		PreviewURL:  a.PreviewURL,
-		Content:     "",
+		Content:     nil,
 		StorageKey:  a.StorageKey,
 		Status:      a.Status,
 	}, nil

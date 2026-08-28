@@ -1,3 +1,5 @@
+BEGIN;
+
 -- Adds an upload lifecycle to case_attachments. Today, a row is only ever
 -- created once the browser has already finished uploading to SFTPGo (see
 -- CaseService.CreateCaseAttachment); if that final registration call never
@@ -15,3 +17,5 @@ ALTER TABLE case_attachments
 -- interval '1 hour'"). Not built in this change -- see the status column
 -- comment above.
 CREATE INDEX IF NOT EXISTS idx_case_attachments_status_created ON case_attachments(status, created_at);
+
+COMMIT;

@@ -2350,7 +2350,8 @@ func (s *snCaseService) CreateCaseAttachment(ctx context.Context, req domain.Cre
 			SizeBytes:   snResp.Attachment.SizeBytes,
 			CreatedOn:   createdOn,
 			CreatedBy:   snResp.Attachment.CreatedBy,
-			DownloadURL: snResp.Attachment.DownloadURL,
+			DownloadURL: &snResp.Attachment.DownloadURL,
+			Status:      domain.AttachmentStatusComplete,
 		},
 	}, nil
 }
@@ -2450,6 +2451,7 @@ func (s *snCaseService) SearchCaseAttachments(ctx context.Context, req domain.Se
 			CreatedOn:     createdOn,
 			DownloadURL:   a.DownloadURL,
 			PreviewURL:    a.PreviewURL,
+			Status:        domain.AttachmentStatusComplete,
 		})
 	}
 
@@ -2677,7 +2679,8 @@ func (s *snCaseService) GetAttachmentByID(ctx context.Context, id string) (domai
 		CreatedOn:   createdOn,
 		DownloadURL: snResp.DownloadURL,
 		PreviewURL:  snResp.PreviewURL,
-		Content:     snResp.Content,
+		Content:     &snResp.Content,
+		Status:      domain.AttachmentStatusComplete,
 	}, nil
 }
 
