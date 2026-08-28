@@ -112,6 +112,127 @@ function mockPost(responses: {
   });
 }
 
+/**
+ * `case_feedback`'s own "View more" landing: a rating-pie slice click-through
+ * must land the viewer on the exact rating it clicked (regression for the
+ * numeric-`rating`-dropped-from-URL bug — see `widgetPreviewUrl.ts`'s own
+ * regression test for the encoding half of this), and — reported live as "a
+ * must" — the rating/date filters must be real, editable controls, not the
+ * generic resourceTypes' read-only "Filtered by:" chip summary.
+ */
+describe("DashboardWidgetPreviewPage — case_feedback gets a real, editable rating/date filter bar", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockResolvedValue({
+      results: [
+        {
+          instanceId: "fb-1",
+          caseId: "11111111-1111-1111-1111-111111111111",
+          rating: 5,
+          ratingLabel: "Very Satisfied",
+          comment: "Great support",
+          submittedAt: "2026-08-01T00:00:00Z",
+        },
+      ],
+      totalRecords: 1,
+    });
+  });
+
+  it("queries with the rating a pie slice click-through carried, not the unfiltered list", async () => {
+    // Mirrors what DashboardWidgetTile actually builds for a rating-pie
+    // slice click (see useCaseFeedbackTrendData's `{ rating: 5 }` query,
+    // merged and passed through WIDGET_RESOURCE_CONFIG.case_feedback.buildHref).
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "case-feedback",
+        widgetId: "feedback_rating_distribution",
+        displayName: "Rating Distribution",
+        filters: { rating: 5 },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("Very Satisfied")).toBeInTheDocument());
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/feedback/search",
+      { filters: { rating: 5 }, page: 1, pageSize: 10 },
+      { signal: expect.any(AbortSignal) },
+    );
+    // The rating select shows the slice's own rating pre-selected, not "All
+    // ratings" -- confirms the filter bar is seeded, not just the query.
+    expect(screen.getByRole("combobox", { name: /^rating$/i })).toHaveTextContent(
+      /very satisfied/i,
+    );
+  });
+
+  it("re-queries when the rating filter is changed from the dropdown", async () => {
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "case-feedback",
+        widgetId: "feedback_list",
+        displayName: "Feedback Records",
+        filters: {},
+      }),
+    );
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/feedback/search",
+        { filters: {}, page: 1, pageSize: 10 },
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /^rating$/i }));
+    fireEvent.click(screen.getByRole("option", { name: /1 — very dissatisfied/i }));
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/feedback/search",
+        { filters: { rating: 1 }, page: 1, pageSize: 10 },
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+  });
+
+  it("Reset restores the widget's own original rating, not 'All ratings'", async () => {
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "case-feedback",
+        widgetId: "feedback_rating_distribution",
+        displayName: "Rating Distribution",
+        filters: { rating: 5 },
+      }),
+    );
+
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/feedback/search",
+        { filters: { rating: 5 }, page: 1, pageSize: 10 },
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: /^rating$/i }));
+    fireEvent.click(screen.getByRole("option", { name: /all ratings/i }));
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/feedback/search",
+        { filters: {}, page: 1, pageSize: 10 },
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /^reset$/i }));
+    await waitFor(() =>
+      expect(postMock).toHaveBeenCalledWith(
+        "/cases/feedback/search",
+        { filters: { rating: 5 }, page: 1, pageSize: 10 },
+        { signal: expect.any(AbortSignal) },
+      ),
+    );
+  });
+});
+
 describe("DashboardWidgetPreviewPage", () => {
   beforeEach(() => {
     postMock.mockReset();

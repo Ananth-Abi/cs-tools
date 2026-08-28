@@ -14,7 +14,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Chip, TablePagination, TextField, Typography } from "@wso2/oxygen-ui";
+import {
+  Box,
+  Button,
+  Chip,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  TablePagination,
+  TextField,
+  Typography,
+} from "@wso2/oxygen-ui";
 import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type ChangeEvent, type JSX } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router";
@@ -42,6 +53,9 @@ import CasesList from "@features/csm-cases/components/CasesList";
 import { useGetCsmCases } from "@features/csm-cases/api/useGetCsmCases";
 import { useSearchTags } from "@features/csm-cases/api/useSearchTags";
 import { DEFAULT_CASES_FILTERS } from "@features/csm-cases/utils/casesFiltersUrl";
+import DateRangeFilter, {
+  type DateRangeFilterValue,
+} from "@features/csm-dashboard/components/DateRangeFilter";
 
 const DEFAULT_ROWS_PER_PAGE = 10;
 const ROWS_PER_PAGE_OPTIONS = [10, 20, BE_MAX_PAGE_LIMIT];
@@ -157,6 +171,17 @@ export default function DashboardWidgetPreviewPage(): JSX.Element {
   if (CASE_FAMILY_RESOURCE_TYPES.has(resourceType) && !isAnyOfBranchArray(filters.anyOf)) {
     return (
       <CaseFamilyWidgetPreview
+        displayName={displayName}
+        filters={filters}
+        backButton={backButton}
+      />
+    );
+  }
+
+  if (resourceType === "case_feedback") {
+    return (
+      <CaseFeedbackWidgetPreview
+        widgetId={widgetId}
         displayName={displayName}
         filters={filters}
         backButton={backButton}
@@ -394,6 +419,176 @@ function CaseFamilyWidgetPreview({
       ) : (
         <>
           <CasesList cases={data?.cases ?? []} isLoading={isLoading} skeletonCount={rowsPerPage} />
+          <TablePagination
+            component="div"
+            count={data?.total ?? 0}
+            page={page}
+            onPageChange={(_, newPage) => setPage(newPage)}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={handleRowsPerPageChange}
+            rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
+            showFirstButton
+            showLastButton
+          />
+        </>
+      )}
+    </Box>
+  );
+}
+
+interface CaseFeedbackWidgetPreviewProps {
+  widgetId: string;
+  displayName: string;
+  filters: Record<string, unknown>;
+  backButton: JSX.Element;
+}
+
+/** The 5 case-feedback rating values, in order — same scale ServiceNow's own
+ * survey uses (see `useCaseFeedbackTrendData`'s `colorForAvgRating` doc
+ * comment for the same 1-5 -> CSAT-label mapping). No shared constant for
+ * this exists elsewhere in the app (every other rating display reads the
+ * label straight off the record itself), so it's scoped here rather than
+ * invented as a new cross-feature export for a single dropdown. */
+const FEEDBACK_RATING_OPTIONS: { value: string; label: string }[] = [
+  { value: "1", label: "1 — Very Dissatisfied" },
+  { value: "2", label: "2 — Dissatisfied" },
+  { value: "3", label: "3 — Neutral" },
+  { value: "4", label: "4 — Satisfied" },
+  { value: "5", label: "5 — Very Satisfied" },
+];
+
+/** First string value out of a filter field that's either a bare string (a
+ * tile/slice click-through's own scalar filters) or a 1-element string[]
+ * (the same field once round-tripped through the preview URL — see
+ * `parseWidgetPreviewFilters`, which decodes every param as a comma-split
+ * array). Either shape lands here since `filters` (this component's own
+ * prop) always came from that URL round trip. */
+function asFeedbackFilterValue(v: unknown): string | undefined {
+  if (typeof v === "string") return v;
+  if (Array.isArray(v) && typeof v[0] === "string") return v[0];
+  return undefined;
+}
+
+/**
+ * The case-feedback "View more" landing: unlike the generic
+ * `DashboardWidgetPreviewContent` fallback below (a static "Filtered by:"
+ * chip summary plus a free-text search box the feedback search endpoint
+ * doesn't even support — `case_feedback` has no `searchQuery` field), this
+ * gives a real, editable rating + date-range filter bar, seeded from the
+ * widget's own filters (a rating-pie or trend-bar slice click-through) and
+ * then freely adjustable from there — the same "seeded then editable"
+ * pattern `CaseFamilyWidgetPreview` already uses for the case-family
+ * resourceTypes, scoped to this resourceType's own flat
+ * `dateFrom`/`dateTo`/`rating` filter shape (see
+ * `WIDGET_RESOURCE_CONFIG.case_feedback`'s own `buildSearchRequestBody`
+ * doc comment) rather than the case-search DSL that component translates.
+ */
+function CaseFeedbackWidgetPreview({
+  widgetId,
+  displayName,
+  filters,
+  backButton,
+}: CaseFeedbackWidgetPreviewProps): JSX.Element {
+  // Frozen once at mount (a fresh "View more"/slice click is a fresh mount),
+  // same rationale as `CaseFamilyWidgetPreview`'s `resetBaseline` — Reset
+  // must restore what the widget/slice actually linked here with, not
+  // whatever the viewer has since edited.
+  const [initial] = useState(() => ({
+    dateFrom: asFeedbackFilterValue(filters.dateFrom),
+    dateTo: asFeedbackFilterValue(filters.dateTo),
+    rating: asFeedbackFilterValue(filters.rating),
+  }));
+  const [dateRange, setDateRange] = useState<DateRangeFilterValue>({
+    from: initial.dateFrom,
+    to: initial.dateTo,
+  });
+  const [rating, setRating] = useState<string>(initial.rating ?? "");
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
+
+  const queriedFilters = useMemo(() => {
+    const out: Record<string, unknown> = { ...filters };
+    delete out.dateFrom;
+    delete out.dateTo;
+    delete out.rating;
+    if (dateRange.from) out.dateFrom = dateRange.from;
+    if (dateRange.to) out.dateTo = dateRange.to;
+    if (rating) out.rating = Number(rating);
+    return out;
+  }, [filters, dateRange, rating]);
+
+  const handleReset = (): void => {
+    setDateRange({ from: initial.dateFrom, to: initial.dateTo });
+    setRating(initial.rating ?? "");
+    setPage(0);
+  };
+
+  const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useWidgetData(
+    widgetId,
+    "case_feedback",
+    queriedFilters,
+    "list",
+    rowsPerPage,
+    page * rowsPerPage,
+  );
+  const ListRenderer = WIDGET_LIST_RENDERERS.case_feedback;
+
+  const handleRowsPerPageChange = (e: ChangeEvent<HTMLInputElement>): void => {
+    setRowsPerPage(parseInt(e.target.value, 10));
+    setPage(0);
+  };
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      {backButton}
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
+        <Typography variant="h5">{displayName}</Typography>
+        <RefreshButton
+          onRefresh={() => void refetch()}
+          isFetching={isFetching}
+          updatedAt={dataUpdatedAt}
+          label={`Refresh ${displayName}`}
+        />
+      </Box>
+      <Box sx={{ display: "flex", flexWrap: "wrap", alignItems: "flex-end", gap: 2 }}>
+        <DateRangeFilter
+          label="Feedback submitted"
+          value={dateRange}
+          onChange={(next) => {
+            setDateRange(next);
+            setPage(0);
+          }}
+        />
+        <FormControl size="small" sx={{ minWidth: 220 }}>
+          <InputLabel id="feedback-rating-filter-label">Rating</InputLabel>
+          <Select
+            labelId="feedback-rating-filter-label"
+            label="Rating"
+            value={rating}
+            onChange={(e) => {
+              setRating(e.target.value);
+              setPage(0);
+            }}
+          >
+            <MenuItem value="">All ratings</MenuItem>
+            {FEEDBACK_RATING_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <Button variant="text" size="small" onClick={handleReset}>
+          Reset
+        </Button>
+      </Box>
+      {isError ? (
+        <Typography variant="body2" color="text.secondary">
+          Could not load this widget.
+        </Typography>
+      ) : (
+        <>
+          <ListRenderer items={data?.items ?? []} isLoading={isLoading} />
           <TablePagination
             component="div"
             count={data?.total ?? 0}
