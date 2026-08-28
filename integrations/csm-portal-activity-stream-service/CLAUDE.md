@@ -2,7 +2,7 @@
 
 Go HTTP server (`net/http`, Go 1.26+) serving the case-activity SSE endpoint (`GET /cases/{id}/activities/stream`) on a dedicated listener (default `:9092`). Consumes the `case-events` Azure Event Hub topic in its own per-replica consumer group (`LatestOffset`) and fans `case.comment_added` / `case.status_changed` events to connected SSE clients via an in-process `BroadcastHub`.
 
-Extracted from `apps/csm-portal/backend` (internal/stream, internal/caseevents, internal/eventbus consumer, and the :9092 listener in cmd/server/main.go). That backend no longer serves the SSE stream; it only publishes events to the topic via its `eventpublisher`.
+Extracted from `apps/csm-portal/backend` (internal/stream, internal/caseevents, internal/eventbus consumer, and the :9092 listener in cmd/server/main.go). That backend no longer serves the SSE stream, nor does it publish to the topic anymore — its own `internal/eventbus`/`internal/eventpublisher`/`internal/events` were removed entirely; `entity-service` is now the sole publisher of `case-events`.
 
 ## Why a separate service
 
@@ -13,8 +13,7 @@ Extracted from `apps/csm-portal/backend` (internal/stream, internal/caseevents, 
 ## Event flow
 
 ```
-csm-portal-backend ──▶ Event Hub "case-events" ──▶ this service (consumer group per replica) ──▶ BroadcastHub ──▶ browser EventSource
-customer-portal-backend ┘                                              (same topic, own groups)
+entity-service ──▶ Event Hub "case-events" ──▶ this service (consumer group per replica) ──▶ BroadcastHub ──▶ browser EventSource
 ```
 
 Only `case.comment_added` and `case.status_changed` are broadcast. The payload is minimal: `{caseId, type, timestamp}` — no comment text or field values.
@@ -80,7 +79,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 ## Packages
 
 - `internal/apierror` — typed upstream error (mirrors csm-portal-backend/internal/apierror)
-- `internal/events` — `Envelope` + event types (3rd hand-synced copy; keep in sync with csm-notification-service and csm-portal-backend)
+- `internal/events` — `Envelope` + event types (hand-synced copy; keep in sync with csm-notification-service's and entity-service's own copies)
 - `internal/eventbus` — `Consumer` (simple: no retry/DLQ; commit after Handle; `LatestOffset`; per-replica group suffix)
 - `internal/stream` — `BroadcastHub` (in-process pub-sub per case ID; `subscriberBuffer=4`; non-blocking publish)
 - `internal/caseevents` — `Handler` (consumes events, fans to BroadcastHub for the two SSE types)
@@ -91,7 +90,7 @@ See `.choreo/component.yaml` (two endpoints: health on :8080, SSE on :9092 with 
 ## Known limitations
 
 - No per-user/per-replica cap on concurrent SSE connections (same as csm-portal-backend's `StreamCaseActivities` doc comment). A hostile client could exhaust goroutines/FDs.
-- `Envelope` is hand-synced across three Go modules — changes must be propagated manually to csm-notification-service and csm-portal-backend/internal/events.
+- `Envelope` is hand-synced across three Go modules — changes must be propagated manually to csm-notification-service's and entity-service's own `internal/events`.
 - A redeploy (new pod/hostname) causes one-time replay of retained events (accepted tradeoff).
 - Consumer groups accumulate forever on the broker (no API to delete).
 

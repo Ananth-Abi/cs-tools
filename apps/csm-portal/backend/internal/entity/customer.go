@@ -73,14 +73,6 @@ func (c *CustomerEntityClient) SearchTasks(ctx context.Context, body []byte) ([]
 	return c.do(ctx, http.MethodPost, "/tasks/search", body)
 }
 
-// CreateEventPublishFailure calls POST /event-publish-failures on the entity
-// service — see internal/eventpublisher.Publisher, the only caller: it
-// records a domain event that failed to publish to Event Hub, for manual
-// remediation later. Response is returned as raw JSON.
-func (c *CustomerEntityClient) CreateEventPublishFailure(ctx context.Context, body []byte) ([]byte, error) {
-	return c.do(ctx, http.MethodPost, "/event-publish-failures", body)
-}
-
 // GetUserMe calls GET /users/me on the entity service.
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) GetUserMe(ctx context.Context) ([]byte, error) {
