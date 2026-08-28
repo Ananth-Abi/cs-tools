@@ -35,8 +35,6 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/dashboard"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/directory"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventbus"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventpublisher"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/scim"
@@ -75,22 +73,7 @@ func main() {
 
 	customerEntityClient := entity.NewCustomerEntityClient(customerEntityCfg)
 
-	// Event Hub — optional producer side (this backend's own writes, via
-	// eventPublisher below). When EVENT_HUB_BROKER is unset, this backend
-	// neither publishes nor consumes events; callers fall back to their
-	// existing manual-refresh/staleTime polling. The consumer side (case
-	// activity stream) has moved to integrations/csm-portal-activity-stream-service.
-	var eventPublisher *eventpublisher.Publisher
-	if broker := os.Getenv("EVENT_HUB_BROKER"); broker != "" {
-		eventBusCfg := eventbus.Config{
-			Broker:           broker,
-			ConnectionString: mustEnv("EVENT_HUB_CONNECTION_STRING"),
-			Topic:            mustEnv("EVENT_HUB_TOPIC"),
-		}
-		eventPublisher = eventpublisher.New(eventbus.NewProducer(eventBusCfg), customerEntityClient)
-	}
-
-	caseHandler := handler.NewCaseHandler(customerEntityClient, eventPublisher)
+	caseHandler := handler.NewCaseHandler(customerEntityClient)
 	dashboardHandler := handler.NewDashboardHandler()
 	accountHandler := handler.NewAccountHandler(customerEntityClient)
 	projectHandler := handler.NewProjectHandler(customerEntityClient)
@@ -316,17 +299,6 @@ func main() {
 	if srvErr != nil {
 		slog.Error("graceful shutdown failed", "err", srvErr)
 		os.Exit(1)
-	}
-
-	// No new publishAsync goroutine can start after Shutdown returns —
-	// safe to wait for the ones already in flight before closing the
-	// producer. A state-changing request can return 200 with its
-	// publishAsync goroutine still running; closing the producer out
-	// from under it would otherwise silently drop the event.
-	caseHandler.WaitPendingPublishes(shutdownCtx)
-
-	if eventPublisher != nil {
-		eventPublisher.Close()
 	}
 
 	slog.Info("CSM Portal Backend stopped")
