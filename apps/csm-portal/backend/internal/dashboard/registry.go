@@ -83,6 +83,39 @@ type dashboardFile struct {
 	PartOf string `json:"partOf,omitempty"`
 }
 
+// partFileAllowedKeys is every JSON key a part file (one with "partOf" set)
+// is allowed to carry — see rejectUnexpectedPartFields.
+var partFileAllowedKeys = map[string]bool{"partOf": true, "widgets": true}
+
+// rejectUnexpectedPartFields is a hard load failure for a part file that
+// also sets any embedded Dashboard field beyond Widgets -- e.g. "id" or
+// "filterPresets". dashboardFile decodes those fields into f.Dashboard like
+// any other file, but loadDir's part-file branch only ever reads f.Widgets
+// back out (see mergeParts): every other field a part file's author sets
+// would otherwise decode successfully and then vanish without a trace,
+// which is exactly the "silently misroutes/drops data" failure mode
+// mergeParts's own doc comment says this loader refuses to tolerate
+// elsewhere. Re-decoding raw into a generic key set (rather than comparing
+// f.Dashboard's fields against their zero values) is deliberate: a
+// zero-value comparison can't tell "the author wrote isDefault: false" apart
+// from "the author never mentioned isDefault at all", but a raw key lookup
+// can.
+func rejectUnexpectedPartFields(raw []byte, path string) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return fmt.Errorf("dashboard definitions: parse %q: %w", path, err)
+	}
+	for key := range keys {
+		if !partFileAllowedKeys[key] {
+			return fmt.Errorf(
+				"dashboard definitions: %s: a part file (\"partOf\" set) may only carry \"partOf\" and \"widgets\", found unexpected field %q",
+				path, key,
+			)
+		}
+	}
+	return nil
+}
+
 // mergeParts folds every part's widgets onto its primary dashboard's own
 // Widgets, in the order the parts were encountered (which is loadDir's
 // lexical filename order, same determinism guarantee LoadDir already makes
@@ -445,6 +478,9 @@ func loadDir(dir string, sharedPresets map[string]map[string]any, sharedSections
 			return nil, fmt.Errorf("dashboard definitions: parse %q: %w", path, err)
 		}
 		if f.PartOf != "" {
+			if err := rejectUnexpectedPartFields(raw, path); err != nil {
+				return nil, err
+			}
 			parts = append(parts, dashboardPart{partOf: f.PartOf, widgets: f.Widgets, source: path})
 			continue
 		}

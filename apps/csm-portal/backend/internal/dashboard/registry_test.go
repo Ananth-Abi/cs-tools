@@ -1141,3 +1141,39 @@ func TestLoadDir_OrphanPartOfFailsWholeLoad(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadDir_PartFileWithUnexpectedFieldFailsWholeLoad: a part file is only
+// ever read for its "partOf"/"widgets" -- any other embedded Dashboard field
+// (id, displayName, filterPresets, etc) decodes successfully via
+// dashboardFile's embedded Dashboard and then silently vanishes, since
+// dashboardPart never carries it forward. That must be a hard load failure,
+// not a silent drop, the same fail-loud rule TestLoadDir_OrphanPartOfFailsWholeLoad
+// enforces for a mismatched "partOf".
+func TestLoadDir_PartFileWithUnexpectedFieldFailsWholeLoad(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "primary.json", `{
+	  "id": "cs-overview", "displayName": "CS Overview", "type": "cs",
+	  "widgets": [
+	    {"id": "open-cases", "displayName": "Open Cases", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["open"]}]}}
+	  ]
+	}`)
+	writeDefinition(t, dir, "part.json", `{
+	  "partOf": "cs-overview",
+	  "displayName": "This should never take effect",
+	  "widgets": [
+	    {"id": "closed-cases", "displayName": "Closed Cases", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["closed"]}]}}
+	  ]
+	}`)
+
+	_, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("LoadDir accepted a part file carrying an unexpected field (\"displayName\"); expected an error")
+	}
+	for _, want := range []string{"part.json", `"partOf"`, "displayName"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, does not mention %q", err.Error(), want)
+		}
+	}
+}
