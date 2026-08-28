@@ -1166,16 +1166,58 @@ export interface BeAttachmentSearchResponse extends BeSearchResponseBase {
 
 /**
  * Upload payload for `POST /attachments`. `referenceId` + `referenceType` link
- * the file to its owning entity; `file` is a base64 data URI (e.g.
- * `data:image/png;base64,...`); the BE caps the decoded size at 10 MB.
+ * the file to its owning entity.
+ *
+ * The two data sources populate mutually exclusive fields (see
+ * entity-service openapi.yaml's `CreateAttachmentRequest`): the default path
+ * sends `file`, a base64 data URI (e.g. `data:image/png;base64,...`), and the
+ * BE caps the decoded size at 10 MB. When the SFTPGo-backed attachment
+ * storage flag is on (`sftpgoAttachmentStorageEnabled` on `GET /users/me`),
+ * the file's bytes were already uploaded directly to SFTPGo out of band, so
+ * `storageKey` + `sizeBytes` are sent instead of `file` — see
+ * `usePostCsmCaseAttachment`.
  */
 export interface BeAttachmentCreatePayload {
   referenceId: string;
   referenceType: BeReferenceType;
   name: string;
   type: string;
-  file: string;
+  file?: string;
   description?: string | null;
+  /** Set instead of `file` when the attachment's bytes were uploaded directly
+   * to SFTPGo (see `POST /cases/{id}/attachments/upload-token`). */
+  storageKey?: string;
+  /** Required alongside `storageKey`; the entity service cannot compute this
+   * itself since it never sees the file's bytes on that path. */
+  sizeBytes?: number;
+}
+
+/**
+ * Response body of `POST /cases/{id}/attachments/upload-token`. Only
+ * reachable when `sftpgoAttachmentStorageEnabled` is on. `storageKey` is the
+ * exact SFTPGo path to PATCH the file's bytes to (the TUS/chunked-upload
+ * target), and the exact value to send back unchanged as
+ * `BeAttachmentCreatePayload.storageKey` once the upload completes.
+ */
+export interface BeAttachmentUploadTokenResponse {
+  sftpgoAccessToken: string;
+  /** SFTPGo's raw `expires_at` — shape (string vs. epoch number) not relied
+   * on by the frontend; the mint call itself is what's time-boxed. */
+  expiresAt: string | number;
+  sftpgoBaseUrl: string;
+  storageKey: string;
+}
+
+/**
+ * Response body of `POST /attachments/{id}/share`. `shareUrl` is a public,
+ * short-lived (5 minute TTL) download URL for the attachment's stored file —
+ * see `AttachmentStorageHandler.CreateAttachmentShare` on the backend. Must
+ * be requested lazily (only when an inline image is actually rendered, or a
+ * specific attachment's download is actually clicked), never eagerly for a
+ * whole list.
+ */
+export interface BeAttachmentShareResponse {
+  shareUrl: string;
 }
 
 /** Thin ack returned by `POST /attachments`. */

@@ -337,13 +337,16 @@ type CaseService interface {
 	// is returned for invalid input. Supported by the ServiceNow data source only.
 	SubmitCaseFeedback(ctx context.Context, id string, req domain.SubmitCaseFeedbackRequest) (domain.SubmitCaseFeedbackResponse, error)
 	// GetAttachmentByID returns the metadata and base64-encoded content of the attachment
-	// identified by id. A NotFoundError is returned if it does not exist.
-	// Supported by the ServiceNow data source only.
+	// identified by id. A NotFoundError is returned if it does not exist. For the CSM-native
+	// (Postgres) data source, Content is always "" and StorageKey is populated instead: that
+	// data source holds no bytes, only a reference into external (SFTPGo) storage.
 	GetAttachmentByID(ctx context.Context, id string) (domain.AttachmentDetails, error)
 	// UpdateAttachment updates the name and/or description of the attachment identified by
-	// req.ID. A ValidationError is returned for invalid input (referenceType must be "case"
-	// or "deployment"; "case" requires name and forbids description; "deployment" requires
-	// at least one of name or description). Supported by the ServiceNow data source only.
+	// req.ID. A ValidationError is returned for invalid input. For ServiceNow, referenceType
+	// must be "case" or "deployment" ("case" requires name and forbids description;
+	// "deployment" requires at least one of name or description). The CSM-native (Postgres)
+	// data source only models case attachments, so it accepts referenceType "case" only, with
+	// the same name-required/description-forbidden rule.
 	UpdateAttachment(ctx context.Context, req domain.UpdateAttachmentRequest) (domain.UpdateAttachmentResponse, error)
 }
 

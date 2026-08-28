@@ -20,9 +20,11 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -38,6 +40,7 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/scim"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/sftpgo"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
 
@@ -108,6 +111,16 @@ func main() {
 	incidentHandler := handler.NewIncidentHandler(customerEntityClient)
 	problemHandler := handler.NewProblemHandler(customerEntityClient)
 
+	// SFTPGo-backed attachment storage — off by default (see loadSftpgoConfig).
+	// When disabled, no SFTPGO_* env var is read at all and neither the client
+	// nor its routes are constructed: the existing streaming attachment
+	// endpoints on caseHandler above are completely unaffected either way.
+	sftpgoAttachmentStorageEnabled, sftpgoCfg := loadSftpgoConfig()
+	var attachmentStorageHandler *handler.AttachmentStorageHandler
+	if sftpgoAttachmentStorageEnabled {
+		attachmentStorageHandler = handler.NewAttachmentStorageHandler(customerEntityClient, sftpgo.NewClient(sftpgoCfg))
+	}
+
 	updatesCfg := updates.Config{
 		BaseURL:      mustEnv("UPDATES_BASE_URL"),
 		TokenURL:     oauth2TokenURL,
@@ -126,7 +139,7 @@ func main() {
 		Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
 	}
 	scimClient := scim.NewClient(scimCfg)
-	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir)
+	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir, sftpgoAttachmentStorageEnabled)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -150,6 +163,14 @@ func main() {
 	mux.HandleFunc("POST /attachments/search", caseHandler.SearchCaseAttachments)
 	mux.HandleFunc("GET /attachments/{id}/content", caseHandler.GetCaseAttachmentContent)
 	mux.HandleFunc("DELETE /attachments/{id}", caseHandler.DeleteCaseAttachment)
+	// The SFTPGo-backed attachment-storage routes only exist on the mux when
+	// the feature flag is on: with it off (default), these paths are not
+	// registered at all and 404, rather than existing but erroring, so
+	// shipping this dark carries zero risk to the routes above.
+	if attachmentStorageHandler != nil {
+		mux.HandleFunc("POST /cases/{id}/attachments/upload-token", attachmentStorageHandler.MintUploadToken)
+		mux.HandleFunc("POST /attachments/{id}/share", attachmentStorageHandler.CreateAttachmentShare)
+	}
 	mux.HandleFunc("POST /cases/{id}/call-requests", caseHandler.CreateCallRequest)
 	mux.HandleFunc("POST /cases/{id}/call-requests/search", caseHandler.SearchCallRequests)
 	mux.HandleFunc("POST /call-requests/search", caseHandler.SearchAllCallRequests)
@@ -428,6 +449,93 @@ func loadDirectory() *directory.Directory {
 	}
 	slog.Info("resolved reference catalogues", "teams", dir.TeamCount(), "roles", dir.RoleCount())
 	return dir
+}
+
+// loadSftpgoConfig resolves the SFTPGo-backed attachment-storage feature
+// flag and, only when it is on, the client configuration it needs:
+//
+//	SFTPGO_ATTACHMENT_STORAGE_ENABLED  Any strconv.ParseBool-true value (1, t,
+//	                                   T, TRUE, true, True). Off by default —
+//	                                   unset, empty, or any other value keeps
+//	                                   this feature dark and every other
+//	                                   env var below unread. This mirrors
+//	                                   DASHBOARDS_HOT_RELOAD's parsing: an
+//	                                   unparseable non-empty value is a
+//	                                   warning, not fatal, and defaults to off.
+//	SFTPGO_BASE_URL                    SFTPGo's REST API base URL. Required
+//	                                   when the flag is on.
+//	SFTPGO_PUBLIC_BASE_URL             Public host for constructing share
+//	                                   URLs, e.g. when SFTPGo's WebClient
+//	                                   share pages are fronted separately
+//	                                   from its REST API. Optional; defaults
+//	                                   to SFTPGO_BASE_URL when unset.
+//
+// Returns (false, zero Config) when the flag is off, so the caller never
+// touches the returned Config in that case.
+func loadSftpgoConfig() (bool, sftpgo.Config) {
+	enabled := false
+	if raw := strings.TrimSpace(os.Getenv("SFTPGO_ATTACHMENT_STORAGE_ENABLED")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			slog.Warn("SFTPGO_ATTACHMENT_STORAGE_ENABLED is not a boolean; treating it as false",
+				"value", raw, "expected", "1, t, T, TRUE, true, True, 0, f, F, FALSE, false, False")
+		}
+		enabled = parsed
+	}
+	if !enabled {
+		return false, sftpgo.Config{}
+	}
+
+	slog.Info("SFTPGO_ATTACHMENT_STORAGE_ENABLED is on: the SFTPGo-backed attachment-storage endpoints are active")
+	baseURL := mustHTTPSURL("SFTPGO_BASE_URL", mustEnv("SFTPGO_BASE_URL"))
+	publicBaseURL := baseURL
+	if raw := os.Getenv("SFTPGO_PUBLIC_BASE_URL"); raw != "" {
+		publicBaseURL = mustHTTPSURL("SFTPGO_PUBLIC_BASE_URL", raw)
+	}
+	return true, sftpgo.Config{
+		BaseURL:       baseURL,
+		PublicBaseURL: publicBaseURL,
+	}
+}
+
+// mustHTTPSURL validates value via validateHTTPSURL, exiting the process with
+// a logged error if it is invalid. Both SFTPGO_BASE_URL and
+// SFTPGO_PUBLIC_BASE_URL are used to build requests/URLs that carry the
+// caller's email and raw gateway JWT (see internal/sftpgo.Client.MintToken)
+// or are handed to end users as a public download link (see
+// internal/sftpgo.Client.PublicShareURL), so a non-HTTPS or spoofed-looking
+// value here is a credential-leak/MITM risk, not just a misconfiguration —
+// refuse to start rather than proceed with it.
+func mustHTTPSURL(key, value string) string {
+	if err := validateHTTPSURL(value); err != nil {
+		// Deliberately omit the raw value from this log line: it may carry
+		// embedded userinfo (e.g. "https://user:pass@host"), which would
+		// otherwise write a credential straight into the startup log.
+		slog.Error("invalid environment variable", "key", key, "err", err)
+		os.Exit(1)
+	}
+	return value
+}
+
+// validateHTTPSURL reports an error unless value parses as a URL with scheme
+// "https", a non-empty host, and no embedded userinfo (e.g.
+// "https://user:pass@host/...", which could indicate a misconfigured or
+// spoofed URL).
+func validateHTTPSURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("not a valid URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("must use the https scheme, got %q", parsed.Scheme)
+	}
+	if parsed.Hostname() == "" {
+		return errors.New("must include a host (e.g. \"https://host/...\")")
+	}
+	if parsed.User != nil {
+		return errors.New("must not contain embedded userinfo (e.g. \"https://user:pass@host/...\")")
+	}
+	return nil
 }
 
 func mustEnv(key string) string {

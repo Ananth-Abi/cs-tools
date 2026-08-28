@@ -1577,6 +1577,16 @@ export default function CsmCaseDetailPage(): JSX.Element {
 
   const attachmentList = useMemo(() => attachments ?? [], [attachments]);
 
+  // `postAttachment` is a single shared mutation object that stays mounted
+  // across `caseId` changes (this page doesn't remount on navigation between
+  // cases). Without this check, an upload still in flight for a previously
+  // viewed case would show its progress/disabled state on whichever case is
+  // open now. `variables` reflects whichever call is currently pending, so
+  // comparing its `caseId` to the page's current `caseId` scopes the
+  // in-flight state to the case it actually belongs to.
+  const isUploadingForThisCase =
+    postAttachment.isPending && postAttachment.variables?.caseId === caseId;
+
   // Case comments + the linked chat transcript, as one list for the activity
   // feed. Memoised so the feed's own sort doesn't rerun on every render.
   const mergedComments = useMemo(
@@ -2373,9 +2383,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
             onRefresh={() => void refetchAttachments()}
             isRefreshing={isFetchingAttachments}
             refreshedAt={attachmentsUpdatedAt}
-            uploading={postAttachment.isPending}
+            uploading={isUploadingForThisCase}
+            uploadProgress={isUploadingForThisCase ? postAttachment.uploadProgress : null}
             uploadError={
-              postAttachment.isError
+              postAttachment.isError &&
+              postAttachment.variables?.caseId === caseId
                 ? (postAttachment.error?.message ??
                   "Could not upload the attachment.")
                 : null

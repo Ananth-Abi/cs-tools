@@ -106,6 +106,7 @@ type mockEntityCaseClient struct {
 	searchCaseAttachmentsFn    func(ctx context.Context, body []byte) ([]byte, error)
 	getCaseAttachmentContentFn func(ctx context.Context, attachmentID string) ([]byte, string, error)
 	deleteCaseAttachmentFn     func(ctx context.Context, attachmentID string) ([]byte, error)
+	getCaseAttachmentFn        func(ctx context.Context, attachmentID string) ([]byte, error)
 	createCallRequestFn        func(ctx context.Context, body []byte) ([]byte, error)
 	searchCallRequestsFn       func(ctx context.Context, body []byte) ([]byte, error)
 	searchAllCallRequestsFn    func(ctx context.Context, body []byte) ([]byte, error)
@@ -202,6 +203,13 @@ func (m *mockEntityCaseClient) DeleteCaseAttachment(ctx context.Context, attachm
 		return m.deleteCaseAttachmentFn(ctx, attachmentID)
 	}
 	return []byte(`{"message":"Attachment deleted successfully."}`), nil
+}
+
+func (m *mockEntityCaseClient) GetCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	if m.getCaseAttachmentFn != nil {
+		return m.getCaseAttachmentFn(ctx, attachmentID)
+	}
+	return []byte(`{}`), nil
 }
 
 func (m *mockEntityCaseClient) CreateCallRequest(ctx context.Context, body []byte) ([]byte, error) {

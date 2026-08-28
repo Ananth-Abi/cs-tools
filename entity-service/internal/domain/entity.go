@@ -2361,16 +2361,38 @@ type Attachment struct {
 	CreatedOn   time.Time      `json:"createdOn"`
 	DownloadURL *string        `json:"downloadUrl"`
 	PreviewURL  *string        `json:"previewUrl"`
+	// StorageKey identifies the file's location in external object storage
+	// (SFTPGo) for CSM-native (Postgres) data source attachments. Nil for
+	// ServiceNow-sourced attachments, whose bytes are held by ServiceNow itself.
+	StorageKey *string `json:"storageKey,omitempty"`
 }
 
 // CreateAttachmentRequest is the input for POST /attachments.
+//
+// The two data sources populate mutually exclusive fields: ServiceNow requires
+// File (a base64 data URI) and computes SizeBytes from the decoded bytes; the
+// CSM-native (Postgres) data source requires StorageKey (the file was already
+// uploaded to SFTPGo out of band) and SizeBytes, since this service never sees
+// the bytes themselves.
 type CreateAttachmentRequest struct {
 	ReferenceID   string        `json:"referenceId"`
 	ReferenceType ReferenceType `json:"referenceType"`
 	Name          string        `json:"name"`
 	Type          string        `json:"type"`
-	File          string        `json:"file"`
+	File          string        `json:"file,omitempty"`
 	Description   *string       `json:"description"`
+	// StorageKey references file bytes already uploaded to SFTPGo. Required
+	// for the CSM-native (Postgres) data source; ignored for ServiceNow.
+	StorageKey *string `json:"storageKey,omitempty"`
+	// SizeBytes is the file size in bytes. Required for the CSM-native
+	// (Postgres) data source (this service cannot compute it, since it never
+	// sees the file bytes); ignored for ServiceNow, which computes it from
+	// the decoded File payload.
+	SizeBytes int `json:"sizeBytes,omitempty"`
+	// CreatedBy is the resolved actor user id, wired in by the Postgres-backed
+	// service from the request's auth token before it reaches the repository.
+	// Not part of the wire contract.
+	CreatedBy string `json:"-"`
 }
 
 // AttachmentDetail holds the core fields returned after creating an attachment.
@@ -2380,6 +2402,9 @@ type AttachmentDetail struct {
 	CreatedOn   time.Time `json:"createdOn"`
 	CreatedBy   string    `json:"createdBy"`
 	DownloadURL string    `json:"downloadUrl"`
+	// StorageKey is set only for CSM-native (Postgres) data source attachments.
+	// See Attachment.StorageKey.
+	StorageKey *string `json:"storageKey,omitempty"`
 }
 
 // CreateAttachmentResponse is the response for POST /cases/{id}/attachments.
@@ -4456,7 +4481,10 @@ type CaseFeedback struct {
 	AdditionalComment *string              `json:"additionalComment"`
 }
 
-// --- attachment gaps (ServiceNow data source only) ---
+// --- attachment gaps (formerly ServiceNow data source only; the CSM-native
+// Postgres data source now implements GetAttachmentByID and UpdateAttachment
+// too, in caseService -- see its Content/StorageKey doc comments above for how
+// the two data sources differ) ---
 
 // AttachmentDetails is the response for GET /attachments/{id} — attachment
 // metadata plus its base64-encoded file content. Note ServiceNow's
@@ -4476,6 +4504,10 @@ type AttachmentDetails struct {
 	DownloadURL *string   `json:"downloadUrl"`
 	PreviewURL  *string   `json:"previewUrl"`
 	Content     string    `json:"content"`
+	// StorageKey is set only for CSM-native (Postgres) data source
+	// attachments, whose Content is always "" (this service holds no bytes
+	// for them -- see CaseService.GetCaseAttachmentContent).
+	StorageKey *string `json:"storageKey,omitempty"`
 }
 
 // UpdateAttachmentRequest is the request body for PATCH /attachments/{id}.

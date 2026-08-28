@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -29,7 +30,12 @@ import (
 // an unsupported field happens before the Postgres backend ever reaches the
 // repository, not merely that the repository ignores the field.
 type stubCaseRepo struct {
-	searchCases func(ctx context.Context, req domain.SearchCasesRequest) ([]domain.SearchCaseView, int, error)
+	searchCases           func(ctx context.Context, req domain.SearchCasesRequest) ([]domain.SearchCaseView, int, error)
+	createCaseAttachment  func(ctx context.Context, req domain.CreateAttachmentRequest) (domain.Attachment, error)
+	searchCaseAttachments func(ctx context.Context, caseID string, pagination domain.Pagination) ([]domain.Attachment, int, error)
+	getCaseAttachmentByID func(ctx context.Context, id string) (domain.Attachment, error)
+	deleteCaseAttachment  func(ctx context.Context, id string) error
+	updateAttachmentName  func(ctx context.Context, id, name, updatedBy string) (time.Time, error)
 }
 
 func (s *stubCaseRepo) CreateCase(context.Context, domain.CreateCaseRequest) (domain.Case, error) {
@@ -53,16 +59,51 @@ func (s *stubCaseRepo) SearchCaseComments(context.Context, domain.SearchCaseComm
 func (s *stubCaseRepo) UpdateCase(context.Context, domain.UpdateCaseRequest) (domain.Case, error) {
 	panic("not implemented")
 }
+func (s *stubCaseRepo) CreateCaseAttachment(ctx context.Context, req domain.CreateAttachmentRequest) (domain.Attachment, error) {
+	if s.createCaseAttachment != nil {
+		return s.createCaseAttachment(ctx, req)
+	}
+	panic("not implemented")
+}
+func (s *stubCaseRepo) SearchCaseAttachments(ctx context.Context, caseID string, pagination domain.Pagination) ([]domain.Attachment, int, error) {
+	if s.searchCaseAttachments != nil {
+		return s.searchCaseAttachments(ctx, caseID, pagination)
+	}
+	panic("not implemented")
+}
+func (s *stubCaseRepo) GetCaseAttachmentByID(ctx context.Context, id string) (domain.Attachment, error) {
+	if s.getCaseAttachmentByID != nil {
+		return s.getCaseAttachmentByID(ctx, id)
+	}
+	panic("not implemented")
+}
+func (s *stubCaseRepo) DeleteCaseAttachment(ctx context.Context, id string) error {
+	if s.deleteCaseAttachment != nil {
+		return s.deleteCaseAttachment(ctx, id)
+	}
+	panic("not implemented")
+}
+func (s *stubCaseRepo) UpdateCaseAttachmentName(ctx context.Context, id, name, updatedBy string) (time.Time, error) {
+	if s.updateAttachmentName != nil {
+		return s.updateAttachmentName(ctx, id, name, updatedBy)
+	}
+	panic("not implemented")
+}
 
 // stubUserRepo is a minimal repository.UserRepository; SearchCases doesn't
 // exercise it beyond the createdBy-current-user path, which these tests don't
 // use.
-type stubUserRepo struct{}
+type stubUserRepo struct {
+	getUserByEmail func(ctx context.Context, email string) (domain.User, error)
+}
 
 func (stubUserRepo) SearchUsers(context.Context, domain.SearchUsersRequest) ([]domain.User, int, error) {
 	panic("not implemented")
 }
-func (stubUserRepo) GetUserByEmail(context.Context, string) (domain.User, error) {
+func (s stubUserRepo) GetUserByEmail(ctx context.Context, email string) (domain.User, error) {
+	if s.getUserByEmail != nil {
+		return s.getUserByEmail(ctx, email)
+	}
 	panic("not implemented")
 }
 
