@@ -61,6 +61,103 @@ type sourced struct {
 	source    string
 }
 
+// dashboardPart is a widgets-only fragment split out of a dashboard whose
+// full definition would otherwise exceed the deploy path's per-file size
+// limit (see loadDir's doc comment on "partOf"). It carries no dashboard
+// metadata of its own -- id, displayName, type and everything else always
+// come from the primary file it belongs to; a part only ever contributes
+// more entries to that primary's Widgets.
+type dashboardPart struct {
+	partOf  string
+	widgets []WidgetTemplate
+	source  string
+}
+
+// dashboardFile is the decode target for one *.json file in DASHBOARDS_DIR.
+// A file is a PART of another dashboard's definition, not a dashboard in its
+// own right, exactly when it carries a non-empty "partOf" -- every other
+// field decodes into the embedded Dashboard as before, unused for a part
+// file except Widgets. See mergeParts.
+type dashboardFile struct {
+	Dashboard
+	PartOf string `json:"partOf,omitempty"`
+}
+
+// partFileAllowedKeys is every JSON key a part file (one with "partOf" set)
+// is allowed to carry — see rejectUnexpectedPartFields.
+var partFileAllowedKeys = map[string]bool{"partOf": true, "widgets": true}
+
+// rejectUnexpectedPartFields is a hard load failure for a part file that
+// also sets any embedded Dashboard field beyond Widgets -- e.g. "id" or
+// "filterPresets". dashboardFile decodes those fields into f.Dashboard like
+// any other file, but loadDir's part-file branch only ever reads f.Widgets
+// back out (see mergeParts): every other field a part file's author sets
+// would otherwise decode successfully and then vanish without a trace,
+// which is exactly the "silently misroutes/drops data" failure mode
+// mergeParts's own doc comment says this loader refuses to tolerate
+// elsewhere. Re-decoding raw into a generic key set (rather than comparing
+// f.Dashboard's fields against their zero values) is deliberate: a
+// zero-value comparison can't tell "the author wrote isDefault: false" apart
+// from "the author never mentioned isDefault at all", but a raw key lookup
+// can.
+func rejectUnexpectedPartFields(raw []byte, path string) error {
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &keys); err != nil {
+		return fmt.Errorf("dashboard definitions: parse %q: %w", path, err)
+	}
+	for key := range keys {
+		if !partFileAllowedKeys[key] {
+			return fmt.Errorf(
+				"dashboard definitions: %s: a part file (\"partOf\" set) may only carry \"partOf\" and \"widgets\", found unexpected field %q",
+				path, key,
+			)
+		}
+	}
+	return nil
+}
+
+// mergeParts folds every part's widgets onto its primary dashboard's own
+// Widgets, in the order the parts were encountered (which is loadDir's
+// lexical filename order, same determinism guarantee LoadDir already makes
+// for dashboards themselves).
+//
+// A part file exists purely so a dashboard whose full widget set no longer
+// fits Choreo's confirmed ~20KB per-file deploy limit can keep growing:
+// splitting it across files is invisible past this point -- finalize and
+// validate see one Dashboard with one concatenated Widgets slice, identical
+// to a dashboard that was always small enough to live in one file. That is
+// also why merging happens before finalize runs: a part's widgets go through
+// the exact same key-migration/preset-expansion/type-injection/validation
+// pipeline as any other widget, including the existing duplicate-widget-id
+// check (validateWidgets), which is what catches a widget id colliding
+// across a primary and its part -- no separate collision check is needed
+// here.
+//
+// A part whose "partOf" does not match any loaded primary dashboard's id is
+// a hard load failure, same fail-loud philosophy as everything else this
+// loader rejects (a dropped/misrouted set of widgets is exactly the kind of
+// silent gap this package refuses to tolerate elsewhere).
+func mergeParts(loaded []sourced, parts []dashboardPart) ([]sourced, error) {
+	if len(parts) == 0 {
+		return loaded, nil
+	}
+
+	byID := make(map[string]int, len(loaded))
+	for i, l := range loaded {
+		byID[l.dashboard.ID] = i
+	}
+
+	for _, p := range parts {
+		i, ok := byID[p.partOf]
+		if !ok {
+			return nil, fmt.Errorf("dashboard definitions: %s: \"partOf\" %q does not match any loaded dashboard id", p.source, p.partOf)
+		}
+		loaded[i].dashboard.Widgets = append(loaded[i].dashboard.Widgets, p.widgets...)
+	}
+
+	return loaded, nil
+}
+
 // Registry holds the dashboard definitions a running process serves.
 //
 // Two modes, chosen at construction:
@@ -319,6 +416,19 @@ func SharedSections() map[string]SharedSection { return Active().SharedSections(
 // not authored any definitions yet must still start and serve every other
 // endpoint. A missing directory is not legal — it is a misconfigured path.
 //
+// A dashboard whose widget count outgrows Choreo's confirmed ~20KB per-file
+// deploy limit for this directory can be split across more than one file: the
+// PRIMARY file is unchanged (a complete object carrying id/type/displayName/
+// widgets/etc), and any number of additional PART files carry only
+// {"partOf": "<dashboard id>", "widgets": [...]} -- no other dashboard
+// metadata. Every part's widgets are appended to its primary's Widgets before
+// validation runs (see mergeParts), so a widget-id collision between a
+// primary and any of its parts fails the whole load exactly like a collision
+// within one file already does, and a part whose "partOf" names no loaded
+// dashboard is also a hard load failure. Filenames still carry no meaning:
+// nothing about a part's own filename ties it to its primary, only the
+// "partOf" value does.
+//
 // LoadDir never applies shared filter presets (see LoadSharedPresets) — it is
 // the plain, no-shared-presets form kept for the many callers (including this
 // package's own tests) that only care about a directory of definitions.
@@ -356,17 +466,30 @@ func loadDir(dir string, sharedPresets map[string]map[string]any, sharedSections
 	sort.Strings(names)
 
 	loaded := make([]sourced, 0, len(names))
+	var parts []dashboardPart
 	for _, name := range names {
 		path := filepath.Join(dir, name)
 		raw, err := os.ReadFile(path) //nolint:gosec // path is deployment configuration, not user input
 		if err != nil {
 			return nil, fmt.Errorf("dashboard definitions: read %q: %w", path, err)
 		}
-		var d Dashboard
-		if err := json.Unmarshal(raw, &d); err != nil {
+		var f dashboardFile
+		if err := json.Unmarshal(raw, &f); err != nil {
 			return nil, fmt.Errorf("dashboard definitions: parse %q: %w", path, err)
 		}
-		loaded = append(loaded, sourced{dashboard: d, source: path})
+		if f.PartOf != "" {
+			if err := rejectUnexpectedPartFields(raw, path); err != nil {
+				return nil, err
+			}
+			parts = append(parts, dashboardPart{partOf: f.PartOf, widgets: f.Widgets, source: path})
+			continue
+		}
+		loaded = append(loaded, sourced{dashboard: f.Dashboard, source: path})
+	}
+
+	loaded, err = mergeParts(loaded, parts)
+	if err != nil {
+		return nil, err
 	}
 
 	return finalize(loaded, true, sharedPresets, sharedSections)
