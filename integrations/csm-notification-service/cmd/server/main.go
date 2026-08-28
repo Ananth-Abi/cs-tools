@@ -273,6 +273,18 @@ func main() {
 	// REDIS_ADDR/REDIS_PASSWORD pair has no way to request. REDIS_ADDR/
 	// REDIS_PASSWORD remain for a local, non-TLS Redis and take effect only
 	// when REDIS_URL is unset.
+	//
+	// redisClient below is always a plain redis.NewClient, which only
+	// supports a non-clustered Redis (a single logical endpoint, whether
+	// that's a real standalone instance or Azure Managed Redis/Azure Cache
+	// for Redis under a non-clustered or "Enterprise" clustering policy,
+	// where Azure's own proxy hides the sharding). It does NOT support
+	// "OSS Cluster" policy — that needs a cluster-aware redis.NewClusterClient
+	// to follow MOVED/ASK redirects, which nothing here constructs. Confirm
+	// the target Redis resource's clustering policy is Enterprise/
+	// non-clustered before pointing REDIS_URL at it; OSS Cluster policy will
+	// fail unpredictably (WakeIndex's ZSET operations landing on the wrong
+	// shard) rather than at this construction site.
 	var redisClient *redis.Client
 	var slaProducer *eventbus.Producer
 	var slaConsumers []*eventbus.Consumer
@@ -284,7 +296,12 @@ func main() {
 			var err error
 			redisOpts, err = redis.ParseURL(redisURL)
 			if err != nil {
-				slog.Error("invalid REDIS_URL", "err", err)
+				// Deliberately not logging err itself: a malformed URL (e.g.
+				// a stray unescaped '%' in the password) makes Go's
+				// net/url.Parse embed the raw input string — password
+				// included — in its own error message, which would
+				// otherwise land straight in this log line.
+				slog.Error("invalid REDIS_URL: failed to parse connection string")
 				os.Exit(1)
 			}
 		} else {
