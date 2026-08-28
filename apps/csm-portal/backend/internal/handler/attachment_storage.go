@@ -17,6 +17,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -204,8 +205,18 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Decode strictly: reject unknown fields and a trailing second JSON value
+	// rather than silently ignoring either, per this repo's boundary-input
+	// validation convention (validate and reject unexpected input before it
+	// is ever forwarded to an upstream service).
 	var req mintUploadTokenRequest
-	if err := json.Unmarshal(rawBody, &req); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(rawBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+	if err := dec.Decode(new(json.RawMessage)); err != io.EOF {
 		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
 		return
 	}

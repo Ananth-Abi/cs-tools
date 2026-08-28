@@ -76,10 +76,27 @@ func NewClient(cfg Config) *Client {
 		publicBaseURL = cfg.BaseURL
 	}
 	return &Client{
-		http:          &http.Client{Timeout: 15 * time.Second},
+		http: &http.Client{
+			Timeout:       15 * time.Second,
+			CheckRedirect: refuseInsecureRedirect,
+		},
 		baseURL:       strings.TrimRight(cfg.BaseURL, "/"),
 		publicBaseURL: strings.TrimRight(publicBaseURL, "/"),
 	}
+}
+
+// refuseInsecureRedirect is an http.Client.CheckRedirect override that
+// refuses to follow any redirect whose target is not HTTPS. Go's default
+// CheckRedirect copies the Authorization header onto a same-host redirect,
+// which would silently leak this client's bearer token (see MintToken,
+// CreateShare) over cleartext on an HTTPS-to-HTTP downgrade redirect —
+// something a compromised or misconfigured SFTPGo instance, or a
+// man-in-the-middle, could trigger without this check.
+func refuseInsecureRedirect(req *http.Request, via []*http.Request) error {
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("sftpgo: refusing to follow redirect to non-https URL %q", req.URL.Redacted())
+	}
+	return nil
 }
 
 // BaseURL returns the configured REST API base URL, verbatim — handed back

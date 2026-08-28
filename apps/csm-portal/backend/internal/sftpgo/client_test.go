@@ -331,3 +331,45 @@ func TestBaseURL(t *testing.T) {
 		t.Errorf("BaseURL() = %q, want trailing slash trimmed", got)
 	}
 }
+
+// TestClientRefusesInsecureRedirect proves the http.Client this package
+// constructs does not follow an HTTPS-to-HTTP redirect (which, under Go's
+// default CheckRedirect, would copy the Authorization header onto the
+// downgraded, cleartext request) — see refuseInsecureRedirect. downgradeSrv
+// stands in for the "same host, now-plain-HTTP" redirect target: since
+// CheckRedirect must refuse the redirect before the client ever issues a
+// request to it, downgradeSrv should never see any request at all, bearer
+// token or otherwise.
+func TestClientRefusesInsecureRedirect(t *testing.T) {
+	t.Parallel()
+
+	downgradeHit := false
+	downgradeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		downgradeHit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer downgradeSrv.Close()
+
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Redirect to the same logical host but downgraded to plain HTTP —
+		// the scenario refuseInsecureRedirect exists to block.
+		http.Redirect(w, r, downgradeSrv.URL+"/api/v2/user/shares", http.StatusFound)
+	}))
+	defer tlsSrv.Close()
+
+	client := NewClient(Config{BaseURL: tlsSrv.URL})
+	// Trust the TLS test server's self-signed certificate; keep our own
+	// CheckRedirect override intact.
+	client.http.Transport = tlsSrv.Client().Transport
+
+	_, err := client.CreateShare(context.Background(), "access-tok", "/attachments/00000000-0000-0000-0000-000000000000", ShareScopeWrite, 5*time.Minute)
+	if err == nil {
+		t.Fatal("CreateShare: expected an error refusing the insecure redirect, got nil")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow redirect") {
+		t.Errorf("CreateShare error = %v, want it to mention refusing the redirect", err)
+	}
+	if downgradeHit {
+		t.Error("downgrade target received a request; CheckRedirect should have refused before dialing it (Authorization would have leaked over plain HTTP)")
+	}
+}
