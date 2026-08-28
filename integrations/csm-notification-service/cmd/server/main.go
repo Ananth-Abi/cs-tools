@@ -261,18 +261,36 @@ func main() {
 	mainConsumers := startConsumers(ctx, "main", eventBusCfg, consumerGroup, mainConsumerCount, dispatcher.Handle, toDeadLetter)
 	dlqConsumers := startConsumers(ctx, "dlq", dlqCfg, dlqConsumerGroup, dlqConsumerCount, dispatcher.Handle, nil)
 
-	// The SLA timer engine is optional per deployment, gated on REDIS_ADDR
-	// being set — unset means this engine neither consumes sla.clock.register
-	// nor ticks, matching the "unset means don't run" convention used
-	// elsewhere in this repo's own services for an optional capability (e.g.
-	// apps/csm-portal/backend's EVENT_HUB_BROKER gate). Local Redis for now;
-	// pointing REDIS_ADDR at Azure Cache for Redis later needs no code change
-	// (same wire protocol), just its connection details here.
+	// The SLA timer engine is optional per deployment, gated on REDIS_ADDR or
+	// REDIS_URL being set — unset means this engine neither consumes
+	// sla.clock.register nor ticks, matching the "unset means don't run"
+	// convention used elsewhere in this repo's own services for an optional
+	// capability (e.g. apps/csm-portal/backend's EVENT_HUB_BROKER gate).
+	// REDIS_URL (a rediss://:<password>@<host>:<port> connection string,
+	// parsed via redis.ParseURL) is how a managed Redis with TLS — Azure
+	// Managed Redis, Azure Cache for Redis — gets configured: the "rediss"
+	// scheme makes go-redis dial with TLS automatically, which a plain
+	// REDIS_ADDR/REDIS_PASSWORD pair has no way to request. REDIS_ADDR/
+	// REDIS_PASSWORD remain for a local, non-TLS Redis and take effect only
+	// when REDIS_URL is unset.
 	var redisClient *redis.Client
 	var slaProducer *eventbus.Producer
 	var slaConsumers []*eventbus.Consumer
-	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
-		redisClient = redis.NewClient(&redis.Options{Addr: redisAddr, Password: os.Getenv("REDIS_PASSWORD")})
+	redisURL := os.Getenv("REDIS_URL")
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisURL != "" || redisAddr != "" {
+		var redisOpts *redis.Options
+		if redisURL != "" {
+			var err error
+			redisOpts, err = redis.ParseURL(redisURL)
+			if err != nil {
+				slog.Error("invalid REDIS_URL", "err", err)
+				os.Exit(1)
+			}
+		} else {
+			redisOpts = &redis.Options{Addr: redisAddr, Password: os.Getenv("REDIS_PASSWORD")}
+		}
+		redisClient = redis.NewClient(redisOpts)
 
 		// slaengine.EntityClient talks to the exact same entity-service as
 		// customerEntityClient above — not a different backend — so it
