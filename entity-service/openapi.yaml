@@ -421,7 +421,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SNAccountDetail'
+                $ref: '#/components/schemas/AccountDetail'
         "400":
           description: Bad request.
           content:
@@ -5236,7 +5236,7 @@ components:
           type: string
           description: Filter by account classification (e.g. enterprise).
 
-    SNAccountView:
+    AccountView:
       type: object
       properties:
         id:
@@ -5259,10 +5259,11 @@ components:
         supportTier:
           type: string
           nullable: true
-          description: Support tier label (e.g. Platinum).
+          description: Support tier label (e.g. Platinum). ServiceNow data source only.
         arrToday:
           type: string
           nullable: true
+          description: ServiceNow data source only.
         technicalOwner:
           nullable: true
           allOf:
@@ -5273,10 +5274,12 @@ components:
             - $ref: '#/components/schemas/PersonRef'
         renewalAccountManager:
           nullable: true
+          description: ServiceNow data source only.
           allOf:
             - $ref: '#/components/schemas/PersonRef'
         activationDate:
           type: string
+          nullable: true
         deactivationDate:
           type: string
           nullable: true
@@ -5301,7 +5304,7 @@ components:
         label:
           type: string
 
-    SNAccountDetail:
+    AccountDetail:
       type: object
       properties:
         id:
@@ -5323,11 +5326,13 @@ components:
           nullable: true
         supportTier:
           nullable: true
+          description: ServiceNow data source only.
           allOf:
             - $ref: '#/components/schemas/SNSupportTierRef'
         arrToday:
           type: string
           nullable: true
+          description: ServiceNow data source only.
         technicalOwner:
           nullable: true
           allOf:
@@ -5338,10 +5343,12 @@ components:
             - $ref: '#/components/schemas/PersonRef'
         renewalAccountManager:
           nullable: true
+          description: ServiceNow data source only.
           allOf:
             - $ref: '#/components/schemas/PersonRef'
         activationDate:
           type: string
+          nullable: true
         deactivationDate:
           type: string
           nullable: true
@@ -5363,7 +5370,7 @@ components:
         accounts:
           type: array
           items:
-            $ref: '#/components/schemas/SNAccountView'
+            $ref: '#/components/schemas/AccountView'
         total:
           type: integer
         limit:

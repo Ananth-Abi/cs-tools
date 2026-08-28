@@ -244,34 +244,6 @@ type PatchUserMeResponse struct {
 	User    PatchUserMeUpdated `json:"user"`
 }
 
-// AccountTier represents the subscription tier of an account.
-type AccountTier string
-
-const (
-	// AccountTierBasic is the standard subscription tier.
-	AccountTierBasic AccountTier = "basic"
-	// AccountTierEnterprise is the premium subscription tier.
-	AccountTierEnterprise AccountTier = "enterprise"
-)
-
-// Account represents a customer account as stored in the database.
-// TechnicalOwnerID, Region, and DeactivationDate are optional.
-type Account struct {
-	ID                  string      `json:"id"`
-	SfID                string      `json:"sfId"`
-	Name                string      `json:"name"`
-	Tier                AccountTier `json:"tier"`
-	Region              *string     `json:"region"`
-	ActivationDate      time.Time   `json:"activationDate"`
-	DeactivationDate    *time.Time  `json:"deactivationDate"`
-	OwnerID             string      `json:"ownerId"`
-	TechnicalOwnerID    *string     `json:"technicalOwnerId"`
-	AgentEnabled        bool        `json:"agentEnabled"`
-	KbReferencesEnabled bool        `json:"kbReferencesEnabled"`
-	CreatedOn           time.Time   `json:"createdOn"`
-	UpdatedOn           time.Time   `json:"updatedOn"`
-}
-
 // SearchAccountsFilters holds the optional filter criteria for an account search.
 type SearchAccountsFilters struct {
 	SearchQuery    string `json:"searchQuery,omitempty"`
@@ -286,20 +258,12 @@ type SearchAccountsRequest struct {
 	Filters    SearchAccountsFilters `json:"filters,omitempty"`
 }
 
-// SearchAccountsResponse is the paginated result of an account search.
-// HasMore is true when additional pages are available beyond the current offset.
-type SearchAccountsResponse struct {
-	Accounts []Account `json:"accounts"`
-	Total    int       `json:"total"`
-	Limit    int       `json:"limit"`
-	Offset   int       `json:"offset"`
-	HasMore  bool      `json:"hasMore"`
-}
-
-// SNAccountView is the account view returned by the ServiceNow data source.
-// Timestamp fields are kept as strings to accommodate empty values from ServiceNow.
+// AccountView is the unified account search-result shape returned for all data
+// sources. Both Postgres and ServiceNow responses are mapped to this type so
+// callers receive the same fields regardless of which backend is active.
+// Fields not available from a given data source are left nil.
 // SupportTier is returned as a plain label string (no ID).
-type SNAccountView struct {
+type AccountView struct {
 	ID                    string     `json:"id"`
 	Name                  string     `json:"name"`
 	Classification        string     `json:"classification"`
@@ -317,7 +281,7 @@ type SNAccountView struct {
 	// SreTeam is the account's SRE team, resolved to a named group reference (ServiceNow
 	// data source only). Mirrors AccountRef.SreTeam.
 	SreTeam          *EntityRef `json:"sreTeam,omitempty"`
-	ActivationDate   string     `json:"activationDate"`
+	ActivationDate   *string    `json:"activationDate"`
 	DeactivationDate *string    `json:"deactivationDate"`
 	HasAgent         bool       `json:"hasAgent"`
 	HasKbReferences  bool       `json:"hasKbReferences"`
@@ -326,13 +290,14 @@ type SNAccountView struct {
 	UpdatedOn        string     `json:"updatedOn"`
 }
 
-// SearchSNAccountsResponse is the paginated result of a ServiceNow account search.
-type SearchSNAccountsResponse struct {
-	Accounts []SNAccountView `json:"accounts"`
-	Total    int             `json:"total"`
-	Limit    int             `json:"limit"`
-	Offset   int             `json:"offset"`
-	HasMore  bool            `json:"hasMore"`
+// SearchAccountsResponse is the paginated result of an account search, unified
+// across data sources.
+type SearchAccountsResponse struct {
+	Accounts []AccountView `json:"accounts"`
+	Total    int           `json:"total"`
+	Limit    int           `json:"limit"`
+	Offset   int           `json:"offset"`
+	HasMore  bool          `json:"hasMore"`
 }
 
 // SNSupportTierRef is a compact reference to a support tier carrying its label.
@@ -341,9 +306,10 @@ type SNSupportTierRef struct {
 	Label string `json:"label"`
 }
 
-// SNAccountDetail is the full account detail returned by the ServiceNow data source
-// for GET /accounts/{id}. SupportTier is returned as an {id, label} object.
-type SNAccountDetail struct {
+// AccountDetail is the unified account detail shape returned for all data
+// sources for GET /accounts/{id}. SupportTier is returned as an {id, label}
+// object. Fields not available from a given data source are left nil.
+type AccountDetail struct {
 	ID                    string            `json:"id"`
 	Name                  string            `json:"name"`
 	Classification        string            `json:"classification"`
@@ -361,7 +327,7 @@ type SNAccountDetail struct {
 	// SreTeam is the account's SRE team, resolved to a named group reference (ServiceNow
 	// data source only). Mirrors AccountRef.SreTeam.
 	SreTeam          *EntityRef `json:"sreTeam,omitempty"`
-	ActivationDate   string     `json:"activationDate"`
+	ActivationDate   *string    `json:"activationDate"`
 	DeactivationDate *string    `json:"deactivationDate"`
 	HasAgent         bool       `json:"hasAgent"`
 	HasKbReferences  bool       `json:"hasKbReferences"`
