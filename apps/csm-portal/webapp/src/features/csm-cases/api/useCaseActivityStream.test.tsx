@@ -49,6 +49,7 @@ const { apiConfigMock } = vi.hoisted(() => ({
   apiConfigMock: {
     backendUrl: "https://example.test",
     streamUrl: "https://stream.example.test" as string | undefined,
+    streamEnabled: true,
   },
 }));
 vi.mock("@config/apiConfig", () => ({ apiConfig: apiConfigMock }));
@@ -86,6 +87,7 @@ describe("useCaseActivityStream", () => {
     debugMock.mockReset();
     getTokensMock.mockReset().mockResolvedValue({ token: "access-token", idToken: "id-token" });
     apiConfigMock.streamUrl = "https://stream.example.test";
+    apiConfigMock.streamEnabled = true;
   });
 
   afterEach(() => {
@@ -100,6 +102,13 @@ describe("useCaseActivityStream", () => {
 
   it("does not connect when the stream base URL isn't configured", async () => {
     apiConfigMock.streamUrl = undefined;
+    renderHook(() => useCaseActivityStream("case-1"), { wrapper });
+    await Promise.resolve();
+    expect(mockInstances).toHaveLength(0);
+  });
+
+  it("does not connect when the stream is not enabled, even with a URL configured", async () => {
+    apiConfigMock.streamEnabled = false;
     renderHook(() => useCaseActivityStream("case-1"), { wrapper });
     await Promise.resolve();
     expect(mockInstances).toHaveLength(0);
