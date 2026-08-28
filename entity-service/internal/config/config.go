@@ -63,6 +63,13 @@ type Config struct {
 	EventHubBroker           string
 	EventHubConnectionString string
 	EventHubTopic            string
+	// EventPublishingEnabled is a separate kill switch on top of
+	// EventHubBroker being set — it defaults to false (safe-by-default: an
+	// environment can have Event Hub fully configured and still not publish
+	// a single event until this is explicitly turned on). routes.go only
+	// constructs EventPublisherService when both this is true AND
+	// EventHubBroker is set.
+	EventPublishingEnabled bool
 }
 
 // Load reads configuration from environment variables and returns a populated
@@ -86,6 +93,7 @@ func Load() *Config {
 		EventHubBroker:                           os.Getenv("EVENT_HUB_BROKER"),
 		EventHubConnectionString:                 os.Getenv("EVENT_HUB_CONNECTION_STRING"),
 		EventHubTopic:                            os.Getenv("EVENT_HUB_TOPIC"),
+		EventPublishingEnabled:                   os.Getenv("EVENT_PUBLISHING_ENABLED") == "true",
 	}
 }
 

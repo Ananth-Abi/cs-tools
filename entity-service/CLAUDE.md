@@ -39,6 +39,7 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `EVENT_HUB_BROKER` | no | — | Kafka-compatible bootstrap address; feature-gates `EventPublisherService` (see "Event Hub publishing" below) |
 | `EVENT_HUB_CONNECTION_STRING` | no* | — | Event Hub namespace Shared Access Policy connection string. *Required once `EVENT_HUB_BROKER` is set |
 | `EVENT_HUB_TOPIC` | no* | — | Event Hub (Kafka topic) name. *Required once `EVENT_HUB_BROKER` is set |
+| `EVENT_PUBLISHING_ENABLED` | no | `false` | Must be `"true"` for `EventPublisherService` to actually get constructed, even with `EVENT_HUB_BROKER` fully configured — a separate safe-by-default kill switch |
 
 `CSM_TEAM_REGISTRY` and `CSM_USER_ROLES` are **not read here**. The team registry
 and the assignable-role allow-list are organisation vocabulary and live in the CSM
@@ -68,18 +69,26 @@ records the failure via `EventPublishFailureService.CreateEventPublishFailure`
 **Wired in**: `NewEventPublisherService` is constructed in
 `internal/server/routes.go` (not `cmd/api/main.go` — `NewRouter` owns the
 whole dependency graph; see "Adding a new entity" below), gated on
-`cfg.EventHubBroker != ""` — the same optional-wiring convention
-`apps/csm-portal/backend/cmd/server/main.go` uses, but keyed on Event Hub
-config specifically, not `cfg.DataSource`: publishing is a distinct concern
-from which backend serves reads. `Config.Validate` rejects a partial
-Event Hub configuration (e.g. `EVENT_HUB_BROKER` set but
+`cfg.EventHubBroker != "" && cfg.EventPublishingEnabled` — the same
+optional-wiring convention `apps/csm-portal/backend/cmd/server/main.go`
+used to use for its own now-removed Event Hub pipeline, but keyed on Event
+Hub config specifically, not `cfg.DataSource`: publishing is a distinct
+concern from which backend serves reads. `EventPublishingEnabled` is a
+second, independent kill switch on top of `EventHubBroker` — it defaults to
+`false` (`EVENT_PUBLISHING_ENABLED` must be exactly `"true"`), so an
+environment can have Event Hub fully configured and still publish nothing
+until this is explicitly turned on; every publisher call site already
+handles `eventPublisher == nil` as a no-op, so this required no changes
+anywhere except `config.go`/`routes.go` themselves. `Config.Validate`
+rejects a partial Event Hub configuration (e.g. `EVENT_HUB_BROKER` set but
 `EVENT_HUB_CONNECTION_STRING`/`EVENT_HUB_TOPIC` empty) at startup — all
 three must be set together or not at all, since `NewRouter`'s gate only
 checks `EventHubBroker`, and constructing `EventPublisherService` with a
 missing connection string or topic would make every publish attempt fail
-silently while the deployment otherwise looks healthy. `NewRouter` returns
-the constructed `EventPublisherService` (nil if unconfigured) alongside the
-`http.Handler`,
+silently while the deployment otherwise looks healthy;
+`EventPublishingEnabled` isn't part of that all-or-nothing group — it's
+just a bool, either `"true"` or not. `NewRouter` returns the constructed
+`EventPublisherService` (nil if unconfigured) alongside the `http.Handler`,
 threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
 it during shutdown, after `srv.Shutdown`.
 
