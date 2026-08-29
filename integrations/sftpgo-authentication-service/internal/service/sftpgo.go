@@ -26,12 +26,12 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/httpclient"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/constants"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/models"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/util"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/httpclient"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/constants"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/log"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/models"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/util"
 )
 
 // SFTPGoService handles interactions with the SFTPGo Admin API.

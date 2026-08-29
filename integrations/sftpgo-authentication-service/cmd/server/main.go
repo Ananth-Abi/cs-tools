@@ -25,11 +25,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/handler"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/service"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/handler"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/service"
 
-	applog "github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
+	applog "github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/log"
 )
 
 // The entry point for the SFTPGo Authentication Service.

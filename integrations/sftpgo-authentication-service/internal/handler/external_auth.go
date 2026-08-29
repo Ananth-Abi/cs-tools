@@ -23,7 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/models"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/models"
 )
 
 // externalAuthProtocolHTTP is the protocol value SFTPGo sends on the

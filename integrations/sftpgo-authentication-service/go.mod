@@ -13,7 +13,7 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
-module github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service
+module github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service
 
 go 1.25.6
 

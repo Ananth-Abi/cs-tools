@@ -21,8 +21,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/constants"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/constants"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/log"
 )
 
 // LoggingTransport implements http.RoundTripper and logs requests and responses.

@@ -40,9 +40,9 @@ import (
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/httpclient"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/httpclient"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/log"
 )
 
 // JWTUserInfo holds the authenticated user's identity extracted from the JWT.
