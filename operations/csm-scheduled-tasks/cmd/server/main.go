@@ -63,27 +63,33 @@ func main() {
 	oauthClientSecret := mustEnv("OAUTH2_CLIENT_SECRET")
 
 	// entity-service is this component's only durable state — see
-	// internal/ledger's own doc comment — so a missing ENTITY_SERVICE_BASE_URL
-	// here fails startup loudly (mustEnv) rather than surfacing as a
-	// per-task error later, unlike the email client below.
-	ledgerClient := ledger.NewClient(ledger.Config{
-		BaseURL:      mustEnv("ENTITY_SERVICE_BASE_URL"),
+	// internal/ledger's own doc comment — so a missing CUSTOMER_ENTITY_SERVICE_BASE_URL,
+	// or either URL failing httpsec's https-only check, fails startup
+	// loudly rather than surfacing as a per-task error later, unlike the
+	// email client below.
+	ledgerClient, err := ledger.NewClient(ledger.Config{
+		BaseURL:      mustEnv("CUSTOMER_ENTITY_SERVICE_BASE_URL"),
 		TokenURL:     oauthTokenURL,
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
-		Scopes:       splitComma(os.Getenv("ENTITY_SERVICE_SCOPES")),
+		Scopes:       splitComma(os.Getenv("CUSTOMER_ENTITY_SERVICE_SCOPES")),
 	})
+	if err != nil {
+		slog.Error("failed to construct entity-service client", "err", err)
+		os.Exit(1)
+	}
 
-	// Email itself is not required for every deployment (a task with no
-	// Report/AlertRecipients never calls it) — EMAIL_BASE_URL is read with
+	// Email itself is not required for every deployment (nothing calls it
+	// while ALERT_RECIPIENTS is unset) — EMAIL_BASE_URL is read with
 	// os.Getenv, not mustEnv, matching
 	// integrations/csm-notification-service's own
 	// internal/notifications.EmailClient. A missing/invalid configuration
 	// only surfaces as an error the first time a task with recipients
-	// actually finishes. Authenticates with the same shared OAUTH2_*
-	// credentials as ledgerClient above, not its own — only
-	// BaseURL/Scopes/FromAddress are specific to this client.
-	emailClient := notify.NewClient(notify.Config{
+	// actually finishes; NewClient itself still fails startup if
+	// EMAIL_BASE_URL is set but not https. Authenticates with the same
+	// shared OAUTH2_* credentials as ledgerClient above, not its own —
+	// only BaseURL/Scopes/FromAddress are specific to this client.
+	emailClient, err := notify.NewClient(notify.Config{
 		BaseURL:      os.Getenv("EMAIL_BASE_URL"),
 		TokenURL:     oauthTokenURL,
 		ClientID:     oauthClientID,
@@ -91,16 +97,15 @@ func main() {
 		Scopes:       splitComma(os.Getenv("EMAIL_SCOPES")),
 		FromAddress:  os.Getenv("EMAIL_FROM_ADDRESS"),
 	})
+	if err != nil {
+		slog.Error("failed to construct email client", "err", err)
+		os.Exit(1)
+	}
 
-	// No sub-crons registered yet. See this component's own CLAUDE.md
-	// ("Adding a sub-cron") for the steps — in short: write a
-	// func(ctx context.Context) error handler, append a
-	// registry.Task{Name, Schedule, Handler, ...} entry below with a
-	// sensible hardcoded default Schedule, and optionally let ops override
-	// that schedule per-task-by-name via the SUB_CRON_SCHEDULES env var
-	// (parseSubCronSchedules/scheduleFor below already implement that
-	// lookup — call scheduleFor(parseSubCronSchedules(os.Getenv("SUB_CRON_SCHEDULES")),
-	// "<task.Name>", "<default>") for each task's Schedule field once one exists).
+	// No real sub-crons registered yet. See this component's own CLAUDE.md
+	// ("Adding a sub-cron") for the steps to add one — including wiring
+	// SUB_CRON_SCHEDULES support in via parseSubCronSchedules/scheduleFor
+	// below, which have no caller until then.
 	tasks := []registry.Task{}
 
 	for _, t := range tasks {
@@ -110,7 +115,12 @@ func main() {
 		}
 	}
 
-	eng := engine.New(tasks, ledgerClient, emailClient, driverInterval)
+	// One shared alert audience for every task's failures — there is no
+	// per-task report email yet, see engine.Engine.AlertRecipients's own
+	// doc comment for why.
+	alertRecipients := splitComma(os.Getenv("ALERT_RECIPIENTS"))
+
+	eng := engine.New(tasks, ledgerClient, emailClient, driverInterval, alertRecipients)
 
 	// No app-level execution timeout here — Choreo's own Scheduled Task
 	// execution-time limit already bounds how long one invocation can run.
@@ -136,13 +146,6 @@ func mustEnv(key string) string {
 	return v
 }
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 // parseSubCronSchedules decodes SUB_CRON_SCHEDULES, a JSON object mapping a
 // registered task's Name to a cron schedule override — one shared config
 // value for every task in the registry, rather than a dedicated env var per
@@ -151,7 +154,11 @@ func envOrDefault(key, def string) string {
 // overrides, so every task just falls back to its own hardcoded default
 // schedule — mirrors integrations/csm-notification-service's own
 // parseGoogleChatSpaces (same "optional JSON env var, log and fall back on
-// a bad value" shape).
+// a bad value" shape). No caller until the first real registry.Task exists
+// — see "Adding a sub-cron" in this component's own CLAUDE.md, which calls
+// this out explicitly as scaffolding for that step, not dead code.
+//
+//nolint:unused // see doc comment above
 func parseSubCronSchedules(raw string) map[string]string {
 	if raw == "" {
 		return nil
@@ -168,6 +175,8 @@ func parseSubCronSchedules(raw string) map[string]string {
 // otherwise def. def is still what ships when SUB_CRON_SCHEDULES doesn't
 // mention taskName at all — every registered task keeps a sensible
 // hardcoded default in code; SUB_CRON_SCHEDULES only ever overrides it.
+//
+//nolint:unused // see parseSubCronSchedules's own nolint comment above.
 func scheduleFor(overrides map[string]string, taskName, def string) string {
 	if s, ok := overrides[taskName]; ok && s != "" {
 		return s

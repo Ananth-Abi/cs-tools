@@ -135,18 +135,22 @@ type ScheduledTaskRunService interface {
 	// comment for how to read the result. A ValidationError is returned if
 	// taskName or periodKey is missing.
 	Attempt(ctx context.Context, req domain.ClaimScheduledTaskRunRequest) (domain.ClaimScheduledTaskRunResponse, error)
-	// Complete marks the run succeeded. A NotFoundError is returned if id
-	// doesn't exist.
-	Complete(ctx context.Context, id string) (domain.ScheduledTaskRun, error)
-	// Fail records a failed attempt. A ValidationError is returned if error
-	// or nextRetryOn is missing; a NotFoundError if id doesn't exist.
-	Fail(ctx context.Context, id string, req domain.FailScheduledTaskRunRequest) (domain.ScheduledTaskRun, error)
+	// UpdateAttempt reports the outcome of the attempt id — succeeded or
+	// failed, per req.Status — but only if req.AttemptCount still matches
+	// the active claim (see domain.UpdateScheduledTaskRunAttemptRequest's
+	// own doc comment). A ValidationError is returned if attemptCount is
+	// missing/non-positive, status isn't "succeeded"/"failed", or status is
+	// "failed" and error/nextRetryOn is missing; a NotFoundError if id
+	// doesn't exist or the claim is no longer active.
+	UpdateAttempt(ctx context.Context, id string, req domain.UpdateScheduledTaskRunAttemptRequest) (domain.ScheduledTaskRun, error)
 	// List returns every run matching statusFilter ("failed", "succeeded",
 	// "superseded"), or every run if statusFilter is empty. A
 	// ValidationError is returned for any other value.
 	List(ctx context.Context, statusFilter string) (domain.ListScheduledTaskRunsResponse, error)
-	// DeleteResolvedBefore deletes every succeeded or superseded run
-	// created before cutoff. A ValidationError is returned if cutoff is the
+	// DeleteResolvedBefore deletes every run that succeeded or was
+	// superseded before cutoff (by its own resolution time, not when it
+	// was created — see the repository's own doc comment for why that
+	// distinction matters). A ValidationError is returned if cutoff is the
 	// zero time.
 	DeleteResolvedBefore(ctx context.Context, cutoff time.Time) (domain.DeleteScheduledTaskRunsResponse, error)
 }

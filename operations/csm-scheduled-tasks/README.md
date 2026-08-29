@@ -28,13 +28,17 @@ csm-scheduled-tasks/
 ├── cmd/server/main.go       # Entry point — builds the registry, runs one Engine.Tick, exits
 ├── internal/
 │   ├── schedule/period.go   # PeriodKey(cronExpr, now) — the "most recent scheduled firing" concept
-│   ├── registry/registry.go # Task{Name, Schedule, Handler, RetryBackoff, Report/AlertRecipients}
+│   ├── registry/registry.go # Task{Name, Schedule, Handler, RetryBackoff}
 │   ├── engine/engine.go     # Tick: claim → run → report back, once per task per invocation
 │   ├── ledger/client.go     # entity-service client (Attempt/Complete/Fail) — this component's only durable state
-│   ├── notify/email.go      # Direct email sending (report/alert) — same internal email service csm-notification-service uses
+│   ├── notify/              # Alert email sending — same internal email service csm-notification-service uses; templates/alert.html is the only template today (see CLAUDE.md, "Future: per-task report emails")
+│   ├── httpsec/httpsec.go   # Shared HTTPS/redirect guards for ledger and notify's OAuth2 clients
 │   └── apierror/errors.go   # Typed upstream-error wrapper, shared by ledger and notify
-└── .choreo/component.yaml   # No endpoints — this is a Scheduled Task component, not a Service
 ```
+
+No `.choreo/component.yaml` here — this component is created as a Choreo "Scheduled Task" (not
+"Service") directly in Choreo Console, where its cron trigger is also configured; there's no
+endpoint declaration this component needs to check in.
 
 ## Running locally
 
@@ -50,7 +54,7 @@ There are no sub-crons registered yet, so a run currently does nothing beyond lo
 
 ## Environment variables
 
-See `CLAUDE.md` for the full table. At minimum, `ENTITY_SERVICE_BASE_URL` and the shared
+See `CLAUDE.md` for the full table. At minimum, `CUSTOMER_ENTITY_SERVICE_BASE_URL` and the shared
 `OAUTH2_CLIENT_ID`/`OAUTH2_CLIENT_SECRET`/`OAUTH2_TOKEN_URL` are required — this component cannot
 claim or report anything without entity-service. The same `OAUTH2_*` credentials also back the
 email client, and any future service client — see `CLAUDE.md`'s own note on that convention.
@@ -59,7 +63,7 @@ email client, and any future service client — see `CLAUDE.md`'s own note on th
 
 ```bash
 go vet ./...              # vet
-go test -race ./...       # vet + race-detector tests
+go test -race ./...       # race-detector tests
 go build -o server ./cmd/server
 ```
 

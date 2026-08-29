@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/httpsec"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -58,11 +59,14 @@ type Config struct {
 // authenticated via the OAuth2 client credentials grant. Tokens are
 // acquired and refreshed automatically.
 //
-// NewClient never fails and never contacts the token endpoint, so it is
-// safe to construct with a zero-value Config — a missing/invalid
-// configuration only surfaces as an error the first time SendEmail is
-// called, matching integrations/csm-notification-service's own
-// internal/notifications.EmailClient.
+// NewClient never contacts the token endpoint itself, so a valid-looking
+// but wrong URL only surfaces as an error the first time SendEmail is
+// called — but it does now validate cfg.TokenURL/cfg.BaseURL are https
+// (loopback http allowed for local development — see
+// httpsec.RequireSecureURL), since both carry credentials or a bearer
+// token. That's the one point this diverges from
+// integrations/csm-notification-service's own
+// internal/notifications.EmailClient, whose constructor never fails.
 type Client struct {
 	http        *http.Client
 	baseURL     string
@@ -71,7 +75,23 @@ type Client struct {
 
 // NewClient constructs a Client that authenticates against the email
 // notification service using the OAuth2 client credentials grant type.
-func NewClient(cfg Config) *Client {
+func NewClient(cfg Config) (*Client, error) {
+	// BaseURL is allowed to be empty — email is optional per deployment
+	// (see this type's own doc comment); an empty BaseURL just means
+	// SendEmail will fail the first time something actually tries to use
+	// it, same as before this validation existed. TokenURL is never
+	// optional (both clients share OAUTH2_TOKEN_URL, which cmd/server/main.go
+	// requires via mustEnv regardless of whether email itself is
+	// configured), so it's always checked.
+	if err := httpsec.RequireSecureURL(cfg.TokenURL); err != nil {
+		return nil, fmt.Errorf("notify: token URL: %w", err)
+	}
+	if cfg.BaseURL != "" {
+		if err := httpsec.RequireSecureURL(cfg.BaseURL); err != nil {
+			return nil, fmt.Errorf("notify: base URL: %w", err)
+		}
+	}
+
 	cc := clientcredentials.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
@@ -79,16 +99,18 @@ func NewClient(cfg Config) *Client {
 		Scopes:       cfg.Scopes,
 	}
 
-	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient,
-		&http.Client{Timeout: emailTokenFetchTimeout})
+	tokenHTTPClient := &http.Client{Timeout: emailTokenFetchTimeout}
+	httpsec.RejectInsecureRedirects(tokenHTTPClient)
+	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
 	httpClient := cc.Client(tokenCtx)
 	httpClient.Timeout = 25 * time.Second
+	httpsec.RejectInsecureRedirects(httpClient)
 
 	return &Client{
 		http:        httpClient,
 		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
 		fromAddress: cfg.FromAddress,
-	}
+	}, nil
 }
 
 // sendEmailRequest is the wire shape expected by POST /send-email.
@@ -101,7 +123,7 @@ type sendEmailRequest struct {
 
 // SendEmail sends a plain HTML email via the notification service. The
 // sender address is always the client's configured FromAddress. A request
-// with no recipients is a silent no-op — see registry.Task.ReportRecipients'
+// with no recipients is a silent no-op — see engine.Engine.AlertRecipients'
 // own doc comment for why that's a deliberate, valid configuration rather
 // than an error.
 func (c *Client) SendEmail(ctx context.Context, to []string, subject, htmlBody string) error {

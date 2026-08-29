@@ -50,12 +50,4 @@ type Task struct {
 	// zero (see cmd/server/main.go) — there is no point backing off
 	// shorter than how often this process even runs.
 	RetryBackoff time.Duration
-	// ReportRecipients is who gets a report email on success. Nil is a
-	// valid, deliberate choice for a task with no report to send — the
-	// engine treats an empty list as "nothing to send", not an error.
-	ReportRecipients []string
-	// AlertRecipients is who gets an alert email on failure. Falls back to
-	// ReportRecipients when nil, on the assumption that whoever wants the
-	// report also wants to know when it didn't happen.
-	AlertRecipients []string
 }

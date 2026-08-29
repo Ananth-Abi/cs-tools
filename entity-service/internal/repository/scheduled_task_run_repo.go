@@ -53,28 +53,46 @@ type ScheduledTaskRunRepository interface {
 	//     req.StaleClaimAfterSeconds) — attempt_count is bumped and
 	//     allowed=true.
 	//
-	// Concurrent callers racing for the exact same (TaskName, PeriodKey)
-	// are serialized by this table's own UNIQUE constraint: at most one can
-	// ever see allowed=true for a given claim.
+	// Concurrent callers racing for the same TaskName — whether the exact
+	// same (TaskName, PeriodKey) or two different periods of it — are
+	// serialized by a transaction-scoped advisory lock keyed on TaskName:
+	// at most one can ever see allowed=true for a given claim, and the
+	// "at most one open row per task" invariant holds even under a
+	// concurrent claim for a brand-new period.
 	Attempt(ctx context.Context, req domain.ClaimScheduledTaskRunRequest) (run domain.ScheduledTaskRun, allowed bool, err error)
-	// Complete marks the row succeeded and clears NextRetryOn/LastError.
-	// Returns a *apierror.NotFoundError if id doesn't exist.
-	Complete(ctx context.Context, id string) (domain.ScheduledTaskRun, error)
+	// Complete marks the row succeeded and clears NextRetryOn/LastError —
+	// but only if id's row is still open (neither succeeded nor superseded)
+	// and its AttemptCount still matches attemptCount, the value the caller
+	// was handed back by the Attempt call it's completing. This binds
+	// Complete to that specific claim: a worker that stalled past
+	// StaleClaimAfterSeconds and gets reclaimed by another caller (see
+	// Attempt) later finds its own stale Complete call rejected — the
+	// AttemptCount it holds no longer matches — rather than silently
+	// overwriting whatever the reclaiming caller's own attempt has since
+	// done. Returns a *apierror.NotFoundError if id doesn't exist, or if
+	// the claim is no longer active (already resolved, or attemptCount is
+	// stale).
+	Complete(ctx context.Context, id string, attemptCount int) (domain.ScheduledTaskRun, error)
 	// Fail records a failed attempt: sets LastError/NextRetryOn. Deliberately
 	// does not touch SucceededOn/SupersededOn — the row stays eligible for
 	// another attempt (or for being superseded, once the next period comes
-	// due, by a future Attempt call for a different period). Returns a
-	// *apierror.NotFoundError if id doesn't exist.
-	Fail(ctx context.Context, id string, req domain.FailScheduledTaskRunRequest) (domain.ScheduledTaskRun, error)
+	// due, by a future Attempt call for a different period). Bound to the
+	// active claim the same way Complete is — see that method's own doc
+	// comment for why. Returns a *apierror.NotFoundError if id doesn't
+	// exist, or if the claim is no longer active.
+	Fail(ctx context.Context, id string, attemptCount int, errMsg string, nextRetryOn time.Time) (domain.ScheduledTaskRun, error)
 	// List returns every row matching statusFilter ("failed", "succeeded",
 	// "superseded"), or every row if statusFilter is empty. statusFilter is
 	// assumed already validated by the service layer.
 	List(ctx context.Context, statusFilter string) ([]domain.ScheduledTaskRun, error)
-	// DeleteResolvedBefore deletes every succeeded or superseded row
-	// created before cutoff and returns how many rows were removed. A row
-	// that is still open (neither succeeded nor superseded) is never
-	// deleted, regardless of age — it represents a genuinely unresolved
-	// problem, not history to archive.
+	// DeleteResolvedBefore deletes every row that succeeded or was
+	// superseded before cutoff (SucceededOn/SupersededOn, not CreatedOn —
+	// a row open for 89 days before finally resolving on day 90 should get
+	// the same retention window as one resolved on day one, not be deleted
+	// the instant it resolves because its CreatedOn is already old) and
+	// returns how many rows were removed. A row that is still open (neither
+	// succeeded nor superseded) is never deleted, regardless of age — it
+	// represents a genuinely unresolved problem, not history to archive.
 	DeleteResolvedBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
@@ -116,6 +134,20 @@ func (r *scheduledTaskRunRepo) Attempt(ctx context.Context, req domain.ClaimSche
 		return domain.ScheduledTaskRun{}, false, fmt.Errorf("attempt scheduled_task_run: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Serializes every Attempt for this exact task_name, not just this exact
+	// (task_name, period_key): without this, two concurrent Attempt calls
+	// for two different NEW periods of the same task both see no existing
+	// row (different period_keys don't collide on the UNIQUE constraint
+	// below), so both insert successfully — leaving two open rows for the
+	// same task at once, breaking the "at most one open row per task"
+	// invariant the supersede step above depends on. An advisory lock keyed
+	// by task_name (released automatically at transaction end) closes that
+	// window without a schema change; it's a pure hash, no ordering/tuning
+	// concern the way a real row lock would raise.
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, req.TaskName); err != nil {
+		return domain.ScheduledTaskRun{}, false, fmt.Errorf("attempt scheduled_task_run: acquire task lock: %w", err)
+	}
 
 	existing, err := scanScheduledTaskRun(tx.QueryRow(ctx,
 		`SELECT `+scheduledTaskRunColumns+` FROM scheduled_task_run WHERE task_name = $1 AND period_key = $2 FOR UPDATE`,
@@ -195,15 +227,15 @@ func (r *scheduledTaskRunRepo) Attempt(ctx context.Context, req domain.ClaimSche
 }
 
 // Complete implements ScheduledTaskRunRepository.
-func (r *scheduledTaskRunRepo) Complete(ctx context.Context, id string) (domain.ScheduledTaskRun, error) {
+func (r *scheduledTaskRunRepo) Complete(ctx context.Context, id string, attemptCount int) (domain.ScheduledTaskRun, error) {
 	run, err := scanScheduledTaskRun(r.db.QueryRow(ctx,
 		`UPDATE scheduled_task_run
 		 SET succeeded_at = NOW(), next_retry_at = NULL, last_error = NULL, updated_at = NOW()
-		 WHERE id = $1
-		 RETURNING `+scheduledTaskRunColumns, id))
+		 WHERE id = $1 AND attempt_count = $2 AND succeeded_at IS NULL AND superseded_at IS NULL
+		 RETURNING `+scheduledTaskRunColumns, id, attemptCount))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.ScheduledTaskRun{}, &apierror.NotFoundError{Msg: "scheduled_task_run not found: " + id}
+			return domain.ScheduledTaskRun{}, &apierror.NotFoundError{Msg: "scheduled_task_run not found, or claim is no longer active: " + id}
 		}
 		return domain.ScheduledTaskRun{}, fmt.Errorf("complete scheduled_task_run: %w", err)
 	}
@@ -211,15 +243,15 @@ func (r *scheduledTaskRunRepo) Complete(ctx context.Context, id string) (domain.
 }
 
 // Fail implements ScheduledTaskRunRepository.
-func (r *scheduledTaskRunRepo) Fail(ctx context.Context, id string, req domain.FailScheduledTaskRunRequest) (domain.ScheduledTaskRun, error) {
+func (r *scheduledTaskRunRepo) Fail(ctx context.Context, id string, attemptCount int, errMsg string, nextRetryOn time.Time) (domain.ScheduledTaskRun, error) {
 	run, err := scanScheduledTaskRun(r.db.QueryRow(ctx,
 		`UPDATE scheduled_task_run
-		 SET last_error = $2, next_retry_at = $3, updated_at = NOW()
-		 WHERE id = $1
-		 RETURNING `+scheduledTaskRunColumns, id, req.Error, req.NextRetryOn))
+		 SET last_error = $3, next_retry_at = $4, updated_at = NOW()
+		 WHERE id = $1 AND attempt_count = $2 AND succeeded_at IS NULL AND superseded_at IS NULL
+		 RETURNING `+scheduledTaskRunColumns, id, attemptCount, errMsg, nextRetryOn))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return domain.ScheduledTaskRun{}, &apierror.NotFoundError{Msg: "scheduled_task_run not found: " + id}
+			return domain.ScheduledTaskRun{}, &apierror.NotFoundError{Msg: "scheduled_task_run not found, or claim is no longer active: " + id}
 		}
 		return domain.ScheduledTaskRun{}, fmt.Errorf("fail scheduled_task_run: %w", err)
 	}
@@ -269,7 +301,8 @@ func (r *scheduledTaskRunRepo) List(ctx context.Context, statusFilter string) ([
 func (r *scheduledTaskRunRepo) DeleteResolvedBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	tag, err := r.db.Exec(ctx,
 		`DELETE FROM scheduled_task_run
-		 WHERE (succeeded_at IS NOT NULL OR superseded_at IS NOT NULL) AND created_at < $1`,
+		 WHERE (succeeded_at IS NOT NULL AND succeeded_at < $1)
+		    OR (superseded_at IS NOT NULL AND superseded_at < $1)`,
 		cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("delete scheduled_task_run: %w", err)

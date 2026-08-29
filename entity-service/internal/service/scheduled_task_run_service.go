@@ -54,26 +54,28 @@ func (s *scheduledTaskRunService) Attempt(ctx context.Context, req domain.ClaimS
 	return domain.ClaimScheduledTaskRunResponse{Allowed: allowed, Run: run}, nil
 }
 
-// Complete implements ScheduledTaskRunService.
-func (s *scheduledTaskRunService) Complete(ctx context.Context, id string) (domain.ScheduledTaskRun, error) {
+// UpdateAttempt implements ScheduledTaskRunService.
+func (s *scheduledTaskRunService) UpdateAttempt(ctx context.Context, id string, req domain.UpdateScheduledTaskRunAttemptRequest) (domain.ScheduledTaskRun, error) {
 	if id == "" {
 		return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: "id is required"}
 	}
-	return s.repo.Complete(ctx, id)
-}
-
-// Fail implements ScheduledTaskRunService.
-func (s *scheduledTaskRunService) Fail(ctx context.Context, id string, req domain.FailScheduledTaskRunRequest) (domain.ScheduledTaskRun, error) {
-	if id == "" {
-		return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: "id is required"}
+	if req.AttemptCount < 1 {
+		return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: "attemptCount is required and must be at least 1"}
 	}
-	if req.Error == "" {
-		return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: "error is required"}
+	switch req.Status {
+	case domain.ScheduledTaskRunAttemptSucceeded:
+		return s.repo.Complete(ctx, id, req.AttemptCount)
+	case domain.ScheduledTaskRunAttemptFailed:
+		if req.Error == "" {
+			return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: "error is required when status is failed"}
+		}
+		if req.NextRetryOn == nil || req.NextRetryOn.IsZero() {
+			return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: "nextRetryOn is required when status is failed"}
+		}
+		return s.repo.Fail(ctx, id, req.AttemptCount, req.Error, *req.NextRetryOn)
+	default:
+		return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: `status must be one of "succeeded", "failed"`}
 	}
-	if req.NextRetryOn.IsZero() {
-		return domain.ScheduledTaskRun{}, &apierror.ValidationError{Msg: "nextRetryOn is required"}
-	}
-	return s.repo.Fail(ctx, id, req)
 }
 
 // List implements ScheduledTaskRunService.

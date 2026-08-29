@@ -30,11 +30,13 @@ either it's fixed or its own next period supersedes it.
 `engine.Engine.Tick` does exactly one thing per registered task, once per invocation:
 
 1. Compute the task's current period key.
-2. Call `POST /scheduled-task-runs/attempt` (`internal/ledger.Client.Attempt`) — entity-service
+2. Call `POST /scheduled-tasks/attempts` (`internal/ledger.Client.Attempt`) — entity-service
    atomically decides allow/deny: a period this task hasn't seen before first supersedes any other
    still-open row for the same task, then claims fresh; an existing row whose retry time has
    arrived is bumped and claimed; anything else is denied.
-3. If allowed, run `Task.Handler`, then report back via `Complete` (success) or `Fail` (failure —
+3. If allowed, run `Task.Handler`, then report back via `PATCH /scheduled-tasks/attempts/{id}`
+   (one endpoint for both outcomes, `internal/ledger.Client.Complete`/`Fail` on the Go side) —
+   `Complete` (success) or `Fail` (failure —
    sets `nextRetryOn`, never a permanent give-up state).
 
 There is deliberately no second "sweep" pass here: an earlier design had one whose job was to
@@ -57,15 +59,9 @@ empty. To add one:
    entity-service ledger key **and** the key `SUB_CRON_SCHEDULES` below looks it up by — treat a
    rename like a breaking API change, since it orphans the task's prior history there and silently
    stops matching any existing schedule override.
-3. Set `ReportRecipients`/`AlertRecipients` if the task should email on success/failure — both are
-   `nil`-safe, an empty list is a deliberate "nothing to send," not an error. **`AlertRecipients` is
-   emailed on every single failed attempt, not just a final give-up** — there is no "fully failed"
-   or exhausted state in this design (see "The core mechanism" above), so an alert fires each time
-   the handler returns an error, however many times that happens before the task either succeeds or
-   gets superseded by its own next period. A task retrying every tick for hours will alert every
-   tick too; if that turns out to be too noisy for a given task, that's a notification-frequency
-   policy to add on top later (see "Future: events" below), not something to fix by inventing a
-   retry cap.
+3. There is nothing to configure here for failure alerting — every task's failures already email
+   `ALERT_RECIPIENTS` (see below), a single shared list, not a per-task setting. There is no
+   per-task success email yet; see "Future: per-task report emails" below.
 4. Wire up `SUB_CRON_SCHEDULES` support for it: call
    `scheduleFor(parseSubCronSchedules(os.Getenv("SUB_CRON_SCHEDULES")), "<task.Name>", "<default>")`
    for the task's `Schedule` field (both helper functions already exist in `cmd/server/main.go`,
@@ -83,17 +79,40 @@ again for every new sub-cron added here. `scheduleFor` looks up each task's over
 when zero — there is no point backing off shorter than how often this process even runs. Set it
 explicitly only if a specific task needs to back off harder than "every tick."
 
+## Alerting
+
+`ALERT_RECIPIENTS` (see below) is a single, shared list emailed on every failed attempt, for every
+task — not a per-task setting, since a failure is an operational concern for whoever's on call for
+this whole component, not an audience that varies sub-cron to sub-cron. Empty/unset means no email
+at all; a task still fails and retries normally either way.
+
+**Every single failed attempt sends an alert, not just a final give-up** — there is no "fully
+failed" or exhausted state in this design (see "The core mechanism" above), so this fires each time
+a handler returns an error, however many times that happens before the task either succeeds or gets
+superseded by its own next period. A task retrying every tick for hours alerts every tick too; if
+that's too noisy for a given task in practice, the fix is a notification-frequency policy layered
+on top later, not a retry cap.
+
+The email itself (`internal/notify/templates/alert.html`, rendered by `notify.RenderAlertEmail`) is
+a plain HTML template in the same table-based, WSO2-branded style
+`integrations/csm-notification-service`'s own templates use (`escapeHTML`/`escapeMultiline` mirror
+that service's own functions of the same name) — task name, period, attempt count, next retry time,
+and the failure's error message.
+
+There is currently no success email — see "Future: per-task report emails" below for why.
+
 ## Environment variables
 
 | Variable | Required | Description |
 |---|---|---|
 | `OAUTH2_CLIENT_ID` / `OAUTH2_CLIENT_SECRET` / `OAUTH2_TOKEN_URL` | Yes | Shared OAuth2 client credentials — used by the entity-service client and the email client below, and by any future service client this component grows. Mirrors `integrations/csm-notification-service`'s own `OAUTH2_*` convention: the real deployments these point at authenticate every caller through the same shared gateway app, scoped per-client via each client's own `*_SCOPES` var, not a separate app per consumer |
-| `ENTITY_SERVICE_BASE_URL` | Yes | entity-service base URL |
-| `ENTITY_SERVICE_SCOPES` | No | Comma-separated OAuth2 scopes for the entity-service client, using the shared credentials above |
+| `CUSTOMER_ENTITY_SERVICE_BASE_URL` | Yes | entity-service base URL |
+| `CUSTOMER_ENTITY_SERVICE_SCOPES` | No | Comma-separated OAuth2 scopes for the entity-service client, using the shared credentials above |
 | `EMAIL_BASE_URL` | No | Internal email notification service base URL (`POST /send-email`) — same service `integrations/csm-notification-service` uses. Authenticates with the same shared `OAUTH2_*` credentials, not its own |
 | `EMAIL_SCOPES` | No | Comma-separated OAuth2 scopes for the email client, using the shared credentials above |
 | `EMAIL_FROM_ADDRESS` | No | Fixed "From" address for every email this component sends |
-| `DRIVER_INTERVAL` | No (default `1h`) | This component's own expected invocation cadence — must match the cron trigger configured on the Choreo Scheduled Task component itself (see `.choreo/component.yaml`) |
+| `ALERT_RECIPIENTS` | No | Comma-separated email addresses alerted on every failed sub-cron attempt, for every task — see "Alerting" above |
+| `DRIVER_INTERVAL` | No (default `1h`) | This component's own expected invocation cadence — must match the cron trigger configured on the Choreo Scheduled Task component itself |
 | `SUB_CRON_SCHEDULES` | No | JSON object `{"<task.Name>": "<cron expression>"}` overriding any registered task's schedule by name — see "Adding a sub-cron" above. A task not mentioned keeps its own hardcoded default |
 
 No app-level execution timeout is configured here — Choreo's own Scheduled Task execution-time
@@ -104,6 +123,17 @@ instead of being cut off mid-request with no chance to react.
 
 `.env` is auto-loaded from the working directory at startup if present (silently ignored if
 absent), matching `integrations/csm-notification-service`'s own convention.
+
+## Future: per-task report emails
+
+Not built yet, deliberately: `registry.Task` has no report-recipients field and `engine.recordSuccess`
+only updates the ledger, never sends anything. A generic one-size-fits-all "task succeeded" template
+was tried and dropped — different sub-crons will want genuinely different report content (a usage
+report reads nothing like a billing summary), so one shared template would either stay generic to
+the point of being useless or grow special cases per task. The intended shape when this is built:
+each real sub-cron owns its own template (in `internal/notify/templates/`, following `alert.html`'s
+pattern) and supplies its own `ReportRecipients`, rather than the engine rendering one shared shape
+for every task the way it does for alerts today.
 
 ## Future: events
 
@@ -125,12 +155,12 @@ component.
 go run ./cmd/server
 ```
 
-Runs exactly one tick against whatever `ENTITY_SERVICE_BASE_URL` points at, then exits — there is
+Runs exactly one tick against whatever `CUSTOMER_ENTITY_SERVICE_BASE_URL` points at, then exits — there is
 no server to leave running.
 
 ## Commands
 
 ```bash
 go vet ./...              # vet
-go test -race ./...       # vet + race-detector tests
+go test -race ./...       # race-detector tests
 ```

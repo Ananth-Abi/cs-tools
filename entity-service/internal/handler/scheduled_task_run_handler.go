@@ -38,7 +38,7 @@ func NewScheduledTaskRunHandler(svc service.ScheduledTaskRunService) *ScheduledT
 	return &ScheduledTaskRunHandler{svc: svc}
 }
 
-// AttemptScheduledTaskRun handles POST /scheduled-task-runs/attempt.
+// AttemptScheduledTaskRun handles POST /scheduled-tasks/attempts.
 func (h *ScheduledTaskRunHandler) AttemptScheduledTaskRun(w http.ResponseWriter, r *http.Request) {
 	var req domain.ClaimScheduledTaskRunRequest
 	if !decodeRequest(w, r, &req) {
@@ -53,26 +53,17 @@ func (h *ScheduledTaskRunHandler) AttemptScheduledTaskRun(w http.ResponseWriter,
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// CompleteScheduledTaskRun handles POST /scheduled-task-runs/{id}/complete.
-// Takes no request body — completing a run is not parameterized by
-// anything the caller supplies.
-func (h *ScheduledTaskRunHandler) CompleteScheduledTaskRun(w http.ResponseWriter, r *http.Request) {
-	run, err := h.svc.Complete(r.Context(), r.PathValue("id"))
-	if err != nil {
-		writeServiceError(w, r, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(run)
-}
-
-// FailScheduledTaskRun handles POST /scheduled-task-runs/{id}/fail.
-func (h *ScheduledTaskRunHandler) FailScheduledTaskRun(w http.ResponseWriter, r *http.Request) {
-	var req domain.FailScheduledTaskRunRequest
+// UpdateScheduledTaskRunAttempt handles
+// PATCH /scheduled-tasks/attempts/{id} — reports an attempt's outcome
+// (succeeded or failed, per the request body's status). Replaces what used
+// to be two separate action-style endpoints (POST .../complete and
+// POST .../fail).
+func (h *ScheduledTaskRunHandler) UpdateScheduledTaskRunAttempt(w http.ResponseWriter, r *http.Request) {
+	var req domain.UpdateScheduledTaskRunAttemptRequest
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	run, err := h.svc.Fail(r.Context(), r.PathValue("id"), req)
+	run, err := h.svc.UpdateAttempt(r.Context(), r.PathValue("id"), req)
 	if err != nil {
 		writeServiceError(w, r, err)
 		return
@@ -81,7 +72,7 @@ func (h *ScheduledTaskRunHandler) FailScheduledTaskRun(w http.ResponseWriter, r 
 	_ = json.NewEncoder(w).Encode(run)
 }
 
-// ListScheduledTaskRuns handles GET /scheduled-task-runs?status=<filter>.
+// ListScheduledTaskRuns handles GET /scheduled-tasks/attempts?status=<filter>.
 // Monitoring only — not used by operations/csm-scheduled-tasks' own engine.
 func (h *ScheduledTaskRunHandler) ListScheduledTaskRuns(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.svc.List(r.Context(), r.URL.Query().Get("status"))
@@ -94,7 +85,7 @@ func (h *ScheduledTaskRunHandler) ListScheduledTaskRuns(w http.ResponseWriter, r
 }
 
 // DeleteScheduledTaskRuns handles
-// DELETE /scheduled-task-runs?resolvedBefore=<RFC3339 timestamp>.
+// DELETE /scheduled-tasks/attempts?resolvedBefore=<RFC3339 timestamp>.
 func (h *ScheduledTaskRunHandler) DeleteScheduledTaskRuns(w http.ResponseWriter, r *http.Request) {
 	raw := r.URL.Query().Get("resolvedBefore")
 	cutoff, err := time.Parse(time.RFC3339, raw)

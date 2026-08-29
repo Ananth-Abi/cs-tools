@@ -300,11 +300,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 	mux.HandleFunc("POST /cases/{caseId}/sla-clocks", slaClockHandler.RegisterSLAClock)
 	mux.HandleFunc("GET /cases/{caseId}/sla-clocks/{clockType}", slaClockHandler.GetSLAClock)
 	mux.HandleFunc("PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}", slaClockHandler.SetSLAClockTierReached)
-	mux.HandleFunc("POST /scheduled-task-runs/attempt", scheduledTaskRunHandler.AttemptScheduledTaskRun)
-	mux.HandleFunc("POST /scheduled-task-runs/{id}/complete", scheduledTaskRunHandler.CompleteScheduledTaskRun)
-	mux.HandleFunc("POST /scheduled-task-runs/{id}/fail", scheduledTaskRunHandler.FailScheduledTaskRun)
-	mux.HandleFunc("GET /scheduled-task-runs", scheduledTaskRunHandler.ListScheduledTaskRuns)
-	mux.HandleFunc("DELETE /scheduled-task-runs", scheduledTaskRunHandler.DeleteScheduledTaskRuns)
+	mux.HandleFunc("POST /scheduled-tasks/attempts", scheduledTaskRunHandler.AttemptScheduledTaskRun)
+	mux.HandleFunc("PATCH /scheduled-tasks/attempts/{id}", scheduledTaskRunHandler.UpdateScheduledTaskRunAttempt)
+	mux.HandleFunc("GET /scheduled-tasks/attempts", scheduledTaskRunHandler.ListScheduledTaskRuns)
+	mux.HandleFunc("DELETE /scheduled-tasks/attempts", scheduledTaskRunHandler.DeleteScheduledTaskRuns)
 
 	if snUserHandler != nil {
 		mux.HandleFunc("GET /users/{id}", snUserHandler.GetUser)

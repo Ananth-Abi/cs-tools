@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/httpsec"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -66,10 +67,20 @@ type Client struct {
 }
 
 // NewClient constructs a Client authenticated via the OAuth2 client
-// credentials grant. Never fails and never contacts the token endpoint — a
-// missing/invalid configuration only surfaces as an error the first time a
-// method below is called.
-func NewClient(cfg Config) *Client {
+// credentials grant. Unlike a prior version of this constructor, it can now
+// fail: cfg.TokenURL/cfg.BaseURL must both be https (loopback http is
+// allowed for local development — see httpsec.RequireSecureURL) since both
+// carry credentials or a bearer token. It still never contacts the token
+// endpoint itself — a valid-looking but wrong URL only surfaces as an error
+// the first time a method below is called.
+func NewClient(cfg Config) (*Client, error) {
+	if err := httpsec.RequireSecureURL(cfg.TokenURL); err != nil {
+		return nil, fmt.Errorf("ledger: token URL: %w", err)
+	}
+	if err := httpsec.RequireSecureURL(cfg.BaseURL); err != nil {
+		return nil, fmt.Errorf("ledger: base URL: %w", err)
+	}
+
 	cc := clientcredentials.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
@@ -77,15 +88,17 @@ func NewClient(cfg Config) *Client {
 		Scopes:       cfg.Scopes,
 	}
 
-	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient,
-		&http.Client{Timeout: tokenFetchTimeout})
+	tokenHTTPClient := &http.Client{Timeout: tokenFetchTimeout}
+	httpsec.RejectInsecureRedirects(tokenHTTPClient)
+	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
 	httpClient := cc.Client(tokenCtx)
 	httpClient.Timeout = 25 * time.Second
+	httpsec.RejectInsecureRedirects(httpClient)
 
 	return &Client{
 		http:    httpClient,
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-	}
+	}, nil
 }
 
 // do executes an authenticated HTTP request against entity-service and
@@ -148,7 +161,7 @@ type Claim struct {
 	Run     Run  `json:"run"`
 }
 
-// Attempt calls POST /scheduled-task-runs/attempt — see entity-service's
+// Attempt calls POST /scheduled-tasks/attempts — see entity-service's
 // own CLAUDE.md ("Scheduled task runs") for the full decision table.
 // staleClaimAfter bounds how long a row that looks currently-claimed is
 // trusted before being treated as an orphaned claim (this process crashed
@@ -164,7 +177,7 @@ func (c *Client) Attempt(ctx context.Context, taskName string, periodKey time.Ti
 		return Claim{}, fmt.Errorf("ledger: encode Attempt request: %w", err)
 	}
 
-	respBody, err := c.do(ctx, http.MethodPost, "/scheduled-task-runs/attempt", body)
+	respBody, err := c.do(ctx, http.MethodPost, "/scheduled-tasks/attempts", body)
 	if err != nil {
 		return Claim{}, err
 	}
@@ -175,23 +188,37 @@ func (c *Client) Attempt(ctx context.Context, taskName string, periodKey time.Ti
 	return claim, nil
 }
 
-// Complete calls POST /scheduled-task-runs/{id}/complete.
-func (c *Client) Complete(ctx context.Context, id string) error {
-	_, err := c.do(ctx, http.MethodPost, "/scheduled-task-runs/"+url.PathEscape(id)+"/complete", nil)
+// Complete calls PATCH /scheduled-tasks/attempts/{id} with status
+// "succeeded". attemptCount must be the Claim.Run.AttemptCount the Attempt
+// call handed back for this same id — entity-service rejects a mismatched
+// attemptCount (a stale claim, or one that's already been resolved by
+// another caller) rather than overwriting a newer attempt's outcome.
+func (c *Client) Complete(ctx context.Context, id string, attemptCount int) error {
+	body, err := json.Marshal(struct {
+		AttemptCount int    `json:"attemptCount"`
+		Status       string `json:"status"`
+	}{AttemptCount: attemptCount, Status: "succeeded"})
+	if err != nil {
+		return fmt.Errorf("ledger: encode Complete request: %w", err)
+	}
+	_, err = c.do(ctx, http.MethodPatch, "/scheduled-tasks/attempts/"+url.PathEscape(id), body)
 	return err
 }
 
-// Fail calls POST /scheduled-task-runs/{id}/fail. nextRetryOn is this
-// client's own choice (see registry.Task.RetryBackoff) — entity-service has
-// no backoff policy opinion of its own.
-func (c *Client) Fail(ctx context.Context, id, errMsg string, nextRetryOn time.Time) error {
+// Fail calls PATCH /scheduled-tasks/attempts/{id} with status "failed".
+// nextRetryOn is this client's own choice (see registry.Task.RetryBackoff)
+// — entity-service has no backoff policy opinion of its own. attemptCount
+// — see Complete's own doc comment; the same binding applies here.
+func (c *Client) Fail(ctx context.Context, id string, attemptCount int, errMsg string, nextRetryOn time.Time) error {
 	body, err := json.Marshal(struct {
-		Error       string    `json:"error"`
-		NextRetryOn time.Time `json:"nextRetryOn"`
-	}{Error: errMsg, NextRetryOn: nextRetryOn})
+		AttemptCount int       `json:"attemptCount"`
+		Status       string    `json:"status"`
+		Error        string    `json:"error"`
+		NextRetryOn  time.Time `json:"nextRetryOn"`
+	}{AttemptCount: attemptCount, Status: "failed", Error: errMsg, NextRetryOn: nextRetryOn})
 	if err != nil {
 		return fmt.Errorf("ledger: encode Fail request: %w", err)
 	}
-	_, err = c.do(ctx, http.MethodPost, "/scheduled-task-runs/"+url.PathEscape(id)+"/fail", body)
+	_, err = c.do(ctx, http.MethodPatch, "/scheduled-tasks/attempts/"+url.PathEscape(id), body)
 	return err
 }

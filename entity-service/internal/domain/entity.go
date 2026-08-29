@@ -5201,13 +5201,38 @@ type ClaimScheduledTaskRunResponse struct {
 	Run     ScheduledTaskRun `json:"run"`
 }
 
-// FailScheduledTaskRunRequest is the request body for
-// POST /scheduled-task-runs/{id}/fail. NextRetryOn is supplied by the
-// caller, not computed here — this service has no opinion on backoff
-// policy, the same way it has no opinion on SLA clock durations.
-type FailScheduledTaskRunRequest struct {
-	Error       string    `json:"error"`
-	NextRetryOn time.Time `json:"nextRetryOn"`
+// ScheduledTaskRunAttemptStatus is the value of
+// UpdateScheduledTaskRunAttemptRequest.Status — the outcome the caller is
+// reporting for the attempt it claimed. Modeled as an enum, not a bare
+// boolean, so a future third outcome (if one is ever needed) doesn't force
+// a breaking change to this request's shape.
+type ScheduledTaskRunAttemptStatus string
+
+const (
+	ScheduledTaskRunAttemptSucceeded ScheduledTaskRunAttemptStatus = "succeeded"
+	ScheduledTaskRunAttemptFailed    ScheduledTaskRunAttemptStatus = "failed"
+)
+
+// UpdateScheduledTaskRunAttemptRequest is the request body for
+// PATCH /scheduled-tasks/attempts/{id} — the single endpoint reporting an
+// attempt's outcome, replacing what used to be two separate
+// action-style endpoints (POST .../complete and POST .../fail). Status
+// picks which outcome is being reported; Error/NextRetryOn are used (and
+// required) only when Status is "failed" — ignored otherwise.
+//
+// AttemptCount must match the value
+// ClaimScheduledTaskRunResponse.Run.AttemptCount reported when this
+// caller's own Attempt call claimed the run — see
+// ScheduledTaskRunRepository.Complete's own doc comment for why this binds
+// the report to that specific claim rather than to the row's identity
+// alone. NextRetryOn is supplied by the caller, not computed here — this
+// service has no opinion on backoff policy, the same way it has no opinion
+// on SLA clock durations.
+type UpdateScheduledTaskRunAttemptRequest struct {
+	AttemptCount int                           `json:"attemptCount"`
+	Status       ScheduledTaskRunAttemptStatus `json:"status"`
+	Error        string                        `json:"error,omitempty"`
+	NextRetryOn  *time.Time                    `json:"nextRetryOn,omitempty"`
 }
 
 // ListScheduledTaskRunsResponse is the response body for

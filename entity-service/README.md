@@ -178,11 +178,12 @@ and `operations/csm-scheduled-tasks`'s `CLAUDE.md` for the "period keys"/"supers
 behind it.
 
 Consumed by that component's engine, which claims a period via
-`POST /scheduled-task-runs/attempt`, then reports back via
-`POST /scheduled-task-runs/{id}/complete` or `POST /scheduled-task-runs/{id}/fail`.
-`GET /scheduled-task-runs?status=<filter>` is monitoring-only, and
-`DELETE /scheduled-task-runs?resolvedBefore=<ts>` backs that same component's own self-hosted
-housekeeping sub-cron.
+`POST /scheduled-tasks/attempts`, then reports back via
+`PATCH /scheduled-tasks/attempts/{id}` (`{attemptCount, status: "succeeded"|"failed", ...}`).
+`GET /scheduled-tasks/attempts?status=<filter>` is monitoring-only, and
+`DELETE /scheduled-tasks/attempts?resolvedBefore=<ts>` is available for that same component's own
+self-hosted housekeeping sub-cron — no such sub-cron is registered there yet, so nothing calls this
+endpoint automatically until one is added.
 
 ## Security Scanning
 
