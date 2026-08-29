@@ -23,11 +23,17 @@
 package httpsec
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 )
+
+// errInvalidURL is returned as-is (never wrapped) by RequireSecureURL: unlike
+// a wrapped error, this carries no risk of echoing url.Parse's own error
+// text — which includes the input it failed on — into a log line.
+var errInvalidURL = errors.New("invalid URL")
 
 // RequireSecureURL returns an error unless rawURL uses https, or its host
 // is loopback (localhost/127.0.0.1/::1) — plain http is allowed only for
@@ -36,14 +42,15 @@ import (
 // deployment target (entity-service, the email-sending service, any future
 // service client this component grows) must be https.
 //
-// Deliberately never includes rawURL itself in the returned error: this
-// error is logged at startup (see cmd/server/main.go) and a malformed or
-// insecure URL can carry userinfo or a query-string token, which would
-// otherwise leak into logs.
+// Deliberately never includes rawURL itself, or url.Parse's own error text,
+// in the returned error: this error is logged at startup (see
+// cmd/server/main.go), a malformed or insecure URL can carry userinfo or a
+// query-string token, and url.Parse's error message echoes back the input
+// it failed on — either would otherwise leak into logs.
 func RequireSecureURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
+		return errInvalidURL
 	}
 	if u.Scheme == "https" || isLoopbackHost(u.Hostname()) {
 		return nil

@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"strconv"
@@ -81,25 +82,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Global kill switch for every failure alert email — see
+	// engine.Engine.AlertsEnabled's own doc comment. Defaults to true (the
+	// current always-alert behavior); set to false to go quiet without
+	// touching ALERT_RECIPIENTS or any task's SUB_CRON_RECIPIENTS entry.
+	alertsEnabled := envBool("ALERTS_ENABLED", true)
+
 	// Standing ops/on-call audience, emailed on every failure for every
 	// task in addition to that task's own registry.Task.To/Cc — see
-	// engine.Engine.AlertRecipients' own doc comment. Parsed before the
-	// email client below specifically so the check right after it can run:
-	// a non-empty list with no EMAIL_BASE_URL configured would otherwise
-	// only surface the first time some task actually fails and tries to
-	// send, as an opaque "invalid URL" error from a relative "/send-email"
-	// path — much easier to catch here, at startup.
+	// engine.Engine.AlertRecipients' own doc comment. The EMAIL_BASE_URL
+	// check below covers this list too, once every task's own To is known.
 	alertRecipients := splitComma(os.Getenv("ALERT_RECIPIENTS"))
 	emailBaseURL := os.Getenv("EMAIL_BASE_URL")
-	if len(alertRecipients) > 0 && emailBaseURL == "" {
-		slog.Error("ALERT_RECIPIENTS is set but EMAIL_BASE_URL is not; refusing to start since failure alerts could never actually send")
-		os.Exit(1)
-	}
 
-	// Email itself is not required for every deployment (nothing calls it
-	// while no registered task sets To and ALERT_RECIPIENTS is also empty,
-	// per the check above) — EMAIL_BASE_URL is read with os.Getenv, not
-	// mustEnv, matching integrations/csm-notification-service's own
+	// Email itself is not required for every deployment — EMAIL_BASE_URL is
+	// read with os.Getenv, not mustEnv, matching
+	// integrations/csm-notification-service's own
 	// internal/notifications.EmailClient. NewClient itself still fails
 	// startup if EMAIL_BASE_URL is set but not https. Authenticates with
 	// the same shared OAUTH2_* credentials as ledgerClient above, not its
@@ -143,14 +141,32 @@ func main() {
 		},
 	}
 
+	var tasksWithRecipients []string
 	for _, t := range tasks {
 		if !gronx.IsValid(t.Schedule) {
 			slog.Error("invalid cron schedule for registered task; refusing to start", "task", t.Name, "schedule", t.Schedule)
 			os.Exit(1)
 		}
+		if len(t.To) > 0 {
+			tasksWithRecipients = append(tasksWithRecipients, t.Name)
+		}
 	}
 
-	eng := engine.New(tasks, ledgerClient, emailClient, driverInterval, alertRecipients)
+	// A non-empty audience with no EMAIL_BASE_URL configured would otherwise
+	// only surface the first time some task actually fails and tries to
+	// send, as an opaque "invalid URL" error from a relative "/send-email"
+	// path — much easier to catch here, at startup. Checked after tasks is
+	// built so a per-task SUB_CRON_RECIPIENTS "to" list is covered too, not
+	// just the standing ALERT_RECIPIENTS audience. Skipped entirely when
+	// ALERTS_ENABLED=false — no email will ever be sent in that case, so an
+	// unset EMAIL_BASE_URL isn't a misconfiguration.
+	if alertsEnabled && emailBaseURL == "" && (len(alertRecipients) > 0 || len(tasksWithRecipients) > 0) {
+		slog.Error("failure alert recipients are configured but EMAIL_BASE_URL is not; refusing to start since those alerts could never actually send",
+			"alertRecipientsSet", len(alertRecipients) > 0, "tasksWithOwnRecipients", tasksWithRecipients)
+		os.Exit(1)
+	}
+
+	eng := engine.New(tasks, ledgerClient, emailClient, driverInterval, alertRecipients, alertsEnabled)
 
 	// No app-level execution timeout here — Choreo's own Scheduled Task
 	// execution-time limit already bounds how long one invocation can run.
@@ -243,6 +259,22 @@ func recipientsFor(overrides map[string]subCronRecipients, taskName string) (to,
 	return r.To, r.Cc
 }
 
+// envBool returns the given environment variable parsed with
+// strconv.ParseBool (accepts "true"/"false"/"1"/"0"/"t"/"f", etc.), or def
+// if unset or malformed.
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		slog.Warn("environment variable is not a valid boolean; using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return b
+}
+
 // envDuration returns the given environment variable parsed with
 // time.ParseDuration (e.g. "1h", "5m"), or def if unset or malformed.
 func envDuration(key string, def time.Duration) time.Duration {
@@ -258,20 +290,28 @@ func envDuration(key string, def time.Duration) time.Duration {
 	return d
 }
 
+// maxRetentionDays is the largest value envDays accepts: the most whole
+// days that fit in a time.Duration (an int64 count of nanoseconds) without
+// overflowing. A larger value wraps around to a negative duration, which
+// would turn a retention window into a future cleanup cutoff and delete
+// every already-resolved row instead of none of them.
+const maxRetentionDays = int64(math.MaxInt64) / int64(24*time.Hour)
+
 // envDays returns the given environment variable, parsed as a positive
 // whole number of days and converted to a time.Duration, or defDays if
-// unset or malformed. A plain integer is friendlier for a "how many days
-// of history to keep" setting than requiring Go duration syntax like
-// "720h".
+// unset, malformed, or too large to convert without overflowing. A plain
+// integer is friendlier for a "how many days of history to keep" setting
+// than requiring Go duration syntax like "720h".
 func envDays(key string, defDays int) time.Duration {
+	def := time.Duration(defDays) * 24 * time.Hour
 	v := os.Getenv(key)
 	if v == "" {
-		return time.Duration(defDays) * 24 * time.Hour
+		return def
 	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil || n <= 0 || n > maxRetentionDays {
 		slog.Warn("environment variable is not a valid positive number of days; using default", "key", key, "value", v, "defaultDays", defDays)
-		return time.Duration(defDays) * 24 * time.Hour
+		return def
 	}
 	return time.Duration(n) * 24 * time.Hour
 }

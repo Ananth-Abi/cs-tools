@@ -68,11 +68,18 @@ type Engine struct {
 	// long as this is set. Nil is a valid, deliberate choice for "no
 	// standing alert audience configured."
 	AlertRecipients []string
+	// AlertsEnabled is a global kill switch for every failure alert email —
+	// recordFailure still records the failure in the ledger and logs it
+	// either way, this only silences the email itself. Sits above both
+	// AlertRecipients and every task's own To/Cc: set to false to go quiet
+	// for a maintenance window or a known-noisy period without touching
+	// either config. Defaults to true (see cmd/server/main.go's ALERTS_ENABLED).
+	AlertsEnabled bool
 }
 
 // New constructs an Engine.
-func New(tasks []registry.Task, ledgerClient LedgerClient, emailClient EmailSender, driverInterval time.Duration, alertRecipients []string) *Engine {
-	return &Engine{Tasks: tasks, Ledger: ledgerClient, Email: emailClient, DriverInterval: driverInterval, AlertRecipients: alertRecipients}
+func New(tasks []registry.Task, ledgerClient LedgerClient, emailClient EmailSender, driverInterval time.Duration, alertRecipients []string, alertsEnabled bool) *Engine {
+	return &Engine{Tasks: tasks, Ledger: ledgerClient, Email: emailClient, DriverInterval: driverInterval, AlertRecipients: alertRecipients, AlertsEnabled: alertsEnabled}
 }
 
 // Tick evaluates every registered task once against now. Call this exactly
@@ -135,6 +142,10 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 	nextRetry := now.Add(backoff)
 	if err := e.Ledger.Fail(ctx, runID, attemptCount, handlerErr.Error(), nextRetry); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to record failure in ledger", "task", task.Name, "runId", runID, "err", err)
+	}
+
+	if !e.AlertsEnabled {
+		return
 	}
 
 	// AlertRecipients (the standing ops audience) always gets included

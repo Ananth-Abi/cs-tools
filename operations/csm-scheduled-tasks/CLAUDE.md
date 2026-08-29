@@ -131,6 +131,13 @@ Two layers, combined:
 A task's failures send no email only if **both** `ALERT_RECIPIENTS` and that task's own `To` are
 empty — it still fails and retries normally either way, just silently as far as email goes.
 
+`ALERTS_ENABLED` (env var, default `true`) is a global kill switch above both layers —
+`engine.Engine.AlertsEnabled` — for going quiet during a maintenance window or a known-noisy period
+without editing either recipients config. Failures are still recorded in entity-service and logged
+either way; this only silences the email send in `Engine.recordFailure`. When it's `false`,
+`EMAIL_BASE_URL` is also no longer required at startup even if recipients are configured, since no
+email will ever actually be sent — see cmd/server/main.go's startup check.
+
 **Every single failed attempt sends an alert, not just a final give-up** — there is no "fully
 failed" or exhausted state in this design (see "The core mechanism" above), so this fires each time
 a handler returns an error, however many times that happens before the task either succeeds or gets
@@ -153,12 +160,14 @@ There is currently no success email — see "Future: per-task report emails" bel
 | `OAUTH2_CLIENT_ID` / `OAUTH2_CLIENT_SECRET` / `OAUTH2_TOKEN_URL` | Yes | Shared OAuth2 client credentials — used by the entity-service client and the email client below, and by any future service client this component grows. Mirrors `integrations/csm-notification-service`'s own `OAUTH2_*` convention: the real deployments these point at authenticate every caller through the same shared gateway app, scoped per-client via each client's own `*_SCOPES` var, not a separate app per consumer |
 | `CUSTOMER_ENTITY_SERVICE_BASE_URL` | Yes | entity-service base URL |
 | `CUSTOMER_ENTITY_SERVICE_SCOPES` | No | Comma-separated OAuth2 scopes for the entity-service client, using the shared credentials above |
-| `EMAIL_BASE_URL` | No | Internal email notification service base URL (`POST /send-email`) — same service `integrations/csm-notification-service` uses. Authenticates with the same shared `OAUTH2_*` credentials, not its own |
+| `EMAIL_BASE_URL` | No, but required if `ALERTS_ENABLED` is true and `ALERT_RECIPIENTS` or any task's `SUB_CRON_RECIPIENTS` "to" is non-empty (checked at startup) | Internal email notification service base URL (`POST /send-email`) — same service `integrations/csm-notification-service` uses. Authenticates with the same shared `OAUTH2_*` credentials, not its own |
 | `EMAIL_SCOPES` | No | Comma-separated OAuth2 scopes for the email client, using the shared credentials above |
 | `EMAIL_FROM_ADDRESS` | No | Fixed "From" address for every email this component sends |
+| `ALERTS_ENABLED` | No (default `true`) | Global kill switch for every failure alert email, above `ALERT_RECIPIENTS` and `SUB_CRON_RECIPIENTS` both — see "Alerting" above |
 | `ALERT_RECIPIENTS` | No | Comma-separated email addresses alerted on every failed sub-cron attempt, for every task — see "Alerting" above |
 | `DRIVER_INTERVAL` | No (default `1h`) | This component's own expected invocation cadence — must match the cron trigger configured on the Choreo Scheduled Task component itself |
 | `SUB_CRON_SCHEDULES` | No | JSON object `{"<task.Name>": "<cron expression>"}` overriding any registered task's schedule by name — see "Adding a sub-cron" above. A task not mentioned keeps its own hardcoded default |
+| `SUB_CRON_RECIPIENTS` | No | JSON object `{"<task.Name>": {"to": [...], "cc": [...]}}` giving a registered task its own extra failure-alert audience, on top of `ALERT_RECIPIENTS` — see "Alerting" and "Adding a sub-cron" above. A task not mentioned gets no per-task recipients |
 | `HOUSEKEEPING_RETENTION_DAYS` | No (default `30`) | Plain integer number of days of resolved history the `housekeeping_cleanup` sub-cron keeps — see "Housekeeping" above |
 
 No app-level execution timeout is configured here — Choreo's own Scheduled Task execution-time
