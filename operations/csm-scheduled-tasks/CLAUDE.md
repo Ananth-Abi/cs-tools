@@ -48,12 +48,15 @@ worked examples that led here.
 
 ## Adding a sub-cron
 
-There are no sub-crons registered yet — `tasks := []registry.Task{}` in `cmd/server/main.go` is
-empty. To add one:
+`internal/housekeeping` (registered as `"housekeeping_cleanup"` in `cmd/server/main.go`) is the
+first real one, and doubles as the worked example for adding another:
 
 1. Write the handler: `func(ctx context.Context) error` — return nil on success, a non-nil error
    (with enough detail to be useful in an alert email) on failure. It does not need to know
    anything about retries, periods, or the ledger — the engine handles all of that.
+   `housekeeping.CleanupResolvedRuns(ledgerClient, retention)` returns exactly this shape, closing
+   over the ledger client and a retention `time.Duration` rather than taking them as `Handler`
+   arguments (the engine only ever calls `Handler(ctx)`, nothing else).
 2. Add a `registry.Task{Name, Schedule, Handler, ...}` entry to the `tasks` slice in
    `cmd/server/main.go`, with a sensible default `Schedule` hardcoded in code. `Name` is the
    entity-service ledger key **and** the key both `SUB_CRON_SCHEDULES` and `SUB_CRON_RECIPIENTS`
@@ -64,13 +67,13 @@ empty. To add one:
 3. Leave `To`/`Cc` unset in the struct literal itself — they're populated from config, not
    hardcoded (see step 4 and "Alerting" below).
 4. Wire up both config surfaces for it, by exact `Name`:
-   - Schedule: `scheduleFor(parseSubCronSchedules(os.Getenv("SUB_CRON_SCHEDULES")), "<task.Name>", "<default>")`
-     for the task's `Schedule` field.
-   - Recipients: `recipientsFor(parseSubCronRecipients(os.Getenv("SUB_CRON_RECIPIENTS")), "<task.Name>")`
-     returns `(to, cc []string)` for the task's `To`/`Cc` fields — leave both unset (call returns
-     `nil, nil`) unless `SUB_CRON_RECIPIENTS` actually mentions this task.
-   (All four helper functions already exist in `cmd/server/main.go`, just currently unreferenced
-   since there's nothing to call them for yet.)
+   - Schedule: `scheduleFor(scheduleOverrides, "<task.Name>", "<default>")` for the task's
+     `Schedule` field, where `scheduleOverrides := parseSubCronSchedules(os.Getenv("SUB_CRON_SCHEDULES"))`
+     is computed once, above the `tasks` slice, and reused for every task in it.
+   - Recipients: `recipientsFor(recipientOverrides, "<task.Name>")` returns `(to, cc []string)`
+     for the task's `To`/`Cc` fields, where `recipientOverrides := parseSubCronRecipients(os.Getenv("SUB_CRON_RECIPIENTS"))`
+     is likewise computed once and reused — leave both unset (call returns `nil, nil`) unless
+     `SUB_CRON_RECIPIENTS` actually mentions this task.
 
 Every task's cadence and per-task recipients can both be set without a code change:
 `SUB_CRON_SCHEDULES` is `{"<task.Name>": "<cron expression>"}`; `SUB_CRON_RECIPIENTS` is
@@ -84,6 +87,19 @@ sub-cron added here. `scheduleFor`/`recipientsFor` look up each task's override 
 `registry.Task.RetryBackoff` defaults to the driver's own interval (`DRIVER_INTERVAL`, see below)
 when zero — there is no point backing off shorter than how often this process even runs. Set it
 explicitly only if a specific task needs to back off harder than "every tick."
+
+## Housekeeping
+
+`internal/housekeeping.CleanupResolvedRuns`, registered as `"housekeeping_cleanup"`, is this
+component's first real sub-cron and the thing that finally calls
+`DELETE /scheduled-tasks/attempts?resolvedBefore=<ts>` — that endpoint existed in entity-service
+from the start (see that repo's own CLAUDE.md, "Scheduled task runs"), but nothing called it until
+this. Deletes every `scheduled_task_run` row that succeeded or was superseded more than
+`HOUSEKEEPING_RETENTION_DAYS` (default 30) ago, by its own resolution time — a row still
+failed/retrying is never touched, regardless of age. Default schedule `0 3 * * *` (daily, 03:00
+UTC, a low-traffic hour); override via `SUB_CRON_SCHEDULES` like any other task. `envDays`
+(`cmd/server/main.go`) parses the retention setting as a plain integer number of days rather than
+requiring Go duration syntax (`"720h"`) — friendlier for a "how many days of history" knob.
 
 ## Alerting
 
@@ -130,6 +146,7 @@ There is currently no success email — see "Future: per-task report emails" bel
 | `ALERT_RECIPIENTS` | No | Comma-separated email addresses alerted on every failed sub-cron attempt, for every task — see "Alerting" above |
 | `DRIVER_INTERVAL` | No (default `1h`) | This component's own expected invocation cadence — must match the cron trigger configured on the Choreo Scheduled Task component itself |
 | `SUB_CRON_SCHEDULES` | No | JSON object `{"<task.Name>": "<cron expression>"}` overriding any registered task's schedule by name — see "Adding a sub-cron" above. A task not mentioned keeps its own hardcoded default |
+| `HOUSEKEEPING_RETENTION_DAYS` | No (default `30`) | Plain integer number of days of resolved history the `housekeeping_cleanup` sub-cron keeps — see "Housekeeping" above |
 
 No app-level execution timeout is configured here — Choreo's own Scheduled Task execution-time
 limit already bounds how long one invocation can run. `cmd/server/main.go` instead cancels its

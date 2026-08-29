@@ -31,12 +31,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/adhocore/gronx"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/engine"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/housekeeping"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/ledger"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/notify"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/registry"
@@ -115,13 +117,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	// No real sub-crons registered yet. See this component's own CLAUDE.md
-	// ("Adding a sub-cron") for the steps to add one — including wiring
-	// SUB_CRON_SCHEDULES/SUB_CRON_RECIPIENTS support in via
-	// parseSubCronSchedules/scheduleFor and
-	// parseSubCronRecipients/recipientsFor below, none of which have a
-	// caller until then.
-	tasks := []registry.Task{}
+	// Shared by both config-driven override maps below — see
+	// parseSubCronSchedules/parseSubCronRecipients's own doc comments.
+	scheduleOverrides := parseSubCronSchedules(os.Getenv("SUB_CRON_SCHEDULES"))
+	recipientOverrides := parseSubCronRecipients(os.Getenv("SUB_CRON_RECIPIENTS"))
+
+	const housekeepingTaskName = "housekeeping_cleanup"
+	housekeepingTo, housekeepingCc := recipientsFor(recipientOverrides, housekeepingTaskName)
+	tasks := []registry.Task{
+		// This component's first real sub-cron: deletes rows from
+		// entity-service's scheduled_task_run table that succeeded or were
+		// superseded ("fully omitted after retrying") more than
+		// HOUSEKEEPING_RETENTION_DAYS ago — see internal/housekeeping's own
+		// doc comment. Default schedule is daily at 03:00 UTC, a low-traffic
+		// hour; override via SUB_CRON_SCHEDULES if needed.
+		{
+			Name:     housekeepingTaskName,
+			Schedule: scheduleFor(scheduleOverrides, housekeepingTaskName, "0 3 * * *"),
+			Handler:  housekeeping.CleanupResolvedRuns(ledgerClient, envDays("HOUSEKEEPING_RETENTION_DAYS", 30)),
+			To:       housekeepingTo,
+			Cc:       housekeepingCc,
+		},
+	}
 
 	for _, t := range tasks {
 		if !gronx.IsValid(t.Schedule) {
@@ -164,11 +181,7 @@ func mustEnv(key string) string {
 // overrides, so every task just falls back to its own hardcoded default
 // schedule — mirrors integrations/csm-notification-service's own
 // parseGoogleChatSpaces (same "optional JSON env var, log and fall back on
-// a bad value" shape). No caller until the first real registry.Task exists
-// — see "Adding a sub-cron" in this component's own CLAUDE.md, which calls
-// this out explicitly as scaffolding for that step, not dead code.
-//
-//nolint:unused // see doc comment above
+// a bad value" shape).
 func parseSubCronSchedules(raw string) map[string]string {
 	if raw == "" {
 		return nil
@@ -185,8 +198,6 @@ func parseSubCronSchedules(raw string) map[string]string {
 // otherwise def. def is still what ships when SUB_CRON_SCHEDULES doesn't
 // mention taskName at all — every registered task keeps a sensible
 // hardcoded default in code; SUB_CRON_SCHEDULES only ever overrides it.
-//
-//nolint:unused // see parseSubCronSchedules's own nolint comment above.
 func scheduleFor(overrides map[string]string, taskName, def string) string {
 	if s, ok := overrides[taskName]; ok && s != "" {
 		return s
@@ -210,10 +221,6 @@ type subCronRecipients struct {
 // additional audience of its own. A missing or malformed value logs a
 // warning and yields no per-task recipients at all, the same
 // fail-safe-not-fail-closed shape parseSubCronSchedules uses.
-//
-// same situation as parseSubCronSchedules above.
-//
-//nolint:unused // no caller until the first real registry.Task exists —
 func parseSubCronRecipients(raw string) map[string]subCronRecipients {
 	if raw == "" {
 		return nil
@@ -228,8 +235,6 @@ func parseSubCronRecipients(raw string) map[string]subCronRecipients {
 
 // recipientsFor returns overrides[taskName]'s To/Cc, or nil, nil if
 // taskName isn't mentioned in overrides at all.
-//
-//nolint:unused // see parseSubCronRecipients's own nolint comment above.
 func recipientsFor(overrides map[string]subCronRecipients, taskName string) (to, cc []string) {
 	r := overrides[taskName]
 	return r.To, r.Cc
@@ -248,6 +253,24 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// envDays returns the given environment variable, parsed as a positive
+// whole number of days and converted to a time.Duration, or defDays if
+// unset or malformed. A plain integer is friendlier for a "how many days
+// of history to keep" setting than requiring Go duration syntax like
+// "720h".
+func envDays(key string, defDays int) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return time.Duration(defDays) * 24 * time.Hour
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		slog.Warn("environment variable is not a valid positive number of days; using default", "key", key, "value", v, "defaultDays", defDays)
+		return time.Duration(defDays) * 24 * time.Hour
+	}
+	return time.Duration(n) * 24 * time.Hour
 }
 
 func splitComma(s string) []string {

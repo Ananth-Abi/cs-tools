@@ -222,3 +222,24 @@ func (c *Client) Fail(ctx context.Context, id string, attemptCount int, errMsg s
 	_, err = c.do(ctx, http.MethodPatch, "/scheduled-tasks/attempts/"+url.PathEscape(id), body)
 	return err
 }
+
+// DeleteResolvedBefore calls
+// DELETE /scheduled-tasks/attempts?resolvedBefore=<cutoff> — deletes every
+// row that succeeded or was superseded before cutoff (by its own
+// resolution time, not when it was created; see entity-service's own
+// CLAUDE.md, "Scheduled task runs"). A row still failed/retrying is never
+// deleted regardless of age. Returns how many rows were removed.
+func (c *Client) DeleteResolvedBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	path := "/scheduled-tasks/attempts?resolvedBefore=" + url.QueryEscape(cutoff.Format(time.RFC3339))
+	respBody, err := c.do(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return 0, err
+	}
+	var resp struct {
+		DeletedCount int `json:"deletedCount"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return 0, fmt.Errorf("ledger: decode DeleteResolvedBefore response: %w", err)
+	}
+	return resp.DeletedCount, nil
+}

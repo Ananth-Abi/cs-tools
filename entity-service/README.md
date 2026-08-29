@@ -181,9 +181,8 @@ Consumed by that component's engine, which claims a period via
 `POST /scheduled-tasks/attempts`, then reports back via
 `PATCH /scheduled-tasks/attempts/{id}` (`{attemptCount, status: "succeeded"|"failed", ...}`).
 `GET /scheduled-tasks/attempts?status=<filter>` is monitoring-only, and
-`DELETE /scheduled-tasks/attempts?resolvedBefore=<ts>` is available for that same component's own
-self-hosted housekeeping sub-cron — no such sub-cron is registered there yet, so nothing calls this
-endpoint automatically until one is added.
+`DELETE /scheduled-tasks/attempts?resolvedBefore=<ts>` backs that same component's own self-hosted
+`housekeeping_cleanup` sub-cron (`internal/housekeeping`), which calls it daily.
 
 ## Security Scanning
 

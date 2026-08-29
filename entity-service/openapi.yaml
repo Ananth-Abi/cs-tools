@@ -344,9 +344,9 @@ paths:
         Delete every run that succeeded or was superseded before
         resolvedBefore (by its own resolution time, not when it was
         created). A run that is still open (neither succeeded nor
-        superseded) is never deleted, regardless of age. Intended for a
-        self-hosted housekeeping sub-cron — no such sub-cron is registered
-        yet, so nothing calls this endpoint automatically today.
+        superseded) is never deleted, regardless of age. Called daily by
+        operations/csm-scheduled-tasks' own self-hosted housekeeping_cleanup
+        sub-cron.
       operationId: deleteScheduledTaskRuns
       parameters:
         - name: resolvedBefore

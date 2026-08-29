@@ -445,10 +445,11 @@ Exposed at:
 - `GET /scheduled-tasks/attempts?status=<failed|succeeded|superseded>` —
   monitoring only, not called by the engine's own claim/retry logic. Plain
   unpaginated list. `status=failed` stays small by construction (at most
-  one open row per `taskName`), but `status=succeeded`/`superseded` is
-  retained history with no cap of its own — it stays bounded only for as
-  long as `DELETE /scheduled-tasks/attempts` (below) is actually being
-  called by something; don't assume it's small without checking that.
+  one open row per `taskName`), and `status=succeeded`/`superseded` now
+  stays bounded too, as long as `operations/csm-scheduled-tasks`' own
+  `housekeeping_cleanup` sub-cron (below) keeps running — that result set
+  has no cap of its own, it's only ever kept small by that cleanup actually
+  happening; don't assume it's small in a deployment where it isn't.
 - `DELETE /scheduled-tasks/attempts?resolvedBefore=<RFC3339 timestamp>` — deletes
   every row that succeeded or was superseded before the cutoff, by its own
   `succeededOn`/`supersededOn` (not `createdOn` — a row open for 89 days
@@ -456,10 +457,10 @@ Exposed at:
   resolved on day one, not an immediate deletion because it happens to look
   old by creation time). A row still `failed` is never deleted regardless
   of age — it represents a genuinely unresolved problem, not history to
-  archive. Meant for a self-hosted "housekeeping" sub-cron in
-  `operations/csm-scheduled-tasks`' own registry — as of this writing no
-  such sub-cron is registered there yet, so nothing calls this endpoint
-  automatically; it has to be added before cleanup actually happens.
+  archive. Called daily by `operations/csm-scheduled-tasks`' own
+  self-hosted `housekeeping_cleanup` sub-cron (`internal/housekeeping`
+  there) — that endpoint existed from the start, but this is the first
+  thing that actually calls it.
 
 ## Adding a new entity
 

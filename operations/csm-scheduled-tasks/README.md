@@ -30,9 +30,10 @@ csm-scheduled-tasks/
 │   ├── schedule/period.go   # PeriodKey(cronExpr, now) — the "most recent scheduled firing" concept
 │   ├── registry/registry.go # Task{Name, Schedule, Handler, RetryBackoff}
 │   ├── engine/engine.go     # Tick: claim → run → report back, once per task per invocation
-│   ├── ledger/client.go     # entity-service client (Attempt/Complete/Fail) — this component's only durable state
+│   ├── ledger/client.go     # entity-service client (Attempt/Complete/Fail/DeleteResolvedBefore) — this component's only durable state
 │   ├── notify/              # Alert email sending — same internal email service csm-notification-service uses; templates/alert.html is the only template today (see CLAUDE.md, "Future: per-task report emails")
 │   ├── httpsec/httpsec.go   # Shared HTTPS/redirect guards for ledger and notify's OAuth2 clients
+│   ├── housekeeping/        # The first real sub-cron — deletes old resolved scheduled_task_run rows (see CLAUDE.md, "Housekeeping")
 │   └── apierror/errors.go   # Typed upstream-error wrapper, shared by ledger and notify
 ```
 
@@ -44,13 +45,13 @@ endpoint declaration this component needs to check in.
 
 ```bash
 # from operations/csm-scheduled-tasks
-cp .env.example .env   # fill in ENTITY_SERVICE_* at minimum
+cp .env.example .env   # fill in CUSTOMER_ENTITY_SERVICE_* at minimum
 go run ./cmd/server
 ```
 
 Each run is one tick against whichever entity-service `.env` points at, then the process exits.
-There are no sub-crons registered yet, so a run currently does nothing beyond logging — see
-`CLAUDE.md` ("Adding a sub-cron") for how to register a real one.
+`housekeeping_cleanup` (see `CLAUDE.md`, "Housekeeping") is the one sub-cron registered today; see
+`CLAUDE.md` ("Adding a sub-cron") for how to register another.
 
 ## Environment variables
 
