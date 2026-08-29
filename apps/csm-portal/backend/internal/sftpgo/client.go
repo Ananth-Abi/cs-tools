@@ -30,11 +30,13 @@ package sftpgo
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -256,6 +258,118 @@ func (c *Client) CreateShare(ctx context.Context, accessToken, storageKey string
 // "/web/client/pubshares/{id}".
 func (c *Client) PublicShareURL(shareID string) string {
 	return c.publicBaseURL + "/web/client/pubshares/" + url.PathEscape(shareID) + "?compress=false"
+}
+
+// tusResumableVersion is the TUS protocol version this client and the
+// frontend's uploadFileViaTus both advertise via the Tus-Resumable header.
+const tusResumableVersion = "1.0.0"
+
+// UploadBytes writes data directly to SFTPGo's share-authenticated
+// chunked/TUS upload endpoint (POST /api/v2/shares-chunked-uploads, then a
+// single PATCH carrying the whole payload at offset 0), driven server-side
+// by this Go HTTP client rather than a browser.
+//
+// This mirrors, call for call, what the frontend's uploadFileViaTus does
+// against the same endpoint (see
+// apps/csm-portal/webapp/src/features/csm-cases/api/attachmentStorageTus.ts):
+// same Upload-Metadata keys (path/share_id/mkdir_parents), same
+// Tus-Resumable/Upload-Length/Upload-Offset headers, same
+// application/offset+octet-stream PATCH body. It exists because the
+// browser-driven two-phase flow (MintUploadToken + confirm) assumes the
+// caller does not yet have the file's bytes; the inline-image extraction
+// path (see internal/handler.InlineImageProcessor) has the bytes
+// synchronously in-process already decoded from a data: URI, so it drives
+// the same TUS mechanics itself rather than round-tripping through a
+// browser that was never involved.
+//
+// shareID must be a write-scoped share (see CreateShare with
+// ShareScopeWrite) whose root covers storageKey's parent directory — it is
+// the entire upload credential, exactly as for the browser path; no bearer
+// token is sent alongside it. storageKey's final path segment (after the
+// last "/") is sent as the TUS "path" metadata, matching the frontend's
+// convention of sending only the filename since the share's own root
+// already covers the directory portion.
+func (c *Client) UploadBytes(ctx context.Context, shareID, storageKey string, data []byte, contentType string) error {
+	fileName := storageKey
+	if idx := strings.LastIndex(storageKey, "/"); idx != -1 {
+		fileName = storageKey[idx+1:]
+	}
+	uploadMetadata := strings.Join([]string{
+		"path " + base64.StdEncoding.EncodeToString([]byte(fileName)),
+		"share_id " + base64.StdEncoding.EncodeToString([]byte(shareID)),
+		"mkdir_parents " + base64.StdEncoding.EncodeToString([]byte("true")),
+	}, ",")
+
+	createEndpoint := c.baseURL + "/api/v2/shares-chunked-uploads"
+	createReq, err := http.NewRequestWithContext(ctx, http.MethodPost, createEndpoint, nil)
+	if err != nil {
+		return fmt.Errorf("sftpgo: build chunked-upload create request: %w", err)
+	}
+	// No Authorization header: the share id embedded in Upload-Metadata above
+	// is the entire credential for this endpoint, exactly as for the
+	// browser-driven upload — see this method's doc comment.
+	createReq.Header.Set("Tus-Resumable", tusResumableVersion)
+	createReq.Header.Set("Upload-Length", strconv.Itoa(len(data)))
+	createReq.Header.Set("Upload-Metadata", uploadMetadata)
+
+	createResp, err := c.http.Do(createReq)
+	if err != nil {
+		return fmt.Errorf("sftpgo: chunked-upload create request: %w", err)
+	}
+	createBody, err := io.ReadAll(createResp.Body)
+	createResp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("sftpgo: read chunked-upload create response: %w", err)
+	}
+	if createResp.StatusCode < http.StatusOK || createResp.StatusCode >= http.StatusMultipleChoices {
+		return &apierror.Error{StatusCode: createResp.StatusCode, Body: truncate(createBody)}
+	}
+
+	// The TUS spec returns the upload's URL via Location, which may be
+	// relative to the create endpoint's origin or an absolute URL — resolve
+	// it the same way the frontend does, and refuse to PATCH anywhere outside
+	// this client's own configured origin (a misconfigured or compromised
+	// SFTPGo instance redirecting the upload elsewhere is exactly the risk
+	// the frontend's uploadFileViaTus guards against with the same check).
+	uploadURL := createEndpoint
+	if location := createResp.Header.Get("Location"); location != "" {
+		base, err := url.Parse(createEndpoint)
+		if err != nil {
+			return fmt.Errorf("sftpgo: parse chunked-upload create endpoint: %w", err)
+		}
+		resolved, err := url.Parse(location)
+		if err != nil {
+			return fmt.Errorf("sftpgo: parse chunked-upload Location header %q: %w", location, err)
+		}
+		resolvedURL := base.ResolveReference(resolved)
+		if resolvedURL.Scheme != base.Scheme || resolvedURL.Host != base.Host {
+			return fmt.Errorf("sftpgo: refusing to upload to an untrusted origin returned by the Location header: %q", resolvedURL.Redacted())
+		}
+		uploadURL = resolvedURL.String()
+	}
+
+	patchReq, err := http.NewRequestWithContext(ctx, http.MethodPatch, uploadURL, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("sftpgo: build chunked-upload PATCH request: %w", err)
+	}
+	patchReq.Header.Set("Tus-Resumable", tusResumableVersion)
+	patchReq.Header.Set("Upload-Offset", "0")
+	patchReq.Header.Set("Content-Type", "application/offset+octet-stream")
+	patchReq.ContentLength = int64(len(data))
+
+	patchResp, err := c.http.Do(patchReq)
+	if err != nil {
+		return fmt.Errorf("sftpgo: chunked-upload PATCH request: %w", err)
+	}
+	patchBody, err := io.ReadAll(patchResp.Body)
+	patchResp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("sftpgo: read chunked-upload PATCH response: %w", err)
+	}
+	if patchResp.StatusCode < http.StatusOK || patchResp.StatusCode >= http.StatusMultipleChoices {
+		return &apierror.Error{StatusCode: patchResp.StatusCode, Body: truncate(patchBody)}
+	}
+	return nil
 }
 
 // truncate bounds body to maxErrBodyBytes for inclusion on an *apierror.Error.

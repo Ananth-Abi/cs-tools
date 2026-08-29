@@ -116,6 +116,12 @@ type CaseHandler struct {
 	// value is a ready-to-use sync.WaitGroup, so this needs no constructor
 	// wiring.
 	pending sync.WaitGroup
+	// inlineImages enables server-side inline-image extraction on
+	// CreateCaseComment when non-nil — see WithInlineImageProcessor. nil on
+	// every existing call site (including every test), which keeps
+	// CreateCaseComment's behavior completely unchanged from before this
+	// feature existed.
+	inlineImages *InlineImageProcessor
 }
 
 // NewCaseHandler creates a CaseHandler backed by the given entity client.
@@ -174,6 +180,20 @@ func (h *CaseHandler) WaitPendingPublishes(ctx context.Context) {
 	case <-done:
 	case <-ctx.Done():
 	}
+}
+
+// WithInlineImageProcessor enables server-side inline-image extraction on
+// CreateCaseComment: a base64 data: URI embedded in a comment's rich-text
+// HTML is extracted, uploaded as a real SFTPGo-backed attachment, and the
+// HTML is rewritten to a ".iix" reference — mirroring ServiceNow's own
+// RichTextUtils.processInlineImages for SN-backed comments. Only wired up in
+// cmd/server/main.go when SFTPGO_ATTACHMENT_STORAGE_ENABLED is on; SN-backed
+// comment creation is untouched either way, since SN's own scripted API
+// already performs the equivalent extraction itself. Returns h for chaining
+// at the construction site.
+func (h *CaseHandler) WithInlineImageProcessor(p *InlineImageProcessor) *CaseHandler {
+	h.inlineImages = p
+	return h
 }
 
 // resolveCurrentUserID returns the caller's platform user id — the id
@@ -392,6 +412,21 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusConflict, ErrMsgWorkNoteOnClosedCase)
 			return
 		}
+	}
+
+	// Extract any base64 inline image embedded in the comment's rich-text
+	// HTML into a real SFTPGo-backed attachment before forwarding to the
+	// entity service — mirrors ServiceNow's own RichTextUtils processing for
+	// SN-backed comments (that path is untouched: it already runs inside the
+	// SN scripted API, not here). Only active when
+	// SFTPGO_ATTACHMENT_STORAGE_ENABLED is on; see WithInlineImageProcessor.
+	if h.inlineImages != nil {
+		newBody, ierr := h.processCommentInlineImages(r, user, caseID, body)
+		if ierr != nil {
+			ierr.write(w)
+			return
+		}
+		body = newBody
 	}
 
 	result, err := h.entity.CreateCaseComment(r.Context(), caseID, body)

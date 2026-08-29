@@ -26,7 +26,9 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/sftpgo"
@@ -261,7 +263,7 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 	// invent: the frontend has no way to guarantee id uniqueness or apply the
 	// storage-key convention, and both are this backend's responsibility.
 	attachmentID := newAttachmentID()
-	storageKey := buildStorageKey(projectID, caseID, attachmentID)
+	storageKey := buildStorageKey(projectID, caseID, attachmentID, req.Filename)
 
 	// Create the attachment's metadata row BEFORE minting the upload share —
 	// see the doc comment above on why this ordering is load-bearing. If this
@@ -315,11 +317,15 @@ func (h *AttachmentStorageHandler) MintUploadToken(w http.ResponseWriter, r *htt
 	// write-scope share used with POST /shares-chunked-uploads always
 	// resolves the TUS "path" metadata relative to the share's own path, so
 	// a share scoped to the exact file (rather than its directory) makes
-	// every upload against it fail with "unable to write to file". Scoping
-	// to the directory still keeps the share unable to touch any other
-	// case's files: buildStorageKey gives every case (and, when known,
-	// every project) its own directory, so the worst a leaked share id can
-	// do is write within this one case's attachment directory. See
+	// every upload against it fail with "unable to write to file". Since
+	// buildStorageKey now makes the attachment id its own directory
+	// (".../cases/<caseId>/<attachmentId>/<filename>"), this directory is
+	// the attachment's OWN directory, not the whole case's — tighter than
+	// before: the worst a leaked share id can do is write within this one
+	// attachment's own folder, not the entire case's attachment tree.
+	// Confirmed empirically that SFTPGo's mkdir_parents still creates this
+	// now-one-level-deeper directory (case dir + attachment-id dir) and
+	// writes the file inside it in a single TUS upload. See
 	// uploadTokenResponse.ShareID's doc comment for the corresponding
 	// frontend-side contract.
 	shareDir := path.Dir(storageKey)
@@ -524,9 +530,26 @@ func newAttachmentID() string {
 }
 
 // buildStorageKey computes the SFTPGo path an attachment's bytes live under:
-// "/attachments/project-<projectId>/cases/<caseId>/<attachmentId>". SFTPGo
-// permissions are granted per project, so the project segment is
+// "/attachments/project-<projectId>/cases/<caseId>/<attachmentId>/<filename>".
+// SFTPGo permissions are granted per project, so the project segment is
 // load-bearing whenever a project is known.
+//
+// The attachment id is a directory, not a filename prefix: every attachment
+// gets its own freshly generated UUID directory, so the leaf underneath it
+// can be the sanitized original filename itself with zero risk of collision
+// with any other attachment — no disambiguation or retry logic needed, ever.
+// This also means SFTPGo's own share-download handler, which sets
+// Content-Disposition's filename from path.Base() of the stored path (real
+// SFTPGo OSS source, internal/httpd/api_utils.go), serves the file back with
+// exactly its original name and extension, rather than a UUID-prefixed one.
+// A human browsing this tree directly (e.g. over SFTP) also sees real
+// filenames, with the UUID directories providing per-attachment isolation
+// instead of noise in every filename. See sanitizeFilenameForStorageKey for
+// the sanitization rules — filename is untrusted, attacker-controlled input
+// that ends up in a filesystem path, so it is never used as-is. If
+// sanitization strips the filename to nothing (empty, all separators/dots,
+// or otherwise entirely invalid), the attachment id is reused as the leaf
+// name too, so the path is always well-formed even in that edge case.
 //
 // projectID is "" when the case's own record carries no project reference.
 // Cases in this Postgres/CSM-native data source are NOT guaranteed to have a
@@ -535,17 +558,85 @@ func newAttachmentID() string {
 // (unlike ServiceNow-sourced cases, which are always project-scoped). Rather
 // than block minting a token over a missing project reference, this falls
 // back to a project-less path shape,
-// "/attachments/cases/<caseId>/<attachmentId>", which still uniquely
-// identifies the file. This fallback path cannot be granted SFTPGo
+// "/attachments/cases/<caseId>/<attachmentId>/<filename>", which still
+// uniquely identifies the file. This fallback path cannot be granted SFTPGo
 // permissions per-project the way the documented convention can; it is
 // accepted here as a deliberate, narrower scope (case-only) rather than a
 // blocker, and should be revisited if/when CSM-native cases gain a
 // guaranteed project reference.
-func buildStorageKey(projectID, caseID, attachmentID string) string {
-	if projectID == "" {
-		return fmt.Sprintf("/attachments/cases/%s/%s", caseID, attachmentID)
+func buildStorageKey(projectID, caseID, attachmentID, filename string) string {
+	sanitized := sanitizeFilenameForStorageKey(filename)
+	if sanitized == "" {
+		sanitized = attachmentID
 	}
-	return fmt.Sprintf("/attachments/project-%s/cases/%s/%s", projectID, caseID, attachmentID)
+	if projectID == "" {
+		return fmt.Sprintf("/attachments/cases/%s/%s/%s", caseID, attachmentID, sanitized)
+	}
+	return fmt.Sprintf("/attachments/project-%s/cases/%s/%s/%s", projectID, caseID, attachmentID, sanitized)
+}
+
+// maxSanitizedFilenameLen caps the sanitized filename portion of a storage
+// key's leaf segment. Combined with the attachmentID (36 chars) and a
+// separator, this keeps the leaf well under common filesystem/SFTPGo
+// path-component length limits (typically 255 bytes) even for a filename
+// with multi-byte UTF-8 characters.
+const maxSanitizedFilenameLen = 200
+
+// sanitizeFilenameForStorageKey makes an untrusted, user-supplied filename
+// safe to use as one path segment of an SFTPGo storage key. filename becomes
+// part of a filesystem path on a real backing store, so it is treated as
+// hostile input rather than display text:
+//
+//   - Path separators ("/", "\") are stripped so the result cannot introduce
+//     extra path segments (which would, among other things, change what
+//     directory path.Dir(storageKey) resolves to — see buildStorageKey's
+//     callers, which rely on that directory for share scoping).
+//   - ".." sequences are stripped so the result cannot be used for path
+//     traversal.
+//   - Control characters (including NUL) are stripped.
+//   - Leading dots are stripped, so the result can never collide with "." or
+//     ".." on its own, or produce a hidden-file-like leaf.
+//   - The result is capped to maxSanitizedFilenameLen bytes (after the above
+//     stripping), measured in a way that never splits a multi-byte UTF-8
+//     rune.
+//
+// If every character is stripped (filename was empty, all separators/dots,
+// or otherwise entirely invalid), this returns "" and the caller falls back
+// to the bare attachmentID leaf — today's behavior — rather than producing a
+// malformed or empty path segment.
+func sanitizeFilenameForStorageKey(filename string) string {
+	var b []rune
+	for _, r := range filename {
+		if r == '/' || r == '\\' || r < 0x20 || r == 0x7f {
+			continue
+		}
+		b = append(b, r)
+	}
+	cleaned := string(b)
+
+	// Strip ".." sequences (after separator/control-char removal, so an
+	// input like "..\/.." can't reassemble one post-sanitization).
+	for {
+		replaced := strings.ReplaceAll(cleaned, "..", "")
+		if replaced == cleaned {
+			break
+		}
+		cleaned = replaced
+	}
+
+	// Strip leading dots.
+	cleaned = strings.TrimLeft(cleaned, ".")
+
+	// Cap length without splitting a multi-byte rune.
+	if len(cleaned) > maxSanitizedFilenameLen {
+		truncated := cleaned[:maxSanitizedFilenameLen]
+		for len(truncated) > 0 && !utf8.ValidString(truncated) {
+			truncated = truncated[:len(truncated)-1]
+		}
+		cleaned = truncated
+	}
+
+	return cleaned
 }
 
 // canReadCase confirms the caller can view the target case at all — mirrors

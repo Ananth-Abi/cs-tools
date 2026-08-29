@@ -34,6 +34,12 @@ type UserService interface {
 	// req. A ValidationError is returned for invalid input (e.g. limit > 50);
 	// any other error indicates an infrastructure failure.
 	SearchUsers(ctx context.Context, req domain.SearchUsersRequest) (domain.SearchUsersResponse, error)
+	// GetMe returns the profile of the currently authenticated user, resolved
+	// from the Postgres users table by the email claim in the caller's
+	// x-user-id-token JWT. An UnauthorizedError is returned when that header
+	// is missing; a ValidationError when the token cannot be decoded; a
+	// NotFoundError when no user row matches the email.
+	GetMe(ctx context.Context) (domain.GetUserMeResponse, error)
 }
 
 // SNUserService defines the user operations backed by the ServiceNow data source.

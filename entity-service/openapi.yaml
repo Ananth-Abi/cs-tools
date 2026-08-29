@@ -1459,6 +1459,49 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /cases/{id}/comments/search:
+    post:
+      summary: Search comments on a support case.
+      operationId: searchCaseComments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Case UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCaseCommentsRequest'
+      responses:
+        "200":
+          description: Paginated list of comments for the case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCaseCommentsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /cases/{id}/tags:
     post:
       summary: Attach a free-text tag to a support case.

@@ -36,12 +36,25 @@ import (
 type mockSftpgoClient struct {
 	mintTokenFn    func(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error)
 	createShareFn  func(ctx context.Context, accessToken, storageKey string, scope int, ttl time.Duration) (string, error)
+	uploadBytesFn  func(ctx context.Context, shareID, storageKey string, data []byte, contentType string) error
 	publicShareURL func(shareID string) string
 	baseURL        string
 
 	mintTokenCalls    []string // records the jwtAssertion passed on each call
 	createShareCalls  []string // records the storageKey passed on each call
 	createShareScopes []int    // records the scope passed on each CreateShare call
+	uploadBytesCalls  []string // records the storageKey passed on each UploadBytes call
+}
+
+// UploadBytes satisfies inlineImageSftpgoClient (see inline_images.go) in
+// addition to the read/write-share operations above, so this same mock
+// serves both AttachmentStorageHandler's and InlineImageProcessor's tests.
+func (m *mockSftpgoClient) UploadBytes(ctx context.Context, shareID, storageKey string, data []byte, contentType string) error {
+	m.uploadBytesCalls = append(m.uploadBytesCalls, storageKey)
+	if m.uploadBytesFn != nil {
+		return m.uploadBytesFn(ctx, shareID, storageKey, data, contentType)
+	}
+	return nil
 }
 
 func (m *mockSftpgoClient) MintToken(ctx context.Context, email, jwtAssertion string) (*sftpgo.Token, error) {
@@ -286,8 +299,9 @@ func TestMintUploadTokenSuccess(t *testing.T) {
 	if resp.SftpgoBaseURL != "https://sftpgo.example.com" {
 		t.Errorf("SftpgoBaseURL = %q, want https://sftpgo.example.com", resp.SftpgoBaseURL)
 	}
-	// The share must be scoped to storageKey's parent directory, NOT
-	// storageKey itself — confirmed against a real SFTPGo instance that a
+	// The share must be scoped to storageKey's parent directory — the
+	// attachment's OWN directory under the new nested layout, NOT the whole
+	// case's directory — confirmed against a real SFTPGo instance that a
 	// share scoped to the exact file makes every shares-chunked-uploads call
 	// against it fail (see MintUploadToken's doc comment on shareDir).
 	wantShareDir := path.Dir(resp.StorageKey)
@@ -314,16 +328,24 @@ func TestMintUploadTokenSuccess(t *testing.T) {
 	if !strings.HasPrefix(resp.StorageKey, wantKey) {
 		t.Errorf("StorageKey = %q, want prefix %q (no-project fallback)", resp.StorageKey, wantKey)
 	}
-	attachmentID := strings.TrimPrefix(resp.StorageKey, wantKey)
+	// The path must be "<attachmentId>/<original filename>" — the attachment
+	// id is now a directory, and the leaf is the real filename — so SFTPGo's
+	// path.Base()-derived Content-Disposition filename on download is the
+	// real name, not a UUID.
+	rest := strings.TrimPrefix(resp.StorageKey, wantKey)
+	if !strings.HasSuffix(rest, "/report.pdf") {
+		t.Errorf("StorageKey rest = %q, want suffix %q (original filename preserved as the leaf)", rest, "/report.pdf")
+	}
+	attachmentID := strings.TrimSuffix(rest, "/report.pdf")
 	if !uuidRe.MatchString(attachmentID) {
-		t.Errorf("StorageKey %q does not end in a well-formed UUID, got %q", resp.StorageKey, attachmentID)
+		t.Errorf("StorageKey %q does not carry a well-formed UUID directory, got %q", resp.StorageKey, attachmentID)
 	}
 }
 
 // TestMintUploadTokenStorageKeyIncludesProject verifies that when the case's
 // own record carries a projectId, the minted storageKey follows the
 // documented convention:
-// /attachments/project-<projectId>/cases/<caseId>/<attachmentId>.
+// /attachments/project-<projectId>/cases/<caseId>/<attachmentId>/<filename>.
 func TestMintUploadTokenStorageKeyIncludesProject(t *testing.T) {
 	t.Parallel()
 	const projectID = "22222222-2222-2222-2222-222222222222"
@@ -351,9 +373,13 @@ func TestMintUploadTokenStorageKeyIncludesProject(t *testing.T) {
 	if !strings.HasPrefix(resp.StorageKey, wantPrefix) {
 		t.Fatalf("StorageKey = %q, want prefix %q", resp.StorageKey, wantPrefix)
 	}
-	attachmentID := strings.TrimPrefix(resp.StorageKey, wantPrefix)
+	rest := strings.TrimPrefix(resp.StorageKey, wantPrefix)
+	if !strings.HasSuffix(rest, "/report.pdf") {
+		t.Errorf("StorageKey rest = %q, want suffix %q (original filename preserved as the leaf)", rest, "/report.pdf")
+	}
+	attachmentID := strings.TrimSuffix(rest, "/report.pdf")
 	if !uuidRe.MatchString(attachmentID) {
-		t.Errorf("StorageKey %q does not end in a well-formed UUID, got %q", resp.StorageKey, attachmentID)
+		t.Errorf("StorageKey %q does not carry a well-formed UUID directory, got %q", resp.StorageKey, attachmentID)
 	}
 }
 
@@ -846,4 +872,100 @@ func TestConfirmUploadMapsConflict(t *testing.T) {
 	h.ConfirmUpload(w, req)
 
 	assertStatus(t, w, http.StatusConflict)
+}
+
+// ----- sanitizeFilenameForStorageKey / buildStorageKey -----
+
+func TestSanitizeFilenameForStorageKey(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"ordinary name with extension", "quarterly-report.pdf", "quarterly-report.pdf"},
+		{"spaces and parens", "Q3 report (final).docx", "Q3 report (final).docx"},
+		{"unicode name", "報告書.pdf", "報告書.pdf"},
+		{"forward slashes stripped", "a/b/c.txt", "abc.txt"},
+		{"backslashes stripped", `a\b\c.txt`, "abc.txt"},
+		{"parent traversal stripped", "../../etc/passwd", "etcpasswd"},
+		{"traversal reassembly attempt", "..\\/../secret.txt", "secret.txt"},
+		{"leading dots stripped", "...hidden.txt", "hidden.txt"},
+		{"bare dot", ".", ""},
+		{"bare dotdot", "..", ""},
+		{"control characters stripped", "bad\x00name\x01.txt", "badname.txt"},
+		{"empty input", "", ""},
+		{"only invalid characters", "/\\..", ""},
+		{"very long name truncated", strings.Repeat("a", 500) + ".txt", strings.Repeat("a", 200)},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := sanitizeFilenameForStorageKey(tc.input)
+			if got != tc.want {
+				t.Errorf("sanitizeFilenameForStorageKey(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+			if len(got) > maxSanitizedFilenameLen {
+				t.Errorf("sanitizeFilenameForStorageKey(%q) length = %d, want <= %d", tc.input, len(got), maxSanitizedFilenameLen)
+			}
+			if strings.Contains(got, "/") || strings.Contains(got, `\`) {
+				t.Errorf("sanitizeFilenameForStorageKey(%q) = %q, must not contain a path separator", tc.input, got)
+			}
+			if strings.Contains(got, "..") {
+				t.Errorf("sanitizeFilenameForStorageKey(%q) = %q, must not contain \"..\"", tc.input, got)
+			}
+		})
+	}
+}
+
+func TestBuildStorageKeyLeafFormat(t *testing.T) {
+	t.Parallel()
+	const caseID = "11111111-1111-1111-1111-111111111111"
+	const attachmentID = "22222222-2222-2222-2222-222222222222"
+
+	t.Run("no project, valid filename", func(t *testing.T) {
+		t.Parallel()
+		got := buildStorageKey("", caseID, attachmentID, "report.pdf")
+		want := "/attachments/cases/" + caseID + "/" + attachmentID + "/report.pdf"
+		if got != want {
+			t.Errorf("buildStorageKey = %q, want %q", got, want)
+		}
+		if path.Dir(got) != "/attachments/cases/"+caseID+"/"+attachmentID {
+			t.Errorf("path.Dir(buildStorageKey(...)) = %q, want the attachment's own directory %q", path.Dir(got), "/attachments/cases/"+caseID+"/"+attachmentID)
+		}
+	})
+
+	t.Run("with project, valid filename", func(t *testing.T) {
+		t.Parallel()
+		const projectID = "33333333-3333-3333-3333-333333333333"
+		got := buildStorageKey(projectID, caseID, attachmentID, "report.pdf")
+		want := "/attachments/project-" + projectID + "/cases/" + caseID + "/" + attachmentID + "/report.pdf"
+		if got != want {
+			t.Errorf("buildStorageKey = %q, want %q", got, want)
+		}
+		if path.Dir(got) != "/attachments/project-"+projectID+"/cases/"+caseID+"/"+attachmentID {
+			t.Errorf("path.Dir(buildStorageKey(...)) = %q, want the attachment's own directory", path.Dir(got))
+		}
+	})
+
+	t.Run("filename sanitizes to empty falls back to attachment id as the leaf name", func(t *testing.T) {
+		t.Parallel()
+		got := buildStorageKey("", caseID, attachmentID, "../..")
+		want := "/attachments/cases/" + caseID + "/" + attachmentID + "/" + attachmentID
+		if got != want {
+			t.Errorf("buildStorageKey = %q, want %q (attachment-id leaf fallback)", got, want)
+		}
+	})
+
+	t.Run("path traversal filename cannot escape the attachment directory", func(t *testing.T) {
+		t.Parallel()
+		got := buildStorageKey("", caseID, attachmentID, "../../../etc/passwd")
+		if path.Dir(got) != "/attachments/cases/"+caseID+"/"+attachmentID {
+			t.Errorf("path.Dir(buildStorageKey(...)) = %q, want attachment directory %q — traversal must not escape it", path.Dir(got), "/attachments/cases/"+caseID+"/"+attachmentID)
+		}
+		if strings.Contains(got, "..") {
+			t.Errorf("buildStorageKey(...) = %q, must not contain \"..\"", got)
+		}
+	})
 }

@@ -118,7 +118,14 @@ func main() {
 	sftpgoAttachmentStorageEnabled, sftpgoCfg := loadSftpgoConfig()
 	var attachmentStorageHandler *handler.AttachmentStorageHandler
 	if sftpgoAttachmentStorageEnabled {
-		attachmentStorageHandler = handler.NewAttachmentStorageHandler(customerEntityClient, sftpgo.NewClient(sftpgoCfg))
+		sftpgoClientInst := sftpgo.NewClient(sftpgoCfg)
+		attachmentStorageHandler = handler.NewAttachmentStorageHandler(customerEntityClient, sftpgoClientInst)
+		// Inline-image extraction on CreateCaseComment (base64 data: URIs
+		// rewritten into real SFTPGo-backed attachments) shares the same
+		// SFTPGo client and is gated by the same flag — see
+		// CaseHandler.WithInlineImageProcessor. SN-backed comment creation is
+		// unaffected: it never reaches this branch.
+		caseHandler.WithInlineImageProcessor(handler.NewInlineImageProcessor(customerEntityClient, sftpgoClientInst))
 	}
 
 	updatesCfg := updates.Config{
