@@ -21,6 +21,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
@@ -123,6 +124,35 @@ type SLAClockService interface {
 	// reached timestamp. A ValidationError is returned for an unrecognized
 	// tier or status; a NotFoundError if no such clock has been registered.
 	SetSLAClockTierReached(ctx context.Context, caseID, clockType, tier string, req domain.SetSLAClockTierRequest) (domain.SetSLAClockTierReachedResponse, error)
+}
+
+// ScheduledTaskRunService defines the operations available on the
+// scheduled_task_run entity — see domain.ScheduledTaskRun's doc comment for
+// what it's for.
+type ScheduledTaskRunService interface {
+	// Attempt decides whether req.TaskName/req.PeriodKey may run right now,
+	// claiming it if so — see domain.ClaimScheduledTaskRunResponse's doc
+	// comment for how to read the result. A ValidationError is returned if
+	// taskName or periodKey is missing.
+	Attempt(ctx context.Context, req domain.ClaimScheduledTaskRunRequest) (domain.ClaimScheduledTaskRunResponse, error)
+	// UpdateAttempt reports the outcome of the attempt id — succeeded or
+	// failed, per req.Status — but only if req.AttemptCount still matches
+	// the active claim (see domain.UpdateScheduledTaskRunAttemptRequest's
+	// own doc comment). A ValidationError is returned if attemptCount is
+	// missing/non-positive, status isn't "succeeded"/"failed", or status is
+	// "failed" and error/nextRetryOn is missing; a NotFoundError if id
+	// doesn't exist or the claim is no longer active.
+	UpdateAttempt(ctx context.Context, id string, req domain.UpdateScheduledTaskRunAttemptRequest) (domain.ScheduledTaskRun, error)
+	// List returns every run matching statusFilter ("failed", "succeeded",
+	// "superseded"), or every run if statusFilter is empty. A
+	// ValidationError is returned for any other value.
+	List(ctx context.Context, statusFilter string) (domain.ListScheduledTaskRunsResponse, error)
+	// DeleteResolvedBefore deletes every run that succeeded or was
+	// superseded before cutoff (by its own resolution time, not when it
+	// was created — see the repository's own doc comment for why that
+	// distinction matters). A ValidationError is returned if cutoff is the
+	// zero time.
+	DeleteResolvedBefore(ctx context.Context, cutoff time.Time) (domain.DeleteScheduledTaskRunsResponse, error)
 }
 
 // SNAccountService defines the account operations backed by the ServiceNow data source.
