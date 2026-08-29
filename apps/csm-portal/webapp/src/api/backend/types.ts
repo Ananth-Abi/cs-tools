@@ -1226,7 +1226,8 @@ export interface BeAttachmentDetail {
   sizeBytes: number;
   createdOn: string;
   createdBy: string;
-  downloadUrl: string;
+  /** Null for a CSM-native (Postgres) data source attachment; always set for ServiceNow-sourced attachments. */
+  downloadUrl: string | null;
 }
 
 export interface BeAttachmentCreateResponse {
