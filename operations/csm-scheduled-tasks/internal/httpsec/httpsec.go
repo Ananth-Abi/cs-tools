@@ -35,15 +35,20 @@ import (
 // non-TLS-terminated server without needing a certificate. Any real
 // deployment target (entity-service, the email-sending service, any future
 // service client this component grows) must be https.
+//
+// Deliberately never includes rawURL itself in the returned error: this
+// error is logged at startup (see cmd/server/main.go) and a malformed or
+// insecure URL can carry userinfo or a query-string token, which would
+// otherwise leak into logs.
 func RequireSecureURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid URL %q: %w", rawURL, err)
+		return fmt.Errorf("invalid URL: %w", err)
 	}
 	if u.Scheme == "https" || isLoopbackHost(u.Hostname()) {
 		return nil
 	}
-	return fmt.Errorf("%q must use https (plain http is only allowed for localhost/127.0.0.1)", rawURL)
+	return fmt.Errorf("URL must use https (plain http is only allowed for localhost/127.0.0.1)")
 }
 
 func isLoopbackHost(host string) bool {
@@ -55,17 +60,26 @@ func isLoopbackHost(host string) bool {
 }
 
 // RejectInsecureRedirects sets client's CheckRedirect to refuse following
-// any redirect whose target isn't https or loopback. Defense in depth
-// against a compromised or misconfigured server redirecting an
-// authenticated request — bearer token in the Authorization header, or an
-// OAuth2 token-fetch request carrying the client secret — to a plaintext
-// endpoint mid-flight; net/http follows a same-body redirect by default
-// without this guard, including across schemes.
+// any redirect whose target isn't https. Defense in depth against a
+// compromised or misconfigured server redirecting an authenticated request
+// — bearer token in the Authorization header, or an OAuth2 token-fetch
+// request carrying the client secret — to a plaintext endpoint mid-flight;
+// net/http follows a same-body redirect by default without this guard,
+// including across schemes.
+//
+// Unlike RequireSecureURL, loopback is NOT exempted here: RequireSecureURL's
+// loopback allowance is for an explicitly configured local endpoint chosen
+// by whoever set TokenURL/BaseURL, but a same-host redirect from a
+// legitimate https endpoint down to plaintext loopback is exactly the
+// downgrade this guard exists to stop — allowing it here would undermine
+// the https requirement the initial URL check just enforced. The error
+// also never includes the redirect target URL, for the same
+// log-leakage reason RequireSecureURL's own doc comment gives.
 func RejectInsecureRedirects(client *http.Client) {
 	client.CheckRedirect = func(req *http.Request, _ []*http.Request) error {
-		if req.URL.Scheme == "https" || isLoopbackHost(req.URL.Hostname()) {
+		if req.URL.Scheme == "https" {
 			return nil
 		}
-		return fmt.Errorf("httpsec: refusing to follow redirect to insecure URL: %s", req.URL.Redacted())
+		return fmt.Errorf("httpsec: refusing to follow redirect to a non-https URL")
 	}
 }

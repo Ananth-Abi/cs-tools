@@ -79,18 +79,31 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Standing ops/on-call audience, emailed on every failure for every
+	// task in addition to that task's own registry.Task.To/Cc — see
+	// engine.Engine.AlertRecipients' own doc comment. Parsed before the
+	// email client below specifically so the check right after it can run:
+	// a non-empty list with no EMAIL_BASE_URL configured would otherwise
+	// only surface the first time some task actually fails and tries to
+	// send, as an opaque "invalid URL" error from a relative "/send-email"
+	// path — much easier to catch here, at startup.
+	alertRecipients := splitComma(os.Getenv("ALERT_RECIPIENTS"))
+	emailBaseURL := os.Getenv("EMAIL_BASE_URL")
+	if len(alertRecipients) > 0 && emailBaseURL == "" {
+		slog.Error("ALERT_RECIPIENTS is set but EMAIL_BASE_URL is not; refusing to start since failure alerts could never actually send")
+		os.Exit(1)
+	}
+
 	// Email itself is not required for every deployment (nothing calls it
-	// while no registered task sets To) — EMAIL_BASE_URL is read with
-	// os.Getenv, not mustEnv, matching
-	// integrations/csm-notification-service's own
-	// internal/notifications.EmailClient. A missing/invalid configuration
-	// only surfaces as an error the first time a task with recipients
-	// actually finishes; NewClient itself still fails startup if
-	// EMAIL_BASE_URL is set but not https. Authenticates with the same
-	// shared OAUTH2_* credentials as ledgerClient above, not its own —
-	// only BaseURL/Scopes/FromAddress are specific to this client.
+	// while no registered task sets To and ALERT_RECIPIENTS is also empty,
+	// per the check above) — EMAIL_BASE_URL is read with os.Getenv, not
+	// mustEnv, matching integrations/csm-notification-service's own
+	// internal/notifications.EmailClient. NewClient itself still fails
+	// startup if EMAIL_BASE_URL is set but not https. Authenticates with
+	// the same shared OAUTH2_* credentials as ledgerClient above, not its
+	// own — only BaseURL/Scopes/FromAddress are specific to this client.
 	emailClient, err := notify.NewClient(notify.Config{
-		BaseURL:      os.Getenv("EMAIL_BASE_URL"),
+		BaseURL:      emailBaseURL,
 		TokenURL:     oauthTokenURL,
 		ClientID:     oauthClientID,
 		ClientSecret: oauthClientSecret,
@@ -116,11 +129,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-
-	// Standing ops/on-call audience, emailed on every failure for every
-	// task in addition to that task's own registry.Task.To/Cc — see
-	// engine.Engine.AlertRecipients' own doc comment.
-	alertRecipients := splitComma(os.Getenv("ALERT_RECIPIENTS"))
 
 	eng := engine.New(tasks, ledgerClient, emailClient, driverInterval, alertRecipients)
 
