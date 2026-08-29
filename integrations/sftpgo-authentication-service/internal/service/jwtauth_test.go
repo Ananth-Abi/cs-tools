@@ -29,8 +29,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/log"
 )
 
 const (

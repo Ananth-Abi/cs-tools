@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/util"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/util"
 )
 
 // Config holds all configuration for the application, loaded from environment variables.

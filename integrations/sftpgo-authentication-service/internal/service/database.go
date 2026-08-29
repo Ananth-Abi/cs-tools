@@ -22,10 +22,10 @@ import (
 	"errors"
 	"time"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/config"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/config"
 
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/log"
-	"github.com/wso2-open-operations/cs-tools/operations/sftpgo-authentication-service/internal/models"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/log"
+	"github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service/internal/models"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (database/sql compatible)
 )
