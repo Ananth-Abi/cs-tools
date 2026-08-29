@@ -93,6 +93,14 @@ type ScheduledTaskRunRepository interface {
 	// returns how many rows were removed. A row that is still open (neither
 	// succeeded nor superseded) is never deleted, regardless of age — it
 	// represents a genuinely unresolved problem, not history to archive.
+	//
+	// This means a task deregistered from operations/csm-scheduled-tasks'
+	// registry while it still has an open failed row leaves that row behind
+	// forever: nothing supersedes it (superseding only happens on a future
+	// Attempt call for that same TaskName), and this method never touches an
+	// open row regardless of age. Deregistering a task requires manually
+	// resolving or deleting its open row; there is no automatic cleanup for
+	// this case.
 	DeleteResolvedBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 

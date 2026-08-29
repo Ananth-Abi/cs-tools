@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS scheduled_task_run (
 -- By construction (see the "supersede" step in ScheduledTaskRunRepository.Attempt)
 -- there is at most one open (not succeeded, not superseded) row per
 -- task_name at any time. This partial index serves both that supersede
--- step's UPDATE and the monitoring GET /scheduled-task-runs?status=failed
+-- step's UPDATE and the monitoring GET /scheduled-tasks/attempts?status=failed
 -- endpoint.
 CREATE INDEX IF NOT EXISTS idx_scheduled_task_run_open
   ON scheduled_task_run(task_name)

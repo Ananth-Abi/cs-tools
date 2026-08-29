@@ -129,8 +129,11 @@ func main() {
 		// entity-service's scheduled_task_run table that succeeded or were
 		// superseded ("fully omitted after retrying") more than
 		// HOUSEKEEPING_RETENTION_DAYS ago — see internal/housekeeping's own
-		// doc comment. Default schedule is daily at 03:00 UTC, a low-traffic
-		// hour; override via SUB_CRON_SCHEDULES if needed.
+		// doc comment. Default schedule is daily at 03:00, a low-traffic hour
+		// assuming the deployment runs with TZ=UTC (see
+		// internal/schedule.PeriodKey's own doc comment — cron expressions
+		// have no timezone of their own); override via SUB_CRON_SCHEDULES if
+		// needed.
 		{
 			Name:     housekeepingTaskName,
 			Schedule: scheduleFor(scheduleOverrides, housekeepingTaskName, "0 3 * * *"),

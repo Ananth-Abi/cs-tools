@@ -44,6 +44,11 @@ type Task struct {
 	// recorded as a failed attempt (see engine.Engine.Tick) and never
 	// retried more than once per driver tick — the ledger, not this
 	// function, decides whether/when to try again.
+	//
+	// Handler must be idempotent per period: there is no checkpointing, so a
+	// worker that crashes mid-run has its claim reclaimed once it looks
+	// orphaned (see entity-service's StaleClaimAfterSeconds), and the next
+	// claimant re-runs Handler from scratch for that same period key.
 	Handler func(ctx context.Context) error
 	// RetryBackoff is how far into the future the next retry is scheduled
 	// after a failure. Defaults to the driver's own tick interval when

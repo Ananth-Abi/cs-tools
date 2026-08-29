@@ -41,6 +41,13 @@ import (
 // Real sub-crons should stick to 5 fields; a seconds field is mainly useful
 // for fast local testing of a task's own handler. Returns an error if expr
 // is not a valid cron expression.
+//
+// now is interpreted in its own time.Time.Location() — gronx has no
+// timezone concept of its own, so every schedule in this component is
+// effectively "wall clock time of whatever TZ the process runs in." Every
+// schedule documented elsewhere as a UTC time (e.g. housekeeping_cleanup's
+// "daily at 03:00 UTC") holds only if the deployment runs with TZ=UTC; a
+// non-UTC container silently shifts every period key by its own offset.
 func PeriodKey(expr string, now time.Time) (time.Time, error) {
 	if !gronx.IsValid(expr) {
 		return time.Time{}, fmt.Errorf("schedule: invalid cron expression %q", expr)

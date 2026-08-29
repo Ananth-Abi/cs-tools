@@ -96,10 +96,23 @@ component's first real sub-cron and the thing that finally calls
 from the start (see that repo's own CLAUDE.md, "Scheduled task runs"), but nothing called it until
 this. Deletes every `scheduled_task_run` row that succeeded or was superseded more than
 `HOUSEKEEPING_RETENTION_DAYS` (default 30) ago, by its own resolution time — a row still
-failed/retrying is never touched, regardless of age. Default schedule `0 3 * * *` (daily, 03:00
-UTC, a low-traffic hour); override via `SUB_CRON_SCHEDULES` like any other task. `envDays`
+failed/retrying is never touched, regardless of age. Default schedule `0 3 * * *` (daily at 03:00,
+a low-traffic hour); override via `SUB_CRON_SCHEDULES` like any other task. `envDays`
 (`cmd/server/main.go`) parses the retention setting as a plain integer number of days rather than
 requiring Go duration syntax (`"720h"`) — friendlier for a "how many days of history" knob.
+
+Cron expressions have no timezone of their own — `internal/schedule.PeriodKey` interprets every
+schedule (this one included) in whatever `time.Time.Location()` the process's clock returns, i.e.
+the container's local time. "03:00" only means 03:00 UTC if the deployment actually runs with
+`TZ=UTC`; a non-UTC container silently shifts every period key by its own offset. Set `TZ=UTC` in
+the Choreo component's environment rather than relying on the platform's default.
+
+If a task is later removed from the registry entirely while it still has an open failed row, that
+row is orphaned: nothing ever supersedes it (superseding only happens on a future `Attempt` call
+for that same task name, which no longer exists), and `housekeeping_cleanup` only deletes resolved
+(succeeded/superseded) rows, never an open one — so it sits in `status=failed` monitoring output
+indefinitely. Deregistering a task requires manually resolving or deleting its open row in
+entity-service; there is no automatic cleanup for this case.
 
 ## Alerting
 
