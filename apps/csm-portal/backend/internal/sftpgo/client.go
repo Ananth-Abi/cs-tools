@@ -98,7 +98,7 @@ type Token struct {
 // username is the caller's email claim, password is the caller's raw
 // gateway-issued JWT (the x-jwt-assertion header value this backend itself
 // already validated). SFTPGo's external_auth_hook (see
-// operations/sftpgo-authentication-service's /external-auth-hook)
+// integrations/sftpgo-authentication-service's /external-auth-hook)
 // independently re-validates that JWT against the same JWKS/issuer/audience
 // this backend trusts, so the "password" here is never a SFTPGo-native
 // credential — it is the same bearer token the caller already presented to
