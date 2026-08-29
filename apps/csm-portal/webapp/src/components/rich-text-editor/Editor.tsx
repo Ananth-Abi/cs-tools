@@ -37,6 +37,7 @@ import {
   INSERT_IMAGE_COMMAND,
   tokenizePlainTextPaste,
   unwrapNestedPreCodeElements,
+  collapseEmptyParagraphElements,
 } from "@components/rich-text-editor/richTextEditor";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { type ReactNode, useEffect, useState, useCallback, useMemo, useRef } from "react";
@@ -289,6 +290,14 @@ const ClipboardImagePlugin = ({ onPasteError }: { onPasteError?: () => void }): 
  *   Notion's standard code block markup): flattens the nested `<code>`
  *   before conversion so it doesn't produce a duplicated, nested CodeNode.
  *   See `unwrapNestedPreCodeElements` in richTextEditor.tsx.
+ * - HTML paste containing an empty `<p>`/`<div>` between two real paragraphs
+ *   (how Google Docs, Gmail, Gemini, Claude, Notion, Word, and a manual
+ *   text-selection copy from ChatGPT's rendered page all represent a blank
+ *   line in their clipboard HTML): removes the empty block before
+ *   conversion, the same "extra space between paragraphs" fix the plain-text
+ *   path gets from `tokenizePlainTextPaste`, generalized to any source that
+ *   puts `text/html` on the clipboard. See `collapseEmptyParagraphElements`
+ *   in richTextEditor.tsx.
  */
 const PasteNormalizationPlugin = (): null => {
   const [editor] = useLexicalComposerContext();
@@ -306,7 +315,9 @@ const PasteNormalizationPlugin = (): null => {
 
         if (html.trim()) {
           const dom = new DOMParser().parseFromString(html, "text/html");
-          if (!unwrapNestedPreCodeElements(dom)) return false;
+          const unwrappedPreCode = unwrapNestedPreCodeElements(dom);
+          const collapsedEmptyParagraphs = collapseEmptyParagraphElements(dom);
+          if (!unwrappedPreCode && !collapsedEmptyParagraphs) return false;
 
           event.preventDefault();
           editor.update(
@@ -545,6 +556,13 @@ const Editor = ({
               "& p": {
                 margin: 0,
                 padding: 0,
+              },
+              // Mirrors CsmCaseCommentBubble's read-view rule (`"& p + p": { mt: 0.75 }`)
+              // so a real paragraph-to-paragraph adjacency shows the same visible gap
+              // while composing as it will once posted -- otherwise distinct paragraphs
+              // look identical to a soft line break during composition.
+              "& p + p": {
+                marginTop: 0.75,
               },
               "& > p:only-child > br:only-child": {
                 display: "none",

@@ -267,3 +267,54 @@ export function unwrapNestedPreCodeElements(dom: Document): boolean {
 
   return changed;
 }
+
+/**
+ * Removes paragraph-like elements (`<p>` or `<div>`) that carry no real
+ * content -- empty, or containing only whitespace, `&nbsp;`, and/or `<br>` --
+ * from pasted HTML. Mutates `dom` in place; returns whether anything was
+ * removed.
+ *
+ * Rich clipboard sources (Google Docs, Gmail, Gemini, Claude, Notion, Word,
+ * and even a manual text-selection copy from ChatGPT's rendered page --
+ * anything that puts `text/html` on the clipboard) commonly represent a
+ * blank line between paragraphs as an empty `<p>&nbsp;</p>`, `<p><br></p>`,
+ * or an empty `<div><br></div>` in their clipboard HTML. Left in place, each
+ * one becomes its own empty ParagraphNode once converted, which reproduces
+ * the same "extra space between paragraphs" bug in the read view that
+ * `tokenizePlainTextPaste` above fixes for plain-text paste -- the read
+ * view's `"& p + p": { mt: 0.75 }` adjacency rule fires around the empty
+ * paragraph too, and the empty paragraph contributes its own line height on
+ * top.
+ *
+ * Only `<p>`/`<div>` elements whose only children are whitespace text nodes
+ * and/or `<br>` elements are removed, so a block that carries real content
+ * (text, an image, a link, a nested list, etc.) is always left untouched.
+ */
+export function collapseEmptyParagraphElements(dom: Document): boolean {
+  const body = dom.body;
+  if (!body) return false;
+
+  const isEffectivelyEmptyBlock = (el: Element): boolean => {
+    if (el.tagName !== "P" && el.tagName !== "DIV") return false;
+    for (const child of Array.from(el.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = (child.textContent ?? "").replace(/\u00a0/g, " ").trim();
+        if (text !== "") return false;
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        if ((child as Element).tagName !== "BR") return false;
+      }
+      // Other node types (comments, etc.) carry no visible content.
+    }
+    return true;
+  };
+
+  let changed = false;
+  for (const el of Array.from(body.querySelectorAll("p, div"))) {
+    if (isEffectivelyEmptyBlock(el)) {
+      el.remove();
+      changed = true;
+    }
+  }
+
+  return changed;
+}

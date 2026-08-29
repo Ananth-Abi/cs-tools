@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 import {
   tokenizePlainTextPaste,
   unwrapNestedPreCodeElements,
+  collapseEmptyParagraphElements,
 } from "./richTextEditor";
 
 describe("tokenizePlainTextPaste", () => {
@@ -147,5 +148,74 @@ describe("unwrapNestedPreCodeElements", () => {
 
     expect(changed).toBe(false);
     expect(dom.querySelector("code")).not.toBeNull();
+  });
+});
+
+describe("collapseEmptyParagraphElements", () => {
+  const parse = (html: string) =>
+    new DOMParser().parseFromString(html, "text/html");
+
+  it("removes an empty <p>&nbsp;</p> sitting between two real paragraphs", () => {
+    const dom = parse("<p>Para1</p><p>&nbsp;</p><p>Para2</p>");
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(true);
+    expect(
+      Array.from(dom.querySelectorAll("p")).map((p) => p.textContent),
+    ).toEqual(["Para1", "Para2"]);
+  });
+
+  it("removes an empty <p><br></p> sitting between two real paragraphs", () => {
+    const dom = parse("<p>Para1</p><p><br></p><p>Para2</p>");
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(true);
+    expect(dom.querySelectorAll("p").length).toBe(2);
+    expect(dom.body.textContent).toBe("Para1Para2");
+  });
+
+  it("removes an empty <div><br></div> sitting between two real paragraphs", () => {
+    const dom = parse("<p>Para1</p><div><br></div><p>Para2</p>");
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(true);
+    expect(dom.querySelector("div")).toBeNull();
+    expect(dom.body.textContent).toBe("Para1Para2");
+  });
+
+  it("collapses multiple consecutive empty blocks between two real paragraphs", () => {
+    const dom = parse(
+      "<p>Para1</p><p><br></p><p>&nbsp;</p><div><br></div><p>Para2</p>",
+    );
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(true);
+    expect(
+      Array.from(dom.querySelectorAll("p")).map((p) => p.textContent),
+    ).toEqual(["Para1", "Para2"]);
+  });
+
+  it("does not remove a paragraph or div that carries real content", () => {
+    const dom = parse(
+      '<p>Para1</p><div><img src="x.png" alt="x" /></div><p>Para2</p>',
+    );
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(false);
+    expect(dom.querySelector("img")).not.toBeNull();
+  });
+
+  it("returns false and leaves the DOM untouched when there are no empty blocks", () => {
+    const dom = parse("<p>Para1</p><p>Para2</p>");
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(false);
+    expect(dom.querySelectorAll("p").length).toBe(2);
   });
 });
