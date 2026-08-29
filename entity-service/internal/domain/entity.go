@@ -5123,3 +5123,105 @@ type SetSLAClockTierReachedResponse struct {
 	ReachedOn      time.Time `json:"reachedOn"`
 	AlreadyReached bool      `json:"alreadyReached"`
 }
+
+// ScheduledTaskRun is the durable record of one attempted period of a
+// registered sub-cron running inside operations/csm-scheduled-tasks — a
+// single Choreo Scheduled Task that internally fans out to any number of
+// independently-scheduled jobs. See that component's own CLAUDE.md for the
+// full design ("period keys", "supersede"); this service only stores the
+// result. Like SLAClock and EventPublishFailure, this has no ServiceNow
+// equivalent and is always backed by Postgres regardless of DATA_SOURCE.
+//
+// TaskName is a caller-defined registry key, not a fixed enum — same
+// reasoning as SLAClock.ClockType: which sub-crons exist, and on what
+// schedule, is a policy decision made entirely by operations/csm-scheduled-tasks'
+// own registry, not something this service tracks.
+//
+// There is no stored status column, the same choice SLAClock makes for the
+// same reason: status is always derivable from which timestamp is set, and
+// each timestamp is independently useful on its own:
+//   - SucceededOn set → done, forever, for this period.
+//   - SupersededOn set → abandoned: the next period came due before this
+//     one ever succeeded, so it stopped being retried.
+//   - Neither set, NextRetryOn set and not in the future → eligible for
+//     another attempt right now.
+//   - Neither set, NextRetryOn nil → currently claimed: some caller is
+//     either actively running the handler, or crashed before reporting
+//     back via Complete/Fail — see ClaimScheduledTaskRunRequest's own doc
+//     comment for how Attempt tells those two cases apart.
+//
+// By construction there is at most one row per TaskName with neither
+// SucceededOn nor SupersededOn set at any given time — ScheduledTaskRunRepository.Attempt
+// enforces this by superseding any such row before claiming a new period.
+//
+// Backed by the scheduled_task_run table (singular — the one intentional
+// exception to every other table in this schema being plural).
+type ScheduledTaskRun struct {
+	ID       string `json:"id"`
+	TaskName string `json:"taskName"`
+	// PeriodKey is the sub-cron's own most-recent-scheduled-firing time at
+	// the moment this row was created — not when the row was created
+	// itself. It stays fixed for the row's whole lifetime, which is what
+	// lets every retry (however many days it spans) resolve to this same
+	// row instead of a new one.
+	PeriodKey        time.Time  `json:"periodKey"`
+	AttemptCount     int        `json:"attemptCount"`
+	LastError        *string    `json:"lastError"`
+	NextRetryOn      *time.Time `json:"nextRetryOn"`
+	FirstAttemptedOn time.Time  `json:"firstAttemptedOn"`
+	LastAttemptedOn  time.Time  `json:"lastAttemptedOn"`
+	SucceededOn      *time.Time `json:"succeededOn"`
+	SupersededOn     *time.Time `json:"supersededOn"`
+}
+
+// ClaimScheduledTaskRunRequest is the request body for
+// POST /scheduled-task-runs/attempt.
+type ClaimScheduledTaskRunRequest struct {
+	TaskName  string    `json:"taskName"`
+	PeriodKey time.Time `json:"periodKey"`
+	// StaleClaimAfterSeconds bounds how long a row that looks
+	// currently-claimed (SucceededOn, SupersededOn, and NextRetryOn all
+	// unset) is trusted before Attempt treats it as an orphaned claim — the
+	// caller that made it crashed before ever calling Complete or Fail —
+	// and allows another attempt. Defaults to 3600 (1 hour) when zero. The
+	// caller (the scheduled task's own engine) knows its own driver cadence
+	// and should generally pass a small multiple of it, not a fixed value
+	// shared across every deployment.
+	StaleClaimAfterSeconds int `json:"staleClaimAfterSeconds,omitempty"`
+}
+
+// ClaimScheduledTaskRunResponse is the response body for
+// POST /scheduled-task-runs/attempt. Allowed is the actual decision the
+// caller must act on; Run is the row's resulting state either way, so a
+// denied caller can still tell *why* — already SucceededOn, already
+// SupersededOn, a NextRetryOn still in the future, or genuinely claimed by
+// another still-live attempt.
+type ClaimScheduledTaskRunResponse struct {
+	Allowed bool             `json:"allowed"`
+	Run     ScheduledTaskRun `json:"run"`
+}
+
+// FailScheduledTaskRunRequest is the request body for
+// POST /scheduled-task-runs/{id}/fail. NextRetryOn is supplied by the
+// caller, not computed here — this service has no opinion on backoff
+// policy, the same way it has no opinion on SLA clock durations.
+type FailScheduledTaskRunRequest struct {
+	Error       string    `json:"error"`
+	NextRetryOn time.Time `json:"nextRetryOn"`
+}
+
+// ListScheduledTaskRunsResponse is the response body for
+// GET /scheduled-task-runs. Unlike this file's SearchXxxResponse types,
+// this is a plain, unpaginated list — monitoring only, not used by the
+// engine's own claim/retry logic, and by construction there is at most one
+// open row per TaskName, so the result set stays small regardless of how
+// many sub-crons are registered.
+type ListScheduledTaskRunsResponse struct {
+	Runs []ScheduledTaskRun `json:"runs"`
+}
+
+// DeleteScheduledTaskRunsResponse is the response body for
+// DELETE /scheduled-task-runs?resolvedBefore=<RFC3339 timestamp>.
+type DeleteScheduledTaskRunsResponse struct {
+	DeletedCount int `json:"deletedCount"`
+}

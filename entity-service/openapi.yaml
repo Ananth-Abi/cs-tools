@@ -261,6 +261,191 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /scheduled-task-runs/attempt:
+    post:
+      summary: >-
+        Atomically decide whether taskName/periodKey may run right now, and
+        claim it if so. Backs operations/csm-scheduled-tasks' engine — see
+        that component's own CLAUDE.md and this service's CLAUDE.md
+        ("Scheduled task runs") for the full decision table. Has no
+        ServiceNow equivalent — always backed by Postgres.
+      operationId: attemptScheduledTaskRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimScheduledTaskRunRequest'
+      responses:
+        "200":
+          description: The claim decision, and the row's resulting state either way.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimScheduledTaskRunResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /scheduled-task-runs/{id}/complete:
+    post:
+      summary: Mark a claimed run succeeded. Takes no request body.
+      operationId: completeScheduledTaskRun
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Run marked succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTaskRun'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /scheduled-task-runs/{id}/fail:
+    post:
+      summary: >-
+        Record a failed attempt. Deliberately does not mark the run
+        succeeded or superseded — it stays eligible for another attempt at
+        nextRetryOn, or for being superseded once the next period comes due.
+      operationId: failScheduledTaskRun
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FailScheduledTaskRunRequest'
+      responses:
+        "200":
+          description: Failure recorded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScheduledTaskRun'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: No such run.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /scheduled-task-runs:
+    get:
+      summary: >-
+        List scheduled_task_run rows, optionally filtered by derived status.
+        Monitoring only — not used by operations/csm-scheduled-tasks' own
+        engine.
+      operationId: listScheduledTaskRuns
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["failed", "succeeded", "superseded"]
+      responses:
+        "200":
+          description: Matching runs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListScheduledTaskRunsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      summary: >-
+        Delete every succeeded or superseded run created before
+        resolvedBefore. A run that is still open (neither succeeded nor
+        superseded) is never deleted, regardless of age. Intended to be
+        called by a self-hosted housekeeping sub-cron, not a human.
+      operationId: deleteScheduledTaskRuns
+      parameters:
+        - name: resolvedBefore
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Deletion complete.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteScheduledTaskRunsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /users/me:
     get:
       summary: Get the profile of the currently authenticated user.
@@ -12773,6 +12958,108 @@ components:
             completed it once. Only rely on this field to gate a reaction
             if that risk is acceptable, or if the reaction's own completion
             is tracked separately and durably instead.
+
+    ScheduledTaskRun:
+      description: >
+        The durable record of one attempted period of a registered sub-cron
+        running inside operations/csm-scheduled-tasks. No stored status
+        field — status is always derivable from which timestamp is set:
+        succeededOn (done, forever, for this period), supersededOn
+        (abandoned — the next period came due first), or nextRetryOn
+        (eligible for another attempt once it's in the past). Has no
+        ServiceNow equivalent — always backed by Postgres.
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskName:
+          type: string
+        periodKey:
+          type: string
+          format: date-time
+        attemptCount:
+          type: integer
+        lastError:
+          type: string
+          nullable: true
+        nextRetryOn:
+          type: string
+          format: date-time
+          nullable: true
+        firstAttemptedOn:
+          type: string
+          format: date-time
+        lastAttemptedOn:
+          type: string
+          format: date-time
+        succeededOn:
+          type: string
+          format: date-time
+          nullable: true
+        supersededOn:
+          type: string
+          format: date-time
+          nullable: true
+
+    ClaimScheduledTaskRunRequest:
+      type: object
+      required: [taskName, periodKey]
+      additionalProperties: false
+      properties:
+        taskName:
+          type: string
+        periodKey:
+          type: string
+          format: date-time
+        staleClaimAfterSeconds:
+          type: integer
+          description: >-
+            How long a row that looks currently-claimed is trusted before
+            being treated as an orphaned claim and made eligible for
+            another attempt. Defaults to 3600 (1 hour) when omitted or zero.
+
+    ClaimScheduledTaskRunResponse:
+      type: object
+      properties:
+        allowed:
+          type: boolean
+          description: >-
+            The actual decision the caller must act on. false does not mean
+            error — it means this exact claim was denied (already
+            succeeded, already superseded, not yet due, or claimed by
+            another still-live attempt); inspect run to tell those apart.
+        run:
+          $ref: '#/components/schemas/ScheduledTaskRun'
+
+    FailScheduledTaskRunRequest:
+      type: object
+      required: [error, nextRetryOn]
+      additionalProperties: false
+      properties:
+        error:
+          type: string
+        nextRetryOn:
+          type: string
+          format: date-time
+          description: >-
+            Supplied by the caller, not computed here — this service has no
+            opinion on backoff policy, the same way it has no opinion on
+            SLA clock durations.
+
+    ListScheduledTaskRunsResponse:
+      type: object
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ScheduledTaskRun'
+
+    DeleteScheduledTaskRunsResponse:
+      type: object
+      properties:
+        deletedCount:
+          type: integer
 
     SearchEventPublishFailuresResponse:
       type: object

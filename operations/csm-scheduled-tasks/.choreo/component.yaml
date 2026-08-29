@@ -1,0 +1,14 @@
+schemaVersion: 1.2
+
+# This component has no inbound HTTP surface at all — it is a batch process:
+# each invocation runs Engine.Tick once against every registered sub-cron
+# and exits. No `endpoints` section is declared, unlike every other Go
+# component in this repo, which are all long-running HTTP services.
+#
+# Create this component in Choreo Console as a "Scheduled Task" component
+# type (not "Service"), and configure its cron trigger expression /
+# timezone there at deploy time — that configuration lives in Choreo's own
+# deployment settings, not in this file. Pick the trigger cadence to match
+# the tightest schedule among the sub-crons registered in cmd/server/main.go
+# (see this component's own README/CLAUDE.md for the "driver cadence"
+# concept — the Choreo trigger IS the driver).

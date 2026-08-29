@@ -377,6 +377,64 @@ No `case_service.go`/`sn_case_service.go` method calls any of this yet — case
 creation/update do not register a clock. Wiring that in requires deciding the
 SLA duration policy first (see above), which is out of scope here.
 
+## Scheduled task runs
+
+`scheduled_task_run` (migration `000013`, `internal/domain/entity.go`'s
+`ScheduledTaskRun`, `internal/repository/scheduled_task_run_repo.go`,
+`internal/service/scheduled_task_run_service.go`) is durable claim/retry
+state for `operations/csm-scheduled-tasks` — a single Choreo Scheduled Task
+that internally fans out to any number of independently-scheduled sub-crons
+on one shared driver cadence. Like `sla_clocks`/`event_publish_failures`, it
+has no ServiceNow equivalent and is always backed by Postgres regardless of
+`DATA_SOURCE`. It is also the one intentionally **singular** table name in
+this schema — every other table here is plural; don't "fix" it to match.
+
+`taskName` is a caller-defined registry key, not a fixed enum — same
+reasoning as `sla_clocks.clockType`: which sub-crons exist, and on what
+schedule, is a policy decision made entirely by `operations/csm-scheduled-tasks`'
+own registry, not something this service tracks.
+
+There is no stored status column, the same choice `sla_clocks` makes for the
+same reason: status is always derivable from which timestamp is set, and
+each is independently useful on its own — `succeededOn` (done, forever, for
+this period), `supersededOn` (abandoned: the next period came due before
+this one ever succeeded), or `nextRetryOn` (eligible for another attempt
+once it's in the past). See `operations/csm-scheduled-tasks`'s own
+`CLAUDE.md` for the full design behind "period keys" and "supersede" — this
+service only stores the result of that design, it does not compute period
+keys or decide backoff itself, the same division of labor as `sla_clocks`.
+
+Exposed at:
+
+- `POST /scheduled-task-runs/attempt` — the only endpoint with real
+  decision logic. Atomically claims `taskName`/`periodKey` if it's allowed
+  to run right now: a period this task hasn't seen before first supersedes
+  any other still-open row for the same `taskName` (there is at most one by
+  construction), then inserts and claims fresh; an existing row whose
+  `nextRetryOn` has arrived (or that looks like an orphaned claim — see
+  `staleClaimAfterSeconds`) is bumped and claimed; anything else (already
+  succeeded, already superseded, not yet due, genuinely still claimed by a
+  live attempt) is denied. Concurrent callers racing for the exact same
+  `(taskName, periodKey)` are serialized by this table's own
+  `UNIQUE(task_name, period_key)` constraint — at most one can ever see
+  `allowed: true` for a given claim.
+- `POST /scheduled-task-runs/{id}/complete` — marks a claimed run succeeded.
+- `POST /scheduled-task-runs/{id}/fail` — records a failed attempt
+  (`error`/`nextRetryOn`, both caller-supplied — this service has no
+  backoff policy opinion, same as it has no SLA-duration policy opinion).
+  Deliberately does not mark the row succeeded or superseded, so it stays
+  eligible for another attempt, or for being superseded once the next
+  period's own `Attempt` call comes in.
+- `GET /scheduled-task-runs?status=<failed|succeeded|superseded>` —
+  monitoring only, not called by the engine's own claim/retry logic. Plain
+  unpaginated list — by construction there is at most one open row per
+  `taskName`, so the result set stays small regardless of registry size.
+- `DELETE /scheduled-task-runs?resolvedBefore=<RFC3339 timestamp>` — deletes
+  every succeeded/superseded row created before the cutoff. A row still
+  `failed` is never deleted regardless of age — it represents a genuinely
+  unresolved problem, not history to archive. Intended to be called by a
+  self-hosted "housekeeping" sub-cron in the registry itself, not a human.
+
 ## Adding a new entity
 
 Follow these steps in order:

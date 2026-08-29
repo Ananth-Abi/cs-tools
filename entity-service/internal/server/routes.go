@@ -73,6 +73,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 	slaClockRepo := repository.NewSLAClockRepository(db)
 	slaClockHandler := handler.NewSLAClockHandler(service.NewSLAClockService(slaClockRepo))
 
+	// scheduled_task_run has no ServiceNow equivalent either — same
+	// reasoning as sla_clocks/event_publish_failures above. Backs
+	// operations/csm-scheduled-tasks; see that component's own CLAUDE.md
+	// and this service's CLAUDE.md ("Scheduled task runs").
+	scheduledTaskRunRepo := repository.NewScheduledTaskRunRepository(db)
+	scheduledTaskRunHandler := handler.NewScheduledTaskRunHandler(service.NewScheduledTaskRunService(scheduledTaskRunRepo))
+
 	accountRepo := repository.NewAccountRepository(db)
 	accountHandler := handler.NewAccountHandler(service.NewAccountService(accountRepo))
 
@@ -293,6 +300,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 	mux.HandleFunc("POST /cases/{caseId}/sla-clocks", slaClockHandler.RegisterSLAClock)
 	mux.HandleFunc("GET /cases/{caseId}/sla-clocks/{clockType}", slaClockHandler.GetSLAClock)
 	mux.HandleFunc("PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}", slaClockHandler.SetSLAClockTierReached)
+	mux.HandleFunc("POST /scheduled-task-runs/attempt", scheduledTaskRunHandler.AttemptScheduledTaskRun)
+	mux.HandleFunc("POST /scheduled-task-runs/{id}/complete", scheduledTaskRunHandler.CompleteScheduledTaskRun)
+	mux.HandleFunc("POST /scheduled-task-runs/{id}/fail", scheduledTaskRunHandler.FailScheduledTaskRun)
+	mux.HandleFunc("GET /scheduled-task-runs", scheduledTaskRunHandler.ListScheduledTaskRuns)
+	mux.HandleFunc("DELETE /scheduled-task-runs", scheduledTaskRunHandler.DeleteScheduledTaskRuns)
 
 	if snUserHandler != nil {
 		mux.HandleFunc("GET /users/{id}", snUserHandler.GetUser)

@@ -21,6 +21,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
@@ -123,6 +124,31 @@ type SLAClockService interface {
 	// reached timestamp. A ValidationError is returned for an unrecognized
 	// tier or status; a NotFoundError if no such clock has been registered.
 	SetSLAClockTierReached(ctx context.Context, caseID, clockType, tier string, req domain.SetSLAClockTierRequest) (domain.SetSLAClockTierReachedResponse, error)
+}
+
+// ScheduledTaskRunService defines the operations available on the
+// scheduled_task_run entity — see domain.ScheduledTaskRun's doc comment for
+// what it's for.
+type ScheduledTaskRunService interface {
+	// Attempt decides whether req.TaskName/req.PeriodKey may run right now,
+	// claiming it if so — see domain.ClaimScheduledTaskRunResponse's doc
+	// comment for how to read the result. A ValidationError is returned if
+	// taskName or periodKey is missing.
+	Attempt(ctx context.Context, req domain.ClaimScheduledTaskRunRequest) (domain.ClaimScheduledTaskRunResponse, error)
+	// Complete marks the run succeeded. A NotFoundError is returned if id
+	// doesn't exist.
+	Complete(ctx context.Context, id string) (domain.ScheduledTaskRun, error)
+	// Fail records a failed attempt. A ValidationError is returned if error
+	// or nextRetryOn is missing; a NotFoundError if id doesn't exist.
+	Fail(ctx context.Context, id string, req domain.FailScheduledTaskRunRequest) (domain.ScheduledTaskRun, error)
+	// List returns every run matching statusFilter ("failed", "succeeded",
+	// "superseded"), or every run if statusFilter is empty. A
+	// ValidationError is returned for any other value.
+	List(ctx context.Context, statusFilter string) (domain.ListScheduledTaskRunsResponse, error)
+	// DeleteResolvedBefore deletes every succeeded or superseded run
+	// created before cutoff. A ValidationError is returned if cutoff is the
+	// zero time.
+	DeleteResolvedBefore(ctx context.Context, cutoff time.Time) (domain.DeleteScheduledTaskRunsResponse, error)
 }
 
 // SNAccountService defines the account operations backed by the ServiceNow data source.
