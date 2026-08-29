@@ -56,22 +56,28 @@ empty. To add one:
    anything about retries, periods, or the ledger — the engine handles all of that.
 2. Add a `registry.Task{Name, Schedule, Handler, ...}` entry to the `tasks` slice in
    `cmd/server/main.go`, with a sensible default `Schedule` hardcoded in code. `Name` is the
-   entity-service ledger key **and** the key `SUB_CRON_SCHEDULES` below looks it up by — treat a
-   rename like a breaking API change, since it orphans the task's prior history there and silently
-   stops matching any existing schedule override.
-3. There is nothing to configure here for failure alerting — every task's failures already email
-   `ALERT_RECIPIENTS` (see below), a single shared list, not a per-task setting. There is no
-   per-task success email yet; see "Future: per-task report emails" below.
-4. Wire up `SUB_CRON_SCHEDULES` support for it: call
-   `scheduleFor(parseSubCronSchedules(os.Getenv("SUB_CRON_SCHEDULES")), "<task.Name>", "<default>")`
-   for the task's `Schedule` field (both helper functions already exist in `cmd/server/main.go`,
-   just currently unreferenced since there's nothing to call them for yet).
+   entity-service ledger key **and** the key both `SUB_CRON_SCHEDULES` and `SUB_CRON_RECIPIENTS`
+   below look it up by — treat a rename like a breaking API change: it orphans the task's prior
+   history in entity-service, and silently stops matching any existing schedule *or* recipients
+   override in either config (they're two separate JSON maps — see step 4 — but both keyed on this
+   same exact `Name`, so a rename has to be updated in both at once).
+3. Leave `To`/`Cc` unset in the struct literal itself — they're populated from config, not
+   hardcoded (see step 4 and "Alerting" below).
+4. Wire up both config surfaces for it, by exact `Name`:
+   - Schedule: `scheduleFor(parseSubCronSchedules(os.Getenv("SUB_CRON_SCHEDULES")), "<task.Name>", "<default>")`
+     for the task's `Schedule` field.
+   - Recipients: `recipientsFor(parseSubCronRecipients(os.Getenv("SUB_CRON_RECIPIENTS")), "<task.Name>")`
+     returns `(to, cc []string)` for the task's `To`/`Cc` fields — leave both unset (call returns
+     `nil, nil`) unless `SUB_CRON_RECIPIENTS` actually mentions this task.
+   (All four helper functions already exist in `cmd/server/main.go`, just currently unreferenced
+   since there's nothing to call them for yet.)
 
-Every task's cadence can be overridden without a code change via `SUB_CRON_SCHEDULES` (see the
-environment variables table below) — a single JSON object of `{"<task.Name>": "<cron expression>"}`
-shared by the whole registry, rather than a dedicated env var per task that would need inventing
-again for every new sub-cron added here. `scheduleFor` looks up each task's override by its exact
-`Name`; anything not mentioned just keeps its own hardcoded default.
+Every task's cadence and per-task recipients can both be set without a code change:
+`SUB_CRON_SCHEDULES` is `{"<task.Name>": "<cron expression>"}`; `SUB_CRON_RECIPIENTS` is
+`{"<task.Name>": {"to": [...], "cc": [...]}}` — both single JSON objects shared by the whole
+registry, rather than a dedicated env var per task that would need inventing again for every new
+sub-cron added here. `scheduleFor`/`recipientsFor` look up each task's override by its exact
+`Name`; anything not mentioned just keeps its own hardcoded default (schedule) or gets nil (To/Cc).
 
 ## Retry backoff
 
@@ -81,10 +87,20 @@ explicitly only if a specific task needs to back off harder than "every tick."
 
 ## Alerting
 
-`ALERT_RECIPIENTS` (see below) is a single, shared list emailed on every failed attempt, for every
-task — not a per-task setting, since a failure is an operational concern for whoever's on call for
-this whole component, not an audience that varies sub-cron to sub-cron. Empty/unset means no email
-at all; a task still fails and retries normally either way.
+Two layers, combined:
+
+- `ALERT_RECIPIENTS` (env var) is a standing ops/on-call audience — emailed on every failed
+  attempt, for every task, unconditionally. Most tasks will leave `To`/`Cc` unset and rely on this
+  alone.
+- `registry.Task.To`/`Task.Cc` are additional recipients specific to that one task, populated from
+  `SUB_CRON_RECIPIENTS` (see below) — set only for the sub-crons that need a different or extra
+  audience, e.g. a billing job's own on-call team alongside the standing list. `To` gets merged
+  into the same `To` line as `AlertRecipients` (not `Cc`), so a task's own recipients and the
+  standing list both land as real primary recipients, not one buried in Cc; `Cc` stays purely
+  per-task.
+
+A task's failures send no email only if **both** `ALERT_RECIPIENTS` and that task's own `To` are
+empty — it still fails and retries normally either way, just silently as far as email goes.
 
 **Every single failed attempt sends an alert, not just a final give-up** — there is no "fully
 failed" or exhausted state in this design (see "The core mechanism" above), so this fires each time

@@ -45,7 +45,7 @@ type LedgerClient interface {
 
 // EmailSender is the subset of *notify.Client the engine depends on.
 type EmailSender interface {
-	SendEmail(ctx context.Context, to []string, subject, htmlBody string) error
+	SendEmail(ctx context.Context, to, cc []string, subject, htmlBody string) error
 }
 
 // Engine runs one Tick over every registered Task.
@@ -58,16 +58,15 @@ type Engine struct {
 	// default for a task's RetryBackoff when it's zero, and to size the
 	// orphaned-claim safety margin passed to Ledger.Attempt.
 	DriverInterval time.Duration
-	// AlertRecipients gets emailed on every failed attempt, for every
-	// task, regardless of which one failed — a single shared list, not a
-	// per-task setting: a failure is an operational concern for whoever's
-	// on call for this whole component, not an audience that differs
-	// sub-cron to sub-cron the way a success report eventually will (see
-	// "Future: per-task report emails" in this component's own CLAUDE.md —
-	// not built yet, deliberately, since different sub-crons will want
-	// genuinely different report templates, not one generic one). Nil is a
-	// valid, deliberate choice for "no alerting configured" — the engine
-	// treats an empty list as "nothing to send," not an error.
+	// AlertRecipients is a static set of people who get every failure
+	// alert, for every task, in addition to that task's own
+	// registry.Task.To/Cc — a standing ops/on-call audience, distinct from
+	// (and unconditional on) whatever per-task recipients a specific
+	// sub-cron sets. Included in the email's To alongside the task's own
+	// To, not Cc, so a task with no To/Cc of its own still actually gets
+	// an email sent (rather than silently having nothing in To at all) as
+	// long as this is set. Nil is a valid, deliberate choice for "no
+	// standing alert audience configured."
 	AlertRecipients []string
 }
 
@@ -115,10 +114,10 @@ func (e *Engine) attempt(ctx context.Context, task registry.Task, now time.Time)
 	e.recordSuccess(ctx, task, period, claim.Run.ID, claim.Run.AttemptCount)
 }
 
-// recordSuccess only updates the ledger — there is no success email. Only
-// a failure is worth an audience's attention; see Engine.AlertRecipients's
-// own doc comment. attemptCount is the claim being completed — see
-// LedgerClient.Complete's own doc comment for why that binding matters.
+// recordSuccess only updates the ledger — there is no success email yet;
+// see registry.Task.To's own doc comment. attemptCount is the claim being
+// completed — see LedgerClient.Complete's own doc comment for why that
+// binding matters.
 func (e *Engine) recordSuccess(ctx context.Context, task registry.Task, period time.Time, runID string, attemptCount int) {
 	slog.InfoContext(ctx, "csm-scheduled-tasks: succeeded", "task", task.Name, "period", period)
 	if err := e.Ledger.Complete(ctx, runID, attemptCount); err != nil {
@@ -138,7 +137,13 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to record failure in ledger", "task", task.Name, "runId", runID, "err", err)
 	}
 
-	if len(e.AlertRecipients) == 0 {
+	// AlertRecipients (the standing ops audience) always gets included
+	// alongside whatever this specific task's own To adds — see
+	// Engine.AlertRecipients' own doc comment for why that's in To, not Cc.
+	to := make([]string, 0, len(task.To)+len(e.AlertRecipients))
+	to = append(to, task.To...)
+	to = append(to, e.AlertRecipients...)
+	if len(to) == 0 {
 		return
 	}
 	// Plain ASCII only — this is a mail Subject header, not HTML, so
@@ -154,7 +159,7 @@ func (e *Engine) recordFailure(ctx context.Context, task registry.Task, period t
 		NextRetry:    nextRetry.Format(time.RFC3339),
 		Error:        handlerErr.Error(),
 	})
-	if err := e.Email.SendEmail(ctx, e.AlertRecipients, subject, body); err != nil {
+	if err := e.Email.SendEmail(ctx, to, task.Cc, subject, body); err != nil {
 		slog.ErrorContext(ctx, "csm-scheduled-tasks: failed to send alert email", "task", task.Name, "err", err)
 	}
 }

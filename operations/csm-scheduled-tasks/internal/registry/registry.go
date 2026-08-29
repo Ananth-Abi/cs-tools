@@ -50,4 +50,18 @@ type Task struct {
 	// zero (see cmd/server/main.go) — there is no point backing off
 	// shorter than how often this process even runs.
 	RetryBackoff time.Duration
+	// To/Cc are additional recipients emailed when this specific task
+	// fails, on top of the standing ALERT_RECIPIENTS audience every task
+	// already alerts (see engine.Engine.AlertRecipients' own doc comment)
+	// — deliberately per-task, not shared: two sub-crons can alert
+	// completely different extra audiences (e.g. a billing job's own
+	// on-call team vs. a usage report's product owner). Set from
+	// cmd/server/main.go's SUB_CRON_RECIPIENTS config (via
+	// recipientsFor), not hardcoded here — see this component's own
+	// CLAUDE.md, "Adding a sub-cron." Both nil is the common case: this
+	// task has no audience beyond ALERT_RECIPIENTS. There is no separate
+	// success email yet — see "Future: per-task report emails" in that
+	// same doc.
+	To []string
+	Cc []string
 }

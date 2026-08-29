@@ -116,6 +116,7 @@ func NewClient(cfg Config) (*Client, error) {
 // sendEmailRequest is the wire shape expected by POST /send-email.
 type sendEmailRequest struct {
 	To       []string `json:"to"`
+	CC       []string `json:"cc,omitempty"`
 	From     string   `json:"from"`
 	Subject  string   `json:"subject"`
 	Template []byte   `json:"template"`
@@ -123,10 +124,11 @@ type sendEmailRequest struct {
 
 // SendEmail sends a plain HTML email via the notification service. The
 // sender address is always the client's configured FromAddress. A request
-// with no recipients is a silent no-op — see engine.Engine.AlertRecipients'
-// own doc comment for why that's a deliberate, valid configuration rather
-// than an error.
-func (c *Client) SendEmail(ctx context.Context, to []string, subject, htmlBody string) error {
+// with no recipients is a silent no-op — see registry.Task.To's own doc
+// comment for why that's a deliberate, valid configuration rather than an
+// error. cc may be nil; a nil/empty cc with a non-empty to still sends
+// normally, just with no one cc'd.
+func (c *Client) SendEmail(ctx context.Context, to, cc []string, subject, htmlBody string) error {
 	if len(to) == 0 {
 		return nil
 	}
@@ -136,6 +138,7 @@ func (c *Client) SendEmail(ctx context.Context, to []string, subject, htmlBody s
 
 	reqBody, err := json.Marshal(sendEmailRequest{
 		To:       to,
+		CC:       cc,
 		From:     c.fromAddress,
 		Subject:  subject,
 		Template: []byte(htmlBody),

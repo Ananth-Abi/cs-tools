@@ -80,7 +80,7 @@ func main() {
 	}
 
 	// Email itself is not required for every deployment (nothing calls it
-	// while ALERT_RECIPIENTS is unset) — EMAIL_BASE_URL is read with
+	// while no registered task sets To) — EMAIL_BASE_URL is read with
 	// os.Getenv, not mustEnv, matching
 	// integrations/csm-notification-service's own
 	// internal/notifications.EmailClient. A missing/invalid configuration
@@ -104,8 +104,10 @@ func main() {
 
 	// No real sub-crons registered yet. See this component's own CLAUDE.md
 	// ("Adding a sub-cron") for the steps to add one — including wiring
-	// SUB_CRON_SCHEDULES support in via parseSubCronSchedules/scheduleFor
-	// below, which have no caller until then.
+	// SUB_CRON_SCHEDULES/SUB_CRON_RECIPIENTS support in via
+	// parseSubCronSchedules/scheduleFor and
+	// parseSubCronRecipients/recipientsFor below, none of which have a
+	// caller until then.
 	tasks := []registry.Task{}
 
 	for _, t := range tasks {
@@ -115,9 +117,9 @@ func main() {
 		}
 	}
 
-	// One shared alert audience for every task's failures — there is no
-	// per-task report email yet, see engine.Engine.AlertRecipients's own
-	// doc comment for why.
+	// Standing ops/on-call audience, emailed on every failure for every
+	// task in addition to that task's own registry.Task.To/Cc — see
+	// engine.Engine.AlertRecipients' own doc comment.
 	alertRecipients := splitComma(os.Getenv("ALERT_RECIPIENTS"))
 
 	eng := engine.New(tasks, ledgerClient, emailClient, driverInterval, alertRecipients)
@@ -182,6 +184,47 @@ func scheduleFor(overrides map[string]string, taskName, def string) string {
 		return s
 	}
 	return def
+}
+
+// subCronRecipients is the per-task shape decoded from SUB_CRON_RECIPIENTS.
+type subCronRecipients struct {
+	To []string `json:"to"`
+	Cc []string `json:"cc"`
+}
+
+// parseSubCronRecipients decodes SUB_CRON_RECIPIENTS, a JSON object mapping
+// a registered task's Name to {"to": [...], "cc": [...]} — the config-driven
+// counterpart to SUB_CRON_SCHEDULES, so a sub-cron's failure audience lives
+// in .env next to its cadence, not hardcoded as registry.Task{To, Cc}
+// literals in this file. A task not mentioned here just gets nil To/Cc —
+// its failures still reach the standing ALERT_RECIPIENTS list (see
+// engine.Engine.AlertRecipients' own doc comment), it just has no
+// additional audience of its own. A missing or malformed value logs a
+// warning and yields no per-task recipients at all, the same
+// fail-safe-not-fail-closed shape parseSubCronSchedules uses.
+//
+// same situation as parseSubCronSchedules above.
+//
+//nolint:unused // no caller until the first real registry.Task exists —
+func parseSubCronRecipients(raw string) map[string]subCronRecipients {
+	if raw == "" {
+		return nil
+	}
+	var overrides map[string]subCronRecipients
+	if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
+		slog.Error("failed to parse SUB_CRON_RECIPIENTS; every task will have no per-task alert recipients", "err", err)
+		return nil
+	}
+	return overrides
+}
+
+// recipientsFor returns overrides[taskName]'s To/Cc, or nil, nil if
+// taskName isn't mentioned in overrides at all.
+//
+//nolint:unused // see parseSubCronRecipients's own nolint comment above.
+func recipientsFor(overrides map[string]subCronRecipients, taskName string) (to, cc []string) {
+	r := overrides[taskName]
+	return r.To, r.Cc
 }
 
 // envDuration returns the given environment variable parsed with
