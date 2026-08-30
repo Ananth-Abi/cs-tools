@@ -38,6 +38,12 @@ export type CaseTabsAction =
       kind: CaseRouteKind;
       path: string;
       state?: unknown;
+      /** Set by the caller (`useCaseTabsController.openTab`, based on the
+       * current `CaseTabsBehaviorMode`) when opening at the cap should evict
+       * a tab to make room, rather than being refused. `"oldest"` closes
+       * `tabs[0]` (first opened); `"newest"` closes the last one. Ignored
+       * (irrelevant) when under the cap or the case is already open. */
+      evict?: "oldest" | "newest";
     }
   | { type: "CLOSE"; id: string }
   | { type: "SET_ACTIVE"; id: string }
@@ -77,11 +83,20 @@ export function caseTabsReducer(
           ? state
           : { ...state, activeTabId: existing.id };
       }
-      if (state.tabs.length >= MAX_OPEN_CASE_TABS) {
-        // Caller (useCaseTabsController.openTab) is responsible for checking
-        // capacity BEFORE dispatching and surfacing the "close a tab first"
-        // message; this is a defensive no-op if it's ever dispatched anyway.
-        return state;
+      let tabs = state.tabs;
+      if (tabs.length >= MAX_OPEN_CASE_TABS) {
+        if (action.evict === "oldest") {
+          tabs = tabs.slice(1);
+        } else if (action.evict === "newest") {
+          tabs = tabs.slice(0, -1);
+        } else {
+          // Caller (useCaseTabsController.openTab) is responsible for
+          // checking capacity BEFORE dispatching and surfacing the "close a
+          // tab first" message (mode "block") or skipping the dispatch
+          // entirely (mode "off"); this is a defensive no-op if it's ever
+          // dispatched anyway without an eviction request.
+          return state;
+        }
       }
       const newTab: CaseTabState = {
         id: action.id,
@@ -92,7 +107,7 @@ export function caseTabsReducer(
         state: action.state,
       };
       return {
-        tabs: [...state.tabs, newTab],
+        tabs: [...tabs, newTab],
         activeTabId: newTab.id,
       };
     }

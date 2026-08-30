@@ -186,15 +186,9 @@ export default function CsmIncidentDetailPage(): JSX.Element {
     | undefined;
   const backTarget = backState?.from ?? OPERATIONS_INCIDENTS_PATH;
   const { data, isLoading, isError } = useGetIncident(id);
-  // Same label computation this page's own `recordView` call below uses —
-  // see `useReportCaseTabMeta`'s doc comment.
-  useReportCaseTabMeta(
-    id,
-    data
-      ? [data.number, data.subject].filter((s): s is string => !!s?.trim()).join(" · ") ||
-          "(no subject)"
-      : undefined,
-  );
+  // The incident number only (not the subject) — a deliberately short tab
+  // chip label, matching `CsmCaseDetailPage`'s own `caseNumber`-only report.
+  useReportCaseTabMeta(id, data?.number ?? undefined);
   const { showError } = useErrorBanner();
   const patchIncident = usePatchIncident();
   const [editOpen, setEditOpen] = useState(false);

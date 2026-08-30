@@ -23,7 +23,7 @@ import {
 import type { JSX } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 import UserProfile from "@components/header/UserProfile";
-import ThemeSelect from "@components/header/ThemeSelect";
+import PreferencesMenu from "@components/header/PreferencesMenu";
 import RecentViewsButton from "@features/csm-recent/components/RecentViewsButton";
 import PinThisPageButton from "@features/csm-recent/components/PinThisPageButton";
 
@@ -32,7 +32,7 @@ export default function Actions(): JSX.Element {
 
   return (
     <HeaderUI.Actions>
-      <ThemeSelect />
+      <PreferencesMenu />
       <ColorSchemeToggle />
       {isSignedIn && <PinThisPageButton />}
       {isSignedIn && <RecentViewsButton />}

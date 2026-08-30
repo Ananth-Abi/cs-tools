@@ -20,10 +20,12 @@ import { pageComponentForKind } from "@features/case-tabs/tabPageRegistry";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import { basePathForKind, matchCaseLocation } from "@context/case-tabs/caseRoutePatterns";
 import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
+import { useCaseTabsBehavior } from "@context/case-tabs/CaseTabsBehaviorContext";
 import { useNavTransition } from "@hooks/useNavTransition";
 import CaseTabIsolatedRouter from "@features/case-tabs/components/CaseTabIsolatedRouter";
 import CaseTabStrip from "@features/case-tabs/components/CaseTabStrip";
 import { useCaseTabCloseConfirm } from "@features/case-tabs/hooks/useCaseTabCloseConfirm";
+import { useCurrentLocationTab } from "@features/case-tabs/hooks/useCurrentLocationTab";
 
 /**
  * The visible tab strip, meant to sit ABOVE the routed page content (e.g.
@@ -31,24 +33,43 @@ import { useCaseTabCloseConfirm } from "@features/case-tabs/hooks/useCaseTabClos
  * outside that region's own padding, so it reads as a persistent strip like
  * a browser's, not part of the page underneath it.
  *
- * Also mounts the close-confirm dialog. Each tab's own label is reported
- * directly by the page rendering it (`useReportCaseTabMeta`, called from
- * `CsmCaseDetailPage`) rather than fetched separately here — see that
- * hook's own doc comment for why. Renders nothing when no tabs are open.
+ * Position 0 is always the pinned, non-closable "current location" tab (see
+ * `useCurrentLocationTab`) — shown whenever the mechanism is on at all
+ * (mode !== "off"), independent of whether any case tabs are open, so it
+ * never flickers in and out as the last case tab closes.
+ *
+ * Also mounts the close-confirm dialog. Each case tab's own label is
+ * reported directly by the page rendering it (`useReportCaseTabMeta`,
+ * called from `CsmCaseDetailPage` et al.) rather than fetched separately
+ * here — see that hook's own doc comment for why.
+ *
+ * Renders nothing at all when the behavior mode is `off` — the app then
+ * behaves exactly as it did before this feature existed.
  */
 export function CaseTabStripBar(): JSX.Element | null {
   const location = useLocation();
   const navigate = useNavTransition();
   const { tabs, activeTabId, setActiveTab } = useCaseTabsController();
+  const { mode } = useCaseTabsBehavior();
   const { requestClose, dialog } = useCaseTabCloseConfirm();
+  const currentLocationTab = useCurrentLocationTab();
 
-  if (tabs.length === 0) return null;
+  if (mode === "off") return null;
 
   return (
     <>
       <CaseTabStrip
         tabs={tabs}
-        activeTabId={activeTabId}
+        // No case tab reads as "active" while the pinned tab is the live
+        // view (the user is on a non-case page) — otherwise a stale case
+        // tab would keep showing as selected after navigating away from it
+        // without closing it.
+        activeTabId={currentLocationTab.active ? null : activeTabId}
+        pinnedTab={{
+          label: currentLocationTab.label,
+          active: currentLocationTab.active,
+          onClick: () => navigate(currentLocationTab.path),
+        }}
         onActivate={(id) => {
           const tab = tabs.find((t) => t.id === id);
           if (!tab) return;

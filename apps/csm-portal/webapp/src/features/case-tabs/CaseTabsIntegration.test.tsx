@@ -15,12 +15,13 @@
 // under the License.
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { BrowserRouter, Route, Routes, useNavigate, useParams } from "react-router";
 import "@testing-library/jest-dom/vitest";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 import { CaseTabsProvider, useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
+import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
 import { ErrorBannerProvider } from "@context/error-banner/ErrorBannerContext";
 import CaseDetailRouteSync from "@features/case-tabs/components/CaseDetailRouteSync";
 import {
@@ -29,6 +30,8 @@ import {
 } from "@features/case-tabs/components/CaseTabsWorkspace";
 import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
 import { MAX_OPEN_CASE_TABS } from "@context/case-tabs/caseTabsTypes";
+
+const BEHAVIOR_STORAGE_KEY = "csm.caseTabs.behavior";
 
 /**
  * Stand-in for `CsmCaseDetailPage`, wired in via the SAME lazy-loaded module
@@ -93,26 +96,37 @@ function App({ initialPath }: { initialPath: string }) {
   return (
     <BrowserRouter>
       <ErrorBannerProvider>
-        <CaseTabsProvider>
-          <CaseTabStripBar />
-          <CaseTabsContentHost />
-          <Routes>
-            <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
-          </Routes>
-        </CaseTabsProvider>
+        <CaseTabsBehaviorProvider>
+          <CaseTabsProvider>
+            <CaseTabStripBar />
+            <CaseTabsContentHost />
+            <Routes>
+              <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
+            </Routes>
+          </CaseTabsProvider>
+        </CaseTabsBehaviorProvider>
       </ErrorBannerProvider>
     </BrowserRouter>
   );
 }
 
 describe("case tabs — real BrowserRouter integration", () => {
+  beforeEach(() => {
+    // These tests exercise the tab mechanism itself; opt into a mode where
+    // it's actually on (default is "off" — see the dedicated describe block
+    // below for that).
+    localStorage.setItem(BEHAVIOR_STORAGE_KEY, "block");
+  });
+
   it("opening a case via the tab mechanism renders it, without the nested-Router crash", async () => {
     expect(() => render(<App initialPath="/cases/CS0001" />)).not.toThrow();
     await waitFor(() =>
       expect(screen.getByTestId("stub-page-case-id")).toHaveTextContent("CS0001"),
     );
-    // A tab for it is now open and shown in the strip.
+    // A tab for it is now open and shown in the strip, alongside the
+    // permanent pinned "current location" tab (see `useCurrentLocationTab`).
     expect(screen.getByRole("tablist", { name: "Open cases" })).toBeInTheDocument();
+    expect(screen.getByText("CS0001")).toBeInTheDocument();
   });
 
   // Regression test for bug: a tab's chip label stayed on the raw caseId
@@ -122,19 +136,18 @@ describe("case tabs — real BrowserRouter integration", () => {
     render(<App initialPath="/cases/CS0001" />);
     await waitFor(() => screen.getByTestId("stub-page-case-id"));
 
-    // Label not resolved yet: the chip falls back to the raw caseId.
-    expect(screen.getByRole("tab")).toHaveTextContent("CS0001");
+    // Label not resolved yet: the chip falls back to "Loading…", not the
+    // raw caseId/UUID.
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
 
     // Simulate the page's data query resolving (matches
     // `CsmCaseDetailPage`'s own data -> label flow via `useReportCaseTabMeta`).
     fireEvent.click(screen.getByText("resolve-label"));
 
-    await waitFor(() =>
-      expect(screen.getByRole("tab")).toHaveTextContent("Label for CS0001"),
-    );
-    // Still exactly one tab, still the active one — this wasn't achieved by
-    // closing/reopening or switching away.
-    expect(screen.getAllByRole("tab")).toHaveLength(1);
+    await waitFor(() => expect(screen.getByText("Label for CS0001")).toBeInTheDocument());
+    // Still exactly one CASE tab (plus the permanent pinned one) — this
+    // wasn't achieved by closing/reopening or switching away.
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
   });
 
   // Regression test for bug: at the open-tab cap, clicking a 6th distinct
@@ -147,17 +160,19 @@ describe("case tabs — real BrowserRouter integration", () => {
       return (
         <BrowserRouter>
           <ErrorBannerProvider>
-            <CaseTabsProvider>
-              {Array.from({ length: MAX_OPEN_CASE_TABS }, (_, i) => (
-                <Opener key={i} caseId={`CS000${i}`} />
-              ))}
-              <NavigateButton to="/cases/CS-OVERFLOW" label="click-overflow-case" />
-              <CaseTabStripBar />
-              <CaseTabsContentHost />
-              <Routes>
-                <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
-              </Routes>
-            </CaseTabsProvider>
+            <CaseTabsBehaviorProvider>
+              <CaseTabsProvider>
+                {Array.from({ length: MAX_OPEN_CASE_TABS }, (_, i) => (
+                  <Opener key={i} caseId={`CS000${i}`} />
+                ))}
+                <NavigateButton to="/cases/CS-OVERFLOW" label="click-overflow-case" />
+                <CaseTabStripBar />
+                <CaseTabsContentHost />
+                <Routes>
+                  <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
+                </Routes>
+              </CaseTabsProvider>
+            </CaseTabsBehaviorProvider>
           </ErrorBannerProvider>
         </BrowserRouter>
       );
@@ -166,7 +181,10 @@ describe("case tabs — real BrowserRouter integration", () => {
     for (let i = 0; i < MAX_OPEN_CASE_TABS; i++) {
       fireEvent.click(screen.getByText(`open-CS000${i}`));
     }
-    await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS));
+    // The 5 case tabs, plus the permanent pinned "current location" tab.
+    await waitFor(() =>
+      expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS + 1),
+    );
 
     // Navigate (as a case-list row click would) to a 6th, never-opened case.
     fireEvent.click(screen.getByText("click-overflow-case"));
@@ -183,9 +201,77 @@ describe("case tabs — real BrowserRouter integration", () => {
     // And it's rendered outside any tab panel — the un-tabbed fallback path,
     // not a (still hidden) `CaseTabIsolatedRouter` instance.
     expect(screen.getByText("CS-OVERFLOW").closest('[data-testid^="case-tab-panel-"]')).toBeNull();
-    // Still exactly the original 5 tabs — the 6th case never became one.
-    expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS);
+    // Still exactly the original 5 case tabs (+ the pinned one) — the 6th
+    // case never became one.
+    expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS + 1);
     // The user is told why.
     expect(screen.getByText(/already open/i)).toBeInTheDocument();
+  });
+});
+
+/**
+ * Regression test for the single most consequential behavioral change in
+ * this feature: the case-tabs mechanism defaults to OFF. A fresh
+ * browser/session (empty localStorage) must see exactly the pre-feature
+ * behavior — no tab strip at all, and clicking into a case renders it
+ * in place via the real route, full page at a time, with no open-tab
+ * bookkeeping happening at all.
+ */
+describe("case tabs — default (mode 'off') behavior", () => {
+  beforeEach(() => {
+    localStorage.removeItem(BEHAVIOR_STORAGE_KEY);
+    // Isolation from the mode-"block" tests above, which persist open tabs
+    // to sessionStorage — mode "off" must ignore any such leftovers (see
+    // `CaseTabsProvider`'s own doc comment on this), but clearing it here
+    // too keeps this describe block's own fixture state independent.
+    sessionStorage.clear();
+  });
+
+  it("renders no tab strip and no pinned tab on a fresh session", async () => {
+    render(<App initialPath="/cases/CS0001" />);
+    await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
+    expect(screen.queryByRole("tablist", { name: "Open cases" })).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+  });
+
+  it("renders every case directly (plain full-page navigation), never opening a tab", async () => {
+    function AppAtTwoCasesInTurn({ path }: { path: string }) {
+      window.history.pushState({}, "", path);
+      return (
+        <BrowserRouter>
+          <ErrorBannerProvider>
+            <CaseTabsBehaviorProvider>
+              <CaseTabsProvider>
+                <CaseTabStripBar />
+                <CaseTabsContentHost />
+                <Routes>
+                  <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
+                </Routes>
+              </CaseTabsProvider>
+            </CaseTabsBehaviorProvider>
+          </ErrorBannerProvider>
+        </BrowserRouter>
+      );
+    }
+    const first = render(<AppAtTwoCasesInTurn path="/cases/CS0001" />);
+    await waitFor(() =>
+      expect(first.getByTestId("stub-page-case-id")).toHaveTextContent("CS0001"),
+    );
+    expect(first.queryByRole("tablist")).not.toBeInTheDocument();
+    first.unmount();
+
+    // A second, distinct case renders the same way — no accumulated tab
+    // state carried between them (there IS none, in this mode).
+    const second = render(<AppAtTwoCasesInTurn path="/cases/CS0002" />);
+    await waitFor(() =>
+      expect(second.getByTestId("stub-page-case-id")).toHaveTextContent("CS0002"),
+    );
+    expect(second.queryByRole("tablist")).not.toBeInTheDocument();
+  });
+
+  it("never shows the 'tabs are already open' toast in this mode", async () => {
+    render(<App initialPath="/cases/CS0001" />);
+    await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
+    expect(screen.queryByText(/already open/i)).not.toBeInTheDocument();
   });
 });

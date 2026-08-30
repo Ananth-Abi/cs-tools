@@ -22,9 +22,11 @@ import {
   CaseTabsProvider,
   useCaseTabsController,
 } from "@context/case-tabs/CaseTabsContext";
+import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
 import { MAX_OPEN_CASE_TABS } from "@context/case-tabs/caseTabsTypes";
 
 const STORAGE_KEY = "csm.caseTabs.v1";
+const BEHAVIOR_STORAGE_KEY = "csm.caseTabs.behavior";
 
 function Probe(): JSX.Element {
   const { tabs, activeTabId, openTab, closeTab } = useCaseTabsController();
@@ -41,15 +43,23 @@ function Probe(): JSX.Element {
 
 function renderProbe(): ReturnType<typeof render> {
   return render(
-    <CaseTabsProvider>
-      <Probe />
-    </CaseTabsProvider>,
+    <CaseTabsBehaviorProvider>
+      <CaseTabsProvider>
+        <Probe />
+      </CaseTabsProvider>
+    </CaseTabsBehaviorProvider>,
   );
 }
 
 describe("CaseTabsProvider", () => {
   beforeEach(() => {
     sessionStorage.clear();
+    // These tests exercise the tab MECHANISM itself, not the default
+    // behavior mode (that's `CaseTabsBehaviorContext`'s own test file, and
+    // the "off by default" regression test) — mode "off" would make every
+    // `openTab` call here a no-op, so opt into a mode where tabs actually
+    // open.
+    localStorage.setItem(BEHAVIOR_STORAGE_KEY, "block");
   });
 
   it("starts with no tabs when sessionStorage is empty", () => {
@@ -121,9 +131,11 @@ describe("CaseTabsProvider", () => {
       );
     }
     render(
-      <CaseTabsProvider>
-        <CapProbe />
-      </CaseTabsProvider>,
+      <CaseTabsBehaviorProvider>
+        <CaseTabsProvider>
+          <CapProbe />
+        </CaseTabsProvider>
+      </CaseTabsBehaviorProvider>,
     );
     await act(async () => screen.getByText("fill").click());
     expect(screen.getByTestId("count")).toHaveTextContent(String(MAX_OPEN_CASE_TABS));

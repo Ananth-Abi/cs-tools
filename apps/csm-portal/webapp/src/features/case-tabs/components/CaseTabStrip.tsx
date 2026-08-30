@@ -18,32 +18,49 @@ import { Box, Chip, Tooltip } from "@wso2/oxygen-ui";
 import { type JSX } from "react";
 import type { CaseTabState } from "@context/case-tabs/caseTabsTypes";
 
+export interface PinnedTabProps {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}
+
 export interface CaseTabStripProps {
   tabs: CaseTabState[];
   activeTabId: string | null;
   onActivate: (id: string) => void;
   onRequestClose: (id: string) => void;
+  /** The permanent, non-closable "wherever the user currently is" tab at
+   * position 0 — see `useCurrentLocationTab`. Optional purely so this
+   * component's own tests can exercise the plain case-tab strip in
+   * isolation; `CaseTabStripBar` always supplies one. */
+  pinnedTab?: PinnedTabProps;
 }
 
+// Shown while a tab's own page hasn't reported a label yet (see
+// `useReportCaseTabMeta`) — deliberately not the raw caseId/UUID, which read
+// as a rendering glitch rather than "still loading".
+const LOADING_LABEL = "Loading…";
+
 function tabDisplayLabel(tab: CaseTabState): string {
-  return tab.label ?? tab.caseId;
+  return tab.label ?? LOADING_LABEL;
 }
 
 /**
- * Browser-tab-like strip for in-app open case tabs, rendered by
- * `CaseTabStripBar` above the routed page content. Presentational: all
- * open/close/activate decisions (capacity, the unsaved-draft confirm) are
- * made by the caller — this component only renders the given `tabs` and
- * reports clicks. See `useCaseTabCloseConfirm` for the close-confirm dialog
- * this strip's `onRequestClose` is typically wired to.
+ * Browser-tab-like strip for in-app open tabs, rendered by `CaseTabStripBar`
+ * above the routed page content. Presentational: all open/close/activate
+ * decisions (capacity, the unsaved-draft confirm) are made by the caller —
+ * this component only renders the given `tabs` (plus the pinned tab, if
+ * given) and reports clicks. See `useCaseTabCloseConfirm` for the
+ * close-confirm dialog this strip's `onRequestClose` is typically wired to.
  */
 export default function CaseTabStrip({
   tabs,
   activeTabId,
   onActivate,
   onRequestClose,
+  pinnedTab,
 }: CaseTabStripProps): JSX.Element | null {
-  if (tabs.length === 0) return null;
+  if (tabs.length === 0 && !pinnedTab) return null;
 
   return (
     <Box
@@ -63,6 +80,28 @@ export default function CaseTabStrip({
         "&::-webkit-scrollbar-thumb": { bgcolor: "action.disabled", borderRadius: 3 },
       }}
     >
+      {pinnedTab && (
+        <Tooltip title={pinnedTab.label}>
+          {/* No `onDelete` — this tab is permanent, not part of the
+              closable case-tab set (see `useCurrentLocationTab`'s doc
+              comment). */}
+          <Chip
+            size="small"
+            role="tab"
+            aria-selected={pinnedTab.active}
+            label={pinnedTab.label}
+            variant={pinnedTab.active ? "filled" : "outlined"}
+            onClick={pinnedTab.onClick}
+            sx={{
+              flexShrink: 0,
+              maxWidth: 220,
+              cursor: "pointer",
+              fontStyle: "italic",
+              ...(pinnedTab.active ? { bgcolor: "action.selected", fontWeight: 600 } : {}),
+            }}
+          />
+        </Tooltip>
+      )}
       {tabs.map((tab) => {
         const active = tab.id === activeTabId;
         const label = tabDisplayLabel(tab);

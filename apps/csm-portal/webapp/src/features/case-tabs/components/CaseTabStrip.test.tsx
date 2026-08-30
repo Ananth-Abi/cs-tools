@@ -61,7 +61,7 @@ describe("CaseTabStrip", () => {
     expect(tab1.closest('[role="tab"]')).toHaveAttribute("aria-selected", "false");
   });
 
-  it("falls back to the raw caseId when no label has resolved yet", () => {
+  it("shows a Loading… placeholder (not the raw caseId/UUID) when no label has resolved yet", () => {
     render(
       <CaseTabStrip
         tabs={[{ ...TAB_1, label: undefined }]}
@@ -70,7 +70,8 @@ describe("CaseTabStrip", () => {
         onRequestClose={vi.fn()}
       />,
     );
-    expect(screen.getByText("CS1")).toBeInTheDocument();
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.queryByText("CS1")).not.toBeInTheDocument();
   });
 
   it("calls onActivate when a tab chip is clicked", () => {

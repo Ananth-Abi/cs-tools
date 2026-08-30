@@ -15,12 +15,13 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { useState, type JSX } from "react";
 import { BrowserRouter, useNavigate, useParams } from "react-router";
 import "@testing-library/jest-dom/vitest";
 import CaseTabIsolatedRouter from "@features/case-tabs/components/CaseTabIsolatedRouter";
 import { CaseTabsProvider, useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
+import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 import type { CaseTabState } from "@context/case-tabs/caseTabsTypes";
 
@@ -94,6 +95,14 @@ function renderInApp(ui: JSX.Element): ReturnType<typeof render> {
 }
 
 describe("CaseTabIsolatedRouter", () => {
+  beforeEach(() => {
+    // Only the last test below actually opens a tab via the real `openTab`
+    // (the others hand-build `CaseTabState` objects directly) — but this is
+    // harmless for those, and keeps this test independent of whatever the
+    // default behavior mode is.
+    localStorage.setItem("csm.caseTabs.behavior", "block");
+  });
+
   it("does not throw react-router's nested-Router invariant when mounted inside the app's real BrowserRouter", () => {
     // This is the regression test for the bug this component previously
     // shipped with: an earlier implementation rendered a second, low-level
@@ -173,9 +182,11 @@ describe("CaseTabIsolatedRouter", () => {
       );
     }
     renderInApp(
-      <CaseTabsProvider>
-        <OpenerHarness />
-      </CaseTabsProvider>,
+      <CaseTabsBehaviorProvider>
+        <CaseTabsProvider>
+          <OpenerHarness />
+        </CaseTabsProvider>
+      </CaseTabsBehaviorProvider>,
     );
     fireEvent.click(screen.getByText("seed"));
     expect(screen.getByTestId("tab-count")).toHaveTextContent("1");

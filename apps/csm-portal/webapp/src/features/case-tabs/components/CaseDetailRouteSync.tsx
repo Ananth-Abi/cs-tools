@@ -19,6 +19,7 @@ import { useLocation } from "react-router";
 import { pageComponentForKind } from "@features/case-tabs/tabPageRegistry";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
+import { useCaseTabsBehavior } from "@context/case-tabs/CaseTabsBehaviorContext";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
@@ -61,6 +62,7 @@ export default function CaseDetailRouteSync({
   const caseId = useNormalizedIdParam(paramName);
   const location = useLocation();
   const { tabs, isAtCapacity, openTab } = useCaseTabsController();
+  const { mode } = useCaseTabsBehavior();
   const { showError } = useErrorBanner();
   const warnedForCaseIdRef = useRef<string | undefined>(undefined);
 
@@ -72,11 +74,20 @@ export default function CaseDetailRouteSync({
   // transiently render this fallback (nothing is open for it yet) before
   // the effect's `openTab` call resolves, then immediately swap to `null`
   // once it succeeds — a needless mount-then-discard on every record opened.
-  const alreadyOpenAsTab = !!caseId && tabs.some((t) => t.caseId === caseId);
-  const blocked = !!caseId && !alreadyOpenAsTab && isAtCapacity;
+  //
+  // Mode "off" always renders this fallback (there is never a tab to defer
+  // to) — this is what makes "off" behave exactly like the pre-feature app:
+  // every record renders directly, in place, via the real matched route.
+  const alreadyOpenAsTab =
+    mode !== "off" && !!caseId && tabs.some((t) => t.caseId === caseId);
+  const blocked = mode === "off" || (!!caseId && !alreadyOpenAsTab && isAtCapacity);
 
   useEffect(() => {
-    if (!caseId) return;
+    // Mode "off": never call openTab (which would just return false anyway
+    // — see CaseTabsContext) and, crucially, never fire the capacity toast
+    // below, which would otherwise show on literally every record opened by
+    // default.
+    if (!caseId || mode === "off") return;
     const path = `${location.pathname}${location.search}${location.hash}`;
     const opened = openTab(caseId, kind, path, location.state);
     if (!opened && warnedForCaseIdRef.current !== caseId) {
@@ -89,6 +100,7 @@ export default function CaseDetailRouteSync({
   }, [
     caseId,
     kind,
+    mode,
     location.pathname,
     location.search,
     location.hash,

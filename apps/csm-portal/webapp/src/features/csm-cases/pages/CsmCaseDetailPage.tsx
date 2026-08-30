@@ -396,18 +396,13 @@ export default function CsmCaseDetailPage(): JSX.Element {
     isFetching: isFetchingCaseDetail,
     dataUpdatedAt: caseDetailUpdatedAt,
   } = useGetCsmCaseDetail(caseId);
-  // Reports this exact label (same computation the recent-views/QuickNav
-  // effect below uses) up to the in-app case-tabs layer, so the tab strip's
-  // chip shows it — see the hook's own doc comment for why this replaced an
-  // earlier "the tab strip fetches its own copy" design.
-  useReportCaseTabMeta(
-    caseId,
-    data
-      ? caseIdLabel(data)
-        ? `${caseIdLabel(data)} · ${data.subject}`
-        : data.subject
-      : undefined,
-  );
+  // Reports this case's number ONLY (not the wso2CaseId/subject the header
+  // and recent-views entry show — a deliberately short tab chip label, by
+  // request) up to the in-app case-tabs layer. Same field for all five
+  // case-like kinds this page renders (engagements, service requests,
+  // announcements, security reports all carry a `caseNumber` too, from the
+  // same `CsmCaseDetail` shape).
+  useReportCaseTabMeta(caseId, data?.caseNumber);
   // The route alone isn't a reliable signal once data has loaded: a "Related
   // case" link always points at /cases/:id regardless of the target's actual
   // type, so an announcement opened that way would otherwise render the full

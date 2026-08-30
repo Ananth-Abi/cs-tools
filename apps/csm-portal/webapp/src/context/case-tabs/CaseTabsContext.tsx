@@ -38,6 +38,7 @@ import {
   type CaseTabState,
   type CaseTabsPersistedState,
 } from "@context/case-tabs/caseTabsTypes";
+import { useCaseTabsBehavior } from "@context/case-tabs/CaseTabsBehaviorContext";
 
 // Deliberately sessionStorage, not localStorage: an open-tabs list is
 // per-browser-session working state, not something that should survive
@@ -137,15 +138,31 @@ const NOOP_CASE_TABS_CONTROLLER: CaseTabsController = {
 const CaseTabsContext = createContext<CaseTabsController>(NOOP_CASE_TABS_CONTROLLER);
 
 export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Element {
+  const { mode } = useCaseTabsBehavior();
   const [state, dispatch] = useReducer(
     caseTabsReducer,
     undefined,
-    () => readPersistedState() ?? INITIAL_CASE_TABS_STATE,
+    // Mode "off" never restores a prior session's open tabs, even if some
+    // are still sitting in sessionStorage from before the user (or a
+    // previous session on this browser) turned the mechanism off — without
+    // this, `CaseTabsContentHost`/`CaseTabStripBar` would render stale tabs
+    // in a mode that's supposed to render neither, since they only read
+    // `tabs` off this state and don't separately re-check `mode`.
+    () => (mode === "off" ? INITIAL_CASE_TABS_STATE : (readPersistedState() ?? INITIAL_CASE_TABS_STATE)),
   );
 
   useEffect(() => {
     writePersistedState(state);
   }, [state]);
+
+  // Same reasoning as the lazy-init check above, but for a LIVE mode change
+  // (the user switches to "No tabs at all" via the preferences menu while
+  // tabs are already open) — clears them immediately rather than leaving
+  // them to linger, hidden behind `CaseTabStripBar`'s own `mode === "off"`
+  // early return, until the next full reload.
+  useEffect(() => {
+    if (mode === "off") dispatch({ type: "HYDRATE", state: INITIAL_CASE_TABS_STATE });
+  }, [mode]);
 
   // Read inside `openTab` via a ref, not a `[state.tabs]` dependency: a
   // dependency there gives `openTab` a new identity on every single tab
@@ -160,11 +177,25 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
     tabsRef.current = state.tabs;
   });
 
+  // Same ref-not-dependency reasoning as `tabsRef` above — `openTab` stays a
+  // stable callback identity across a mode change too.
+  const modeRef = useRef(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  });
+
   const openTab = useCallback(
     (caseId: string, kind: CaseRouteKind, path: string, tabState?: unknown): boolean => {
+      // Mode "off" disables the mechanism entirely — never opens a tab, for
+      // any case, regardless of capacity. Callers (`CaseDetailRouteSync`)
+      // already skip calling this in that mode (so no toast fires), but this
+      // is the authoritative check other/future callers should be able to
+      // rely on too.
+      if (modeRef.current === "off") return false;
       const tabs = tabsRef.current;
       const alreadyOpen = tabs.some((t) => t.caseId === caseId);
-      if (!alreadyOpen && tabs.length >= MAX_OPEN_CASE_TABS) {
+      const atCap = !alreadyOpen && tabs.length >= MAX_OPEN_CASE_TABS;
+      if (atCap && modeRef.current === "block") {
         return false;
       }
       dispatch({
@@ -174,6 +205,11 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
         kind,
         path,
         state: tabState,
+        evict: atCap
+          ? modeRef.current === "evict-oldest"
+            ? "oldest"
+            : "newest"
+          : undefined,
       });
       return true;
     },

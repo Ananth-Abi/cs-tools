@@ -37,6 +37,30 @@ function open(
   });
 }
 
+function openWithEvict(
+  state: CaseTabsState,
+  id: string,
+  caseId: string,
+  evict: "oldest" | "newest",
+): CaseTabsState {
+  return caseTabsReducer(state, {
+    type: "OPEN_OR_ACTIVATE",
+    id,
+    caseId,
+    kind: "case",
+    path: `/cases/${caseId}`,
+    evict,
+  });
+}
+
+function fillToCap(): CaseTabsState {
+  let state = INITIAL_CASE_TABS_STATE;
+  for (let i = 0; i < MAX_OPEN_CASE_TABS; i++) {
+    state = open(state, `t${i}`, `CS${i}`);
+  }
+  return state;
+}
+
 describe("caseTabsReducer", () => {
   it("opens a new tab and makes it active", () => {
     const state = open(INITIAL_CASE_TABS_STATE, "t1", "CS1");
@@ -156,5 +180,44 @@ describe("caseTabsReducer", () => {
     expect(unchanged).toBe(state);
     const unchanged2 = caseTabsReducer(state, { type: "CLOSE", id: "does-not-exist" });
     expect(unchanged2).toBe(state);
+  });
+
+  describe("eviction (mode 'evict-oldest' / 'evict-newest')", () => {
+    it("evicts the first-opened tab (insertion order, not LRU) when evict is 'oldest'", () => {
+      const full = fillToCap();
+      const openOrder = full.tabs.map((t) => t.id);
+      const state = openWithEvict(full, "new", "CS-new", "oldest");
+      expect(state.tabs).toHaveLength(MAX_OPEN_CASE_TABS);
+      // The very first tab opened (t0) is gone; every other original tab
+      // survives in its original relative order, with the new one appended.
+      expect(state.tabs.map((t) => t.id)).toEqual([...openOrder.slice(1), "new"]);
+      expect(state.tabs.some((t) => t.caseId === "CS0")).toBe(false);
+      expect(state.activeTabId).toBe("new");
+    });
+
+    it("evicts the last-opened tab when evict is 'newest'", () => {
+      const full = fillToCap();
+      const openOrder = full.tabs.map((t) => t.id);
+      const state = openWithEvict(full, "new", "CS-new", "newest");
+      expect(state.tabs).toHaveLength(MAX_OPEN_CASE_TABS);
+      expect(state.tabs.map((t) => t.id)).toEqual([...openOrder.slice(0, -1), "new"]);
+      expect(state.tabs.some((t) => t.caseId === `CS${MAX_OPEN_CASE_TABS - 1}`)).toBe(false);
+      expect(state.activeTabId).toBe("new");
+    });
+
+    it("does not evict anything when the case is already open, even with evict set", () => {
+      const full = fillToCap();
+      const state = openWithEvict(full, "ignored-new-id", "CS0", "oldest");
+      expect(state.tabs).toHaveLength(MAX_OPEN_CASE_TABS);
+      expect(state.tabs.map((t) => t.id)).toEqual(full.tabs.map((t) => t.id));
+      expect(state.activeTabId).toBe("t0");
+    });
+
+    it("does not evict anything when under the cap, even with evict set", () => {
+      let state = INITIAL_CASE_TABS_STATE;
+      state = open(state, "t1", "CS1");
+      state = openWithEvict(state, "t2", "CS2", "oldest");
+      expect(state.tabs.map((t) => t.id)).toEqual(["t1", "t2"]);
+    });
   });
 });
