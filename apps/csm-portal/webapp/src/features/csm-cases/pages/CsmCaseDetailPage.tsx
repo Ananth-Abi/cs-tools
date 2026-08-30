@@ -145,6 +145,7 @@ import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDia
 import { usePostTimeCard, useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
+import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
   isBlankHtml,
@@ -566,6 +567,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const [isAcknowledging, setIsAcknowledging] = useState(false);
   const [metaCollapsed, setMetaCollapsed] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
+  // Reports composerOpen up to the in-app case-tabs layer, purely so closing
+  // this case's tab from the tab strip can confirm first — see the hook's
+  // own doc comment for what this signal does and doesn't guarantee.
+  useReportCaseTabDraft(caseId, composerOpen);
   const [assignOpen, setAssignOpen] = useState(false);
   const [linkCaseOpen, setLinkCaseOpen] = useState(false);
   const [linkIncidentOpen, setLinkIncidentOpen] = useState(false);

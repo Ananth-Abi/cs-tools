@@ -1,0 +1,96 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
+
+/**
+ * The five route bases that all render `CsmCaseDetailPage` (see that page's
+ * own doc comment on `detailPath`/`canonicalDetailPath`) — kept here as the
+ * single source of truth this feature's tab layer matches against, mirroring
+ * `caseTypeDetailBasePath` in `features/csm-cases/utils/caseType.ts` (which
+ * maps a *loaded case's* `caseType` to the same bases; this module instead
+ * maps a *URL* to one of them, before any case data has loaded).
+ */
+const ROUTE_BASES: Record<CaseRouteKind, string> = {
+  case: "/cases",
+  service_request: "/operations/service-requests",
+  engagement: "/engagements",
+  announcement: "/announcements",
+  security_report_analysis: "/security-center/security-reports",
+};
+
+// Longest/most specific base first so `/operations/service-requests/:id`
+// isn't shadowed by a hypothetical shorter prefix — not currently a risk
+// with these five literal bases, but keeps this order-independent.
+const ROUTE_KIND_BY_BASE: [string, CaseRouteKind][] = (
+  Object.entries(ROUTE_BASES) as [CaseRouteKind, string][]
+)
+  .map(([kind, base]) => [base, kind] as [string, CaseRouteKind])
+  .sort((a, b) => b[0].length - a[0].length);
+
+export interface CaseLocationMatch {
+  kind: CaseRouteKind;
+  caseId: string;
+}
+
+/**
+ * The react-router path pattern for a given kind, e.g. `/cases/:caseId` —
+ * used as the sole `<Route>` inside each open tab's isolated router (see
+ * `CaseTabIsolatedRouter`).
+ */
+export function pathPatternForKind(kind: CaseRouteKind): string {
+  return `${ROUTE_BASES[kind]}/:caseId`;
+}
+
+export function basePathForKind(kind: CaseRouteKind): string {
+  return ROUTE_BASES[kind];
+}
+
+/**
+ * Matches a pathname (no search/hash) against the five known case-detail
+ * route bases, returning the route kind and the raw `:caseId` segment, or
+ * `undefined` if the path isn't a case-detail route at all. Pure string
+ * matching, deliberately independent of the app's real `<Routes>` tree so it
+ * can also be used inside an isolated (non-real) router — see
+ * `CaseTabIsolatedRouter`.
+ */
+export function matchCaseLocation(pathname: string): CaseLocationMatch | undefined {
+  for (const [base, kind] of ROUTE_KIND_BY_BASE) {
+    if (pathname === base || pathname.startsWith(`${base}/`)) {
+      const rest = pathname.slice(base.length + 1);
+      const caseId = rest.split("/")[0];
+      if (caseId) return { kind, caseId };
+    }
+  }
+  return undefined;
+}
+
+/** Builds the concrete detail path for a case of the given kind. */
+export function pathForTab(kind: CaseRouteKind, caseId: string): string {
+  return `${ROUTE_BASES[kind]}/${caseId}`;
+}
+
+/**
+ * `CaseRouteKind` is deliberately the same set of values as the backend's
+ * own `BeCaseType` (see `api/backend/types.ts`) — this just narrows an
+ * `undefined`/legacy-row case type to `"case"`, matching
+ * `caseTypeDetailBasePath`'s and `caseTypeHasSeverity`'s own fallback.
+ */
+export function caseRouteKindForType(
+  caseType: CaseRouteKind | undefined,
+): CaseRouteKind {
+  return caseType ?? "case";
+}
