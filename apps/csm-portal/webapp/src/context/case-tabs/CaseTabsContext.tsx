@@ -39,6 +39,7 @@ import {
   type CaseTabsPersistedState,
 } from "@context/case-tabs/caseTabsTypes";
 import { useCaseTabsBehavior } from "@context/case-tabs/CaseTabsBehaviorContext";
+import { pathForTab } from "@context/case-tabs/caseRoutePatterns";
 
 // Deliberately sessionStorage, not localStorage: an open-tabs list is
 // per-browser-session working state, not something that should survive
@@ -51,14 +52,20 @@ function readPersistedState(): CaseTabsState | undefined {
     if (!raw) return undefined;
     const parsed = JSON.parse(raw) as CaseTabsPersistedState;
     if (!Array.isArray(parsed.tabs)) return undefined;
-    const tabs: CaseTabState[] = parsed.tabs.map((t) => ({
-      ...t,
+    // Every rehydrated tab gets a fresh synthetic `id` — the persisted shape
+    // only carries `caseId` + `kind`, not the prior session's internal ids —
+    // and its concrete path is reconstructed from those two, the same way
+    // `openTab` builds it for a freshly-opened tab.
+    const tabs: CaseTabState[] = parsed.tabs.map(({ caseId, kind }) => ({
+      id: nextTabId(),
+      caseId,
+      kind,
+      path: pathForTab(kind, caseId),
       hasDraft: false,
       label: undefined,
     }));
-    const activeTabId = tabs.some((t) => t.id === parsed.activeTabId)
-      ? parsed.activeTabId
-      : (tabs[tabs.length - 1]?.id ?? null);
+    const activeTab = tabs.find((t) => t.caseId === parsed.activeCaseId);
+    const activeTabId = activeTab ? activeTab.id : (tabs[tabs.length - 1]?.id ?? null);
     return { tabs, activeTabId };
   } catch {
     return undefined;
@@ -67,14 +74,10 @@ function readPersistedState(): CaseTabsState | undefined {
 
 function writePersistedState(state: CaseTabsState): void {
   try {
+    const activeCaseId = state.tabs.find((t) => t.id === state.activeTabId)?.caseId ?? null;
     const persisted: CaseTabsPersistedState = {
-      tabs: state.tabs.map(({ id, caseId, kind, path }) => ({
-        id,
-        caseId,
-        kind,
-        path,
-      })),
-      activeTabId: state.activeTabId,
+      tabs: state.tabs.map(({ caseId, kind }) => ({ caseId, kind })),
+      activeCaseId,
     };
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
   } catch {
@@ -195,15 +198,25 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
     tabsRef.current = state.tabs;
   });
 
-  // Same ref-not-dependency reasoning as `tabsRef` above — `openTab` stays a
-  // stable callback identity across a preference change too.
-  const enabledRef = useRef(enabled);
-  const capModeRef = useRef(capMode);
-  useEffect(() => {
-    enabledRef.current = enabled;
-    capModeRef.current = capMode;
-  });
-
+  // `enabled`/`capMode` are read directly from this render's closure below
+  // (real `useCallback` DEPENDENCIES, not a ref) — deliberately NOT the same
+  // ref-not-dependency treatment as `tabsRef` above. A ref here needs a
+  // `useEffect` (or a render-time ref mutation, which this codebase's lint
+  // config forbids outright — refs are for values read outside render) to
+  // stay synced, and `useEffect`s fire child-before-parent within a commit:
+  // a descendant (`CaseDetailRouteSync`) whose own effect calls `openTab` in
+  // the SAME commit that flips `enabled` false -> true (e.g. the user
+  // toggles the preference on while already viewing a case) would run
+  // before this provider's own effect had synced a ref from `false` to
+  // `true` — so `openTab` saw a stale `false` and refused the very first
+  // tab, and the caller (unable to tell "refused, disabled" from "refused,
+  // at capacity" apart) showed a false-positive "reached the limit" toast
+  // with zero tabs open. Depending on them directly has no such staleness —
+  // a closure captured during a render always sees THAT render's values —
+  // at the cost of `openTab` getting a new identity on a preference change,
+  // which is rare (a user toggle, not per-tab churn) and, since `openTab`
+  // sits in `CaseDetailRouteSync`'s own effect deps, is exactly what makes
+  // that effect re-evaluate against the fresh preference in the first place.
   const openTab = useCallback(
     (caseId: string, kind: CaseRouteKind, path: string, tabState?: unknown): boolean => {
       // Disabled means the mechanism is off entirely — never opens a tab,
@@ -211,11 +224,11 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
       // already skip calling this while disabled (so no toast fires), but
       // this is the authoritative check other/future callers should be able
       // to rely on too.
-      if (!enabledRef.current) return false;
+      if (!enabled) return false;
       const tabs = tabsRef.current;
       const alreadyOpen = tabs.some((t) => t.caseId === caseId);
       const atCap = !alreadyOpen && tabs.length >= MAX_OPEN_CASE_TABS;
-      if (atCap && capModeRef.current === "block") {
+      if (atCap && capMode === "block") {
         return false;
       }
       dispatch({
@@ -225,15 +238,11 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
         kind,
         path,
         state: tabState,
-        evict: atCap
-          ? capModeRef.current === "evict-oldest"
-            ? "oldest"
-            : "newest"
-          : undefined,
+        evict: atCap ? (capMode === "evict-oldest" ? "oldest" : "newest") : undefined,
       });
       return true;
     },
-    [],
+    [enabled, capMode],
   );
 
   const closeTab = useCallback((id: string) => {

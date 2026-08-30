@@ -70,8 +70,17 @@ export interface CaseTabState {
 }
 
 export interface CaseTabsPersistedState {
-  tabs: { id: string; caseId: string; kind: CaseRouteKind; path: string }[];
-  activeTabId: string | null;
+  /** Deliberately just `caseId` + `kind` — not the full `CaseTabState`. The
+   * internal `id` is a synthetic per-open-instance value (see `CaseTabState.id`
+   * above) with no meaning across a reload, and `path` is always
+   * reconstructible from `caseId` + `kind` (see `pathForTab`) — persisting
+   * either would only be extra bytes that can drift from the value rehydrate
+   * actually needs. See `CaseTabsContext`'s `readPersistedState`/
+   * `writePersistedState`. */
+  tabs: { caseId: string; kind: CaseRouteKind }[];
+  /** Which tab was active, identified by `caseId` — not the old tab's `id`,
+   * which no longer exists once rehydrate assigns every tab a fresh one. */
+  activeCaseId: string | null;
 }
 
 /** Hard cap on simultaneously open in-app case tabs (browser-tab-strip

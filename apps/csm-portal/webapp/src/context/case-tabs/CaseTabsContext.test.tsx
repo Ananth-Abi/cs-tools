@@ -89,17 +89,60 @@ describe("CaseTabsProvider", () => {
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
   });
 
-  it("restores tabs from a prior session's sessionStorage on mount", () => {
+  it("restores tabs from a prior session's sessionStorage on mount, reassigning fresh ids", () => {
+    // Persisted shape is deliberately just `caseId` + `kind` (see
+    // `CaseTabsPersistedState`'s doc comment) — no `id`/`path` to read back,
+    // and the active tab is identified by `activeCaseId`, not the prior
+    // session's internal id (which no longer exists once rehydrate assigns
+    // every tab a fresh one).
     sessionStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
-        tabs: [{ id: "t1", caseId: "CS9", kind: "case", path: "/cases/CS9" }],
-        activeTabId: "t1",
+        tabs: [{ caseId: "CS9", kind: "case" }],
+        activeCaseId: "CS9",
       }),
     );
     renderProbe();
-    expect(screen.getByTestId("tab-ids")).toHaveTextContent("t1");
-    expect(screen.getByTestId("active")).toHaveTextContent("t1");
+    const ids = screen.getByTestId("tab-ids").textContent?.split(",") ?? [];
+    expect(ids).toHaveLength(1);
+    expect(ids[0]).toMatch(/^case-tab-/);
+    expect(screen.getByTestId("active")).toHaveTextContent(ids[0]);
+  });
+
+  it("resolves the active tab by caseId, and reopens an incident/change-request tab as the right kind", () => {
+    sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        tabs: [
+          { caseId: "CS9", kind: "case" },
+          { caseId: "INC1", kind: "incident" },
+        ],
+        activeCaseId: "INC1",
+      }),
+    );
+    function KindProbe(): JSX.Element {
+      const { tabs, activeTabId } = useCaseTabsController();
+      const active = tabs.find((t) => t.id === activeTabId);
+      return (
+        <div>
+          <div data-testid="active-case-id">{active?.caseId}</div>
+          <div data-testid="active-kind">{active?.kind}</div>
+          <div data-testid="active-path">{active?.path}</div>
+        </div>
+      );
+    }
+    render(
+      <CaseTabsBehaviorProvider>
+        <CaseTabsProvider>
+          <KindProbe />
+        </CaseTabsProvider>
+      </CaseTabsBehaviorProvider>,
+    );
+    expect(screen.getByTestId("active-case-id")).toHaveTextContent("INC1");
+    expect(screen.getByTestId("active-kind")).toHaveTextContent("incident");
+    expect(screen.getByTestId("active-path")).toHaveTextContent(
+      "/operations/incidents/INC1",
+    );
   });
 
   it("refuses a new tab past the cap and returns false from openTab", async () => {

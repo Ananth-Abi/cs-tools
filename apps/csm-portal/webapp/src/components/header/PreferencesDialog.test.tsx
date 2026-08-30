@@ -1,0 +1,71 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import "@testing-library/jest-dom/vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import PreferencesDialog from "@components/header/PreferencesDialog";
+import { ThemePreferenceProvider } from "@context/theme/ThemePreferenceContext";
+import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
+
+function renderDialog(open = true, onClose = vi.fn()) {
+  return {
+    onClose,
+    ...render(
+      <ThemePreferenceProvider>
+        <CaseTabsBehaviorProvider>
+          <PreferencesDialog open={open} onClose={onClose} />
+        </CaseTabsBehaviorProvider>
+      </ThemePreferenceProvider>,
+    ),
+  };
+}
+
+describe("PreferencesDialog", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("renders nothing visible when closed", () => {
+    renderDialog(false);
+    expect(screen.queryByText("Preferences")).not.toBeInTheDocument();
+  });
+
+  it("shows the theme select and the case-tabs preferences when open", () => {
+    renderDialog(true);
+    expect(screen.getByText("Preferences")).toBeInTheDocument();
+    expect(screen.getByLabelText("Select theme")).toBeInTheDocument();
+    expect(screen.getByLabelText("Open cases in tabs")).toBeInTheDocument();
+    expect(screen.getByLabelText("When the tab limit is reached")).toBeInTheDocument();
+  });
+
+  it("the cap-mode select is disabled until the tabs toggle is on", () => {
+    renderDialog(true);
+    // MUI's `Select` doesn't set the native `disabled` attribute on its
+    // rendered root — it applies the `Mui-disabled` class instead.
+    expect(screen.getByLabelText("When the tab limit is reached")).toHaveClass("Mui-disabled");
+    fireEvent.click(screen.getByLabelText("Open cases in tabs"));
+    expect(screen.getByLabelText("When the tab limit is reached")).not.toHaveClass(
+      "Mui-disabled",
+    );
+  });
+
+  it("calls onClose from the dialog's own close button", () => {
+    const { onClose } = renderDialog(true);
+    fireEvent.click(screen.getByLabelText("Close"));
+    expect(onClose).toHaveBeenCalled();
+  });
+});

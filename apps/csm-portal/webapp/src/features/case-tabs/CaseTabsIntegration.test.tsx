@@ -21,7 +21,10 @@ import { BrowserRouter, Route, Routes, useNavigate, useParams } from "react-rout
 import "@testing-library/jest-dom/vitest";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 import { CaseTabsProvider, useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
-import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
+import {
+  CaseTabsBehaviorProvider,
+  useCaseTabsBehavior,
+} from "@context/case-tabs/CaseTabsBehaviorContext";
 import { ErrorBannerProvider } from "@context/error-banner/ErrorBannerContext";
 import CaseDetailRouteSync from "@features/case-tabs/components/CaseDetailRouteSync";
 import {
@@ -275,6 +278,62 @@ describe("case tabs — default (mode 'off') behavior", () => {
   it("never shows the 'tabs are already open' toast in this mode", async () => {
     render(<App initialPath="/cases/CS0001" />);
     await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
+    expect(screen.queryByText(/already open/i)).not.toBeInTheDocument();
+  });
+
+  // Regression test for bug: enabling the mechanism (mode "off" -> a mode
+  // where it's on) while already viewing a case, in the SAME commit, used to
+  // show a false-positive "tabs are already open" toast with zero tabs
+  // actually open. Root cause: `CaseDetailRouteSync` (a descendant of
+  // `CaseTabsProvider`) read the fresh `enabled` value directly and called
+  // `openTab` from its own effect in that same commit, but React flushes
+  // descendant effects before ancestor effects — so `CaseTabsProvider`'s own
+  // effect hadn't yet synced its `enabledRef` from `false` to `true`, and
+  // `openTab` saw the stale ref and refused, indistinguishable (to the
+  // caller) from a genuine capacity refusal. Fixed by having `openTab` read
+  // `enabled`/`capMode` directly as `useCallback` dependencies (always
+  // fresh for the render that created it) instead of via an effect-synced
+  // ref — see `CaseTabsContext`'s own comment on `openTab` for why a
+  // render-time ref mutation wasn't a valid alternative here.
+  it("enabling tabs while already on a case route opens a tab immediately, with no false capacity toast", async () => {
+    function EnableToggle() {
+      const { setEnabled } = useCaseTabsBehavior();
+      return <button onClick={() => setEnabled(true)}>enable-tabs</button>;
+    }
+    function AppStartingDisabled({ initialPath }: { initialPath: string }) {
+      window.history.pushState({}, "", initialPath);
+      return (
+        <BrowserRouter>
+          <ErrorBannerProvider>
+            <CaseTabsBehaviorProvider>
+              <CaseTabsProvider>
+                <EnableToggle />
+                <CaseTabStripBar />
+                <CaseTabsContentHost />
+                <Routes>
+                  <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
+                </Routes>
+              </CaseTabsProvider>
+            </CaseTabsBehaviorProvider>
+          </ErrorBannerProvider>
+        </BrowserRouter>
+      );
+    }
+
+    localStorage.removeItem(ENABLED_STORAGE_KEY);
+    localStorage.setItem(CAP_MODE_STORAGE_KEY, "block");
+    sessionStorage.clear();
+
+    render(<AppStartingDisabled initialPath="/cases/CS0001" />);
+    await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("enable-tabs"));
+
+    await waitFor(() =>
+      expect(screen.getByRole("tablist", { name: "Open cases" })).toBeInTheDocument(),
+    );
+    expect(screen.getByText("CS0001")).toBeInTheDocument();
     expect(screen.queryByText(/already open/i)).not.toBeInTheDocument();
   });
 });

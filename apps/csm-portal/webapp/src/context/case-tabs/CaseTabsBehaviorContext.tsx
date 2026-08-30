@@ -69,7 +69,7 @@ interface CaseTabsBehaviorContextValue {
    * time. The feature is beta, opt-in only. */
   enabled: boolean;
   setEnabled: (next: boolean) => void;
-  /** Only meaningful (and only shown as interactive in `PreferencesMenu`)
+  /** Only meaningful (and only shown as interactive in `PreferencesDialog`)
    * when `enabled` is true. */
   capMode: CaseTabsCapMode;
   setCapMode: (next: CaseTabsCapMode) => void;
