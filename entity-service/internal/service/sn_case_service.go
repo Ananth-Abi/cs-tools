@@ -2455,6 +2455,8 @@ type snCaseFilterGroup struct {
 	DeploymentIDs      []string `json:"deploymentIds,omitempty"`
 	AssignedUserIDs    []string `json:"assignedUserIds,omitempty"`
 	EscalationLevels   []string `json:"escalationLevel,omitempty"`
+	Tags               []string `json:"tags,omitempty"`
+	ExcludeTags        []string `json:"excludeTags,omitempty"`
 }
 
 // buildSNCaseFilterGroups maps each domain.CaseFilterGroup branch into its SN
@@ -2477,6 +2479,8 @@ func buildSNCaseFilterGroups(groups []domain.CaseFilterGroup) []snCaseFilterGrou
 			DeploymentIDs:      uuidsToSysids(g.DeploymentIDs),
 			AssignedUserIDs:    uuidsToSysids(g.AssignedUserIDs),
 			EscalationLevels:   g.EscalationLevels,
+			Tags:               g.Tags,
+			ExcludeTags:        g.ExcludeTags,
 		})
 	}
 	return result

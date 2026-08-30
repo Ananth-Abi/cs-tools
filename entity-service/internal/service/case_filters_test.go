@@ -604,6 +604,31 @@ func TestParseCaseFieldFilterGroups_AcceptsStateIn(t *testing.T) {
 	}
 }
 
+// tag/excludeTags are supported inside an anyOf branch now that ServiceNow's
+// CaseUtils (searchCases and groupCasesBy) accepts orGroups[].tags/
+// excludeTags -- the Go-side rejection that used to gate this is gone.
+func TestParseCaseFieldFilterGroups_AcceptsTagAndExcludeTags(t *testing.T) {
+	branch := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{
+			{Field: "tag", Op: "in", Values: []string{"migration"}},
+			{Field: "tag", Op: "notIn", Values: []string{"archived"}},
+		},
+	}
+	groups, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{branch})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("len(groups) = %d, want 1", len(groups))
+	}
+	if len(groups[0].Tags) != 1 || groups[0].Tags[0] != "migration" {
+		t.Errorf("groups[0].Tags = %v, want [migration]", groups[0].Tags)
+	}
+	if len(groups[0].ExcludeTags) != 1 || groups[0].ExcludeTags[0] != "archived" {
+		t.Errorf("groups[0].ExcludeTags = %v, want [archived]", groups[0].ExcludeTags)
+	}
+}
+
 // A branch is parsed by ParseCaseFieldFilters, which roots every message it
 // raises at the top-level "filters" path. Returned unchanged, that path is a
 // lie inside an OR group: the array the client has to fix lives at

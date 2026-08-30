@@ -5799,7 +5799,7 @@ components:
             direct, non-subquery ServiceNow mapping are supported inside a
             branch: type, state, severity, engagementType, issueType,
             workState, projectId, deploymentId, assignedUserId,
-            escalationLevel. A branch containing any other field (e.g. tag,
+            escalationLevel, tag. A branch containing any other field (e.g.
             taskSLABusinessElapsedPercent, createdOn) is rejected with a
             validation error. Requires ServiceNow data source.
 
