@@ -308,8 +308,14 @@ export function collapseEmptyParagraphElements(dom: Document): boolean {
     return true;
   };
 
+  // querySelectorAll returns elements in document order (ancestors before
+  // descendants). Reversing processes descendants first, so an outer wrapper
+  // whose only child is itself an empty block (e.g. `<div><div><br></div></div>`)
+  // is re-evaluated as empty once its inner child has already been removed,
+  // instead of being skipped because it "contained an element" at the time it
+  // was checked.
   let changed = false;
-  for (const el of Array.from(body.querySelectorAll("p, div"))) {
+  for (const el of Array.from(body.querySelectorAll("p, div")).reverse()) {
     if (isEffectivelyEmptyBlock(el)) {
       el.remove();
       changed = true;

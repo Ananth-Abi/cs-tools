@@ -218,4 +218,26 @@ describe("collapseEmptyParagraphElements", () => {
     expect(changed).toBe(false);
     expect(dom.querySelectorAll("p").length).toBe(2);
   });
+
+  it("collapses a nested empty wrapper (<div><div><br></div></div>) entirely", () => {
+    const dom = parse("<p>Para1</p><div><div><br></div></div><p>Para2</p>");
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(true);
+    expect(dom.querySelector("div")).toBeNull();
+    expect(dom.body.textContent).toBe("Para1Para2");
+  });
+
+  it("collapses a three-level nested empty wrapper", () => {
+    const dom = parse(
+      "<p>Para1</p><div><div><div><br></div></div></div><p>Para2</p>",
+    );
+
+    const changed = collapseEmptyParagraphElements(dom);
+
+    expect(changed).toBe(true);
+    expect(dom.querySelector("div")).toBeNull();
+    expect(dom.body.textContent).toBe("Para1Para2");
+  });
 });
