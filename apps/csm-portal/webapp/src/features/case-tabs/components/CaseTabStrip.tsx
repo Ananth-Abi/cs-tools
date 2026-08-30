@@ -62,6 +62,8 @@ function tabTooltip(tab: CaseTabState): string {
 
 type ContextMenuTarget = { kind: "tab"; tabId: string } | { kind: "empty" };
 
+type MenuAnchorPosition = { top: number; left: number };
+
 /**
  * Browser-tab-like strip for in-app open tabs, rendered by `CaseTabStripBar`
  * above the routed page content. Presentational: all open/close/activate
@@ -90,19 +92,25 @@ export default function CaseTabStrip({
   onCloseOthers,
   pinnedTab,
 }: CaseTabStripProps): JSX.Element | null {
-  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [menuAnchorPosition, setMenuAnchorPosition] = useState<MenuAnchorPosition | null>(null);
   const [menuTarget, setMenuTarget] = useState<ContextMenuTarget | null>(null);
 
   if (tabs.length === 0) return null;
 
   const closeContextMenu = (): void => {
-    setMenuAnchor(null);
+    setMenuAnchorPosition(null);
     setMenuTarget(null);
   };
 
   const openContextMenu = (e: ReactMouseEvent<HTMLElement>, target: ContextMenuTarget): void => {
     e.preventDefault();
-    setMenuAnchor(e.currentTarget);
+    // Anchor at the cursor, not the triggering element — an
+    // element-anchored `<Menu>` opens at that element's top-left corner
+    // (MUI's `anchorEl` default), which for the strip's own empty-space
+    // right-click means the strip's full-width container: the menu would
+    // always render at the strip's left edge regardless of where within it
+    // was actually clicked.
+    setMenuAnchorPosition({ top: e.clientY, left: e.clientX });
     setMenuTarget(target);
   };
 
@@ -191,7 +199,12 @@ export default function CaseTabStrip({
         );
       })}
 
-      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeContextMenu}>
+      <Menu
+        open={Boolean(menuAnchorPosition)}
+        onClose={closeContextMenu}
+        anchorReference="anchorPosition"
+        anchorPosition={menuAnchorPosition ?? undefined}
+      >
         {menuTarget?.kind === "tab" && (
           <MenuItem
             onClick={() => {

@@ -153,6 +153,39 @@ describe("CaseTabStrip", () => {
       expect(handlers.onCloseAll).toHaveBeenCalledTimes(1);
     });
 
+    it("anchors the menu at the right-click cursor position, not the triggering element", () => {
+      // Regression test: the menu used to be `anchorEl`-positioned (top-left
+      // corner of whatever element was right-clicked), which for the
+      // strip's own empty-space right-click meant the strip's full-width
+      // container — the menu always opened at the strip's left edge
+      // regardless of where within it the user actually clicked. jsdom gives
+      // no real pixel layout (and MUI's positioning math applies its own
+      // fixed offsets on top of the anchor point), so rather than assert an
+      // absolute pixel value, this asserts that the menu's *rendered
+      // position moves by the same delta* as the right-click coordinates
+      // — proving it tracks the cursor, not a fixed element-derived point.
+      const menuPaperStyle = (): CSSStyleDeclaration =>
+        window.getComputedStyle(screen.getByRole("menu").closest(".MuiPopover-paper")!);
+
+      const handlers = noopHandlers();
+      render(<CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t1" {...handlers} />);
+
+      fireEvent.contextMenu(screen.getByRole("tablist"), { clientX: 100, clientY: 50 });
+      const firstStyle = menuPaperStyle();
+      const firstTop = parseFloat(firstStyle.top);
+      const firstLeft = parseFloat(firstStyle.left);
+
+      fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+      fireEvent.contextMenu(screen.getByRole("tablist"), { clientX: 300, clientY: 200 });
+      const secondStyle = menuPaperStyle();
+      const secondTop = parseFloat(secondStyle.top);
+      const secondLeft = parseFloat(secondStyle.left);
+
+      expect(secondLeft - firstLeft).toBe(200);
+      expect(secondTop - firstTop).toBe(150);
+    });
+
     it("the pinned tab is never a right-click target", () => {
       const handlers = noopHandlers();
       render(
