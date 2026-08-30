@@ -17,6 +17,7 @@
 import { Box, Chip, Menu, MenuItem, Tooltip } from "@wso2/oxygen-ui";
 import { useState, type JSX, type MouseEvent as ReactMouseEvent } from "react";
 import type { CaseTabState } from "@context/case-tabs/caseTabsTypes";
+import { tabDisplayLabel } from "@features/case-tabs/utils/tabDisplayLabel";
 
 export interface PinnedTabProps {
   label: string;
@@ -40,15 +41,6 @@ export interface CaseTabStripProps {
    * `tabs` is empty — the whole strip hides in that case (see this
    * component's own doc comment). */
   pinnedTab?: PinnedTabProps;
-}
-
-// Shown while a tab's own page hasn't reported a label yet (see
-// `useReportCaseTabMeta`) — deliberately not the raw caseId/UUID, which read
-// as a rendering glitch rather than "still loading".
-const LOADING_LABEL = "Loading…";
-
-function tabDisplayLabel(tab: CaseTabState): string {
-  return tab.label ?? LOADING_LABEL;
 }
 
 /** Tooltip content: internal/project-scoped id + subject — a fuller

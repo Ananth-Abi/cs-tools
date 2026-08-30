@@ -118,9 +118,11 @@ describe("case tabs — real BrowserRouter integration", () => {
   beforeEach(() => {
     // These tests exercise the tab mechanism itself; opt into a mode where
     // it's actually on (default is "off" — see the dedicated describe block
-    // below for that).
+    // below for that). Cap mode is pinned to "evict-oldest" (rather than
+    // left at its own default) so the cap tests below are deterministic
+    // about WHICH tab gets evicted.
     localStorage.setItem(ENABLED_STORAGE_KEY, "1");
-    localStorage.setItem(CAP_MODE_STORAGE_KEY, "block");
+    localStorage.setItem(CAP_MODE_STORAGE_KEY, "evict-oldest");
   });
 
   it("opening a case via the tab mechanism renders it, without the nested-Router crash", async () => {
@@ -158,9 +160,13 @@ describe("case tabs — real BrowserRouter integration", () => {
   // Regression test for bug: at the open-tab cap, clicking one more distinct
   // case silently kept showing a DIFFERENT, already-open tab's content (and
   // even redirected the URL to it) instead of the case that was actually
-  // clicked.
-  it("bug 2 — a new distinct case past the cap renders itself standalone, not a stale open tab", async () => {
-    function AppWithFiveOpenTabs() {
+  // clicked. Cap-behavior no longer has a "refuse the new one" mode at all
+  // (see `CaseTabsCapMode`'s own doc comment) — this now exercises the
+  // eviction path instead: the new case must open in its OWN new tab
+  // (evicting an existing one per the active `CaseTabsCapMode`), not get
+  // silently redirected onto a stale already-open tab.
+  it("bug 2 — a new distinct case past the cap opens in its own tab (evicting one), never a stale open tab", async () => {
+    function AppWithFullTabs() {
       window.history.pushState({}, "", "/cases/CS0000");
       return (
         <BrowserRouter>
@@ -182,11 +188,11 @@ describe("case tabs — real BrowserRouter integration", () => {
         </BrowserRouter>
       );
     }
-    render(<AppWithFiveOpenTabs />);
+    render(<AppWithFullTabs />);
     for (let i = 0; i < MAX_OPEN_CASE_TABS; i++) {
       fireEvent.click(screen.getByText(`open-CS000${i}`));
     }
-    // The 5 case tabs, plus the permanent pinned "current location" tab.
+    // The 10 case tabs, plus the permanent pinned "current location" tab.
     await waitFor(() =>
       expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS + 1),
     );
@@ -194,23 +200,40 @@ describe("case tabs — real BrowserRouter integration", () => {
     // Navigate (as a case-list row click would) to one more, never-opened case.
     fireEvent.click(screen.getByText("click-overflow-case"));
 
-    // The URL must stay on the case that was actually clicked — not get
+    // The URL must land on the case that was actually clicked — not get
     // silently redirected back to whichever tab was previously active.
     await waitFor(() => expect(window.location.pathname).toBe("/cases/CS-OVERFLOW"));
-    // The overflow case's own (un-tabbed) content must be what's showing —
-    // not a stale already-open tab's. (Every open tab's page stays mounted
-    // in the background — see `CaseTabIsolatedRouter` — so there are
-    // multiple `stub-page-case-id` nodes at this point; `getByText` narrows
-    // to the one whose visible text is this specific, never-opened case.)
     await waitFor(() => expect(screen.getByText("CS-OVERFLOW")).toBeInTheDocument());
-    // And it's rendered outside any tab panel — the un-tabbed fallback path,
-    // not a (still hidden) `CaseTabIsolatedRouter` instance.
-    expect(screen.getByText("CS-OVERFLOW").closest('[data-testid^="case-tab-panel-"]')).toBeNull();
-    // Still exactly the original MAX_OPEN_CASE_TABS case tabs (+ the pinned one) — the extra
-    // case never became one.
+    // Rendered INSIDE a tab panel now (not the un-tabbed fallback, which no
+    // longer exists for a capacity reason) — a genuine new tab, not a stale
+    // already-open one repurposed in place.
+    expect(
+      screen.getByText("CS-OVERFLOW").closest('[data-testid^="case-tab-panel-"]'),
+    ).not.toBeNull();
+    // Still exactly at the cap: the new tab opened, evicting exactly one of
+    // the originally-opened ones to make room (which one is `CaseTabsCapMode`
+    // eviction-order detail, not this regression's concern — see
+    // `caseTabsReducer.test.ts` for that). Every still-open tab's page stays
+    // mounted in the background (keep-alive — see `CaseTabIsolatedRouter`),
+    // so an evicted tab's page unmounting is what actually proves it closed,
+    // not just the strip's chip count.
     expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS + 1);
-    // The user is told why.
-    expect(screen.getByText(/already open/i)).toBeInTheDocument();
+    // (Only the case tabs themselves render `StubCaseDetailPage` — the
+    // permanent pinned "current location" tab doesn't — so this is
+    // `MAX_OPEN_CASE_TABS`, not `+1`.)
+    const openCaseIds = screen
+      .getAllByTestId("stub-page-case-id")
+      .map((el) => el.textContent);
+    expect(openCaseIds).toHaveLength(MAX_OPEN_CASE_TABS);
+    expect(openCaseIds).toContain("CS-OVERFLOW");
+    const originalCaseIds = Array.from(
+      { length: MAX_OPEN_CASE_TABS },
+      (_, i) => `CS000${i}`,
+    );
+    const survivingOriginalCount = originalCaseIds.filter((id) =>
+      openCaseIds.includes(id),
+    ).length;
+    expect(survivingOriginalCount).toBe(MAX_OPEN_CASE_TABS - 1);
   });
 });
 
@@ -226,8 +249,8 @@ describe("case tabs — default (mode 'off') behavior", () => {
   beforeEach(() => {
     localStorage.removeItem(ENABLED_STORAGE_KEY);
     localStorage.removeItem(CAP_MODE_STORAGE_KEY);
-    // Isolation from the mode-"block" tests above, which persist open tabs
-    // to sessionStorage — mode "off" must ignore any such leftovers (see
+    // Isolation from the tests above, which persist open tabs to
+    // sessionStorage — mode "off" must ignore any such leftovers (see
     // `CaseTabsProvider`'s own doc comment on this), but clearing it here
     // too keeps this describe block's own fixture state independent.
     sessionStorage.clear();
@@ -275,27 +298,20 @@ describe("case tabs — default (mode 'off') behavior", () => {
     expect(second.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
-  it("never shows the 'tabs are already open' toast in this mode", async () => {
-    render(<App initialPath="/cases/CS0001" />);
-    await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
-    expect(screen.queryByText(/already open/i)).not.toBeInTheDocument();
-  });
-
   // Regression test for bug: enabling the mechanism (mode "off" -> a mode
   // where it's on) while already viewing a case, in the SAME commit, used to
-  // show a false-positive "tabs are already open" toast with zero tabs
-  // actually open. Root cause: `CaseDetailRouteSync` (a descendant of
+  // silently leave that case un-tabbed for the rest of the session — nothing
+  // ever retried it. Root cause: `CaseDetailRouteSync` (a descendant of
   // `CaseTabsProvider`) read the fresh `enabled` value directly and called
   // `openTab` from its own effect in that same commit, but React flushes
   // descendant effects before ancestor effects — so `CaseTabsProvider`'s own
   // effect hadn't yet synced its `enabledRef` from `false` to `true`, and
-  // `openTab` saw the stale ref and refused, indistinguishable (to the
-  // caller) from a genuine capacity refusal. Fixed by having `openTab` read
+  // `openTab` saw the stale ref and refused. Fixed by having `openTab` read
   // `enabled`/`capMode` directly as `useCallback` dependencies (always
   // fresh for the render that created it) instead of via an effect-synced
   // ref — see `CaseTabsContext`'s own comment on `openTab` for why a
   // render-time ref mutation wasn't a valid alternative here.
-  it("enabling tabs while already on a case route opens a tab immediately, with no false capacity toast", async () => {
+  it("enabling tabs while already on a case route opens a tab immediately", async () => {
     function EnableToggle() {
       const { setEnabled } = useCaseTabsBehavior();
       return <button onClick={() => setEnabled(true)}>enable-tabs</button>;
@@ -321,7 +337,7 @@ describe("case tabs — default (mode 'off') behavior", () => {
     }
 
     localStorage.removeItem(ENABLED_STORAGE_KEY);
-    localStorage.setItem(CAP_MODE_STORAGE_KEY, "block");
+    localStorage.removeItem(CAP_MODE_STORAGE_KEY);
     sessionStorage.clear();
 
     render(<AppStartingDisabled initialPath="/cases/CS0001" />);
@@ -334,6 +350,5 @@ describe("case tabs — default (mode 'off') behavior", () => {
       expect(screen.getByRole("tablist", { name: "Open cases" })).toBeInTheDocument(),
     );
     expect(screen.getByText("CS0001")).toBeInTheDocument();
-    expect(screen.queryByText(/already open/i)).not.toBeInTheDocument();
   });
 });

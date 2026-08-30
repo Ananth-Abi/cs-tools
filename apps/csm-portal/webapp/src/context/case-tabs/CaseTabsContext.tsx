@@ -208,11 +208,11 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
   // the SAME commit that flips `enabled` false -> true (e.g. the user
   // toggles the preference on while already viewing a case) would run
   // before this provider's own effect had synced a ref from `false` to
-  // `true` — so `openTab` saw a stale `false` and refused the very first
-  // tab, and the caller (unable to tell "refused, disabled" from "refused,
-  // at capacity" apart) showed a false-positive "reached the limit" toast
-  // with zero tabs open. Depending on them directly has no such staleness —
-  // a closure captured during a render always sees THAT render's values —
+  // `true` — so `openTab` saw a stale `false` and silently refused the very
+  // first tab (that case kept rendering un-tabbed for the rest of the
+  // session, since nothing ever retried). Depending on them directly has no
+  // such staleness — a closure captured during a render always sees THAT
+  // render's values —
   // at the cost of `openTab` getting a new identity on a preference change,
   // which is rare (a user toggle, not per-tab churn) and, since `openTab`
   // sits in `CaseDetailRouteSync`'s own effect deps, is exactly what makes
@@ -220,17 +220,16 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
   const openTab = useCallback(
     (caseId: string, kind: CaseRouteKind, path: string, tabState?: unknown): boolean => {
       // Disabled means the mechanism is off entirely — never opens a tab,
-      // for any case, regardless of capacity. Callers (`CaseDetailRouteSync`)
-      // already skip calling this while disabled (so no toast fires), but
-      // this is the authoritative check other/future callers should be able
-      // to rely on too.
+      // for any case. Callers (`CaseDetailRouteSync`) already skip calling
+      // this while disabled, but this is the authoritative check
+      // other/future callers should be able to rely on too.
       if (!enabled) return false;
       const tabs = tabsRef.current;
       const alreadyOpen = tabs.some((t) => t.caseId === caseId);
       const atCap = !alreadyOpen && tabs.length >= MAX_OPEN_CASE_TABS;
-      if (atCap && capMode === "block") {
-        return false;
-      }
+      // Both `CaseTabsCapMode` values evict an existing tab to make room —
+      // there is no "refuse the new one" mode (see that type's own doc
+      // comment), so a genuinely new tab always succeeds once `enabled`.
       dispatch({
         type: "OPEN_OR_ACTIVATE",
         id: nextTabId(),

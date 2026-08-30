@@ -32,34 +32,39 @@ const CAP_MODE_STORAGE_KEY = "csm.caseTabs.capMode";
 // | "evict-newest") — read once, best-effort, so a browser that already
 // picked a preference under the old shape doesn't silently revert to the
 // default. Not written to anymore; safe to remove entirely in a later pass
-// once this has been live a while (beta feature, short-lived old shape).
+// once this has been live a while (beta feature, short-lived old shape). A
+// legacy value of "block" (no longer a valid `CaseTabsCapMode` — see below)
+// falls through `isCapMode` and resolves to `DEFAULT_CAP_MODE` instead, same
+// as any other unrecognized value.
 const LEGACY_STORAGE_KEY = "csm.caseTabs.behavior";
 
 /**
  * What happens when a distinct new case/incident/change-request is opened
  * while `MAX_OPEN_CASE_TABS` are already open (only relevant while the
- * mechanism is `enabled` — see `useCaseTabsBehavior`):
- *  - `block` — the new one is shown standalone (no tab), with a toast; the
- *    existing open tabs are untouched. What the feature originally shipped
- *    with, and still the default.
+ * mechanism is `enabled` — see `useCaseTabsBehavior`). Always evicts an
+ * existing tab to make room for the new one, which always opens and becomes
+ * active — there is deliberately no "refuse the new one" mode (the feature
+ * originally shipped with one, `block`, removed once the tab strip's own
+ * "Close all tabs" / "Close other tabs" context menu made blocking feel
+ * like unnecessary friction rather than a useful guardrail):
+ *  - `evict-newest` — the most-recently-opened tab closes instead. The
+ *    DEFAULT — closes whichever tab the user is least likely to still be
+ *    mid-task on, since it was opened most recently.
  *  - `evict-oldest` — the longest-open tab (first opened, not
- *    least-recently-viewed) closes to make room; the new one opens and
- *    becomes active.
- *  - `evict-newest` — the most-recently-opened tab closes instead.
+ *    least-recently-viewed) closes to make room.
  */
-export type CaseTabsCapMode = "block" | "evict-oldest" | "evict-newest";
+export type CaseTabsCapMode = "evict-oldest" | "evict-newest";
 
 export const CASE_TABS_CAP_MODE_OPTIONS: { mode: CaseTabsCapMode; label: string }[] = [
-  { mode: "block", label: "Block new tabs at the limit" },
-  { mode: "evict-oldest", label: "Replace the oldest tab at the limit" },
-  { mode: "evict-newest", label: "Replace the newest tab at the limit" },
+  { mode: "evict-newest", label: "Replace the last tab" },
+  { mode: "evict-oldest", label: "Replace the oldest tab" },
 ];
 
 const DEFAULT_ENABLED = false;
-const DEFAULT_CAP_MODE: CaseTabsCapMode = "block";
+const DEFAULT_CAP_MODE: CaseTabsCapMode = "evict-newest";
 
 function isCapMode(value: unknown): value is CaseTabsCapMode {
-  return value === "block" || value === "evict-oldest" || value === "evict-newest";
+  return value === "evict-oldest" || value === "evict-newest";
 }
 
 interface CaseTabsBehaviorContextValue {

@@ -40,9 +40,9 @@ export type CaseTabsAction =
       state?: unknown;
       /** Set by the caller (`useCaseTabsController.openTab`, based on the
        * current `CaseTabsCapMode`) when opening at the cap should evict
-       * a tab to make room, rather than being refused. `"oldest"` closes
-       * `tabs[0]` (first opened); `"newest"` closes the last one. Ignored
-       * (irrelevant) when under the cap or the case is already open. */
+       * a tab to make room. `"oldest"` closes `tabs[0]` (first opened);
+       * `"newest"` closes the last one. Ignored (irrelevant) when under the
+       * cap or the case is already open. */
       evict?: "oldest" | "newest";
     }
   | { type: "CLOSE"; id: string }
@@ -91,24 +91,43 @@ export function caseTabsReducer(
     case "OPEN_OR_ACTIVATE": {
       const existing = state.tabs.find((t) => t.caseId === action.caseId);
       if (existing) {
-        return existing.id === state.activeTabId
-          ? state
-          : { ...state, activeTabId: existing.id };
+        // Reactivating an already-open tab must still pick up whatever the
+        // triggering navigation actually resolved to — `CaseDetailRouteSync`
+        // dispatches this on every route match for the case, including a
+        // bookmark/related-case link to the SAME case but a different
+        // query string, `#hash`, or internal section. Without this, that
+        // navigation silently discarded (path/kind/state stayed whatever
+        // the tab had from when it was first opened) — same class of "stale
+        // in-place update" `UPDATE_TAB_PATH` already exists to fix, just for
+        // an outside (not in-tab) navigation instead.
+        const pathChanged = existing.path !== action.path || existing.kind !== action.kind;
+        const dataChanged = existing.state !== action.state;
+        const activeChanged = existing.id !== state.activeTabId;
+        if (!pathChanged && !dataChanged && !activeChanged) {
+          return state;
+        }
+        const tabs =
+          pathChanged || dataChanged
+            ? state.tabs.map((t) =>
+                t.id === existing.id
+                  ? { ...t, path: action.path, kind: action.kind, state: action.state }
+                  : t,
+              )
+            : state.tabs;
+        return { tabs, activeTabId: existing.id };
       }
       let tabs = state.tabs;
       if (tabs.length >= MAX_OPEN_CASE_TABS) {
-        if (action.evict === "oldest") {
-          tabs = tabs.slice(1);
-        } else if (action.evict === "newest") {
-          tabs = tabs.slice(0, -1);
-        } else {
-          // Caller (useCaseTabsController.openTab) is responsible for
-          // checking capacity BEFORE dispatching and surfacing the "close a
-          // tab first" message (mode "block") or skipping the dispatch
-          // entirely (mode "off"); this is a defensive no-op if it's ever
-          // dispatched anyway without an eviction request.
-          return state;
-        }
+        // Caller (`useCaseTabsController.openTab`) is responsible for
+        // skipping the dispatch entirely while the mechanism is disabled;
+        // once `enabled`, every `CaseTabsCapMode` evicts an existing tab
+        // rather than refusing the new one (see that type's own doc
+        // comment — there is no longer a "refuse" mode), so `action.evict`
+        // is always set here in practice. `"oldest"` is the only value that
+        // means "oldest"; anything else (including a missing value, which
+        // shouldn't happen but is treated as the current default mode
+        // rather than silently dropping the open request) evicts newest.
+        tabs = action.evict === "oldest" ? tabs.slice(1) : tabs.slice(0, -1);
       }
       const newTab: CaseTabState = {
         id: action.id,

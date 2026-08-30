@@ -60,12 +60,17 @@ export interface CaseTabState {
    * to decide whether closing this tab needs a confirm — see
    * `CaseTabsContext`'s `reportDraftState`. */
   hasDraft: boolean;
-  /** Router `location.state` at the moment this tab was opened — carries the
-   * originating list's filtered URL (`{ from: string }`) so the page's own
-   * Back button returns to it. Captured once at open time only (not updated
-   * by later in-tab navigation); not persisted to sessionStorage, so a
-   * reload falls back to the page's own hardcoded backPath instead — see
-   * `CaseTabsContext`'s persistence code. */
+  /** Router `location.state` most recently associated with this tab — carries
+   * the originating list's filtered URL (`{ from: string }`) so the page's
+   * own Back button returns to it. Captured at open time, and refreshed on a
+   * later OUTSIDE (not in-tab) navigation that reactivates this same
+   * already-open tab — e.g. a bookmark or a related-case link to the same
+   * case (see `caseTabsReducer`'s `OPEN_OR_ACTIVATE` case). NOT updated by
+   * in-tab navigation (`CaseTabIsolatedRouter`'s own `navigate()` calls,
+   * which dispatch `UPDATE_TAB_PATH` instead and leave this alone) — not
+   * persisted to sessionStorage either way, so a reload falls back to the
+   * page's own hardcoded backPath instead — see `CaseTabsContext`'s
+   * persistence code. */
   state?: unknown;
 }
 
@@ -84,7 +89,7 @@ export interface CaseTabsPersistedState {
 }
 
 /** Hard cap on simultaneously open in-app case tabs (browser-tab-strip
- * parity target; see the feature's own design notes for why "block" as one
- * of the cap-behavior modes rather than always evicting). Raised from the
- * original 5 to 10 by explicit request once the feature had settled. */
+ * parity target — see `CaseTabsCapMode` for what happens when a new one
+ * opens past it). Raised from the original 5 to 10 by explicit request once
+ * the feature had settled. */
 export const MAX_OPEN_CASE_TABS = 10;

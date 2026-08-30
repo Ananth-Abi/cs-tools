@@ -57,7 +57,7 @@ describe("CaseTabsBehaviorContext", () => {
   it("defaults to disabled (no tabs at all) on a fresh session with nothing in localStorage", () => {
     renderProbe();
     expect(screen.getByTestId("enabled")).toHaveTextContent("false");
-    expect(screen.getByTestId("cap-mode")).toHaveTextContent("block");
+    expect(screen.getByTestId("cap-mode")).toHaveTextContent("evict-newest");
   });
 
   it("also defaults to disabled outside a provider (the no-op default context value)", () => {
@@ -93,7 +93,18 @@ describe("CaseTabsBehaviorContext", () => {
   it("falls back to the default cap mode for a garbage/unrecognized stored value", () => {
     localStorage.setItem(CAP_MODE_STORAGE_KEY, "not-a-real-mode");
     renderProbe();
-    expect(screen.getByTestId("cap-mode")).toHaveTextContent("block");
+    expect(screen.getByTestId("cap-mode")).toHaveTextContent("evict-newest");
+  });
+
+  it("falls back to the default cap mode for the removed legacy 'block' value", () => {
+    // "block" was a valid `CaseTabsCapMode` value before it was removed
+    // entirely (there is no longer a "refuse the new tab" mode — see that
+    // type's own doc comment) — a stored "block" from before that change
+    // must not crash or silently stick around; it's just another
+    // unrecognized value now, same as `not-a-real-mode` above.
+    localStorage.setItem(CAP_MODE_STORAGE_KEY, "block");
+    renderProbe();
+    expect(screen.getByTestId("cap-mode")).toHaveTextContent("evict-newest");
   });
 
   describe("migration from the earlier single 4-value setting", () => {

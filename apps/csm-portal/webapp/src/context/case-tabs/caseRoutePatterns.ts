@@ -77,16 +77,3 @@ export function matchCaseLocation(pathname: string): CaseLocationMatch | undefin
 export function pathForTab(kind: CaseRouteKind, caseId: string): string {
   return `${ROUTE_BASES[kind]}/${caseId}`;
 }
-
-/**
- * The five case-like `CaseRouteKind` values are deliberately the same set as
- * the backend's own `BeCaseType` (see `api/backend/types.ts`) — `incident`/
- * `change_request` are never a `BeCaseType`, so never passed in here. This
- * just narrows an `undefined`/legacy-row case type to `"case"`, matching
- * `caseTypeDetailBasePath`'s and `caseTypeHasSeverity`'s own fallback.
- */
-export function caseRouteKindForType(
-  caseType: CaseRouteKind | undefined,
-): CaseRouteKind {
-  return caseType ?? "case";
-}

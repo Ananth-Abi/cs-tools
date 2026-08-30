@@ -100,7 +100,7 @@ describe("CaseTabIsolatedRouter", () => {
     // (the others hand-build `CaseTabState` objects directly) — but this is
     // harmless for those, and keeps this test independent of whatever the
     // default behavior mode is.
-    localStorage.setItem("csm.caseTabs.behavior", "block");
+    localStorage.setItem("csm.caseTabs.enabled", "1");
   });
 
   it("does not throw react-router's nested-Router invariant when mounted inside the app's real BrowserRouter", () => {

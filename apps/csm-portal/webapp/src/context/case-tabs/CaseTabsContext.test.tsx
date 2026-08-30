@@ -26,7 +26,7 @@ import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorCon
 import { MAX_OPEN_CASE_TABS } from "@context/case-tabs/caseTabsTypes";
 
 const STORAGE_KEY = "csm.caseTabs.v1";
-const BEHAVIOR_STORAGE_KEY = "csm.caseTabs.behavior";
+const ENABLED_STORAGE_KEY = "csm.caseTabs.enabled";
 
 function Probe(): JSX.Element {
   const { tabs, activeTabId, openTab, closeTab } = useCaseTabsController();
@@ -56,10 +56,10 @@ describe("CaseTabsProvider", () => {
     sessionStorage.clear();
     // These tests exercise the tab MECHANISM itself, not the default
     // behavior mode (that's `CaseTabsBehaviorContext`'s own test file, and
-    // the "off by default" regression test) — mode "off" would make every
-    // `openTab` call here a no-op, so opt into a mode where tabs actually
-    // open.
-    localStorage.setItem(BEHAVIOR_STORAGE_KEY, "block");
+    // the "off by default" regression test) — `enabled: false` would make
+    // every `openTab` call here a no-op, so opt into it being on. Cap-mode
+    // is left at its own default (`evict-newest`).
+    localStorage.setItem(ENABLED_STORAGE_KEY, "1");
   });
 
   it("starts with no tabs when sessionStorage is empty", () => {
@@ -145,13 +145,19 @@ describe("CaseTabsProvider", () => {
     );
   });
 
-  it("refuses a new tab past the cap and returns false from openTab", async () => {
+  // There is no longer a cap-behavior mode that refuses a new tab — both
+  // `CaseTabsCapMode` values evict an existing tab to make room instead (see
+  // that type's own doc comment). This test exercises the DEFAULT mode,
+  // `evict-newest`: opening one more distinct case past the cap always
+  // succeeds, closing the most-recently-opened tab to make room.
+  it("opening a new tab past the cap evicts the newest tab (default mode) instead of refusing", async () => {
     function CapProbe(): JSX.Element {
       const { tabs, openTab } = useCaseTabsController();
       const [result, setResult] = useState<string>("");
       return (
         <div>
           <div data-testid="count">{tabs.length}</div>
+          <div data-testid="case-ids">{tabs.map((t) => t.caseId).join(",")}</div>
           <div data-testid="overflow-outcome">{result}</div>
           <button
             onClick={() => {
@@ -183,7 +189,13 @@ describe("CaseTabsProvider", () => {
     await act(async () => screen.getByText("fill").click());
     expect(screen.getByTestId("count")).toHaveTextContent(String(MAX_OPEN_CASE_TABS));
     await act(async () => screen.getByText("overflow").click());
-    expect(screen.getByTestId("overflow-outcome")).toHaveTextContent("blocked");
+    expect(screen.getByTestId("overflow-outcome")).toHaveTextContent("opened");
+    // Still exactly at the cap — the most-recently-opened tab (CS9, the last
+    // of the `fill` loop) was evicted to make room, not the new one refused.
     expect(screen.getByTestId("count")).toHaveTextContent(String(MAX_OPEN_CASE_TABS));
+    const caseIds = screen.getByTestId("case-ids").textContent?.split(",") ?? [];
+    expect(caseIds).toContain("CS-overflow");
+    expect(caseIds).not.toContain("CS9");
+    expect(caseIds).toContain("CS0");
   });
 });

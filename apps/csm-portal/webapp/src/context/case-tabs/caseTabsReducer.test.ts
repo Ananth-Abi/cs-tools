@@ -79,15 +79,86 @@ describe("caseTabsReducer", () => {
     expect(state.activeTabId).toBe("t1");
   });
 
-  it("refuses to open a new tab past the cap", () => {
+  // Regression test for bug: reactivating an already-open tab (a bookmark or
+  // a related-case link to the SAME case but a different query
+  // string/hash/section) silently discarded the new path/kind/state,
+  // leaving the tab pinned to whatever it had from when it was first opened.
+  it("reactivating an already-open tab updates its path/kind/state to the new navigation, not just activeTabId", () => {
+    let state = caseTabsReducer(INITIAL_CASE_TABS_STATE, {
+      type: "OPEN_OR_ACTIVATE",
+      id: "t1",
+      caseId: "CS1",
+      kind: "case",
+      path: "/cases/CS1?tab=details",
+      state: { from: "/cases?tab=open" },
+    });
+    state = open(state, "t2", "CS2");
+
+    state = caseTabsReducer(state, {
+      type: "OPEN_OR_ACTIVATE",
+      id: "ignored-existing-tab-keeps-its-own-id",
+      caseId: "CS1",
+      kind: "case",
+      path: "/cases/CS1?tab=activities",
+      state: { from: "/related-cases-widget" },
+    });
+
+    expect(state.tabs).toHaveLength(2);
+    expect(state.activeTabId).toBe("t1");
+    const reactivated = state.tabs.find((t) => t.id === "t1");
+    expect(reactivated?.path).toBe("/cases/CS1?tab=activities");
+    expect(reactivated?.state).toEqual({ from: "/related-cases-widget" });
+  });
+
+  it("reactivating an already-open tab with the exact same path/kind/state returns the same state object", () => {
+    const navState = { from: "/cases?tab=open" };
+    let state = caseTabsReducer(INITIAL_CASE_TABS_STATE, {
+      type: "OPEN_OR_ACTIVATE",
+      id: "t1",
+      caseId: "CS1",
+      kind: "case",
+      path: "/cases/CS1",
+      state: navState,
+    });
+    // Already active, and re-dispatched with the literal same values —
+    // nothing to change, must return the identical state reference (same
+    // no-op contract as every other reducer case here).
+    const before = state;
+    state = caseTabsReducer(state, {
+      type: "OPEN_OR_ACTIVATE",
+      id: "ignored",
+      caseId: "CS1",
+      kind: "case",
+      path: "/cases/CS1",
+      state: navState,
+    });
+    expect(state).toBe(before);
+  });
+
+  // There is no longer a "refuse the new tab" outcome at all — every
+  // `CaseTabsCapMode` evicts an existing tab to make room instead (see that
+  // type's own doc comment). An `OPEN_OR_ACTIVATE` past the cap with no
+  // `evict` at all (the `open` helper here never sets one — only
+  // `openWithEvict` does) still isn't refused: it defaults to evicting the
+  // newest tab, same as an explicit `evict: "newest"` would (see this
+  // reducer's own comment on why — the caller, `useCaseTabsController.
+  // openTab`, always supplies one in practice; this is what happens if a
+  // dispatch somehow doesn't).
+  it("opening a new tab past the cap with no evict specified defaults to evicting the newest tab", () => {
     let state = INITIAL_CASE_TABS_STATE;
     for (let i = 0; i < MAX_OPEN_CASE_TABS; i++) {
       state = open(state, `t${i}`, `CS${i}`);
     }
     expect(state.tabs).toHaveLength(MAX_OPEN_CASE_TABS);
-    const blocked = open(state, "overflow", "CS-overflow");
-    expect(blocked.tabs).toHaveLength(MAX_OPEN_CASE_TABS);
-    expect(blocked.tabs.some((t) => t.caseId === "CS-overflow")).toBe(false);
+    const opened = open(state, "overflow", "CS-overflow");
+    expect(opened.tabs).toHaveLength(MAX_OPEN_CASE_TABS);
+    expect(opened.tabs.some((t) => t.caseId === "CS-overflow")).toBe(true);
+    // The most-recently-opened tab (tMAX_OPEN_CASE_TABS-1, i.e. the last of
+    // the fill loop) is the one evicted.
+    expect(opened.tabs.some((t) => t.caseId === `CS${MAX_OPEN_CASE_TABS - 1}`)).toBe(
+      false,
+    );
+    expect(opened.tabs.some((t) => t.caseId === "CS0")).toBe(true);
   });
 
   it("still activates an already-open tab even when at the cap", () => {

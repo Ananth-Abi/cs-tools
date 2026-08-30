@@ -25,10 +25,7 @@ import {
 import { useState, type JSX } from "react";
 import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
 import type { CaseTabState } from "@context/case-tabs/caseTabsTypes";
-
-function tabDisplayLabel(tab: CaseTabState): string {
-  return tab.label ?? tab.caseId;
-}
+import { tabDisplayLabel } from "@features/case-tabs/utils/tabDisplayLabel";
 
 /**
  * Owns the close confirmation for a tab whose reply composer is open (a

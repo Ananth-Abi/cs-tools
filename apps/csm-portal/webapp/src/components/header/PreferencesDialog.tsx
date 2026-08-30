@@ -35,7 +35,7 @@ import {
 } from "@context/case-tabs/CaseTabsBehaviorContext";
 
 function isCapMode(value: string): value is CaseTabsCapMode {
-  return value === "block" || value === "evict-oldest" || value === "evict-newest";
+  return value === "evict-oldest" || value === "evict-newest";
 }
 
 export interface PreferencesDialogProps {

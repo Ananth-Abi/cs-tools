@@ -17,7 +17,6 @@
 import { describe, expect, it } from "vitest";
 import {
   basePathForKind,
-  caseRouteKindForType,
   matchCaseLocation,
   pathForTab,
 } from "@context/case-tabs/caseRoutePatterns";
@@ -84,12 +83,3 @@ describe("basePathForKind / pathForTab", () => {
   });
 });
 
-describe("caseRouteKindForType", () => {
-  it("defaults an undefined case type to case", () => {
-    expect(caseRouteKindForType(undefined)).toBe("case");
-  });
-
-  it("passes through a known type unchanged", () => {
-    expect(caseRouteKindForType("engagement")).toBe("engagement");
-  });
-});

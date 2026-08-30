@@ -78,4 +78,20 @@ describe("useCaseTabCloseConfirm", () => {
       expect(screen.queryByText("Close this case tab?")).not.toBeInTheDocument(),
     );
   });
+
+  // Regression test: this dialog used to have its own copy of the tab-label
+  // fallback logic, and its copy fell back to the raw `caseId`/UUID instead
+  // of "Loading…" (unlike `CaseTabStrip`'s own chips, which already showed
+  // "Loading…") — the two have since been consolidated onto the same shared
+  // `tabDisplayLabel` helper, so both must show the same fallback text.
+  it("shows the 'Loading…' fallback (not the raw caseId/UUID) when the tab's label hasn't resolved yet", () => {
+    render(
+      <CaseTabsProvider>
+        <Harness tab={{ ...TAB_WITH_DRAFT, label: undefined }} />
+      </CaseTabsProvider>,
+    );
+    fireEvent.click(screen.getByText("close"));
+    expect(screen.getByText(/^Loading… has a reply in progress\./)).toBeInTheDocument();
+    expect(screen.queryByText(/^CS2 has a reply in progress\./)).not.toBeInTheDocument();
+  });
 });

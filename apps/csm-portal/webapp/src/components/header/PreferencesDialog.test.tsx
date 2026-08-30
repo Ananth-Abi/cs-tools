@@ -63,6 +63,26 @@ describe("PreferencesDialog", () => {
     );
   });
 
+  it("offers exactly the two eviction cap-mode options, with no 'block' choice", () => {
+    renderDialog(true);
+    // The select is disabled (and so won't open) until tabs are on.
+    fireEvent.click(screen.getByLabelText("Open cases in tabs"));
+    // MUI's `Select` opens its options popup on `mousedown` of its inner
+    // `combobox`-role child, not a `click` on the `aria-label`led outer root
+    // (same pattern as this codebase's other MUI `Select` interaction
+    // tests, e.g. `ChangeCaseTypeDialog.test.tsx`) — the `aria-label` lands
+    // on that outer root, not the combobox itself, so this drills into it
+    // via the already-`aria-label`led root instead of matching by name.
+    fireEvent.mouseDown(
+      screen
+        .getByLabelText("When the tab limit is reached")
+        .querySelector('[role="combobox"]')!,
+    );
+    expect(screen.getByRole("option", { name: "Replace the last tab" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Replace the oldest tab" })).toBeInTheDocument();
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+  });
+
   it("calls onClose from the dialog's own close button", () => {
     const { onClose } = renderDialog(true);
     fireEvent.click(screen.getByLabelText("Close"));

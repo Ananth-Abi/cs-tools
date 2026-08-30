@@ -14,15 +14,14 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Suspense, useEffect, useMemo, useRef, type JSX } from "react";
+import { Suspense, useEffect, useMemo, type JSX } from "react";
 import { useLocation } from "react-router";
 import { pageComponentForKind } from "@features/case-tabs/tabPageRegistry";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
 import { useCaseTabsBehavior } from "@context/case-tabs/CaseTabsBehaviorContext";
-import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
-import { MAX_OPEN_CASE_TABS, type CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
+import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
 
 /**
  * The `element` for every detail route this tab mechanism covers in
@@ -41,13 +40,13 @@ import { MAX_OPEN_CASE_TABS, type CaseRouteKind } from "@context/case-tabs/caseT
  * renders nothing, leaving the routed `<Outlet/>` slot empty while the
  * workspace's own content occupies the same visual area.
  *
- * The one exception is the tab cap (`MAX_OPEN_CASE_TABS`): opening one more
- * distinct record past the cap, in "block" cap mode, is refused rather than
- * evicting an existing tab (see `CaseTabsBehaviorContext`'s doc comment for
- * the other cap modes) — that record is rendered directly, un-tabbed,
- * exactly as this route worked before this feature existed. It won't
- * survive being navigated away from and back to, but nothing is lost that
- * wasn't already lost by a plain page navigation today.
+ * Disabled (`enabled` false) is the only case this renders the record
+ * directly, un-tabbed, via the real matched route — exactly how this route
+ * worked before this feature existed. There is no longer a "the tab cap is
+ * full, render this one un-tabbed instead" fallback: both cap-behavior modes
+ * (`CaseTabsBehaviorContext`'s `CaseTabsCapMode`) always evict an existing
+ * tab to make room rather than refusing the new one, so `openTab` never
+ * fails for a capacity reason while `enabled` is true.
  */
 export default function CaseDetailRouteSync({
   kind,
@@ -62,53 +61,15 @@ export default function CaseDetailRouteSync({
 }): JSX.Element | null {
   const caseId = useNormalizedIdParam(paramName);
   const location = useLocation();
-  const { tabs, isAtCapacity, openTab } = useCaseTabsController();
+  const { openTab } = useCaseTabsController();
   const { enabled } = useCaseTabsBehavior();
-  const { showError } = useErrorBanner();
-  const warnedForCaseIdRef = useRef<string | undefined>(undefined);
-
-  // Derived purely from already-available context state, not local state set
-  // from inside the effect below — this is what this record would render if
-  // `openTab` is refused, computed BEFORE the effect (which only performs
-  // the actual side effect: opening the tab / firing the capacity warning)
-  // ever runs. Without this, the first render for a brand new record would
-  // transiently render this fallback (nothing is open for it yet) before
-  // the effect's `openTab` call resolves, then immediately swap to `null`
-  // once it succeeds — a needless mount-then-discard on every record opened.
-  //
-  // Disabled always renders this fallback (there is never a tab to defer
-  // to) — this is what makes the mechanism behave exactly like the
-  // pre-feature app when off: every record renders directly, in place, via
-  // the real matched route.
-  const alreadyOpenAsTab = enabled && !!caseId && tabs.some((t) => t.caseId === caseId);
-  const blocked = !enabled || (!!caseId && !alreadyOpenAsTab && isAtCapacity);
 
   useEffect(() => {
-    // Disabled: never call openTab (which would just return false anyway —
-    // see CaseTabsContext) and, crucially, never fire the capacity toast
-    // below, which would otherwise show on literally every record opened by
-    // default.
+    // Disabled: never call openTab — see this component's own doc comment.
     if (!caseId || !enabled) return;
     const path = `${location.pathname}${location.search}${location.hash}`;
-    const opened = openTab(caseId, kind, path, location.state);
-    if (!opened && warnedForCaseIdRef.current !== caseId) {
-      warnedForCaseIdRef.current = caseId;
-      showError(
-        `${MAX_OPEN_CASE_TABS} tabs are already open — close one to open this in a tab. ` +
-          "Showing it without a tab for now.",
-      );
-    }
-  }, [
-    caseId,
-    kind,
-    enabled,
-    location.pathname,
-    location.search,
-    location.hash,
-    location.state,
-    openTab,
-    showError,
-  ]);
+    openTab(caseId, kind, path, location.state);
+  }, [caseId, kind, enabled, location.pathname, location.search, location.hash, location.state, openTab]);
 
   // Memoized so re-renders reuse the same reference — `pageComponentForKind`
   // always returns one of a small fixed set of stable, module-level `lazy()`
@@ -120,7 +81,12 @@ export default function CaseDetailRouteSync({
   const Page = useMemo(() => pageComponentForKind(kind), [kind]);
 
   if (!caseId) return null;
-  if (!blocked) return null;
+  // Disabled always renders this fallback (there is never a tab to defer
+  // to) — this is what makes the mechanism behave exactly like the
+  // pre-feature app when off: every record renders directly, in place, via
+  // the real matched route. See this component's own doc comment for why
+  // there's no other reason left to fall back to this.
+  if (enabled) return null;
   return (
     <Suspense fallback={<RouteSuspenseFallback />}>
       {/* eslint-disable-next-line react-hooks/static-components -- registry lookup among stable, pre-declared lazy() components, not a new component per render */}
