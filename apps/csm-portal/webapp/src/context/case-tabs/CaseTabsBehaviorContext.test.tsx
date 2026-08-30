@@ -23,17 +23,29 @@ import {
   useCaseTabsBehavior,
 } from "@context/case-tabs/CaseTabsBehaviorContext";
 
-const STORAGE_KEY = "csm.caseTabs.behavior";
+const ENABLED_STORAGE_KEY = "csm.caseTabs.enabled";
+const CAP_MODE_STORAGE_KEY = "csm.caseTabs.capMode";
+const LEGACY_STORAGE_KEY = "csm.caseTabs.behavior";
 
 function Probe(): JSX.Element {
-  const { mode, setMode } = useCaseTabsBehavior();
+  const { enabled, setEnabled, capMode, setCapMode } = useCaseTabsBehavior();
   return (
     <div>
-      <div data-testid="mode">{mode}</div>
-      <button onClick={() => setMode("block")}>set-block</button>
-      <button onClick={() => setMode("evict-oldest")}>set-evict-oldest</button>
-      <button onClick={() => setMode("off")}>set-off</button>
+      <div data-testid="enabled">{String(enabled)}</div>
+      <div data-testid="cap-mode">{capMode}</div>
+      <button onClick={() => setEnabled(true)}>enable</button>
+      <button onClick={() => setEnabled(false)}>disable</button>
+      <button onClick={() => setCapMode("evict-oldest")}>set-evict-oldest</button>
+      <button onClick={() => setCapMode("evict-newest")}>set-evict-newest</button>
     </div>
+  );
+}
+
+function renderProbe(): ReturnType<typeof render> {
+  return render(
+    <CaseTabsBehaviorProvider>
+      <Probe />
+    </CaseTabsBehaviorProvider>,
   );
 }
 
@@ -42,62 +54,67 @@ describe("CaseTabsBehaviorContext", () => {
     localStorage.clear();
   });
 
-  it("defaults to 'off' (no tabs at all) on a fresh session with nothing in localStorage", () => {
-    render(
-      <CaseTabsBehaviorProvider>
-        <Probe />
-      </CaseTabsBehaviorProvider>,
-    );
-    expect(screen.getByTestId("mode")).toHaveTextContent("off");
+  it("defaults to disabled (no tabs at all) on a fresh session with nothing in localStorage", () => {
+    renderProbe();
+    expect(screen.getByTestId("enabled")).toHaveTextContent("false");
+    expect(screen.getByTestId("cap-mode")).toHaveTextContent("block");
   });
 
-  it("also defaults to 'off' outside a provider (the no-op default context value)", () => {
+  it("also defaults to disabled outside a provider (the no-op default context value)", () => {
     render(<Probe />);
-    expect(screen.getByTestId("mode")).toHaveTextContent("off");
+    expect(screen.getByTestId("enabled")).toHaveTextContent("false");
   });
 
-  it("persists a mode change to localStorage and reflects it immediately", () => {
-    render(
-      <CaseTabsBehaviorProvider>
-        <Probe />
-      </CaseTabsBehaviorProvider>,
-    );
+  it("persists a toggle change to localStorage and reflects it immediately", () => {
+    renderProbe();
+    fireEvent.click(screen.getByText("enable"));
+    expect(screen.getByTestId("enabled")).toHaveTextContent("true");
+    expect(localStorage.getItem(ENABLED_STORAGE_KEY)).toBe("1");
+    fireEvent.click(screen.getByText("disable"));
+    expect(screen.getByTestId("enabled")).toHaveTextContent("false");
+    expect(localStorage.getItem(ENABLED_STORAGE_KEY)).toBe("0");
+  });
+
+  it("persists a cap-mode change to localStorage and reflects it immediately", () => {
+    renderProbe();
     fireEvent.click(screen.getByText("set-evict-oldest"));
-    expect(screen.getByTestId("mode")).toHaveTextContent("evict-oldest");
-    expect(localStorage.getItem(STORAGE_KEY)).toBe("evict-oldest");
+    expect(screen.getByTestId("cap-mode")).toHaveTextContent("evict-oldest");
+    expect(localStorage.getItem(CAP_MODE_STORAGE_KEY)).toBe("evict-oldest");
   });
 
-  it("restores a previously-saved mode on mount", () => {
-    localStorage.setItem(STORAGE_KEY, "block");
-    render(
-      <CaseTabsBehaviorProvider>
-        <Probe />
-      </CaseTabsBehaviorProvider>,
-    );
-    expect(screen.getByTestId("mode")).toHaveTextContent("block");
+  it("restores previously-saved preferences on mount", () => {
+    localStorage.setItem(ENABLED_STORAGE_KEY, "1");
+    localStorage.setItem(CAP_MODE_STORAGE_KEY, "evict-newest");
+    renderProbe();
+    expect(screen.getByTestId("enabled")).toHaveTextContent("true");
+    expect(screen.getByTestId("cap-mode")).toHaveTextContent("evict-newest");
   });
 
-  it("falls back to the default for a garbage/unrecognized stored value", () => {
-    localStorage.setItem(STORAGE_KEY, "not-a-real-mode");
-    render(
-      <CaseTabsBehaviorProvider>
-        <Probe />
-      </CaseTabsBehaviorProvider>,
-    );
-    expect(screen.getByTestId("mode")).toHaveTextContent("off");
+  it("falls back to the default cap mode for a garbage/unrecognized stored value", () => {
+    localStorage.setItem(CAP_MODE_STORAGE_KEY, "not-a-real-mode");
+    renderProbe();
+    expect(screen.getByTestId("cap-mode")).toHaveTextContent("block");
   });
 
-  it("exposes exactly the four documented modes as options", () => {
-    render(
-      <CaseTabsBehaviorProvider>
-        <Probe />
-      </CaseTabsBehaviorProvider>,
-    );
-    // Exercised indirectly via PreferencesMenu.test.tsx; here just confirm
-    // every mode is independently settable and read back correctly.
-    fireEvent.click(screen.getByText("set-block"));
-    expect(screen.getByTestId("mode")).toHaveTextContent("block");
-    fireEvent.click(screen.getByText("set-off"));
-    expect(screen.getByTestId("mode")).toHaveTextContent("off");
+  describe("migration from the earlier single 4-value setting", () => {
+    it("derives enabled=true and the cap mode from a legacy non-off value", () => {
+      localStorage.setItem(LEGACY_STORAGE_KEY, "evict-oldest");
+      renderProbe();
+      expect(screen.getByTestId("enabled")).toHaveTextContent("true");
+      expect(screen.getByTestId("cap-mode")).toHaveTextContent("evict-oldest");
+    });
+
+    it("derives enabled=false from a legacy 'off' value", () => {
+      localStorage.setItem(LEGACY_STORAGE_KEY, "off");
+      renderProbe();
+      expect(screen.getByTestId("enabled")).toHaveTextContent("false");
+    });
+
+    it("prefers the new keys over the legacy one once both are present", () => {
+      localStorage.setItem(LEGACY_STORAGE_KEY, "off");
+      localStorage.setItem(ENABLED_STORAGE_KEY, "1");
+      renderProbe();
+      expect(screen.getByTestId("enabled")).toHaveTextContent("true");
+    });
   });
 });

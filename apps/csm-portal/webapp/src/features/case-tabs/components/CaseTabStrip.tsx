@@ -14,8 +14,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Chip, Tooltip } from "@wso2/oxygen-ui";
-import { type JSX } from "react";
+import { Box, Chip, Menu, MenuItem, Tooltip } from "@wso2/oxygen-ui";
+import { useState, type JSX, type MouseEvent as ReactMouseEvent } from "react";
 import type { CaseTabState } from "@context/case-tabs/caseTabsTypes";
 
 export interface PinnedTabProps {
@@ -29,10 +29,16 @@ export interface CaseTabStripProps {
   activeTabId: string | null;
   onActivate: (id: string) => void;
   onRequestClose: (id: string) => void;
+  /** Right-click "Close all tabs" (on a chip or on empty strip space). */
+  onCloseAll: () => void;
+  /** Right-click "Close other tabs" — every open tab except `keepId`. */
+  onCloseOthers: (keepId: string) => void;
   /** The permanent, non-closable "wherever the user currently is" tab at
    * position 0 — see `useCurrentLocationTab`. Optional purely so this
    * component's own tests can exercise the plain case-tab strip in
-   * isolation; `CaseTabStripBar` always supplies one. */
+   * isolation; `CaseTabStripBar` always supplies one. Never rendered when
+   * `tabs` is empty — the whole strip hides in that case (see this
+   * component's own doc comment). */
   pinnedTab?: PinnedTabProps;
 }
 
@@ -45,6 +51,17 @@ function tabDisplayLabel(tab: CaseTabState): string {
   return tab.label ?? LOADING_LABEL;
 }
 
+/** Tooltip content: internal/project-scoped id + subject — a fuller
+ * identity than the chip's own short number-only label. Falls back to the
+ * chip label alone while the record's own data (and so its tooltip fields)
+ * hasn't resolved yet. */
+function tabTooltip(tab: CaseTabState): string {
+  if (!tab.internalId && !tab.subject) return tabDisplayLabel(tab);
+  return [tab.internalId, tab.subject].filter(Boolean).join(" · ");
+}
+
+type ContextMenuTarget = { kind: "tab"; tabId: string } | { kind: "empty" };
+
 /**
  * Browser-tab-like strip for in-app open tabs, rendered by `CaseTabStripBar`
  * above the routed page content. Presentational: all open/close/activate
@@ -52,20 +69,53 @@ function tabDisplayLabel(tab: CaseTabState): string {
  * this component only renders the given `tabs` (plus the pinned tab, if
  * given) and reports clicks. See `useCaseTabCloseConfirm` for the
  * close-confirm dialog this strip's `onRequestClose` is typically wired to.
+ *
+ * Renders nothing at all when `tabs` is empty — including the pinned tab,
+ * which would otherwise sit alone taking up a full strip's worth of space
+ * for no case tabs open. The pinned tab only appears once the first case tab
+ * does.
+ *
+ * Right-clicking a tab chip (or empty space in the strip, when there's
+ * nowhere else to click) opens a small context menu — "Close all tabs" /
+ * "Close other tabs" — same `onContextMenu` + anchored `<Menu>` pattern as
+ * `PinnedTabs`' own right-click rename menu elsewhere in this codebase. The
+ * pinned tab is never part of either action (it isn't closable at all).
  */
 export default function CaseTabStrip({
   tabs,
   activeTabId,
   onActivate,
   onRequestClose,
+  onCloseAll,
+  onCloseOthers,
   pinnedTab,
 }: CaseTabStripProps): JSX.Element | null {
-  if (tabs.length === 0 && !pinnedTab) return null;
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
+  const [menuTarget, setMenuTarget] = useState<ContextMenuTarget | null>(null);
+
+  if (tabs.length === 0) return null;
+
+  const closeContextMenu = (): void => {
+    setMenuAnchor(null);
+    setMenuTarget(null);
+  };
+
+  const openContextMenu = (e: ReactMouseEvent<HTMLElement>, target: ContextMenuTarget): void => {
+    e.preventDefault();
+    setMenuAnchor(e.currentTarget);
+    setMenuTarget(target);
+  };
 
   return (
     <Box
       role="tablist"
       aria-label="Open cases"
+      onContextMenu={(e: ReactMouseEvent<HTMLElement>) => {
+        // Only when the strip's own background was right-clicked, not a
+        // chip inside it — each chip has its own onContextMenu, which stops
+        // this one from also firing (see its stopPropagation below).
+        openContextMenu(e, { kind: "empty" });
+      }}
       sx={{
         display: "flex",
         alignItems: "center",
@@ -82,9 +132,11 @@ export default function CaseTabStrip({
     >
       {pinnedTab && (
         <Tooltip title={pinnedTab.label}>
-          {/* No `onDelete` — this tab is permanent, not part of the
-              closable case-tab set (see `useCurrentLocationTab`'s doc
-              comment). */}
+          {/* No `onDelete` and no `onContextMenu` — this tab is permanent,
+              not part of the closable case-tab set (see
+              `useCurrentLocationTab`'s doc comment), so it's excluded from
+              both context-menu actions and never itself a right-click
+              target. */}
           <Chip
             size="small"
             role="tab"
@@ -106,7 +158,7 @@ export default function CaseTabStrip({
         const active = tab.id === activeTabId;
         const label = tabDisplayLabel(tab);
         return (
-          <Tooltip key={tab.id} title={label}>
+          <Tooltip key={tab.id} title={tabTooltip(tab)}>
             <Chip
               size="small"
               role="tab"
@@ -114,6 +166,10 @@ export default function CaseTabStrip({
               label={label}
               variant={active ? "filled" : "outlined"}
               onClick={() => onActivate(tab.id)}
+              onContextMenu={(e: ReactMouseEvent<HTMLElement>) => {
+                e.stopPropagation();
+                openContextMenu(e, { kind: "tab", tabId: tab.id });
+              }}
               onDelete={(e) => {
                 // Chip's onDelete already receives a synthetic event whose
                 // propagation stopping is handled by oxygen-ui internally;
@@ -134,6 +190,27 @@ export default function CaseTabStrip({
           </Tooltip>
         );
       })}
+
+      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={closeContextMenu}>
+        {menuTarget?.kind === "tab" && (
+          <MenuItem
+            onClick={() => {
+              if (menuTarget.kind === "tab") onCloseOthers(menuTarget.tabId);
+              closeContextMenu();
+            }}
+          >
+            Close other tabs
+          </MenuItem>
+        )}
+        <MenuItem
+          onClick={() => {
+            onCloseAll();
+            closeContextMenu();
+          }}
+        >
+          Close all tabs
+        </MenuItem>
+      </Menu>
     </Box>
   );
 }

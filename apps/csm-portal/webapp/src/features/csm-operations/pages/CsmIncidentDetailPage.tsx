@@ -186,9 +186,15 @@ export default function CsmIncidentDetailPage(): JSX.Element {
     | undefined;
   const backTarget = backState?.from ?? OPERATIONS_INCIDENTS_PATH;
   const { data, isLoading, isError } = useGetIncident(id);
-  // The incident number only (not the subject) — a deliberately short tab
-  // chip label, matching `CsmCaseDetailPage`'s own `caseNumber`-only report.
-  useReportCaseTabMeta(id, data?.number ?? undefined);
+  // The incident number as the short chip label (matching `CsmCaseDetailPage`'s
+  // own `caseNumber`-only report); incidents have no separate project-scoped
+  // id the way cases do, so the tooltip's `internalId` reuses the same
+  // number, with the subject alongside it.
+  useReportCaseTabMeta(id, {
+    label: data?.number ?? undefined,
+    internalId: data?.number ?? undefined,
+    subject: data?.subject ?? undefined,
+  });
   const { showError } = useErrorBanner();
   const patchIncident = usePatchIncident();
   const [editOpen, setEditOpen] = useState(false);

@@ -31,7 +31,8 @@ import {
 import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
 import { MAX_OPEN_CASE_TABS } from "@context/case-tabs/caseTabsTypes";
 
-const BEHAVIOR_STORAGE_KEY = "csm.caseTabs.behavior";
+const ENABLED_STORAGE_KEY = "csm.caseTabs.enabled";
+const CAP_MODE_STORAGE_KEY = "csm.caseTabs.capMode";
 
 /**
  * Stand-in for `CsmCaseDetailPage`, wired in via the SAME lazy-loaded module
@@ -51,7 +52,7 @@ function StubCaseDetailPage() {
   // `useGetCsmCaseDetail` query — the label should appear once this
   // resolves, without needing the user to switch tabs away and back.
   const [label, setLabel] = useState<string | undefined>(undefined);
-  useReportCaseTabMeta(caseId, label);
+  useReportCaseTabMeta(caseId, { label, internalId: undefined, subject: undefined });
   return (
     <div>
       <div data-testid="stub-page-case-id">{caseId}</div>
@@ -115,7 +116,8 @@ describe("case tabs — real BrowserRouter integration", () => {
     // These tests exercise the tab mechanism itself; opt into a mode where
     // it's actually on (default is "off" — see the dedicated describe block
     // below for that).
-    localStorage.setItem(BEHAVIOR_STORAGE_KEY, "block");
+    localStorage.setItem(ENABLED_STORAGE_KEY, "1");
+    localStorage.setItem(CAP_MODE_STORAGE_KEY, "block");
   });
 
   it("opening a case via the tab mechanism renders it, without the nested-Router crash", async () => {
@@ -150,11 +152,11 @@ describe("case tabs — real BrowserRouter integration", () => {
     expect(screen.getAllByRole("tab")).toHaveLength(2);
   });
 
-  // Regression test for bug: at the open-tab cap, clicking a 6th distinct
+  // Regression test for bug: at the open-tab cap, clicking one more distinct
   // case silently kept showing a DIFFERENT, already-open tab's content (and
   // even redirected the URL to it) instead of the case that was actually
   // clicked.
-  it("bug 2 — a 6th distinct case at the open-tab cap renders itself standalone, not a stale open tab", async () => {
+  it("bug 2 — a new distinct case past the cap renders itself standalone, not a stale open tab", async () => {
     function AppWithFiveOpenTabs() {
       window.history.pushState({}, "", "/cases/CS0000");
       return (
@@ -186,7 +188,7 @@ describe("case tabs — real BrowserRouter integration", () => {
       expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS + 1),
     );
 
-    // Navigate (as a case-list row click would) to a 6th, never-opened case.
+    // Navigate (as a case-list row click would) to one more, never-opened case.
     fireEvent.click(screen.getByText("click-overflow-case"));
 
     // The URL must stay on the case that was actually clicked — not get
@@ -201,7 +203,7 @@ describe("case tabs — real BrowserRouter integration", () => {
     // And it's rendered outside any tab panel — the un-tabbed fallback path,
     // not a (still hidden) `CaseTabIsolatedRouter` instance.
     expect(screen.getByText("CS-OVERFLOW").closest('[data-testid^="case-tab-panel-"]')).toBeNull();
-    // Still exactly the original 5 case tabs (+ the pinned one) — the 6th
+    // Still exactly the original MAX_OPEN_CASE_TABS case tabs (+ the pinned one) — the extra
     // case never became one.
     expect(screen.getAllByRole("tab")).toHaveLength(MAX_OPEN_CASE_TABS + 1);
     // The user is told why.
@@ -219,7 +221,8 @@ describe("case tabs — real BrowserRouter integration", () => {
  */
 describe("case tabs — default (mode 'off') behavior", () => {
   beforeEach(() => {
-    localStorage.removeItem(BEHAVIOR_STORAGE_KEY);
+    localStorage.removeItem(ENABLED_STORAGE_KEY);
+    localStorage.removeItem(CAP_MODE_STORAGE_KEY);
     // Isolation from the mode-"block" tests above, which persist open tabs
     // to sessionStorage — mode "off" must ignore any such leftovers (see
     // `CaseTabsProvider`'s own doc comment on this), but clearing it here

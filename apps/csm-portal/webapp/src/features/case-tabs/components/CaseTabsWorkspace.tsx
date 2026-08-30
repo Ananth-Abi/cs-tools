@@ -34,27 +34,35 @@ import { useCurrentLocationTab } from "@features/case-tabs/hooks/useCurrentLocat
  * a browser's, not part of the page underneath it.
  *
  * Position 0 is always the pinned, non-closable "current location" tab (see
- * `useCurrentLocationTab`) — shown whenever the mechanism is on at all
- * (mode !== "off"), independent of whether any case tabs are open, so it
- * never flickers in and out as the last case tab closes.
+ * `useCurrentLocationTab`) — but, per `CaseTabStrip`'s own doc comment, only
+ * once at least one case tab is open: with zero, the whole strip (pinned tab
+ * included) hides entirely rather than sitting there on its own.
  *
  * Also mounts the close-confirm dialog. Each case tab's own label is
  * reported directly by the page rendering it (`useReportCaseTabMeta`,
  * called from `CsmCaseDetailPage` et al.) rather than fetched separately
  * here — see that hook's own doc comment for why.
  *
- * Renders nothing at all when the behavior mode is `off` — the app then
+ * The right-click "Close all tabs"/"Close other tabs" actions (see
+ * `CaseTabStrip`) close directly, without the draft confirm `onRequestClose`
+ * goes through for a single tab — a deliberate simplification (bulk-closing
+ * is already a more deliberate action than a single ×, and a confirm per
+ * affected tab would be its own UX problem); flagged as a judgment call, not
+ * an oversight.
+ *
+ * Renders nothing at all when the mechanism is disabled — the app then
  * behaves exactly as it did before this feature existed.
  */
 export function CaseTabStripBar(): JSX.Element | null {
   const location = useLocation();
   const navigate = useNavTransition();
-  const { tabs, activeTabId, setActiveTab } = useCaseTabsController();
-  const { mode } = useCaseTabsBehavior();
+  const { tabs, activeTabId, setActiveTab, closeAllTabs, closeOtherTabs } =
+    useCaseTabsController();
+  const { enabled } = useCaseTabsBehavior();
   const { requestClose, dialog } = useCaseTabCloseConfirm();
   const currentLocationTab = useCurrentLocationTab();
 
-  if (mode === "off") return null;
+  if (!enabled) return null;
 
   return (
     <>
@@ -82,6 +90,8 @@ export function CaseTabStripBar(): JSX.Element | null {
           const tab = tabs.find((t) => t.id === id);
           if (tab) requestClose(tab);
         }}
+        onCloseAll={closeAllTabs}
+        onCloseOthers={closeOtherTabs}
       />
       {dialog}
     </>

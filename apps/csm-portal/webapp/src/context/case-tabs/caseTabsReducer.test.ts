@@ -156,10 +156,26 @@ describe("caseTabsReducer", () => {
 
   it("sets a tab's label and draft flag independently", () => {
     let state = open(INITIAL_CASE_TABS_STATE, "t1", "CS1");
-    state = caseTabsReducer(state, { type: "SET_LABEL", id: "t1", label: "CS1 · Subject" });
+    state = caseTabsReducer(state, { type: "SET_META", id: "t1", label: "CS0001" });
     state = caseTabsReducer(state, { type: "SET_DRAFT", id: "t1", hasDraft: true });
-    expect(state.tabs[0].label).toBe("CS1 · Subject");
+    expect(state.tabs[0].label).toBe("CS0001");
     expect(state.tabs[0].hasDraft).toBe(true);
+  });
+
+  it("sets a tab's internalId/subject (tooltip fields) without touching its label", () => {
+    let state = open(INITIAL_CASE_TABS_STATE, "t1", "CS1");
+    state = caseTabsReducer(state, { type: "SET_META", id: "t1", label: "CS0001" });
+    state = caseTabsReducer(state, {
+      type: "SET_META",
+      id: "t1",
+      internalId: "CPASUB-8",
+      subject: "Something broke",
+    });
+    expect(state.tabs[0]).toMatchObject({
+      label: "CS0001",
+      internalId: "CPASUB-8",
+      subject: "Something broke",
+    });
   });
 
   it("hydrates from a persisted state wholesale", () => {

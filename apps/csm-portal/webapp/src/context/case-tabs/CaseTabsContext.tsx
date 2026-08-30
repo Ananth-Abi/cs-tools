@@ -107,9 +107,24 @@ export interface CaseTabsController {
     state?: unknown,
   ) => boolean;
   closeTab: (id: string) => void;
+  /** Closes every open tab except the pinned "current location" one (which
+   * is never part of this array to begin with — see `useCurrentLocationTab`
+   * — so there's nothing to special-case here). Backs the tab strip's
+   * right-click "Close all tabs". */
+  closeAllTabs: () => void;
+  /** Closes every open tab except `keepId`. Backs "Close other tabs". */
+  closeOtherTabs: (keepId: string) => void;
   setActiveTab: (id: string) => void;
   updateTabPath: (id: string, kind: CaseRouteKind, path: string) => void;
-  setTabLabel: (id: string, label: string | undefined) => void;
+  /** Reports a tab's display label plus its tooltip identity (internal id +
+   * subject) — see `useReportCaseTabMeta`, the sole caller. Any omitted
+   * field is left unchanged (not reset to undefined), so the label and the
+   * tooltip fields — which typically resolve from the same data at slightly
+   * different times — don't stomp each other. */
+  setTabMeta: (
+    id: string,
+    meta: { label?: string; internalId?: string; subject?: string },
+  ) => void;
   setTabDraft: (id: string, hasDraft: boolean) => void;
   isAtCapacity: boolean;
 }
@@ -128,9 +143,11 @@ const NOOP_CASE_TABS_CONTROLLER: CaseTabsController = {
   activeTab: undefined,
   openTab: () => true,
   closeTab: () => {},
+  closeAllTabs: () => {},
+  closeOtherTabs: () => {},
   setActiveTab: () => {},
   updateTabPath: () => {},
-  setTabLabel: () => {},
+  setTabMeta: () => {},
   setTabDraft: () => {},
   isAtCapacity: false,
 };
@@ -138,31 +155,32 @@ const NOOP_CASE_TABS_CONTROLLER: CaseTabsController = {
 const CaseTabsContext = createContext<CaseTabsController>(NOOP_CASE_TABS_CONTROLLER);
 
 export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Element {
-  const { mode } = useCaseTabsBehavior();
+  const { enabled, capMode } = useCaseTabsBehavior();
   const [state, dispatch] = useReducer(
     caseTabsReducer,
     undefined,
-    // Mode "off" never restores a prior session's open tabs, even if some
-    // are still sitting in sessionStorage from before the user (or a
-    // previous session on this browser) turned the mechanism off — without
-    // this, `CaseTabsContentHost`/`CaseTabStripBar` would render stale tabs
-    // in a mode that's supposed to render neither, since they only read
-    // `tabs` off this state and don't separately re-check `mode`.
-    () => (mode === "off" ? INITIAL_CASE_TABS_STATE : (readPersistedState() ?? INITIAL_CASE_TABS_STATE)),
+    // Disabled never restores a prior session's open tabs, even if some are
+    // still sitting in sessionStorage from before the user (or a previous
+    // session on this browser) turned the mechanism off — without this,
+    // `CaseTabsContentHost`/`CaseTabStripBar` would render stale tabs while
+    // disabled, since they only read `tabs` off this state and don't
+    // separately re-check `enabled`.
+    () =>
+      enabled ? (readPersistedState() ?? INITIAL_CASE_TABS_STATE) : INITIAL_CASE_TABS_STATE,
   );
 
   useEffect(() => {
     writePersistedState(state);
   }, [state]);
 
-  // Same reasoning as the lazy-init check above, but for a LIVE mode change
-  // (the user switches to "No tabs at all" via the preferences menu while
-  // tabs are already open) — clears them immediately rather than leaving
-  // them to linger, hidden behind `CaseTabStripBar`'s own `mode === "off"`
-  // early return, until the next full reload.
+  // Same reasoning as the lazy-init check above, but for a LIVE toggle (the
+  // user turns the mechanism off via the preferences menu while tabs are
+  // already open) — clears them immediately rather than leaving them to
+  // linger, hidden behind `CaseTabStripBar`'s own `enabled` early return,
+  // until the next full reload.
   useEffect(() => {
-    if (mode === "off") dispatch({ type: "HYDRATE", state: INITIAL_CASE_TABS_STATE });
-  }, [mode]);
+    if (!enabled) dispatch({ type: "HYDRATE", state: INITIAL_CASE_TABS_STATE });
+  }, [enabled]);
 
   // Read inside `openTab` via a ref, not a `[state.tabs]` dependency: a
   // dependency there gives `openTab` a new identity on every single tab
@@ -178,24 +196,26 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
   });
 
   // Same ref-not-dependency reasoning as `tabsRef` above — `openTab` stays a
-  // stable callback identity across a mode change too.
-  const modeRef = useRef(mode);
+  // stable callback identity across a preference change too.
+  const enabledRef = useRef(enabled);
+  const capModeRef = useRef(capMode);
   useEffect(() => {
-    modeRef.current = mode;
+    enabledRef.current = enabled;
+    capModeRef.current = capMode;
   });
 
   const openTab = useCallback(
     (caseId: string, kind: CaseRouteKind, path: string, tabState?: unknown): boolean => {
-      // Mode "off" disables the mechanism entirely — never opens a tab, for
-      // any case, regardless of capacity. Callers (`CaseDetailRouteSync`)
-      // already skip calling this in that mode (so no toast fires), but this
-      // is the authoritative check other/future callers should be able to
-      // rely on too.
-      if (modeRef.current === "off") return false;
+      // Disabled means the mechanism is off entirely — never opens a tab,
+      // for any case, regardless of capacity. Callers (`CaseDetailRouteSync`)
+      // already skip calling this while disabled (so no toast fires), but
+      // this is the authoritative check other/future callers should be able
+      // to rely on too.
+      if (!enabledRef.current) return false;
       const tabs = tabsRef.current;
       const alreadyOpen = tabs.some((t) => t.caseId === caseId);
       const atCap = !alreadyOpen && tabs.length >= MAX_OPEN_CASE_TABS;
-      if (atCap && modeRef.current === "block") {
+      if (atCap && capModeRef.current === "block") {
         return false;
       }
       dispatch({
@@ -206,7 +226,7 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
         path,
         state: tabState,
         evict: atCap
-          ? modeRef.current === "evict-oldest"
+          ? capModeRef.current === "evict-oldest"
             ? "oldest"
             : "newest"
           : undefined,
@@ -220,6 +240,14 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
     dispatch({ type: "CLOSE", id });
   }, []);
 
+  const closeAllTabs = useCallback(() => {
+    dispatch({ type: "CLOSE_ALL" });
+  }, []);
+
+  const closeOtherTabs = useCallback((keepId: string) => {
+    dispatch({ type: "CLOSE_OTHERS", keepId });
+  }, []);
+
   const setActiveTab = useCallback((id: string) => {
     dispatch({ type: "SET_ACTIVE", id });
   }, []);
@@ -228,9 +256,12 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
     dispatch({ type: "UPDATE_TAB_PATH", id, kind, path });
   }, []);
 
-  const setTabLabel = useCallback((id: string, label: string | undefined) => {
-    dispatch({ type: "SET_LABEL", id, label });
-  }, []);
+  const setTabMeta = useCallback(
+    (id: string, meta: { label?: string; internalId?: string; subject?: string }) => {
+      dispatch({ type: "SET_META", id, ...meta });
+    },
+    [],
+  );
 
   const setTabDraft = useCallback((id: string, hasDraft: boolean) => {
     dispatch({ type: "SET_DRAFT", id, hasDraft });
@@ -245,9 +276,11 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
       activeTab,
       openTab,
       closeTab,
+      closeAllTabs,
+      closeOtherTabs,
       setActiveTab,
       updateTabPath,
-      setTabLabel,
+      setTabMeta,
       setTabDraft,
       isAtCapacity: state.tabs.length >= MAX_OPEN_CASE_TABS,
     }),
@@ -257,9 +290,11 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
       activeTab,
       openTab,
       closeTab,
+      closeAllTabs,
+      closeOtherTabs,
       setActiveTab,
       updateTabPath,
-      setTabLabel,
+      setTabMeta,
       setTabDraft,
     ],
   );

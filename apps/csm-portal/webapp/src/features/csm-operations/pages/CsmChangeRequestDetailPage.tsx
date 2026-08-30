@@ -239,9 +239,15 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   const backTarget = backState?.from ?? OPERATIONS_CR_PATH;
   const { data, isLoading, isError } = useGetChangeRequest(id);
   // Same label computation this page's own `recordView` call below uses —
-  // The CR number only (not the subject) — a deliberately short tab chip
-  // label, matching `CsmCaseDetailPage`'s own `caseNumber`-only report.
-  useReportCaseTabMeta(id, data?.number ?? undefined);
+  // The CR number as the short chip label (matching `CsmCaseDetailPage`'s
+  // own `caseNumber`-only report); change requests have no separate
+  // project-scoped id the way cases do, so the tooltip's `internalId` reuses
+  // the same number, with the subject alongside it.
+  useReportCaseTabMeta(id, {
+    label: data?.number ?? undefined,
+    internalId: data?.number ?? undefined,
+    subject: data?.subject ?? undefined,
+  });
   // Fetched here (not just inside the Approval tab's `ChangeRequestApprovals`)
   // so the header's blocking-reason note has data on first render, even when
   // the engineer lands on a different tab. Both call sites share the same

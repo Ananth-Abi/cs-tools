@@ -46,9 +46,16 @@ export interface CaseTabState {
    * to the SAME caseId — the misrouted-case redirect inside
    * `CsmCaseDetailPage`, or the dashless-id repair in `useNormalizedIdParam`. */
   path: string;
-  /** Short display label ("CS0001 · Subject line"); undefined until the
-   * case's own data has loaded once. */
+  /** Short display label (the record's number only, e.g. "CS0001"); undefined
+   * until its own data has loaded once — see `useReportCaseTabMeta`. */
   label?: string;
+  /** The internal/project-scoped id (`wso2CaseId` for cases, or the
+   * equivalent field on incidents/change requests) and the subject, shown in
+   * the tab chip's hover tooltip (`CaseTabStrip`) — a fuller identity than
+   * the short `label`. Both undefined until the record's own data has
+   * loaded once, same as `label`. */
+  internalId?: string;
+  subject?: string;
   /** Best-effort signal that this case's reply composer is open, used only
    * to decide whether closing this tab needs a confirm — see
    * `CaseTabsContext`'s `reportDraftState`. */
@@ -68,6 +75,7 @@ export interface CaseTabsPersistedState {
 }
 
 /** Hard cap on simultaneously open in-app case tabs (browser-tab-strip
- * parity target; see the feature's own design notes for why 5 and why
- * "block" rather than evict-LRU). */
-export const MAX_OPEN_CASE_TABS = 5;
+ * parity target; see the feature's own design notes for why "block" as one
+ * of the cap-behavior modes rather than always evicting). Raised from the
+ * original 5 to 10 by explicit request once the feature had settled. */
+export const MAX_OPEN_CASE_TABS = 10;

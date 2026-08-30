@@ -39,18 +39,30 @@ export type CaseTabsAction =
       path: string;
       state?: unknown;
       /** Set by the caller (`useCaseTabsController.openTab`, based on the
-       * current `CaseTabsBehaviorMode`) when opening at the cap should evict
+       * current `CaseTabsCapMode`) when opening at the cap should evict
        * a tab to make room, rather than being refused. `"oldest"` closes
        * `tabs[0]` (first opened); `"newest"` closes the last one. Ignored
        * (irrelevant) when under the cap or the case is already open. */
       evict?: "oldest" | "newest";
     }
   | { type: "CLOSE"; id: string }
+  /** Closes every open tab. */
+  | { type: "CLOSE_ALL" }
+  /** Closes every open tab except `keepId`. */
+  | { type: "CLOSE_OTHERS"; keepId: string }
   | { type: "SET_ACTIVE"; id: string }
   /** Same case, path (and/or kind) changed in place — see
    * `CaseTabIsolatedRouter`'s navigator. */
   | { type: "UPDATE_TAB_PATH"; id: string; kind: CaseRouteKind; path: string }
-  | { type: "SET_LABEL"; id: string; label: string | undefined }
+  /** Any subset of the display fields — an omitted field is left unchanged,
+   * not reset. See `CaseTabsController.setTabMeta`'s own doc comment. */
+  | {
+      type: "SET_META";
+      id: string;
+      label?: string;
+      internalId?: string;
+      subject?: string;
+    }
   | { type: "SET_DRAFT"; id: string; hasDraft: boolean }
   | { type: "HYDRATE"; state: CaseTabsState };
 
@@ -123,6 +135,18 @@ export function caseTabsReducer(
       return { tabs, activeTabId };
     }
 
+    case "CLOSE_ALL": {
+      if (state.tabs.length === 0) return state;
+      return { tabs: [], activeTabId: null };
+    }
+
+    case "CLOSE_OTHERS": {
+      const keep = state.tabs.find((t) => t.id === action.keepId);
+      if (!keep) return state;
+      if (state.tabs.length === 1) return state;
+      return { tabs: [keep], activeTabId: keep.id };
+    }
+
     case "SET_ACTIVE": {
       if (state.activeTabId === action.id) return state;
       if (!state.tabs.some((t) => t.id === action.id)) return state;
@@ -141,11 +165,25 @@ export function caseTabsReducer(
       return { ...state, tabs };
     }
 
-    case "SET_LABEL": {
+    case "SET_META": {
       const index = state.tabs.findIndex((t) => t.id === action.id);
-      if (index === -1 || state.tabs[index].label === action.label) return state;
+      if (index === -1) return state;
+      const current = state.tabs[index];
+      const next = {
+        ...current,
+        ...(action.label !== undefined ? { label: action.label } : {}),
+        ...(action.internalId !== undefined ? { internalId: action.internalId } : {}),
+        ...(action.subject !== undefined ? { subject: action.subject } : {}),
+      };
+      if (
+        next.label === current.label &&
+        next.internalId === current.internalId &&
+        next.subject === current.subject
+      ) {
+        return state;
+      }
       const tabs = state.tabs.slice();
-      tabs[index] = { ...tabs[index], label: action.label };
+      tabs[index] = next;
       return { ...state, tabs };
     }
 

@@ -16,10 +16,12 @@
 
 import {
   Box,
+  FormControlLabel,
   IconButton,
   MenuItem,
   Popover,
   Select,
+  Switch,
   Tooltip,
   Typography,
   type SelectChangeEvent,
@@ -30,29 +32,35 @@ import { useThemePreference } from "@context/theme/ThemePreferenceContext";
 import { isThemeKey } from "@config/themeConfig";
 import {
   useCaseTabsBehavior,
-  type CaseTabsBehaviorMode,
+  type CaseTabsCapMode,
 } from "@context/case-tabs/CaseTabsBehaviorContext";
 
-function isBehaviorMode(value: string): value is CaseTabsBehaviorMode {
-  return (
-    value === "off" || value === "block" || value === "evict-oldest" || value === "evict-newest"
-  );
+function isCapMode(value: string): value is CaseTabsCapMode {
+  return value === "block" || value === "evict-oldest" || value === "evict-newest";
 }
 
 /**
  * Single consolidated header entry point for user-level display/behavior
  * preferences: the Oxygen UI theme (previously its own standalone dropdown,
- * `ThemeSelect`) and the case-tabs behavior mode (`CaseTabsBehaviorContext`).
- * Both are localStorage-only, no-backend-sync preferences with the same
- * persistence shape, so one small popover holds both rather than growing the
- * header with a second standalone control per preference added.
+ * `ThemeSelect`) and the two case-tabs preferences (`CaseTabsBehaviorContext`)
+ * — an on/off toggle for the mechanism, and a cap-behavior mode that's only
+ * relevant (and only shown as interactive) while it's on. All three are
+ * localStorage-only, no-backend-sync preferences with the same persistence
+ * shape, so one small popover holds them rather than growing the header with
+ * a new standalone control per preference added.
  */
 export default function PreferencesMenu(): JSX.Element {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
   const open = Boolean(anchorEl);
 
   const { themeKey, setThemeKey, options: themeOptions } = useThemePreference();
-  const { mode, setMode, options: behaviorOptions } = useCaseTabsBehavior();
+  const {
+    enabled,
+    setEnabled,
+    capMode,
+    setCapMode,
+    capModeOptions,
+  } = useCaseTabsBehavior();
 
   const handleOpen = (e: MouseEvent<HTMLElement>): void => setAnchorEl(e.currentTarget);
   const handleClose = (): void => setAnchorEl(null);
@@ -62,9 +70,9 @@ export default function PreferencesMenu(): JSX.Element {
     if (isThemeKey(next)) setThemeKey(next);
   };
 
-  const handleBehaviorChange = (e: SelectChangeEvent<string>): void => {
+  const handleCapModeChange = (e: SelectChangeEvent<string>): void => {
     const next = e.target.value;
-    if (isBehaviorMode(next)) setMode(next);
+    if (isCapMode(next)) setCapMode(next);
   };
 
   return (
@@ -112,14 +120,37 @@ export default function PreferencesMenu(): JSX.Element {
             >
               Case tabs (beta)
             </Typography>
+            <FormControlLabel
+              sx={{ ml: 0, justifyContent: "space-between", width: "100%" }}
+              labelPlacement="start"
+              control={
+                <Switch
+                  size="small"
+                  checked={enabled}
+                  onChange={(e) => setEnabled(e.target.checked)}
+                  inputProps={{ "aria-label": "Open cases in tabs" }}
+                />
+              }
+              label={
+                <Typography variant="body2" color="text.secondary">
+                  Open cases in tabs
+                </Typography>
+              }
+            />
+            {/* Only meaningful while the toggle above is on — kept visible
+                but disabled (rather than removed) so its current value stays
+                legible and the popover doesn't reflow when the toggle
+                changes. */}
             <Select
-              value={mode}
-              onChange={handleBehaviorChange}
+              value={capMode}
+              onChange={handleCapModeChange}
               size="small"
               fullWidth
-              aria-label="Case tabs behavior"
+              disabled={!enabled}
+              aria-label="When the tab limit is reached"
+              sx={{ mt: 1 }}
             >
-              {behaviorOptions.map((o) => (
+              {capModeOptions.map((o) => (
                 <MenuItem key={o.mode} value={o.mode}>
                   {o.label}
                 </MenuItem>

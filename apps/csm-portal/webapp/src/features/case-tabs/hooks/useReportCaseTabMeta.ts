@@ -17,10 +17,22 @@
 import { useEffect } from "react";
 import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
 
+export interface CaseTabMeta {
+  /** Short chip label — the record's number only (e.g. "CS0001"). */
+  label: string | undefined;
+  /** Internal/project-scoped id shown in the tab's hover tooltip (e.g.
+   * "CPASUB-8" — `wso2CaseId` for cases, or the incident/CR equivalent).
+   * Distinct from `label`: never shown as the chip's own text, only in the
+   * tooltip alongside `subject`. */
+  internalId: string | undefined;
+  /** Subject/title shown in the tab's hover tooltip alongside `internalId`. */
+  subject: string | undefined;
+}
+
 /**
- * Reports this case's display label ("CS0001 · Subject line") up to
- * `CaseTabsContext`, so the tab strip can show it without a second,
- * independent data fetch of its own.
+ * Reports this record's display label ("CS0001") and its fuller tooltip
+ * identity (internal id + subject) up to `CaseTabsContext`, so the tab strip
+ * can show both without a second, independent data fetch of its own.
  *
  * An EARLIER version of this had the tab strip resolve each tab's label via
  * its OWN separate `useGetCsmCaseDetail(tab.caseId)` call (`CaseTabLabel`,
@@ -29,25 +41,26 @@ import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
  * that produced a real bug: a tab's chip stayed on the raw caseId until the
  * user switched away and back, i.e. the label query's own render cycle
  * wasn't reliably picking up data the page had already loaded. Having the
- * page that's ACTUALLY rendering (and already computes this exact string for
+ * page that's ACTUALLY rendering (and already computes this exact data for
  * its own header) report it directly removes that whole class of "two
  * independent consumers of the same query, but only one renders it"
- * staleness risk — there is now exactly one source of truth for the label,
- * the same `data` `CsmCaseDetailPage` uses for everything else it renders.
+ * staleness risk — there is now exactly one source of truth, the same
+ * `data` the page uses for everything else it renders.
  *
  * No-ops when this page isn't part of any open tab (e.g. the un-tabbed
- * fallback for a case opened past the open-tab cap — see
+ * fallback for a record opened past the open-tab cap — see
  * `CaseDetailRouteSync`), same as `useReportCaseTabDraft`.
  */
 export function useReportCaseTabMeta(
   caseId: string | undefined,
-  label: string | undefined,
+  meta: CaseTabMeta,
 ): void {
-  const { tabs, setTabLabel } = useCaseTabsController();
+  const { tabs, setTabMeta } = useCaseTabsController();
   const tabId = caseId ? tabs.find((t) => t.caseId === caseId)?.id : undefined;
+  const { label, internalId, subject } = meta;
 
   useEffect(() => {
     if (!tabId) return;
-    setTabLabel(tabId, label);
-  }, [tabId, label, setTabLabel]);
+    setTabMeta(tabId, { label, internalId, subject });
+  }, [tabId, label, internalId, subject, setTabMeta]);
 }

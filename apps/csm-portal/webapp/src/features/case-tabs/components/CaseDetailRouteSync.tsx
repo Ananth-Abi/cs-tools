@@ -22,7 +22,7 @@ import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
 import { useCaseTabsBehavior } from "@context/case-tabs/CaseTabsBehaviorContext";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
-import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
+import { MAX_OPEN_CASE_TABS, type CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
 
 /**
  * The `element` for every detail route this tab mechanism covers in
@@ -41,12 +41,13 @@ import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
  * renders nothing, leaving the routed `<Outlet/>` slot empty while the
  * workspace's own content occupies the same visual area.
  *
- * The one exception is the tab cap (`MAX_OPEN_CASE_TABS`): opening a 6th
- * distinct record while 5 are already open is blocked rather than evicting
- * one (see the tab strip's own design notes) — that record is rendered
- * directly, un-tabbed, exactly as this route worked before this feature
- * existed. It won't survive being navigated away from and back to, but
- * nothing is lost that wasn't already lost by a plain page navigation today.
+ * The one exception is the tab cap (`MAX_OPEN_CASE_TABS`): opening one more
+ * distinct record past the cap, in "block" cap mode, is refused rather than
+ * evicting an existing tab (see `CaseTabsBehaviorContext`'s doc comment for
+ * the other cap modes) — that record is rendered directly, un-tabbed,
+ * exactly as this route worked before this feature existed. It won't
+ * survive being navigated away from and back to, but nothing is lost that
+ * wasn't already lost by a plain page navigation today.
  */
 export default function CaseDetailRouteSync({
   kind,
@@ -62,7 +63,7 @@ export default function CaseDetailRouteSync({
   const caseId = useNormalizedIdParam(paramName);
   const location = useLocation();
   const { tabs, isAtCapacity, openTab } = useCaseTabsController();
-  const { mode } = useCaseTabsBehavior();
+  const { enabled } = useCaseTabsBehavior();
   const { showError } = useErrorBanner();
   const warnedForCaseIdRef = useRef<string | undefined>(undefined);
 
@@ -75,32 +76,32 @@ export default function CaseDetailRouteSync({
   // the effect's `openTab` call resolves, then immediately swap to `null`
   // once it succeeds — a needless mount-then-discard on every record opened.
   //
-  // Mode "off" always renders this fallback (there is never a tab to defer
-  // to) — this is what makes "off" behave exactly like the pre-feature app:
-  // every record renders directly, in place, via the real matched route.
-  const alreadyOpenAsTab =
-    mode !== "off" && !!caseId && tabs.some((t) => t.caseId === caseId);
-  const blocked = mode === "off" || (!!caseId && !alreadyOpenAsTab && isAtCapacity);
+  // Disabled always renders this fallback (there is never a tab to defer
+  // to) — this is what makes the mechanism behave exactly like the
+  // pre-feature app when off: every record renders directly, in place, via
+  // the real matched route.
+  const alreadyOpenAsTab = enabled && !!caseId && tabs.some((t) => t.caseId === caseId);
+  const blocked = !enabled || (!!caseId && !alreadyOpenAsTab && isAtCapacity);
 
   useEffect(() => {
-    // Mode "off": never call openTab (which would just return false anyway
-    // — see CaseTabsContext) and, crucially, never fire the capacity toast
+    // Disabled: never call openTab (which would just return false anyway —
+    // see CaseTabsContext) and, crucially, never fire the capacity toast
     // below, which would otherwise show on literally every record opened by
     // default.
-    if (!caseId || mode === "off") return;
+    if (!caseId || !enabled) return;
     const path = `${location.pathname}${location.search}${location.hash}`;
     const opened = openTab(caseId, kind, path, location.state);
     if (!opened && warnedForCaseIdRef.current !== caseId) {
       warnedForCaseIdRef.current = caseId;
       showError(
-        "5 tabs are already open — close one to open this in a tab. " +
+        `${MAX_OPEN_CASE_TABS} tabs are already open — close one to open this in a tab. ` +
           "Showing it without a tab for now.",
       );
     }
   }, [
     caseId,
     kind,
-    mode,
+    enabled,
     location.pathname,
     location.search,
     location.hash,

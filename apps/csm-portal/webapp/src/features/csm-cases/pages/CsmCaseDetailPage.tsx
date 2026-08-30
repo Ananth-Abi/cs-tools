@@ -402,7 +402,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // case-like kinds this page renders (engagements, service requests,
   // announcements, security reports all carry a `caseNumber` too, from the
   // same `CsmCaseDetail` shape).
-  useReportCaseTabMeta(caseId, data?.caseNumber);
+  useReportCaseTabMeta(caseId, {
+    label: data?.caseNumber,
+    internalId: data?.wso2CaseId,
+    subject: data?.subject,
+  });
   // The route alone isn't a reliable signal once data has loaded: a "Related
   // case" link always points at /cases/:id regardless of the target's actual
   // type, so an announcement opened that way would otherwise render the full
