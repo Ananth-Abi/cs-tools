@@ -146,6 +146,7 @@ import { usePostTimeCard, useUpdateTimeCard } from "@features/csm-timecards/api/
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
 import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
+import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
@@ -395,6 +396,18 @@ export default function CsmCaseDetailPage(): JSX.Element {
     isFetching: isFetchingCaseDetail,
     dataUpdatedAt: caseDetailUpdatedAt,
   } = useGetCsmCaseDetail(caseId);
+  // Reports this exact label (same computation the recent-views/QuickNav
+  // effect below uses) up to the in-app case-tabs layer, so the tab strip's
+  // chip shows it — see the hook's own doc comment for why this replaced an
+  // earlier "the tab strip fetches its own copy" design.
+  useReportCaseTabMeta(
+    caseId,
+    data
+      ? caseIdLabel(data)
+        ? `${caseIdLabel(data)} · ${data.subject}`
+        : data.subject
+      : undefined,
+  );
   // The route alone isn't a reliable signal once data has loaded: a "Related
   // case" link always points at /cases/:id regardless of the target's actual
   // type, so an announcement opened that way would otherwise render the full

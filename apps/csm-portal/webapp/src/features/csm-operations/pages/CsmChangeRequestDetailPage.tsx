@@ -86,6 +86,8 @@ import {
 import type { BeEntityRef, BePatchChangeRequestPayload } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
+import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
+import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
 import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
 const OPERATIONS_CR_PATH = "/operations/change-requests";
@@ -214,14 +216,37 @@ const CHANGE_REQUEST_TAB_IDS: readonly ChangeRequestTabId[] = TAB_DEFS.map((t) =
  * rollback / test / communication plans.
  */
 export default function CsmChangeRequestDetailPage(): JSX.Element {
-  const id = useNormalizedIdParam("id");
-  const navigate = useNavTransition();
+  // Real router hooks — called unconditionally regardless of `routeOverride`
+  // below (rules of hooks), but their VALUES are only actually used when
+  // this instance isn't part of an open in-app tab. See the identical
+  // pattern (and its own longer doc comment) at the top of
+  // `CsmCaseDetailPage`, which this mirrors: this page can be mounted
+  // several times at once (one per open tab, kept alive in the background —
+  // see `CaseTabIsolatedRouter`), while there is only ever one real matched
+  // route/location for the app as a whole.
+  const routedId = useNormalizedIdParam("id");
+  const routedNavigate = useNavTransition();
+  const routedLocationState = useLocation().state;
+  const routeOverride = useCaseRouteOverride();
+  const id = routeOverride?.caseId ?? routedId;
+  const navigate = routeOverride?.navigate ?? routedNavigate;
   // Prefer the list URL the row link captured (if any) so "back" returns to
   // the exact view the engineer came from, falling back to the bare tab path
   // for a bookmarked or directly-linked change request.
-  const backState = useLocation().state as { from?: string } | undefined;
+  const backState = (routeOverride ? routeOverride.state : routedLocationState) as
+    | { from?: string }
+    | undefined;
   const backTarget = backState?.from ?? OPERATIONS_CR_PATH;
   const { data, isLoading, isError } = useGetChangeRequest(id);
+  // Same label computation this page's own `recordView` call below uses —
+  // see `useReportCaseTabMeta`'s doc comment.
+  useReportCaseTabMeta(
+    id,
+    data
+      ? [data.number, data.subject].filter((s): s is string => !!s?.trim()).join(" · ") ||
+          "(no subject)"
+      : undefined,
+  );
   // Fetched here (not just inside the Approval tab's `ChangeRequestApprovals`)
   // so the header's blocking-reason note has data on first render, even when
   // the engineer lands on a different tab. Both call sites share the same

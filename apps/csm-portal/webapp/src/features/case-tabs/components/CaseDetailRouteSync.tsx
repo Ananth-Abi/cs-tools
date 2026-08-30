@@ -14,9 +14,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Suspense, useEffect, useRef, type JSX } from "react";
+import { Suspense, useEffect, useMemo, useRef, type JSX } from "react";
 import { useLocation } from "react-router";
-import LazyCsmCaseDetailPage from "@features/case-tabs/lazyCaseDetailPage";
+import { pageComponentForKind } from "@features/case-tabs/tabPageRegistry";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import { useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
@@ -24,46 +24,54 @@ import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
 
 /**
- * The `element` for all five case-detail routes in `App.tsx` (`/cases/:id`,
- * `/engagements/:id`, `/operations/service-requests/:id`,
- * `/announcements/:id`, `/security-center/security-reports/:id`), replacing
- * a direct `<CsmCaseDetailPage/>` mount.
+ * The `element` for every detail route this tab mechanism covers in
+ * `App.tsx` (the five case-like ones — `/cases/:caseId`,
+ * `/engagements/:caseId`, `/operations/service-requests/:caseId`,
+ * `/announcements/:caseId`, `/security-center/security-reports/:caseId` —
+ * plus `/operations/incidents/:id` and `/operations/change-requests/:id`),
+ * replacing a direct page-component mount.
  *
  * Its job is narrow: given the REAL matched route (real `useParams`/
  * `useLocation` — this component is not itself isolated), ask
- * `CaseTabsContext` to open/activate an in-app tab for this case. Actually
+ * `CaseTabsContext` to open/activate an in-app tab for this record. Actually
  * rendering the page happens elsewhere, in `CaseTabsWorkspace`'s keep-alive
- * host (each open tab gets its own isolated router there — see
- * `CaseTabIsolatedRouter`), so on success this renders nothing, leaving the
- * routed `<Outlet/>` slot empty while the workspace's own content occupies
- * the same visual area.
+ * host (each open tab gets its own isolated identity there — see
+ * `CaseTabIsolatedRouter`/`CaseRouteOverrideContext`), so on success this
+ * renders nothing, leaving the routed `<Outlet/>` slot empty while the
+ * workspace's own content occupies the same visual area.
  *
  * The one exception is the tab cap (`MAX_OPEN_CASE_TABS`): opening a 6th
- * distinct case while 5 are already open is blocked rather than evicting one
- * (see the tab strip's own design notes) — that case is rendered directly,
- * un-tabbed, exactly as this route worked before this feature existed. It
- * won't survive being navigated away from and back to, but nothing is lost
- * that wasn't already lost by a plain page navigation today.
+ * distinct record while 5 are already open is blocked rather than evicting
+ * one (see the tab strip's own design notes) — that record is rendered
+ * directly, un-tabbed, exactly as this route worked before this feature
+ * existed. It won't survive being navigated away from and back to, but
+ * nothing is lost that wasn't already lost by a plain page navigation today.
  */
 export default function CaseDetailRouteSync({
   kind,
+  // The five case-like routes all use `:caseId`; Incidents/Change Requests
+  // use `:id` (see their own route definitions in App.tsx and their pages'
+  // own `useNormalizedIdParam("id")` call) — same mechanism, different param
+  // name on the route pattern.
+  paramName = "caseId",
 }: {
   kind: CaseRouteKind;
+  paramName?: string;
 }): JSX.Element | null {
-  const caseId = useNormalizedIdParam("caseId");
+  const caseId = useNormalizedIdParam(paramName);
   const location = useLocation();
   const { tabs, isAtCapacity, openTab } = useCaseTabsController();
   const { showError } = useErrorBanner();
   const warnedForCaseIdRef = useRef<string | undefined>(undefined);
 
   // Derived purely from already-available context state, not local state set
-  // from inside the effect below — this is what this case would render if
+  // from inside the effect below — this is what this record would render if
   // `openTab` is refused, computed BEFORE the effect (which only performs
   // the actual side effect: opening the tab / firing the capacity warning)
-  // ever runs. Without this, the first render for a brand new case would
+  // ever runs. Without this, the first render for a brand new record would
   // transiently render this fallback (nothing is open for it yet) before
   // the effect's `openTab` call resolves, then immediately swap to `null`
-  // once it succeeds — a needless mount-then-discard on every case opened.
+  // once it succeeds — a needless mount-then-discard on every record opened.
   const alreadyOpenAsTab = !!caseId && tabs.some((t) => t.caseId === caseId);
   const blocked = !!caseId && !alreadyOpenAsTab && isAtCapacity;
 
@@ -74,7 +82,7 @@ export default function CaseDetailRouteSync({
     if (!opened && warnedForCaseIdRef.current !== caseId) {
       warnedForCaseIdRef.current = caseId;
       showError(
-        "5 case tabs are already open — close one to open this case in a tab. " +
+        "5 tabs are already open — close one to open this in a tab. " +
           "Showing it without a tab for now.",
       );
     }
@@ -89,11 +97,21 @@ export default function CaseDetailRouteSync({
     showError,
   ]);
 
+  // Memoized so re-renders reuse the same reference — `pageComponentForKind`
+  // always returns one of a small fixed set of stable, module-level `lazy()`
+  // components, never a genuinely new one; this is a component REGISTRY
+  // lookup, not the "defining a component inline during render" antipattern
+  // `react-hooks/static-components` exists to catch, which can't be proven
+  // statically here. Called before the early returns below so it's
+  // unconditional, same as every other hook in this component.
+  const Page = useMemo(() => pageComponentForKind(kind), [kind]);
+
   if (!caseId) return null;
   if (!blocked) return null;
   return (
     <Suspense fallback={<RouteSuspenseFallback />}>
-      <LazyCsmCaseDetailPage />
+      {/* eslint-disable-next-line react-hooks/static-components -- registry lookup among stable, pre-declared lazy() components, not a new component per render */}
+      <Page />
     </Suspense>
   );
 }

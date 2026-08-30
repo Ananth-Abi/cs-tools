@@ -20,11 +20,10 @@ import {
   caseRouteKindForType,
   matchCaseLocation,
   pathForTab,
-  pathPatternForKind,
 } from "@context/case-tabs/caseRoutePatterns";
 
 describe("matchCaseLocation", () => {
-  it("matches every one of the five case-detail route bases", () => {
+  it("matches every known route base", () => {
     expect(matchCaseLocation("/cases/CS1")).toEqual({ kind: "case", caseId: "CS1" });
     expect(matchCaseLocation("/engagements/CS2")).toEqual({
       kind: "engagement",
@@ -42,6 +41,14 @@ describe("matchCaseLocation", () => {
       kind: "security_report_analysis",
       caseId: "CS5",
     });
+    expect(matchCaseLocation("/operations/incidents/INC1")).toEqual({
+      kind: "incident",
+      caseId: "INC1",
+    });
+    expect(matchCaseLocation("/operations/change-requests/CR1")).toEqual({
+      kind: "change_request",
+      caseId: "CR1",
+    });
   });
 
   it("does not match a list/index path with no id segment", () => {
@@ -51,7 +58,7 @@ describe("matchCaseLocation", () => {
 
   it("does not match an unrelated route", () => {
     expect(matchCaseLocation("/dashboard")).toBeUndefined();
-    expect(matchCaseLocation("/operations/change-requests/CS1")).toBeUndefined();
+    expect(matchCaseLocation("/operations/problems/CS1")).toBeUndefined();
   });
 
   it("only takes the first path segment after the base as the id", () => {
@@ -59,7 +66,7 @@ describe("matchCaseLocation", () => {
   });
 });
 
-describe("pathPatternForKind / basePathForKind / pathForTab", () => {
+describe("basePathForKind / pathForTab", () => {
   it("round-trip consistently for every kind", () => {
     for (const kind of [
       "case",
@@ -67,11 +74,12 @@ describe("pathPatternForKind / basePathForKind / pathForTab", () => {
       "announcement",
       "service_request",
       "security_report_analysis",
+      "incident",
+      "change_request",
     ] as const) {
       const path = pathForTab(kind, "CS1");
       expect(matchCaseLocation(path)).toEqual({ kind, caseId: "CS1" });
       expect(path.startsWith(basePathForKind(kind))).toBe(true);
-      expect(pathPatternForKind(kind)).toBe(`${basePathForKind(kind)}/:caseId`);
     }
   });
 });

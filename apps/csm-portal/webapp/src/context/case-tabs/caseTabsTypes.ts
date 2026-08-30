@@ -14,13 +14,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-/** The five case-like record types that share `CsmCaseDetailPage`. */
+/** The record types this tab mechanism covers: the five case-like types that
+ * share `CsmCaseDetailPage`, plus Incidents and Change Requests (their own
+ * dedicated pages, `CsmIncidentDetailPage`/`CsmChangeRequestDetailPage`) —
+ * see `tabPageRegistry.tsx` for which page each kind renders. The last two
+ * values match the `RecentView` `kind` vocabulary already used by
+ * `features/csm-recent` (`recordView({ kind: "incident" | "change_request",
+ * ... })` in each page), not a coincidence — same records, same name. */
 export type CaseRouteKind =
   | "case"
   | "service_request"
   | "engagement"
   | "announcement"
-  | "security_report_analysis";
+  | "security_report_analysis"
+  | "incident"
+  | "change_request";
 
 export interface CaseTabState {
   /** Stable synthetic id for this open tab, assigned once at open time.

@@ -74,14 +74,8 @@ const OperationsPage = lazy(
 const CreateServiceRequestPage = lazy(
   () => import("@features/csm-operations/pages/CreateServiceRequestPage"),
 );
-const CsmChangeRequestDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmChangeRequestDetailPage"),
-);
 const CreateChangeRequestPage = lazy(
   () => import("@features/csm-operations/pages/CreateChangeRequestPage"),
-);
-const CsmIncidentDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmIncidentDetailPage"),
 );
 const CreateIncidentPage = lazy(
   () => import("@features/csm-operations/pages/CreateIncidentPage"),
@@ -533,10 +527,13 @@ export default function App(): JSX.Element {
                     />
                     <Route
                       path="change-requests/:id"
-                      element={<CsmChangeRequestDetailPage />}
+                      element={<CaseDetailRouteSync kind="change_request" paramName="id" />}
                     />
                     <Route path="incidents/new" element={<CreateIncidentPage />} />
-                    <Route path="incidents/:id" element={<CsmIncidentDetailPage />} />
+                    <Route
+                      path="incidents/:id"
+                      element={<CaseDetailRouteSync kind="incident" paramName="id" />}
+                    />
                     <Route path="problems/new" element={<CreateProblemPage />} />
                     <Route path="problems/:id" element={<ProblemDetailPage />} />
                   </Route>

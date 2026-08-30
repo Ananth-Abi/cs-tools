@@ -17,12 +17,14 @@
 import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
 
 /**
- * The five route bases that all render `CsmCaseDetailPage` (see that page's
- * own doc comment on `detailPath`/`canonicalDetailPath`) — kept here as the
- * single source of truth this feature's tab layer matches against, mirroring
+ * The route base for every kind this tab mechanism covers. The five
+ * case-like ones all render `CsmCaseDetailPage` (see that page's own doc
+ * comment on `detailPath`/`canonicalDetailPath`) and mirror
  * `caseTypeDetailBasePath` in `features/csm-cases/utils/caseType.ts` (which
  * maps a *loaded case's* `caseType` to the same bases; this module instead
- * maps a *URL* to one of them, before any case data has loaded).
+ * maps a *URL* to one of them, before any data has loaded). `incident` and
+ * `change_request` each have their own dedicated page — see
+ * `tabPageRegistry.tsx` for which component renders for which kind.
  */
 const ROUTE_BASES: Record<CaseRouteKind, string> = {
   case: "/cases",
@@ -30,6 +32,8 @@ const ROUTE_BASES: Record<CaseRouteKind, string> = {
   engagement: "/engagements",
   announcement: "/announcements",
   security_report_analysis: "/security-center/security-reports",
+  incident: "/operations/incidents",
+  change_request: "/operations/change-requests",
 };
 
 // Longest/most specific base first so `/operations/service-requests/:id`
@@ -44,15 +48,6 @@ const ROUTE_KIND_BY_BASE: [string, CaseRouteKind][] = (
 export interface CaseLocationMatch {
   kind: CaseRouteKind;
   caseId: string;
-}
-
-/**
- * The react-router path pattern for a given kind, e.g. `/cases/:caseId` —
- * used as the sole `<Route>` inside each open tab's isolated router (see
- * `CaseTabIsolatedRouter`).
- */
-export function pathPatternForKind(kind: CaseRouteKind): string {
-  return `${ROUTE_BASES[kind]}/:caseId`;
 }
 
 export function basePathForKind(kind: CaseRouteKind): string {
@@ -84,9 +79,10 @@ export function pathForTab(kind: CaseRouteKind, caseId: string): string {
 }
 
 /**
- * `CaseRouteKind` is deliberately the same set of values as the backend's
- * own `BeCaseType` (see `api/backend/types.ts`) — this just narrows an
- * `undefined`/legacy-row case type to `"case"`, matching
+ * The five case-like `CaseRouteKind` values are deliberately the same set as
+ * the backend's own `BeCaseType` (see `api/backend/types.ts`) — `incident`/
+ * `change_request` are never a `BeCaseType`, so never passed in here. This
+ * just narrows an `undefined`/legacy-row case type to `"case"`, matching
  * `caseTypeDetailBasePath`'s and `caseTypeHasSeverity`'s own fallback.
  */
 export function caseRouteKindForType(

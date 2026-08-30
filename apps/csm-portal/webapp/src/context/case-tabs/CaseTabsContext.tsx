@@ -147,10 +147,24 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
     writePersistedState(state);
   }, [state]);
 
+  // Read inside `openTab` via a ref, not a `[state.tabs]` dependency: a
+  // dependency there gives `openTab` a new identity on every single tab
+  // change (label resolved, draft flag toggled, ...), and `openTab` sits in
+  // `CaseDetailRouteSync`'s own effect dependency array — that combination
+  // was re-running (and re-dispatching) that effect far more often than the
+  // route actually changed. Harmless on its own (`OPEN_OR_ACTIVATE` on an
+  // already-open, already-active tab is a no-op), but needless churn this
+  // callback doesn't need to cause.
+  const tabsRef = useRef(state.tabs);
+  useEffect(() => {
+    tabsRef.current = state.tabs;
+  });
+
   const openTab = useCallback(
     (caseId: string, kind: CaseRouteKind, path: string, tabState?: unknown): boolean => {
-      const alreadyOpen = state.tabs.some((t) => t.caseId === caseId);
-      if (!alreadyOpen && state.tabs.length >= MAX_OPEN_CASE_TABS) {
+      const tabs = tabsRef.current;
+      const alreadyOpen = tabs.some((t) => t.caseId === caseId);
+      if (!alreadyOpen && tabs.length >= MAX_OPEN_CASE_TABS) {
         return false;
       }
       dispatch({
@@ -163,7 +177,7 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
       });
       return true;
     },
-    [state.tabs],
+    [],
   );
 
   const closeTab = useCallback((id: string) => {
