@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useMemo, useState, type JSX, type ReactNode } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactNode } from "react";
 import type { NavigateOptions, To } from "react-router";
 import { matchCaseLocation } from "@context/case-tabs/caseRoutePatterns";
 import { useCaseTabsControllerRef } from "@context/case-tabs/CaseTabsContext";
@@ -149,30 +149,58 @@ export default function CaseTabIsolatedRouter({
     [tab.caseId, routeState, navigate],
   );
 
+  // This panel is its OWN scroll container — not just a flex child of
+  // `AppLayout`'s single shared `mainContentRef` region (which every
+  // non-tab page scrolls via, and which `AppLayout` resets to the top on
+  // every route change, tab switches included). Without this, a tab's
+  // scroll offset lived on `mainContentRef` itself, which is the SAME DOM
+  // node for every tab — so switching away and back always came back at the
+  // top, even though the tab's other state (drafts, open dialogs) correctly
+  // persisted (this component is kept alive, never unmounted, purely
+  // toggling `display`/`hidden`).
+  //
+  // Giving each tab its own scrolling element is necessary but NOT
+  // sufficient on its own: per the CSSOM View spec, an element with no
+  // layout box (`display: none`, which this panel gets while hidden) has no
+  // defined `scrollTop`, and browsers are inconsistent about restoring it
+  // once the element becomes visible again — some do, some silently reset
+  // it to 0 (see the WPT test `scrollTop-display-change.html`; this is
+  // implementation-defined, not standardized). So the position is captured
+  // and reapplied explicitly instead of trusting the browser to remember it
+  // through the toggle: `handleScroll` keeps `savedScrollTopRef` current
+  // continuously (not just at the moment this panel hides — by the time a
+  // `display: none` commit has already landed, this panel's own `scrollTop`
+  // may already be unreadable/zeroed per the above, so there is no reliable
+  // "capture on hide" moment to hook), and the layout effect below writes
+  // that saved value back onto the real DOM node the instant this panel
+  // becomes visible again, overwriting whatever the browser did or didn't
+  // preserve on its own.
+  const panelRef = useRef<HTMLDivElement>(null);
+  const savedScrollTopRef = useRef(0);
+  const wasVisibleRef = useRef(isVisible);
+
+  useLayoutEffect(() => {
+    if (isVisible && !wasVisibleRef.current && panelRef.current) {
+      panelRef.current.scrollTop = savedScrollTopRef.current;
+    }
+    wasVisibleRef.current = isVisible;
+  }, [isVisible]);
+
+  const handleScroll = (): void => {
+    if (panelRef.current) savedScrollTopRef.current = panelRef.current.scrollTop;
+  };
+
   return (
     <div
+      ref={panelRef}
       hidden={!isVisible}
       data-testid={`case-tab-panel-${tab.id}`}
+      onScroll={handleScroll}
       style={{
         display: isVisible ? "flex" : "none",
         flexDirection: "column",
         flex: 1,
         minHeight: 0,
-        // This panel is its OWN scroll container — not just a flex child of
-        // `AppLayout`'s single shared `mainContentRef` region (which every
-        // non-tab page scrolls via, and which `AppLayout` resets to the top
-        // on every route change, tab switches included). Without this, a
-        // tab's scroll offset lived on `mainContentRef` itself, which is the
-        // SAME DOM node for every tab — so switching away and back always
-        // came back at the top, even though the tab's other state (drafts,
-        // open dialogs) correctly persisted (this component is kept alive,
-        // never unmounted, purely toggling `display`/`hidden`). Giving each
-        // tab its own scrolling element means each one's `scrollTop` is a
-        // property of ITS OWN never-unmounted node, which the browser
-        // preserves across a `display: none` toggle on its own — no manual
-        // save/restore needed, and `AppLayout`'s reset (which only ever
-        // touches `mainContentRef`, a different element) can no longer reach
-        // it at all.
         overflowY: "auto",
       }}
     >

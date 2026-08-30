@@ -16,8 +16,8 @@
 
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { JSX } from "react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { useState, type JSX, type ReactNode } from "react";
+import { MemoryRouter, Route, Routes, useLocation, type To } from "react-router";
 import "@testing-library/jest-dom/vitest";
 import {
   enabledPathTabKeys,
@@ -250,50 +250,68 @@ describe("useQueryParamTabs", () => {
   // hook itself now) with two independent overrides standing in for two
   // open tabs.
   describe("inside an open case tab (CaseRouteOverrideContext)", () => {
-    function makeOverride(
-      initialSearch: string,
-      onNavigate: (search: string) => void,
-    ): CaseRouteOverrideValue {
-      let search = initialSearch;
-      return {
+    // A real React-state-backed override, not a closure mutation — mirrors
+    // `CaseTabIsolatedRouter`'s own shape (its `routeState`/`overrideValue`
+    // pair): `navigate` updates STATE, which triggers a real rerender that
+    // rebuilds the override VALUE object with the new `search`, exactly as
+    // production does. An earlier version of this fixture only mutated a
+    // closure-local `search` variable and never touched `override.search`
+    // or recreated the provider's value at all — so it never actually
+    // exercised a rerender, and could have silently kept passing even if
+    // the hook stopped reading fresh `search` values from a changing
+    // override altogether.
+    function OverrideHost({
+      initialSearch,
+      onNavigate,
+      children,
+    }: {
+      initialSearch: string;
+      onNavigate: (search: string) => void;
+      children: ReactNode;
+    }) {
+      const [search, setSearch] = useState(initialSearch);
+      const navigate = (to: To | number): void => {
+        const next =
+          typeof to === "string"
+            ? (to.split("?")[1] ?? "")
+            : typeof to === "number"
+              ? ""
+              : (to.search ?? "").replace(/^\?/, "");
+        const nextSearch = next ? `?${next}` : "";
+        setSearch(nextSearch);
+        onNavigate(nextSearch);
+      };
+      const value: CaseRouteOverrideValue = {
         caseId: "CS-STUB",
         kind: "case",
         pathname: "/cases/CS-STUB",
         search,
         hash: "",
         state: undefined,
-        navigate: (to) => {
-          const next =
-            typeof to === "string"
-              ? (to.split("?")[1] ?? "")
-              : typeof to === "number"
-                ? ""
-                : (to.search ?? "").replace(/^\?/, "");
-          search = next ? `?${next}` : "";
-          onNavigate(search);
-        },
+        navigate,
       };
+      return (
+        <CaseRouteOverrideProvider value={value}>{children}</CaseRouteOverrideProvider>
+      );
     }
 
     it("reads/writes the tab's own search, never the real router's", () => {
       const navigateSpyA = vi.fn();
       const navigateSpyB = vi.fn();
-      const overrideA = makeOverride("?tab=one", navigateSpyA);
-      const overrideB = makeOverride("?tab=two", navigateSpyB);
 
       render(
         <MemoryRouter initialEntries={["/cases/CS-STUB"]}>
           <LocationProbe />
-          <CaseRouteOverrideProvider value={overrideA}>
+          <OverrideHost initialSearch="?tab=one" onNavigate={navigateSpyA}>
             <div data-testid="tab-a">
               <QueryParamTabsProbe />
             </div>
-          </CaseRouteOverrideProvider>
-          <CaseRouteOverrideProvider value={overrideB}>
+          </OverrideHost>
+          <OverrideHost initialSearch="?tab=two" onNavigate={navigateSpyB}>
             <div data-testid="tab-b">
               <QueryParamTabsProbe />
             </div>
-          </CaseRouteOverrideProvider>
+          </OverrideHost>
         </MemoryRouter>,
       );
 

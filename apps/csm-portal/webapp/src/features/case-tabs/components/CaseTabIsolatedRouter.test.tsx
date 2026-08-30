@@ -203,15 +203,9 @@ describe("CaseTabIsolatedRouter", () => {
   // persisted — root cause was `AppLayout`'s single shared scroll container
   // (`mainContentRef`) being reset to the top on every route change,
   // including a tab-to-tab switch, since every open tab shared that SAME
-  // element as its scroll container. Fixed by making each tab's own panel
-  // its own scroll container (see this component's own comment on
-  // `overflowY: "auto"`) — its `scrollTop` then lives on a DOM node that's
-  // never unmounted (this component keeps every tab alive, only toggling
-  // `display`/`hidden`), which the browser preserves on its own, and which
-  // an `AppLayout`-style reset effect targeting a DIFFERENT (shared,
-  // sibling) element can no longer reach at all — reproduced directly below
-  // rather than importing the real (very large) `AppLayout`.
-  it("each tab's own scroll position survives switching away and back, unaffected by a shared sibling scroll container's reset", () => {
+  // element as its scroll container. Reproduced directly below rather than
+  // importing the real (very large) `AppLayout`.
+  it("switching to another tab and back doesn't touch this tab's own scroll position, unaffected by a shared sibling scroll container's reset", () => {
     function AppLayoutStyleHarness() {
       const [visibleId, setVisibleId] = useState<string>("t-a");
       // Stands in for `AppLayout`'s own `mainContentRef` + its
@@ -247,6 +241,10 @@ describe("CaseTabIsolatedRouter", () => {
 
     const panelA = screen.getByTestId("case-tab-panel-t-a");
     panelA.scrollTop = 240;
+    // `handleScroll` (the explicit capture the follow-up test below covers
+    // in more depth) is what actually records this — a native `scroll`
+    // event, not just the property assignment above.
+    fireEvent.scroll(panelA);
     expect(panelA.scrollTop).toBe(240);
 
     // Switch to tab B — a route change in the real app, so the shared
@@ -260,6 +258,65 @@ describe("CaseTabIsolatedRouter", () => {
     // Tab A's own scroll position survived — it was never on the shared
     // container the reset actually touched.
     expect(screen.getByTestId("case-tab-panel-t-a").scrollTop).toBe(240);
+  });
+
+  // Regression test for a follow-up bug in the fix above: relying on the
+  // browser to remember a hidden (`display: none`) element's own `scrollTop`
+  // isn't spec-guaranteed — per the CSSOM View spec an element with no
+  // layout box has no defined `scrollTop`, and browsers are inconsistent
+  // about restoring it once it becomes visible again (some reset it to 0;
+  // see the WPT test `scrollTop-display-change.html`). This is why the
+  // position is captured on scroll (`handleScroll`, continuously, not just
+  // "on hide" — by the time a `display: none` commit lands this panel's own
+  // `scrollTop` may already be unreadable) and explicitly reapplied by a
+  // layout effect the instant the panel becomes visible again, rather than
+  // trusting passive DOM persistence. Proven here by deliberately zeroing
+  // the panel's `scrollTop` WHILE IT'S HIDDEN (standing in for a browser
+  // that does reset it) — passive persistence alone would show 0 after
+  // switching back; the explicit restore must still produce 240.
+  it("explicitly reapplies a tab's saved scroll position on becoming visible again, even if the browser reset it while hidden", () => {
+    const { rerender } = renderInApp(
+      <CaseTabsProvider>
+        <Harness tabs={[TAB_A, TAB_B]} visibleId="t-a" />
+      </CaseTabsProvider>,
+    );
+
+    const panelA = screen.getByTestId("case-tab-panel-t-a") as HTMLDivElement;
+    panelA.scrollTop = 240;
+    // `handleScroll` is what actually captures this into `savedScrollTopRef`
+    // — a plain property assignment (as in the test above) doesn't fire a
+    // native `scroll` event on its own in jsdom.
+    fireEvent.scroll(panelA);
+
+    // Hide tab A's panel the same way switching tabs does (`isVisible`
+    // false -> the real component sets `hidden`/`display: none`) — this
+    // test drives that via `rerender` since `Harness` takes `visibleId` as
+    // a prop, same mechanism `CaseTabsContentHost` itself uses. Kept inside
+    // the same `<BrowserRouter>` wrapper `renderInApp` used initially — the
+    // stub page underneath still calls the real `useParams`/`useNavigate`.
+    rerender(
+      <BrowserRouter>
+        <CaseTabsProvider>
+          <Harness tabs={[TAB_A, TAB_B]} visibleId="t-b" />
+        </CaseTabsProvider>
+      </BrowserRouter>,
+    );
+
+    // Simulate a browser that does NOT preserve a hidden element's
+    // `scrollTop` (the CSSOM-View-ambiguous case CodeRabbit flagged) —
+    // without the explicit restore below, the panel would still read 0
+    // after switching back.
+    panelA.scrollTop = 0;
+
+    rerender(
+      <BrowserRouter>
+        <CaseTabsProvider>
+          <Harness tabs={[TAB_A, TAB_B]} visibleId="t-a" />
+        </CaseTabsProvider>
+      </BrowserRouter>,
+    );
+
+    expect(panelA.scrollTop).toBe(240);
   });
 
   it("each tab's own panel is its own scroll container (overflowY: auto)", () => {
