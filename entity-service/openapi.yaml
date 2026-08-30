@@ -1631,6 +1631,49 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /cases/{id}/comments/search:
+    post:
+      summary: Search comments on a support case.
+      operationId: searchCaseComments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Case UUID.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchCaseCommentsRequest'
+      responses:
+        "200":
+          description: Paginated list of comments for the case.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchCaseCommentsResponse'
+        "400":
+          description: Bad request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /cases/{id}/tags:
     post:
       summary: Attach a free-text tag to a support case.
@@ -1999,6 +2042,77 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
         "500":
           description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /attachments/{id}/confirm:
+    post:
+      summary: >
+        Confirm a pending CSM-native (Postgres) data source attachment now that its file has
+        finished uploading to SFTPGo.
+      description: >
+        Second half of the two-step upload flow: the caller registers a "pending" row via
+        POST /attachments before minting an SFTPGo upload credential, then calls this once the
+        browser reports the upload succeeded. This closes the gap where a browser upload could
+        succeed in SFTPGo while the metadata-registration call never lands, leaving an
+        untracked orphan file. Only the actor who created the pending row may confirm it.
+        ServiceNow-sourced attachments have no such lifecycle and are rejected with 503.
+      operationId: confirmCaseAttachment
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Attachment UUID.
+      responses:
+        "200":
+          description: Attachment confirmed successfully; status transitioned to complete.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmAttachmentResponse'
+        "400":
+          description: Bad request (malformed UUID).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: The attachment was not created by the current user.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Attachment not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: Attachment exists but is no longer pending (already confirmed).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "503":
+          description: Not supported for the ServiceNow data source.
           content:
             application/json:
               schema:
@@ -7963,6 +8077,21 @@ components:
             File size in bytes. Required for the CSM-native (Postgres) data source (this
             service cannot compute it there); ignored for ServiceNow, which computes it from
             the decoded file payload.
+        status:
+          $ref: '#/components/schemas/AttachmentStatus'
+
+    AttachmentStatus:
+      type: string
+      enum:
+        - pending
+        - complete
+      description: >
+        Upload lifecycle state for a CSM-native (Postgres) data source attachment. Meaningful
+        for that data source only -- ServiceNow's /attachments API only ever returns
+        fully-uploaded files, so ServiceNow-sourced attachments are always "complete". On
+        create, omitted/empty defaults to "complete" (today's behavior, preserved for every
+        existing caller); pass "pending" to register the row before the file has finished
+        uploading to SFTPGo, then confirm it via POST /attachments/{id}/confirm.
 
     AttachmentDetail:
       type: object
@@ -7979,13 +8108,32 @@ components:
           type: string
         downloadUrl:
           type: string
+          nullable: true
+          description: >
+            Null for a CSM-native (Postgres) data source attachment: this service holds no
+            download location for it, only its storageKey. Always set for ServiceNow-sourced
+            attachments.
         storageKey:
           type: string
           nullable: true
           description: Set only for CSM-native (Postgres) data source attachments. See Attachment.storageKey.
+        status:
+          $ref: '#/components/schemas/AttachmentStatus'
 
     CreateAttachmentResponse:
       type: object
+      properties:
+        message:
+          type: string
+        attachment:
+          $ref: '#/components/schemas/AttachmentDetail'
+
+    ConfirmAttachmentResponse:
+      type: object
+      description: >
+        Response for POST /attachments/{id}/confirm. Same shape as CreateAttachmentResponse --
+        confirming is the second half of the CSM-native (Postgres) data source's two-step
+        (pending -> complete) upload flow.
       properties:
         message:
           type: string
@@ -8031,6 +8179,8 @@ components:
             Reference to the file's location in external object storage (SFTPGo), set only for
             CSM-native (Postgres) data source attachments. Null for ServiceNow-sourced
             attachments, whose bytes are held by ServiceNow itself.
+        status:
+          $ref: '#/components/schemas/AttachmentStatus'
 
     ReferenceType:
       type: string
@@ -11971,11 +12121,17 @@ components:
           nullable: true
         content:
           type: string
-          description: Base64 data URI of the attachment content (e.g. data:image/png;base64,...).
+          nullable: true
+          description: >
+            Base64 data URI of the attachment content (e.g. data:image/png;base64,...). Null
+            for a CSM-native (Postgres) data source attachment: this service holds no bytes for
+            it, only its storageKey. Always set for ServiceNow-sourced attachments.
         storageKey:
           type: string
           nullable: true
           description: Set only for CSM-native (Postgres) data source attachments. See Attachment.storageKey.
+        status:
+          $ref: '#/components/schemas/AttachmentStatus'
 
     UpdateAttachmentRequest:
       type: object

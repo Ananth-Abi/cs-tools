@@ -35,6 +35,12 @@ type UserService interface {
 	// req. A ValidationError is returned for invalid input (e.g. limit > 50);
 	// any other error indicates an infrastructure failure.
 	SearchUsers(ctx context.Context, req domain.SearchUsersRequest) (domain.SearchUsersResponse, error)
+	// GetMe returns the profile of the currently authenticated user, resolved
+	// from the Postgres users table by the email claim in the caller's
+	// x-user-id-token JWT. An UnauthorizedError is returned when that header
+	// is missing; a ValidationError when the token cannot be decoded; a
+	// NotFoundError when no user row matches the email.
+	GetMe(ctx context.Context) (domain.GetUserMeResponse, error)
 }
 
 // SNUserService defines the user operations backed by the ServiceNow data source.
@@ -331,8 +337,20 @@ type CaseService interface {
 	// open task that is visible to the customer (the authoritative case-close gate).
 	UpdateCase(ctx context.Context, req domain.UpdateCaseRequest) (domain.UpdateCaseResponse, error)
 	// CreateCaseAttachment uploads a new attachment for the case identified by req.CaseID.
-	// A ValidationError is returned for invalid input.
+	// A ValidationError is returned for invalid input. For the CSM-native (Postgres) data
+	// source, req.Status controls the initial lifecycle state (see domain.AttachmentStatus):
+	// empty/omitted and "complete" behave exactly as before this field existed; "pending"
+	// registers the row before the caller has uploaded the file to SFTPGo, to be finished off
+	// later via ConfirmCaseAttachment. ServiceNow ignores this field.
 	CreateCaseAttachment(ctx context.Context, req domain.CreateAttachmentRequest) (domain.CreateAttachmentResponse, error)
+	// ConfirmCaseAttachment transitions the CSM-native (Postgres) data source attachment
+	// identified by id from status "pending" to "complete", once its file has finished
+	// uploading to SFTPGo. A NotFoundError is returned if it does not exist; a
+	// ForbiddenError if the caller did not create it; a ConflictError if it is not
+	// currently "pending" (including if it was already confirmed). Supported by the
+	// CSM-native (Postgres) data source only -- ServiceNow attachments have no such
+	// lifecycle, since SN's /attachments API only ever returns fully-uploaded files.
+	ConfirmCaseAttachment(ctx context.Context, id string) (domain.ConfirmAttachmentResponse, error)
 	// SearchCaseAttachments returns a paginated list of attachments for the case identified
 	// by req.CaseID. A ValidationError is returned for invalid input.
 	SearchCaseAttachments(ctx context.Context, req domain.SearchAttachmentsRequest) (domain.SearchAttachmentsResponse, error)
