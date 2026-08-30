@@ -741,6 +741,8 @@ func ParseCaseFieldFilterGroups(branches []domain.CaseFilterBranch) ([]domain.Ca
 			DeploymentIDs:    parsed.DeploymentIDs,
 			AssignedUserIDs:  parsed.AssignedUserIDs,
 			EscalationLevels: parsed.EscalationLevels,
+			Tags:             parsed.Tags,
+			ExcludeTags:      parsed.ExcludeTags,
 		})
 	}
 	return result, nil
@@ -751,8 +753,6 @@ func ParseCaseFieldFilterGroups(branches []domain.CaseFilterBranch) ([]domain.Ca
 // top-level (AND-only) Filters array, not inside an OR branch.
 func rejectUnsupportedOrGroupFields(parsed domain.ParsedCaseFilters) error {
 	switch {
-	case len(parsed.Tags) > 0 || len(parsed.ExcludeTags) > 0:
-		return &apierror.ValidationError{Msg: "anyOf: field \"tag\" is not supported inside an OR group"}
 	case parsed.ParentID != nil:
 		return &apierror.ValidationError{Msg: "anyOf: field \"parentId\" is not supported inside an OR group"}
 	case parsed.Number != nil:
