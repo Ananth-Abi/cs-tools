@@ -70,7 +70,7 @@ export default function CaseDetailRouteSync({
   useEffect(() => {
     if (!caseId) return;
     const path = `${location.pathname}${location.search}${location.hash}`;
-    const opened = openTab(caseId, kind, path);
+    const opened = openTab(caseId, kind, path, location.state);
     if (!opened && warnedForCaseIdRef.current !== caseId) {
       warnedForCaseIdRef.current = caseId;
       showError(
@@ -78,7 +78,16 @@ export default function CaseDetailRouteSync({
           "Showing it without a tab for now.",
       );
     }
-  }, [caseId, kind, location.pathname, location.search, location.hash, openTab, showError]);
+  }, [
+    caseId,
+    kind,
+    location.pathname,
+    location.search,
+    location.hash,
+    location.state,
+    openTab,
+    showError,
+  ]);
 
   if (!caseId) return null;
   if (!blocked) return null;

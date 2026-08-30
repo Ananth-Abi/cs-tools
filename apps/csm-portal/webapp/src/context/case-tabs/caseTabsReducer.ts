@@ -37,6 +37,7 @@ export type CaseTabsAction =
       caseId: string;
       kind: CaseRouteKind;
       path: string;
+      state?: unknown;
     }
   | { type: "CLOSE"; id: string }
   | { type: "SET_ACTIVE"; id: string }
@@ -88,6 +89,7 @@ export function caseTabsReducer(
         kind: action.kind,
         path: action.path,
         hasDraft: false,
+        state: action.state,
       };
       return {
         tabs: [...state.tabs, newTab],

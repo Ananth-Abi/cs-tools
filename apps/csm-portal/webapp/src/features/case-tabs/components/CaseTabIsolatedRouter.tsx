@@ -15,13 +15,11 @@
 // under the License.
 
 import { useMemo, useState, type JSX, type ReactNode } from "react";
-import { Route, Router, Routes, type To } from "react-router";
-import {
-  matchCaseLocation,
-  pathPatternForKind,
-} from "@context/case-tabs/caseRoutePatterns";
+import type { NavigateOptions, To } from "react-router";
+import { matchCaseLocation } from "@context/case-tabs/caseRoutePatterns";
 import { useCaseTabsControllerRef } from "@context/case-tabs/CaseTabsContext";
-import type { CaseTabState } from "@context/case-tabs/caseTabsTypes";
+import { CaseRouteOverrideProvider } from "@context/case-tabs/CaseRouteOverrideContext";
+import type { CaseRouteKind, CaseTabState } from "@context/case-tabs/caseTabsTypes";
 
 function toHref(to: To): string {
   if (typeof to === "string") return to;
@@ -32,37 +30,40 @@ export interface CaseTabIsolatedRouterProps {
   tab: CaseTabState;
   isVisible: boolean;
   /** The page to render for this tab — `CsmCaseDetailPage` in production,
-   * swappable in tests so this component's routing/visibility mechanics can
-   * be verified without pulling in the real (very large) page. */
+   * swappable in tests so this component's mechanics can be verified without
+   * pulling in the real (very large) page. */
   children: ReactNode;
 }
 
 /**
- * Mounts one case-detail page inside its own private react-router context —
- * a distinct `location` + `navigator` pair, isolated from the browser's real
- * address bar via the low-level `<Router>` primitive (the same one
- * `<BrowserRouter>`/`<MemoryRouter>` are built from).
- *
- * This is what makes "keep every open tab mounted, just hidden" possible
- * across FIVE different route bases (`/cases/:id`, `/engagements/:id`, ...):
- * `CsmCaseDetailPage` reads its `caseId` via `useParams`, which reflects
- * whichever `<Routes>` last matched — with a single real router there can
- * only ever be one such match at a time, so N simultaneously-mounted
- * instances would all resolve to the SAME (current) route's params. Each
- * instance here gets its own private match instead.
+ * Mounts one case-detail page "kept alive" in the background, giving it its
+ * own private `caseId`/location/navigate — WITHOUT a second react-router
+ * `<Router>`. react-router refuses to render a `<Router>` inside another
+ * `<Router>` (an unconditional invariant), and the app already has exactly
+ * one (`<BrowserRouter>`, in `App.tsx`) — an earlier version of this
+ * component tried exactly that (a low-level `<Router>` per tab) and crashed
+ * the moment any case was opened for it. See `CaseRouteOverrideContext`'s
+ * own doc comment for the full explanation of why a plain Context works
+ * where a second Router cannot: `CsmCaseDetailPage` still reads the REAL
+ * `useParams`/`useLocation`/`useNavigate` (there is only ever one, real,
+ * app-wide match), it just prefers this override's values when one is
+ * present in context.
  *
  * In-page navigation (the misrouted-case redirect, the dashless-id repair in
- * `useNormalizedIdParam`, a "Related case" link, ...) is intercepted by the
- * custom navigator below rather than reaching the real browser history:
+ * `useNormalizedIdParam`, ...) is intercepted by the `navigate` function
+ * passed through the override rather than reaching the real browser history:
  *   - if it resolves to the SAME caseId this tab represents, the tab's own
  *     `path`/`kind` are updated in place (`updateTabPath`) — covers the
  *     redirect/repair cases, and keeps this tab's identity stable.
  *   - if it resolves to a DIFFERENT caseId (e.g. following a related-case
- *     link), it is treated as opening a new tab (or activating an existing
- *     one for that case) rather than retargeting this one — matching how the
- *     case-list entry point (`CasesList`) opens tabs, and avoiding the need
- *     to ever change a tab's React key mid-life (which would force a real
- *     remount and defeat the point of this component).
+ *     link — though in practice those render as real react-router `<Link>`s
+ *     bound to the real router regardless of which tab they're clicked from,
+ *     so they already open/activate a tab via `CaseDetailRouteSync` before
+ *     ever reaching this code path), it is treated as opening a new tab (or
+ *     activating an existing one for that case) rather than retargeting this
+ *     one — avoiding the need to ever change a tab's React key mid-life
+ *     (which would force a real remount and defeat the point of this
+ *     component).
  *
  * The active tab's real-URL sync (so a reload/bookmark on `/cases/:id`
  * still works — see this feature's design notes) is owned by the caller
@@ -74,62 +75,92 @@ export default function CaseTabIsolatedRouter({
   isVisible,
   children,
 }: CaseTabIsolatedRouterProps): JSX.Element {
-  const [location, setLocation] = useState(tab.path);
-  // Tracked alongside `location` (not read from the `tab.kind` prop) so the
-  // `<Route>` pattern below always matches `location` in the same render —
-  // the prop only catches up once the dispatched `updateTabPath` action has
-  // round-tripped through the parent, one render later.
-  const [kind, setKind] = useState(tab.kind);
+  const initialPath = useMemo(() => {
+    const [pathnameAndSearch, hash = ""] = tab.path.split("#");
+    const [pathname, search = ""] = pathnameAndSearch.split("?");
+    return {
+      pathname,
+      search: search ? `?${search}` : "",
+      hash: hash ? `#${hash}` : "",
+    };
+  }, [tab.path]);
+
+  const [routeState, setRouteState] = useState<{
+    pathname: string;
+    search: string;
+    hash: string;
+    kind: CaseRouteKind;
+    state: unknown;
+  }>({ ...initialPath, kind: tab.kind, state: tab.state });
+
   const controllerRef = useCaseTabsControllerRef();
+
   // `tab.id` and `tab.caseId` are both invariant for the lifetime of a given
   // tab instance: this component is keyed by `tab.id` (never changes by
   // definition), and an in-page navigation to a DIFFERENT case is handled by
-  // opening/activating a different tab (see `applyNavigation` below) rather
-  // than ever retargeting this one — so `tab.caseId` never changes here
-  // either. Safe to close over both directly in the memo below (with the
-  // lint suppression that implies) instead of keeping them in refs.
-  const navigator = useMemo(() => {
-    const applyNavigation = (to: To): void => {
+  // opening/activating a different tab (see `navigate` below) rather than
+  // ever retargeting this one — so `tab.caseId` never changes here either.
+  // Safe to close over both directly in the memo below (with the lint
+  // suppression that implies) instead of keeping them in refs.
+  const navigate = useMemo(() => {
+    return (to: To | number, options?: NavigateOptions): void => {
+      if (typeof to === "number") {
+        // No independent back/forward stack per in-app tab; not meaningful
+        // here (nothing in CsmCaseDetailPage calls navigate(-1)/(1) today).
+        return;
+      }
       const href = toHref(to);
       const pathname = href.split(/[?#]/)[0];
+      const search = href.includes("?") ? `?${href.split("?")[1]?.split("#")[0]}` : "";
+      const hash = href.includes("#") ? `#${href.split("#")[1]}` : "";
       const match = matchCaseLocation(pathname);
       if (!match || match.caseId === tab.caseId) {
-        setLocation(href);
+        setRouteState((prev) => ({
+          pathname,
+          search,
+          hash,
+          kind: match?.kind ?? prev.kind,
+          state: options?.state,
+        }));
         if (match) {
-          setKind(match.kind);
           controllerRef.current.updateTabPath(tab.id, match.kind, href);
         }
         return;
       }
       // Different case referenced from inside this tab: open/activate it as
       // its own tab, leave this tab exactly where it was.
-      controllerRef.current.openTab(match.caseId, match.kind, href);
-    };
-    return {
-      createHref: (to: To) => toHref(to),
-      go: () => {
-        /* No independent back/forward stack per in-app tab; not meaningful
-         * here (nothing in CsmCaseDetailPage calls history.go/back today). */
-      },
-      push: applyNavigation,
-      replace: applyNavigation,
+      controllerRef.current.openTab(match.caseId, match.kind, href, options?.state);
     };
     // Stable for the lifetime of this tab instance — reads the latest
     // controller via `controllerRef` rather than depending on it directly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const overrideValue = useMemo(
+    () => ({
+      caseId: tab.caseId,
+      kind: routeState.kind,
+      pathname: routeState.pathname,
+      search: routeState.search,
+      hash: routeState.hash,
+      state: routeState.state,
+      navigate,
+    }),
+    [tab.caseId, routeState, navigate],
+  );
+
   return (
     <div
       hidden={!isVisible}
       data-testid={`case-tab-panel-${tab.id}`}
-      style={{ display: isVisible ? "flex" : "none", flexDirection: "column", flex: 1, minHeight: 0 }}
+      style={{
+        display: isVisible ? "flex" : "none",
+        flexDirection: "column",
+        flex: 1,
+        minHeight: 0,
+      }}
     >
-      <Router location={location} navigator={navigator}>
-        <Routes>
-          <Route path={pathPatternForKind(kind)} element={children} />
-        </Routes>
-      </Router>
+      <CaseRouteOverrideProvider value={overrideValue}>{children}</CaseRouteOverrideProvider>
     </div>
   );
 }

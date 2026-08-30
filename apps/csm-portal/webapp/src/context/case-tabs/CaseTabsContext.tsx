@@ -96,8 +96,15 @@ export interface CaseTabsController {
    * `false` without changing state when the cap is already reached and this
    * would be a genuinely new tab — the caller (list row click, route sync)
    * decides how to surface that (a toast, or simply rendering the record
-   * without a tab). */
-  openTab: (caseId: string, kind: CaseRouteKind, path: string) => boolean;
+   * without a tab). `state` (router `location.state`, e.g. the originating
+   * list's `{ from }`) is only captured on a genuinely new tab, ignored when
+   * activating an already-open one. */
+  openTab: (
+    caseId: string,
+    kind: CaseRouteKind,
+    path: string,
+    state?: unknown,
+  ) => boolean;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateTabPath: (id: string, kind: CaseRouteKind, path: string) => void;
@@ -141,12 +148,19 @@ export function CaseTabsProvider({ children }: { children: ReactNode }): JSX.Ele
   }, [state]);
 
   const openTab = useCallback(
-    (caseId: string, kind: CaseRouteKind, path: string): boolean => {
+    (caseId: string, kind: CaseRouteKind, path: string, tabState?: unknown): boolean => {
       const alreadyOpen = state.tabs.some((t) => t.caseId === caseId);
       if (!alreadyOpen && state.tabs.length >= MAX_OPEN_CASE_TABS) {
         return false;
       }
-      dispatch({ type: "OPEN_OR_ACTIVATE", id: nextTabId(), caseId, kind, path });
+      dispatch({
+        type: "OPEN_OR_ACTIVATE",
+        id: nextTabId(),
+        caseId,
+        kind,
+        path,
+        state: tabState,
+      });
       return true;
     },
     [state.tabs],

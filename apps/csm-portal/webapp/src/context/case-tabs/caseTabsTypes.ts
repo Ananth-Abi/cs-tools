@@ -45,6 +45,13 @@ export interface CaseTabState {
    * to decide whether closing this tab needs a confirm — see
    * `CaseTabsContext`'s `reportDraftState`. */
   hasDraft: boolean;
+  /** Router `location.state` at the moment this tab was opened — carries the
+   * originating list's filtered URL (`{ from: string }`) so the page's own
+   * Back button returns to it. Captured once at open time only (not updated
+   * by later in-tab navigation); not persisted to sessionStorage, so a
+   * reload falls back to the page's own hardcoded backPath instead — see
+   * `CaseTabsContext`'s persistence code. */
+  state?: unknown;
 }
 
 export interface CaseTabsPersistedState {
