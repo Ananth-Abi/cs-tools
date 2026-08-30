@@ -29,12 +29,23 @@ export default function CsmCasesPage(): JSX.Element {
     <CsmIssuesView
       title="Cases"
       entityNoun="cases"
-      // Cases list is support cases only. The other issue types have dedicated
-      // homes — service requests under Operations, engagements under
-      // Engagements, security reports under Security Center — so they're locked
-      // out here (and the type filter is hidden since it's fixed to `case`).
+      // Cases list defaults to support cases (`caseTypes: ["case"]`) but,
+      // unlike the other issue-type pages (Operations/Security Center/
+      // Engagements, which exist purely to be locked to one type and hide
+      // the control), is the one unlocked, multi-type `CsmIssuesView`: the
+      // type control is left visible, and `CsmIssuesView` only applies this
+      // `lockedFilters.caseTypes` value to its severity-filter-visibility /
+      // column-default hints, not to the query itself (see its own
+      // `hideTypeFilter` handling) — so picking a different type here
+      // genuinely narrows the results, per digiops-cs#2907. Clearing the
+      // control back to no selection falls through to "every type" (see
+      // `CsmIssuesView`'s own `ALL_CASE_TYPES` fallback), not back to "Case
+      // only" — a deliberate choice to keep the empty state meaning "no
+      // filter applied" consistently with every other filter on this bar,
+      // rather than a hidden implicit default the user can't see or
+      // override. Flag to the product owner if "Case only" should instead be
+      // the sticky default even once cleared.
       lockedFilters={{ caseTypes: ["case"] }}
-      hideTypeFilter
       enableColumnCustomization
       columnsViewId="cases"
       actions={

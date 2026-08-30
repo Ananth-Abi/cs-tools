@@ -17,11 +17,14 @@ assignee. Next to it, **Filters** expands a grid of additional controls:
   waiting on the customer (Solution proposed, Awaiting info), green for Closed.
 - **Team**, **Case type**, **Assignee** (search the engineer directory, or pick "Me"),
   **Product**, **Onboarding status**, **Tags**, and **Project**.
+- **Tags** is include/exclude: click a tag once to require it (shown as a `+ tag` chip), click
+  it again to exclude it instead (`- tag`, in red), and a third click clears it. You can mix
+  included and excluded tags at once.
 
 When a case list arrives already filtered, for example after clicking into a dashboard
-widget, any filter that doesn't have its own control in the grid (an excluded state, a tag
-exclusion, an SLA-percent bound, an escalation filter, and so on) still shows up as a removable
-chip above the grid, so you can always see why the list is filtered and undo it with one click.
+widget, any filter that doesn't have its own control in the grid (an excluded state, an
+SLA-percent bound, an escalation filter, and so on) still shows up as a removable chip above
+the grid, so you can always see why the list is filtered and undo it with one click.
 
 Once any filter is active, the **Filters** button turns into **Clear filters (N)**, showing
 how many are active and clearing all of them in one click.

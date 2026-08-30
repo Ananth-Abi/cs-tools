@@ -14,36 +14,84 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Autocomplete, Box, Checkbox, ListItemText, TextField, Tooltip } from "@wso2/oxygen-ui";
+import { Autocomplete, Box, Chip, ListItemText, TextField, Tooltip } from "@wso2/oxygen-ui";
+import { Minus, Plus } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type JSX } from "react";
 import type * as React from "react";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useSearchTags } from "@features/csm-cases/api/useSearchTags";
 
+/** A tag's tri-state selection: absent from both lists, required (`tag`
+ * op:in), or excluded (`tag` op:notIn). Mirrors `CasesFilters.tags`/
+ * `excludeTags` — never present in both at once. */
+type TagState = "unselected" | "included" | "excluded";
+
+export interface TriStateTagsValue {
+  included: string[];
+  excluded: string[];
+}
+
 interface TagsMultiSelectProps {
   id?: string;
   label?: string;
-  /** Selected free-text tag labels (the filter values themselves). */
-  values: string[];
-  onChange: (next: string[]) => void;
+  /** Tags the case must carry (`filters.tags`). */
+  includedValues: string[];
+  /** Tags the case must NOT carry (`filters.excludeTags`). */
+  excludedValues: string[];
+  onChange: (next: TriStateTagsValue) => void;
+}
+
+function tagState(label: string, included: string[], excluded: string[]): TagState {
+  if (included.includes(label)) return "included";
+  if (excluded.includes(label)) return "excluded";
+  return "unselected";
+}
+
+/** Unselected -> Include -> Exclude -> Unselected, Linear/Sentry-style. */
+function nextTagState(current: TagState): TagState {
+  switch (current) {
+    case "unselected":
+      return "included";
+    case "included":
+      return "excluded";
+    case "excluded":
+    default:
+      return "unselected";
+  }
 }
 
 /**
- * Tag filter for the cases list, searching already-used tag labels from the
- * backend as the user types (`useSearchTags`, the same `/tags/search`
- * type-ahead {@link AddTagDialog} uses) — the tag-side twin of
- * {@link AsyncProjectMultiSelect}/{@link AsyncAssigneeMultiSelect}. Stays
- * `freeSolo`: unlike a project or an engineer, a tag is a genuinely free-text
- * label (SN's generic label mechanism, e.g. `micro-gw`, `ws-policy`) with no
- * canonical existence check — filtering by a label the search didn't
- * surface (a typo, or one used by a case outside the current query's top 20)
- * is still a meaningful, harmless filter, so typing one in and pressing
- * Enter/comma must keep working even with no matching suggestion.
+ * Tri-state tag filter for the cases list: each tag can be Included
+ * (`filters.tags`, must carry), Excluded (`filters.excludeTags`, must NOT
+ * carry), or left unselected. Replaces the earlier include-only
+ * `TagsMultiSelect` -- `excludeTags` used to be settable only via a
+ * dashboard widget click-through (see `buildActiveFilterChips` in
+ * `CasesFilterBar.tsx`); this is the one bar control for both lists now
+ * (digiops-cs#2907).
+ *
+ * Still searches already-used tag labels from the backend as the user types
+ * (`useSearchTags`, the same `/tags/search` type-ahead {@link AddTagDialog}
+ * uses), and stays effectively `freeSolo`: a tag is a genuinely free-text
+ * label (the backing data source's generic label mechanism, e.g.
+ * `micro-gw`, `ws-policy`) with no canonical existence check, so typing one
+ * in and pressing Enter must keep working even with no matching suggestion
+ * (same reasoning the original component documented).
+ *
+ * Deliberately does NOT use MUI Autocomplete's own built-in multi-select
+ * selection model (binary in/out) -- that can't express a third "excluded"
+ * state. Instead the Autocomplete's own `value` is always kept empty; every
+ * "user picked option X" signal it reports (click, keyboard Enter, or a
+ * freeSolo typed term) is treated as one opaque "cycle X" event, and this
+ * component tracks each label's real tri-state itself from
+ * `includedValues`/`excludedValues` (passed back to the caller via
+ * `onChange`, not stored locally) rather than trusting anything MUI computed
+ * about "selection".
  */
 export default function TagsMultiSelect({
   id = "cases-filter-tags",
   label = "Tags",
-  values,
+  includedValues,
+  excludedValues,
   onChange,
 }: TagsMultiSelectProps): JSX.Element {
   const [input, setInput] = useState("");
@@ -55,15 +103,51 @@ export default function TagsMultiSelect({
   // suggestions on open (no typing needed) and re-queries as the user types.
   const { data, isFetching, isError } = useSearchTags(query, open);
 
-  // Pool = current selection (so the field renders its chips) + the search
-  // results' labels, de-duplicated.
+  // Pool = current selection (either state, so their rows still render with
+  // the right indicator even once the search term no longer matches them) +
+  // the search results' labels, de-duplicated.
   const options: string[] = useMemo(() => {
-    const seen = new Set(values);
+    const seen = new Set([...includedValues, ...excludedValues]);
     const results = (data ?? [])
       .map((t) => t.label)
       .filter((l) => l.length > 0 && !seen.has(l));
-    return [...values, ...results];
-  }, [data, values]);
+    return [...includedValues, ...excludedValues, ...results];
+  }, [data, includedValues, excludedValues]);
+
+  const cycle = (rawLabel: string): void => {
+    const value = rawLabel.trim();
+    if (!value.length) return;
+    const current = tagState(value, includedValues, excludedValues);
+    const next = nextTagState(current);
+    const withoutValue = {
+      included: includedValues.filter((v) => v !== value),
+      excluded: excludedValues.filter((v) => v !== value),
+    };
+    if (next === "included") {
+      onChange({ ...withoutValue, included: [...withoutValue.included, value] });
+    } else if (next === "excluded") {
+      onChange({ ...withoutValue, excluded: [...withoutValue.excluded, value] });
+    } else {
+      onChange(withoutValue);
+    }
+  };
+
+  const removeTag = (value: string): void => {
+    onChange({
+      included: includedValues.filter((v) => v !== value),
+      excluded: excludedValues.filter((v) => v !== value),
+    });
+  };
+
+  // MUI's Autocomplete only calls `renderTags` (and shows a clear/backspace
+  // affordance) when its own `value` is non-empty, so this has to be the
+  // real combined selection, not an always-empty array -- even though we
+  // otherwise ignore what MUI *does* with this value (see `onChange` below
+  // and `renderTags`' own comment).
+  const comboValue = useMemo(
+    () => [...includedValues, ...excludedValues],
+    [includedValues, excludedValues],
+  );
 
   return (
     <Autocomplete<string, true, false, true>
@@ -77,24 +161,43 @@ export default function TagsMultiSelect({
       size="small"
       id={id}
       options={options}
-      value={values}
+      value={comboValue}
       open={open}
       onOpen={() => setOpen(true)}
-      onClose={() => setOpen(false)}
-      // Stays open across a selection -- same reasoning as
-      // AsyncProjectMultiSelect/AsyncAssigneeMultiSelect: this is a
-      // multi-select, so picking one tag shouldn't close the dropdown on
-      // someone about to pick several from the same search.
+      // Stay open on a selection/removal (mirrors the old `disableCloseOnSelect`
+      // -- this is a multi-pick control, picking/cycling one tag shouldn't
+      // close the dropdown on someone about to pick several).
+      onClose={(_event, reason) => {
+        if (reason === "selectOption" || reason === "removeOption") return;
+        setOpen(false);
+      }}
       disableCloseOnSelect
       loading={isFetching && (data ?? []).length === 0}
       // The backend already filtered by the typed term; don't re-filter
       // locally (that would also drop the currently-selected values, which
-      // must stay in `options` so their chips render).
+      // must stay in `options` so their rows keep showing their indicator).
       filterOptions={(opts) => opts}
       sx={{ "& .MuiAutocomplete-inputRoot": { flexWrap: "nowrap", minHeight: 40 } }}
-      onChange={(_event, next) =>
-        onChange(next.map((v) => v.trim()).filter((v) => v.length > 0))
-      }
+      onChange={(_event, next, reason) => {
+        // Mouse clicks on an option row are handled entirely in
+        // `renderOption`'s own `onClick` below (MUI's built-in click
+        // handler for a row is deliberately never attached -- see there),
+        // so this only ever fires for: a freeSolo typed term + Enter/comma
+        // ("createOption"/"selectOption"), a keyboard-driven Enter on a
+        // highlighted row, or a Backspace/clear removing the last chip
+        // ("removeOption"). Diff against the real combined value rather
+        // than trusting MUI's own add/remove *meaning* for that reason --
+        // it doesn't know about the exclude state, so "already selected,
+        // toggle it off" isn't right for an included tag (that should cycle
+        // to excluded, not clear).
+        if (reason === "removeOption") {
+          const removed = comboValue.find((v) => !next.includes(v));
+          if (removed) removeTag(removed);
+          return;
+        }
+        const added = next.find((v) => !comboValue.includes(v));
+        if (typeof added === "string") cycle(added);
+      }}
       inputValue={input}
       onInputChange={(_event, value, reason) => {
         // Keep the typed term after a selection (reason "reset") so the user
@@ -108,13 +211,40 @@ export default function TagsMultiSelect({
             ? "Loading tags…"
             : "No matching tags — press Enter to filter by it anyway"
       }
-      renderOption={(props, option, { selected }) => {
-        const { key, ...liProps } = props as React.HTMLAttributes<HTMLLIElement> & {
+      renderOption={(props, option) => {
+        const { key, onClick: _onClick, ...liProps } = props as React.HTMLAttributes<HTMLLIElement> & {
           key: string;
         };
+        const state = tagState(option, includedValues, excludedValues);
         return (
-          <li key={key} {...liProps} style={{ paddingTop: 2, paddingBottom: 2 }}>
-            <Checkbox size="small" checked={selected} sx={{ mr: 1, p: 0.25 }} />
+          <li
+            key={key}
+            {...liProps}
+            // Fully custom click handling -- cycle the tri-state ourselves
+            // rather than letting MUI's own (binary) selection model decide
+            // what "clicking this row" means.
+            onClick={(event) => {
+              event.preventDefault();
+              cycle(option);
+            }}
+            style={{ paddingTop: 2, paddingBottom: 2, display: "flex", alignItems: "center" }}
+          >
+            <Box
+              sx={{
+                width: 20,
+                height: 20,
+                mr: 1,
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: state === "excluded" ? "error.main" : "primary.main",
+              }}
+              aria-hidden="true"
+            >
+              {state === "included" && <Plus size={14} />}
+              {state === "excluded" && <Minus size={14} />}
+            </Box>
             {/* A tag label often has no spaces to wrap at (e.g.
                 "Change-Tracking/Infrastructure") -- without
                 `overflowWrap`, a long one only breaks at a hyphen, then
@@ -129,25 +259,59 @@ export default function TagsMultiSelect({
           </li>
         );
       }}
-      renderTags={(value) => {
-        const displayText = value.join(", ");
+      renderTags={() => {
+        // Ignores the (plain-string) `value` array MUI passes here -- it
+        // carries no include/exclude distinction. Renders from
+        // `includedValues`/`excludedValues` directly instead, so each chip
+        // knows which list it belongs to.
+        const chips = [
+          ...includedValues.map((v) => ({ value: v, excluded: false })),
+          ...excludedValues.map((v) => ({ value: v, excluded: true })),
+        ];
+        if (chips.length === 0) return null;
+        const displayText = chips
+          .map((c) => `${c.excluded ? "-" : "+"} ${c.value}`)
+          .join(", ");
         const content = (
           <Box
-            component="span"
-            sx={{ flex: "1 1 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", pl: 1 }}
+            sx={{
+              display: "flex",
+              flexWrap: "nowrap",
+              overflow: "hidden",
+              gap: 0.5,
+              flex: "1 1 0",
+              minWidth: 0,
+              pl: 0.5,
+            }}
           >
-            {displayText}
+            {chips.map((c) => (
+              <Chip
+                key={`${c.excluded ? "exclude" : "include"}-${c.value}`}
+                size="small"
+                variant="outlined"
+                color={c.excluded ? "error" : "default"}
+                label={`${c.excluded ? "-" : "+"} ${c.value}`}
+                onDelete={() => removeTag(c.value)}
+                sx={{ flexShrink: 0 }}
+              />
+            ))}
           </Box>
         );
-        return value.length === 1 ? content : (
-          <Tooltip title={displayText} placement="top">{content}</Tooltip>
+        return chips.length === 1 ? (
+          content
+        ) : (
+          <Tooltip title={displayText} placement="top">
+            {content}
+          </Tooltip>
         );
       }}
       renderInput={(params) => (
         <TextField
           {...params}
           label={label}
-          placeholder={values.length ? undefined : "Search tags…"}
+          placeholder={
+            includedValues.length || excludedValues.length ? undefined : "Search tags…"
+          }
         />
       )}
     />

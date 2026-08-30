@@ -612,9 +612,11 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
       expect(postMock).toHaveBeenCalledWith("/tags/search", expect.anything()),
     );
 
-    // The displayed "Tags" control shows the complement (checked "other-tag").
+    // The displayed "Tags" control shows the complement (checked "other-tag"
+    // -- rendered as an *included* chip now that `TagsMultiSelect` is
+    // tri-state, hence the "+ " prefix; see its own doc comment).
     await waitFor(() => {
-      expect(screen.getByText("other-tag")).toBeInTheDocument();
+      expect(screen.getByText("+ other-tag")).toBeInTheDocument();
     });
 
     // But the query itself carries the real `notIn` blacklist, not an `in`
@@ -721,8 +723,10 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
       }),
     );
 
+    // Rendered as an *included* chip (see the tri-state `TagsMultiSelect`'s
+    // own doc comment for the "+ "/"- " prefix convention).
     await waitFor(() => {
-      expect(screen.getByText("required-tag")).toBeInTheDocument();
+      expect(screen.getByText("+ required-tag")).toBeInTheDocument();
     });
 
     await waitFor(() => {

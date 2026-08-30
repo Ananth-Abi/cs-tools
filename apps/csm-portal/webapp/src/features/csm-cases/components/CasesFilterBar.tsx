@@ -278,10 +278,14 @@ interface ActiveFilterChip {
  * hand-picked, and a better home for advanced filters is still to be
  * designed), so a chip is now the ONLY way a user can see or clear them
  * after arriving from a dashboard click-through. `csTeams`/
- * `onboardingStatuses`/`tags` each have their own bar control (see the
- * filter grid below) and are deliberately NOT chipped here too — every
- * other bar-controlled field (`states`, `severities`, ...) shows its
+ * `onboardingStatuses`/`tags`/`excludeTags` each have their own bar control
+ * (see the filter grid below) and are deliberately NOT chipped here too —
+ * every other bar-controlled field (`states`, `severities`, ...) shows its
  * selection inside its own control, not as a second, redundant chip.
+ * `excludeTags` moved into this group once `TagsMultiSelect` became a
+ * tri-state include/exclude control (digiops-cs#2907): its own excluded-tag
+ * chips already render inside that control, so a second "Excluding tag: X"
+ * chip here would just duplicate the same information right next to it.
  */
 function buildActiveFilterChips(
   filters: CasesFilters,
@@ -304,20 +308,13 @@ function buildActiveFilterChips(
     });
   });
 
-  // `tags` has its own "Tags" bar control now (see the filter grid below)
-  // -- not chipped here, same as `csTeams`/`onboardingStatuses`.
-  // `excludeTags` has no bar control of its own on this general filter bar
-  // (only ever set via a dashboard click-through, or seeded as `tags`'
-  // own complement -- see `CaseFamilyWidgetPreview` in
-  // `DashboardWidgetPreviewPage.tsx` -- before it ever reaches this
-  // component), so its chip is still the only way to see or clear it here.
-  filters.excludeTags.forEach((tag) => {
-    chips.push({
-      key: `excludeTag-${tag}`,
-      label: `Excluding tag: ${tag}`,
-      onRemove: (f) => ({ ...f, excludeTags: f.excludeTags.filter((t) => t !== tag) }),
-    });
-  });
+  // `tags`/`excludeTags` both have their own "Tags" bar control now (the
+  // tri-state `TagsMultiSelect`, see the filter grid below and its own doc
+  // comment) -- not chipped here, same as `csTeams`/`onboardingStatuses`.
+  // A dashboard click-through (or a saved view) that seeds `excludeTags`
+  // still round-trips it losslessly through the URL and shows up as that
+  // control's own "- tag" chip, same as any other exclusion a user picks by
+  // hand.
 
   filters.excludeStates.forEach((state) => {
     chips.push({
@@ -847,9 +844,15 @@ export default function CasesFilterBar({
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
+              {/* One tri-state control drives both `tags` (include) and
+                  `excludeTags` (exclude) -- see `TagsMultiSelect`'s own doc
+                  comment for the cycling model. */}
               <TagsMultiSelect
-                values={filters.tags}
-                onChange={(next) => onChange({ ...filters, tags: next })}
+                includedValues={filters.tags}
+                excludedValues={filters.excludeTags}
+                onChange={(next) =>
+                  onChange({ ...filters, tags: next.included, excludeTags: next.excluded })
+                }
               />
             </Grid>
             {!hideProjectFilter && (

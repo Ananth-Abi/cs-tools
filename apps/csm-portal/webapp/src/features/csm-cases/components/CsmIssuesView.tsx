@@ -251,6 +251,17 @@ export default function CsmIssuesView({
         // results.
         ...(showSeverityFilter ? {} : { severities: [] }),
         ...lockedFilters,
+        // `lockedFilters.caseTypes` still drives the severity-filter/column
+        // hints above (both keyed off the raw `lockedFilters` prop, not this
+        // merged query) even when the type control itself is visible
+        // (Support/`CsmCasesPage` — see its own doc comment) — but the
+        // *query* must not be pinned to that lock once the user has a real,
+        // working control to pick a different type from, or the control
+        // would be visible yet functionally inert (picking a type would
+        // silently have no effect on the results). Every other caller pairs
+        // a `caseTypes` lock with `hideTypeFilter`, so this only changes
+        // behavior for the one caller that doesn't.
+        ...(hideTypeFilter ? {} : { caseTypes: filters.caseTypes }),
       };
       // An unlocked, empty type selection means "no type filter applied" from
       // the FE's perspective (every issue type shown — this is the only
@@ -267,7 +278,7 @@ export default function CsmIssuesView({
       }
       return merged;
     },
-    [filters, debouncedSearch, showSeverityFilter, lockedFilters],
+    [filters, debouncedSearch, showSeverityFilter, lockedFilters, hideTypeFilter],
   );
 
   const {
