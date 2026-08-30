@@ -158,6 +158,22 @@ export default function CaseTabIsolatedRouter({
         flexDirection: "column",
         flex: 1,
         minHeight: 0,
+        // This panel is its OWN scroll container — not just a flex child of
+        // `AppLayout`'s single shared `mainContentRef` region (which every
+        // non-tab page scrolls via, and which `AppLayout` resets to the top
+        // on every route change, tab switches included). Without this, a
+        // tab's scroll offset lived on `mainContentRef` itself, which is the
+        // SAME DOM node for every tab — so switching away and back always
+        // came back at the top, even though the tab's other state (drafts,
+        // open dialogs) correctly persisted (this component is kept alive,
+        // never unmounted, purely toggling `display`/`hidden`). Giving each
+        // tab its own scrolling element means each one's `scrollTop` is a
+        // property of ITS OWN never-unmounted node, which the browser
+        // preserves across a `display: none` toggle on its own — no manual
+        // save/restore needed, and `AppLayout`'s reset (which only ever
+        // touches `mainContentRef`, a different element) can no longer reach
+        // it at all.
+        overflowY: "auto",
       }}
     >
       <CaseRouteOverrideProvider value={overrideValue}>{children}</CaseRouteOverrideProvider>

@@ -32,6 +32,7 @@ import {
   CaseTabStripBar,
 } from "@features/case-tabs/components/CaseTabsWorkspace";
 import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 import { MAX_OPEN_CASE_TABS } from "@context/case-tabs/caseTabsTypes";
 
 const ENABLED_STORAGE_KEY = "csm.caseTabs.enabled";
@@ -47,6 +48,9 @@ const CAP_MODE_STORAGE_KEY = "csm.caseTabs.capMode";
  * exact same way the real page does now (see that hook's doc comment for
  * why), which is what makes the bug-1 regression test below meaningful.
  */
+const STUB_SECTIONS = ["details", "activities"] as const;
+type StubSection = (typeof STUB_SECTIONS)[number];
+
 function StubCaseDetailPage() {
   const override = useCaseRouteOverride();
   const { caseId: routedCaseId } = useParams();
@@ -56,10 +60,20 @@ function StubCaseDetailPage() {
   // resolves, without needing the user to switch tabs away and back.
   const [label, setLabel] = useState<string | undefined>(undefined);
   useReportCaseTabMeta(caseId, { label, internalId: undefined, subject: undefined });
+  // Same `useQueryParamTabs` call `CsmCaseDetailPage` itself makes for its
+  // own section strip (Details/Activities/...) — what makes the item-4
+  // regression test below meaningful: it exercises the SAME override-aware
+  // path a real open tab's section selection goes through.
+  const { activeTab: section, setActiveTab: setSection } = useQueryParamTabs<StubSection>(
+    STUB_SECTIONS,
+    "details",
+  );
   return (
     <div>
       <div data-testid="stub-page-case-id">{caseId}</div>
+      <div data-testid="stub-page-section">{section}</div>
       <button onClick={() => setLabel(`Label for ${caseId}`)}>resolve-label</button>
+      <button onClick={() => setSection("activities")}>go-to-activities-{caseId}</button>
     </div>
   );
 }
@@ -155,6 +169,82 @@ describe("case tabs — real BrowserRouter integration", () => {
     // Still exactly one CASE tab (plus the permanent pinned one) — this
     // wasn't achieved by closing/reopening or switching away.
     expect(screen.getAllByRole("tab")).toHaveLength(2);
+  });
+
+  // Regression test for bug: a detail page's own section tab strip
+  // (Details/Activities/...) reads/writes the REAL shared router `?tab=`
+  // query param, not a per-tab one — with two case tabs open on different
+  // sections, switching between them could reset one back to its default
+  // section because they were fighting over the same param. Fixed by making
+  // `useQueryParamTabs` itself override-aware (see that hook's own doc
+  // comment) — this exercises it end to end, through the real tab strip and
+  // the real keep-alive host, not just the hook in isolation (see
+  // `useSectionTabs.test.tsx` for that).
+  it("bug 4 — each open case tab keeps its own section selection independently", async () => {
+    function AppWithTwoCaseRoutes() {
+      window.history.pushState({}, "", "/cases/CS0001");
+      return (
+        <BrowserRouter>
+          <ErrorBannerProvider>
+            <CaseTabsBehaviorProvider>
+              <CaseTabsProvider>
+                <NavigateButton to="/cases/CS0002" label="go-to-cs0002" />
+                <NavigateButton to="/cases/CS0001" label="go-to-cs0001" />
+                <CaseTabStripBar />
+                <CaseTabsContentHost />
+                <Routes>
+                  <Route path="/cases/:caseId" element={<CaseDetailRouteSync kind="case" />} />
+                </Routes>
+              </CaseTabsProvider>
+            </CaseTabsBehaviorProvider>
+          </ErrorBannerProvider>
+        </BrowserRouter>
+      );
+    }
+    render(<AppWithTwoCaseRoutes />);
+    await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
+
+    // Once a second tab is open, both pages stay mounted in the background
+    // (keep-alive) — `stub-page-section` then matches TWO elements, so
+    // reading it always means the currently VISIBLE tab's panel specifically
+    // (`CaseTabIsolatedRouter` marks the hidden one(s) with a real `hidden`
+    // attribute — see that component's own doc comment).
+    const visibleSection = (): string | null => {
+      const panels = document.querySelectorAll('[data-testid^="case-tab-panel-"]');
+      for (const panel of Array.from(panels)) {
+        if (!panel.hasAttribute("hidden")) {
+          return panel.querySelector('[data-testid="stub-page-section"]')?.textContent ?? null;
+        }
+      }
+      return null;
+    };
+
+    // CS0001 (the only, and so visible, tab right now): switch its own
+    // section to "activities".
+    fireEvent.click(screen.getByText("go-to-activities-CS0001"));
+    await waitFor(() => expect(visibleSection()).toBe("activities"));
+
+    // Open a second, distinct case — a real navigation, exactly like a
+    // case-list row click.
+    fireEvent.click(screen.getByText("go-to-cs0002"));
+    await waitFor(() => expect(window.location.pathname).toBe("/cases/CS0002"));
+    // CS0002's own section starts at its own default ("details"), NOT
+    // inheriting CS0001's "activities" — each tab's `?tab=` is independent.
+    await waitFor(() => expect(visibleSection()).toBe("details"));
+
+    // Switch back to CS0001 — reactivates its existing tab (see the
+    // `OPEN_OR_ACTIVATE` reactivation fix elsewhere in this feature) rather
+    // than opening a new one. Its section must still read "activities", not
+    // have been reset by CS0002 defaulting to "details" while it was the
+    // active/visible tab.
+    fireEvent.click(screen.getByText("go-to-cs0001"));
+    await waitFor(() => expect(window.location.pathname).toBe("/cases/CS0001"));
+    await waitFor(() => expect(visibleSection()).toBe("activities"));
+
+    // And CS0002's own section is untouched by any of this.
+    fireEvent.click(screen.getByText("go-to-cs0002"));
+    await waitFor(() => expect(window.location.pathname).toBe("/cases/CS0002"));
+    await waitFor(() => expect(visibleSection()).toBe("details"));
   });
 
   // Regression test for bug: at the open-tab cap, clicking one more distinct

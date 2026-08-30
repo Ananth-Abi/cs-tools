@@ -111,14 +111,26 @@ describe("CaseTabStrip", () => {
   it("calls onRequestClose (not onActivate) when a tab's close button is clicked", () => {
     const handlers = noopHandlers();
     render(<CaseTabStrip tabs={[TAB_1]} activeTabId="t1" {...handlers} />);
-    // The Chip's `aria-label` lands on its outer (clickable/activate) root —
     // oxygen-ui/MUI's delete affordance is a bare `aria-hidden` svg icon with
     // its own onClick, not a separately-labelled control (same limitation as
     // this codebase's other Chip-with-onDelete usage, e.g. `PinnedTabs`) —
-    // so the delete click has to target that icon directly.
+    // so the delete click has to target that icon directly, by test id.
     fireEvent.click(screen.getByTestId("CancelIcon"));
     expect(handlers.onRequestClose).toHaveBeenCalledWith("t1");
     expect(handlers.onActivate).not.toHaveBeenCalled();
+  });
+
+  // Regression test: the chip's own `aria-label` used to be `Close ${label}`
+  // — since `aria-label` sets the ACCESSIBLE NAME of the whole
+  // `role="tab"` chip (not just its delete icon), a screen reader announced
+  // the entire tab as "Close CS0001" instead of "CS0001" (or, once the
+  // Tooltip's own fallback labeling is accounted for, "CPASUB-1 · First
+  // case subject" — either way, never prefixed with "Close").
+  it("the tab chip's accessible name is its own label/tooltip text, not 'Close <label>'", () => {
+    render(<CaseTabStrip tabs={[TAB_1]} activeTabId="t1" {...noopHandlers()} />);
+    const tab = screen.getByRole("tab");
+    expect(tab).not.toHaveAccessibleName(/^close /i);
+    expect(screen.queryByRole("tab", { name: /^close /i })).not.toBeInTheDocument();
   });
 
   describe("right-click context menu", () => {

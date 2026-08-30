@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JSX } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
@@ -26,6 +26,10 @@ import {
   useQueryParamTabs,
 } from "@hooks/useSectionTabs";
 import { resetFeatureStatesForTests } from "@config/featureFlags";
+import {
+  CaseRouteOverrideProvider,
+  type CaseRouteOverrideValue,
+} from "@context/case-tabs/CaseRouteOverrideContext";
 
 function setOverrides(value: unknown): void {
   window.config = {
@@ -233,5 +237,82 @@ describe("useQueryParamTabs", () => {
 
     fireEvent.click(screen.getByText("Go to two"));
     expect(screen.getByTestId("active-tab")).toHaveTextContent("two");
+  });
+
+  // Regression test: this hook used to read/write the REAL, single,
+  // app-wide `?tab=` query param unconditionally, even for a page mounted
+  // inside an open in-app case tab (`CaseTabIsolatedRouter`) — which has its
+  // OWN per-tab location, not the real one. Two such tabs open on different
+  // sections would fight over the same real query param, and switching
+  // between them could reset one back to its default section. This exercises
+  // the override-aware branch directly (`CsmCaseDetailPage`'s own
+  // `routeOverride?.navigate ?? routedNavigate` pattern, applied inside the
+  // hook itself now) with two independent overrides standing in for two
+  // open tabs.
+  describe("inside an open case tab (CaseRouteOverrideContext)", () => {
+    function makeOverride(
+      initialSearch: string,
+      onNavigate: (search: string) => void,
+    ): CaseRouteOverrideValue {
+      let search = initialSearch;
+      return {
+        caseId: "CS-STUB",
+        kind: "case",
+        pathname: "/cases/CS-STUB",
+        search,
+        hash: "",
+        state: undefined,
+        navigate: (to) => {
+          const next =
+            typeof to === "string"
+              ? (to.split("?")[1] ?? "")
+              : typeof to === "number"
+                ? ""
+                : (to.search ?? "").replace(/^\?/, "");
+          search = next ? `?${next}` : "";
+          onNavigate(search);
+        },
+      };
+    }
+
+    it("reads/writes the tab's own search, never the real router's", () => {
+      const navigateSpyA = vi.fn();
+      const navigateSpyB = vi.fn();
+      const overrideA = makeOverride("?tab=one", navigateSpyA);
+      const overrideB = makeOverride("?tab=two", navigateSpyB);
+
+      render(
+        <MemoryRouter initialEntries={["/cases/CS-STUB"]}>
+          <LocationProbe />
+          <CaseRouteOverrideProvider value={overrideA}>
+            <div data-testid="tab-a">
+              <QueryParamTabsProbe />
+            </div>
+          </CaseRouteOverrideProvider>
+          <CaseRouteOverrideProvider value={overrideB}>
+            <div data-testid="tab-b">
+              <QueryParamTabsProbe />
+            </div>
+          </CaseRouteOverrideProvider>
+        </MemoryRouter>,
+      );
+
+      // Each tab's own override search resolves independently, not the real
+      // router's (which has no `?tab=` at all here).
+      expect(screen.getByTestId("tab-a")).toHaveTextContent("one");
+      expect(screen.getByTestId("tab-b")).toHaveTextContent("two");
+
+      // Switching tab A's section calls ONLY tab A's own `navigate` — the
+      // real router (asserted via `LocationProbe`) and tab B are untouched.
+      fireEvent.click(within(screen.getByTestId("tab-a")).getByText("Go to two"));
+      expect(navigateSpyA).toHaveBeenCalled();
+      expect(navigateSpyB).not.toHaveBeenCalled();
+      expect(screen.getByTestId("tab-a")).toHaveTextContent("two");
+      expect(screen.getByTestId("tab-b")).toHaveTextContent("two");
+      // ^ tab-b still shows "two" because it was already on "two" — the
+      // point is its OWN override was never invoked, not that its value
+      // changed to something different by coincidence.
+      expect(screen.getByTestId("location-probe")).not.toHaveTextContent("tab=");
+    });
   });
 });

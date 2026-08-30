@@ -179,7 +179,18 @@ export default function CaseTabStrip({
                 e.stopPropagation();
                 onRequestClose(tab.id);
               }}
-              aria-label={`Close ${label}`}
+              // Deliberately NO `aria-label` here — `aria-label` sets the
+              // ACCESSIBLE NAME of this whole `role="tab"` chip, not just
+              // its delete affordance; a `Close ${label}` value made a
+              // screen reader announce the entire tab as "Close CS0001"
+              // instead of "CS0001". Falls back to the chip's own visible
+              // text (the label) as its accessible name instead, same as
+              // any other unlabelled Chip. The delete icon itself has no
+              // separate accessible name of its own — same limitation as
+              // this codebase's other Chip-with-onDelete usage (see this
+              // file's own test for how it's exercised: by test id, not by
+              // an accessible name, until oxygen-ui/MUI's `Chip` exposes
+              // one for `deleteIcon` directly).
               sx={{
                 flexShrink: 0,
                 maxWidth: 220,

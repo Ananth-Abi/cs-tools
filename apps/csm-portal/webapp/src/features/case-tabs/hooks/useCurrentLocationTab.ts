@@ -24,7 +24,10 @@ export interface CurrentLocationTab {
    * — the owning nav section's label (e.g. "Dashboard", "Support",
    * "Operations"), or "Home" for a path outside the nav tree entirely. */
   label: string;
-  /** The full path (pathname + search) to navigate back to on click. */
+  /** The full path (pathname + search + hash) to navigate back to on click
+   * — the hash matters for anchor-linked pages (e.g. `/help#topic`); losing
+   * it on the way back through a case tab and back would silently drop the
+   * user at the top of the page instead of the anchor they were at. */
   path: string;
   /** Whether the user is CURRENTLY on this page — false while a case tab is
    * the active view, in which case this still reflects the last non-case
@@ -50,8 +53,8 @@ export function useCurrentLocationTab(): CurrentLocationTab {
 
   const [lastNonCaseLocation, setLastNonCaseLocation] = useState(() =>
     isCaseRoute
-      ? { pathname: "/dashboard", search: "" }
-      : { pathname: location.pathname, search: location.search },
+      ? { pathname: "/dashboard", search: "", hash: "" }
+      : { pathname: location.pathname, search: location.search, hash: location.hash },
   );
 
   // Render-time state adjustment (not an effect — see React's own docs on
@@ -63,16 +66,21 @@ export function useCurrentLocationTab(): CurrentLocationTab {
   if (
     !isCaseRoute &&
     (lastNonCaseLocation.pathname !== location.pathname ||
-      lastNonCaseLocation.search !== location.search)
+      lastNonCaseLocation.search !== location.search ||
+      lastNonCaseLocation.hash !== location.hash)
   ) {
-    setLastNonCaseLocation({ pathname: location.pathname, search: location.search });
+    setLastNonCaseLocation({
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+    });
   }
 
   const label = navNodeForPath(lastNonCaseLocation.pathname)?.label ?? "Home";
 
   return {
     label,
-    path: `${lastNonCaseLocation.pathname}${lastNonCaseLocation.search}`,
+    path: `${lastNonCaseLocation.pathname}${lastNonCaseLocation.search}${lastNonCaseLocation.hash}`,
     active: !isCaseRoute,
   };
 }

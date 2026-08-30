@@ -15,11 +15,12 @@
 // under the License.
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { JSX } from "react";
 import "@testing-library/jest-dom/vitest";
 import { useCaseTabCloseConfirm } from "@features/case-tabs/hooks/useCaseTabCloseConfirm";
 import { CaseTabsProvider, useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
+import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
 import type { CaseTabState } from "@context/case-tabs/caseTabsTypes";
 
 const TAB_NO_DRAFT: CaseTabState = {
@@ -51,7 +52,43 @@ function Harness({ tab }: { tab: CaseTabState }): JSX.Element {
   );
 }
 
+/** Opens two real tabs (one with a draft, one without) via the actual
+ * controller, then exposes the bulk-close actions under test — so these
+ * assert on real post-close tab state, not just whether a dialog rendered. */
+function BulkHarness(): JSX.Element {
+  const { openTab, tabs, setTabDraft } = useCaseTabsController();
+  const { requestCloseAll, requestCloseOthers, dialog } = useCaseTabCloseConfirm();
+  return (
+    <div>
+      <div data-testid="open-case-ids">{tabs.map((t) => t.caseId).join(",")}</div>
+      <button
+        onClick={() => {
+          openTab("CS1", "case", "/cases/CS1");
+          openTab("CS2", "case", "/cases/CS2");
+        }}
+      >
+        open-both
+      </button>
+      <button onClick={() => setTabDraft(tabs.find((t) => t.caseId === "CS2")!.id, true)}>
+        mark-cs2-draft
+      </button>
+      <button onClick={() => requestCloseAll(tabs)}>close-all</button>
+      <button
+        onClick={() => requestCloseOthers(tabs, tabs.find((t) => t.caseId === "CS1")!.id)}
+      >
+        close-others-keep-cs1
+      </button>
+      {dialog}
+    </div>
+  );
+}
+
 describe("useCaseTabCloseConfirm", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    localStorage.setItem("csm.caseTabs.enabled", "1");
+  });
+
   it("closes immediately when the tab has no draft, without confirming", () => {
     render(
       <CaseTabsProvider>
@@ -93,5 +130,89 @@ describe("useCaseTabCloseConfirm", () => {
     fireEvent.click(screen.getByText("close"));
     expect(screen.getByText(/^Loading… has a reply in progress\./)).toBeInTheDocument();
     expect(screen.queryByText(/^CS2 has a reply in progress\./)).not.toBeInTheDocument();
+  });
+
+  describe("bulk close (Close all tabs / Close other tabs)", () => {
+    function renderBulk() {
+      return render(
+        <CaseTabsBehaviorProvider>
+          <CaseTabsProvider>
+            <BulkHarness />
+          </CaseTabsProvider>
+        </CaseTabsBehaviorProvider>,
+      );
+    }
+
+    it("closes all tabs immediately when none have a draft, without confirming", () => {
+      renderBulk();
+      fireEvent.click(screen.getByText("open-both"));
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("CS1,CS2");
+      fireEvent.click(screen.getByText("close-all"));
+      expect(screen.queryByText("Close all tabs?")).not.toBeInTheDocument();
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("");
+    });
+
+    // Regression test: "Close all tabs" used to discard every affected
+    // draft unconditionally — this is the fix.
+    it("asks for confirmation before Close all tabs discards a draft, and Keep tabs open leaves every tab untouched", async () => {
+      renderBulk();
+      fireEvent.click(screen.getByText("open-both"));
+      fireEvent.click(screen.getByText("mark-cs2-draft"));
+
+      fireEvent.click(screen.getByText("close-all"));
+      expect(screen.getByText("Close all tabs?")).toBeInTheDocument();
+      // The opened-via-`openTab` tab never had a page report a real label
+      // (see `useReportCaseTabMeta`, not exercised by this harness), so it
+      // falls back to "Loading…" the same as everywhere else this fallback
+      // applies — not the raw caseId/UUID.
+      expect(screen.getByText(/^Loading… has a reply in progress\./)).toBeInTheDocument();
+      // Still open — nothing closed while the confirm is pending.
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("CS1,CS2");
+
+      fireEvent.click(screen.getByText("Keep tabs open"));
+      await waitFor(() =>
+        expect(screen.queryByText("Close all tabs?")).not.toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("CS1,CS2");
+    });
+
+    it("Close anyway on the bulk confirm actually closes every tab, including the drafted one", async () => {
+      renderBulk();
+      fireEvent.click(screen.getByText("open-both"));
+      fireEvent.click(screen.getByText("mark-cs2-draft"));
+
+      fireEvent.click(screen.getByText("close-all"));
+      fireEvent.click(screen.getByText("Close anyway"));
+      await waitFor(() =>
+        expect(screen.queryByText("Close all tabs?")).not.toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("");
+    });
+
+    it("closes other tabs immediately when none of them have a draft", () => {
+      renderBulk();
+      fireEvent.click(screen.getByText("open-both"));
+      fireEvent.click(screen.getByText("close-others-keep-cs1"));
+      expect(screen.queryByText("Close other tabs?")).not.toBeInTheDocument();
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("CS1");
+    });
+
+    it("asks for confirmation before Close other tabs discards the OTHER tab's draft — the kept tab's own draft is irrelevant", async () => {
+      renderBulk();
+      fireEvent.click(screen.getByText("open-both"));
+      fireEvent.click(screen.getByText("mark-cs2-draft"));
+
+      // CS2 (the one with the draft) is the one being closed here — CS1 is
+      // kept, so CS1's own draft state (it has none) is irrelevant.
+      fireEvent.click(screen.getByText("close-others-keep-cs1"));
+      expect(screen.getByText("Close other tabs?")).toBeInTheDocument();
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("CS1,CS2");
+
+      fireEvent.click(screen.getByText("Close anyway"));
+      await waitFor(() =>
+        expect(screen.queryByText("Close other tabs?")).not.toBeInTheDocument(),
+      );
+      expect(screen.getByTestId("open-case-ids")).toHaveTextContent("CS1");
+    });
   });
 });

@@ -16,7 +16,7 @@
 
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { useState, type JSX } from "react";
+import { useRef, useState, type JSX } from "react";
 import { BrowserRouter, useNavigate, useParams } from "react-router";
 import "@testing-library/jest-dom/vitest";
 import CaseTabIsolatedRouter from "@features/case-tabs/components/CaseTabIsolatedRouter";
@@ -196,5 +196,79 @@ describe("CaseTabIsolatedRouter", () => {
     const ids = screen.getAllByTestId("stub-case-id").map((n) => n.textContent);
     expect(ids).toContain("CS1");
     expect(ids).toContain("OTHER-CASE");
+  });
+
+  // Regression test for bug: a tab's scroll position was lost on switching
+  // away and back, even though its other state (drafts, dialogs) correctly
+  // persisted — root cause was `AppLayout`'s single shared scroll container
+  // (`mainContentRef`) being reset to the top on every route change,
+  // including a tab-to-tab switch, since every open tab shared that SAME
+  // element as its scroll container. Fixed by making each tab's own panel
+  // its own scroll container (see this component's own comment on
+  // `overflowY: "auto"`) — its `scrollTop` then lives on a DOM node that's
+  // never unmounted (this component keeps every tab alive, only toggling
+  // `display`/`hidden`), which the browser preserves on its own, and which
+  // an `AppLayout`-style reset effect targeting a DIFFERENT (shared,
+  // sibling) element can no longer reach at all — reproduced directly below
+  // rather than importing the real (very large) `AppLayout`.
+  it("each tab's own scroll position survives switching away and back, unaffected by a shared sibling scroll container's reset", () => {
+    function AppLayoutStyleHarness() {
+      const [visibleId, setVisibleId] = useState<string>("t-a");
+      // Stands in for `AppLayout`'s own `mainContentRef` + its
+      // reset-on-route-change effect — a SIBLING element, not an ancestor
+      // of the tab panels, same relationship as the real `AppLayout`
+      // (`mainContentRef` wraps `CaseTabsContentHost`, but is not itself
+      // inside any of `CaseTabIsolatedRouter`'s per-tab panels).
+      const sharedScrollRef = useRef<HTMLDivElement>(null);
+      return (
+        <div>
+          <div ref={sharedScrollRef} data-testid="shared-scroll-container" />
+          <button onClick={() => setVisibleId("t-a")}>show-a</button>
+          <button onClick={() => setVisibleId("t-b")}>show-b</button>
+          <button
+            onClick={() => {
+              // The exact reset this bug's root cause performs — applied to
+              // the SHARED sibling container, never to either tab's own
+              // panel.
+              if (sharedScrollRef.current) sharedScrollRef.current.scrollTop = 0;
+            }}
+          >
+            simulate-route-change-scroll-reset
+          </button>
+          <Harness tabs={[TAB_A, TAB_B]} visibleId={visibleId} />
+        </div>
+      );
+    }
+    renderInApp(
+      <CaseTabsProvider>
+        <AppLayoutStyleHarness />
+      </CaseTabsProvider>,
+    );
+
+    const panelA = screen.getByTestId("case-tab-panel-t-a");
+    panelA.scrollTop = 240;
+    expect(panelA.scrollTop).toBe(240);
+
+    // Switch to tab B — a route change in the real app, so the shared
+    // container's own reset fires too (simulated explicitly here).
+    fireEvent.click(screen.getByText("show-b"));
+    fireEvent.click(screen.getByText("simulate-route-change-scroll-reset"));
+
+    // Switch back to tab A.
+    fireEvent.click(screen.getByText("show-a"));
+
+    // Tab A's own scroll position survived — it was never on the shared
+    // container the reset actually touched.
+    expect(screen.getByTestId("case-tab-panel-t-a").scrollTop).toBe(240);
+  });
+
+  it("each tab's own panel is its own scroll container (overflowY: auto)", () => {
+    renderInApp(
+      <CaseTabsProvider>
+        <Harness tabs={[TAB_A, TAB_B]} visibleId="t-a" />
+      </CaseTabsProvider>,
+    );
+    expect(screen.getByTestId("case-tab-panel-t-a")).toHaveStyle({ overflowY: "auto" });
+    expect(screen.getByTestId("case-tab-panel-t-b")).toHaveStyle({ overflowY: "auto" });
   });
 });

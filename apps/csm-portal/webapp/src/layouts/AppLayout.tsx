@@ -73,6 +73,15 @@ export default function AppLayout({ children }: AppLayoutProps): JSX.Element {
   const { isErrorPageDisplayed } = useErrorPageContext();
   useSyncRecentViewsIdentity();
 
+  // Resets the top-level scroll region on every route change — including a
+  // switch between two open case tabs (both are `location.pathname`
+  // changes). That's still correct for a GENUINE navigation (a new page
+  // should start at the top), and is a no-op for a tab switch specifically:
+  // while any case tab is active, this ref's own content never actually
+  // overflows it (see `CaseTabsContentHost`'s sizing), because each open
+  // tab is its OWN scroll container now — see `CaseTabIsolatedRouter`'s own
+  // comment on why that, not a save/restore against THIS ref, is what
+  // actually keeps a tab's scroll position across switching away and back.
   useEffect(() => {
     if (mainContentRef.current) {
       mainContentRef.current.scrollTop = 0;
