@@ -149,11 +149,8 @@ import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
   isBlankHtml,
   isDescriptionEchoedInComment,
-  sanitizeDescriptionHtml,
   stripHtmlTags,
-  stripLightModeInlineStyles,
 } from "@utils/sanitizeHtml";
-import { useDarkMode } from "@utils/useDarkMode";
 import {
   canResumeToUnlockPublicReply as computeCanResumeToUnlockPublicReply,
   effectiveWorkState,
@@ -540,7 +537,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
     "Unknown engineer";
   const { showError } = useErrorBanner();
   const { showSuccess } = useSuccessBanner();
-  const isDarkMode = useDarkMode();
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   // Kept in the URL (`?tab=`), not local state, so a shared/bookmarked link
   // to a specific tab survives a refresh. Unlike the plain `useState` this
@@ -1706,9 +1702,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // creator's real role isn't known on the frontend (see the field's doc
   // comment), so nothing is claimed about it. This is folded into
   // `safeComments` itself (not a separate prop) so the "N entries" count and
-  // the feed's own chronological sort both pick it up naturally. The Details
-  // tab keeps its own separate, pre-existing fallback card for the same
-  // content — unrelated to this and left untouched.
+  // the feed's own chronological sort both pick it up naturally. This is now
+  // the only place the description renders — the Details tab's duplicate
+  // fallback card was removed.
   const safeComments = useMemo(() => {
     if (isBlankHtml(data?.description ?? "") || descriptionEchoedInOriginComment) {
       return mergedComments;
@@ -2366,41 +2362,6 @@ export default function CsmCaseDetailPage(): JSX.Element {
               </MetaCell>
             </Box>
           </Card>
-          {/* Duplicates the fallback card also rendered on the Activities
-              tab (below the timeline) whenever the description isn't
-              genuinely present elsewhere — see `descriptionEchoedInOriginComment`
-              and the note next to that card. Kept here too, next to the
-              action bar's "Edit case details…" item (EditCaseDetailsDialog),
-              so the description is visible while editing without switching
-              tabs. */}
-          {!isBlankHtml(c.description) && !descriptionEchoedInOriginComment && (
-            <Card sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
-              <Typography variant="subtitle2">Description</Typography>
-              <Box
-                sx={{
-                  typography: "body2",
-                  color: "text.primary",
-                  // Same containment the comment bubble needs — see the long
-                  // note in `CsmCaseCommentBubble`. This description is backend
-                  // HTML too, so it can carry an explicit pixel width that would
-                  // otherwise drag the whole page off-screen.
-                  minWidth: 0,
-                  maxWidth: "100%",
-                  contain: "inline-size",
-                  overflowX: "auto",
-                  "& p": { mb: 0.5 },
-                  "& p:last-child": { mb: 0 },
-                }}
-                dangerouslySetInnerHTML={{
-                  __html: sanitizeDescriptionHtml(
-                    isDarkMode
-                      ? stripLightModeInlineStyles(c.description)
-                      : c.description,
-                  ),
-                }}
-              />
-            </Card>
-          )}
           {/* Service-request-only: the catalog answers the requester filled
               in. Reuses the page's single `isServiceRequest` signal (route +
               loaded caseType) rather than adding a parallel one. Always
