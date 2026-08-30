@@ -26,11 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/eventpublisher"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/events"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
 
@@ -109,13 +105,7 @@ type entityCaseClient interface {
 // CaseHandler handles HTTP requests for case operations, delegating to the
 // entity service for data access.
 type CaseHandler struct {
-	entity    entityCaseClient
-	publisher *eventpublisher.Publisher
-	// pending tracks in-flight publishAsync goroutines so shutdown can wait
-	// for them before closing publisher — see WaitPendingPublishes. Zero
-	// value is a ready-to-use sync.WaitGroup, so this needs no constructor
-	// wiring.
-	pending sync.WaitGroup
+	entity entityCaseClient
 	// inlineImages enables server-side inline-image extraction on
 	// CreateCaseComment when non-nil — see WithInlineImageProcessor. nil on
 	// every existing call site (including every test), which keeps
@@ -125,61 +115,8 @@ type CaseHandler struct {
 }
 
 // NewCaseHandler creates a CaseHandler backed by the given entity client.
-// publisher may be nil — every publish call site below must check for that
-// (see publishAsync) — since Event Hub config is optional in this backend
-// (see cmd/server/main.go).
-func NewCaseHandler(entity entityCaseClient, publisher *eventpublisher.Publisher) *CaseHandler {
-	return &CaseHandler{entity: entity, publisher: publisher}
-}
-
-// publishAsyncTimeout bounds the detached publish below.
-const publishAsyncTimeout = 10 * time.Second
-
-// publishAsync fires eventpublisher.Publish on its own goroutine so the HTTP
-// response doesn't wait on a Kafka round-trip. It deliberately does NOT use
-// r.Context() for the goroutine's own lifetime: net/http cancels a request's
-// context the moment the handler returns, and this goroutine is specifically
-// meant to keep running after that — so it detaches via context.WithoutCancel
-// first (same technique eventpublisher.Publish already uses internally for
-// its own failure-recording call), then applies its own bounded timeout.
-// A no-op when h.publisher is nil (Event Hub not configured — see
-// cmd/server/main.go).
-func (h *CaseHandler) publishAsync(ctx context.Context, eventType events.Type, entityID string, payload any) {
-	if h.publisher == nil {
-		return
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		slog.ErrorContext(ctx, "publishAsync: encode payload", "eventType", eventType, "entityId", entityID, "err", err)
-		return
-	}
-	h.pending.Go(func() {
-		publishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishAsyncTimeout)
-		defer cancel()
-		if err := h.publisher.Publish(publishCtx, eventType, entityID, body); err != nil {
-			slog.ErrorContext(publishCtx, "publishAsync: publish failed", "eventType", eventType, "entityId", entityID, "err", err)
-		}
-	})
-}
-
-// WaitPendingPublishes blocks until every in-flight publishAsync goroutine
-// has finished, or ctx is done, whichever comes first. Call during shutdown
-// after the HTTP servers have finished draining (so no new publishAsync
-// call can start) and before closing the underlying publisher/producer —
-// otherwise an in-flight publish can be silently dropped mid-write: the
-// HTTP response for a state-changing request can already be 200 while its
-// publishAsync goroutine is still running, unawaited, when shutdown closes
-// the producer out from under it.
-func (h *CaseHandler) WaitPendingPublishes(ctx context.Context) {
-	done := make(chan struct{})
-	go func() {
-		h.pending.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
+func NewCaseHandler(entity entityCaseClient) *CaseHandler {
+	return &CaseHandler{entity: entity}
 }
 
 // WithInlineImageProcessor enables server-side inline-image extraction on
@@ -435,10 +372,6 @@ func (h *CaseHandler) CreateCaseComment(w http.ResponseWriter, r *http.Request) 
 		mapUpstreamErrorGeneric(w, err, "Failed to create case comment.")
 		return
 	}
-
-	h.publishAsync(r.Context(), events.TypeCommentAdded, caseID, events.CommentAddedPayload{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	})
 
 	writeJSON(w, http.StatusCreated, result)
 }
@@ -956,16 +889,6 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "entity PatchCase failed", "userID", user.UserID, "caseID", caseID, "err", err)
 		mapUpstreamError(w, err, "Failed to update case.")
 		return
-	}
-
-	// Only a real state transition is a case.status_changed event — patch
-	// carries other fields too (assignee, tags, etc.), and `patch.State` was
-	// already parsed above for the transition guard.
-	if patch.State != nil {
-		h.publishAsync(r.Context(), events.TypeStatusChanged, caseID, events.StatusChangedPayload{
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			NewStatus: *patch.State,
-		})
 	}
 
 	writeJSON(w, http.StatusOK, result)

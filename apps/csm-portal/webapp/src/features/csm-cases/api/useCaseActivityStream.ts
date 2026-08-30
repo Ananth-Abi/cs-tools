@@ -74,9 +74,11 @@ function reconnectDelay(attempt: number): number {
  * instead of this hook just retrying forever with no way to ever recover
  * and no visible signal that anything's wrong.
  *
- * A no-op when `caseId` is unset or `apiConfig.streamUrl` isn't configured
- * (Event Hub — and therefore this endpoint — is optional on the backend);
- * callers fall back to the comments/activities queries' own staleTime.
+ * A no-op when `caseId` is unset, `apiConfig.streamEnabled` is false (the
+ * feature's master switch, `CSM_PORTAL_STREAM_ENABLED` — defaults off), or
+ * `apiConfig.streamUrl` isn't configured (Event Hub — and therefore this
+ * endpoint — is optional on the backend); callers fall back to the
+ * comments/activities queries' own staleTime.
  */
 export function useCaseActivityStream(caseId: string | undefined): void {
   const queryClient = useQueryClient();
@@ -84,7 +86,7 @@ export function useCaseActivityStream(caseId: string | undefined): void {
   const logger = useLogger();
 
   useEffect(() => {
-    if (!caseId || !apiConfig.streamUrl) return;
+    if (!caseId || !apiConfig.streamEnabled || !apiConfig.streamUrl) return;
 
     let cancelled = false;
     let source: EventSourcePolyfill | null = null;

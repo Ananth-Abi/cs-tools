@@ -104,7 +104,7 @@ func TestCreateCase(t *testing.T) {
 	const validPayload = `{"type":"case","projectId":"proj-1","deploymentId":"dep-1","deployedProductId":"dp-1","subject":"Login failure","description":"Users cannot log in","severity":"high","issueType":"error"}`
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(validPayload))
 		w := httptest.NewRecorder()
 		h.CreateCase(w, r)
@@ -114,7 +114,7 @@ func TestCreateCase(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 10 MiB case limit", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(strings.Repeat("x", maxCaseBodyBytes+1))))
 		w := httptest.NewRecorder()
 		h.CreateCase(w, r)
@@ -124,7 +124,7 @@ func TestCreateCase(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(`not-json`)))
 		w := httptest.NewRecorder()
 		h.CreateCase(w, r)
@@ -141,7 +141,7 @@ func TestCreateCase(t *testing.T) {
 				return []byte(`{"id":"case-1","subject":"Login failure","state":"open"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(validPayload)))
 		w := httptest.NewRecorder()
 		h.CreateCase(w, r)
@@ -171,7 +171,7 @@ func TestCreateCase(t *testing.T) {
 				return []byte(`{"id":"case-1","state":"open"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		payload := `{"projectId":"proj-1","createdBy":"attacker-uuid","subject":"Login failure"}`
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(payload)))
 		w := httptest.NewRecorder()
@@ -197,7 +197,7 @@ func TestCreateCase(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases", strings.NewReader(validPayload)))
 				w := httptest.NewRecorder()
 				h.CreateCase(w, r)
@@ -215,7 +215,7 @@ func TestCreateCaseComment(t *testing.T) {
 	const validPayload = `{"type":"comment","content":"Looking into this now."}`
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -226,7 +226,7 @@ func TestCreateCaseComment(t *testing.T) {
 	})
 
 	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases//comments", strings.NewReader(validPayload)))
 		w := httptest.NewRecorder()
 		h.CreateCaseComment(w, r)
@@ -236,7 +236,7 @@ func TestCreateCaseComment(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 10 MiB comment limit", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(strings.Repeat("x", maxCommentBodyBytes+1))))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -247,7 +247,7 @@ func TestCreateCaseComment(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(`not-json`)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -273,7 +273,7 @@ func TestCreateCaseComment(t *testing.T) {
 						return []byte(`{"state":"` + state + `","workState":null}`), nil
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 				r.SetPathValue("id", "case-1")
 				w := httptest.NewRecorder()
@@ -290,7 +290,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"state":"work_in_progress","workState":"paused"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -305,7 +305,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"state":"work_in_progress"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -320,7 +320,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"state":"work_in_progress","workState":"ongoing","assignedEngineer":{"id":"someone-else"}}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -335,7 +335,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"state":"work_in_progress","workState":"ongoing"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -363,7 +363,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"id":"comment-1"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -383,7 +383,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"state":"work_in_progress","workState":"ongoing","assignedEngineer":{"id":"` + testUser.UserID + `"}}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -414,7 +414,7 @@ func TestCreateCaseComment(t *testing.T) {
 						return []byte(`{"id":"comment-1"}`), nil
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 				r.SetPathValue("id", "case-1")
 				w := httptest.NewRecorder()
@@ -443,7 +443,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"id":"wn-1"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(`{"type":"work_note","content":"internal note"}`)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -461,7 +461,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return nil, errors.New("unexpected call")
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -483,7 +483,7 @@ func TestCreateCaseComment(t *testing.T) {
 						return []byte(`{"id":"wn-1"}`), nil
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(`{"type":"work_note","content":"internal note"}`)))
 				r.SetPathValue("id", "case-1")
 				w := httptest.NewRecorder()
@@ -500,7 +500,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"state":"closed"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(`{"type":"work_note","content":"internal note"}`)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -522,7 +522,7 @@ func TestCreateCaseComment(t *testing.T) {
 				return []byte(`{"message":"Comment created successfully","comment":{"id":"comment-1","createdOn":"2026-06-03T00:00:00Z","createdBy":"agent@example.com"}}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -557,7 +557,7 @@ func TestCreateCaseComment(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments", strings.NewReader(validPayload)))
 				r.SetPathValue("id", "case-1")
 				w := httptest.NewRecorder()
@@ -574,7 +574,7 @@ func TestCreateCaseComment(t *testing.T) {
 
 func TestSearchCaseComments(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/cases/case-1/comments/search", strings.NewReader(`{}`))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -585,7 +585,7 @@ func TestSearchCaseComments(t *testing.T) {
 	})
 
 	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases//comments/search", strings.NewReader(`{}`)))
 		w := httptest.NewRecorder()
 		h.SearchCaseComments(w, r)
@@ -595,7 +595,7 @@ func TestSearchCaseComments(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments/search", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -606,7 +606,7 @@ func TestSearchCaseComments(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments/search", strings.NewReader(`not-json`)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -624,7 +624,7 @@ func TestSearchCaseComments(t *testing.T) {
 				return []byte(`{"comments":[{"id":"c-1","referenceId":"case-42","type":"comment","content":"First comment","createdBy":"user-1","createdOn":"2026-06-03T00:00:00Z"}],"total":1,"limit":20,"offset":0,"hasMore":false}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-42/comments/search",
 			strings.NewReader(`{"pagination":{"limit":20,"offset":0}}`)))
 		r.SetPathValue("id", "case-42")
@@ -660,7 +660,7 @@ func TestSearchCaseComments(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/comments/search", strings.NewReader(`{}`)))
 				r.SetPathValue("id", "case-1")
 				w := httptest.NewRecorder()
@@ -677,7 +677,7 @@ func TestSearchCaseComments(t *testing.T) {
 
 func TestSearchCaseActivities(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/cases/case-1/activities/search", strings.NewReader(`{}`))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -688,7 +688,7 @@ func TestSearchCaseActivities(t *testing.T) {
 	})
 
 	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases//activities/search", strings.NewReader(`{}`)))
 		w := httptest.NewRecorder()
 		h.SearchCaseActivities(w, r)
@@ -698,7 +698,7 @@ func TestSearchCaseActivities(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/activities/search", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -709,7 +709,7 @@ func TestSearchCaseActivities(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/activities/search", strings.NewReader(`not-json`)))
 		r.SetPathValue("id", "case-1")
 		w := httptest.NewRecorder()
@@ -730,7 +730,7 @@ func TestSearchCaseActivities(t *testing.T) {
 				return []byte(`{"activities":[{"id":"a-1"}],"total":1,"limit":20,"offset":0,"hasMore":false}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-42/activities/search", strings.NewReader(reqBody)))
 		r.SetPathValue("id", "case-42")
 		w := httptest.NewRecorder()
@@ -761,7 +761,7 @@ func TestSearchCaseActivities(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/case-1/activities/search", strings.NewReader(`{}`)))
 				r.SetPathValue("id", "case-1")
 				w := httptest.NewRecorder()
@@ -778,7 +778,7 @@ func TestSearchCaseActivities(t *testing.T) {
 
 func TestSearchCases(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(`{}`))
 		w := httptest.NewRecorder()
 		h.SearchCases(w, r)
@@ -788,7 +788,7 @@ func TestSearchCases(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		w := httptest.NewRecorder()
 		h.SearchCases(w, r)
@@ -798,7 +798,7 @@ func TestSearchCases(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(`not-json`)))
 		w := httptest.NewRecorder()
 		h.SearchCases(w, r)
@@ -815,7 +815,7 @@ func TestSearchCases(t *testing.T) {
 				return []byte(`{"cases":[{"id":"case-1"}],"total":1}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search",
 			strings.NewReader(`{"filters":{"projectIds":["proj-1"],"states":["open"]},"pagination":{"limit":10,"offset":0}}`)))
 		w := httptest.NewRecorder()
@@ -851,7 +851,7 @@ func TestSearchCases(t *testing.T) {
 				return []byte(`{"cases":[],"total":0}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search",
 			strings.NewReader(`{"filters":{"states":["open"]},"pagination":{"limit":10,"offset":0}}`)))
 		w := httptest.NewRecorder()
@@ -881,7 +881,7 @@ func TestSearchCases(t *testing.T) {
 				return []byte(`{"cases":[],"total":0}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		const reqBody = `{"filters":{"parentId":"44444444-4444-4444-4444-444444444444"}}`
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(reqBody)))
 		w := httptest.NewRecorder()
@@ -901,7 +901,7 @@ func TestSearchCases(t *testing.T) {
 				return []byte(upstreamBody), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(`{}`)))
 		w := httptest.NewRecorder()
 		h.SearchCases(w, r)
@@ -937,7 +937,7 @@ func TestSearchCases(t *testing.T) {
 				return []byte(upstreamBody), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(`{}`)))
 		w := httptest.NewRecorder()
 		h.SearchCases(w, r)
@@ -968,7 +968,7 @@ func TestSearchCases(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(`{}`)))
 				w := httptest.NewRecorder()
 				h.SearchCases(w, r)
@@ -987,7 +987,7 @@ func TestPatchCase(t *testing.T) {
 	const validPayload = `{"state":"work_in_progress"}`
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(validPayload))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -998,7 +998,7 @@ func TestPatchCase(t *testing.T) {
 	})
 
 	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/", strings.NewReader(validPayload)))
 		w := httptest.NewRecorder()
 		h.PatchCase(w, r)
@@ -1008,7 +1008,7 @@ func TestPatchCase(t *testing.T) {
 	})
 
 	t.Run("rejects malformed UUID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/not-a-uuid", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "not-a-uuid")
 		w := httptest.NewRecorder()
@@ -1030,7 +1030,7 @@ func TestPatchCase(t *testing.T) {
 				return []byte(`{"id":"sn-123","state":"work_in_progress"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/sn-123", strings.NewReader(validPayload)))
 		r.SetPathValue("id", "sn-123")
 		r.Header.Set("x-user-id-token", "token-value")
@@ -1043,7 +1043,7 @@ func TestPatchCase(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1054,7 +1054,7 @@ func TestPatchCase(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`not-json`)))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1078,7 +1078,7 @@ func TestPatchCase(t *testing.T) {
 				return []byte(upstreamResp), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(validPayload)))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1128,7 +1128,7 @@ func TestPatchCase(t *testing.T) {
 				return []byte(`{"id":"` + testCaseID + `","state":"closed"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"state":"work_in_progress"}`)))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1149,7 +1149,7 @@ func TestPatchCase(t *testing.T) {
 						return []byte(`{"id":"` + testCaseID + `","state":"` + state + `"}`), nil
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"workState":"ongoing"}`)))
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
@@ -1171,7 +1171,7 @@ func TestPatchCase(t *testing.T) {
 				return []byte(`{"id":"` + testCaseID + `","state":"work_in_progress","workState":"paused"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"workState":"paused"}`)))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1186,7 +1186,7 @@ func TestPatchCase(t *testing.T) {
 				return []byte(`{"id":"` + testCaseID + `","state":"open","severity":"high"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"severity":"high"}`)))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1273,7 +1273,7 @@ func TestPatchCase(t *testing.T) {
 						return []byte(tc.upstream), nil
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(tc.reqBody)))
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
@@ -1318,7 +1318,7 @@ func TestPatchCase(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(validPayload)))
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
@@ -1342,7 +1342,7 @@ func TestPatchCase(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(validPayload)))
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
@@ -1364,7 +1364,7 @@ func TestGetCase(t *testing.T) {
 	)
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil)
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1375,7 +1375,7 @@ func TestGetCase(t *testing.T) {
 	})
 
 	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		// PathValue("id") returns "" when not set — exercises the explicit guard.
 		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/", nil))
 		w := httptest.NewRecorder()
@@ -1386,7 +1386,7 @@ func TestGetCase(t *testing.T) {
 	})
 
 	t.Run("rejects malformed UUID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/not-a-uuid", nil))
 		r.SetPathValue("id", "not-a-uuid")
 		w := httptest.NewRecorder()
@@ -1404,7 +1404,7 @@ func TestGetCase(t *testing.T) {
 				return []byte(`{"id":"sn-123","state":"open"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/sn-123", nil))
 		r.SetPathValue("id", "sn-123")
 		r.Header.Set("x-user-id-token", "token-value")
@@ -1429,7 +1429,7 @@ func TestGetCase(t *testing.T) {
 				return []byte(`{"id":"` + testCaseID42 + `","state":"open"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID42, nil))
 		r.SetPathValue("id", testCaseID42)
 		w := httptest.NewRecorder()
@@ -1469,7 +1469,7 @@ func TestGetCase(t *testing.T) {
 				client := &mockEntityCaseClient{
 					getCaseFn: func(_ context.Context, _ string) ([]byte, error) { return body, nil },
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil))
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
@@ -1522,7 +1522,7 @@ func TestGetCase(t *testing.T) {
 						return []byte(tc.body), nil
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil))
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
@@ -1556,7 +1556,7 @@ func TestGetCase(t *testing.T) {
 				return []byte(upstreamBody), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1612,7 +1612,7 @@ func TestGetCase(t *testing.T) {
 				return []byte(upstreamBody), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil))
 		r.SetPathValue("id", testCaseID)
 		w := httptest.NewRecorder()
@@ -1643,7 +1643,7 @@ func TestGetCase(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil))
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
@@ -1665,7 +1665,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 	)
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/attachments", strings.NewReader(validPayload))
 		w := httptest.NewRecorder()
 		h.CreateCaseAttachment(w, r)
@@ -1674,7 +1674,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 15 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/attachments", strings.NewReader(strings.Repeat("x", maxAttachmentBodyBytes+1))))
 		w := httptest.NewRecorder()
 		h.CreateCaseAttachment(w, r)
@@ -1683,7 +1683,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/attachments", strings.NewReader(`not-json`)))
 		w := httptest.NewRecorder()
 		h.CreateCaseAttachment(w, r)
@@ -1699,7 +1699,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 				return []byte(want), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/attachments", strings.NewReader(validPayload)))
 		w := httptest.NewRecorder()
 		h.CreateCaseAttachment(w, r)
@@ -1716,7 +1716,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/attachments", strings.NewReader(validPayload)))
 				w := httptest.NewRecorder()
 				h.CreateCaseAttachment(w, r)
@@ -1735,7 +1735,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 				return []byte(`{"state":"closed"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/attachments", strings.NewReader(casePayload)))
 		w := httptest.NewRecorder()
 		h.CreateCaseAttachment(w, r)
@@ -1754,7 +1754,7 @@ func TestCreateCaseAttachment(t *testing.T) {
 				return []byte(`{"id":"att-1"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/attachments", strings.NewReader(casePayload)))
 		w := httptest.NewRecorder()
 		h.CreateCaseAttachment(w, r)
@@ -1771,7 +1771,7 @@ func TestSearchCaseAttachments(t *testing.T) {
 	)
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/attachments/search", strings.NewReader(validPayload))
 		w := httptest.NewRecorder()
 		h.SearchCaseAttachments(w, r)
@@ -1782,7 +1782,7 @@ func TestSearchCaseAttachments(t *testing.T) {
 	t.Run("returns 200 on success", func(t *testing.T) {
 		t.Parallel()
 		client := &mockEntityCaseClient{}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/attachments/search", strings.NewReader(validPayload)))
 		w := httptest.NewRecorder()
 		h.SearchCaseAttachments(w, r)
@@ -1799,7 +1799,7 @@ func TestSearchCaseAttachments(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/attachments/search", strings.NewReader(validPayload)))
 				w := httptest.NewRecorder()
 				h.SearchCaseAttachments(w, r)
@@ -1820,7 +1820,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 	)
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil)
 		r.SetPathValue("id", testAttachmentID)
 		w := httptest.NewRecorder()
@@ -1830,7 +1830,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 	})
 
 	t.Run("rejects invalid attachment UUID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/not-a-uuid/content", nil))
 		r.SetPathValue("id", "not-a-uuid")
 		w := httptest.NewRecorder()
@@ -1849,7 +1849,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 				return []byte("PNG_BYTES"), "image/png", nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil))
 		r.SetPathValue("id", testAttachmentID)
 		w := httptest.NewRecorder()
@@ -1871,7 +1871,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 				return []byte("<script>alert(1)</script>"), "text/html; charset=utf-8", nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil))
 		r.SetPathValue("id", testAttachmentID)
 		w := httptest.NewRecorder()
@@ -1889,7 +1889,7 @@ func TestGetCaseAttachmentContent(t *testing.T) {
 						return nil, "", tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodGet, "/attachments/"+testAttachmentID+"/content", nil))
 				r.SetPathValue("id", testAttachmentID)
 				w := httptest.NewRecorder()
@@ -1906,7 +1906,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 	const caseID = "11111111-1111-1111-1111-111111111111"
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/github-issues", strings.NewReader(`{"title":"crash"}`))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -1917,7 +1917,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 	})
 
 	t.Run("rejects empty case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases//github-issues", strings.NewReader(`{"title":"crash"}`)))
 		w := httptest.NewRecorder()
 		h.CreateCaseGithubIssue(w, r)
@@ -1927,7 +1927,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 	})
 
 	t.Run("rejects non-UUID case ID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/not-a-uuid/github-issues", strings.NewReader(`{"title":"crash"}`)))
 		r.SetPathValue("id", "not-a-uuid")
 		w := httptest.NewRecorder()
@@ -1938,7 +1938,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/github-issues", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -1949,7 +1949,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/github-issues", strings.NewReader(`not-json`)))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -1970,7 +1970,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 				return []byte(`{"issueUrl":"https://github.com/org/repo/issues/1","issueNumber":1,"repository":"org/repo"}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/github-issues", strings.NewReader(reqPayload)))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -1995,7 +1995,7 @@ func TestCreateCaseGithubIssue(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/github-issues", strings.NewReader(`{"title":"crash"}`)))
 				r.SetPathValue("id", caseID)
 				w := httptest.NewRecorder()
@@ -2012,7 +2012,7 @@ func TestAddCaseTag(t *testing.T) {
 	const caseID = "11111111-1111-1111-1111-111111111111"
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(`{"label":"micro-gw"}`))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -2023,7 +2023,7 @@ func TestAddCaseTag(t *testing.T) {
 	})
 
 	t.Run("rejects malformed case UUID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/not-a-uuid/tags", strings.NewReader(`{"label":"micro-gw"}`)))
 		r.SetPathValue("id", "not-a-uuid")
 		w := httptest.NewRecorder()
@@ -2034,7 +2034,7 @@ func TestAddCaseTag(t *testing.T) {
 	})
 
 	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -2045,7 +2045,7 @@ func TestAddCaseTag(t *testing.T) {
 	})
 
 	t.Run("rejects invalid JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(`not-json`)))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -2066,7 +2066,7 @@ func TestAddCaseTag(t *testing.T) {
 				return []byte(`{"id":"22222222-2222-2222-2222-222222222222","label":"micro-gw","color":null}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(reqBody)))
 		r.SetPathValue("id", caseID)
 		w := httptest.NewRecorder()
@@ -2091,7 +2091,7 @@ func TestAddCaseTag(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+caseID+"/tags", strings.NewReader(`{"label":"micro-gw"}`)))
 				r.SetPathValue("id", caseID)
 				w := httptest.NewRecorder()
@@ -2109,7 +2109,7 @@ func TestRemoveCaseTag(t *testing.T) {
 	const tagID = "22222222-2222-2222-2222-222222222222"
 
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodDelete, "/cases/"+caseID+"/tags/"+tagID, nil)
 		r.SetPathValue("id", caseID)
 		r.SetPathValue("tagId", tagID)
@@ -2121,7 +2121,7 @@ func TestRemoveCaseTag(t *testing.T) {
 	})
 
 	t.Run("rejects malformed case UUID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodDelete, "/cases/not-a-uuid/tags/"+tagID, nil))
 		r.SetPathValue("id", "not-a-uuid")
 		r.SetPathValue("tagId", tagID)
@@ -2133,7 +2133,7 @@ func TestRemoveCaseTag(t *testing.T) {
 	})
 
 	t.Run("rejects malformed tag UUID", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodDelete, "/cases/"+caseID+"/tags/not-a-uuid", nil))
 		r.SetPathValue("id", caseID)
 		r.SetPathValue("tagId", "not-a-uuid")
@@ -2153,7 +2153,7 @@ func TestRemoveCaseTag(t *testing.T) {
 				return nil, nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodDelete, "/cases/"+caseID+"/tags/"+tagID, nil))
 		r.SetPathValue("id", caseID)
 		r.SetPathValue("tagId", tagID)
@@ -2181,7 +2181,7 @@ func TestRemoveCaseTag(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodDelete, "/cases/"+caseID+"/tags/"+tagID, nil))
 				r.SetPathValue("id", caseID)
 				r.SetPathValue("tagId", tagID)
@@ -2209,7 +2209,7 @@ func TestGetCasePassesThroughTags(t *testing.T) {
 			return []byte(upstreamBody), nil
 		},
 	}
-	h := NewCaseHandler(client, nil)
+	h := NewCaseHandler(client)
 	r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil))
 	r.SetPathValue("id", testCaseID)
 	w := httptest.NewRecorder()
@@ -2242,7 +2242,7 @@ func TestSearchCasesForwardsTagsFilter(t *testing.T) {
 			return []byte(`{"cases":[],"total":0}`), nil
 		},
 	}
-	h := NewCaseHandler(client, nil)
+	h := NewCaseHandler(client)
 	const reqBody = `{"filters":{"tags":["micro-gw","ws-policy"]}}`
 	r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(reqBody)))
 	w := httptest.NewRecorder()
@@ -2270,7 +2270,7 @@ func TestPatchCaseBestCaseFixEta(t *testing.T) {
 			return []byte(upstream), nil
 		},
 	}
-	h := NewCaseHandler(client, nil)
+	h := NewCaseHandler(client)
 	r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(reqBody)))
 	r.SetPathValue("id", testCaseID)
 	w := httptest.NewRecorder()
@@ -2310,7 +2310,7 @@ func TestPatchCaseMostLikelyFixEta(t *testing.T) {
 			return []byte(upstream), nil
 		},
 	}
-	h := NewCaseHandler(client, nil)
+	h := NewCaseHandler(client)
 	r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(reqBody)))
 	r.SetPathValue("id", testCaseID)
 	w := httptest.NewRecorder()
@@ -2350,7 +2350,7 @@ func TestPatchCaseWorstCaseFixEta(t *testing.T) {
 			return []byte(upstream), nil
 		},
 	}
-	h := NewCaseHandler(client, nil)
+	h := NewCaseHandler(client)
 	r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(reqBody)))
 	r.SetPathValue("id", testCaseID)
 	w := httptest.NewRecorder()
@@ -2393,7 +2393,7 @@ func TestGetCasePassesThroughNewFixEtaFields(t *testing.T) {
 			return []byte(upstreamBody), nil
 		},
 	}
-	h := NewCaseHandler(client, nil)
+	h := NewCaseHandler(client)
 	r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID, nil))
 	r.SetPathValue("id", testCaseID)
 	w := httptest.NewRecorder()
@@ -2428,7 +2428,7 @@ func TestSearchCasesPassesThroughNewFixEtaFields(t *testing.T) {
 			return []byte(upstream), nil
 		},
 	}
-	h := NewCaseHandler(client, nil)
+	h := NewCaseHandler(client)
 	r := withUser(httptest.NewRequest(http.MethodPost, "/cases/search", strings.NewReader(`{}`)))
 	w := httptest.NewRecorder()
 	h.SearchCases(w, r)
@@ -2459,7 +2459,7 @@ func TestSearchCasesPassesThroughNewFixEtaFields(t *testing.T) {
 
 func TestSearchTags(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{"filters":{"searchQuery":"micro"}}`))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
@@ -2469,7 +2469,7 @@ func TestSearchTags(t *testing.T) {
 	})
 
 	t.Run("rejects a malformed JSON body", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{"filters":`)))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
@@ -2491,7 +2491,7 @@ func TestSearchTags(t *testing.T) {
 				return []byte(`{"tags":[{"id":"22222222-2222-2222-2222-222222222222","label":"micro-gw","color":null}]}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(reqBody)))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
@@ -2527,7 +2527,7 @@ func TestSearchTags(t *testing.T) {
 				return []byte(`{"tags":[]}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{}`)))
 		w := httptest.NewRecorder()
 		h.SearchTags(w, r)
@@ -2550,7 +2550,7 @@ func TestSearchTags(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(`{"filters":{"searchQuery":"micro"}}`)))
 				w := httptest.NewRecorder()
 				h.SearchTags(w, r)
@@ -2567,7 +2567,7 @@ func TestSearchTags(t *testing.T) {
 // rather than in lockstep; delete these tests with the handler.
 func TestSearchTagsQuery(t *testing.T) {
 	t.Run("requires authenticated user", func(t *testing.T) {
-		h := NewCaseHandler(&mockEntityCaseClient{}, nil)
+		h := NewCaseHandler(&mockEntityCaseClient{})
 		r := httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=5", nil)
 		w := httptest.NewRecorder()
 		h.SearchTagsQuery(w, r)
@@ -2592,7 +2592,7 @@ func TestSearchTagsQuery(t *testing.T) {
 		}
 		pr := withUser(httptest.NewRequest(http.MethodPost, "/tags/search", strings.NewReader(postBody)))
 		pw := httptest.NewRecorder()
-		NewCaseHandler(postClient, nil).SearchTags(pw, pr)
+		NewCaseHandler(postClient).SearchTags(pw, pr)
 		assertStatus(t, pw, http.StatusOK)
 
 		var getCaptured []byte
@@ -2604,7 +2604,7 @@ func TestSearchTagsQuery(t *testing.T) {
 		}
 		gr := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=5", nil))
 		gw := httptest.NewRecorder()
-		NewCaseHandler(getClient, nil).SearchTagsQuery(gw, gr)
+		NewCaseHandler(getClient).SearchTagsQuery(gw, gr)
 		assertStatus(t, gw, http.StatusOK)
 		assertContentType(t, gw, "application/json")
 
@@ -2627,7 +2627,7 @@ func TestSearchTagsQuery(t *testing.T) {
 				return []byte(`{"tags":[]}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search", nil))
 		w := httptest.NewRecorder()
 		h.SearchTagsQuery(w, r)
@@ -2647,7 +2647,7 @@ func TestSearchTagsQuery(t *testing.T) {
 				return []byte(`{"tags":[]}`), nil
 			},
 		}
-		h := NewCaseHandler(client, nil)
+		h := NewCaseHandler(client)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro&limit=abc", nil))
 		w := httptest.NewRecorder()
 		h.SearchTagsQuery(w, r)
@@ -2669,7 +2669,7 @@ func TestSearchTagsQuery(t *testing.T) {
 						return nil, tc.err
 					},
 				}
-				h := NewCaseHandler(client, nil)
+				h := NewCaseHandler(client)
 				r := withUser(httptest.NewRequest(http.MethodGet, "/tags/search?q=micro", nil))
 				w := httptest.NewRecorder()
 				h.SearchTagsQuery(w, r)

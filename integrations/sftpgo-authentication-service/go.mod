@@ -13,23 +13,22 @@
 // KIND, either express or implied.  See the License for the
 // specific language governing permissions and limitations
 // under the License.
+module github.com/wso2-open-operations/cs-tools/integrations/sftpgo-authentication-service
 
-package eventbus
+go 1.25.6
 
-import (
-	"fmt"
-	"log/slog"
+require (
+	github.com/MicahParks/keyfunc/v3 v3.8.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/jackc/pgx/v5 v5.9.2
 )
 
-// logDebug and logError bridge kafka.Writer's Logger/ErrorLogger (a bare
-// Printf-style func) to slog — see csm-notification-service's
-// internal/eventbus/logger.go for why this split (Logger to Debug,
-// ErrorLogger to Error) matches kafka-go's own intended severity levels;
-// confirmed against the real Event Hub namespace there.
-func logDebug(msg string, args ...any) {
-	slog.Debug(fmt.Sprintf(msg, args...))
-}
-
-func logError(msg string, args ...any) {
-	slog.Error(fmt.Sprintf(msg, args...))
-}
+require (
+	github.com/MicahParks/jwkset v0.11.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	golang.org/x/sync v0.17.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
+	golang.org/x/time v0.9.0 // indirect
+)

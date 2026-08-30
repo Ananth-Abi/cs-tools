@@ -29,6 +29,12 @@ declare global {
        * Optional — see apiConfig.ts's STREAM_BASE_URL.
        */
       CSM_PORTAL_STREAM_BASE_URL?: string;
+      /**
+       * Master on/off switch for the case-activity SSE stream, independent
+       * of the URL above. Defaults to false when absent — see
+       * apiConfig.ts's STREAM_ENABLED.
+       */
+      CSM_PORTAL_STREAM_ENABLED?: boolean;
       CSM_PORTAL_THEME: string;
       CSM_PORTAL_LOG_LEVEL: string;
       /**

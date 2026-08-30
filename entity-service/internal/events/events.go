@@ -30,11 +30,13 @@ import "encoding/json"
 type Type string
 
 const (
-	TypeCaseCreated     Type = "case.created"
-	TypeCommentAdded    Type = "case.comment_added"
-	TypeStatusChanged   Type = "case.status_changed"
-	TypeCaseAssigned    Type = "case.assigned"
-	TypeIncidentCreated Type = "incident.created"
+	TypeCaseCreated      Type = "case.created"
+	TypeCommentAdded     Type = "case.comment_added"
+	TypeStatusChanged    Type = "case.status_changed"
+	TypeCaseAssigned     Type = "case.assigned"
+	TypeCaseAcknowledged Type = "case.acknowledged"
+	TypeSeverityChanged  Type = "case.severity_changed"
+	TypeIncidentCreated  Type = "incident.created"
 )
 
 // Envelope is the wire shape of every record on the case-events topic.
@@ -120,14 +122,63 @@ type CaseAssignedPayload struct {
 	Recipients []string `json:"recipients"`
 }
 
+// CaseAcknowledgedPayload is the Payload shape for TypeCaseAcknowledged —
+// mirrors csm-notification-service's own CaseAcknowledgedPayload. Unlike
+// every other case.* payload above, this one has no Recipients/email
+// audience at all: acknowledging a case only triggers a Google Chat alert
+// (see snCaseService.publishCaseAcknowledged's own doc comment for why
+// there's no email reaction). Severity is the raw uppercase severity
+// string (e.g. "CRITICAL"), the same value CaseCreatedPayload.Priority
+// carries — csm-notification-service maps it to a display label/color for
+// the Chat card.
+type CaseAcknowledgedPayload struct {
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CommentAddedPayload's own doc comment.
+	WSO2CaseID string `json:"wso2CaseId,omitempty"`
+	Severity   string `json:"severity,omitempty"`
+	// Product — see CaseCreatedPayload's own doc comment. The acknowledged
+	// case's own product, so this alert routes to the same Google Chat
+	// space as its case.created alert did.
+	Product string `json:"product,omitempty"`
+	// Team — see CaseCreatedPayload's own doc comment.
+	Team             string `json:"team,omitempty"`
+	AcknowledgerName string `json:"acknowledgerName"`
+}
+
+// SeverityChangedPayload is the Payload shape for TypeSeverityChanged —
+// mirrors csm-notification-service's own SeverityChangedPayload, same
+// reasoning as CommentAddedPayload above. Unlike CaseAcknowledgedPayload,
+// this one does carry Recipients: a severity change has both an email
+// reaction (same audience as case.status_changed/case.assigned — the
+// case's watch list) and a Google Chat alert, so it needs both an audience
+// and a routing Product, same as CaseCreatedPayload's own doc comment for
+// why Product is here.
+type SeverityChangedPayload struct {
+	ProjectID  string `json:"projectId"`
+	CaseID     string `json:"caseId"`
+	CaseNumber string `json:"caseNumber,omitempty"`
+	// WSO2CaseID — see CommentAddedPayload's own doc comment.
+	WSO2CaseID string `json:"wso2CaseId,omitempty"`
+	CaseTitle  string `json:"caseTitle,omitempty"`
+	// OldSeverity/NewSeverity are raw uppercase severity strings (e.g.
+	// "CRITICAL"), the same convention as CaseAcknowledgedPayload.Severity.
+	OldSeverity string `json:"oldSeverity"`
+	NewSeverity string `json:"newSeverity"`
+	// Product — see CaseCreatedPayload's own doc comment.
+	Product string `json:"product,omitempty"`
+	// Team — see CaseCreatedPayload's own doc comment.
+	Team       string   `json:"team,omitempty"`
+	Recipients []string `json:"recipients"`
+}
+
 // CaseCreatedPayload is the Payload shape for TypeCaseCreated — mirrors
 // csm-notification-service's own CaseCreatedPayload (its internal/events/
 // validate.go is the schema authority; keep this in sync by hand the same
-// way Envelope above is kept in sync). That payload also has optional
-// Product/IncidentImpactDescription fields; they're omitted here rather than
-// always encoded empty, since this service has no data source for either
-// yet — omitting an optional field and encoding it empty are equivalent on
-// the wire (see the notification service's decodeStrict).
+// way Envelope above is kept in sync). IncidentImpactDescription is omitted
+// here rather than always encoded empty, since this service has no data
+// source for it yet — omitting an optional field and encoding it empty are
+// equivalent on the wire (see the notification service's decodeStrict).
 type CaseCreatedPayload struct {
 	ReporterName string `json:"reporterName"`
 	ProjectName  string `json:"projectName"`
@@ -135,10 +186,28 @@ type CaseCreatedPayload struct {
 	CaseID       string `json:"caseId"`
 	CaseNumber   string `json:"caseNumber,omitempty"`
 	// WSO2CaseID — see CommentAddedPayload's own doc comment.
-	WSO2CaseID  string   `json:"wso2CaseId,omitempty"`
-	CaseTitle   string   `json:"caseTitle"`
-	CaseType    string   `json:"caseType"`
-	Priority    string   `json:"priority"`
+	WSO2CaseID string `json:"wso2CaseId,omitempty"`
+	CaseTitle  string `json:"caseTitle"`
+	CaseType   string `json:"caseType"`
+	Priority   string `json:"priority"`
+	// Product is the case's deployed product's display name (e.g. "WSO2 API
+	// Manager") — cv.DeployedProductDetails.Product.Name, "" when the case
+	// has no deployed product. Doubles as csm-notification-service's Google
+	// Chat space routing key for this event (see that service's own
+	// handleCaseCreated/dispatch.NewDispatcher doc comments) — an operator's
+	// GOOGLE_CHAT_SPACES config needs a Product entry matching each deployed
+	// product's display name for per-product routing to work; otherwise
+	// dispatch.Dispatcher falls back to DEFAULT_CHAT_PRODUCT, same as before
+	// this field was populated.
+	Product string `json:"product,omitempty"`
+	// Team is the case's account's CRE team display name (e.g. "Team Nova")
+	// — cv.AccountDetails.CreTeam.Name, "" when the case has no account or
+	// the account has no CRE team assigned. A purely-display value in
+	// csm-notification-service's Chat cards, same as Product; unlike
+	// Product, it plays no role in routing. Depends on ServiceNow's
+	// case-embedded account object actually carrying creTeam/sreTeam — see
+	// caseTeamName's own doc comment for the current caveat around that.
+	Team        string   `json:"team,omitempty"`
 	CreatedAt   string   `json:"createdAt"`
 	Description string   `json:"description"`
 	Recipients  []string `json:"recipients"`

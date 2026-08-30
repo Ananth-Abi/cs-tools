@@ -81,6 +81,8 @@ func TestSNCaseService_CreateCase_PublishesCaseCreated(t *testing.T) {
 	const caseSysid = "1111111111111111111111111111aaaa"
 	const projectSysid = "2222222222222222222222222222bbbb"
 	const watcherSysid = "3333333333333333333333333333cccc"
+	const productSysid = "6666666666666666666666666666ffff"
+	const teamSysid = "7777777777777777777777777777aaaa"
 
 	getCaseBody := `{
 		"id": "` + caseSysid + `",
@@ -94,8 +96,10 @@ func TestSNCaseService_CreateCase_PublishesCaseCreated(t *testing.T) {
 		"project": {"id": "` + projectSysid + `", "name": "Project Zeta"},
 		"deployment": {"id": "", "name": ""},
 		"deployedProduct": {"id": "", "name": "", "version": ""},
+		"product": {"id": "` + productSysid + `", "name": "WSO2 API Manager"},
 		"severity": {"id": 3, "label": "3 - High"},
 		"state": {"id": 1, "label": "Open"},
+		"account": {"id": "` + projectSysid + `", "name": "Account Zeta", "type": "customer", "creTeam": {"id": "` + teamSysid + `", "name": "Team Nova"}},
 		"watchList": [
 			{"id": "` + watcherSysid + `", "userName": "jroe", "name": "John Roe", "email": "john.roe@example.com"}
 		]
@@ -153,6 +157,12 @@ func TestSNCaseService_CreateCase_PublishesCaseCreated(t *testing.T) {
 	}
 	if payload.Priority != "HIGH" {
 		t.Errorf("priority = %q, want %q", payload.Priority, "HIGH")
+	}
+	if payload.Product != "WSO2 API Manager" {
+		t.Errorf("product = %q, want %q", payload.Product, "WSO2 API Manager")
+	}
+	if payload.Team != "Team Nova" {
+		t.Errorf("team = %q, want %q", payload.Team, "Team Nova")
 	}
 	if payload.Description != "Login fails with a 500" {
 		t.Errorf("description = %q, want %q", payload.Description, "Login fails with a 500")

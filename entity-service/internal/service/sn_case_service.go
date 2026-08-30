@@ -59,6 +59,19 @@ const publishStatusChangedTimeout = 5 * time.Second
 // of its state path.
 const publishCaseAssignedTimeout = 5 * time.Second
 
+// publishCaseAcknowledgedTimeout bounds publishCaseAcknowledged's own
+// GetCaseByID enrichment + publish call — see publishCaseCreatedTimeout's
+// doc comment for why.
+const publishCaseAcknowledgedTimeout = 5 * time.Second
+
+// publishSeverityChangedTimeout bounds publishSeverityChanged's own publish
+// call — see publishStatusChangedTimeout's doc comment for why. Unlike
+// publishCaseAcknowledgedTimeout, this doesn't need to also bound a
+// GetCaseByID call: UpdateCase's own pre-PATCH enrichment (mirroring its
+// status-change block) already supplies the "before" CaseView this publish
+// needs.
+const publishSeverityChangedTimeout = 5 * time.Second
+
 // watchListEmails extracts the non-empty emails from a case's watch list —
 // Recipients for every case.* event this file publishes is the case's
 // WatchList emails only (an explicit, deliberate decision — this service
@@ -72,6 +85,40 @@ func watchListEmails(watchList []domain.WatchListUser) []string {
 		}
 	}
 	return recipients
+}
+
+// caseProductName returns cv's deployed product's display name (e.g. "WSO2
+// API Manager"), "" when the case has no deployed product. Shared by every
+// publisher that needs it for a case.* payload's Product field (Google
+// Chat space routing key and, for case.created, also a display line — see
+// events.CaseCreatedPayload.Product's own doc comment).
+func caseProductName(cv domain.CaseView) string {
+	if cv.DeployedProductDetails != nil && cv.DeployedProductDetails.Product != nil {
+		return cv.DeployedProductDetails.Product.Name
+	}
+	return ""
+}
+
+// caseTeamName returns cv's account's CRE team display name (e.g. "Team
+// Nova"), "" when the case has no account or the account has no CRE team.
+// Shared by every publisher that needs it for a case.* payload's Team
+// field — see events.CaseCreatedPayload.Team's own doc comment.
+//
+// Reads cv.AccountDetails.CreTeam, which GetCaseByID already resolves from
+// the case's own embedded account object (see snCaseAccount's doc comment)
+// — no extra lookup needed, unlike a fresh GET /accounts/{id} call. As of
+// this field's introduction, that embedded object's creTeam/sreTeam are
+// documented ("not yet available in the backing service") as not
+// guaranteed to be populated by the ServiceNow integration yet, even
+// though the standalone accounts endpoint does return them — this helper
+// simply passes through whatever GetCaseByID resolved, so Team may come
+// back empty in practice until that catches up. If it does, the fix is on
+// the backing service, not here.
+func caseTeamName(cv domain.CaseView) string {
+	if cv.AccountDetails != nil && cv.AccountDetails.CreTeam != nil {
+		return cv.AccountDetails.CreTeam.Name
+	}
+	return ""
 }
 
 // wso2EmailDomain is WSO2's own corporate domain — mirrors
@@ -959,6 +1006,7 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 	if cv.CreatedBy != nil {
 		reporterName = cv.CreatedBy.Name
 	}
+	product := caseProductName(cv)
 
 	payload, err := json.Marshal(events.CaseCreatedPayload{
 		ReporterName: reporterName,
@@ -970,6 +1018,8 @@ func (s *snCaseService) publishCaseCreated(ctx context.Context, req domain.Creat
 		CaseTitle:    cv.Subject,
 		CaseType:     strings.ToUpper(req.Type),
 		Priority:     strings.ToUpper(string(cv.Severity)),
+		Product:      product,
+		Team:         caseTeamName(cv),
 		CreatedAt:    cv.CreatedOn.Format(time.RFC3339),
 		Description:  cv.Description,
 		Recipients:   recipients,
@@ -1151,6 +1201,68 @@ func (s *snCaseService) publishStatusChanged(ctx context.Context, caseID, newSta
 	}
 }
 
+// publishSeverityChanged best-effort publishes a case.severity_changed
+// event after UpdateCase changes a case's severity — called only when the
+// PATCH's own req.Severity was set AND actually differs from the case's
+// prior severity (the same no-op guard as publishStatusChanged's own call
+// site: a caller re-PATCHing the case's current severity must not send
+// every watcher a false "severity changed" notification). Unlike
+// publishCaseAcknowledged, this has both an email reaction (Recipients,
+// same watch-list-emails audience as publishStatusChanged/
+// publishCaseAssigned) and a Google Chat alert (Product, same
+// caseProductName(before) reasoning as publishCaseCreated/
+// publishCaseAcknowledged) — csm-notification-service's dispatch package
+// decides how to route each.
+//
+// before is the case as it was fetched by UpdateCase *before* issuing the
+// PATCH — same reuse-the-enrichment reasoning as publishStatusChanged's own
+// doc comment.
+//
+// Recipients is the case's WatchList emails only — see publishCaseCreated's
+// own doc comment for why, and why an empty list silently skips publishing
+// (both the email AND the Chat alert — csm-notification-service has no
+// separate "chat only, no recipients" event type for this the way
+// case.acknowledged is; a severity change with no watchers has nobody to
+// notify by design).
+//
+// Runs synchronously, bounded by publishSeverityChangedTimeout — see
+// publishCaseCreated's own doc comment for why (same reasoning).
+func (s *snCaseService) publishSeverityChanged(ctx context.Context, caseID, oldSeverity, newSeverity string, before domain.CaseView) {
+	if s.publisher == nil || newSeverity == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishSeverityChangedTimeout)
+	defer cancel()
+
+	recipients := watchListEmails(before.WatchList)
+	if len(recipients) == 0 {
+		slog.InfoContext(ctx, "sn update case: case.severity_changed not published, case has no watchers to email", "caseId", caseID)
+		return
+	}
+
+	payload, err := json.Marshal(events.SeverityChangedPayload{
+		ProjectID:   before.ProjectDetails.ID,
+		CaseID:      caseID,
+		CaseNumber:  before.Number,
+		WSO2CaseID:  before.InternalID,
+		CaseTitle:   before.Subject,
+		OldSeverity: strings.ToUpper(oldSeverity),
+		NewSeverity: strings.ToUpper(newSeverity),
+		Product:     caseProductName(before),
+		Team:        caseTeamName(before),
+		Recipients:  recipients,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: encode case.severity_changed payload failed", "caseId", caseID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeSeverityChanged, caseID, payload); err != nil {
+		// Not logging err itself — see publishCaseCreated's matching log
+		// line for why.
+		slog.ErrorContext(ctx, "sn update case: publish case.severity_changed failed", "caseId", caseID)
+	}
+}
+
 // publishCaseAssigned best-effort publishes a case.assigned event after
 // UpdateCase changes a case's assignee. assigneeName/assigneeEmail
 // identify who the case is now assigned *to* — not who performed the
@@ -1204,6 +1316,57 @@ func (s *snCaseService) publishCaseAssigned(ctx context.Context, caseID, assigne
 		// Not logging err itself — see publishCaseCreated's matching log
 		// line for why.
 		slog.ErrorContext(ctx, "sn update case: publish case.assigned failed", "caseId", caseID)
+	}
+}
+
+// publishCaseAcknowledged best-effort publishes a case.acknowledged event
+// after UpdateCase's Acknowledge path successfully claims the case for the
+// first time — never for a repeat Acknowledge:true call that succeeded
+// without changing anything (AlreadyAcknowledged true; see the call site's
+// own comment). Chat-only: there is no email reaction for an
+// acknowledgment, unlike every other publisher in this file, so there's no
+// Recipients/watch-list concept here at all.
+//
+// Re-fetches the case via GetCaseByID rather than trusting the PATCH
+// response for CaseNumber/WSO2CaseID/Severity — snUpdateCaseResponse's
+// acknowledge path only ever echoes Number/AlreadyAcknowledged/
+// AcknowledgedBy, none of which cover what csm-notification-service's Chat
+// alert needs to display (mirrors publishCaseCreated's own "re-fetch
+// rather than trust a narrow create/update response" precedent).
+//
+// Runs synchronously, bounded by publishCaseAcknowledgedTimeout — see
+// publishCaseCreated's own doc comment for why (same reasoning).
+func (s *snCaseService) publishCaseAcknowledged(ctx context.Context, caseID, acknowledgerName string) {
+	if s.publisher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishCaseAcknowledgedTimeout)
+	defer cancel()
+
+	cv, err := s.GetCaseByID(ctx, caseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: enrich case for case.acknowledged publish failed", "caseId", caseID)
+		return
+	}
+	product := caseProductName(cv)
+
+	payload, err := json.Marshal(events.CaseAcknowledgedPayload{
+		CaseID:           caseID,
+		CaseNumber:       cv.Number,
+		WSO2CaseID:       cv.InternalID,
+		Severity:         strings.ToUpper(string(cv.Severity)),
+		Product:          product,
+		Team:             caseTeamName(cv),
+		AcknowledgerName: acknowledgerName,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn update case: encode case.acknowledged payload failed", "caseId", caseID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeCaseAcknowledged, caseID, payload); err != nil {
+		// Not logging err itself — see publishCaseCreated's matching log
+		// line for why.
+		slog.ErrorContext(ctx, "sn update case: publish case.acknowledged failed", "caseId", caseID)
 	}
 }
 
@@ -2106,6 +2269,29 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 		}
 	}
 
+	// Same reasoning as the state-change block above, applied to severity
+	// instead: a caller re-PATCHing the case's current severity (a no-op as
+	// far as ServiceNow is concerned) must not send every watcher a false
+	// "severity changed" notification. req.State and req.Severity are
+	// mutually exclusive per request (see exclusiveCount above), so this and
+	// the block above never both fire for the same call.
+	var caseBeforeSeverity domain.CaseView
+	publishSeverityChange := false
+	if req.Severity != nil && s.publisher != nil {
+		enrichCtx, cancel := context.WithTimeout(ctx, publishSeverityChangedTimeout)
+		cv, err := s.GetCaseByID(enrichCtx, req.ID)
+		cancel()
+		switch {
+		case err != nil:
+			slog.ErrorContext(ctx, "sn update case: enrich case for case.severity_changed publish failed", "caseId", req.ID)
+		case cv.Severity == *req.Severity:
+			slog.InfoContext(ctx, "sn update case: case.severity_changed not published, severity is unchanged", "caseId", req.ID)
+		default:
+			caseBeforeSeverity = cv
+			publishSeverityChange = true
+		}
+	}
+
 	// Same reasoning as the state-change block above, applied to
 	// assigneeEmail instead: a caller re-PATCHing the case's current
 	// assignee (a no-op as far as ServiceNow is concerned) must not send
@@ -2243,6 +2429,24 @@ func (s *snCaseService) UpdateCase(ctx context.Context, req domain.UpdateCaseReq
 			assigneeName = snResp.Case.AssignedTo.Name
 		}
 		s.publishCaseAssigned(ctx, req.ID, assigneeName, *req.AssigneeEmail, caseBeforeAssign)
+	}
+	// AlreadyAcknowledged distinguishes a genuine first-time claim from a
+	// repeat Acknowledge:true call that succeeded without changing anything
+	// (see UpdateCaseRequest.Acknowledge's own doc comment) — only the
+	// former is a real event worth a Chat alert.
+	if req.Acknowledge != nil && *req.Acknowledge && (resp.Case.AlreadyAcknowledged == nil || !*resp.Case.AlreadyAcknowledged) && resp.Case.AcknowledgedBy != nil {
+		s.publishCaseAcknowledged(ctx, req.ID, resp.Case.AcknowledgedBy.Name)
+	}
+	// resp.Case.Severity != caseBeforeSeverity.Severity is a second guard on
+	// top of publishSeverityChange itself: that flag only confirms the
+	// PATCH *request* asked for a different severity than the pre-PATCH
+	// GetCaseByID observed — it says nothing about what the PATCH response
+	// actually echoes back. If ServiceNow's response reports the
+	// pre-update severity (e.g. a stale echo), publishing anyway would
+	// send a false case.severity_changed event with identical old/new
+	// values.
+	if publishSeverityChange && resp.Case.Severity != "" && resp.Case.Severity != caseBeforeSeverity.Severity {
+		s.publishSeverityChanged(ctx, req.ID, string(caseBeforeSeverity.Severity), string(resp.Case.Severity), caseBeforeSeverity)
 	}
 
 	return resp, nil

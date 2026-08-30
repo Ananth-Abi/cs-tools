@@ -125,6 +125,32 @@ func Validate(entityID string, t Type, raw json.RawMessage) error {
 		if p.CaseID != entityID {
 			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
 		}
+	case TypeCaseAcknowledged:
+		var p CaseAcknowledgedPayload
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		// No Recipients check here — unlike every other case.* type, this
+		// one is Chat-only (see CaseAcknowledgedPayload's own doc comment),
+		// so there's no recipient list to validate.
+		if p.CaseID == "" || p.AcknowledgerName == "" {
+			return fmt.Errorf("events: missing required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
+		}
+	case TypeSeverityChanged:
+		var p SeverityChangedPayload
+		if err := decodeStrict(raw, &p); err != nil {
+			return err
+		}
+		if p.ProjectID == "" || p.CaseID == "" || p.OldSeverity == "" || p.NewSeverity == "" ||
+			p.OldSeverity == p.NewSeverity || !validRecipients(p.Recipients) {
+			return fmt.Errorf("events: missing or invalid required field for %s", t)
+		}
+		if p.CaseID != entityID {
+			return fmt.Errorf("events: payload caseId %q does not match entityId %q", p.CaseID, entityID)
+		}
 	case TypeIncidentCreated:
 		var p IncidentCreatedPayload
 		if err := decodeStrict(raw, &p); err != nil {

@@ -33,9 +33,9 @@ import (
 // NewRouter builds the dependency graph (repository → service → handler),
 // registers all routes, and wraps the mux with the middleware chain:
 // CorrelationID → Recovery → Logger → UserIDToken → Timeout. Also returns
-// the constructed EventPublisherService (nil if EVENT_HUB_BROKER is unset)
-// so the caller (server.New, then cmd/api/main.go) can close it gracefully
-// on shutdown.
+// the constructed EventPublisherService (nil if EVENT_HUB_BROKER is unset or
+// EVENT_PUBLISHING_ENABLED isn't "true") so the caller (server.New, then
+// cmd/api/main.go) can close it gracefully on shutdown.
 func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.EventPublisherService) {
 	userRepo := repository.NewUserRepository(db)
 	userSvc := service.NewUserService(userRepo)
@@ -51,10 +51,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 	// EventPublisherService is optional, like every ServiceNow-only
 	// dependency below — gated on EventHubBroker rather than cfg.DataSource,
 	// since publishing is a distinct concern from which backend serves reads
-	// (see config.Config.EventHubBroker's doc comment). nil when unset; every
-	// caller (snCaseService, snIncidentService) already handles that.
+	// (see config.Config.EventHubBroker's doc comment). Also gated on
+	// EventPublishingEnabled, a separate safe-by-default kill switch: Event
+	// Hub can be fully configured and this still stays nil until that's
+	// explicitly turned on. nil when unset; every caller (snCaseService,
+	// snIncidentService) already handles that.
 	var eventPublisher service.EventPublisherService
-	if cfg.EventHubBroker != "" {
+	if cfg.EventHubBroker != "" && cfg.EventPublishingEnabled {
 		eventPublisher = service.NewEventPublisherService(
 			eventbus.NewProducer(eventbus.Config{
 				Broker:           cfg.EventHubBroker,
@@ -69,6 +72,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 	// event_publish_failures above.
 	slaClockRepo := repository.NewSLAClockRepository(db)
 	slaClockHandler := handler.NewSLAClockHandler(service.NewSLAClockService(slaClockRepo))
+
+	// scheduled_task_run has no ServiceNow equivalent either — same
+	// reasoning as sla_clocks/event_publish_failures above. Backs
+	// operations/csm-scheduled-tasks; see that component's own CLAUDE.md
+	// and this service's CLAUDE.md ("Scheduled task runs").
+	scheduledTaskRunRepo := repository.NewScheduledTaskRunRepository(db)
+	scheduledTaskRunHandler := handler.NewScheduledTaskRunHandler(service.NewScheduledTaskRunService(scheduledTaskRunRepo))
 
 	accountRepo := repository.NewAccountRepository(db)
 	accountHandler := handler.NewAccountHandler(service.NewAccountService(accountRepo))
@@ -290,6 +300,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, service.Even
 	mux.HandleFunc("POST /cases/{caseId}/sla-clocks", slaClockHandler.RegisterSLAClock)
 	mux.HandleFunc("GET /cases/{caseId}/sla-clocks/{clockType}", slaClockHandler.GetSLAClock)
 	mux.HandleFunc("PATCH /cases/{caseId}/sla-clocks/{clockType}/tiers/{tier}", slaClockHandler.SetSLAClockTierReached)
+	mux.HandleFunc("POST /scheduled-tasks/attempts", scheduledTaskRunHandler.AttemptScheduledTaskRun)
+	mux.HandleFunc("PATCH /scheduled-tasks/attempts/{id}", scheduledTaskRunHandler.UpdateScheduledTaskRunAttempt)
+	mux.HandleFunc("GET /scheduled-tasks/attempts", scheduledTaskRunHandler.ListScheduledTaskRuns)
+	mux.HandleFunc("DELETE /scheduled-tasks/attempts", scheduledTaskRunHandler.DeleteScheduledTaskRuns)
 
 	if snUserHandler != nil {
 		mux.HandleFunc("GET /users/{id}", snUserHandler.GetUser)

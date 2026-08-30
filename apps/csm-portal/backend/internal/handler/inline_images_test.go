@@ -351,7 +351,7 @@ func TestCreateCaseCommentInlineImagesDisabledByDefault(t *testing.T) {
 			return []byte(`{}`), nil
 		},
 	}
-	h := NewCaseHandler(entity, nil) // no WithInlineImageProcessor call
+	h := NewCaseHandler(entity) // no WithInlineImageProcessor call
 
 	b64 := tinyPNGBase64(16)
 	content := dataURIImg("png", b64)
@@ -391,7 +391,7 @@ func TestCreateCaseCommentExtractsInlineImageWhenEnabled(t *testing.T) {
 		},
 	}
 	sftpgoMock := &mockSftpgoClient{}
-	h := NewCaseHandler(entity, nil).WithInlineImageProcessor(NewInlineImageProcessor(entity, sftpgoMock))
+	h := NewCaseHandler(entity).WithInlineImageProcessor(NewInlineImageProcessor(entity, sftpgoMock))
 
 	content := dataURIImg("png", tinyPNGBase64(16))
 	reqBody := `{"type":"comment","content":` + jsonString(content) + `}`
@@ -435,7 +435,7 @@ func TestCreateCaseCommentInlineImageFailureRejectsComment(t *testing.T) {
 		},
 	}
 	sftpgoMock := &mockSftpgoClient{}
-	h := NewCaseHandler(entity, nil).WithInlineImageProcessor(NewInlineImageProcessor(entity, sftpgoMock))
+	h := NewCaseHandler(entity).WithInlineImageProcessor(NewInlineImageProcessor(entity, sftpgoMock))
 
 	// An unsupported subtype forces InlineImageProcessor to reject.
 	content := dataURIImg("bmp", tinyPNGBase64(16))

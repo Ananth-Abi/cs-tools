@@ -39,6 +39,7 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `EVENT_HUB_BROKER` | no | — | Kafka-compatible bootstrap address; feature-gates `EventPublisherService` (see "Event Hub publishing" below) |
 | `EVENT_HUB_CONNECTION_STRING` | no* | — | Event Hub namespace Shared Access Policy connection string. *Required once `EVENT_HUB_BROKER` is set |
 | `EVENT_HUB_TOPIC` | no* | — | Event Hub (Kafka topic) name. *Required once `EVENT_HUB_BROKER` is set |
+| `EVENT_PUBLISHING_ENABLED` | no | `false` | Must be `"true"` for `EventPublisherService` to actually get constructed, even with `EVENT_HUB_BROKER` fully configured — a separate safe-by-default kill switch |
 
 `CSM_TEAM_REGISTRY` and `CSM_USER_ROLES` are **not read here**. The team registry
 and the assignable-role allow-list are organisation vocabulary and live in the CSM
@@ -68,22 +69,30 @@ records the failure via `EventPublishFailureService.CreateEventPublishFailure`
 **Wired in**: `NewEventPublisherService` is constructed in
 `internal/server/routes.go` (not `cmd/api/main.go` — `NewRouter` owns the
 whole dependency graph; see "Adding a new entity" below), gated on
-`cfg.EventHubBroker != ""` — the same optional-wiring convention
-`apps/csm-portal/backend/cmd/server/main.go` uses, but keyed on Event Hub
-config specifically, not `cfg.DataSource`: publishing is a distinct concern
-from which backend serves reads. `Config.Validate` rejects a partial
-Event Hub configuration (e.g. `EVENT_HUB_BROKER` set but
+`cfg.EventHubBroker != "" && cfg.EventPublishingEnabled` — the same
+optional-wiring convention `apps/csm-portal/backend/cmd/server/main.go`
+used to use for its own now-removed Event Hub pipeline, but keyed on Event
+Hub config specifically, not `cfg.DataSource`: publishing is a distinct
+concern from which backend serves reads. `EventPublishingEnabled` is a
+second, independent kill switch on top of `EventHubBroker` — it defaults to
+`false` (`EVENT_PUBLISHING_ENABLED` must be exactly `"true"`), so an
+environment can have Event Hub fully configured and still publish nothing
+until this is explicitly turned on; every publisher call site already
+handles `eventPublisher == nil` as a no-op, so this required no changes
+anywhere except `config.go`/`routes.go` themselves. `Config.Validate`
+rejects a partial Event Hub configuration (e.g. `EVENT_HUB_BROKER` set but
 `EVENT_HUB_CONNECTION_STRING`/`EVENT_HUB_TOPIC` empty) at startup — all
 three must be set together or not at all, since `NewRouter`'s gate only
 checks `EventHubBroker`, and constructing `EventPublisherService` with a
 missing connection string or topic would make every publish attempt fail
-silently while the deployment otherwise looks healthy. `NewRouter` returns
-the constructed `EventPublisherService` (nil if unconfigured) alongside the
-`http.Handler`,
+silently while the deployment otherwise looks healthy;
+`EventPublishingEnabled` isn't part of that all-or-nothing group — it's
+just a bool, either `"true"` or not. `NewRouter` returns the constructed
+`EventPublisherService` (nil if unconfigured) alongside the `http.Handler`,
 threaded through `server.New` to `cmd/api/main.go`, which calls `Close()` on
 it during shutdown, after `srv.Shutdown`.
 
-Five call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
+Seven call sites publish today, all ServiceNow-data-source-only (`DATA_SOURCE=servicenow`;
 there is no Postgres-backed equivalent for any of them):
 
 - **`snCaseService.CreateCase`** publishes `case.created` via a private
@@ -208,11 +217,99 @@ service's own `CLAUDE.md`, `dispatch.subjectLine`).
   "case assigned" email — compares `cv.AssignedEngineer.Email` against
   `*req.AssigneeEmail` before the PATCH, same as `cv.State` there.
 
+- **`snCaseService.UpdateCase`** also publishes `case.acknowledged` via
+  `publishCaseAcknowledged`, called only when `req.Acknowledge` was true and
+  the acknowledge genuinely claimed the case for the first time —
+  `resp.Case.AlreadyAcknowledged` distinguishes that from a repeat
+  `Acknowledge:true` call that succeeded without changing anything (see
+  `UpdateCaseRequest.Acknowledge`'s own doc comment); only the former is a
+  real event worth a Chat alert. Chat-only, like `case.assigned` used to be
+  blocked and now isn't — but `case.acknowledged` has no email reaction at
+  all, ever, so its own `events.CaseAcknowledgedPayload` has no
+  `Recipients`/watch-list concept whatsoever, unlike every other `case.*`
+  payload. Re-fetches via `GetCaseByID` rather than trusting the PATCH
+  response, same "re-fetch rather than trust a narrow response" precedent
+  as `publishCaseCreated`: `snUpdateCaseResponse`'s acknowledge path only
+  ever echoes `Number`/`AlreadyAcknowledged`/`AcknowledgedBy`, none of which
+  cover `CaseNumber`/`WSO2CaseID`/`Severity`/`Product` — everything
+  `csm-notification-service`'s Chat alert needs to display (see that
+  service's own `CLAUDE.md` for the card's exact shape).
+
+- **`snCaseService.UpdateCase`** also publishes `case.severity_changed` via
+  `publishSeverityChanged`, called only when `req.Severity` was set AND
+  actually differs from the case's prior severity — the same pre-PATCH
+  `GetCaseByID` no-op guard `case.status_changed`/`case.assigned` use
+  (`req.State`/`req.Severity`/`req.AssigneeEmail` are already mutually
+  exclusive per request, so this and the status/assignee blocks never both
+  fire for the same call). Unlike `case.acknowledged`, this has both an
+  email reaction (`Recipients`, the same watch-list-emails audience as
+  `case.status_changed`/`case.assigned`) and a Chat alert (`Product`, same
+  `caseProductName(before)` reasoning as `publishCaseCreated`/
+  `publishCaseAcknowledged`) — `csm-notification-service`'s `dispatch`
+  package fans this one payload out to both channels. `OldSeverity` comes
+  from the pre-PATCH `GetCaseByID` enrichment (`before.Severity`);
+  `NewSeverity` from the PATCH response's own echoed severity
+  (`resp.Case.Severity`, only set when `snResp.Case.Severity != nil`) — no
+  second `GetCaseByID` needed the way `publishCaseAcknowledged` needs one,
+  since `UpdateCase`'s existing pre-PATCH enrichment already supplies
+  everything this payload needs (`CaseNumber`/`WSO2CaseID`/`CaseTitle`/
+  `Product`/`Recipients` all come from that same `before` `CaseView`). Same
+  "empty `Recipients` list skips the whole publish" precedent as
+  `publishCaseCreated` — including the Chat alert, since this event has no
+  Chat-only path the way `case.acknowledged` does; a severity change with
+  no watchers has nobody to notify by design.
+
+`caseProductName(cv)` (a small shared helper) resolves
+`cv.DeployedProductDetails.Product.Name` (e.g. `"WSO2 API Manager"`, `""`
+when the case has no deployed product) — used by `publishCaseCreated`,
+`publishCaseAcknowledged`, and `publishSeverityChanged` to populate their
+payloads' `Product` field.
+`CaseCreatedPayload.Product` was previously never populated at all ("this
+service has no data source for it yet"); now it doubles as both a display
+value in `csm-notification-service`'s redesigned `case.created` Chat card
+and that service's own Chat-space routing key (`GoogleChatConfig.Spaces`
+matches on it, falling back to `DEFAULT_CHAT_PRODUCT` when empty) — an
+operator's `GOOGLE_CHAT_SPACES` config needs a `Product` entry matching
+each deployed product's actual display name for per-product routing to
+take effect; until then, every case routes to `DEFAULT_CHAT_PRODUCT`'s
+space same as before this field was populated.
+
+`caseTeamName(cv)` (same shared-helper pattern) resolves
+`cv.AccountDetails.CreTeam.Name` (e.g. `"Team Nova"`, `""` when the case
+has no account or the account has no CRE team) — used by the same three
+publishers to populate their payloads' `Team` field, a purely-display
+value in `csm-notification-service`'s Chat cards (unlike `Product`, it
+plays no role in routing). `cv.AccountDetails` (and its `CreTeam`) is
+resolved by `GetCaseByID` from the case's own embedded ServiceNow account
+object at no extra request cost — but as of this field's introduction,
+that embedded object's `creTeam`/`sreTeam` are documented in
+`snCaseAccount`'s own doc comment as not yet guaranteed to be populated by
+the ServiceNow integration, even though the standalone accounts endpoint
+does return them. `Team` may therefore come back empty in practice until
+that catches up — not a bug in this service if so.
+
+**Known, accepted inconsistency**: `publishCaseAcknowledged` re-reads
+`caseProductName(cv)` from a fresh `GetCaseByID` at acknowledge time,
+rather than reusing whatever product `publishCaseCreated` read at create
+time — so if a case's deployed product genuinely changes between creation
+and acknowledgement, the two Chat alerts can route to different spaces.
+This service has no persisted state for a case at all (ServiceNow is the
+sole source of truth, no local DB row per case — see this file's own
+"SLA clocks" section for the one deliberate exception), so "preserving the
+creation-time product" would mean adding new durable state purely to pin a
+routing decision, not a same-service code change. It's also arguably not
+even the more correct behavior: if a case's product association is
+corrected after creation, routing its acknowledgement to the *current*
+owning team's space is arguably more useful than a stale one. Left as
+current-product routing; revisit only if the same-space guarantee turns
+out to matter in practice.
+
 Every helper above runs **synchronously** (not detached/async the way
 `apps/csm-portal/backend`'s own `internal/handler/cases.go` `publishAsync`
 is), each bounded by its own 5s `context.WithTimeout`
 (`publishCaseCreatedTimeout`/`publishIncidentCreatedTimeout`/
-`publishCommentAddedTimeout`/`publishStatusChangedTimeout`) so a slow
+`publishCommentAddedTimeout`/`publishStatusChangedTimeout`/
+`publishSeverityChangedTimeout`) so a slow
 ServiceNow or Event Hub round trip can't consume this service's own 30s
 request timeout — a deliberate simplicity trade-off over the async+
 `WaitGroup`-drain pattern, made because this service (unlike that backend)
@@ -279,6 +376,91 @@ not compute or track wake times itself.
 No `case_service.go`/`sn_case_service.go` method calls any of this yet — case
 creation/update do not register a clock. Wiring that in requires deciding the
 SLA duration policy first (see above), which is out of scope here.
+
+## Scheduled task runs
+
+`scheduled_task_run` (migration `000013`, `internal/domain/entity.go`'s
+`ScheduledTaskRun`, `internal/repository/scheduled_task_run_repo.go`,
+`internal/service/scheduled_task_run_service.go`) is durable claim/retry
+state for `operations/csm-scheduled-tasks` — a single Choreo Scheduled Task
+that internally fans out to any number of independently-scheduled sub-crons
+on one shared driver cadence. Like `sla_clocks`/`event_publish_failures`, it
+has no ServiceNow equivalent and is always backed by Postgres regardless of
+`DATA_SOURCE`. It is also the one intentionally **singular** table name in
+this schema — every other table here is plural; don't "fix" it to match.
+
+`taskName` is a caller-defined registry key, not a fixed enum — same
+reasoning as `sla_clocks.clockType`: which sub-crons exist, and on what
+schedule, is a policy decision made entirely by `operations/csm-scheduled-tasks`'
+own registry, not something this service tracks.
+
+There is no stored status column, the same choice `sla_clocks` makes for the
+same reason: status is always derivable from which timestamp is set, and
+each is independently useful on its own — `succeededOn` (done, forever, for
+this period), `supersededOn` (abandoned: the next period came due before
+this one ever succeeded), or `nextRetryOn` (eligible for another attempt
+once it's in the past). See `operations/csm-scheduled-tasks`'s own
+`CLAUDE.md` for the full design behind "period keys" and "supersede" — this
+service only stores the result of that design, it does not compute period
+keys or decide backoff itself, the same division of labor as `sla_clocks`.
+
+Exposed at:
+
+- `POST /scheduled-tasks/attempts` — the only endpoint with real decision
+  logic. Named as a collection-create (like GitHub's `.../dispatches` or
+  `.../deployments`), not a verb-suffixed action path — POST creates a new
+  "attempt" resource in the `attempts` collection. Atomically claims
+  `taskName`/`periodKey` if it's allowed to run right now: a period this
+  task hasn't seen before first supersedes any other still-open row for the
+  same `taskName` (there is at most one by construction), then inserts and
+  claims fresh; an existing row whose `nextRetryOn` has arrived (or that
+  looks like an orphaned claim — see `staleClaimAfterSeconds`) is bumped
+  and claimed; anything else (already succeeded, already superseded, not
+  yet due, genuinely still claimed by a live attempt) is denied. Concurrent
+  callers racing for the same `taskName` — whether the exact same
+  `periodKey` or two different ones — are serialized by a
+  transaction-scoped Postgres advisory lock keyed on `taskName`
+  (`pg_advisory_xact_lock(hashtext(taskName))`), not just the table's own
+  `UNIQUE(task_name, period_key)` constraint: that constraint alone only
+  stops two claims from colliding on the *same* period, not two concurrent
+  claims for two different *new* periods of the same task, which would
+  otherwise both find no existing row and both insert successfully —
+  leaving two open rows for one task at once. The lock closes that window;
+  at most one caller can ever see `allowed: true` for a given `taskName` at
+  a time, regardless of which period it's for.
+- `PATCH /scheduled-tasks/attempts/{id}` — reports an attempt's outcome,
+  `{attemptCount, status: "succeeded"|"failed", error?, nextRetryOn?}` (the
+  latter two required only when `status` is `"failed"`). One endpoint, not
+  two separate action-style ones (an earlier version had `POST .../complete`
+  and `POST .../fail`) — PATCH is the correct verb for a partial update to
+  an existing resource's state, and "which outcome" is naturally the
+  request body's job, not the URL's. Rejects the update (404) unless the
+  caller's `attemptCount` still matches the active claim (the value
+  `Attempt` returned) — a worker that stalls past `staleClaimAfterSeconds`
+  and gets reclaimed by a different caller later finds its own stale report
+  rejected instead of silently overwriting whatever the reclaiming caller's
+  own attempt has since done. On `"failed"`, deliberately does not mark the
+  row succeeded or superseded, so it stays eligible for another attempt, or
+  for being superseded once the next period's own `Attempt` call comes in.
+- `GET /scheduled-tasks/attempts?status=<failed|succeeded|superseded>` —
+  monitoring only, not called by the engine's own claim/retry logic. Plain
+  unpaginated list. `status=failed` stays small by construction (at most
+  one open row per `taskName`), and `status=succeeded`/`superseded` now
+  stays bounded too, as long as `operations/csm-scheduled-tasks`' own
+  `housekeeping_cleanup` sub-cron (below) keeps running — that result set
+  has no cap of its own, it's only ever kept small by that cleanup actually
+  happening; don't assume it's small in a deployment where it isn't.
+- `DELETE /scheduled-tasks/attempts?resolvedBefore=<RFC3339 timestamp>` — deletes
+  every row that succeeded or was superseded before the cutoff, by its own
+  `succeededOn`/`supersededOn` (not `createdOn` — a row open for 89 days
+  before finally resolving on day 90 gets the same retention window as one
+  resolved on day one, not an immediate deletion because it happens to look
+  old by creation time). A row still `failed` is never deleted regardless
+  of age — it represents a genuinely unresolved problem, not history to
+  archive. Called daily by `operations/csm-scheduled-tasks`' own
+  self-hosted `housekeeping_cleanup` sub-cron (`internal/housekeeping`
+  there) — that endpoint existed from the start, but this is the first
+  thing that actually calls it.
 
 ## Adding a new entity
 
