@@ -15,6 +15,7 @@
 // under the License.
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -52,7 +53,16 @@ vi.mock("@features/csm-cases/components/CasesFilterBar", () => ({
   default: () => <div>FilterBar</div>,
 }));
 vi.mock("@features/csm-cases/components/CasesList", () => ({
-  default: () => <div>CasesList</div>,
+  // Forwards `columnCustomizer` (the "Customise columns" trigger, rendered
+  // by the real CasesList in a toolbar row above the table) so the column
+  // customization tests below can still find/click it, even though this
+  // stub renders none of CasesList's own row markup.
+  default: ({ columnCustomizer }: { columnCustomizer?: ReactNode }) => (
+    <div>
+      CasesList
+      {columnCustomizer}
+    </div>
+  ),
 }));
 vi.mock("@components/FilteredCsvExportButton", () => ({
   default: () => <div>ExportButton</div>,

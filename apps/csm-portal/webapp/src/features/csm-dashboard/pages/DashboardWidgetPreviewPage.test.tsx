@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -546,6 +546,43 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
         }),
       }),
     );
+  });
+
+  it("shows a 'Customise columns' picker next to the table, unlike the old chip-only page", async () => {
+    // Reported live: the main Cases tab has a table column selector, but the
+    // dashboard "View more" landing didn't show it at all -- because it only
+    // ever went through `CsmIssuesView`, which this preview never rendered.
+    // `CaseFamilyWidgetPreview` now wires its own `useColumnPreferences` +
+    // `ColumnCustomizerButton` directly into `CasesList`.
+    mockPost({
+      cases: {
+        cases: [{ id: "c1", number: "CS-1", subject: "Disk full", state: "open" }],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      },
+    });
+
+    renderAt(
+      buildWidgetPreviewHref({
+        previewSlug: "cases",
+        widgetId: "team_open_cases",
+        displayName: "Team Open Cases",
+        filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+    fireEvent.click(
+      screen.getByRole("button", { name: "Customise Team Open Cases columns" }),
+    );
+
+    // "case" is the resourceType behind a "cases" preview slug, so Severity
+    // is offered alongside every other optional column.
+    const picker = screen.getByRole("list", { name: "Customise Team Open Cases columns" });
+    for (const label of ["Product", "Type", "Severity", "Assignee", "Customer", "Created"]) {
+      expect(within(picker).getByText(label)).toBeInTheDocument();
+    }
   });
 
   it("re-queries /cases/search when a filter is edited in the real filter bar", async () => {

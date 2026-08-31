@@ -28,8 +28,8 @@ import {
   Tooltip,
   Typography,
 } from "@wso2/oxygen-ui";
-import { ChevronDown, ChevronUp, ColumnsSettings } from "@wso2/oxygen-ui-icons-react";
-import { useState, type JSX, type MouseEvent } from "react";
+import { ColumnsSettings, GripVertical } from "@wso2/oxygen-ui-icons-react";
+import { useState, type DragEvent, type JSX, type KeyboardEvent, type MouseEvent } from "react";
 import type { ColumnOption } from "@hooks/useColumnPreferences";
 
 export interface ColumnCustomizerButtonProps {
@@ -38,7 +38,14 @@ export interface ColumnCustomizerButtonProps {
   allColumns: ColumnOption[];
   isVisible: (id: string) => boolean;
   onToggle: (id: string) => void;
+  /** Keyboard reordering: the drag handle's own arrow-up/down fallback for
+   * anyone not using a mouse/touch drag. */
   onMove: (id: string, direction: "up" | "down") => void;
+  /** Drag-and-drop reordering: called once, on drop, with the dragged
+   * column's id and the index of the row it was dropped onto — a single
+   * gesture can move a column several slots, which is exactly what
+   * `useColumnPreferences`'s `reorderColumn` (not `onMove`) is for. */
+  onReorder: (id: string, targetIndex: number) => void;
   onReset: () => void;
   /** Accessible label for the trigger button; defaults to "Customise
    * columns". Override when a page has more than one table on screen. */
@@ -47,24 +54,68 @@ export interface ColumnCustomizerButtonProps {
 
 /**
  * "Customise columns" trigger + popover: check/uncheck to add or remove a
- * column, up/down arrows to reorder it. Shared across every table that adopts
- * `useColumnPreferences` — the table itself owns what each column id renders
- * as; this component only edits the visibility/order state.
+ * column, drag the grip handle to reorder it (or, with the handle focused,
+ * arrow up/down — native HTML5 drag-and-drop has no built-in keyboard path,
+ * so this is the only way a keyboard-only user can reorder at all). Shared
+ * across every table that adopts `useColumnPreferences` — the table itself
+ * owns what each column id renders as; this component only edits the
+ * visibility/order state.
  */
 export default function ColumnCustomizerButton({
   allColumns,
   isVisible,
   onToggle,
   onMove,
+  onReorder,
   onReset,
   label = "Customise columns",
 }: ColumnCustomizerButtonProps): JSX.Element {
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
   const open = Boolean(anchorEl);
   const visibleCount = allColumns.filter((c) => isVisible(c.id)).length;
 
   const handleOpen = (e: MouseEvent<HTMLElement>): void => setAnchorEl(e.currentTarget);
   const handleClose = (): void => setAnchorEl(null);
+
+  const handleDragStart = (e: DragEvent<HTMLElement>, id: string): void => {
+    setDraggedId(id);
+    e.dataTransfer.effectAllowed = "move";
+    // Firefox refuses to start a drag at all unless data is set.
+    e.dataTransfer.setData("text/plain", id);
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLElement>, id: string): void => {
+    // Required for this element to become a valid drop target at all.
+    e.preventDefault();
+    if (id !== dragOverId) setDragOverId(id);
+  };
+
+  const handleDrop = (e: DragEvent<HTMLElement>, targetId: string): void => {
+    e.preventDefault();
+    if (draggedId && draggedId !== targetId) {
+      const targetIndex = allColumns.findIndex((c) => c.id === targetId);
+      if (targetIndex !== -1) onReorder(draggedId, targetIndex);
+    }
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  const handleDragEnd = (): void => {
+    setDraggedId(null);
+    setDragOverId(null);
+  };
+
+  const handleHandleKeyDown = (e: KeyboardEvent<HTMLElement>, id: string): void => {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      onMove(id, "up");
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      onMove(id, "down");
+    }
+  };
 
   return (
     <>
@@ -94,11 +145,31 @@ export default function ColumnCustomizerButton({
             aria-label={label}
             sx={{ maxHeight: 320, overflowY: "auto" }}
           >
-            {allColumns.map((column, index) => {
+            {allColumns.map((column) => {
               const checked = isVisible(column.id);
               const disableUncheck = checked && visibleCount <= 1;
               return (
-                <ListItem key={column.id} disableGutters sx={{ px: 2, py: 0.25 }}>
+                <ListItem
+                  key={column.id}
+                  disableGutters
+                  onDragOver={(e) => handleDragOver(e, column.id)}
+                  onDrop={(e) => handleDrop(e, column.id)}
+                  sx={{
+                    px: 2,
+                    py: 0.25,
+                    opacity: draggedId === column.id ? 0.4 : 1,
+                    outline:
+                      dragOverId === column.id && draggedId !== column.id
+                        ? "2px solid"
+                        : "2px solid transparent",
+                    outlineColor:
+                      dragOverId === column.id && draggedId !== column.id
+                        ? "primary.main"
+                        : "transparent",
+                    outlineOffset: -2,
+                    borderRadius: 1,
+                  }}
+                >
                   <Checkbox
                     size="small"
                     checked={checked}
@@ -117,25 +188,34 @@ export default function ColumnCustomizerButton({
                       slotProps={{ primary: { style: { fontSize: 13 } } }}
                     />
                   </ListItemButton>
-                  <Box sx={{ display: "flex", ml: 1 }}>
-                    <IconButton
-                      size="small"
-                      aria-label={`Move ${column.label} up`}
-                      disabled={index === 0}
-                      onClick={() => onMove(column.id, "up")}
-                      sx={{ p: 0.25 }}
-                    >
-                      <ChevronUp size={14} />
-                    </IconButton>
-                    <IconButton
-                      size="small"
-                      aria-label={`Move ${column.label} down`}
-                      disabled={index === allColumns.length - 1}
-                      onClick={() => onMove(column.id, "down")}
-                      sx={{ p: 0.25 }}
-                    >
-                      <ChevronDown size={14} />
-                    </IconButton>
+                  <Box
+                    role="button"
+                    tabIndex={0}
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, column.id)}
+                    onDragEnd={handleDragEnd}
+                    onKeyDown={(e) => handleHandleKeyDown(e, column.id)}
+                    aria-label={`Reorder ${column.label}. Drag, or focus and press the up/down arrow keys, to move.`}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      width: 24,
+                      height: 24,
+                      ml: 1,
+                      borderRadius: 1,
+                      color: "text.secondary",
+                      cursor: "grab",
+                      "&:active": { cursor: "grabbing" },
+                      "&:hover": { bgcolor: "action.hover" },
+                      "&:focus-visible": {
+                        outline: "2px solid",
+                        outlineColor: "primary.main",
+                        outlineOffset: 1,
+                      },
+                    }}
+                  >
+                    <GripVertical size={16} />
                   </Box>
                 </ListItem>
               );

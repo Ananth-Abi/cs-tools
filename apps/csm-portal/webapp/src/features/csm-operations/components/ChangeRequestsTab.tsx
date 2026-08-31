@@ -276,6 +276,7 @@ export default function ChangeRequestsTab(): JSX.Element {
           isVisible={columnPrefs.isVisible}
           onToggle={columnPrefs.toggleColumn}
           onMove={columnPrefs.moveColumn}
+          onReorder={columnPrefs.reorderColumn}
           onReset={columnPrefs.resetToDefault}
           label="Customise change request columns"
         />
