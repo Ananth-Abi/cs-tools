@@ -366,11 +366,11 @@ describe("mapCaseSearchViewToRow — issueType and createdBy (reporter)", () => 
 describe("buildCaseSearchFilters — advanced filter rows", () => {
   it("emits a multi-value `in` row as a BeCaseFieldFilter with the field's values array", () => {
     const advancedFilters: AdvancedFilterRow[] = [
-      { field: "creTeam", op: "in", values: ["team-1", "team-2"] },
+      { field: "deploymentId", op: "in", values: ["dep-1", "dep-2"] },
     ];
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
-    expect(filterOf(filters, "creTeam")).toEqual([
-      { field: "creTeam", op: "in", values: ["team-1", "team-2"] },
+    expect(filterOf(filters, "deploymentId")).toEqual([
+      { field: "deploymentId", op: "in", values: ["dep-1", "dep-2"] },
     ]);
   });
 
@@ -424,7 +424,7 @@ describe("buildCaseSearchFilters — advanced filter rows", () => {
 
   it("appends advanced rows alongside the dedicated-control fields, not in place of them", () => {
     const advancedFilters: AdvancedFilterRow[] = [
-      { field: "tag", op: "notIn", values: ["s_dip"] },
+      { field: "deploymentId", op: "in", values: ["dep-1"] },
     ];
     const filters: CasesFilters = {
       ...DEFAULT_CASES_FILTERS,
@@ -434,7 +434,70 @@ describe("buildCaseSearchFilters — advanced filter rows", () => {
     const result = buildCaseSearchFilters(filters, "", undefined).filters ?? [];
     expect(result).toEqual([
       { field: "severity", op: "in", values: ["critical"] },
-      { field: "tag", op: "notIn", values: ["s_dip"] },
+      { field: "deploymentId", op: "in", values: ["dep-1"] },
     ]);
+  });
+});
+
+describe("buildCaseSearchFilters — anyOf (OR groups)", () => {
+  it("emits one anyOf entry per branch with a complete condition", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      anyOfBranches: [
+        { filters: [{ field: "type", values: ["case"] }] },
+        { filters: [{ field: "severity", values: ["critical"] }] },
+      ],
+    };
+    const result = buildCaseSearchFilters(filters, "", undefined);
+    expect(result.anyOf).toEqual([
+      { filters: [{ field: "type", op: "in", values: ["case"] }] },
+      { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+    ]);
+  });
+
+  it("ANDs multiple conditions within one branch", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      anyOfBranches: [
+        {
+          filters: [
+            { field: "type", values: ["case"] },
+            { field: "severity", values: ["critical", "high"] },
+          ],
+        },
+      ],
+    };
+    const result = buildCaseSearchFilters(filters, "", undefined);
+    expect(result.anyOf).toEqual([
+      {
+        filters: [
+          { field: "type", op: "in", values: ["case"] },
+          { field: "severity", op: "in", values: ["critical", "high"] },
+        ],
+      },
+    ]);
+  });
+
+  it("drops a branch with no complete conditions rather than emitting an empty one", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      anyOfBranches: [
+        { filters: [{ field: "type", values: [] }] },
+        { filters: [{ field: "severity", values: ["critical"] }] },
+      ],
+    };
+    const result = buildCaseSearchFilters(filters, "", undefined);
+    expect(result.anyOf).toEqual([
+      { filters: [{ field: "severity", op: "in", values: ["critical"] }] },
+    ]);
+  });
+
+  it("omits anyOf entirely when no branch has a complete condition", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      anyOfBranches: [{ filters: [{ field: "type", values: [] }] }],
+    };
+    const result = buildCaseSearchFilters(filters, "", undefined);
+    expect(result.anyOf).toBeUndefined();
   });
 });

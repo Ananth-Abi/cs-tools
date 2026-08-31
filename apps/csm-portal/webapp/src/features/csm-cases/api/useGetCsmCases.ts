@@ -147,6 +147,10 @@ export function useGetCsmCases(
       // search` payload itself carries — no separate normalization needed
       // here beyond what `buildCaseSearchFilters` already applies.
       JSON.stringify(filters.advancedFilters),
+      // Same reasoning as `advancedFilters` above — every field/values
+      // combination an OR-group row carries is already the exact shape the
+      // request payload itself sends.
+      JSON.stringify(filters.anyOfBranches),
       currentUserEmail ?? "",
       wantsMe ? (currentUserId ?? "") : "",
       page,

@@ -30,8 +30,11 @@ import {
 /** Page size for the lazy-loaded (scroll-to-load-more) assignee filter. */
 export const USER_PAGE_SIZE = 10;
 
-/** A single directory match: name (label) + email (the filter value). */
+/** A single directory match: name (label), email, and id — different callers
+ * filter on different ones (the assignee/`createdBy` pickers store the
+ * email; an `anyOf` branch's `assignedUserId` row stores the id). */
 export interface UserSearchOption {
+  id: string;
   name: string;
   email: string;
 }
@@ -103,9 +106,9 @@ export function useInfiniteUserSearch(
     const seen = new Set<string>();
     const out: UserSearchOption[] = [];
     for (const u of (result.data?.pages ?? []).flatMap((p) => p.users)) {
-      if (!u.email || !u.name || seen.has(u.email)) continue;
+      if (!u.email || !u.name || !u.id || seen.has(u.email)) continue;
       seen.add(u.email);
-      out.push({ name: u.name, email: u.email });
+      out.push({ id: u.id, name: u.name, email: u.email });
     }
     return out;
   }, [result.data]);

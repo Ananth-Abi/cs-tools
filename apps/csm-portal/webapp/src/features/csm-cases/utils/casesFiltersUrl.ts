@@ -30,6 +30,11 @@ import {
   parseAdvancedFiltersParam,
   writeAdvancedFiltersParam,
 } from "@features/csm-cases/utils/advancedFilters";
+import {
+  isCompleteAnyOfBranch,
+  parseAnyOfBranchesParam,
+  writeAnyOfBranchesParam,
+} from "@features/csm-cases/utils/anyOfFilters";
 
 export const DEFAULT_CASES_FILTERS: CasesFilters = {
   search: "",
@@ -59,6 +64,7 @@ export const DEFAULT_CASES_FILTERS: CasesFilters = {
   closedOnGte: null,
   closedOnLte: null,
   advancedFilters: [],
+  anyOfBranches: [],
   // Note: `tags`/`excludeTags` are real, wired-through fields (round-trip
   // URL + `/cases/search` payload), both driven by the one tri-state
   // "Tags" bar control (`TagsMultiSelect`, digiops-cs#2907) — see its own
@@ -186,6 +192,7 @@ export function readCasesFiltersFromUrl(
     closedOnGte: parseFreeFormScalar(params.get("closedFrom")),
     closedOnLte: parseFreeFormScalar(params.get("closedTo")),
     advancedFilters: parseAdvancedFiltersParam(params.get("af")),
+    anyOfBranches: parseAnyOfBranchesParam(params.get("anyOf")),
   };
 }
 
@@ -277,6 +284,12 @@ export function writeCasesFiltersToUrl(f: CasesFilters): URLSearchParams {
   // mis-attribute a value to.
   const af = writeAdvancedFiltersParam(f.advancedFilters);
   if (af !== null) out.set("af", af);
+  // Same generic-escape-hatch reasoning as `af` above — `anyOf` already
+  // carries its own field per row (no op at all, since every branch field is
+  // `in`-only, see `anyOfFilters.ts`), so there is no default op for a
+  // decode to silently mis-attribute a value to here either.
+  const anyOf = writeAnyOfBranchesParam(f.anyOfBranches);
+  if (anyOf !== null) out.set("anyOf", anyOf);
   return out;
 }
 
@@ -318,6 +331,9 @@ export function countActiveFilters(f: CasesFilters): number {
   // `tags`, where every selected tag is really one "tag in [...]" filter) —
   // count complete rows individually rather than the whole array as one.
   n += f.advancedFilters.filter(isCompleteAdvancedFilterRow).length;
+  // Same reasoning as advanced-filter rows: each OR group with at least one
+  // complete condition is its own distinct predicate.
+  n += f.anyOfBranches.filter(isCompleteAnyOfBranch).length;
   return n;
 }
 

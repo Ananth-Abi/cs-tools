@@ -17,30 +17,35 @@
 import type { BeCaseFieldFilter, BeCaseFieldFilterOp } from "@api/backend/types";
 import { BE_CURRENT_USER_FILTER_PLACEHOLDER } from "@api/backend/types";
 import { ALL_ISSUE_TYPES, ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
-import { ALL_ONBOARDING_STATUSES } from "@features/csm-cases/utils/onboardingStatus";
 import { resolveRelativeDatePlaceholder } from "@utils/resolveRelativeDatePlaceholder";
 
 /**
  * The `POST /cases/search` fields the dedicated bar controls in
  * `CasesFilterBar.tsx` (severity, state, case type, work state, engagement
- * type, assignee, project, product) do NOT already cover, exposed instead
- * through the generic "Advanced filters" field/op/value builder. Every one
- * of these is a real, backend-accepted `BeCaseFieldFilterField` — see
- * `types.ts`'s own doc comment on that enum, which mirrors the
- * entity-service's `caseFilterFieldSet` exactly.
+ * type, assignee, project, product, tags, onboarding status, CS team) do NOT
+ * already cover, exposed instead through the generic "Advanced filters"
+ * field/op/value builder. Every one of these is a real, backend-accepted
+ * `BeCaseFieldFilterField` — see `types.ts`'s own doc comment on that enum,
+ * which mirrors the entity-service's `caseFilterFieldSet` exactly.
  *
  * Deliberately excludes two fields a hand-off brief once listed
  * (`accountId`, `resolvedOn`): neither appears in `BeCaseFieldFilterField`,
  * so the backend would reject them — widening that enum is a backend
  * contract change, out of scope for this FE-only builder. Flagged in
  * `PROGRESS.md`, not silently worked around.
+ *
+ * Also deliberately excludes `tag`, `projectOnboardingStatus`, and `creTeam`
+ * even though all three are real, accepted fields: each already has its own
+ * dedicated bar control in `CasesFilterBar.tsx` (the "Tags" tri-state
+ * control, "Onboarding status", and "Team" respectively). Offering a second,
+ * generic advanced-filter row for the same backend field alongside its own
+ * dedicated control would be two independent UI paths writing the same
+ * `/cases/search` predicate — confusing, not additive. Removed 2026-08-31
+ * (they were briefly in this catalogue before the duplication was caught).
  */
 export type AdvancedFilterField =
-  | "tag"
-  | "projectOnboardingStatus"
   | "projectType"
   | "issueType"
-  | "creTeam"
   | "sreTeam"
   | "deploymentId"
   | "number"
@@ -57,23 +62,32 @@ export type AdvancedFilterField =
 
 /** How a row's value input should render for a given field+op combination. */
 export type AdvancedFilterValueKind =
-  /** Free-text, comma-separated multi-value entry. */
+  /** Free-text, comma-separated multi-value entry. Reserved for genuinely
+   * arbitrary/opaque values with no enumerable suggestion source
+   * (`deploymentId`). */
   | "multiText"
   /** Fixed-option multi-select. */
   | "multiSelect"
-  /** A single free-text value. */
+  /** A single free-text value. Reserved for genuinely arbitrary/opaque
+   * identifiers (`number`, `internalId`, `parentId`). */
   | "text"
   /** A single numeric value. */
   | "number"
   /** A single date value — a literal `YYYY-MM-DD`/RFC3339 string, or one of
-   * the relative-date placeholders (`__today__`, `__daysAgo:N__`, ...). */
-  | "date"
+   * the relative-date placeholders (`__today__`, `__daysAgo:N__`, ...),
+   * picked from a preset dropdown or an actual calendar date picker rather
+   * than hand-typed. See {@link RELATIVE_DATE_PRESETS}. */
+  | "dateOrPreset"
   /** No input at all — the op alone is the predicate (`isEmpty`/`isNotEmpty`). */
   | "none"
   /** No input — the row always means "the authenticated caller"; mirrors the
    * old `createdByMe: true` request field via
    * `BE_CURRENT_USER_FILTER_PLACEHOLDER`. */
-  | "currentUser";
+  | "currentUser"
+  /** Multi-value, backend-directory-search-backed email picker (type to
+   * search, same directory `/users/search` the assignee filter already
+   * searches) rather than hand-typed emails. */
+  | "asyncEmailMultiSelect";
 
 export interface AdvancedFilterOpMeta {
   op: BeCaseFieldFilterOp;
@@ -94,8 +108,6 @@ export interface AdvancedFilterFieldMeta {
   /** Placeholder / helper text for a `text`/`multiText`/`number` input. */
   placeholder?: string;
 }
-
-const ONBOARDING_STATUS_SUGGESTIONS: string[] = [...ALL_ONBOARDING_STATUSES];
 
 const PROJECT_TYPE_OPTIONS: { value: string; label: string }[] = [
   "Subscription",
@@ -130,24 +142,6 @@ const ESCALATION_LEVEL_OPTIONS: { value: string; label: string }[] = [
  */
 export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
   {
-    field: "tag",
-    label: "Tag",
-    ops: [
-      { op: "in", label: "is one of", valueKind: "multiText" },
-      { op: "notIn", label: "is not one of", valueKind: "multiText" },
-    ],
-    placeholder: "e.g. micro-gw, ws-policy",
-  },
-  {
-    field: "projectOnboardingStatus",
-    label: "Project onboarding status",
-    ops: [
-      { op: "in", label: "is one of", valueKind: "multiText" },
-      { op: "notIn", label: "is not one of", valueKind: "multiText" },
-    ],
-    suggestions: ONBOARDING_STATUS_SUGGESTIONS,
-  },
-  {
     field: "projectType",
     label: "Project type",
     ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
@@ -160,16 +154,14 @@ export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
     options: ISSUE_TYPE_OPTIONS,
   },
   {
-    field: "creTeam",
-    label: "CRE team",
-    ops: [{ op: "in", label: "is one of", valueKind: "multiText" }],
-    placeholder: "team id, or __current_team__",
-  },
-  {
+    // Options are supplied at render time by `AdvancedFiltersBuilder` (the
+    // `sreTeamOptions` prop, computed once in `CasesFilterBar.tsx` from the
+    // same `useTeams(true)` fetch the "Team" (`creTeam`) bar control uses) —
+    // not listed statically here, since the team registry is fetched data,
+    // not a fixed enum like `projectType`/`issueType` above.
     field: "sreTeam",
     label: "SRE team",
-    ops: [{ op: "in", label: "is one of", valueKind: "multiText" }],
-    placeholder: "team id",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
   },
   {
     field: "deploymentId",
@@ -224,38 +216,59 @@ export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
     field: "createdBy",
     label: "Created by",
     ops: [
-      { op: "in", label: "email is one of", valueKind: "multiText" },
+      { op: "in", label: "email is one of", valueKind: "asyncEmailMultiSelect" },
       { op: "eq", label: "is me", valueKind: "currentUser" },
     ],
-    placeholder: "e.g. jane.doe@example.com",
   },
   {
     field: "createdOn",
     label: "Created on",
     ops: [
-      { op: "gte", label: "is on/after", valueKind: "date" },
-      { op: "lte", label: "is on/before", valueKind: "date" },
+      { op: "gte", label: "is on/after", valueKind: "dateOrPreset" },
+      { op: "lte", label: "is on/before", valueKind: "dateOrPreset" },
     ],
-    placeholder: "YYYY-MM-DD, or __today__ / __daysAgo:N__",
   },
   {
     field: "updatedOn",
     label: "Updated on",
     ops: [
-      { op: "gte", label: "is on/after", valueKind: "date" },
-      { op: "lte", label: "is on/before", valueKind: "date" },
+      { op: "gte", label: "is on/after", valueKind: "dateOrPreset" },
+      { op: "lte", label: "is on/before", valueKind: "dateOrPreset" },
     ],
-    placeholder: "YYYY-MM-DD, or __today__ / __daysAgo:N__",
   },
   {
     field: "closedOn",
     label: "Closed on",
     ops: [
-      { op: "gte", label: "is on/after", valueKind: "date" },
-      { op: "lte", label: "is on/before", valueKind: "date" },
+      { op: "gte", label: "is on/after", valueKind: "dateOrPreset" },
+      { op: "lte", label: "is on/before", valueKind: "dateOrPreset" },
     ],
-    placeholder: "YYYY-MM-DD, or __today__ / __daysAgo:N__",
   },
+];
+
+/**
+ * Fixed set of relative-date presets offered in the `dateOrPreset` value
+ * input's preset dropdown — human labels for a subset of the placeholder
+ * grammar {@link resolveRelativeDatePlaceholder} (and the entity-service's
+ * own `resolveRelativeDate`, see `case_filters.go`) recognizes. Not
+ * exhaustive of every representable offset (`__daysAgo:N__` accepts any
+ * non-negative N) — these are the common ones; picking an exact calendar day
+ * instead covers everything else, so the grammar itself never needs to be
+ * hand-typed.
+ */
+export const RELATIVE_DATE_PRESETS: { value: string; label: string }[] = [
+  { value: "__today__", label: "Today" },
+  { value: "__daysAgo:7__", label: "7 days ago" },
+  { value: "__daysAgo:30__", label: "30 days ago" },
+  { value: "__daysAgo:90__", label: "90 days ago" },
+  { value: "__startOfMonth:0__", label: "Start of this month" },
+  { value: "__startOfMonth:-1__", label: "Start of last month" },
+  { value: "__endOfMonth:0__", label: "End of this month" },
+  { value: "__endOfMonth:-1__", label: "End of last month" },
+  { value: "__startOfQuarter:0__", label: "Start of this quarter" },
+  { value: "__startOfQuarter:-1__", label: "Start of last quarter" },
+  { value: "__endOfQuarter:0__", label: "End of this quarter" },
+  { value: "__endOfQuarter:-1__", label: "End of last quarter" },
 ];
 
 const FIELD_META_BY_FIELD: Map<AdvancedFilterField, AdvancedFilterFieldMeta> = new Map(

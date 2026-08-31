@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
 import type { AdvancedFilterRow } from "@features/csm-cases/utils/advancedFilters";
+import type { AnyOfBranch } from "@features/csm-cases/utils/anyOfFilters";
 import {
   casesHref,
   countActiveFilters,
@@ -228,7 +229,7 @@ describe("op-awareness (regression: the widgetPreviewUrl field~op bug)", () => {
 describe("advanced filters (`af` param)", () => {
   it("round-trips a multi-value `in` row through the URL", () => {
     const advancedFilters: AdvancedFilterRow[] = [
-      { field: "creTeam", op: "in", values: ["team-1", "team-2"] },
+      { field: "deploymentId", op: "in", values: ["dep-1", "dep-2"] },
     ];
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
     const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
@@ -277,7 +278,7 @@ describe("advanced filters (`af` param)", () => {
 
   it("round-trips a row whose op takes a value but none has been typed yet (empty `values` array)", () => {
     const advancedFilters: AdvancedFilterRow[] = [
-      { field: "tag", op: "in", values: [] },
+      { field: "internalId", op: "eq", values: [] },
     ];
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
     const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
@@ -286,7 +287,7 @@ describe("advanced filters (`af` param)", () => {
 
   it("does not count an in-progress (incomplete) row toward the active-filter badge, even though it now round-trips", () => {
     const advancedFilters: AdvancedFilterRow[] = [
-      { field: "tag", op: "in", values: ["a"] },
+      { field: "internalId", op: "eq", values: ["a"] },
       { field: "number", op: "eq", values: [] },
     ];
     expect(
@@ -300,12 +301,12 @@ describe("advanced filters (`af` param)", () => {
       "af",
       JSON.stringify([
         ["not_a_real_field", "in", ["x"]],
-        ["tag", "not_a_real_op", ["y"]],
-        ["tag", "in", ["ok"]],
+        ["internalId", "not_a_real_op", ["y"]],
+        ["internalId", "eq", ["ok"]],
       ]),
     );
     expect(readCasesFiltersFromUrl(params).advancedFilters).toEqual([
-      { field: "tag", op: "in", values: ["ok"] },
+      { field: "internalId", op: "eq", values: ["ok"] },
     ]);
   });
 
@@ -317,12 +318,72 @@ describe("advanced filters (`af` param)", () => {
 
   it("counts each complete advanced-filter row individually toward the active-filter count", () => {
     const advancedFilters: AdvancedFilterRow[] = [
-      { field: "tag", op: "in", values: ["a"] },
+      { field: "internalId", op: "eq", values: ["a"] },
       { field: "number", op: "eq", values: ["CS0441174"] },
     ];
     expect(
       countActiveFilters({ ...DEFAULT_CASES_FILTERS, advancedFilters }),
     ).toBe(2);
+  });
+});
+
+describe("OR groups (`anyOf` param)", () => {
+  it("round-trips a two-branch, single-condition-each anyOf through the URL", () => {
+    const anyOfBranches: AnyOfBranch[] = [
+      { filters: [{ field: "type", values: ["case"] }] },
+      { filters: [{ field: "severity", values: ["critical"] }] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, anyOfBranches };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.anyOfBranches).toEqual(anyOfBranches);
+  });
+
+  it("round-trips an in-progress branch (a row with field picked, no value yet) rather than dropping it", () => {
+    const anyOfBranches: AnyOfBranch[] = [{ filters: [{ field: "type", values: [] }] }];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, anyOfBranches };
+    const href = writeCasesFiltersToUrl(filters);
+    expect(href.get("anyOf")).not.toBeNull();
+    const round = readCasesFiltersFromUrl(href);
+    expect(round.anyOfBranches).toEqual(anyOfBranches);
+  });
+
+  it("round-trips a branch with multiple ANDed conditions", () => {
+    const anyOfBranches: AnyOfBranch[] = [
+      {
+        filters: [
+          { field: "type", values: ["case"] },
+          { field: "severity", values: ["critical", "high"] },
+        ],
+      },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, anyOfBranches };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.anyOfBranches).toEqual(anyOfBranches);
+  });
+
+  it("does not count a branch with no complete condition toward the active-filter badge, even though it round-trips", () => {
+    const anyOfBranches: AnyOfBranch[] = [
+      { filters: [{ field: "type", values: ["case"] }] },
+      { filters: [{ field: "severity", values: [] }] },
+    ];
+    expect(countActiveFilters({ ...DEFAULT_CASES_FILTERS, anyOfBranches })).toBe(1);
+  });
+
+  it("silently drops an unknown branch field on a hand-edited or stale `anyOf` param instead of throwing", () => {
+    const params = new URLSearchParams();
+    params.set(
+      "anyOf",
+      JSON.stringify([[["not_a_real_field", ["x"]], ["type", ["case"]]]]),
+    );
+    expect(readCasesFiltersFromUrl(params).anyOfBranches).toEqual([
+      { filters: [{ field: "type", values: ["case"] }] },
+    ]);
+  });
+
+  it("silently returns no OR groups for garbage JSON in `anyOf`", () => {
+    const params = new URLSearchParams();
+    params.set("anyOf", "not json{{{");
+    expect(readCasesFiltersFromUrl(params).anyOfBranches).toEqual([]);
   });
 });
 

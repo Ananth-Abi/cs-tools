@@ -84,12 +84,14 @@ import AsyncAssigneeMultiSelect from "@features/csm-cases/components/AsyncAssign
 import ProductNameMultiSelect from "@features/csm-cases/components/ProductNameMultiSelect";
 import TagsMultiSelect from "@features/csm-cases/components/TagsMultiSelect";
 import AdvancedFiltersBuilder from "@features/csm-cases/components/AdvancedFiltersBuilder";
+import AnyOfGroupsBuilder from "@features/csm-cases/components/AnyOfGroupsBuilder";
 import {
   getAdvancedFilterFieldMeta,
   getAdvancedFilterOpMeta,
   isCompleteAdvancedFilterRow,
   type AdvancedFilterRow,
 } from "@features/csm-cases/utils/advancedFilters";
+import { isCompleteAnyOfBranch, type AnyOfBranch } from "@features/csm-cases/utils/anyOfFilters";
 
 
 /**
@@ -171,16 +173,30 @@ export interface CasesFilters {
   /**
    * Ad-hoc field/op/value rows from the "Advanced filters" builder — the
    * escape hatch for `/cases/search` fields the dedicated bar controls above
-   * don't cover (`tag`, `projectOnboardingStatus`, `projectType`, `creTeam`,
-   * `sreTeam`, `deploymentId`, `number`, `internalId`, `resolutionNotes`,
-   * `parentId`, `taskSLABusinessElapsedPercent`, `escalationLevel`,
-   * `escalation`, `createdBy`, and the `createdOn`/`updatedOn`/`closedOn`
-   * date ranges) — see `advancedFilters.ts`'s field catalogue. Each row maps
-   * to one extra `BeCaseFieldFilter` entry (`caseSearchPayload.ts`); an
-   * incomplete row (a field/op picked but no value where one is required) is
-   * never emitted — see `isCompleteAdvancedFilterRow`.
+   * don't cover (`projectType`, `sreTeam`, `deploymentId`, `number`,
+   * `internalId`, `resolutionNotes`, `parentId`,
+   * `taskSLABusinessElapsedPercent`, `escalationLevel`, `escalation`,
+   * `createdBy`, and the `createdOn`/`updatedOn`/`closedOn` date ranges) —
+   * see `advancedFilters.ts`'s field catalogue. Fields that already have a
+   * dedicated bar control of their own (`tag`, `projectOnboardingStatus`,
+   * `creTeam`) are deliberately NOT offered here — see that catalogue's own
+   * doc comment. Each row maps to one extra `BeCaseFieldFilter` entry
+   * (`caseSearchPayload.ts`); an incomplete row (a field/op picked but no
+   * value where one is required) is never emitted — see
+   * `isCompleteAdvancedFilterRow`.
    */
   advancedFilters: AdvancedFilterRow[];
+  /**
+   * Cross-field OR groups from the "OR groups" builder — each branch's own
+   * rows are ANDed, the branches themselves are OR'd, and the whole `anyOf`
+   * result is ANDed with everything else (`filters.anyOf`, see
+   * `anyOfFilters.ts`). Only a restricted field subset may appear inside a
+   * branch — a real, backend-enforced allowlist distinct from (and narrower
+   * than) `advancedFilters`' own field catalogue. A branch with no complete
+   * conditions is never emitted into the request payload — see
+   * `isCompleteAnyOfBranch`.
+   */
+  anyOfBranches: AnyOfBranch[];
 }
 
 /**
@@ -446,6 +462,25 @@ function buildActiveFilterChips(
     });
   });
 
+  // Each OR-branch is a distinct predicate too — chipped by its position
+  // (not its contents, which can be several conditions long) so it stays
+  // visible/removable even once the "OR groups" builder is collapsed. Only
+  // a branch with at least one complete condition is chipped; a branch
+  // that's still being edited (no complete rows yet) is only ever visible
+  // inside the open builder itself, same as an in-progress advanced-filter
+  // row.
+  filters.anyOfBranches.forEach((branch, index) => {
+    if (!isCompleteAnyOfBranch(branch)) return;
+    chips.push({
+      key: `any-of-branch-${index}`,
+      label: `OR group ${index + 1}`,
+      onRemove: (f) => ({
+        ...f,
+        anyOfBranches: f.anyOfBranches.filter((_, i) => i !== index),
+      }),
+    });
+  });
+
   return chips;
 }
 
@@ -488,6 +523,16 @@ export default function CasesFilterBar({
       (teams ?? [])
         .filter((t): t is typeof t & { creGroupId: string } => Boolean(t.creGroupId))
         .map((t) => ({ value: t.creGroupId, label: t.name })),
+    [teams],
+  );
+  // Same shape, keyed off `sreGroupId` instead — feeds the "Advanced
+  // filters" builder's `sreTeam` row (a real multi-select now, not
+  // hand-typed team ids/UUIDs).
+  const sreTeamOptions = useMemo(
+    () =>
+      (teams ?? [])
+        .filter((t): t is typeof t & { sreGroupId: string } => Boolean(t.sreGroupId))
+        .map((t) => ({ value: t.sreGroupId, label: t.name })),
     [teams],
   );
 
@@ -919,6 +964,12 @@ export default function CasesFilterBar({
           <AdvancedFiltersBuilder
             rows={filters.advancedFilters}
             onChange={(next) => onChange({ ...filters, advancedFilters: next })}
+            sreTeamOptions={sreTeamOptions}
+          />
+          <Divider />
+          <AnyOfGroupsBuilder
+            branches={filters.anyOfBranches}
+            onChange={(next) => onChange({ ...filters, anyOfBranches: next })}
           />
           {activeCount > 0 && (
             <Box sx={{ display: "flex", justifyContent: "flex-end" }}>

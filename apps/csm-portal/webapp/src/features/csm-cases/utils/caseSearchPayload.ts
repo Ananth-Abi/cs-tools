@@ -36,6 +36,7 @@ import {
   advancedFilterRowToFieldFilter,
   isCompleteAdvancedFilterRow,
 } from "@features/csm-cases/utils/advancedFilters";
+import { anyOfBranchToPayload } from "@features/csm-cases/utils/anyOfFilters";
 
 /**
  * Builds the `/cases/search` `filters` object for the given UI filter state
@@ -261,9 +262,19 @@ export function buildCaseSearchFilters(
   }
 
   const withFreeText = scope === "text" || !!options?.alsoFreeText;
+
+  // "OR groups" (`filters.anyOf`) — each branch with at least one complete
+  // condition becomes one `{filters: [...]}` entry; an empty branch (no
+  // complete conditions at all) is dropped rather than emitted, since the
+  // backend 400s on `anyOf: [{}]` (see `anyOfBranchToPayload`).
+  const anyOf = filters.anyOfBranches
+    .map(anyOfBranchToPayload)
+    .filter((b): b is { filters: BeCaseFieldFilter[] } => b !== undefined);
+
   return {
     ...(withFreeText && search.length > 0 && { searchQuery: search }),
     ...(fieldFilters.length > 0 && { filters: fieldFilters }),
+    ...(anyOf.length > 0 && { anyOf }),
   };
 }
 
