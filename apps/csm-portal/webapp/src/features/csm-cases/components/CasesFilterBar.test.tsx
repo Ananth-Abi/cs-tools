@@ -64,14 +64,22 @@ function renderBar(
   filters: CasesFilters,
   onChange = vi.fn(),
   extraProps: Partial<Parameters<typeof CasesFilterBar>[0]> = {},
-): { onChange: ReturnType<typeof vi.fn> } {
+): {
+  onChange: ReturnType<typeof vi.fn>;
+  /** Re-renders the SAME `CasesFilterBar` instance with new `filters` --
+   * unlike a fresh `renderBar` call, this does NOT remount the component, so
+   * its `mode` state (initialized once at mount, see `CasesFilterBar.tsx`'s
+   * own doc comment on that `useState`) persists across the update, exactly
+   * like a real `onChange` from a bar control or an applied saved view. */
+  rerenderWith: (nextFilters: CasesFilters) => void;
+} {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  const bar = (f: CasesFilters): ReactNode => (
     <QueryClientProvider client={queryClient}>
       <CasesFilterBar
-        filters={filters}
+        filters={f}
         onChange={onChange}
         onReset={() => {}}
         isFiltersOpen
@@ -80,9 +88,10 @@ function renderBar(
         availableProjects={[]}
         {...extraProps}
       />
-    </QueryClientProvider> as ReactNode,
+    </QueryClientProvider>
   );
-  return { onChange };
+  const { rerender } = render(bar(filters) as ReactNode);
+  return { onChange, rerenderWith: (nextFilters) => rerender(bar(nextFilters) as ReactNode) };
 }
 
 describe("CasesFilterBar — active-filter chips for URL-only fields", () => {
@@ -99,7 +108,43 @@ describe("CasesFilterBar — active-filter chips for URL-only fields", () => {
     expect(screen.queryByText(/^Tag:/)).not.toBeInTheDocument();
   });
 
-  it("renders one chip per URL-only filter and each is independently removable", () => {
+  // `slaElapsedPctGte`/`hasEscalation`/`createdOnGte` are all in
+  // `isSimpleRepresentable`'s gating list, so a filters object with any of
+  // them set mounts the bar directly into Advanced mode (see the mode
+  // `useState` initializer in `CasesFilterBar.tsx`). In Advanced mode every
+  // one of these fields is its own row in the unified builder
+  // (`filtersToAdvancedRows`), so per `buildActiveFilterChips`'s doc
+  // comment this function renders NO chips for them any more — the row is
+  // the only visible/removable UI. This used to be a chip-based test (round
+  // 5 predates the fix); see git history for the old assertions if the row
+  // behavior below ever needs to be cross-checked against the previous
+  // chip-based one.
+  it("renders no chips for URL-only fields once they force Advanced mode -- the row is the only UI", () => {
+    renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      slaElapsedPctGte: 80,
+      hasEscalation: true,
+      createdOnGte: "2026-07-27",
+    });
+
+    // No chip renders for any of these three any more.
+    expect(screen.queryByText("SLA ≥ 80%")).not.toBeInTheDocument();
+    expect(screen.queryByText("Escalated")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Created after/)).not.toBeInTheDocument();
+
+    // Each is its own row in the unified Advanced builder instead, in
+    // catalogue order (`taskSLABusinessElapsedPercent` gte, then
+    // `escalation` isNotEmpty, then `createdOn` gte — see
+    // `advancedFilters.ts`'s `ADVANCED_FILTER_FIELDS`).
+    const fieldSelects = screen.getAllByRole("combobox", { name: "Field" });
+    expect(fieldSelects.map((el) => el.textContent)).toEqual([
+      "SLA business-elapsed %",
+      "Escalation",
+      "Created on",
+    ]);
+  });
+
+  it("removing the SLA row (its own 'Remove filter row' control) clears only slaElapsedPctGte", () => {
     const { onChange } = renderBar({
       ...DEFAULT_CASES_FILTERS,
       slaElapsedPctGte: 80,
@@ -107,16 +152,9 @@ describe("CasesFilterBar — active-filter chips for URL-only fields", () => {
       createdOnGte: "2026-07-27",
     });
 
-    expect(screen.getByText("SLA ≥ 80%")).toBeInTheDocument();
-    expect(screen.getByText("Escalated")).toBeInTheDocument();
-    expect(screen.getByText(/Created after/)).toBeInTheDocument();
-
-    // Removing the SLA chip clears only slaElapsedPctGte, nothing else.
-    const slaChip = screen.getByText("SLA ≥ 80%");
-    const deleteIcon = slaChip.parentElement?.querySelector(
-      '[data-testid="CancelIcon"], svg',
-    );
-    fireEvent.click(deleteIcon ?? slaChip);
+    // Catalogue order puts the SLA row first (see the test above).
+    const removeButtons = screen.getAllByRole("button", { name: "Remove filter row" });
+    fireEvent.click(removeButtons[0]);
 
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -127,40 +165,81 @@ describe("CasesFilterBar — active-filter chips for URL-only fields", () => {
     );
   });
 
-  it("renders a date-only bound as the same local calendar date, not shifted by UTC parsing", () => {
-    renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      createdOnGte: "2026-07-27",
-    });
-
-    // A bare YYYY-MM-DD bound must render as that same calendar date
-    // regardless of the runner's local timezone offset from UTC — pinning
-    // this to a fixed local Date (not `new Date("2026-07-27")`, which is
-    // parsed as UTC midnight and can roll back a day) is what makes this
-    // assertion timezone-safe.
-    const expected = new Date(2026, 6, 27).toLocaleDateString();
-    expect(
-      screen.getByText(`Created after ${expected}`),
-    ).toBeInTheDocument();
-  });
-
-  it("both SLA bounds render and clear independently", () => {
+  it("both SLA bounds render as their own rows and clear independently", () => {
     const { onChange } = renderBar({
       ...DEFAULT_CASES_FILTERS,
       slaElapsedPctGte: 80,
       slaElapsedPctLte: 100,
     });
 
-    expect(screen.getByText("SLA ≥ 80%")).toBeInTheDocument();
-    expect(screen.getByText("SLA ≤ 100%")).toBeInTheDocument();
+    // No chips for either bound.
+    expect(screen.queryByText("SLA ≥ 80%")).not.toBeInTheDocument();
+    expect(screen.queryByText("SLA ≤ 100%")).not.toBeInTheDocument();
 
-    const chip = screen.getByText("SLA ≤ 100%");
-    const deleteIcon = chip.parentElement?.querySelector("svg");
-    fireEvent.click(deleteIcon ?? chip);
+    // Two rows: gte (catalogue order puts it before lte).
+    const removeButtons = screen.getAllByRole("button", { name: "Remove filter row" });
+    expect(removeButtons).toHaveLength(2);
+    fireEvent.click(removeButtons[1]);
 
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({ slaElapsedPctGte: 80, slaElapsedPctLte: null }),
     );
+  });
+});
+
+describe("CasesFilterBar — Simple mode keeps its existing chip behavior unchanged", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockResolvedValue({ teams: [] });
+  });
+
+  // `workStates` is deliberately NOT in `isSimpleRepresentable`'s gating
+  // list (see that function's own doc comment), so a filters object with
+  // only `states`/`workStates` set still mounts into Simple mode, where
+  // there is no unified row list -- the chip stays the only way to see/
+  // clear a value that arrived via a dashboard click-through or a saved
+  // view while looking at the Simple grid.
+  it("still chips workStates in Simple mode, with the row list nowhere in sight", () => {
+    const { onChange } = renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      states: ["work_in_progress"],
+      workStates: ["ongoing"],
+    });
+
+    expect(screen.queryByText("Advanced filters")).not.toBeInTheDocument();
+    const chip = screen.getByText("Work state: Ongoing");
+    expect(chip).toBeInTheDocument();
+
+    fireEvent.click(chip.closest(".MuiChip-root")!.querySelector("svg")!);
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ workStates: [] }));
+  });
+
+  // The scenario from the bug report: a page already sitting in Simple mode
+  // (mounted with no advanced-only value active) picks one up mid-session --
+  // e.g. an applied saved view's `onChange`, which updates `filters` without
+  // remounting `CasesFilterBar` -- rather than arriving pre-set at mount
+  // (which would instead auto-switch to Advanced, see the mode gating tests
+  // above). `mode` state persists across that update, so the value must
+  // still be visible/removable via its old chip, same as before this fix --
+  // this fix only suppresses chips for fields whose row is ALSO on screen
+  // (`mode === "advanced"`), never for Simple mode itself.
+  it("still chips a date-range bound that arrives while already in Simple mode, formatted as the same local calendar date", () => {
+    const { rerenderWith } = renderBar({ ...DEFAULT_CASES_FILTERS });
+    expect(screen.queryByText("Advanced filters")).not.toBeInTheDocument();
+
+    rerenderWith({ ...DEFAULT_CASES_FILTERS, createdOnGte: "2026-07-27" });
+
+    // Still Simple mode (persisted `mode` state) -- the row list never
+    // mounted, so the chip is still the only visible/removable UI, exactly
+    // as before this fix.
+    expect(screen.queryByText("Advanced filters")).not.toBeInTheDocument();
+    // A bare YYYY-MM-DD bound must render as that same calendar date
+    // regardless of the runner's local timezone offset from UTC -- pinning
+    // this to a fixed local Date (not `new Date("2026-07-27")`, which is
+    // parsed as UTC midnight and can roll back a day) is what makes this
+    // assertion timezone-safe.
+    const expected = new Date(2026, 6, 27).toLocaleDateString();
+    expect(screen.getByText(`Created after ${expected}`)).toBeInTheDocument();
   });
 });
 

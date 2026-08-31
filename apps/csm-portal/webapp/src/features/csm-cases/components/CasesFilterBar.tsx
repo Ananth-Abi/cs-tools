@@ -299,6 +299,21 @@ interface ActiveFilterChip {
  * row itself is what a user sees (in Advanced mode), never a chip alongside
  * an invisible control.
  */
+// All of the reasoning above is Simple-mode only. In Advanced mode every
+// field this function chips (`sreTeams`, `workStates`, the SLA/escalation/
+// project-type/date-range fields, plus `advancedFilters` and
+// `anyOfBranches`) already has its own always-visible, always-editable,
+// always-clearable row: `filtersToAdvancedRows` (`filterFieldAdapters.ts`)
+// turns every typed field, and every `advancedFilters` entry, into a row
+// `AdvancedFiltersBuilder` renders; `anyOfBranches` gets its own bordered
+// box per branch from `AnyOfGroupsBuilder`, unconditionally, whenever it's
+// mounted. Advanced mode only ever shows this function's output *alongside*
+// those two builders (see the call site below), so a chip there would be a
+// redundant, un-synced second rendering of a value the row/branch above it
+// already owns -- hence the caller only invokes this function in Simple
+// mode now. Simple mode has no row list at all, so a chip stays the only
+// way to see/clear an Advanced-only value that arrived via URL/dashboard
+// click-through while looking at the Simple grid -- that part is unchanged.
 function buildActiveFilterChips(
   filters: CasesFilters,
   /** groupId -> team display name, so a team chip never shows a raw UUID.
@@ -543,9 +558,14 @@ export default function CasesFilterBar({
     [teams],
   );
 
+  // Simple mode only -- see `buildActiveFilterChips`'s doc comment. In
+  // Advanced mode every field it would chip is already its own row (via
+  // `AdvancedFiltersBuilder`) or branch (via `AnyOfGroupsBuilder`), both
+  // rendered below whenever `mode === "advanced"`, so a chip there would
+  // just duplicate what's already visible and editable.
   const activeFilterChips = useMemo(
-    () => buildActiveFilterChips(filters, teamLabels),
-    [filters, teamLabels],
+    () => (mode === "simple" ? buildActiveFilterChips(filters, teamLabels) : []),
+    [filters, teamLabels, mode],
   );
 
   // ── Saved views ──────────────────────────────────────────────────────────
