@@ -144,6 +144,11 @@ func main() {
 
 	const staleCasesTaskName = "stale_cases_report"
 	staleCasesTo, staleCasesCc := recipientsFor(recipientOverrides, staleCasesTaskName)
+	// Fixed, not env-configurable — unlike HOUSEKEEPING_RETENTION_DAYS, there's
+	// no operational reason to tune this per deployment today. Revisit as an
+	// env var (mirroring envDays("HOUSEKEEPING_RETENTION_DAYS", 30)'s shape)
+	// if that changes.
+	const staleCaseThreshold = 30 * 24 * time.Hour
 
 	tasks := []registry.Task{
 		// This component's first real sub-cron: deletes rows from
@@ -163,17 +168,16 @@ func main() {
 			Cc:       housekeepingCc,
 		},
 		// Emails staleCasesTo/Cc a report of every case open more than
-		// STALE_CASE_THRESHOLD_DAYS — see internal/stalecases's own doc
-		// comment. Sends nothing (but still succeeds) if staleCasesTo is
-		// empty, i.e. this task isn't mentioned in SUB_CRON_RECIPIENTS.
-		// Default schedule is daily at 07:00 (again, TZ=UTC-dependent — see
-		// above), ahead of most business hours; override via
-		// SUB_CRON_SCHEDULES if needed.
+		// staleCaseThreshold — see internal/stalecases's own doc comment.
+		// Sends nothing (but still succeeds) if staleCasesTo is empty, i.e.
+		// this task isn't mentioned in SUB_CRON_RECIPIENTS. Default schedule
+		// is daily at 07:00 (again, TZ=UTC-dependent — see above), ahead of
+		// most business hours; override via SUB_CRON_SCHEDULES if needed.
 		{
 			Name:     staleCasesTaskName,
 			Schedule: scheduleFor(scheduleOverrides, staleCasesTaskName, "0 7 * * *"),
 			Handler: stalecases.SendReport(entityCasesClient, emailClient,
-				envDays("STALE_CASE_THRESHOLD_DAYS", 30), staleCasesTo, staleCasesCc, alertsEnabled),
+				staleCaseThreshold, staleCasesTo, staleCasesCc, alertsEnabled),
 			To: staleCasesTo,
 			Cc: staleCasesCc,
 		},

@@ -117,13 +117,15 @@ entity-service; there is no automatic cleanup for this case.
 ## Stale cases report
 
 `internal/stalecases.SendReport`, registered as `"stale_cases_report"`, is this component's first
-sub-cron that sends an email on success rather than only on failure — see "Future: per-task report
-emails" below for why that's not a generic engine feature. Queries entity-service's
-`POST /cases/search` (via `internal/entitycases.Client.SearchOpenCasesOlderThan`) for every case
-whose `state` isn't `closed` and whose `createdOn` is at least `STALE_CASE_THRESHOLD_DAYS` (default
-30) in the past, then emails a report table of them (oldest first) via
-`notify.RenderStaleCasesReport`. Default schedule `0 7 * * *` (daily at 07:00, same `TZ=UTC` caveat
-as "Housekeeping" above); override via `SUB_CRON_SCHEDULES`.
+sub-cron that sends an email on success rather than only on failure — see "Per-task report emails"
+below for why that's not a generic engine feature. Queries entity-service's `POST /cases/search`
+(via `internal/entitycases.Client.SearchOpenCasesOlderThan`) for every case whose `state` isn't
+`closed` and whose `createdOn` is at least 30 days in the past — a fixed threshold, not an env var;
+there's no operational need to tune it per deployment today (unlike
+`HOUSEKEEPING_RETENTION_DAYS` — see `cmd/server/main.go`'s `staleCaseThreshold` constant if that
+changes) — then emails a report table of them (oldest first) via `notify.RenderStaleCasesReport`.
+Default schedule `0 7 * * *` (daily at 07:00, same `TZ=UTC` caveat as "Housekeeping" above);
+override via `SUB_CRON_SCHEDULES`.
 
 Recipients are **not** `ALERT_RECIPIENTS` — that standing audience is about failure alerting, not
 report distribution. This task's report goes only to its own `SUB_CRON_RECIPIENTS` entry (`"to"`/
@@ -178,7 +180,10 @@ a plain HTML template in the same table-based, WSO2-branded style
 that service's own functions of the same name) — task name, period, attempt count, next retry time,
 and the failure's error message.
 
-There is currently no success email — see "Future: per-task report emails" below for why.
+The engine itself still never sends a success email on any task's behalf — `stale_cases_report`'s
+report (see "Stale cases report" above) is sent from inside that task's own handler, not through
+this alerting path at all. See "Per-task report emails" below for why that's not a generic engine
+feature.
 
 ## Environment variables
 
@@ -196,7 +201,6 @@ There is currently no success email — see "Future: per-task report emails" bel
 | `SUB_CRON_SCHEDULES` | No | JSON object `{"<task.Name>": "<cron expression>"}` overriding any registered task's schedule by name — see "Adding a sub-cron" above. A task not mentioned keeps its own hardcoded default |
 | `SUB_CRON_RECIPIENTS` | No | JSON object `{"<task.Name>": {"to": [...], "cc": [...]}}` giving a registered task its own extra failure-alert audience, on top of `ALERT_RECIPIENTS` — or, for `stale_cases_report` specifically, its report's actual recipients (see "Stale cases report" above). A task not mentioned gets no per-task recipients |
 | `HOUSEKEEPING_RETENTION_DAYS` | No (default `30`) | Plain integer number of days of resolved history the `housekeeping_cleanup` sub-cron keeps — see "Housekeeping" above |
-| `STALE_CASE_THRESHOLD_DAYS` | No (default `30`) | Plain integer number of days a case must have been open (by `createdOn`) for the `stale_cases_report` sub-cron to include it — see "Stale cases report" above |
 
 No app-level execution timeout is configured here — Choreo's own Scheduled Task execution-time
 limit already bounds how long one invocation can run. `cmd/server/main.go` instead cancels its
