@@ -82,14 +82,20 @@ function Breakdown({ breakdown }: { breakdown?: CsmTimeCard["breakdown"] }): JSX
     <Field
       label="Breakdown"
       value={
-        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "1fr auto",
+            columnGap: 2,
+            rowGap: 0.25,
+          }}
+        >
           {ACTIVITY_BUCKETS.map((bucket) => (
-            <Box
-              key={bucket.key}
-              sx={{ display: "flex", justifyContent: "space-between", gap: 2 }}
-            >
+            <Box key={bucket.key} sx={{ display: "contents" }}>
               <Typography variant="body2">{bucket.label}</Typography>
-              <Typography variant="body2">{breakdown[bucket.key]} min</Typography>
+              <Typography variant="body2" sx={{ textAlign: "right" }}>
+                {breakdown[bucket.key]} min
+              </Typography>
             </Box>
           ))}
         </Box>
@@ -132,7 +138,7 @@ export default function TimeCardDetailsDialog({
                 </Typography>
               }
             />
-            <Field label="Minutes" value={`${card.totalMinutes} min`} />
+            <Field label="Total time" value={`${card.totalMinutes} min`} />
             <Field
               label="State"
               value={

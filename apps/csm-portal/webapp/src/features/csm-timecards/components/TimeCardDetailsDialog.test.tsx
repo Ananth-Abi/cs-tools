@@ -43,6 +43,7 @@ describe("TimeCardDetailsDialog", () => {
 
     expect(screen.getByText("Jane Doe")).toBeInTheDocument();
     expect(screen.getByText("Acme")).toBeInTheDocument();
+    expect(screen.getByText("Total time")).toBeInTheDocument();
     expect(screen.getAllByText("30 min").length).toBeGreaterThan(0);
   });
 
@@ -94,7 +95,15 @@ describe("TimeCardDetailsDialog", () => {
 
     expect(screen.getByText("Breakdown")).toBeInTheDocument();
     expect(screen.getByText("Analysis and debugging")).toBeInTheDocument();
+    expect(screen.getByText("Reproduce")).toBeInTheDocument();
+    expect(screen.getByText("Setting up")).toBeInTheDocument();
     expect(screen.getByText("Providing solution")).toBeInTheDocument();
+    expect(screen.getByText("Answering")).toBeInTheDocument();
+
+    expect(screen.getByText("15 min")).toBeInTheDocument();
+    expect(screen.getByText("5 min")).toBeInTheDocument();
+    expect(screen.getByText("10 min")).toBeInTheDocument();
+    expect(screen.getAllByText("0 min").length).toBe(2);
   });
 
   it("renders no breakdown section when the card has none", () => {
