@@ -124,7 +124,7 @@ export default function PreferencesDialog({
             color="text.secondary"
             sx={{ display: "block", fontWeight: 600, mb: 0.5 }}
           >
-            Case tabs (beta)
+            Case tabs
           </Typography>
           <FormControlLabel
             sx={{ ml: 0, justifyContent: "space-between", width: "100%" }}

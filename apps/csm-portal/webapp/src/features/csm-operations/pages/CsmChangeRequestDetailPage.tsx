@@ -88,6 +88,7 @@ import { useNavTransition } from "@hooks/useNavTransition";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
+import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
 import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
 const OPERATIONS_CR_PATH = "/operations/change-requests";
@@ -271,6 +272,13 @@ export default function CsmChangeRequestDetailPage(): JSX.Element {
   const postAttachment = usePostCsmCaseAttachment();
   const downloadAttachment = useDownloadCsmCaseAttachment();
   const [composerOpen, setComposerOpen] = useState(false);
+  // Reports composerOpen up to the in-app case-tabs layer, purely so closing
+  // this change request's tab from the tab strip can confirm first — see
+  // CsmCaseDetailPage's identical call, and the hook's own doc comment for
+  // what this signal does and doesn't guarantee. Missing here was itself a
+  // bug: this tab's `hasDraft` never became true, so its close-confirm
+  // never fired for an unsent reply.
+  useReportCaseTabDraft(id, composerOpen);
   // Destructive transition awaiting confirmation (`rollback`/`canceled`), the
   // inline error for that attempt, and whether its reason comment already
   // landed — the last one so a retry after a failed patch re-sends only the

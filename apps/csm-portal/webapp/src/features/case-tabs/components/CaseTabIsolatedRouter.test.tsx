@@ -47,6 +47,8 @@ function StubCasePage(): JSX.Element {
   return (
     <div>
       <div data-testid="stub-case-id">{caseId}</div>
+      <div data-testid="stub-search">{override?.search}</div>
+      <div data-testid="stub-hash">{override?.hash}</div>
       <input aria-label="draft" value={draft} onChange={(e) => setDraft(e.target.value)} />
       <button onClick={() => navigate("/cases/OTHER-CASE")}>go-to-other-case</button>
     </div>
@@ -198,6 +200,65 @@ describe("CaseTabIsolatedRouter", () => {
     expect(ids).toContain("OTHER-CASE");
   });
 
+  // Regression test for bug: an OUTSIDE navigation that reactivates an
+  // already-open tab with different route info (a bookmark or a
+  // related-case link to the same case but a different `?tab=` section or
+  // `#hash`) correctly updated the TAB RECORD (`caseTabsReducer`'s
+  // `OPEN_OR_ACTIVATE` — fixed earlier) but never reached the actually
+  // mounted page: this component's own `routeState` was seeded once and
+  // otherwise only ever written by this tab's OWN in-tab `navigate`, so the
+  // page kept rendering the OLD `search`/`hash` even though the address bar
+  // and the tab record both showed the new ones.
+  it("reactivating an already-open tab with a different ?tab=/#hash updates the mounted page's own override, not just the tab record", () => {
+    // Isolation from earlier tests in this file that also open real tabs
+    // (`CaseTabsProvider` persists open tabs to sessionStorage — see its own
+    // doc comment) — without this, this test's fresh `CaseTabsProvider`
+    // instance would rehydrate whatever an earlier test left behind.
+    sessionStorage.clear();
+    function ReactivateHarness(): JSX.Element {
+      const { tabs, activeTabId, openTab } = useCaseTabsController();
+      return (
+        <div>
+          <button onClick={() => openTab("CS1", "case", "/cases/CS1?tab=details")}>
+            open-cs1-details
+          </button>
+          <button
+            onClick={() => openTab("CS1", "case", "/cases/CS1?tab=activities#latest")}
+          >
+            reactivate-cs1-activities
+          </button>
+          {tabs.map((tab) => (
+            <CaseTabIsolatedRouter key={tab.id} tab={tab} isVisible={tab.id === activeTabId}>
+              <StubCasePage />
+            </CaseTabIsolatedRouter>
+          ))}
+        </div>
+      );
+    }
+    renderInApp(
+      <CaseTabsBehaviorProvider>
+        <CaseTabsProvider>
+          <ReactivateHarness />
+        </CaseTabsProvider>
+      </CaseTabsBehaviorProvider>,
+    );
+
+    fireEvent.click(screen.getByText("open-cs1-details"));
+    expect(screen.getByTestId("stub-search")).toHaveTextContent("?tab=details");
+    expect(screen.getByTestId("stub-hash")).toHaveTextContent("");
+
+    // A bookmark/related-case-link-style OUTSIDE navigation reactivating the
+    // SAME already-open tab, with a different section and a hash.
+    fireEvent.click(screen.getByText("reactivate-cs1-activities"));
+
+    // Still exactly one tab (reactivated, not duplicated) — and the MOUNTED
+    // page's own override now reflects the new section/hash, not the one it
+    // was opened with.
+    expect(screen.getAllByTestId("stub-case-id")).toHaveLength(1);
+    expect(screen.getByTestId("stub-search")).toHaveTextContent("?tab=activities");
+    expect(screen.getByTestId("stub-hash")).toHaveTextContent("#latest");
+  });
+
   // Regression test for bug: a tab's scroll position was lost on switching
   // away and back, even though its other state (drafts, dialogs) correctly
   // persisted — root cause was `AppLayout`'s single shared scroll container
@@ -327,5 +388,27 @@ describe("CaseTabIsolatedRouter", () => {
     );
     expect(screen.getByTestId("case-tab-panel-t-a")).toHaveStyle({ overflowY: "auto" });
     expect(screen.getByTestId("case-tab-panel-t-b")).toHaveStyle({ overflowY: "auto" });
+  });
+
+  // Completes the standard ARIA `tablist`/`tab`/`tabpanel` wiring
+  // `CaseTabStrip`'s own chip `id`/`aria-controls` starts (see that
+  // component's own doc comment and `tabElementIds.ts`, which both sides
+  // share) — a `role="tab"` without a correspondingly-linked `role="tabpanel"`
+  // is an incomplete implementation of the pattern those roles promise.
+  it("each tab's own panel carries role=tabpanel, a matching id, and aria-labelledby pointing back at its own tab chip", () => {
+    renderInApp(
+      <CaseTabsProvider>
+        <Harness tabs={[TAB_A, TAB_B]} visibleId="t-a" />
+      </CaseTabsProvider>,
+    );
+    const panelA = screen.getByTestId("case-tab-panel-t-a");
+    expect(panelA).toHaveAttribute("role", "tabpanel");
+    expect(panelA).toHaveAttribute("id", "case-tab-panel-t-a");
+    expect(panelA).toHaveAttribute("aria-labelledby", "case-tab-t-a");
+
+    const panelB = screen.getByTestId("case-tab-panel-t-b");
+    expect(panelB).toHaveAttribute("role", "tabpanel");
+    expect(panelB).toHaveAttribute("id", "case-tab-panel-t-b");
+    expect(panelB).toHaveAttribute("aria-labelledby", "case-tab-t-b");
   });
 });

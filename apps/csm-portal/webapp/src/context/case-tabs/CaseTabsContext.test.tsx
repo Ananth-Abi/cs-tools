@@ -56,9 +56,11 @@ describe("CaseTabsProvider", () => {
     sessionStorage.clear();
     // These tests exercise the tab MECHANISM itself, not the default
     // behavior mode (that's `CaseTabsBehaviorContext`'s own test file, and
-    // the "off by default" regression test) — `enabled: false` would make
-    // every `openTab` call here a no-op, so opt into it being on. Cap-mode
-    // is left at its own default (`evict-newest`).
+    // the "default (mode 'on') behavior" describe block in
+    // `CaseTabsIntegration.test.tsx`) — `enabled: false` (an explicit
+    // opt-out) would make every `openTab` call here a no-op, so opt into it
+    // being on explicitly. Cap-mode is left at its own default
+    // (`evict-newest`).
     localStorage.setItem(ENABLED_STORAGE_KEY, "1");
   });
 

@@ -14,16 +14,39 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { useLayoutEffect, useMemo, useRef, useState, type JSX, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type JSX,
+  type ReactNode,
+} from "react";
 import type { NavigateOptions, To } from "react-router";
 import { matchCaseLocation } from "@context/case-tabs/caseRoutePatterns";
 import { useCaseTabsControllerRef } from "@context/case-tabs/CaseTabsContext";
 import { CaseRouteOverrideProvider } from "@context/case-tabs/CaseRouteOverrideContext";
 import type { CaseRouteKind, CaseTabState } from "@context/case-tabs/caseTabsTypes";
+import { tabElementId, tabPanelElementId } from "@features/case-tabs/utils/tabElementIds";
 
 function toHref(to: To): string {
   if (typeof to === "string") return to;
   return `${to.pathname ?? ""}${to.search ?? ""}${to.hash ?? ""}`;
+}
+
+/** Splits a concrete `CaseTabState.path` (e.g. "/cases/CS1?tab=activities#x")
+ * into the pieces `CaseRouteOverrideValue` wants broken out — shared by this
+ * tab's initial seed and its outside-reactivation resync (see the effect
+ * below) so both derive `routeState` from `tab.path` identically. */
+function parseTabPath(path: string): { pathname: string; search: string; hash: string } {
+  const [pathnameAndSearch, hash = ""] = path.split("#");
+  const [pathname, search = ""] = pathnameAndSearch.split("?");
+  return {
+    pathname,
+    search: search ? `?${search}` : "",
+    hash: hash ? `#${hash}` : "",
+  };
 }
 
 export interface CaseTabIsolatedRouterProps {
@@ -75,15 +98,7 @@ export default function CaseTabIsolatedRouter({
   isVisible,
   children,
 }: CaseTabIsolatedRouterProps): JSX.Element {
-  const initialPath = useMemo(() => {
-    const [pathnameAndSearch, hash = ""] = tab.path.split("#");
-    const [pathname, search = ""] = pathnameAndSearch.split("?");
-    return {
-      pathname,
-      search: search ? `?${search}` : "",
-      hash: hash ? `#${hash}` : "",
-    };
-  }, [tab.path]);
+  const initialPath = useMemo(() => parseTabPath(tab.path), [tab.path]);
 
   const [routeState, setRouteState] = useState<{
     pathname: string;
@@ -94,6 +109,39 @@ export default function CaseTabIsolatedRouter({
   }>({ ...initialPath, kind: tab.kind, state: tab.state });
 
   const controllerRef = useCaseTabsControllerRef();
+
+  // Re-syncs `routeState` (and so the override this tab's page actually
+  // reads) from `tab.path`/`tab.kind`/`tab.state` whenever those change from
+  // OUTSIDE this tab's own `navigate` below — i.e. an outside navigation
+  // that REACTIVATES this already-open tab with different route info (a
+  // bookmark or a related-case link to the same case but a different
+  // `?tab=` section or `#hash` — see `caseTabsReducer`'s `OPEN_OR_ACTIVATE`,
+  // which already updates the TAB RECORD correctly for this). Without this,
+  // that update never reached the actually-mounted page: the address bar
+  // and the tab record both showed the new section, but this component's
+  // own `routeState` — seeded once and otherwise only ever written by this
+  // tab's OWN in-tab `navigate` — kept serving the OLD `search`/`hash` to
+  // `CsmCaseDetailPage`'s `useSectionTabs`-backed tab strip. A no-op for
+  // in-tab navigation itself: `navigate` below already updates `routeState`
+  // directly, and reports the identical derived values back to the
+  // controller via `updateTabPath`, so by the time this effect's own
+  // dependencies change, `routeState` already matches — the bail-out below
+  // (`return prev`) keeps that a single render, not two.
+  useEffect(() => {
+    setRouteState((prev) => {
+      const parsed = parseTabPath(tab.path);
+      if (
+        prev.pathname === parsed.pathname &&
+        prev.search === parsed.search &&
+        prev.hash === parsed.hash &&
+        prev.kind === tab.kind &&
+        prev.state === tab.state
+      ) {
+        return prev;
+      }
+      return { ...parsed, kind: tab.kind, state: tab.state };
+    });
+  }, [tab.path, tab.kind, tab.state]);
 
   // `tab.id` and `tab.caseId` are both invariant for the lifetime of a given
   // tab instance: this component is keyed by `tab.id` (never changes by
@@ -194,7 +242,17 @@ export default function CaseTabIsolatedRouter({
     <div
       ref={panelRef}
       hidden={!isVisible}
-      data-testid={`case-tab-panel-${tab.id}`}
+      // `id`/`role="tabpanel"`/`aria-labelledby` complete the standard ARIA
+      // tabs wiring `CaseTabStrip`'s own chip starts (its `id`/
+      // `aria-controls`, built from these exact same helpers) — this is what
+      // makes the pairing a real `tablist`/`tab`/`tabpanel` relationship, not
+      // just visually-tab-shaped chips. `data-testid` kept identical to the
+      // existing `id` (this codebase's tests already select by it) rather
+      // than introducing a second, parallel identifier for the same node.
+      id={tabPanelElementId(tab.id)}
+      role="tabpanel"
+      aria-labelledby={tabElementId(tab.id)}
+      data-testid={tabPanelElementId(tab.id)}
       onScroll={handleScroll}
       style={{
         display: isVisible ? "flex" : "none",

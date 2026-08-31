@@ -233,17 +233,24 @@ describe("case tabs — real BrowserRouter integration", () => {
     // inheriting CS0001's "activities" — each tab's `?tab=` is independent.
     await waitFor(() => expect(visibleSection()).toBe("details"));
 
-    // Switch back to CS0001 — reactivates its existing tab (see the
-    // `OPEN_OR_ACTIVATE` reactivation fix elsewhere in this feature) rather
-    // than opening a new one. Its section must still read "activities", not
-    // have been reset by CS0002 defaulting to "details" while it was the
-    // active/visible tab.
-    fireEvent.click(screen.getByText("go-to-cs0001"));
+    // Switch back to CS0001 via its own TAB STRIP CHIP — not another bare
+    // `NavigateButton` click. A chip click (`CaseTabsWorkspace`'s own
+    // `onActivate`) navigates to the tab's own STORED path (which already
+    // carries its `?tab=activities`), the same way a real tab-strip click
+    // does; a bare link/bookmark to `/cases/CS0001` (no `?tab=`) is instead
+    // exactly the OUTSIDE-navigation-reactivates-an-open-tab case that's
+    // now correctly treated as "start this tab over at its default
+    // section" (see `caseTabsReducer`'s `OPEN_OR_ACTIVATE` and
+    // `CaseTabIsolatedRouter`'s resync effect) — this test isn't exercising
+    // that path here, `CaseTabIsolatedRouter.test.tsx`'s own reactivation
+    // test does.
+    fireEvent.click(screen.getAllByRole("tab")[1]);
     await waitFor(() => expect(window.location.pathname).toBe("/cases/CS0001"));
     await waitFor(() => expect(visibleSection()).toBe("activities"));
 
-    // And CS0002's own section is untouched by any of this.
-    fireEvent.click(screen.getByText("go-to-cs0002"));
+    // And CS0002's own section is untouched by any of this — switched to
+    // the same way, via its own chip.
+    fireEvent.click(screen.getAllByRole("tab")[2]);
     await waitFor(() => expect(window.location.pathname).toBe("/cases/CS0002"));
     await waitFor(() => expect(visibleSection()).toBe("details"));
   });

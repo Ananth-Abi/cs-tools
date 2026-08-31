@@ -32,7 +32,7 @@ const CAP_MODE_STORAGE_KEY = "csm.caseTabs.capMode";
 // | "evict-newest") — read once, best-effort, so a browser that already
 // picked a preference under the old shape doesn't silently revert to the
 // default. Not written to anymore; safe to remove entirely in a later pass
-// once this has been live a while (beta feature, short-lived old shape). A
+// once this legacy shape has been unused for a while (it was short-lived). A
 // legacy value of "block" (no longer a valid `CaseTabsCapMode` — see below)
 // falls through `isCapMode` and resolves to `DEFAULT_CAP_MODE` instead, same
 // as any other unrecognized value.

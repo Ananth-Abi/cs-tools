@@ -81,6 +81,7 @@ import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 import { useQueryParamTabs } from "@hooks/useSectionTabs";
 import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
+import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
 
 const OPERATIONS_INCIDENTS_PATH = "/operations/incidents";
 
@@ -217,6 +218,13 @@ export default function CsmIncidentDetailPage(): JSX.Element {
   const downloadAttachment = useDownloadCsmCaseAttachment();
   const getAttachmentPreviewContent = useGetCsmCaseAttachmentContent();
   const [composerOpen, setComposerOpen] = useState(false);
+  // Reports composerOpen up to the in-app case-tabs layer, purely so closing
+  // this incident's tab from the tab strip can confirm first — see
+  // CsmCaseDetailPage's identical call, and the hook's own doc comment for
+  // what this signal does and doesn't guarantee. Missing here was itself a
+  // bug: this tab's `hasDraft` never became true, so its close-confirm
+  // never fired for an unsent reply.
+  useReportCaseTabDraft(id, composerOpen);
   // Shared between the Activities feed and the Attachments tab, same as
   // CsmCaseDetailPage — one attachment previewed at a time regardless of
   // which surface opened it.

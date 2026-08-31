@@ -210,4 +210,140 @@ describe("CaseTabStrip", () => {
       expect(screen.queryByText("Close other tabs")).not.toBeInTheDocument();
     });
   });
+
+  // Regression tests: `role="tablist"`/`role="tab"` promise standard
+  // tab-widget keyboard behavior (roving `tabIndex`, arrow-key movement,
+  // `aria-controls` linking each tab to its panel) — an earlier version of
+  // this strip used the roles without any of that: every chip was its own
+  // `Tab`-key stop, no arrow-key navigation existed, and bulk-close was
+  // reachable only by right-click (unreachable by keyboard at all).
+  describe("keyboard support", () => {
+    it("only the active tab (or the pinned tab, while active) is a natural Tab-key stop — every other chip is tabIndex -1", () => {
+      render(
+        <CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t2" pinnedTab={PINNED} {...noopHandlers()} />,
+      );
+      const tabs = screen.getAllByRole("tab");
+      // [pinned (inactive), CS0001 (inactive), CS0002 (active)]
+      expect(tabs[0]).toHaveAttribute("tabindex", "-1");
+      expect(tabs[1]).toHaveAttribute("tabindex", "-1");
+      expect(tabs[2]).toHaveAttribute("tabindex", "0");
+    });
+
+    it("the pinned tab is the roving tab stop while it's the active/live view", () => {
+      render(
+        <CaseTabStrip
+          tabs={[TAB_1]}
+          activeTabId={null}
+          pinnedTab={{ ...PINNED, active: true }}
+          {...noopHandlers()}
+        />,
+      );
+      const tabs = screen.getAllByRole("tab");
+      expect(tabs[0]).toHaveAttribute("tabindex", "0");
+      expect(tabs[1]).toHaveAttribute("tabindex", "-1");
+    });
+
+    it("ArrowRight moves focus and activation to the next tab, wrapping from the last back to the pinned tab", () => {
+      const handlers = noopHandlers();
+      const { rerender } = render(
+        <CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t1" pinnedTab={PINNED} {...handlers} />,
+      );
+      fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+      expect(handlers.onActivate).toHaveBeenCalledWith("t2");
+
+      // Wrapping: ArrowRight from the LAST tab goes back to the pinned tab.
+      // `onActivate`'s mock doesn't actually change `activeTabId` (this is
+      // a presentational-component test), so re-render with "t2" active to
+      // simulate the activation having taken effect, matching how
+      // `CaseTabStripBar` would re-render this component after a real
+      // `onActivate` call updates the controller's state.
+      rerender(
+        <CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t2" pinnedTab={PINNED} {...handlers} />,
+      );
+      fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+      expect(PINNED.onClick).toHaveBeenCalled();
+    });
+
+    it("ArrowLeft moves focus and activation to the previous tab, wrapping from the pinned tab to the last one", () => {
+      const handlers = noopHandlers();
+      const { rerender } = render(
+        <CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t1" pinnedTab={PINNED} {...handlers} />,
+      );
+      // Currently on t1 (index 1 in [pinned, t1, t2]) — ArrowLeft goes to
+      // the pinned tab (index 0).
+      fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowLeft" });
+      expect(PINNED.onClick).toHaveBeenCalled();
+
+      // From the pinned tab (now "active"), ArrowLeft wraps to the LAST tab.
+      rerender(
+        <CaseTabStrip
+          tabs={[TAB_1, TAB_2]}
+          activeTabId={null}
+          pinnedTab={{ ...PINNED, active: true }}
+          {...handlers}
+        />,
+      );
+      fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowLeft" });
+      expect(handlers.onActivate).toHaveBeenCalledWith("t2");
+    });
+
+    it("Home/End jump to the first/last tab", () => {
+      const handlers = noopHandlers();
+      render(
+        <CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t2" pinnedTab={PINNED} {...handlers} />,
+      );
+      const tablist = screen.getByRole("tablist");
+      fireEvent.keyDown(tablist, { key: "End" });
+      expect(handlers.onActivate).toHaveBeenLastCalledWith("t2");
+      fireEvent.keyDown(tablist, { key: "Home" });
+      expect(PINNED.onClick).toHaveBeenCalled();
+    });
+
+    it("moves real DOM focus to the newly-activated tab, not just calling the handler", () => {
+      render(<CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t1" {...noopHandlers()} />);
+      const tabs = screen.getAllByRole("tab");
+      tabs[0].focus();
+      fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+      expect(tabs[1]).toHaveFocus();
+    });
+
+    it("each case tab's chip carries id/aria-controls pointing at its own panel", () => {
+      render(<CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t1" {...noopHandlers()} />);
+      const tabs = screen.getAllByRole("tab");
+      expect(tabs[0]).toHaveAttribute("id", "case-tab-t1");
+      expect(tabs[0]).toHaveAttribute("aria-controls", "case-tab-panel-t1");
+      expect(tabs[1]).toHaveAttribute("id", "case-tab-t2");
+      expect(tabs[1]).toHaveAttribute("aria-controls", "case-tab-panel-t2");
+    });
+
+    it("a visible kebab button opens the same Close all/Close other tabs menu right-click does — the only keyboard-reachable path to bulk-close", () => {
+      const handlers = noopHandlers();
+      render(<CaseTabStrip tabs={[TAB_1, TAB_2]} activeTabId="t1" {...handlers} />);
+      const kebab = screen.getByRole("button", { name: "More tab actions" });
+      // A real keyboard user reaches this by Tab (it's a natural stop,
+      // unlike the tab chips) then Enter/Space — `fireEvent.click` is the
+      // faithful jsdom stand-in for that activation, same as this test
+      // file's other button interactions.
+      fireEvent.click(kebab);
+      expect(screen.getByText("Close other tabs")).toBeInTheDocument();
+      expect(screen.getByText("Close all tabs")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByText("Close other tabs"));
+      expect(handlers.onCloseOthers).toHaveBeenCalledWith("t1");
+    });
+
+    it("the kebab menu offers only Close all tabs (not Close other tabs) when no tab is active — the pinned tab is the live view", () => {
+      render(
+        <CaseTabStrip
+          tabs={[TAB_1, TAB_2]}
+          activeTabId={null}
+          pinnedTab={{ ...PINNED, active: true }}
+          {...noopHandlers()}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "More tab actions" }));
+      expect(screen.getByText("Close all tabs")).toBeInTheDocument();
+      expect(screen.queryByText("Close other tabs")).not.toBeInTheDocument();
+    });
+  });
 });
