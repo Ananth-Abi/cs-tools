@@ -310,4 +310,44 @@ describe("CsmIssuesView defaultCaseTypes (Support page's case-type default, digi
       ),
     );
   });
+
+  // Regression: the default-consumed ref used to only get set on the branch
+  // that actually WROTE the default into the URL -- so a fresh visit that
+  // already carried an explicit `types` param (e.g. a direct link to
+  // `?types=service_request`) left the ref false, and clearing that type
+  // later looked identical to "never touched", wrongly reasserting
+  // `defaultCaseTypes` instead of expanding to every type.
+  it("does not reassert the default after clearing an explicit type that was already in the URL on the initial visit", async () => {
+    const router = createMemoryRouter(
+      [{ path: "/cases", element: <CsmIssuesView title="Cases" defaultCaseTypes={["case"]} /> }],
+      { initialEntries: ["/cases?types=service_request"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    // Fresh visit with an explicit type already in the URL: default not applied.
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ["service_request"] }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    // User clears the type control -- must expand to every type, not snap
+    // back to `defaultCaseTypes`.
+    await act(async () => { await router.navigate("/cases"); });
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ALL_CASE_TYPES }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+  });
 });

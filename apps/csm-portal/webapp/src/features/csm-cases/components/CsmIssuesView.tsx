@@ -216,15 +216,17 @@ export default function CsmIssuesView({
   // `searchParams` like every other filter, with no special-casing.
   const defaultCaseTypesAppliedRef = useRef(false);
   useEffect(() => {
-    if (
-      defaultCaseTypesAppliedRef.current ||
-      !defaultCaseTypes?.length ||
-      hideTypeFilter ||
-      searchParams.has("types")
-    ) {
+    if (defaultCaseTypesAppliedRef.current || !defaultCaseTypes?.length || hideTypeFilter) {
       return;
     }
+    // Marks the default "consumed" on the very first render regardless of
+    // whether it actually got written -- an initial URL that already names
+    // an explicit `types` (e.g. a direct link to `?types=service_request`)
+    // must permanently disarm the default too, or clearing that explicit
+    // type back to "every type" later would look identical to "no types
+    // param yet" and wrongly reassert `defaultCaseTypes` at that point.
     defaultCaseTypesAppliedRef.current = true;
+    if (searchParams.has("types")) return;
     const next = new URLSearchParams(searchParams);
     next.set("types", defaultCaseTypes.join(","));
     setSearchParams(next, { replace: true });

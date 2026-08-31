@@ -105,4 +105,19 @@ describe("resolveRelativeDatePlaceholder", () => {
     expect(resolveRelativeDatePlaceholder("__daysAgo__", "gte", NOW)).toBeUndefined();
     expect(resolveRelativeDatePlaceholder("__today:5__", "gte", NOW)).toBeUndefined();
   });
+
+  // Regression: an extreme (but well-formed) offset computes a Date outside
+  // JS's representable range, and `toISOString()` on it throws `RangeError:
+  // Invalid time value` instead of returning a string -- which used to
+  // escape this function and crash the caller (`resolveRelativeDateFilters`/
+  // `useGetCsmCases`) rather than leaving the value unresolved like every
+  // other malformed/unrecognized placeholder.
+  it("leaves an out-of-range offset unresolved instead of throwing", () => {
+    expect(
+      resolveRelativeDatePlaceholder("__daysAgo:99999999999__", "gte", NOW),
+    ).toBeUndefined();
+    expect(
+      resolveRelativeDatePlaceholder("__endOfMonth:100000000__", "lte", NOW),
+    ).toBeUndefined();
+  });
 });

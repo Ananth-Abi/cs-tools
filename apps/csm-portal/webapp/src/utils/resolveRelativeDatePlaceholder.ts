@@ -72,12 +72,20 @@ function startOfRelativeQuarter(now: Date, n: number): Date {
  * day's local midnight; every other op (`gte`, chiefly) means the bound
  * starts at the day's own local midnight.
  */
-function dayToBoundInstant(day: Date, op: string): string {
+function dayToBoundInstant(day: Date, op: string): string | undefined {
   if (op === "lte") {
     const nextDayMidnight = addDays(day, 1);
-    return new Date(nextDayMidnight.getTime() - 1).toISOString();
+    const bound = new Date(nextDayMidnight.getTime() - 1);
+    // A well-formed placeholder with an extreme offset (e.g.
+    // `__daysAgo:99999999999__`) computes a Date outside JS's representable
+    // range; `toISOString()` on it throws `RangeError: Invalid time value`
+    // instead of returning a string. Fall through to `undefined` -- same as
+    // any other unresolvable value -- rather than letting that throw
+    // propagate out of `resolveRelativeDateFilters`/`useGetCsmCases` and
+    // crash the caller.
+    return Number.isFinite(bound.getTime()) ? bound.toISOString() : undefined;
   }
-  return day.toISOString();
+  return Number.isFinite(day.getTime()) ? day.toISOString() : undefined;
 }
 
 /**
