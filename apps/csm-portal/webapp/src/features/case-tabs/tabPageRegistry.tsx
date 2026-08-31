@@ -14,40 +14,30 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { lazy, type ComponentType } from "react";
+import type { ComponentType } from "react";
 import type { CaseRouteKind } from "@context/case-tabs/caseTabsTypes";
+import CsmCaseDetailPage from "@features/csm-cases/pages/CsmCaseDetailPage";
+import CsmIncidentDetailPage from "@features/csm-operations/pages/CsmIncidentDetailPage";
+import CsmChangeRequestDetailPage from "@features/csm-operations/pages/CsmChangeRequestDetailPage";
 
 /**
  * Which page component renders for which open-tab kind. The five case-like
  * kinds all share `CsmCaseDetailPage`; `incident` and `change_request` each
- * have their own dedicated page. Every entry is its own `lazy()` — a second
- * `lazy()` wrapper around a module `App.tsx` also lazy-imports still shares
- * the same underlying dynamic `import()` (same network chunk), it doesn't
- * double the bundle — see the (now-superseded, single-page) version of this
- * file's own note for the same reasoning.
+ * have their own dedicated page. All three are plain eager imports — same
+ * module instance `App.tsx` also imports directly, so this registry adds no
+ * extra copy of any of them.
  */
-const LazyCsmCaseDetailPage = lazy(
-  () => import("@features/csm-cases/pages/CsmCaseDetailPage"),
-);
-const LazyCsmIncidentDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmIncidentDetailPage"),
-);
-const LazyCsmChangeRequestDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmChangeRequestDetailPage"),
-);
-
-/** Returns the lazy-loaded page component an open tab of this kind renders. */
 export function pageComponentForKind(kind: CaseRouteKind): ComponentType {
   switch (kind) {
     case "incident":
-      return LazyCsmIncidentDetailPage;
+      return CsmIncidentDetailPage;
     case "change_request":
-      return LazyCsmChangeRequestDetailPage;
+      return CsmChangeRequestDetailPage;
     case "case":
     case "service_request":
     case "engagement":
     case "announcement":
     case "security_report_analysis":
-      return LazyCsmCaseDetailPage;
+      return CsmCaseDetailPage;
   }
 }

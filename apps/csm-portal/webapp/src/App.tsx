@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type JSX, lazy } from "react";
+import { type JSX } from "react";
 import {
   Navigate,
   Outlet,
@@ -48,132 +48,58 @@ import { SuccessBannerProvider } from "@context/success-banner/SuccessBannerCont
 import { LoaderProvider } from "@context/linear-loader/LoaderContext";
 import { ErrorPageProvider } from "@context/error-page/ErrorPageContext";
 import CaseDetailRouteSync from "@features/case-tabs/components/CaseDetailRouteSync";
+import { useAppMountedSignal } from "@utils/appMountedEvent";
 
 /*
- * Authenticated feature pages are lazily loaded so each lands in its own chunk
- * and is fetched only when its route is visited, instead of being bundled into
- * the initial entry chunk. They all render inside AppLayout's Outlet, which
- * owns the Suspense boundary that covers the load. Error pages and the shared
- * CsmComingSoonPage stay eager: they are tiny and act as immediate fallbacks.
+ * Authenticated feature pages used to be lazily loaded (one chunk per route),
+ * fetched only when their route was visited. That meant navigating to a
+ * not-yet-visited route triggered a fresh network fetch + module evaluation
+ * mid-session, which could stall the UI for a beat — especially for a larger
+ * page chunk or a slow/variable connection. They are now imported eagerly so
+ * every page ships in the initial load and no route navigation ever triggers
+ * a runtime chunk fetch. Error pages and the shared CsmComingSoonPage were
+ * already eager (tiny, immediate fallbacks) and are unaffected.
  */
-const CsmDashboardPage = lazy(
-  () => import("@features/csm-dashboard/pages/CsmDashboardPage"),
-);
-const DashboardWidgetPreviewPage = lazy(
-  () => import("@features/csm-dashboard/pages/DashboardWidgetPreviewPage"),
-);
-const CsmCasesPage = lazy(
-  () => import("@features/csm-cases/pages/CsmCasesPage"),
-);
-const CsmCaseCreatePage = lazy(
-  () => import("@features/csm-cases/pages/CsmCaseCreatePage"),
-);
-const OperationsPage = lazy(
-  () => import("@features/csm-operations/pages/OperationsPage"),
-);
-const CreateServiceRequestPage = lazy(
-  () => import("@features/csm-operations/pages/CreateServiceRequestPage"),
-);
-const CreateChangeRequestPage = lazy(
-  () => import("@features/csm-operations/pages/CreateChangeRequestPage"),
-);
-const CreateIncidentPage = lazy(
-  () => import("@features/csm-operations/pages/CreateIncidentPage"),
-);
-const ProblemDetailPage = lazy(
-  () => import("@features/csm-operations/pages/ProblemDetailPage"),
-);
-const CreateProblemPage = lazy(
-  () => import("@features/csm-operations/pages/CreateProblemPage"),
-);
-const CsmAdminLayout = lazy(
-  () => import("@features/csm-admin/pages/CsmAdminLayout"),
-);
-const CsmUserManagementLandingPage = lazy(
-  () => import("@features/csm-admin/pages/CsmUserManagementLandingPage"),
-);
-const CsmUsersPage = lazy(
-  () => import("@features/csm-users/pages/CsmUsersPage"),
-);
-const UserProfilePage = lazy(
-  () => import("@features/csm-users/pages/UserProfilePage"),
-);
-const CsmRolesPage = lazy(
-  () => import("@features/csm-admin/pages/CsmRolesPage"),
-);
-const RoleMembersPage = lazy(
-  () => import("@features/csm-admin/pages/RoleMembersPage"),
-);
-const CsmGroupsPage = lazy(
-  () => import("@features/csm-admin/pages/CsmGroupsPage"),
-);
-const GroupMembersPage = lazy(
-  () => import("@features/csm-admin/pages/GroupMembersPage"),
-);
-const CsmTeamsPage = lazy(
-  () => import("@features/csm-admin/pages/CsmTeamsPage"),
-);
-const TeamMembersPage = lazy(
-  () => import("@features/csm-admin/pages/TeamMembersPage"),
-);
-const DashboardBuilderRouteGuard = lazy(
-  () => import("@features/csm-admin/dashboards/pages/DashboardBuilderRouteGuard"),
-);
-const CsmDashboardBuilderListPage = lazy(
-  () => import("@features/csm-admin/dashboards/pages/CsmDashboardBuilderListPage"),
-);
-const CsmDashboardBuilderEditorPage = lazy(
-  () => import("@features/csm-admin/dashboards/pages/CsmDashboardBuilderEditorPage"),
-);
-const CsmDashboardSharedConfigPage = lazy(
-  () => import("@features/csm-admin/dashboards/pages/CsmDashboardSharedConfigPage"),
-);
-const CsmCustomersLayout = lazy(
-  () => import("@features/csm-customers/pages/CsmCustomersLayout"),
-);
-const CsmAccountsPage = lazy(
-  () => import("@features/csm-accounts/pages/CsmAccountsPage"),
-);
-const CsmAccountDetailPage = lazy(
-  () => import("@features/csm-accounts/pages/CsmAccountDetailPage"),
-);
-const CsmProjectsPage = lazy(
-  () => import("@features/csm-projects/pages/CsmProjectsPage"),
-);
-const CsmProjectDetailPage = lazy(
-  () => import("@features/csm-projects/pages/CsmProjectDetailPage"),
-);
-const ConversationDetailPage = lazy(
-  () => import("@features/csm-projects/pages/ConversationDetailPage"),
-);
-const CsmUpdatesPage = lazy(
-  () => import("@features/updates/pages/CsmUpdatesPage"),
-);
-const CsmSecurityCenterPage = lazy(
-  () => import("@features/csm-security-center/pages/CsmSecurityCenterPage"),
-);
-const CreateSecurityReportPage = lazy(
-  () => import("@features/csm-security-center/pages/CreateSecurityReportPage"),
-);
-const ProductVulnerabilityDetailPage = lazy(
-  () => import("@features/csm-security-center/pages/ProductVulnerabilityDetailPage"),
-);
-const CsmEngagementsPage = lazy(
-  () => import("@features/csm-engagements/pages/CsmEngagementsPage"),
-);
-const CsmEngagementCreatePage = lazy(
-  () => import("@features/csm-engagements/pages/CsmEngagementCreatePage"),
-);
-const CsmTimeCardsPage = lazy(
-  () => import("@features/csm-timecards/pages/CsmTimeCardsPage"),
-);
-const CsmAnnouncementsPage = lazy(
-  () => import("@features/csm-announcements/pages/CsmAnnouncementsPage"),
-);
-const CsmAnnouncementCreatePage = lazy(
-  () => import("@features/csm-announcements/pages/CsmAnnouncementCreatePage"),
-);
-const HelpPage = lazy(() => import("@features/help/pages/HelpPage"));
+import CsmDashboardPage from "@features/csm-dashboard/pages/CsmDashboardPage";
+import DashboardWidgetPreviewPage from "@features/csm-dashboard/pages/DashboardWidgetPreviewPage";
+import CsmCasesPage from "@features/csm-cases/pages/CsmCasesPage";
+import CsmCaseCreatePage from "@features/csm-cases/pages/CsmCaseCreatePage";
+import OperationsPage from "@features/csm-operations/pages/OperationsPage";
+import CreateServiceRequestPage from "@features/csm-operations/pages/CreateServiceRequestPage";
+import CreateChangeRequestPage from "@features/csm-operations/pages/CreateChangeRequestPage";
+import CreateIncidentPage from "@features/csm-operations/pages/CreateIncidentPage";
+import ProblemDetailPage from "@features/csm-operations/pages/ProblemDetailPage";
+import CreateProblemPage from "@features/csm-operations/pages/CreateProblemPage";
+import CsmAdminLayout from "@features/csm-admin/pages/CsmAdminLayout";
+import CsmUserManagementLandingPage from "@features/csm-admin/pages/CsmUserManagementLandingPage";
+import CsmUsersPage from "@features/csm-users/pages/CsmUsersPage";
+import UserProfilePage from "@features/csm-users/pages/UserProfilePage";
+import CsmRolesPage from "@features/csm-admin/pages/CsmRolesPage";
+import RoleMembersPage from "@features/csm-admin/pages/RoleMembersPage";
+import CsmGroupsPage from "@features/csm-admin/pages/CsmGroupsPage";
+import GroupMembersPage from "@features/csm-admin/pages/GroupMembersPage";
+import CsmTeamsPage from "@features/csm-admin/pages/CsmTeamsPage";
+import TeamMembersPage from "@features/csm-admin/pages/TeamMembersPage";
+import DashboardBuilderRouteGuard from "@features/csm-admin/dashboards/pages/DashboardBuilderRouteGuard";
+import CsmDashboardBuilderListPage from "@features/csm-admin/dashboards/pages/CsmDashboardBuilderListPage";
+import CsmDashboardBuilderEditorPage from "@features/csm-admin/dashboards/pages/CsmDashboardBuilderEditorPage";
+import CsmDashboardSharedConfigPage from "@features/csm-admin/dashboards/pages/CsmDashboardSharedConfigPage";
+import CsmCustomersLayout from "@features/csm-customers/pages/CsmCustomersLayout";
+import CsmAccountsPage from "@features/csm-accounts/pages/CsmAccountsPage";
+import CsmAccountDetailPage from "@features/csm-accounts/pages/CsmAccountDetailPage";
+import CsmProjectsPage from "@features/csm-projects/pages/CsmProjectsPage";
+import CsmProjectDetailPage from "@features/csm-projects/pages/CsmProjectDetailPage";
+import ConversationDetailPage from "@features/csm-projects/pages/ConversationDetailPage";
+import CsmUpdatesPage from "@features/updates/pages/CsmUpdatesPage";
+import CsmSecurityCenterPage from "@features/csm-security-center/pages/CsmSecurityCenterPage";
+import CreateSecurityReportPage from "@features/csm-security-center/pages/CreateSecurityReportPage";
+import ProductVulnerabilityDetailPage from "@features/csm-security-center/pages/ProductVulnerabilityDetailPage";
+import CsmEngagementsPage from "@features/csm-engagements/pages/CsmEngagementsPage";
+import CsmEngagementCreatePage from "@features/csm-engagements/pages/CsmEngagementCreatePage";
+import CsmTimeCardsPage from "@features/csm-timecards/pages/CsmTimeCardsPage";
+import CsmAnnouncementsPage from "@features/csm-announcements/pages/CsmAnnouncementsPage";
+import CsmAnnouncementCreatePage from "@features/csm-announcements/pages/CsmAnnouncementCreatePage";
+import HelpPage from "@features/help/pages/HelpPage";
 
 /**
  * Landing for `/`. Defers to AuthGuard's post-login deep-link restore when a
@@ -281,6 +207,12 @@ function LegacySettingsRedirect({ to }: { to: string }): JSX.Element {
 }
 
 export default function App(): JSX.Element {
+  // Signals the index.html boot loading screen that React has mounted and
+  // taken over rendering, so it can remove itself. Not gated on auth/data —
+  // the loading screen's job is only to cover "JS not yet running", not
+  // "signed-in and ready".
+  useAppMountedSignal();
+
   return (
     <LoaderProvider>
       <ErrorBannerProvider>

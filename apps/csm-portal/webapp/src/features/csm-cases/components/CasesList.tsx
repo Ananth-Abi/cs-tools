@@ -28,7 +28,6 @@ import { Eye } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX, type ReactNode } from "react";
 import { Link as RouterLink, useLocation } from "react-router";
 import { useNavTransition } from "@hooks/useNavTransition";
-import { preloadRoute } from "@utils/routePreloaders";
 import RelativeTime from "@components/RelativeTime";
 import SeverityChip from "@components/SeverityChip";
 import StateChip from "@components/StateChip";
@@ -381,7 +380,6 @@ export default function CasesList({
                       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                       navigate(`${rowBasePath}/${c.id}`, { state: rowState });
                     }}
-                    onMouseEnter={() => preloadRoute(rowBasePath)}
                     sx={{
                       gridColumn: "1 / -1",
                       display: "grid",
