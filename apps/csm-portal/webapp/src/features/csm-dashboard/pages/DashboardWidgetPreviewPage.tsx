@@ -51,7 +51,6 @@ import CasesFilterBar, {
 } from "@features/csm-cases/components/CasesFilterBar";
 import CasesList from "@features/csm-cases/components/CasesList";
 import { useGetCsmCases } from "@features/csm-cases/api/useGetCsmCases";
-import { useSearchTags } from "@features/csm-cases/api/useSearchTags";
 import { DEFAULT_CASES_FILTERS } from "@features/csm-cases/utils/casesFiltersUrl";
 import DateRangeFilter, {
   type DateRangeFilterValue,
@@ -214,149 +213,38 @@ interface CaseFamilyWidgetPreviewProps {
  * `CasesList` the Cases tab itself uses — not a read-only render of
  * whatever the widget happened to be configured with.
  *
- * `CasesFilterBar` has exactly one "Tags" control, not a second "Exclude
- * tags" one (a tag has no small, fixed universe of values, unlike
- * `onboardingStatuses`, so a real, independent `excludeTags` field/control
- * still exists everywhere else `CasesFilterBar` is used — the general Cases
- * list included). Here specifically, though, a widget's own `tag notIn [X]`
- * is seeded into that single "Tags" control as its complement over the
- * currently-known tag catalog (every other tag currently on offer) rather
- * than surfacing as a separate `excludeTags` value the control can't show —
- * reported live as confusing next to a control explicitly asked to stay a
- * single multi-select. This is a deliberately approximate complement (the
- * catalog is "recently/commonly used tags", not literally every tag that
- * has ever existed), accepted as a known tradeoff rather than the exact
- * complement `onboardingStatuses` gets over its 4 fixed values — in
- * particular, a case with no tags at all can't be represented as "one of
- * the complement's tags" and is wrongly excluded by this approximation, a
- * gap this deliberately doesn't try to work around (doing so would mean
- * going back to a separate, non-dropdown representation of the exclusion,
- * which is exactly what was asked against). Two narrower correctness gaps
- * *are* worth guarding even within this approximation, though: a widget
- * that also has its own `tag in [...]` gets that list intersected with the
- * complement rather than overwritten (so the widget's "must have one of
- * these tags" requirement survives alongside the exclusion), and a failed
- * tag-catalog fetch falls back to the widget's raw, un-complemented
- * `excludeTags` (still correctly scoped, just not shown as checked items)
- * rather than silently dropping the exclusion and broadening the search.
- *
- * That approximation is *display-only*, though. What actually gets sent to
- * `/cases/search` is a second, independent piece of state (`apiFilters`),
- * seeded straight from `rawTranslated` -- the real `excludeTags` blacklist,
- * never the catalog-derived complement -- so a fresh load or a Reset queries
- * exactly what the dashboard tile itself queries (a case with no tags at
- * all correctly passes a `notIn` filter here, unlike the whitelist shown in
- * the Tags control). The two stay in sync from the moment the viewer makes
- * their first edit through `CasesFilterBar` onward: once they're
- * consciously picking specific tags to include, "what's displayed" and
- * "what's queried" collapse into the same value, and stay collapsed even
- * across a later Reset back to this baseline (see `handleReset`).
+ * `CasesFilterBar`'s tag control is tri-state (digiops-cs#2907) — a tag can
+ * be included, excluded, or left unselected, shown as its own `+`/`-` chip
+ * — so a widget's `tag notIn [X]` now seeds `excludeTags` directly, the
+ * same value the dashboard tile itself queries. No approximation needed:
+ * what's shown and what's queried are the same `CasesFilters` value from
+ * the start, kept in one piece of state.
  */
 function CaseFamilyWidgetPreview({
   displayName,
   filters,
   backButton,
 }: CaseFamilyWidgetPreviewProps): JSX.Element {
-  // Stable across this component's lifetime (a fresh "View more" click is a
-  // fresh mount) so the tag-complement effect below only ever fires once.
-  const [rawTranslated] = useState(() => translateCaseDashboardFilters(filters));
-  const needsTagComplement = rawTranslated.excludeTags?.length ? true : false;
-
-  // Only the complement path needs the catalog -- an ordinary `tags`/no-tag
-  // widget never issues this request at all.
-  const { data: tagCatalog, isFetching: isCatalogFetching, isError: isCatalogError } =
-    useSearchTags("", needsTagComplement);
-
-  const initialCasesFilters = useMemo<CasesFilters | null>(() => {
-    if (!needsTagComplement) {
-      return { ...DEFAULT_CASES_FILTERS, ...rawTranslated };
-    }
-    if (isCatalogFetching) return null;
-    if (isCatalogError || !tagCatalog) {
-      // The catalog failed to load -- fall back to the widget's own raw
-      // `excludeTags` rather than dropping it, so the search itself stays
-      // correctly scoped (just excluded, not narrowed to a wrong "in"
-      // list either) even though the "Tags" control has no way to *show*
-      // an exclusion as checked items.
-      return { ...DEFAULT_CASES_FILTERS, ...rawTranslated };
-    }
-    const excluded = new Set(rawTranslated.excludeTags);
-    const complementTags = tagCatalog
-      .map((t) => t.label)
-      .filter((label) => !excluded.has(label));
-    // A widget that also requires specific tags (`tag in [...]` alongside
-    // `tag notIn [...]`) must keep both conditions ANDed -- intersect with
-    // the complement rather than overwriting the required list outright,
-    // or the widget's own "must have one of these tags" requirement is
-    // silently lost.
-    const priorTags = rawTranslated.tags;
-    const tags =
-      priorTags && priorTags.length > 0
-        ? priorTags.filter((t) => complementTags.includes(t))
-        : complementTags;
-    return {
-      ...DEFAULT_CASES_FILTERS,
-      ...rawTranslated,
-      tags,
-      excludeTags: [],
-    };
-  }, [needsTagComplement, isCatalogFetching, isCatalogError, tagCatalog, rawTranslated]);
-
-  // `initialCasesFilters` is reactive, not actually "initial" -- it goes
-  // back to `null` whenever `isCatalogFetching` is true, including on a
-  // *later* background refetch of `useSearchTags("", ...)`'s cache entry
-  // (shared, by query key, with every other open "Tags" dropdown in the
-  // app, e.g. the real one inside `CasesFilterBar` below, once its own
-  // `staleTime` elapses). Freezing the first resolved value here, once,
-  // is what makes both the initial seed below and `onReset` immune to that
-  // later refetch -- without it, clicking Reset during that window would
-  // fall back to `DEFAULT_CASES_FILTERS` and silently drop every one of
-  // the widget's own starting filters, not just the tag complement.
-  const [resetBaseline, setResetBaseline] = useState<CasesFilters | null>(null);
-  if (resetBaseline === null && initialCasesFilters !== null) {
-    setResetBaseline(initialCasesFilters);
-  }
-
-  const [casesFilters, setCasesFilters] = useState<CasesFilters | null>(null);
-  // Seeds `casesFilters` from `resetBaseline` exactly once, as soon as it
-  // resolves (immediately for a non-tag-complement widget; after the
-  // catalog fetch settles otherwise) -- never re-seeds afterward, so it
-  // can't clobber an edit the viewer already made while the catalog was
-  // still loading.
-  if (casesFilters === null && resetBaseline !== null) {
-    setCasesFilters(resetBaseline);
-  }
-
-  // What actually gets queried -- the widget's real `excludeTags` blacklist,
-  // never the catalog-derived complement `casesFilters` shows as checked
-  // "Tags". Seeded eagerly from `rawTranslated` alone, so it's correct from
-  // the very first render regardless of whether/when the tag catalog
-  // resolves. Stays this way until the viewer edits the filter bar
-  // themselves (`handleFiltersChange`), at which point the displayed value
-  // becomes the source of truth for both.
-  const [apiFilters, setApiFilters] = useState<CasesFilters>(() => ({
+  // Frozen once at mount (a fresh "View more"/slice click is a fresh mount)
+  // so a later Reset restores what the widget actually linked here with,
+  // not whatever the viewer has since edited.
+  const [initial] = useState<CasesFilters>(() => ({
     ...DEFAULT_CASES_FILTERS,
-    ...rawTranslated,
+    ...translateCaseDashboardFilters(filters),
   }));
 
+  const [casesFilters, setCasesFilters] = useState<CasesFilters>(initial);
   const [isFiltersOpen, setIsFiltersOpen] = useState(true);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
   const handleFiltersChange = (next: CasesFilters): void => {
     setCasesFilters(next);
-    setApiFilters(next);
     setPage(0);
   };
 
-  // Distinct from `handleFiltersChange`: a Reset must restore the *original*
-  // divergence (display shows the complement baseline, the query goes back
-  // to the widget's real blacklist) rather than collapsing them the way a
-  // manual edit does -- otherwise a single Reset after any edit would lock
-  // `apiFilters` to the complement approximation forever.
   const handleReset = (): void => {
-    setCasesFilters(resetBaseline ?? DEFAULT_CASES_FILTERS);
-    setApiFilters({ ...DEFAULT_CASES_FILTERS, ...rawTranslated });
+    setCasesFilters(initial);
     setPage(0);
   };
 
@@ -366,23 +254,11 @@ function CaseFamilyWidgetPreview({
   };
 
   const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useGetCsmCases(
-    apiFilters,
+    casesFilters,
     page,
     rowsPerPage,
-    casesFilters !== null,
+    true,
   );
-
-  if (casesFilters === null) {
-    return (
-      <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-        {backButton}
-        <Typography variant="h5">{displayName}</Typography>
-        <Typography variant="body2" color="text.secondary">
-          Loading…
-        </Typography>
-      </Box>
-    );
-  }
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
@@ -396,13 +272,6 @@ function CaseFamilyWidgetPreview({
           label={`Refresh ${displayName}`}
         />
       </Box>
-      {isCatalogError && (
-        <Typography variant="caption" color="text.secondary">
-          Couldn&rsquo;t load the tag catalog — this widget&rsquo;s tag exclusion is still
-          applied to the results below, it just isn&rsquo;t shown as checked items in the Tags
-          control.
-        </Typography>
-      )}
       <CasesFilterBar
         filters={casesFilters}
         onChange={handleFiltersChange}

@@ -124,24 +124,25 @@ describe("TagsMultiSelect — chip rendering", () => {
     expect(chip).toHaveClass("MuiChip-colorError");
   });
 
-  it("renders both an included and an excluded chip at once, each distinct", () => {
+  it("collapses to a fixed-width 'N tags' summary once more than one tag is selected, instead of rendering every chip individually", () => {
+    // Real bug this guards: the control sits in a narrow filter-bar column
+    // that can't fit two real Chip pills without the row's own
+    // `overflow: hidden` silently clipping the second one (only the first,
+    // partially truncated, stayed visible) -- reproduced with
+    // tags=patch&excludeTags=am. A fixed-width summary chip can't overflow
+    // regardless of label length or how many tags are selected.
     renderControl({ includedValues: ["urgent"], excludedValues: ["spam"] });
-    expect(screen.getByText("+ urgent")).toBeInTheDocument();
-    expect(screen.getByText("- spam")).toBeInTheDocument();
+    expect(screen.getByText("2 tags")).toBeInTheDocument();
+    expect(screen.queryByText("+ urgent")).not.toBeInTheDocument();
+    expect(screen.queryByText("- spam")).not.toBeInTheDocument();
   });
 
-  it("deleting a chip clears just that tag via onChange", () => {
-    const { onChange } = renderControl({
-      includedValues: ["urgent", "keep-me"],
-      excludedValues: ["spam"],
-    });
+  it("deleting the single selected chip clears it via onChange", () => {
+    const { onChange } = renderControl({ includedValues: ["urgent"] });
 
     const chip = screen.getByText("+ urgent").closest(".MuiChip-root")!;
     fireEvent.click(chip.querySelector("svg")!);
 
-    expect(onChange).toHaveBeenCalledWith({
-      included: ["keep-me"],
-      excluded: ["spam"],
-    });
+    expect(onChange).toHaveBeenCalledWith({ included: [], excluded: [] });
   });
 });

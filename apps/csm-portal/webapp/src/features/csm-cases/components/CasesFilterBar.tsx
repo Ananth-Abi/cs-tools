@@ -79,6 +79,7 @@ import {
   ONBOARDING_STATUS_LABEL,
 } from "@features/csm-cases/utils/onboardingStatus";
 import MultiSelectField from "@components/MultiSelectField";
+import TriStateMultiSelectField from "@components/TriStateMultiSelectField";
 import AsyncAssigneeMultiSelect from "@features/csm-cases/components/AsyncAssigneeMultiSelect";
 import ProductNameMultiSelect from "@features/csm-cases/components/ProductNameMultiSelect";
 import TagsMultiSelect from "@features/csm-cases/components/TagsMultiSelect";
@@ -98,9 +99,9 @@ export interface CasesFilters {
   states: CaseState[];
   /** States the case must NOT be in (`state` op:notIn). Not the inverse of
    * `states` — a distinct field so `in` and `notIn` can never be conflated
-   * on the round trip, same reasoning as `tags`/`excludeTags`. No dedicated
-   * bar control (like `excludeTags`) — only ever set via a dashboard
-   * click-through, surfaced/removable as a chip. */
+   * on the round trip, same reasoning as `tags`/`excludeTags`. Has its own
+   * bar control (the State field's `TriStateMultiSelectField`, digiops-cs#2907
+   * follow-up) as well as being settable via a dashboard click-through. */
   excludeStates: CaseState[];
   /** Case-type filter (BE `typeKeys`). Empty = all types. */
   caseTypes: BeCaseType[];
@@ -308,24 +309,13 @@ function buildActiveFilterChips(
     });
   });
 
-  // `tags`/`excludeTags` both have their own "Tags" bar control now (the
-  // tri-state `TagsMultiSelect`, see the filter grid below and its own doc
-  // comment) -- not chipped here, same as `csTeams`/`onboardingStatuses`.
-  // A dashboard click-through (or a saved view) that seeds `excludeTags`
-  // still round-trips it losslessly through the URL and shows up as that
-  // control's own "- tag" chip, same as any other exclusion a user picks by
-  // hand.
-
-  filters.excludeStates.forEach((state) => {
-    chips.push({
-      key: `excludeState-${state}`,
-      label: `Excluding state: ${STATE_LABEL[state] ?? state}`,
-      onRemove: (f) => ({
-        ...f,
-        excludeStates: f.excludeStates.filter((s) => s !== state),
-      }),
-    });
-  });
+  // `tags`/`excludeTags` and `states`/`excludeStates` each have their own
+  // tri-state bar control now (`TagsMultiSelect`, `TriStateMultiSelectField`
+  // on the State field -- see the filter grid below) -- not chipped here,
+  // same as `csTeams`/`onboardingStatuses`. A dashboard click-through (or a
+  // saved view) that seeds `excludeTags`/`excludeStates` still round-trips
+  // losslessly through the URL and shows up as that control's own "- "
+  // chip, same as any other exclusion a user picks by hand.
 
   filters.workStates.forEach((workState) => {
     chips.push({
@@ -754,22 +744,32 @@ export default function CasesFilterBar({
               </Grid>
             )}
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-              <MultiSelectField
+              {/* Tri-state (digiops-cs#2907 follow-up): `state` is one of
+                  only two fields (with `tag`) the search contract supports
+                  a real `notIn` on, so "State is not Closed" is now
+                  directly expressible here instead of only via a dashboard
+                  click-through's `excludeStates` chip. */}
+              <TriStateMultiSelectField
                 id="cases-filter-state"
                 label="State"
-                values={filters.states}
+                includedValues={filters.states}
+                excludedValues={filters.excludeStates}
                 options={stateOptions}
                 // Work sub-state only applies when `work_in_progress` is the
-                // *sole* selected state — with other states also selected the
-                // work-state filter can't be applied server-side, so drop any
-                // selected work states as soon as the selection stops being
-                // exactly that one state.
+                // *sole* included state — with other states also included
+                // (or excluded — an exclusion doesn't narrow to a single
+                // work state either) the work-state filter can't be applied
+                // server-side, so drop any selected work states as soon as
+                // the selection stops being exactly that one included state.
                 onChange={(next) =>
                   onChange({
                     ...filters,
-                    states: next,
+                    states: next.included,
+                    excludeStates: next.excluded,
                     workStates:
-                      next.length === 1 && next[0] === "work_in_progress"
+                      next.included.length === 1 &&
+                      next.included[0] === "work_in_progress" &&
+                      next.excluded.length === 0
                         ? filters.workStates
                         : [],
                   })

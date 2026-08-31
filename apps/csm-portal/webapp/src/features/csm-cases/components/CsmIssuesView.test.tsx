@@ -37,16 +37,20 @@ vi.mock("@hooks/useIdTokenClaims", () => ({
 vi.mock("@api/useDirectoryUsers", () => ({
   useDirectoryUsers: () => ({ data: [] }),
 }));
+const useGetCsmCasesMock = vi.fn();
 vi.mock("@features/csm-cases/api/useGetCsmCases", () => ({
-  useGetCsmCases: () => ({
-    data: { cases: [], total: 0, hasMore: false },
-    isLoading: false,
-    isFetching: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-    dataUpdatedAt: 0,
-  }),
+  useGetCsmCases: (...args: unknown[]) => {
+    useGetCsmCasesMock(...args);
+    return {
+      data: { cases: [], total: 0, hasMore: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      dataUpdatedAt: 0,
+    };
+  },
 }));
 vi.mock("@features/csm-cases/components/CasesFilterBar", () => ({
   default: () => <div>FilterBar</div>,
@@ -65,6 +69,7 @@ import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 
 beforeEach(() => {
   window.localStorage.clear();
+  useGetCsmCasesMock.mockClear();
 });
 
 function LocationProbe() {
@@ -174,5 +179,72 @@ describe("CsmIssuesView column customization", () => {
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
     const checkboxes = screen.getAllByRole("checkbox");
     expect(checkboxes[2]).toBeChecked(); // Assignee, toggled on above
+  });
+});
+
+describe("CsmIssuesView defaultCaseTypes (Support page's case-type default, digiops-cs#2907 follow-up)", () => {
+  function renderWithDefault(initialEntry: string) {
+    return render(
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route
+            path="/cases"
+            element={<CsmIssuesView title="Cases" defaultCaseTypes={["case"]} />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("seeds caseTypes to the default on a fresh visit with no `types` param at all", () => {
+    renderWithDefault("/cases");
+    expect(useGetCsmCasesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ caseTypes: ["case"] }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("does not override an explicit `types` param already in the URL", () => {
+    renderWithDefault("/cases?types=service_request");
+    expect(useGetCsmCasesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ caseTypes: ["service_request"] }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("does nothing when hideTypeFilter is set (a locked-type page has no use for a default)", () => {
+    render(
+      <MemoryRouter initialEntries={["/cases"]}>
+        <Routes>
+          <Route
+            path="/cases"
+            element={
+              <CsmIssuesView
+                title="Service Requests"
+                lockedFilters={{ caseTypes: ["service_request"] }}
+                hideTypeFilter
+                defaultCaseTypes={["case"]}
+              />
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(useGetCsmCasesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ caseTypes: ["service_request"] }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });

@@ -126,6 +126,18 @@ interface CsmIssuesViewProps {
   lockedFilters?: Partial<CasesFilters>;
   /** Hide the case-type filter control (use when `lockedFilters` fixes it). */
   hideTypeFilter?: boolean;
+  /**
+   * Case type(s) to pre-select the FIRST time this view loads with no `types`
+   * param in the URL at all -- unlike `lockedFilters`, this is a starting
+   * point the user's own control can freely change (and once they do, their
+   * choice round-trips through the URL like any other filter). Only
+   * meaningful when the type control is visible (`!hideTypeFilter`); a
+   * caller that locks and hides the type filter has no use for a separate
+   * "default" on top of that lock. `CsmCasesPage` (Support) is the only
+   * current user: it wants "Case" pre-selected on a fresh visit, but every
+   * other type still one click away.
+   */
+  defaultCaseTypes?: CasesFilters["caseTypes"];
   /** Label for the case-type filter control; see `CasesFilterBar`'s own
    * `typeFilterLabel` doc comment. Defaults to "Case type". */
   typeFilterLabel?: string;
@@ -176,6 +188,7 @@ export default function CsmIssuesView({
   entityNoun = "cases",
   lockedFilters,
   hideTypeFilter,
+  defaultCaseTypes,
   typeFilterLabel,
   hideProjectFilter,
   showEngagementTypeFilter,
@@ -186,10 +199,23 @@ export default function CsmIssuesView({
   columnsViewId,
 }: CsmIssuesViewProps): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
-  const filters = useMemo<CasesFilters>(
-    () => readCasesFiltersFromUrl(searchParams),
-    [searchParams],
-  );
+  const filters = useMemo<CasesFilters>(() => {
+    const fromUrl = readCasesFiltersFromUrl(searchParams);
+    // Only on a fresh visit -- no `types` param in the URL at all, not even
+    // an explicitly-cleared empty one (that still round-trips as "absent",
+    // see `writeCasesFiltersToUrl`, so this can't tell a first visit apart
+    // from the user having deliberately broadened back to "every type" and
+    // reloading -- an accepted trade-off for a page whose baseline purpose
+    // is "Cases", not a live "was this touched" flag).
+    if (
+      defaultCaseTypes?.length &&
+      !hideTypeFilter &&
+      !searchParams.has("types")
+    ) {
+      return { ...fromUrl, caseTypes: defaultCaseTypes };
+    }
+    return fromUrl;
+  }, [searchParams, defaultCaseTypes, hideTypeFilter]);
 
   const location = useLocation();
   const navigate = useNavTransition();

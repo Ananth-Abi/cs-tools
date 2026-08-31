@@ -194,29 +194,12 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
     expect(screen.queryByText(/^CS team:/)).not.toBeInTheDocument();
   });
 
-  // Regression: reported live against a dashboard widget's `state notIn`
-  // click-through, which showed an INCLUDE chip (the exact opposite of the
-  // widget's own filter) because the exclusion had nowhere of its own to
-  // render. `excludeStates` has no bar control of its own, so its chip is
-  // the only way to see or clear it. `onboardingStatuses` has its own
-  // "Onboarding status" bar control (tested separately below) and
-  // is deliberately NOT chipped, same as `csTeams`.
-  it("renders a distinct chip for excludeStates, never conflated with its include counterpart", () => {
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      states: ["open"],
-      excludeStates: ["closed"],
-    });
-
-    expect(screen.getByText("Excluding state: Closed")).toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByText("Excluding state: Closed").closest(".MuiChip-root")!
-        .querySelector("svg")!,
-    );
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeStates: [] }),
-    );
+  // `excludeStates` now has its own "State" bar control (the tri-state
+  // `TriStateMultiSelectField`, digiops-cs#2907 follow-up), same as
+  // `excludeTags` above — no second, redundant chip.
+  it("does not render a chip for excludeStates — it has its own 'State' bar control now", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, states: ["open"], excludeStates: ["closed"] });
+    expect(screen.queryByText(/^Excluding state:/)).not.toBeInTheDocument();
   });
 
   it("does not render a chip for onboardingStatuses — it has its own 'Onboarding status' bar control", () => {
@@ -254,6 +237,41 @@ describe("CasesFilterBar — 'Team' control (replaces the removed 'Work state' o
     fireEvent.click(await screen.findByRole("option", { name: "ABT One" }));
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ csTeams: ["g-1"] }));
+  });
+});
+
+describe("CasesFilterBar — 'State' control (tri-state include/exclude, digiops-cs#2907 follow-up)", () => {
+  it("clicking an unselected state once includes it", async () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Closed" }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ states: ["closed"], excludeStates: [] }),
+    );
+  });
+
+  it("clicking an included state a second time moves it to excluded", async () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS, states: ["closed"] });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Closed" }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ states: [], excludeStates: ["closed"] }),
+    );
+  });
+
+  it("clicking an excluded state a third time clears it back to unselected", async () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS, excludeStates: ["closed"] });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Closed" }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ states: [], excludeStates: [] }),
+    );
   });
 });
 
@@ -343,25 +361,36 @@ describe("CasesFilterBar — 'Tags' control (tri-state include/exclude, digiops-
     );
   });
 
-  it("renders an included tag as a neutral '+' chip and an excluded tag as an 'error'-tinted '-' chip", () => {
-    renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      tags: ["urgent"],
-      excludeTags: ["spam"],
-    });
-
+  it("renders a single included tag as a neutral '+' chip", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["urgent"] });
     const includedChip = screen.getByText("+ urgent").closest(".MuiChip-root");
-    const excludedChip = screen.getByText("- spam").closest(".MuiChip-root");
     expect(includedChip).toBeInTheDocument();
-    expect(excludedChip).toBeInTheDocument();
-    expect(excludedChip).toHaveClass("MuiChip-colorError");
     expect(includedChip).not.toHaveClass("MuiChip-colorError");
   });
 
-  it("deleting an excluded tag's own chip clears just that tag", () => {
+  it("renders a single excluded tag as an 'error'-tinted '-' chip", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, excludeTags: ["spam"] });
+    const excludedChip = screen.getByText("- spam").closest(".MuiChip-root");
+    expect(excludedChip).toBeInTheDocument();
+    expect(excludedChip).toHaveClass("MuiChip-colorError");
+  });
+
+  it("collapses to a 'N tags' summary once both an included and an excluded tag are selected, instead of rendering both chips individually", () => {
+    // The bar's Tags control sits in a narrow filter-grid column that can't
+    // fit two real Chip pills without the row's own `overflow: hidden`
+    // silently clipping the second one -- see TagsMultiSelect's own test
+    // for the full repro (tags=patch&excludeTags=am showed only one,
+    // truncated chip even though both filters were genuinely active).
+    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["urgent"], excludeTags: ["spam"] });
+
+    expect(screen.getByText("2 tags")).toBeInTheDocument();
+    expect(screen.queryByText("+ urgent")).not.toBeInTheDocument();
+    expect(screen.queryByText("- spam")).not.toBeInTheDocument();
+  });
+
+  it("deleting the one selected excluded tag's chip clears just that tag", () => {
     const { onChange } = renderBar({
       ...DEFAULT_CASES_FILTERS,
-      tags: ["urgent"],
       excludeTags: ["spam"],
     });
 
@@ -369,7 +398,7 @@ describe("CasesFilterBar — 'Tags' control (tri-state include/exclude, digiops-
     fireEvent.click(excludedChip.querySelector("svg")!);
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: ["urgent"], excludeTags: [] }),
+      expect.objectContaining({ tags: [], excludeTags: [] }),
     );
   });
 });

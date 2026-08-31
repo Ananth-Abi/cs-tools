@@ -29,22 +29,21 @@ export default function CsmCasesPage(): JSX.Element {
     <CsmIssuesView
       title="Cases"
       entityNoun="cases"
-      // Cases list defaults to support cases (`caseTypes: ["case"]`) but,
-      // unlike the other issue-type pages (Operations/Security Center/
-      // Engagements, which exist purely to be locked to one type and hide
-      // the control), is the one unlocked, multi-type `CsmIssuesView`: the
-      // type control is left visible, and `CsmIssuesView` only applies this
-      // `lockedFilters.caseTypes` value to its severity-filter-visibility /
-      // column-default hints, not to the query itself (see its own
-      // `hideTypeFilter` handling) — so picking a different type here
-      // genuinely narrows the results, per digiops-cs#2907. Clearing the
-      // control back to no selection falls through to "every type" (see
-      // `CsmIssuesView`'s own `ALL_CASE_TYPES` fallback), not back to "Case
-      // only" — a deliberate choice to keep the empty state meaning "no
-      // filter applied" consistently with every other filter on this bar,
-      // rather than a hidden implicit default the user can't see or
-      // override. Flag to the product owner if "Case only" should instead be
-      // the sticky default even once cleared.
+      // Cases list defaults to support cases (`caseTypes: ["case"]`) on a
+      // fresh visit, but, unlike the other issue-type pages (Operations/
+      // Security Center/Engagements, which exist purely to be locked to one
+      // type and hide the control), is the one unlocked, multi-type
+      // `CsmIssuesView`: the type control is left visible and fully
+      // changeable — `defaultCaseTypes` only seeds the initial selection
+      // when the URL carries no `types` param at all; picking a different
+      // type (or clearing back to no selection, which falls through to
+      // "every type" via `CsmIssuesView`'s own `ALL_CASE_TYPES` fallback)
+      // genuinely narrows/broadens the results, per digiops-cs#2907.
+      // `lockedFilters.caseTypes` is kept in lockstep purely so the severity
+      // filter/column stay visible (that hint is keyed off `lockedFilters`,
+      // not the live selection or `defaultCaseTypes` — see
+      // `CsmIssuesView`'s own `showSeverityFilter`).
+      defaultCaseTypes={["case"]}
       lockedFilters={{ caseTypes: ["case"] }}
       enableColumnCustomization
       columnsViewId="cases"

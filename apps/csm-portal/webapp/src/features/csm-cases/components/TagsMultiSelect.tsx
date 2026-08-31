@@ -272,31 +272,37 @@ export default function TagsMultiSelect({
         const displayText = chips
           .map((c) => `${c.excluded ? "-" : "+"} ${c.value}`)
           .join(", ");
-        const content = (
-          <Box
-            sx={{
-              display: "flex",
-              flexWrap: "nowrap",
-              overflow: "hidden",
-              gap: 0.5,
-              flex: "1 1 0",
-              minWidth: 0,
-              pl: 0.5,
-            }}
-          >
-            {chips.map((c) => (
-              <Chip
-                key={`${c.excluded ? "exclude" : "include"}-${c.value}`}
-                size="small"
-                variant="outlined"
-                color={c.excluded ? "error" : "default"}
-                label={`${c.excluded ? "-" : "+"} ${c.value}`}
-                onDelete={() => removeTag(c.value)}
-                sx={{ flexShrink: 0 }}
-              />
-            ))}
-          </Box>
-        );
+        // The control sits in a narrow filter-bar column (~1/6 row width) --
+        // measured in practice, the available box is too narrow to fit any
+        // real tag label plus a second chip, however aggressively either is
+        // shrunk (a real, reproduced bug: two chips selected, the row's own
+        // `overflow: hidden` squeezed the first down to an unreadable "+"
+        // sliver and hid the second entirely, even though both filters
+        // were genuinely active). Once there's more than one, stop trying
+        // to preview any individual label in the row itself -- show one
+        // fixed-width summary chip ("2 tags") instead, which always fits
+        // regardless of label length. The full include/exclude breakdown
+        // is in the tooltip, and each one is still individually visible
+        // (with its own +/- indicator) and editable by reopening the
+        // dropdown.
+        const content =
+          chips.length === 1 ? (
+            <Chip
+              size="small"
+              variant="outlined"
+              color={chips[0].excluded ? "error" : "default"}
+              label={`${chips[0].excluded ? "-" : "+"} ${chips[0].value}`}
+              onDelete={() => removeTag(chips[0].value)}
+              sx={{ ml: 0.5, maxWidth: "100%" }}
+            />
+          ) : (
+            <Chip
+              size="small"
+              variant="outlined"
+              label={`${chips.length} tags`}
+              sx={{ ml: 0.5 }}
+            />
+          );
         return chips.length === 1 ? (
           content
         ) : (
