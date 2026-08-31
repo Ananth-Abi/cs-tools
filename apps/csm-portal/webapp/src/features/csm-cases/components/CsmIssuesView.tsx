@@ -112,6 +112,17 @@ const FILTER_PARAM_KEYS = [
   "updatedTo",
   "closedFrom",
   "closedTo",
+  // Same class of bug as `workStates` above, found the same way while
+  // live-verifying the unified Advanced-mode row builder: removing the last
+  // `filters.advancedFilters` row (or the last `anyOfBranches` OR-group) —
+  // e.g. a "Created by is me" row with no typed `CasesFilters` slot to fall
+  // back to — silently did nothing, because `af`/`anyOf` were missing here.
+  // `writeCasesFiltersToUrl` only ever *sets* these two once there's at
+  // least one row/branch again; it never explicitly clears them, so without
+  // an explicit `delete` here first, the stale value from the previous URL
+  // just kept getting read back on the next render.
+  "af",
+  "anyOf",
 ] as const;
 
 interface CsmIssuesViewProps {
