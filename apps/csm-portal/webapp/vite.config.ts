@@ -132,6 +132,15 @@ const viteConfig = defineConfig({
     },
   },
   envPrefix: ["CSM_PORTAL_"],
+  // TEMPORARY debug measure: emit referenced (non-hidden) sourcemaps so a
+  // staging deploy shows de-minified stack traces in the browser devtools
+  // console while root-causing a live bug. There is no error-tracking
+  // service in this stack to receive uploaded maps, so "hidden" sourcemaps
+  // would be useless here -- referenced maps are what a browser's devtools
+  // auto-fetches and resolves against. Revert once the bug is diagnosed.
+  build: {
+    sourcemap: true,
+  },
   server: {
     port: 3001,
     strictPort: true,
