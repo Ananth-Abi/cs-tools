@@ -25,6 +25,12 @@ interface UserIdOption {
   name: string;
 }
 
+/** True when the "Me" option should show for the current typed term. */
+function meMatches(input: string): boolean {
+  const t = input.trim().toLowerCase();
+  return t === "" || "me".includes(t);
+}
+
 interface AsyncUserIdMultiSelectProps {
   id?: string;
   label?: string;
@@ -39,17 +45,26 @@ interface AsyncUserIdMultiSelectProps {
    * before any search has run (e.g. seeded from a dashboard widget's own
    * filters). */
   nameSeed?: Map<string, string>;
+  /**
+   * The signed-in user's own platform id, so a selected value equal to it
+   * can render as "Me" instead of its raw UUID, and picking "Me" from the
+   * dropdown stores this id. This field's own contract has no `@me`
+   * sentinel of its own (unlike {@link AsyncAssigneeMultiSelect}'s
+   * `ASSIGNEE_ME_TOKEN`) — the caller resolves `__current_user__`/`@me` to
+   * this real UUID upstream, before this component ever sees the value
+   * (see `resolveCurrentUserSentinels`), so recognizing "Me" here means
+   * comparing selected UUIDs against this id rather than a literal token.
+   * Omit while the current user hasn't resolved yet; already-selected
+   * values just render their raw UUID (or a `nameSeed` label) until it has.
+   */
+  currentUserId?: string;
 }
 
 /**
  * UUID-keyed twin of {@link AsyncAssigneeMultiSelect}: same backend-search
  * Autocomplete (`useInfiniteUserSearch`, the shared user-directory search
  * every assignee-style picker in this app already uses), but stores each
- * selection's platform id instead of its email — for a filter field whose
- * own contract is UUID-typed and has no `@me` sentinel of its own (the
- * caller resolves `__current_user__`/`@me` upstream, before this component
- * ever sees the value — see `resolveCurrentUserSentinels`/
- * `resolveCurrentUserPlaceholder`).
+ * selection's platform id instead of its email.
  */
 export default function AsyncUserIdMultiSelect({
   id = "user-id-multi-select",
@@ -57,6 +72,7 @@ export default function AsyncUserIdMultiSelect({
   values,
   onChange,
   nameSeed,
+  currentUserId,
 }: AsyncUserIdMultiSelectProps): JSX.Element {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -87,17 +103,29 @@ export default function AsyncUserIdMultiSelect({
   }, [nameSeed, users, pickedNames]);
 
   const selectedOptions: UserIdOption[] = useMemo(
-    () => values.map((v) => ({ id: v, name: nameById.get(v) ?? v })),
-    [values, nameById],
+    () =>
+      values.map((v) => ({
+        id: v,
+        name: v === currentUserId ? "Me" : (nameById.get(v) ?? v),
+      })),
+    [values, nameById, currentUserId],
   );
 
+  // Pool = current selection (so the field renders its chips) + the search
+  // results, de-duplicated by id, with "Me" pinned first when it matches
+  // the typed term and isn't already selected — mirrors
+  // `AsyncAssigneeMultiSelect`'s own pinned "Me" option, keyed by this
+  // field's own id (`currentUserId`) rather than a literal sentinel token.
   const options: UserIdOption[] = useMemo(() => {
     const selected = new Set(values);
     const results = users
       .filter((u) => !selected.has(u.id))
       .map((u) => ({ id: u.id, name: u.name }));
-    return [...selectedOptions, ...results];
-  }, [users, values, selectedOptions]);
+    const base = [...selectedOptions, ...results];
+    const showMe = Boolean(currentUserId) && !selected.has(currentUserId!) && meMatches(input);
+    const meOption: UserIdOption = { id: currentUserId ?? "", name: "Me" };
+    return showMe ? [meOption, ...base] : base;
+  }, [users, values, selectedOptions, input, currentUserId]);
 
   return (
     <Autocomplete<UserIdOption, true>
@@ -119,7 +147,9 @@ export default function AsyncUserIdMultiSelect({
       onChange={(_event, next) => {
         setPickedNames((prev) => {
           const m = new Map(prev);
-          next.forEach((o) => m.set(o.id, o.name));
+          next.forEach((o) => {
+            if (o.id !== currentUserId) m.set(o.id, o.name);
+          });
           return m;
         });
         onChange(next.map((o) => o.id));

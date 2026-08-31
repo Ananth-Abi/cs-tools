@@ -468,6 +468,15 @@ function CallRequestWidgetPreview({
     setPage(0);
   };
 
+  // So the Assignee control can render a selected value equal to the
+  // signed-in user's own id as "Me" instead of its raw UUID — see
+  // `AsyncUserIdMultiSelect`'s `currentUserId` doc comment. `filters` (this
+  // component's own prop) already had any `__current_user__`/`@me`
+  // sentinel resolved to this same id upstream, before this component ever
+  // saw it (`resolveCurrentUserSentinels`, above) — this is only needed to
+  // recognize that resolved id again for display/re-selection.
+  const currentUserId = useCurrentUser().user?.id;
+
   // Same CRE-team sourcing/scoping `CasesFilterBar`'s own "CRE Team" control
   // uses (`useTeams(true)`, filtered to `family === "cre-abt"`, keyed by
   // `creGroupId` — what `assignmentTeamIds` actually matches on, not the
@@ -563,6 +572,7 @@ function CallRequestWidgetPreview({
               setCrFilters({ ...crFilters, assignedUserIds: next });
               setPage(0);
             }}
+            currentUserId={currentUserId}
           />
         </Box>
         <Box sx={{ minWidth: 220 }}>
