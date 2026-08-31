@@ -121,6 +121,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Per-call knobs for the returned fetch wrapper's own recovery behavior —
+// distinct from `RequestInit`, which configures the actual HTTP request.
+export interface AuthFetchOptions {
+  /** Skip the full sign-in redirect this hook would otherwise attempt once
+   * retry + silent re-auth + polling are all exhausted with the call still
+   * failing, and surface the failure immediately instead. Use for a call
+   * whose own failure needs a fast, decisive answer (e.g. "is this account
+   * authorized to use this portal at all") rather than risk hanging forever
+   * behind a redirect that assumes the browser is about to navigate away —
+   * an assumption that doesn't hold when signIn() has nothing left to fix
+   * and silently no-ops. Every other caller keeps the default redirect
+   * behavior, which is what's wanted for an arbitrary in-app action failing
+   * because the session has gone genuinely dead. */
+  skipSignInRedirect?: boolean;
+}
+
 // One attempt's outcome, classified so the retry chain below can treat "the
 // SDK threw because the token is expired/missing" and "the fetch resolved
 // with a genuine server-side HTTP 401" identically: both are `recoverable`
@@ -348,7 +364,11 @@ export function useAuthApiClient() {
   );
 
   return useCallback(
-    async (input: RequestInfo | URL, options?: RequestInit): Promise<Response> => {
+    async (
+      input: RequestInfo | URL,
+      options?: RequestInit,
+      authFetchOptions?: AuthFetchOptions,
+    ): Promise<Response> => {
       // First attempt. Only a recoverable outcome (thrown token-expiry, or a
       // resolved genuine HTTP 401) continues the chain below; a success, a
       // non-401 error response, or a non-auth thrown error return/throw here.
@@ -400,13 +420,28 @@ export function useAuthApiClient() {
         if (silentSignInSettled && !silentSignInSucceeded) break;
       }
 
-      // The poll budget is exhausted with no recovery. Before bouncing the
-      // whole tab to a full sign-in redirect, guard against redirect-looping
-      // forever against an account whose 401 isn't actually fixable by
-      // re-authenticating (a valid token, but e.g. a backend/upstream-data
-      // problem on that account) — if we already forced a sign-in very
-      // recently and landed right back on the same failure, let it surface
-      // as a normal failure instead of redirecting again.
+      // The poll budget is exhausted with no recovery. A caller that opted
+      // out of the sign-in redirect gets the failure immediately: the
+      // redirect below assumes the browser is about to navigate away (that's
+      // why it never resolves — see redirectToSignIn's own comment), but
+      // that assumption doesn't hold when signIn() has nothing left to do
+      // (e.g. the IdP session is already fully valid, just short of whatever
+      // this specific call needs) — it can silently no-op, and the caller
+      // would then hang forever waiting on a navigation that never comes.
+      // /users/me's own "not authorized" detection opts out for exactly this
+      // reason — see AuthGuard.tsx's AuthorizedAppShell.
+      if (authFetchOptions?.skipSignInRedirect) {
+        if (last.response) return last.response;
+        throw last.error;
+      }
+
+      // Otherwise, before bouncing the whole tab to a full sign-in redirect,
+      // guard against redirect-looping forever against an account whose 401
+      // isn't actually fixable by re-authenticating (a valid token, but e.g.
+      // a backend/upstream-data problem on that account) — if we already
+      // forced a sign-in very recently and landed right back on the same
+      // failure, let it surface as a normal failure instead of redirecting
+      // again.
       if (recentlyForcedSignIn()) {
         if (last.response) return last.response;
         throw last.error;

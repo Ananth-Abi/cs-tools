@@ -321,7 +321,7 @@ describe("AuthGuard's response to a /users/me failure once signed in", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not show the not-authorized page while /users/me is still loading", async () => {
+  it("suppresses the routed page (shows a loading state instead) while /users/me is still loading, rather than mounting it before access is confirmed", async () => {
     currentUserState.isLoading = true;
     currentUserState.isError = false;
     let rerender!: ReturnType<typeof renderAuthGuard>["rerender"];
@@ -340,7 +340,9 @@ describe("AuthGuard's response to a /users/me failure once signed in", () => {
     expect(
       screen.queryByText("You don't have access to this portal yet"),
     ).not.toBeInTheDocument();
-    expect(appLayoutPropsMock).toHaveBeenCalledWith({ minimalHeader: false });
+    // minimalHeader true here too: the routed page (and its sidebar) has no
+    // business being reachable before we know this caller is authorized.
+    expect(appLayoutPropsMock).toHaveBeenCalledWith({ minimalHeader: true });
   });
 
   it("does not show the not-authorized page for an unrelated /users/me failure (e.g. 500)", async () => {

@@ -127,27 +127,45 @@ function SignInRedirect(): JSX.Element {
 /**
  * Renders the app shell, unless `/users/me` (via `CurrentUserProvider`)
  * failed with a 401 or 403 that survived `useAuthApiClient`'s own recovery
- * chain — that chain already retries/silently refreshes/redirects-to-sign-in
- * on a recoverable 401, so an error still reaching here means the caller is
- * genuinely not entitled to use this portal (or in the rare case a fresh
- * sign-in still comes back 401, the redirect-loop guard gave up), not just a
- * transient expired token.
+ * chain — that chain already retries/silently refreshes/gives up (see
+ * `useGetUsersMe.ts`'s `skipSignInRedirect`) on a recoverable 401, so an
+ * error still reaching here means the caller is genuinely not entitled to
+ * use this portal, not just a transient expired token.
+ *
+ * The routed page is suppressed (same `children` vs. bare `<AppLayout />`
+ * mechanic `AuthPendingShell` above uses, for the same reason) for as long
+ * as that check is still pending, not just once it comes back positive. The
+ * routed page's own components fire their own API calls the moment they
+ * mount — a dashboard widget, a case list — regardless of whether this
+ * caller turns out to be authorized, so mounting it before `/users/me` has
+ * settled let an unauthorized caller see real response data (and use the
+ * sidebar to reach other real pages) during that window. A signed-in user
+ * only ever sees the routed page once we positively know they're allowed to.
  *
  * Renders through `AppLayout` itself (not a bare error layout) so the real
  * header/branding still shows — this is a signed-in user, just one without
- * access yet, not someone who has left the portal. The sidebar has nothing
- * to navigate to in this state, so it's suppressed via `AppLayout`'s
+ * (confirmed or yet-to-be-confirmed) access, not someone who has left the
+ * portal. The sidebar has nothing to navigate to in either the loading or
+ * the not-authorized state, so it's suppressed via `AppLayout`'s
  * `minimalHeader` prop — applied in the very same render as `children`
- * below, not a context flag settled a render later via an effect, so the
- * sidebar never flashes on screen for a frame before disappearing.
+ * below, not a context flag settled a render later via an effect, so it
+ * never flashes on screen for a frame before disappearing.
  *
- * @returns {JSX.Element} AppLayout, showing the routed page or the
- * "not authorized" page in its content area.
+ * @returns {JSX.Element} AppLayout, showing a loading state, the routed
+ * page, or the "not authorized" page in its content area.
  */
 function AuthorizedAppShell(): JSX.Element {
   const { isLoading, isError, error } = useCurrentUser();
   const notAuthorized =
-    !isLoading && isError && (isUnauthorizedError(error) || isForbiddenError(error));
+    isError && (isUnauthorizedError(error) || isForbiddenError(error));
+
+  if (isLoading) {
+    return (
+      <AppLayout minimalHeader>
+        <RouteSuspenseFallback />
+      </AppLayout>
+    );
+  }
 
   if (notAuthorized) {
     return (
