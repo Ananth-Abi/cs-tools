@@ -67,7 +67,7 @@ type AccountService interface {
 	SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) (domain.SearchAccountsResponse, error)
 	// GetAccountByID returns the account with the given UUID. A ValidationError is
 	// returned for a malformed UUID; a NotFoundError if no account matches.
-	GetAccountByID(ctx context.Context, id string) (domain.Account, error)
+	GetAccountByID(ctx context.Context, id string) (domain.AccountDetail, error)
 }
 
 // EventPublishFailureService defines the operations available on the
@@ -165,9 +165,9 @@ type ScheduledTaskRunService interface {
 type SNAccountService interface {
 	// SearchAccounts returns a paginated list of ServiceNow accounts matching the
 	// filters in req.
-	SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) (domain.SearchSNAccountsResponse, error)
+	SearchAccounts(ctx context.Context, req domain.SearchAccountsRequest) (domain.SearchAccountsResponse, error)
 	// GetAccountByID returns the full account detail for the given UUID.
-	GetAccountByID(ctx context.Context, id string) (domain.SNAccountDetail, error)
+	GetAccountByID(ctx context.Context, id string) (domain.AccountDetail, error)
 }
 
 // ProjectService defines the operations available on the project entity.
