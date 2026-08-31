@@ -2145,7 +2145,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   : t.id === "attachments"
                     ? attachmentList.length
                     : t.id === "time"
-                      ? caseTimeCards?.cards.length
+                      ? caseTimeCards?.total
                       : t.id === "call-requests"
                         ? callRequests?.length
                         : t.id === "tasks"
