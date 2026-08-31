@@ -50,13 +50,13 @@ vi.mock("@features/settings/api/usePatchUsersMe", () => ({
   usePatchUsersMe: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
-function renderUserProfile() {
+function renderUserProfile(props: { hideProjectControls?: boolean } = {}) {
   return render(
     <ErrorBannerProvider>
       <SuccessBannerProvider>
         <ThemePreferenceProvider>
           <CaseTabsBehaviorProvider>
-            <UserProfile />
+            <UserProfile {...props} />
           </CaseTabsBehaviorProvider>
         </ThemePreferenceProvider>
       </SuccessBannerProvider>
@@ -105,5 +105,15 @@ describe("UserProfile", () => {
 
     expect(await screen.findByText("Time zone")).toBeInTheDocument();
     expect(screen.queryByLabelText("Select theme")).not.toBeInTheDocument();
+  });
+
+  it("hides Profile/Preferences but keeps identity and Sign out when hideProjectControls is set", async () => {
+    renderUserProfile({ hideProjectControls: true });
+    fireEvent.click(screen.getByRole("button", { name: "Account" }));
+
+    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
+    expect(screen.getByText("Sign out")).toBeInTheDocument();
+    expect(screen.queryByText("Profile")).not.toBeInTheDocument();
+    expect(screen.queryByText("Preferences")).not.toBeInTheDocument();
   });
 });
