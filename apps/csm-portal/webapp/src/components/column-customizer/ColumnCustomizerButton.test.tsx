@@ -26,9 +26,17 @@ const COLUMNS: ColumnOption[] = [
   { id: "c", label: "Column C" },
 ];
 
+/** A minimal `DataTransfer` stand-in — jsdom doesn't implement the real
+ * thing, and the component only ever calls `setData` and assigns
+ * `effectAllowed`. */
+function fakeDataTransfer(): DataTransfer {
+  return { setData: vi.fn(), effectAllowed: "" } as unknown as DataTransfer;
+}
+
 function setup(visible: string[] = ["a", "b", "c"]) {
   const onToggle = vi.fn();
   const onMove = vi.fn();
+  const onReorder = vi.fn();
   const onReset = vi.fn();
   render(
     <ColumnCustomizerButton
@@ -36,10 +44,11 @@ function setup(visible: string[] = ["a", "b", "c"]) {
       isVisible={(id) => visible.includes(id)}
       onToggle={onToggle}
       onMove={onMove}
+      onReorder={onReorder}
       onReset={onReset}
     />,
   );
-  return { onToggle, onMove, onReset };
+  return { onToggle, onMove, onReorder, onReset };
 }
 
 describe("ColumnCustomizerButton", () => {
@@ -60,21 +69,49 @@ describe("ColumnCustomizerButton", () => {
     expect(onToggle).toHaveBeenCalledWith("b");
   });
 
-  it("calls onMove when a reorder arrow is clicked, without also toggling that row", () => {
+  it("calls onMove when the up/down arrow keys are pressed on a column's reorder handle, without toggling that row", () => {
     const { onMove, onToggle } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Customise columns" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Move Column B up" }));
+    const handle = screen.getByRole("button", { name: /Reorder Column B/ });
+    fireEvent.keyDown(handle, { key: "ArrowUp" });
     expect(onMove).toHaveBeenCalledWith("b", "up");
+
+    fireEvent.keyDown(handle, { key: "ArrowDown" });
+    expect(onMove).toHaveBeenCalledWith("b", "down");
+
     expect(onToggle).not.toHaveBeenCalled();
   });
 
-  it("disables the up arrow for the first column and the down arrow for the last", () => {
-    setup();
+  it("calls onReorder with the dragged column's id and the target row's index when dropped", () => {
+    const { onReorder } = setup();
     fireEvent.click(screen.getByRole("button", { name: "Customise columns" }));
 
-    expect(screen.getByRole("button", { name: "Move Column A up" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Move Column C down" })).toBeDisabled();
+    const dragHandleA = screen.getByRole("button", { name: /Reorder Column A/ });
+    const rowC = screen.getByText("Column C").closest("li")!;
+
+    const dataTransfer = fakeDataTransfer();
+    fireEvent.dragStart(dragHandleA, { dataTransfer });
+    fireEvent.dragOver(rowC, { dataTransfer });
+    fireEvent.drop(rowC, { dataTransfer });
+
+    // "c" is at index 2 in `allColumns`.
+    expect(onReorder).toHaveBeenCalledWith("a", 2);
+  });
+
+  it("does not call onReorder when a column is dragged and dropped on itself", () => {
+    const { onReorder } = setup();
+    fireEvent.click(screen.getByRole("button", { name: "Customise columns" }));
+
+    const dragHandleA = screen.getByRole("button", { name: /Reorder Column A/ });
+    const rowA = screen.getByText("Column A").closest("li")!;
+
+    const dataTransfer = fakeDataTransfer();
+    fireEvent.dragStart(dragHandleA, { dataTransfer });
+    fireEvent.dragOver(rowA, { dataTransfer });
+    fireEvent.drop(rowA, { dataTransfer });
+
+    expect(onReorder).not.toHaveBeenCalled();
   });
 
   it("disables unchecking the last remaining visible column", () => {

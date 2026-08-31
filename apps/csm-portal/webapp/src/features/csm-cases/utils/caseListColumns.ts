@@ -46,8 +46,10 @@
 export type CaseOptionalColumnId =
   | "product"
   | "type"
+  | "issueType"
   | "severity"
   | "assignee"
+  | "createdBy"
   | "customer"
   | "createdAt";
 
@@ -57,8 +59,10 @@ export const CASE_OPTIONAL_COLUMNS: Record<
 > = {
   product: { label: "Product", track: "minmax(140px, 1fr)" },
   type: { label: "Type", track: "auto" },
+  issueType: { label: "Issue type", track: "minmax(140px, 1fr)" },
   severity: { label: "Severity", track: "auto" },
   assignee: { label: "Assignee", track: "minmax(140px, 1fr)" },
+  createdBy: { label: "Reporter", track: "minmax(140px, 1fr)" },
   customer: { label: "Customer", track: "minmax(140px, 1fr)" },
   createdAt: { label: "Created", track: "minmax(100px, 0.7fr)" },
 };

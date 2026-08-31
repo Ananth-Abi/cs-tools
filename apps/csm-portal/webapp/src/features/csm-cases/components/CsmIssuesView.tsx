@@ -320,8 +320,10 @@ export default function CsmIssuesView({
   const availableOptionalColumns: CaseOptionalColumnId[] = [
     "product",
     "type",
+    "issueType",
     ...(showSeverityColumn ? (["severity"] as const) : []),
     "assignee",
+    "createdBy",
     "customer",
     "createdAt",
   ];
@@ -514,16 +516,6 @@ export default function CsmIssuesView({
             fetchPage={fetchCasesExportPage}
             disabled={isError || total === 0}
           />
-          {enableColumnCustomization && (
-            <ColumnCustomizerButton
-              allColumns={columnPrefs.allColumns}
-              isVisible={columnPrefs.isVisible}
-              onToggle={columnPrefs.toggleColumn}
-              onMove={columnPrefs.moveColumn}
-              onReset={columnPrefs.resetToDefault}
-              label={`Customise ${entityNoun} columns`}
-            />
-          )}
           {actions}
         </Box>
       </Box>
@@ -553,6 +545,19 @@ export default function CsmIssuesView({
           enableColumnCustomization
             ? columnPrefs.visibleColumns.map((c) => c.id as CaseOptionalColumnId)
             : undefined
+        }
+        columnCustomizer={
+          enableColumnCustomization ? (
+            <ColumnCustomizerButton
+              allColumns={columnPrefs.allColumns}
+              isVisible={columnPrefs.isVisible}
+              onToggle={columnPrefs.toggleColumn}
+              onMove={columnPrefs.moveColumn}
+              onReorder={columnPrefs.reorderColumn}
+              onReset={columnPrefs.resetToDefault}
+              label={`Customise ${entityNoun} columns`}
+            />
+          ) : undefined
         }
         sortField={sortField}
         onSortFieldChange={handleSortFieldChange}

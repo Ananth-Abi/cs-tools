@@ -25,7 +25,7 @@ import {
   useTheme,
 } from "@wso2/oxygen-ui";
 import { Eye } from "@wso2/oxygen-ui-icons-react";
-import { useState, type JSX } from "react";
+import { useState, type JSX, type ReactNode } from "react";
 import { Link as RouterLink, useLocation } from "react-router";
 import { useNavTransition } from "@hooks/useNavTransition";
 import { preloadRoute } from "@utils/routePreloaders";
@@ -45,6 +45,7 @@ import {
   caseTypeDetailBasePath,
   caseTypeHasSeverity,
 } from "@features/csm-cases/utils/caseType";
+import { ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
 import { effectiveWorkState } from "@features/csm-cases/utils/caseWorkState";
 import {
   CASE_OPTIONAL_COLUMNS,
@@ -87,6 +88,14 @@ interface CasesListProps {
   onSortFieldChange?: (field: CasesSortField) => void;
   sortOrder?: CasesSortOrder;
   onSortOrderChange?: (order: CasesSortOrder) => void;
+  /** A "Customise columns" trigger (`ColumnCustomizerButton`), rendered in a
+   * small toolbar row directly above this table. Owned by the caller (e.g.
+   * `CsmIssuesView`, or a dashboard widget preview) since only it knows this
+   * view's own `useColumnPreferences` wiring (viewId, available/default
+   * columns) — this component just reserves the slot next to the table it
+   * actually controls, rather than the control living in a page header far
+   * away from the table it affects. Omit to render no toolbar row at all. */
+  columnCustomizer?: ReactNode;
 }
 
 /** Maps the optional columns that double as sort headers to the field they
@@ -130,10 +139,22 @@ function renderOptionalCell(id: CaseOptionalColumnId, c: CsmCaseRow): JSX.Elemen
           )}
         </Box>
       );
+    case "issueType":
+      return (
+        <Typography variant="body2" noWrap>
+          {c.issueType ? ISSUE_TYPE_LABEL[c.issueType] : "—"}
+        </Typography>
+      );
     case "assignee":
       return (
         <Typography variant="body2" noWrap title={c.assignee || undefined}>
           {c.assignee}
+        </Typography>
+      );
+    case "createdBy":
+      return (
+        <Typography variant="body2" noWrap title={c.createdBy || undefined}>
+          {c.createdBy || "—"}
         </Typography>
       );
     case "customer":
@@ -173,6 +194,7 @@ export default function CasesList({
   onSortFieldChange,
   sortOrder,
   onSortOrderChange,
+  columnCustomizer,
 }: CasesListProps): JSX.Element {
   const theme = useTheme();
   const location = useLocation();
@@ -255,95 +277,37 @@ export default function CasesList({
   ].join(" ");
 
   return (
-    <Box
-      sx={{
-        border: 1,
-        borderColor: "divider",
-        borderRadius: 1,
-        overflow: "hidden",
-        // Single grid context drives column tracks for header + every row.
-        // Each row below uses `grid-template-columns: subgrid` so columns line up.
-        display: "grid",
-        gridTemplateColumns,
-        columnGap: 2,
-      }}
-    >
-      {/* Header */}
-      <Box
-        sx={{
-          gridColumn: "1 / -1",
-          display: "grid",
-          gridTemplateColumns: "subgrid",
-          columnGap: 2,
-          alignItems: "center",
-          px: 2,
-          py: 1.25,
-          bgcolor: "action.hover",
-          borderBottom: 1,
-          borderColor: "divider",
-        }}
-      >
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          sx={{ fontWeight: 600, textAlign: "left" }}
-        >
-          Preview
-        </Typography>
-        {headerCells.map((cell) => renderHeaderCell(cell.label, cell.sortableField))}
-        {renderHeaderCell("Updated", "updatedOn")}
-      </Box>
-
-      {/* Rows */}
-      {isLoading &&
-        Array.from({ length: skeletonCount }).map((_, i) => (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {columnCustomizer && (
+        <Box sx={{ display: "flex", justifyContent: "flex-end" }}>{columnCustomizer}</Box>
+      )}
+      <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
+        {/* Scrolls horizontally on its own, independent of the rest of the
+            page, once the grid below can't fit every visible column at its
+            own minimum width — without this, the grid's tracks were free to
+            shrink past their `minmax(...)` floors to fit the container,
+            which read as column content getting squished/clipped instead of
+            the table scrolling (reported live once most optional columns
+            were turned on at once). */}
+        <Box sx={{ overflowX: "auto" }}>
           <Box
-            key={i}
             sx={{
-              gridColumn: "1 / -1",
-              px: 2,
-              py: 1.25,
-              borderBottom: 1,
-              borderColor: "divider",
-              "&:last-of-type": { borderBottom: 0 },
+              // Single grid context drives column tracks for header + every row.
+              // Each row below uses `grid-template-columns: subgrid` so columns line up.
+              display: "grid",
+              gridTemplateColumns,
+              columnGap: 2,
+              // The actual fix: a grid container's automatic minimum width
+              // otherwise lets its tracks shrink below their own `minmax`
+              // floor to fit whatever space is available. Forcing the grid
+              // itself to its content's true minimum width means it can only
+              // ever overflow its `overflowX: auto` parent above — never
+              // shrink its own columns to fit.
+              minWidth: "max-content",
             }}
           >
-            <Skeleton variant="rounded" height={28} />
-          </Box>
-        ))}
-
-      {!isLoading && cases.length === 0 && (
-        <Box sx={{ gridColumn: "1 / -1", px: 2, py: 4, textAlign: "center" }}>
-          <Typography variant="body2" color="text.secondary">
-            No cases match the current filters.
-          </Typography>
-        </Box>
-      )}
-
-      {!isLoading &&
-        cases.map((c) => {
-          const rowBasePath = detailBasePath ?? caseTypeDetailBasePath(c.caseType);
-          const rowState = { from: `${location.pathname}${location.search}` };
-          const rowLabel = c.wso2CaseId || c.caseNumber || c.subject;
-          return (
+            {/* Header */}
             <Box
-              key={c.id}
-              onClick={(e) => {
-                // The case-id block below is a real RouterLink: a plain click
-                // on it already navigates via its own handler (which calls
-                // preventDefault), and that click still bubbles up here — do
-                // nothing in that case, or this would push a second, duplicate
-                // history entry for the same destination. A modified click
-                // (cmd/ctrl/shift/alt) on that link deliberately does *not*
-                // preventDefault — react-router leaves it to the browser to
-                // open a new tab — so skip here too, or this would navigate
-                // the current tab away from the list while a new tab is also
-                // opening, defeating the point of cmd-click "open in new tab
-                // for reference" the link exists for.
-                if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                navigate(`${rowBasePath}/${c.id}`, { state: rowState });
-              }}
-              onMouseEnter={() => preloadRoute(rowBasePath)}
               sx={{
                 gridColumn: "1 / -1",
                 display: "grid",
@@ -352,129 +316,206 @@ export default function CasesList({
                 alignItems: "center",
                 px: 2,
                 py: 1.25,
+                bgcolor: "action.hover",
                 borderBottom: 1,
                 borderColor: "divider",
-                cursor: "pointer",
-                "&:hover": {
-                  bgcolor: "action.hover",
-                },
-                "&:last-of-type": { borderBottom: 0 },
               }}
             >
-              {/* Quick preview, at the row's left edge so it's the first
-                  thing reachable without hunting across the row; the drawer
-                  itself opens on the right. `stopPropagation` keeps the click
-                  from also bubbling up into the row's own onClick (which
-                  would open the full case instead of just previewing it).
-                  Clicking the eye for the row already being previewed closes
-                  it instead of re-opening the same preview. */}
-              <Tooltip title={`Quick preview ${rowLabel}`}>
-                <IconButton
-                  size="small"
-                  aria-label={`Quick preview ${rowLabel}`}
-                  aria-pressed={previewRow?.id === c.id}
-                  data-quick-preview-eye="true"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setPreviewRow((prev) => (prev?.id === c.id ? null : c));
-                  }}
-                  sx={{ justifySelf: "center" }}
-                >
-                  <Eye size={16} />
-                </IconButton>
-              </Tooltip>
-              {/* Case ids: WSO2 internal id on top, CS number beneath. Never
-                  the UUID. "—" when the case has neither yet. This block is
-                  the row's one real anchor — cmd/middle-click "open in new
-                  tab" (essential when pulling up other cases for reference),
-                  a copyable URL (ISSU-031), and a keyboard tab stop. The rest
-                  of the row relies on the onClick above for a mouse click
-                  anywhere in it; making the whole row a real anchor (or a
-                  role="button" override) would either force the quick-preview
-                  button below into invalid button-inside-anchor nesting, or
-                  strip the row's cells of their own semantics. */}
-              <Box
-                component={RouterLink}
-                to={`${rowBasePath}/${c.id}`}
-                state={rowState}
-                aria-label={`Open ${rowLabel}`}
-                sx={{
-                  minWidth: 0,
-                  color: "inherit",
-                  textDecoration: "none",
-                  display: "block",
-                  "&:focus-visible": {
-                    outline: `2px solid ${theme.palette.primary.main}`,
-                    outlineOffset: 2,
-                    borderRadius: 0.5,
-                  },
-                }}
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontWeight: 600, textAlign: "left" }}
               >
-                {c.wso2CaseId && (
-                  <Typography
-                    variant="body2"
-                    noWrap
-                    title={c.wso2CaseId}
-                    sx={{ fontFamily: "monospace", fontWeight: 600 }}
-                  >
-                    {c.wso2CaseId}
-                  </Typography>
-                )}
-                {c.caseNumber && (
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    noWrap
-                    title={c.caseNumber}
-                    sx={{ fontFamily: "monospace", display: "block" }}
-                  >
-                    {c.caseNumber}
-                  </Typography>
-                )}
-              </Box>
-              {/* Subject (the widest column) + project for context. */}
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" noWrap title={c.subject}>
-                  {c.subject}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  noWrap
-                  title={c.projectName || undefined}
-                  sx={{ display: "block" }}
+                Preview
+              </Typography>
+              {headerCells.map((cell) => renderHeaderCell(cell.label, cell.sortableField))}
+              {renderHeaderCell("Updated", "updatedOn")}
+            </Box>
+
+            {/* Rows */}
+            {isLoading &&
+              Array.from({ length: skeletonCount }).map((_, i) => (
+                <Box
+                  key={i}
+                  sx={{
+                    gridColumn: "1 / -1",
+                    px: 2,
+                    py: 1.25,
+                    borderBottom: 1,
+                    borderColor: "divider",
+                    "&:last-of-type": { borderBottom: 0 },
+                  }}
                 >
-                  {c.projectName}
-                </Typography>
-              </Box>
-              {effectiveOptionalColumns.map((id) => (
-                <Box key={id} sx={{ minWidth: 0 }}>
-                  {renderOptionalCell(id, c)}
+                  <Skeleton variant="rounded" height={28} />
                 </Box>
               ))}
-              {/* State chip, with the work-state chip stacked beneath it (the
-                  latter only for WIP cases). */}
-              <Box
-                sx={{
-                  justifySelf: "start",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "flex-start",
-                  gap: 0.5,
-                }}
-              >
-                <StateChip state={c.state} variant="outlined" clickable />
-                {c.state === "work_in_progress" && (
-                  <WorkStateChip workState={effectiveWorkState(c.workState)} />
-                )}
+
+            {!isLoading && cases.length === 0 && (
+              <Box sx={{ gridColumn: "1 / -1", px: 2, py: 4, textAlign: "center" }}>
+                <Typography variant="body2" color="text.secondary">
+                  No cases match the current filters.
+                </Typography>
               </Box>
-              <Typography variant="caption" color="text.secondary" noWrap>
-                <RelativeTime iso={c.updatedAt} />
-              </Typography>
-            </Box>
-          );
-        })}
-      <CasePreviewDrawer row={previewRow} onClose={() => setPreviewRow(null)} />
+            )}
+
+            {!isLoading &&
+              cases.map((c) => {
+                const rowBasePath = detailBasePath ?? caseTypeDetailBasePath(c.caseType);
+                const rowState = { from: `${location.pathname}${location.search}` };
+                const rowLabel = c.wso2CaseId || c.caseNumber || c.subject;
+                return (
+                  <Box
+                    key={c.id}
+                    onClick={(e) => {
+                      // The case-id block below is a real RouterLink: a plain click
+                      // on it already navigates via its own handler (which calls
+                      // preventDefault), and that click still bubbles up here — do
+                      // nothing in that case, or this would push a second, duplicate
+                      // history entry for the same destination. A modified click
+                      // (cmd/ctrl/shift/alt) on that link deliberately does *not*
+                      // preventDefault — react-router leaves it to the browser to
+                      // open a new tab — so skip here too, or this would navigate
+                      // the current tab away from the list while a new tab is also
+                      // opening, defeating the point of cmd-click "open in new tab
+                      // for reference" the link exists for.
+                      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                      navigate(`${rowBasePath}/${c.id}`, { state: rowState });
+                    }}
+                    onMouseEnter={() => preloadRoute(rowBasePath)}
+                    sx={{
+                      gridColumn: "1 / -1",
+                      display: "grid",
+                      gridTemplateColumns: "subgrid",
+                      columnGap: 2,
+                      alignItems: "center",
+                      px: 2,
+                      py: 1.25,
+                      borderBottom: 1,
+                      borderColor: "divider",
+                      cursor: "pointer",
+                      "&:hover": {
+                        bgcolor: "action.hover",
+                      },
+                      "&:last-of-type": { borderBottom: 0 },
+                    }}
+                  >
+                    {/* Quick preview, at the row's left edge so it's the first
+                        thing reachable without hunting across the row; the drawer
+                        itself opens on the right. `stopPropagation` keeps the click
+                        from also bubbling up into the row's own onClick (which
+                        would open the full case instead of just previewing it).
+                        Clicking the eye for the row already being previewed closes
+                        it instead of re-opening the same preview. */}
+                    <Tooltip title={`Quick preview ${rowLabel}`}>
+                      <IconButton
+                        size="small"
+                        aria-label={`Quick preview ${rowLabel}`}
+                        aria-pressed={previewRow?.id === c.id}
+                        data-quick-preview-eye="true"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewRow((prev) => (prev?.id === c.id ? null : c));
+                        }}
+                        sx={{ justifySelf: "center" }}
+                      >
+                        <Eye size={16} />
+                      </IconButton>
+                    </Tooltip>
+                    {/* Case ids: WSO2 internal id on top, CS number beneath. Never
+                        the UUID. "—" when the case has neither yet. This block is
+                        the row's one real anchor — cmd/middle-click "open in new
+                        tab" (essential when pulling up other cases for reference),
+                        a copyable URL (ISSU-031), and a keyboard tab stop. The rest
+                        of the row relies on the onClick above for a mouse click
+                        anywhere in it; making the whole row a real anchor (or a
+                        role="button" override) would either force the quick-preview
+                        button below into invalid button-inside-anchor nesting, or
+                        strip the row's cells of their own semantics. */}
+                    <Box
+                      component={RouterLink}
+                      to={`${rowBasePath}/${c.id}`}
+                      state={rowState}
+                      aria-label={`Open ${rowLabel}`}
+                      sx={{
+                        minWidth: 0,
+                        color: "inherit",
+                        textDecoration: "none",
+                        display: "block",
+                        "&:focus-visible": {
+                          outline: `2px solid ${theme.palette.primary.main}`,
+                          outlineOffset: 2,
+                          borderRadius: 0.5,
+                        },
+                      }}
+                    >
+                      {c.wso2CaseId && (
+                        <Typography
+                          variant="body2"
+                          noWrap
+                          title={c.wso2CaseId}
+                          sx={{ fontFamily: "monospace", fontWeight: 600 }}
+                        >
+                          {c.wso2CaseId}
+                        </Typography>
+                      )}
+                      {c.caseNumber && (
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          noWrap
+                          title={c.caseNumber}
+                          sx={{ fontFamily: "monospace", display: "block" }}
+                        >
+                          {c.caseNumber}
+                        </Typography>
+                      )}
+                    </Box>
+                    {/* Subject (the widest column) + project for context. */}
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="body2" noWrap title={c.subject}>
+                        {c.subject}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        noWrap
+                        title={c.projectName || undefined}
+                        sx={{ display: "block" }}
+                      >
+                        {c.projectName}
+                      </Typography>
+                    </Box>
+                    {effectiveOptionalColumns.map((id) => (
+                      <Box key={id} sx={{ minWidth: 0 }}>
+                        {renderOptionalCell(id, c)}
+                      </Box>
+                    ))}
+                    {/* State chip, with the work-state chip stacked beneath it (the
+                        latter only for WIP cases). */}
+                    <Box
+                      sx={{
+                        justifySelf: "start",
+                        display: "flex",
+                        flexDirection: "column",
+                        alignItems: "flex-start",
+                        gap: 0.5,
+                      }}
+                    >
+                      <StateChip state={c.state} variant="outlined" clickable />
+                      {c.state === "work_in_progress" && (
+                        <WorkStateChip workState={effectiveWorkState(c.workState)} />
+                      )}
+                    </Box>
+                    <Typography variant="caption" color="text.secondary" noWrap>
+                      <RelativeTime iso={c.updatedAt} />
+                    </Typography>
+                  </Box>
+                );
+              })}
+            <CasePreviewDrawer row={previewRow} onClose={() => setPreviewRow(null)} />
+          </Box>
+        </Box>
+      </Box>
     </Box>
   );
 }

@@ -293,6 +293,52 @@ describe("CasesList optional columns", () => {
     expect(screen.queryByText("Assignee")).not.toBeInTheDocument();
   });
 
+  it("renders Issue type and Reporter (createdBy) when passed explicitly", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={
+            <CasesList
+              cases={[{ ...CASE, issueType: "total_outage", createdBy: "John Reporter" }]}
+              isLoading={false}
+              optionalColumns={["issueType", "createdBy"]}
+            />
+          }
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    expect(screen.getByText("Issue type")).toBeInTheDocument();
+    expect(screen.getByText("Total outage")).toBeInTheDocument();
+    expect(screen.getByText("Reporter")).toBeInTheDocument();
+    expect(screen.getByText("John Reporter")).toBeInTheDocument();
+  });
+
+  it("shows an em dash for Issue type/Reporter when the row carries neither", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={
+            <CasesList
+              cases={[CASE]}
+              isLoading={false}
+              optionalColumns={["issueType", "createdBy"]}
+            />
+          }
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    // `CASE` has no `issueType`/`createdBy` set.
+    expect(screen.getAllByText("—").length).toBeGreaterThan(0);
+  });
+
   it("keeps rendering the legacy fixed optional set when optionalColumns is omitted", () => {
     renderWithProviders(
       <Routes>

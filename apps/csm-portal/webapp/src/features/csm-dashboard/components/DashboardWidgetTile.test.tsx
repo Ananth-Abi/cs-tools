@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
@@ -1547,6 +1547,66 @@ describe("DashboardWidgetTile", () => {
     expect(
       screen.getByRole("button", { name: "Refresh My Critical & High Cases" }),
     ).toBeInTheDocument();
+  });
+
+  it("shape list: shows the 'Customise columns' button next to refresh (same corner), not in a separate row, and toggling a column there updates the table live", async () => {
+    // Reported live: the column customizer (added to case-family list-shape
+    // tiles by CaseWidgetList) rendered in its own row above the table,
+    // separate from the tile's existing refresh button in the top-right
+    // corner — read as two unrelated controls. CaseWidgetList now hands its
+    // button up to the tile via `onColumnCustomizerChange` so both sit in
+    // the same corner; this also guards the single-source-of-truth wiring
+    // behind that (a second, independent `useColumnPreferences` instance
+    // would let the header's button drift out of sync with the table).
+    postMock.mockResolvedValue({
+      total: 2,
+      cases: [
+        {
+          id: "11111111-1111-1111-1111-111111111111",
+          number: "CS-1",
+          subject: "Disk full",
+          state: "open",
+          createdBy: { id: null, email: "jane.doe@example.test", name: "Jane Doe" },
+        },
+      ],
+      limit: 5,
+      offset: 0,
+      hasMore: false,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="my_critical_open"
+        displayName="My Critical & High Cases"
+        resourceType="case"
+        shape="list"
+        filters={{}}
+        listLimit={5}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
+
+    const actionsCorner = screen.getByTestId("widget-tile-actions");
+    const refreshButton = within(actionsCorner).getByRole("button", {
+      name: "Refresh My Critical & High Cases",
+    });
+    const customizerButton = within(actionsCorner).getByRole("button", {
+      name: "Customise columns",
+    });
+    expect(refreshButton).toBeInTheDocument();
+    expect(customizerButton).toBeInTheDocument();
+
+    // Toggling "Reporter" (off by default) from the hoisted header button
+    // must update the actual table, proving both share one live
+    // `useColumnPreferences` instance rather than two independently-seeded
+    // ones (which would leave the header's button out of sync with what
+    // the table actually shows).
+    fireEvent.click(customizerButton);
+    const picker = screen.getByRole("list", { name: "Customise columns" });
+    expect(screen.queryByText("Jane Doe")).not.toBeInTheDocument();
+    fireEvent.click(within(picker).getByText("Reporter"));
+    await waitFor(() => expect(screen.getByText("Jane Doe")).toBeInTheDocument());
   });
 
   it("shape pie: renders a per-widget refresh button that does not trigger the tile's own click-through", async () => {

@@ -120,6 +120,55 @@ describe("useColumnPreferences", () => {
     expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "c", "b"]);
   });
 
+  it("reorders a column directly to a target index in one call, unlike a repeated moveColumn", () => {
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a", "b", "c"],
+      }),
+    );
+
+    // Drag "a" (index 0) down to the last slot (index 2) in one gesture --
+    // the scenario `reorderColumn` exists for, since two back-to-back
+    // `moveColumn` calls in the same handler would both act on the same
+    // pre-move `state` and only net a single-slot move.
+    act(() => result.current.reorderColumn("a", 2));
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("clamps an out-of-range reorderColumn target to the list's bounds", () => {
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a", "b", "c"],
+      }),
+    );
+
+    act(() => result.current.reorderColumn("a", 99));
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["b", "c", "a"]);
+  });
+
+  it("no-ops reorderColumn for an unknown id or a target it already sits at", () => {
+    const { result } = renderHook(() =>
+      useColumnPreferences({
+        viewId: "test-view",
+        userKey: "user-1",
+        columns: COLUMNS,
+        defaultVisibleIds: ["a", "b", "c"],
+      }),
+    );
+
+    act(() => result.current.reorderColumn("does-not-exist", 1));
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "b", "c"]);
+
+    act(() => result.current.reorderColumn("b", 1));
+    expect(result.current.allColumns.map((c) => c.id)).toEqual(["a", "b", "c"]);
+  });
+
   it("resets to the table's built-in default order and visibility", () => {
     const { result } = renderHook(() =>
       useColumnPreferences({

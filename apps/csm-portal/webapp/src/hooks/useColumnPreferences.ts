@@ -57,6 +57,16 @@ export interface UseColumnPreferencesResult {
    * columns share one order, so a column already keeps its relative slot if
    * it's later re-checked). No-ops at either end of the list. */
   moveColumn: (id: string, direction: "up" | "down") => void;
+  /** Move a column directly to `targetIndex` in the shared order — for
+   * drag-and-drop reordering, which can move an item several slots in one
+   * gesture. Unlike `moveColumn`, this is a single atomic update rather than
+   * a step repeated `moveColumn` calls: since `moveColumn` is a `useCallback`
+   * closing over this render's `state`, calling it more than once in the same
+   * synchronous handler (as a multi-slot drag would need to) would have every
+   * call act on the same stale `state.order`, only ever producing a one-slot
+   * move no matter how many times it's called. `targetIndex` is clamped to
+   * the list's bounds; no-ops if `id` isn't found or already sits there. */
+  reorderColumn: (id: string, targetIndex: number) => void;
   /** Back to the table's built-in default order + visibility. */
   resetToDefault: () => void;
 }
@@ -231,9 +241,31 @@ export function useColumnPreferences({
     [state, update],
   );
 
+  const reorderColumn = useCallback(
+    (id: string, targetIndex: number) => {
+      const currentIndex = state.order.indexOf(id);
+      if (currentIndex === -1) return;
+      const clampedIndex = Math.max(0, Math.min(targetIndex, state.order.length - 1));
+      if (clampedIndex === currentIndex) return;
+      const order = [...state.order];
+      order.splice(currentIndex, 1);
+      order.splice(clampedIndex, 0, id);
+      update({ order, visible: state.visible });
+    },
+    [state, update],
+  );
+
   const resetToDefault = useCallback(() => {
     update({ order: columns.map((c) => c.id), visible: [...defaultVisibleIds] });
   }, [columns, defaultVisibleIds, update]);
 
-  return { allColumns, visibleColumns, isVisible, toggleColumn, moveColumn, resetToDefault };
+  return {
+    allColumns,
+    visibleColumns,
+    isVisible,
+    toggleColumn,
+    moveColumn,
+    reorderColumn,
+    resetToDefault,
+  };
 }

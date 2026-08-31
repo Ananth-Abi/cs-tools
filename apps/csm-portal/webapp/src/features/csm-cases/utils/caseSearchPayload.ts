@@ -307,6 +307,7 @@ export function mapCaseSearchViewToRow(
   const myEmail = currentUserEmail?.toLowerCase();
   const assigneeIsMe =
     !!assigneeEmail && !!myEmail && assigneeEmail.toLowerCase() === myEmail;
+  const createdBy = c.createdBy?.name?.trim() || c.createdBy?.email || "Unknown";
   return {
     id: c.id,
     caseNumber: c.number,
@@ -320,9 +321,11 @@ export function mapCaseSearchViewToRow(
     severity: severityFromBe(c.severity),
     state: uiStateFromBe(c.state),
     caseType: c.type,
+    issueType: c.issueType,
     workState: c.workState ?? null,
     assignee,
     assigneeIsMe,
+    createdBy,
     slaClockType: "ack",
     minutesToBreach: 0,
     hasSla: false,
