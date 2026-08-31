@@ -239,6 +239,29 @@ describe("CasesFilterBar — Simple mode keeps its existing chip behavior unchan
 });
 
 
+describe("CasesFilterBar — chips stay visible while the panel is collapsed", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockResolvedValue({ teams: [] });
+  });
+
+  // CodeRabbit finding on PR #1630: `activeFilterChips` renders outside the
+  // `isFiltersOpen` gate by design (chips are the only summary a collapsed
+  // panel has), but gating the memo on `effectiveMode === "simple"` alone
+  // silently emptied it whenever the panel was collapsed while in Advanced
+  // mode -- neither the Simple grid nor the Advanced builder renders when
+  // collapsed, so an Advanced-only value (e.g. from an applied saved view)
+  // was left with no visible summary at all.
+  it("still shows a chip for an Advanced-only value when the panel is collapsed", () => {
+    renderBar(
+      { ...DEFAULT_CASES_FILTERS, escalationLevels: ["2"] },
+      undefined,
+      { isFiltersOpen: false },
+    );
+    expect(screen.getByText("Escalation level: 2")).toBeInTheDocument();
+  });
+});
+
 describe("CasesFilterBar — removed bar controls fall back to chips", () => {
   beforeEach(() => {
     postMock.mockReset();

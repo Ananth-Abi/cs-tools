@@ -585,17 +585,25 @@ export default function CasesFilterBar({
     [teams],
   );
 
-  // Simple mode only -- see `buildActiveFilterChips`'s doc comment. In
-  // Advanced mode every field it would chip is already its own row (via
-  // `AdvancedFiltersBuilder`) or branch (via `AnyOfGroupsBuilder`), both
-  // rendered below whenever `effectiveMode === "advanced"`, so a chip there
-  // would just duplicate what's already visible and editable. Uses
-  // `effectiveMode`, not `mode`, so a non-simple-representable value that
-  // arrives without a remount (e.g. an applied saved view) doesn't sit
-  // chip-less behind a Simple grid that no longer matches reality.
+  // Suppressed only when Advanced mode's own row list/OR-groups are ALSO on
+  // screen (`effectiveMode === "advanced" && isFiltersOpen`) -- that's the
+  // only situation where a chip would duplicate something already visible
+  // and editable (via `AdvancedFiltersBuilder`/`AnyOfGroupsBuilder`). While
+  // the panel is collapsed, neither the Simple grid nor the Advanced builder
+  // renders, so chips are the ONLY way to see what's active regardless of
+  // mode -- this list itself renders outside the `isFiltersOpen` gate below,
+  // by design (see that render site's own doc comment), so this memo must
+  // not silently empty itself out just because the mode happens to be
+  // Advanced. Uses `effectiveMode`, not `mode`, so a non-simple-representable
+  // value that arrives without a remount (e.g. an applied saved view)
+  // doesn't sit chip-less behind a Simple grid that no longer matches
+  // reality.
   const activeFilterChips = useMemo(
-    () => (effectiveMode === "simple" ? buildActiveFilterChips(filters, teamLabels) : []),
-    [filters, teamLabels, effectiveMode],
+    () =>
+      effectiveMode === "simple" || !isFiltersOpen
+        ? buildActiveFilterChips(filters, teamLabels)
+        : [],
+    [filters, teamLabels, effectiveMode, isFiltersOpen],
   );
 
   // ── Saved views ──────────────────────────────────────────────────────────
