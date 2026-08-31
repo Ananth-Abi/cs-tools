@@ -60,7 +60,7 @@ export const CASE_TABS_CAP_MODE_OPTIONS: { mode: CaseTabsCapMode; label: string 
   { mode: "evict-oldest", label: "Replace the oldest tab" },
 ];
 
-const DEFAULT_ENABLED = false;
+const DEFAULT_ENABLED = true;
 const DEFAULT_CAP_MODE: CaseTabsCapMode = "evict-newest";
 
 function isCapMode(value: unknown): value is CaseTabsCapMode {
@@ -69,9 +69,13 @@ function isCapMode(value: unknown): value is CaseTabsCapMode {
 
 interface CaseTabsBehaviorContextValue {
   /** Whether the in-app tab mechanism (tab strip, keep-alive pages, the
-   * pinned "current location" tab) is on at all. `false` — the DEFAULT — is
-   * the pre-feature behavior: plain full-page navigation, one record at a
-   * time. The feature is beta, opt-in only. */
+   * pinned "current location" tab) is on at all. `true` — the DEFAULT as of
+   * this flip — replaces the earlier "beta, off by default" launch decision
+   * per explicit user instruction; `false` is now an explicit opt-out
+   * (still available via `PreferencesDialog`), not the shipped default. See
+   * this flag's own persistence code below for what a `false`-default user
+   * who already opted in keeps seeing (their explicit choice, either way,
+   * always wins over this default). */
   enabled: boolean;
   setEnabled: (next: boolean) => void;
   /** Only meaningful (and only shown as interactive in `PreferencesDialog`)
@@ -112,9 +116,12 @@ function readInitialCapMode(): CaseTabsCapMode {
 // Default value (not `null`) matches the defaults above — a component that
 // reads this outside a `CaseTabsBehaviorProvider` (an isolated test render,
 // e.g.) sees exactly what a fresh, provider-wrapped session would see by
-// default: tabs off. Mirrors `CaseTabsContext`'s own no-op-default pattern,
+// default: tabs on. Mirrors `CaseTabsContext`'s own no-op-default pattern,
 // for the same reason (many existing tests render `CsmCaseDetailPage` et al.
-// standalone).
+// standalone) — though `CaseTabsContext`'s OWN no-op default stays a no-op
+// regardless of this flag (its `openTab` et al. are always inert outside a
+// real `CaseTabsProvider`), so a standalone page render still can't actually
+// open a tab even though this flag alone now reads `true` there.
 const DEFAULT_CONTEXT_VALUE: CaseTabsBehaviorContextValue = {
   enabled: DEFAULT_ENABLED,
   setEnabled: () => {},

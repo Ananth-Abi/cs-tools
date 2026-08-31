@@ -54,15 +54,18 @@ describe("CaseTabsBehaviorContext", () => {
     localStorage.clear();
   });
 
-  it("defaults to disabled (no tabs at all) on a fresh session with nothing in localStorage", () => {
+  // Flipped from the feature's original "beta, off by default" launch
+  // decision, per explicit user instruction — tabs now ship ON, with an
+  // explicit opt-out (via `PreferencesDialog`) rather than an opt-in.
+  it("defaults to enabled (tabs on) on a fresh session with nothing in localStorage", () => {
     renderProbe();
-    expect(screen.getByTestId("enabled")).toHaveTextContent("false");
+    expect(screen.getByTestId("enabled")).toHaveTextContent("true");
     expect(screen.getByTestId("cap-mode")).toHaveTextContent("evict-newest");
   });
 
-  it("also defaults to disabled outside a provider (the no-op default context value)", () => {
+  it("also defaults to enabled outside a provider (the no-op default context value)", () => {
     render(<Probe />);
-    expect(screen.getByTestId("enabled")).toHaveTextContent("false");
+    expect(screen.getByTestId("enabled")).toHaveTextContent("true");
   });
 
   it("persists a toggle change to localStorage and reflects it immediately", () => {

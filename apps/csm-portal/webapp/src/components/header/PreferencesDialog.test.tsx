@@ -52,27 +52,30 @@ describe("PreferencesDialog", () => {
     expect(screen.getByLabelText("When the tab limit is reached")).toBeInTheDocument();
   });
 
-  it("the cap-mode select is disabled until the tabs toggle is on", () => {
+  // Tabs are on by default (`CaseTabsBehaviorContext`'s `DEFAULT_ENABLED`),
+  // so the cap-mode select starts enabled here — turning the toggle OFF is
+  // what disables it, not the other way around.
+  it("the cap-mode select is enabled by default (tabs on), and disables when the tabs toggle is turned off", () => {
     renderDialog(true);
     // MUI's `Select` doesn't set the native `disabled` attribute on its
     // rendered root — it applies the `Mui-disabled` class instead.
-    expect(screen.getByLabelText("When the tab limit is reached")).toHaveClass("Mui-disabled");
-    fireEvent.click(screen.getByLabelText("Open cases in tabs"));
     expect(screen.getByLabelText("When the tab limit is reached")).not.toHaveClass(
       "Mui-disabled",
     );
+    fireEvent.click(screen.getByLabelText("Open cases in tabs"));
+    expect(screen.getByLabelText("When the tab limit is reached")).toHaveClass("Mui-disabled");
   });
 
   it("offers exactly the two eviction cap-mode options, with no 'block' choice", () => {
     renderDialog(true);
-    // The select is disabled (and so won't open) until tabs are on.
-    fireEvent.click(screen.getByLabelText("Open cases in tabs"));
-    // MUI's `Select` opens its options popup on `mousedown` of its inner
-    // `combobox`-role child, not a `click` on the `aria-label`led outer root
-    // (same pattern as this codebase's other MUI `Select` interaction
-    // tests, e.g. `ChangeCaseTypeDialog.test.tsx`) — the `aria-label` lands
-    // on that outer root, not the combobox itself, so this drills into it
-    // via the already-`aria-label`led root instead of matching by name.
+    // Tabs are on by default, so the select is already enabled — no need to
+    // toggle anything first. MUI's `Select` opens its options popup on
+    // `mousedown` of its inner `combobox`-role child, not a `click` on the
+    // `aria-label`led outer root (same pattern as this codebase's other MUI
+    // `Select` interaction tests, e.g. `ChangeCaseTypeDialog.test.tsx`) —
+    // the `aria-label` lands on that outer root, not the combobox itself,
+    // so this drills into it via the already-`aria-label`led root instead
+    // of matching by name.
     fireEvent.mouseDown(
       screen
         .getByLabelText("When the tab limit is reached")

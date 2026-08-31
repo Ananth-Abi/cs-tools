@@ -130,11 +130,12 @@ function App({ initialPath }: { initialPath: string }) {
 
 describe("case tabs — real BrowserRouter integration", () => {
   beforeEach(() => {
-    // These tests exercise the tab mechanism itself; opt into a mode where
-    // it's actually on (default is "off" — see the dedicated describe block
-    // below for that). Cap mode is pinned to "evict-oldest" (rather than
-    // left at its own default) so the cap tests below are deterministic
-    // about WHICH tab gets evicted.
+    // These tests exercise the tab mechanism itself; opt into it being on
+    // explicitly rather than relying on whatever the default happens to be
+    // (see the dedicated describe block below for a test of that default
+    // specifically). Cap mode is pinned to "evict-oldest" (rather than left
+    // at its own default) so the cap tests below are deterministic about
+    // WHICH tab gets evicted.
     localStorage.setItem(ENABLED_STORAGE_KEY, "1");
     localStorage.setItem(CAP_MODE_STORAGE_KEY, "evict-oldest");
   });
@@ -329,31 +330,36 @@ describe("case tabs — real BrowserRouter integration", () => {
 
 /**
  * Regression test for the single most consequential behavioral change in
- * this feature: the case-tabs mechanism defaults to OFF. A fresh
- * browser/session (empty localStorage) must see exactly the pre-feature
- * behavior — no tab strip at all, and clicking into a case renders it
- * in place via the real route, full page at a time, with no open-tab
- * bookkeeping happening at all.
+ * this feature: the case-tabs mechanism now defaults to ON. (It originally
+ * shipped "beta, off by default" — flipped to on-by-default later per
+ * explicit user instruction, once the feature had settled; `false` is now
+ * an explicit opt-out, not the shipped default.) A fresh browser/session
+ * (empty localStorage) must see the tab strip and the pinned "current
+ * location" tab, and open a visited case into its own in-app tab, rather
+ * than the old pre-feature plain-full-page-navigation behavior — that
+ * older behavior is still reachable (see the explicit-opt-out test below),
+ * just no longer what a fresh session sees on its own.
  */
-describe("case tabs — default (mode 'off') behavior", () => {
+describe("case tabs — default (mode 'on') behavior", () => {
   beforeEach(() => {
     localStorage.removeItem(ENABLED_STORAGE_KEY);
     localStorage.removeItem(CAP_MODE_STORAGE_KEY);
-    // Isolation from the tests above, which persist open tabs to
-    // sessionStorage — mode "off" must ignore any such leftovers (see
-    // `CaseTabsProvider`'s own doc comment on this), but clearing it here
-    // too keeps this describe block's own fixture state independent.
+    // Isolation from the tests above (and from each other, between the two
+    // `render()` calls in the test below) — this describe block's own
+    // fixture state stays independent regardless of what earlier tests, or
+    // an earlier render within the SAME test, left behind.
     sessionStorage.clear();
   });
 
-  it("renders no tab strip and no pinned tab on a fresh session", async () => {
+  it("renders the tab strip and pinned tab, opening a visited case into its own tab, on a fresh session", async () => {
     render(<App initialPath="/cases/CS0001" />);
     await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
-    expect(screen.queryByRole("tablist", { name: "Open cases" })).not.toBeInTheDocument();
-    expect(screen.queryAllByRole("tab")).toHaveLength(0);
+    expect(screen.getByRole("tablist", { name: "Open cases" })).toBeInTheDocument();
+    // The case tab, plus the permanent pinned "current location" tab.
+    expect(screen.getAllByRole("tab")).toHaveLength(2);
   });
 
-  it("renders every case directly (plain full-page navigation), never opening a tab", async () => {
+  it("opens each distinct case visited into its own tab, by default, with no opt-in step needed", async () => {
     function AppAtTwoCasesInTurn({ path }: { path: string }) {
       window.history.pushState({}, "", path);
       return (
@@ -376,22 +382,29 @@ describe("case tabs — default (mode 'off') behavior", () => {
     await waitFor(() =>
       expect(first.getByTestId("stub-page-case-id")).toHaveTextContent("CS0001"),
     );
-    expect(first.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(first.getByRole("tablist")).toBeInTheDocument();
+    expect(first.getAllByRole("tab")).toHaveLength(2);
     first.unmount();
 
-    // A second, distinct case renders the same way — no accumulated tab
-    // state carried between them (there IS none, in this mode).
+    // A second, distinct case renders the same way, from a clean slate —
+    // this clears the FIRST render's own persisted tab (see
+    // `CaseTabsContext`'s sessionStorage code) so this app instance doesn't
+    // rehydrate CS0001 alongside CS0002; the point here is that EACH
+    // instance opens its own visited case by default, not that they share
+    // accumulated state (they don't, and never did).
+    sessionStorage.clear();
     const second = render(<AppAtTwoCasesInTurn path="/cases/CS0002" />);
     await waitFor(() =>
       expect(second.getByTestId("stub-page-case-id")).toHaveTextContent("CS0002"),
     );
-    expect(second.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(second.getByRole("tablist")).toBeInTheDocument();
+    expect(second.getAllByRole("tab")).toHaveLength(2);
   });
 
-  // Regression test for bug: enabling the mechanism (mode "off" -> a mode
-  // where it's on) while already viewing a case, in the SAME commit, used to
-  // silently leave that case un-tabbed for the rest of the session — nothing
-  // ever retried it. Root cause: `CaseDetailRouteSync` (a descendant of
+  // Regression test for bug: enabling the mechanism (disabled -> enabled)
+  // while already viewing a case, in the SAME commit, used to silently
+  // leave that case un-tabbed for the rest of the session — nothing ever
+  // retried it. Root cause: `CaseDetailRouteSync` (a descendant of
   // `CaseTabsProvider`) read the fresh `enabled` value directly and called
   // `openTab` from its own effect in that same commit, but React flushes
   // descendant effects before ancestor effects — so `CaseTabsProvider`'s own
@@ -401,7 +414,12 @@ describe("case tabs — default (mode 'off') behavior", () => {
   // fresh for the render that created it) instead of via an effect-synced
   // ref — see `CaseTabsContext`'s own comment on `openTab` for why a
   // render-time ref mutation wasn't a valid alternative here.
-  it("enabling tabs while already on a case route opens a tab immediately", async () => {
+  //
+  // Starting state is an EXPLICIT opt-out (`ENABLED_STORAGE_KEY` set to
+  // `"0"`), not just an absent key — with tabs on by default, an absent key
+  // no longer means disabled, so this is what a real user who deliberately
+  // turned the mechanism off, then back on, actually goes through.
+  it("re-enabling tabs (after an explicit opt-out) while already on a case route opens a tab immediately", async () => {
     function EnableToggle() {
       const { setEnabled } = useCaseTabsBehavior();
       return <button onClick={() => setEnabled(true)}>enable-tabs</button>;
@@ -426,7 +444,7 @@ describe("case tabs — default (mode 'off') behavior", () => {
       );
     }
 
-    localStorage.removeItem(ENABLED_STORAGE_KEY);
+    localStorage.setItem(ENABLED_STORAGE_KEY, "0");
     localStorage.removeItem(CAP_MODE_STORAGE_KEY);
     sessionStorage.clear();
 
@@ -440,5 +458,17 @@ describe("case tabs — default (mode 'off') behavior", () => {
       expect(screen.getByRole("tablist", { name: "Open cases" })).toBeInTheDocument(),
     );
     expect(screen.getByText("CS0001")).toBeInTheDocument();
+  });
+
+  // Regression test for the flip itself: the old pre-feature
+  // plain-full-page-navigation behavior (no tab strip, no open-tab
+  // bookkeeping) is still reachable — just via an explicit opt-out now,
+  // not the default a fresh session sees on its own.
+  it("an explicit opt-out (enabled=0) still renders every case directly, never opening a tab", async () => {
+    localStorage.setItem(ENABLED_STORAGE_KEY, "0");
+    render(<App initialPath="/cases/CS0001" />);
+    await waitFor(() => expect(screen.getByTestId("stub-page-case-id")).toBeInTheDocument());
+    expect(screen.queryByRole("tablist", { name: "Open cases" })).not.toBeInTheDocument();
+    expect(screen.queryAllByRole("tab")).toHaveLength(0);
   });
 });
