@@ -1495,7 +1495,7 @@ type ParsedCaseFilters struct {
 // CaseFilterGroup is one ANDed branch of a SearchCasesFilters.AnyOf entry.
 // Deliberately narrower than ParsedCaseFilters: only fields with a direct,
 // non-subquery ServiceNow field mapping are supported inside an OR branch (no
-// tags/excludeTags/taskSLAFilter/parentId/createdBy/date-range/
+// taskSLAFilter/parentId/createdBy/date-range/
 // projectOnboardingStatus/projectType/creTeam/sreTeam/resolutionNotes/
 // unassigned/hasActiveEscalation) -- service.ParseCaseFieldFilterGroups
 // rejects any of those fields inside a branch with a validation error, they
@@ -1511,6 +1511,14 @@ type CaseFilterGroup struct {
 	DeploymentIDs    []string
 	AssignedUserIDs  []string
 	EscalationLevels []string
+	// Tags filters this branch to cases carrying at least one of these
+	// free-text tag labels (optional). Same semantics as
+	// ParsedCaseFilters.Tags, scoped to this OR branch.
+	Tags []string
+	// ExcludeTags filters this branch to cases NOT carrying any of these
+	// free-text tag labels (optional). Same semantics as
+	// ParsedCaseFilters.ExcludeTags, scoped to this OR branch.
+	ExcludeTags []string
 }
 
 // TaskSLAFilter specifies a range of business-elapsed-percent values for Task SLA

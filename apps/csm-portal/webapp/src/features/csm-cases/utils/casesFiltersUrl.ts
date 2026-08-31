@@ -53,12 +53,13 @@ export const DEFAULT_CASES_FILTERS: CasesFilters = {
   updatedOnLte: null,
   closedOnGte: null,
   closedOnLte: null,
-  // Note: `tags`/`excludeTags` are real, wired-through fields as of this
-  // codec (round-trip URL + `/cases/search` payload) — only the filter-bar
-  // *control* for them is still pending; they surface only as removable
-  // chips (see `buildActiveFilterChips` in `CasesFilterBar.tsx`).
-  // `TagsMultiSelect` and `useSearchTags` remain used by the case-detail
-  // "Add tag" picker regardless.
+  // Note: `tags`/`excludeTags` are real, wired-through fields (round-trip
+  // URL + `/cases/search` payload), both driven by the one tri-state
+  // "Tags" bar control (`TagsMultiSelect`, digiops-cs#2907) — see its own
+  // doc comment for the include/exclude cycling model. `useSearchTags`
+  // (the same `/tags/search` type-ahead) is also used standalone by the
+  // case-detail "Add tag" picker (`AddTagDialog`), which doesn't reuse
+  // `TagsMultiSelect` itself (single-tag add, not a filter).
 };
 
 const VALID_SEVERITIES: Severity[] = ["S0", "S1", "S2", "S3", "S4"];

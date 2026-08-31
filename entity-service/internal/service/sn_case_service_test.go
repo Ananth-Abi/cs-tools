@@ -1974,6 +1974,84 @@ func TestSNCaseService_SearchCases_AnyOfKeepsSNOrGroupsWireFormat(t *testing.T) 
 	}
 }
 
+// TestSNCaseService_SearchCases_AnyOfBranchTagsFlowToSNOrGroups proves tag /
+// excludeTags are now accepted inside an anyOf branch (the Go-side rejection
+// was removed once ServiceNow's CaseUtils gained orGroups[].tags/excludeTags
+// support) and that the values reach the SN payload's "orGroups" entries
+// under the same "tags"/"excludeTags" keys the top-level filters object uses,
+// nested one level into the branch object.
+func TestSNCaseService_SearchCases_AnyOfBranchTagsFlowToSNOrGroups(t *testing.T) {
+	var rawBody []byte
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cases/search", func(w http.ResponseWriter, r *http.Request) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		rawBody = b
+		_ = json.NewEncoder(w).Encode(map[string]any{"cases": []map[string]any{}, "total": 0, "offset": 0, "limit": 20})
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowCaseService(client, nil)
+
+	req := domain.SearchCasesRequest{
+		Filters: domain.SearchCasesFilters{
+			AnyOf: []domain.CaseFilterBranch{
+				{Filters: []domain.CaseFieldFilter{
+					{Field: "type", Op: "in", Values: []string{"engagement"}},
+					{Field: "tag", Op: "in", Values: []string{"migration"}},
+				}},
+				{Filters: []domain.CaseFieldFilter{
+					{Field: "type", Op: "in", Values: []string{"security_report_analysis"}},
+					{Field: "tag", Op: "in", Values: []string{"s_migration"}},
+					{Field: "tag", Op: "notIn", Values: []string{"archived"}},
+				}},
+			},
+		},
+	}
+
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+	if _, err := svc.SearchCases(ctx, req); err != nil {
+		t.Fatalf("unexpected error: %v (tag/excludeTags must be accepted inside an anyOf branch)", err)
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		t.Fatalf("unmarshal raw request body: %v (body=%s)", err, rawBody)
+	}
+	filters, ok := body["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body has no filters object: %s", rawBody)
+	}
+	groups, ok := filters["orGroups"].([]any)
+	if !ok || len(groups) != 2 {
+		t.Fatalf("orGroups = %v, want 2 entries: %s", filters["orGroups"], rawBody)
+	}
+
+	first, ok := groups[0].(map[string]any)
+	if !ok {
+		t.Fatalf("orGroups[0] is not an object: %s", rawBody)
+	}
+	tags, ok := first["tags"].([]any)
+	if !ok || len(tags) != 1 || tags[0] != "migration" {
+		t.Fatalf("orGroups[0].tags = %v, want [\"migration\"]: %s", first["tags"], rawBody)
+	}
+
+	second, ok := groups[1].(map[string]any)
+	if !ok {
+		t.Fatalf("orGroups[1] is not an object: %s", rawBody)
+	}
+	sTags, ok := second["tags"].([]any)
+	if !ok || len(sTags) != 1 || sTags[0] != "s_migration" {
+		t.Fatalf("orGroups[1].tags = %v, want [\"s_migration\"]: %s", second["tags"], rawBody)
+	}
+	excludeTags, ok := second["excludeTags"].([]any)
+	if !ok || len(excludeTags) != 1 || excludeTags[0] != "archived" {
+		t.Fatalf("orGroups[1].excludeTags = %v, want [\"archived\"]: %s", second["excludeTags"], rawBody)
+	}
+}
+
 // TestSNCaseService_SearchCases_RejectsBadFilterFieldAndCombo proves invalid
 // field names and invalid field/op combinations are rejected before ever
 // reaching the backing service, not silently ignored or forwarded.

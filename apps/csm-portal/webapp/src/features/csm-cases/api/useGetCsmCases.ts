@@ -25,6 +25,7 @@ import {
   mapCaseSearchViewToRow,
   resolveAssignedUserIds,
 } from "@features/csm-cases/utils/caseSearchPayload";
+import { resolveRelativeDatePlaceholder } from "@utils/resolveRelativeDatePlaceholder";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
 import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
@@ -52,12 +53,11 @@ const EXACT_MATCH_LIMIT = 5;
  *
  * Does a single `POST /cases/search` (the flat, cross-project search)
  * and maps each rich `CaseSearchView` — which embeds project / deployment /
- * deployed-product — to the UI `CsmCaseRow`. The list has no Customer column,
- * so the customer (account) name is deliberately not resolved: doing so used to
- * page the entire account directory (`/accounts/search` has no ID filter, and
- * the case search view doesn't embed the account) to fill a field nothing
- * renders. If a Customer column is added, resolve the name from the search view
- * once it carries the account, not by scanning the directory.
+ * deployed-product / account — to the UI `CsmCaseRow`. The optional Customer
+ * column reads `account.name` straight off this response; no separate
+ * `/accounts/search` directory scan is needed (that endpoint has no ID
+ * filter anyway, so scanning it per row would have been the wrong approach
+ * regardless).
  *
  * Search and the severity / state / case-type / project filters are pushed
  * into the search payload (searchQuery / severities / states / types /
@@ -173,9 +173,34 @@ export function useGetCsmCases(
         assignedUserIds = resolved;
       }
 
-      // One cross-project case search. No account/project directory scan: the
-      // list has no Customer column, and the old scan paged the entire account
-      // directory to resolve a name nothing renders.
+      // Resolve `createdOnGte`/`createdOnLte` relative-date placeholders
+      // (`__today__`, `__daysAgo:N__`, ... -- same grammar and resolver as
+      // the dashboard widgets' own `resolveRelativeDateFilters`) against the
+      // viewer's own browser-local "now", right here at query-build time --
+      // no backend change, and "today" correctly means whatever moment the
+      // link is opened, not a moment baked into the URL. Only `createdOn`
+      // is covered for now (`updatedOn`/`closedOn` get the same treatment
+      // later if wanted); anything that isn't a recognized placeholder
+      // (a literal `YYYY-MM-DD`, or garbage) passes through unchanged.
+      const now = new Date();
+      const resolvedFilters: CasesFilters = {
+        ...filters,
+        createdOnGte:
+          filters.createdOnGte === null
+            ? null
+            : (resolveRelativeDatePlaceholder(filters.createdOnGte, "gte", now) ??
+              filters.createdOnGte),
+        createdOnLte:
+          filters.createdOnLte === null
+            ? null
+            : (resolveRelativeDatePlaceholder(filters.createdOnLte, "lte", now) ??
+              filters.createdOnLte),
+      };
+
+      // One cross-project case search. No separate account/project directory
+      // scan needed: the search response already embeds `account`, which
+      // `mapCaseSearchViewToRow` reads directly for the optional Customer
+      // column.
       const runSearch = (
         searchOptions?: { forceFreeText?: boolean; alsoFreeText?: boolean },
         pagination = { offset, limit: pageSize },
@@ -184,7 +209,7 @@ export function useGetCsmCases(
           pagination,
           sortBy: { field: sortField, order: sortOrder },
           filters: buildCaseSearchFilters(
-            filters,
+            resolvedFilters,
             search,
             assignedUserIds,
             searchOptions,

@@ -1036,6 +1036,9 @@ export interface BeCaseSearchView {
   /** The product itself (distinct from `deployedProduct`); used to populate the
    * list Product column when no deployed product is set (e.g. cloud cases). */
   product?: BeEntityRef | null;
+  /** The case's customer account. Same shape as the GET view's own {@link
+   * BeCaseAccountRef} -- populates the Cases list's optional Customer column. */
+  account?: BeCaseAccountRef | null;
 }
 
 export interface BeCaseSearchResponse extends BeSearchResponseBase {

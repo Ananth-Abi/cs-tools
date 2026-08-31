@@ -126,6 +126,18 @@ interface CsmIssuesViewProps {
   lockedFilters?: Partial<CasesFilters>;
   /** Hide the case-type filter control (use when `lockedFilters` fixes it). */
   hideTypeFilter?: boolean;
+  /**
+   * Case type(s) to pre-select the FIRST time this view loads with no `types`
+   * param in the URL at all -- unlike `lockedFilters`, this is a starting
+   * point the user's own control can freely change (and once they do, their
+   * choice round-trips through the URL like any other filter). Only
+   * meaningful when the type control is visible (`!hideTypeFilter`); a
+   * caller that locks and hides the type filter has no use for a separate
+   * "default" on top of that lock. `CsmCasesPage` (Support) is the only
+   * current user: it wants "Case" pre-selected on a fresh visit, but every
+   * other type still one click away.
+   */
+  defaultCaseTypes?: CasesFilters["caseTypes"];
   /** Label for the case-type filter control; see `CasesFilterBar`'s own
    * `typeFilterLabel` doc comment. Defaults to "Case type". */
   typeFilterLabel?: string;
@@ -176,6 +188,7 @@ export default function CsmIssuesView({
   entityNoun = "cases",
   lockedFilters,
   hideTypeFilter,
+  defaultCaseTypes,
   typeFilterLabel,
   hideProjectFilter,
   showEngagementTypeFilter,
@@ -190,6 +203,34 @@ export default function CsmIssuesView({
     () => readCasesFiltersFromUrl(searchParams),
     [searchParams],
   );
+
+  // Writes `defaultCaseTypes` into the URL at most once per mount, the first
+  // time it finds no `types` param at all. Done as a real URL write (in an
+  // effect, gated by a ref) rather than an in-memory override inside the
+  // `filters` memo above: a memo can't tell "fresh visit" apart from "the
+  // user cleared the type filter back to every type" -- both just look like
+  // "no `types` param" -- so an in-memory default would keep reasserting
+  // itself every time the user broadened back, making that choice
+  // impossible to keep. Writing it into the URL once, right after mount,
+  // means every later render (including a later clear) is driven purely by
+  // `searchParams` like every other filter, with no special-casing.
+  const defaultCaseTypesAppliedRef = useRef(false);
+  useEffect(() => {
+    if (defaultCaseTypesAppliedRef.current || !defaultCaseTypes?.length || hideTypeFilter) {
+      return;
+    }
+    // Marks the default "consumed" on the very first render regardless of
+    // whether it actually got written -- an initial URL that already names
+    // an explicit `types` (e.g. a direct link to `?types=service_request`)
+    // must permanently disarm the default too, or clearing that explicit
+    // type back to "every type" later would look identical to "no types
+    // param yet" and wrongly reassert `defaultCaseTypes` at that point.
+    defaultCaseTypesAppliedRef.current = true;
+    if (searchParams.has("types")) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("types", defaultCaseTypes.join(","));
+    setSearchParams(next, { replace: true });
+  }, [searchParams, defaultCaseTypes, hideTypeFilter, setSearchParams]);
 
   const location = useLocation();
   const navigate = useNavTransition();
@@ -251,6 +292,17 @@ export default function CsmIssuesView({
         // results.
         ...(showSeverityFilter ? {} : { severities: [] }),
         ...lockedFilters,
+        // `lockedFilters.caseTypes` still drives the severity-filter/column
+        // hints above (both keyed off the raw `lockedFilters` prop, not this
+        // merged query) even when the type control itself is visible
+        // (Support/`CsmCasesPage` — see its own doc comment) — but the
+        // *query* must not be pinned to that lock once the user has a real,
+        // working control to pick a different type from, or the control
+        // would be visible yet functionally inert (picking a type would
+        // silently have no effect on the results). Every other caller pairs
+        // a `caseTypes` lock with `hideTypeFilter`, so this only changes
+        // behavior for the one caller that doesn't.
+        ...(hideTypeFilter ? {} : { caseTypes: filters.caseTypes }),
       };
       // An unlocked, empty type selection means "no type filter applied" from
       // the FE's perspective (every issue type shown — this is the only
@@ -267,7 +319,7 @@ export default function CsmIssuesView({
       }
       return merged;
     },
-    [filters, debouncedSearch, showSeverityFilter, lockedFilters],
+    [filters, debouncedSearch, showSeverityFilter, lockedFilters, hideTypeFilter],
   );
 
   const {

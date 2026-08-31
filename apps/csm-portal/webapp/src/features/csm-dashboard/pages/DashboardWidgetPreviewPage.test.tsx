@@ -68,27 +68,6 @@ function renderAt(initialEntry: string) {
   );
 }
 
-/** Same as {@link renderAt}, but also hands back the `QueryClient` so a
- * test can force a real background refetch of a shared cache entry (e.g.
- * `useSearchTags("", ...)`'s), the same way another mounted "Tags" control
- * elsewhere in the app would once its own `staleTime` elapses. */
-function renderAtWithQueryClient(initialEntry: string) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  const result = render(
-    <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[initialEntry]}>
-        <Routes>
-          <Route path="/dashboard" element={<div>Dashboard landing</div>} />
-          <Route path="/dashboard/preview/:previewSlug" element={<DashboardWidgetPreviewPage />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
-  return { ...result, queryClient };
-}
-
 /** Routes `postMock` by URL, since a case-family widget's preview page
  * fires up to three different POST endpoints at once: `/teams/search`
  * (`CasesFilterBar`'s "Team" control loads unconditionally on mount),
@@ -620,302 +599,76 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
     expect(lastCall?.[1]).toMatchObject({ filters: { searchQuery: "disk" } });
   });
 
-  // The core regression (this is the fix under test): a tag has no small,
-  // fixed universe of values (see `CaseFamilyWidgetPreview`'s own doc
-  // comment), so a widget's `tag notIn ["s_dip"]` can't be represented by a
-  // real `excludeTags` control on `CasesFilterBar` (there isn't one here) --
-  // it's *shown* in the single "Tags" control as the complement over the
-  // currently-known tag catalog. But what's actually sent to
-  // `/cases/search` must stay the real `notIn` blacklist (`apiFilters`),
-  // never that catalog-derived approximation, or a case with no tags at all
-  // would be wrongly excluded and the preview page would disagree with the
-  // dashboard tile it was reached from.
-  it("queries /cases/search with the real tag notIn blacklist, even though the 'Tags' control displays the catalog complement", async () => {
-    mockPost({
-      tags: { tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }] },
-      cases: { cases: [], total: 0, limit: 10, offset: 0 },
-    });
-
-    renderAt(
-      buildWidgetPreviewHref({
-        previewSlug: "cases",
-        widgetId: "excl_tag_widget",
-        displayName: "Discussions on Going",
-        filters: { filters: [{ field: "tag", op: "notIn", values: ["s_dip"] }] },
-      }),
-    );
-
-    await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/tags/search", expect.anything()),
-    );
-
-    // The displayed "Tags" control shows the complement (checked "other-tag").
-    await waitFor(() => {
-      expect(screen.getByText("other-tag")).toBeInTheDocument();
-    });
-
-    // But the query itself carries the real `notIn` blacklist, not an `in`
-    // whitelist derived from the (necessarily incomplete) tag catalog.
-    await waitFor(() => {
-      const lastCasesCall = postMock.mock.calls
-        .filter((c) => c[0] === "/cases/search")
-        .at(-1);
-      expect(lastCasesCall).toBeDefined();
-      expect(lastCasesCall?.[1]).toMatchObject({
-        filters: {
-          filters: expect.arrayContaining([
-            { field: "tag", op: "notIn", values: ["s_dip"] },
-          ]),
-        },
-      });
-    });
-
-    const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
-    const tagEntries = (
-      lastCasesCall?.[1] as { filters: { filters: { field: string; op: string }[] } }
-    ).filters.filters.filter((f) => f.field === "tag");
-    // No complement-derived `in` entry ever reaches the API call.
-    expect(tagEntries.some((f) => f.op === "in")).toBe(false);
-  });
-
-  // Once the viewer edits the filter bar themselves, displayed and queried
-  // filters must collapse to the same value -- they're now consciously
-  // picking specific tags to include, so the approximation/blacklist
-  // divergence no longer applies.
-  it("queries exactly what's displayed once the viewer edits the filter bar themselves", async () => {
-    mockPost({
-      tags: { tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }] },
-      cases: { cases: [], total: 0, limit: 10, offset: 0 },
-    });
-
-    renderAt(
-      buildWidgetPreviewHref({
-        previewSlug: "cases",
-        widgetId: "excl_tag_widget",
-        displayName: "Discussions on Going",
-        filters: { filters: [{ field: "tag", op: "notIn", values: ["s_dip"] }] },
-      }),
-    );
-
-    await waitFor(() =>
-      expect(screen.getByRole("combobox", { name: "Tags" })).toBeInTheDocument(),
-    );
-    const callsBefore = postMock.mock.calls.filter((c) => c[0] === "/cases/search").length;
-
-    fireEvent.change(screen.getByPlaceholderText(/search by case #/i), {
-      target: { value: "disk" },
-    });
-
-    await waitFor(() => {
-      const callsAfter = postMock.mock.calls.filter((c) => c[0] === "/cases/search").length;
-      expect(callsAfter).toBeGreaterThan(callsBefore);
-    });
-    const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
-    // The complement-derived `tag in [other-tag]` the bar still displays now
-    // matches what's queried -- no more real `notIn` sent underneath it.
-    expect(lastCasesCall?.[1]).toMatchObject({
-      filters: expect.objectContaining({
-        searchQuery: "disk",
-        filters: expect.arrayContaining([
-          { field: "tag", op: "in", values: ["other-tag"] },
-        ]),
-      }),
-    });
-    const tagEntries = (
-      lastCasesCall?.[1] as { filters: { filters: { field: string; op: string }[] } }
-    ).filters.filters.filter((f) => f.field === "tag");
-    expect(tagEntries.some((f) => f.op === "notIn")).toBe(false);
-  });
-
-  // CodeRabbit finding: overwriting `tags` with the complement would
-  // silently drop a widget's own "must have one of these tags" requirement
-  // when it also excludes a tag. Intersecting instead preserves both -- this
-  // still governs what's *displayed*; the query itself uses the real,
-  // un-intersected `tag in`/`tag notIn` pair straight from the widget.
-  it("intersects an existing tag-in list with the complement for display, while the query keeps the widget's real tag in/notIn pair", async () => {
-    mockPost({
-      tags: {
-        tags: [
-          { id: "t1", label: "s_dip" },
-          { id: "t2", label: "required-tag" },
-          { id: "t3", label: "other-tag" },
-        ],
-      },
-      cases: { cases: [], total: 0, limit: 10, offset: 0 },
-    });
-
-    renderAt(
-      buildWidgetPreviewHref({
-        previewSlug: "cases",
-        widgetId: "in_and_notin_widget",
-        displayName: "In and NotIn Widget",
-        filters: {
-          filters: [
-            { field: "tag", op: "in", values: ["required-tag"] },
-            { field: "tag", op: "notIn", values: ["s_dip"] },
-          ],
-        },
-      }),
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("required-tag")).toBeInTheDocument();
-    });
-
-    await waitFor(() => {
-      const lastCasesCall = postMock.mock.calls
-        .filter((c) => c[0] === "/cases/search")
-        .at(-1);
-      expect(lastCasesCall).toBeDefined();
-      expect(lastCasesCall?.[1]).toMatchObject({
-        filters: {
-          filters: expect.arrayContaining([
-            { field: "tag", op: "in", values: ["required-tag"] },
-            { field: "tag", op: "notIn", values: ["s_dip"] },
-          ]),
-        },
-      });
-    });
-  });
-
-  // CodeRabbit finding: silently dropping the exclusion on a catalog-fetch
-  // failure would broaden the search to every tag instead of failing safe.
-  it("falls back to the widget's raw excludeTags (still applied, just not shown as checked) when the tag catalog fails to load", async () => {
-    postMock.mockImplementation((url: string) => {
-      if (url === "/tags/search") return Promise.reject(new Error("network error"));
-      if (url === "/cases/search") {
-        return Promise.resolve({ cases: [], total: 0, limit: 10, offset: 0 });
-      }
-      return Promise.resolve({ teams: [] });
-    });
-
-    renderAt(
-      buildWidgetPreviewHref({
-        previewSlug: "cases",
-        widgetId: "excl_tag_catalog_fails",
-        displayName: "Discussions on Going",
-        filters: { filters: [{ field: "tag", op: "notIn", values: ["s_dip"] }] },
-      }),
-    );
-
-    await waitFor(() =>
-      expect(screen.getByText(/couldn.t load the tag catalog/i)).toBeInTheDocument(),
-    );
-
-    await waitFor(() => {
-      const lastCasesCall = postMock.mock.calls
-        .filter((c) => c[0] === "/cases/search")
-        .at(-1);
-      expect(lastCasesCall).toBeDefined();
-      expect(lastCasesCall?.[1]).toMatchObject({
-        filters: {
-          filters: expect.arrayContaining([
-            { field: "tag", op: "notIn", values: ["s_dip"] },
-          ]),
-        },
-      });
-    });
-  });
-
-  it("does not fetch the tag catalog at all when the widget has no tag exclusion", async () => {
+  // The tri-state `TagsMultiSelect` (digiops-cs#2907) means a widget's
+  // `tag notIn [...]` seeds `excludeTags` directly now -- no more catalog
+  // fetch, no more display/query divergence. What's shown and what's
+  // queried are the same `CasesFilters` value from the start.
+  it("seeds a widget's tag notIn directly into excludeTags -- shown as an excluded chip and queried as the same notIn condition", async () => {
     mockPost({ cases: { cases: [], total: 0, limit: 10, offset: 0 } });
 
     renderAt(
       buildWidgetPreviewHref({
         previewSlug: "cases",
-        widgetId: "plain_widget",
-        displayName: "Plain Widget",
-        filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
+        widgetId: "excl_tag_widget",
+        displayName: "Discussions on Going",
+        filters: { filters: [{ field: "tag", op: "notIn", values: ["s_dip"] }] },
       }),
     );
 
-    await waitFor(() =>
-      expect(postMock).toHaveBeenCalledWith("/cases/search", expect.anything()),
-    );
     expect(postMock).not.toHaveBeenCalledWith("/tags/search", expect.anything());
-  });
 
-  // CodeRabbit finding: `useSearchTags("", ...)`'s cache entry is shared,
-  // by query key, with every other "Tags" control mounted anywhere in the
-  // app (e.g. the real one inside this very `CasesFilterBar`, or another
-  // preview page open in a different tab) -- once its own `staleTime`
-  // elapses, any of those refetches the exact same cache entry, which
-  // flips `isFetching` back to true here too, even though this page never
-  // asked for it. Reset must still restore the widget's own starting
-  // filters through that window, not fall back to `DEFAULT_CASES_FILTERS`
-  // just because the shared query happens to be mid-refetch at that exact
-  // moment.
-  it("Reset still restores the widget's own filters during a later background refetch of the shared tag-catalog query", async () => {
-    // The initial catalog fetch resolves normally; a *second* call (the
-    // simulated background refetch below) is held open on a promise this
-    // test controls, so `isFetching` on the shared query stays true for as
-    // long as needed instead of racing a click against a promise that
-    // resolves in the same microtask it was created in.
-    let tagsCallCount = 0;
-    let resolveSecondTagsCall: (value: unknown) => void = () => {};
-    postMock.mockImplementation((url: string) => {
-      if (url === "/tags/search") {
-        tagsCallCount += 1;
-        if (tagsCallCount === 1) {
-          return Promise.resolve({
-            tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }],
-          });
-        }
-        return new Promise((resolve) => {
-          resolveSecondTagsCall = resolve;
-        });
-      }
-      if (url === "/teams/search") return Promise.resolve({ teams: [] });
-      if (url === "/cases/search") {
-        return Promise.resolve({ cases: [], total: 0, limit: 10, offset: 0 });
-      }
-      return Promise.resolve({});
+    await waitFor(() => {
+      expect(screen.getByText("- s_dip")).toBeInTheDocument();
     });
 
-    const { queryClient } = renderAtWithQueryClient(
+    await waitFor(() => {
+      const lastCasesCall = postMock.mock.calls
+        .filter((c) => c[0] === "/cases/search")
+        .at(-1);
+      expect(lastCasesCall).toBeDefined();
+      expect(lastCasesCall?.[1]).toMatchObject({
+        filters: {
+          filters: expect.arrayContaining([
+            { field: "tag", op: "notIn", values: ["s_dip"] },
+          ]),
+        },
+      });
+    });
+  });
+
+  it("Reset restores the widget's own starting tag notIn after an edit", async () => {
+    mockPost({ cases: { cases: [], total: 0, limit: 10, offset: 0 } });
+
+    renderAt(
       buildWidgetPreviewHref({
         previewSlug: "cases",
         widgetId: "excl_tag_widget",
         displayName: "Discussions on Going",
-        filters: {
-          filters: [
-            { field: "state", op: "in", values: ["open"] },
-            { field: "tag", op: "notIn", values: ["s_dip"] },
-          ],
-        },
+        filters: { filters: [{ field: "tag", op: "notIn", values: ["s_dip"] }] },
       }),
     );
 
-    // Let the initial catalog fetch (and the /cases/search it feeds) settle
-    // to the widget's own resolved starting point.
+    await waitFor(() => expect(screen.getByText("- s_dip")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText(/search by case #/i), {
+      target: { value: "disk" },
+    });
     await waitFor(() => {
       const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
-      expect(lastCasesCall).toBeDefined();
       expect(lastCasesCall?.[1]).toMatchObject({
-        filters: {
-          filters: expect.arrayContaining([{ field: "state", op: "in", values: ["open"] }]),
-        },
+        filters: expect.objectContaining({ searchQuery: "disk" }),
       });
     });
 
-    // Simulate another "Tags" control elsewhere refetching the exact same
-    // shared cache entry -- not an action this page itself takes. Held open
-    // by `resolveSecondTagsCall` above, so `isFetching` on
-    // `["csm-tags-search", ""]` stays true through the click below rather
-    // than flipping back before this test can observe it.
-    void queryClient.refetchQueries({ queryKey: ["csm-tags-search", ""] });
-    await waitFor(() => {
-      expect(queryClient.getQueryState(["csm-tags-search", ""])?.fetchStatus).toBe("fetching");
-    });
-
     fireEvent.click(screen.getByRole("button", { name: /clear filters/i }));
-    resolveSecondTagsCall({ tags: [{ id: "t1", label: "s_dip" }, { id: "t2", label: "other-tag" }] });
 
     await waitFor(() => {
       const lastCasesCall = postMock.mock.calls.filter((c) => c[0] === "/cases/search").at(-1);
       expect(lastCasesCall?.[1]).toMatchObject({
         filters: {
-          filters: expect.arrayContaining([{ field: "state", op: "in", values: ["open"] }]),
+          filters: expect.arrayContaining([
+            { field: "tag", op: "notIn", values: ["s_dip"] },
+          ]),
         },
       });
     });

@@ -26,6 +26,23 @@ function filterOf(filters: CasesFilters, field: string) {
   );
 }
 
+describe("mapCaseSearchViewToRow — Customer column", () => {
+  it("reads the customer name straight off the search response's embedded account", () => {
+    const view: BeCaseSearchView = {
+      id: "c1",
+      account: { id: "acc-1", name: "Acme Corp" },
+    };
+    expect(mapCaseSearchViewToRow(view, undefined).customer).toBe("Acme Corp");
+    expect(mapCaseSearchViewToRow(view, undefined).accountId).toBe("acc-1");
+  });
+
+  it("falls back to a placeholder when the search response has no account (e.g. no linked account)", () => {
+    const view: BeCaseSearchView = { id: "c1" };
+    expect(mapCaseSearchViewToRow(view, undefined).customer).toBe("-");
+    expect(mapCaseSearchViewToRow(view, undefined).accountId).toBe("");
+  });
+});
+
 describe("buildCaseSearchFilters — new advanced-filter fields", () => {
   it("emits creTeam op:in for csTeams", () => {
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, csTeams: ["team-a"] };

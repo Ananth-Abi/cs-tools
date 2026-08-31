@@ -376,3 +376,53 @@ describe("useGetCsmCases — queryKey covers every manually-toggleable filter", 
     await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("useGetCsmCases — relative-date `createdOn` placeholders", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockResolvedValue({ cases: [], total: 0, limit: 20, offset: 0 });
+  });
+
+  /** The `createdOn` entry with the given op from the Nth call's field filters. */
+  function createdOnEntry(n: number, op: "gte" | "lte") {
+    return filtersOfCall(n).filters.find(
+      (f: { field: string; op: string }) => f.field === "createdOn" && f.op === op,
+    );
+  }
+
+  it("resolves `__daysAgo:N__` to a concrete instant before hitting /cases/search, not the raw placeholder", async () => {
+    const { result } = renderHook(
+      () =>
+        useGetCsmCases(
+          { ...DEFAULT_CASES_FILTERS, createdOnLte: "__daysAgo:30__" },
+          0,
+          20,
+        ),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const entry = createdOnEntry(0, "lte");
+    expect(entry).toBeDefined();
+    const sent = entry.values[0] as string;
+    expect(sent).not.toBe("__daysAgo:30__");
+    // A resolved RFC3339 instant, not the raw placeholder string.
+    expect(() => new Date(sent).toISOString()).not.toThrow();
+    expect(Number.isNaN(new Date(sent).getTime())).toBe(false);
+  });
+
+  it("leaves a literal date untouched", async () => {
+    const { result } = renderHook(
+      () =>
+        useGetCsmCases(
+          { ...DEFAULT_CASES_FILTERS, createdOnGte: "2026-01-01" },
+          0,
+          20,
+        ),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(createdOnEntry(0, "gte").values[0]).toBe("2026-01-01");
+  });
+});

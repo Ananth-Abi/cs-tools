@@ -14,9 +14,16 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import {
+  MemoryRouter,
+  Route,
+  RouterProvider,
+  Routes,
+  createMemoryRouter,
+  useLocation,
+} from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
@@ -38,16 +45,20 @@ vi.mock("@hooks/useIdTokenClaims", () => ({
 vi.mock("@api/useDirectoryUsers", () => ({
   useDirectoryUsers: () => ({ data: [] }),
 }));
+const useGetCsmCasesMock = vi.fn();
 vi.mock("@features/csm-cases/api/useGetCsmCases", () => ({
-  useGetCsmCases: () => ({
-    data: { cases: [], total: 0, hasMore: false },
-    isLoading: false,
-    isFetching: false,
-    isError: false,
-    error: null,
-    refetch: vi.fn(),
-    dataUpdatedAt: 0,
-  }),
+  useGetCsmCases: (...args: unknown[]) => {
+    useGetCsmCasesMock(...args);
+    return {
+      data: { cases: [], total: 0, hasMore: false },
+      isLoading: false,
+      isFetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+      dataUpdatedAt: 0,
+    };
+  },
 }));
 vi.mock("@features/csm-cases/components/CasesFilterBar", () => ({
   default: () => <div>FilterBar</div>,
@@ -72,9 +83,11 @@ vi.mock("@components/RefreshButton", () => ({
 }));
 
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
+import { ALL_CASE_TYPES } from "@features/csm-cases/utils/caseType";
 
 beforeEach(() => {
   window.localStorage.clear();
+  useGetCsmCasesMock.mockClear();
 });
 
 function LocationProbe() {
@@ -189,5 +202,167 @@ describe("CsmIssuesView column customization", () => {
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
     const checkboxes = screen.getAllByRole("checkbox");
     expect(checkboxes[3]).toBeChecked(); // Assignee, toggled on above
+  });
+});
+
+describe("CsmIssuesView defaultCaseTypes (Support page's case-type default, digiops-cs#2907 follow-up)", () => {
+  function renderWithDefault(initialEntry: string) {
+    return render(
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route
+            path="/cases"
+            element={<CsmIssuesView title="Cases" defaultCaseTypes={["case"]} />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("seeds caseTypes to the default on a fresh visit with no `types` param at all", () => {
+    renderWithDefault("/cases");
+    expect(useGetCsmCasesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ caseTypes: ["case"] }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("does not override an explicit `types` param already in the URL", () => {
+    renderWithDefault("/cases?types=service_request");
+    expect(useGetCsmCasesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ caseTypes: ["service_request"] }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("does nothing when hideTypeFilter is set (a locked-type page has no use for a default)", () => {
+    render(
+      <MemoryRouter initialEntries={["/cases"]}>
+        <Routes>
+          <Route
+            path="/cases"
+            element={
+              <CsmIssuesView
+                title="Service Requests"
+                lockedFilters={{ caseTypes: ["service_request"] }}
+                hideTypeFilter
+                defaultCaseTypes={["case"]}
+              />
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(useGetCsmCasesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ caseTypes: ["service_request"] }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  // Regression: the default used to be re-derived from "does the URL have a
+  // `types` param" on every render, not just the first -- so once the user
+  // picked an explicit type and then cleared the control back to "every
+  // type" (removing `types` from the URL, same as a fresh visit looks),
+  // the default silently reasserted itself instead of staying cleared.
+  it("does not reassert the default once the user has broadened back to every type, later in the same session", async () => {
+    const router = createMemoryRouter(
+      [{ path: "/cases", element: <CsmIssuesView title="Cases" defaultCaseTypes={["case"]} /> }],
+      { initialEntries: ["/cases"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    // Fresh visit: default applied.
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ["case"] }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    // User picks a different type explicitly.
+    await act(async () => { await router.navigate("/cases?types=service_request"); });
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ["service_request"] }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    // User clears the type control back to "every type" -- `types` drops out
+    // of the URL, identical in shape to the original fresh-visit URL. The
+    // default must NOT reassert itself here: the query goes out for every
+    // known type (CsmIssuesView's own "empty selection means no type filter"
+    // fallback), not back to the single-type default.
+    await act(async () => { await router.navigate("/cases"); });
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ALL_CASE_TYPES }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+  });
+
+  // Regression: the default-consumed ref used to only get set on the branch
+  // that actually WROTE the default into the URL -- so a fresh visit that
+  // already carried an explicit `types` param (e.g. a direct link to
+  // `?types=service_request`) left the ref false, and clearing that type
+  // later looked identical to "never touched", wrongly reasserting
+  // `defaultCaseTypes` instead of expanding to every type.
+  it("does not reassert the default after clearing an explicit type that was already in the URL on the initial visit", async () => {
+    const router = createMemoryRouter(
+      [{ path: "/cases", element: <CsmIssuesView title="Cases" defaultCaseTypes={["case"]} /> }],
+      { initialEntries: ["/cases?types=service_request"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    // Fresh visit with an explicit type already in the URL: default not applied.
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ["service_request"] }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    // User clears the type control -- must expand to every type, not snap
+    // back to `defaultCaseTypes`.
+    await act(async () => { await router.navigate("/cases"); });
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ALL_CASE_TYPES }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
   });
 });

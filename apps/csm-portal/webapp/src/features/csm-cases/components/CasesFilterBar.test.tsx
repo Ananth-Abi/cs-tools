@@ -171,33 +171,22 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
 
 
   /**
-   * `tags` has its own "Tags" bar control now (tested separately below),
-   * same as CS team's "Team" control (see the describe block below) —
-   * deliberately NOT chipped, to avoid showing the same selection twice.
-   * `excludeTags` has no bar control of its own on this general filter bar
-   * — only ever set via a dashboard click-through (or, for a case-family
-   * widget's own preview page, seeded as `tags`' own complement before it
-   * ever reaches this component — see `CaseFamilyWidgetPreview` in
-   * `DashboardWidgetPreviewPage.tsx`) — so a chip is still the only way to
-   * see or clear it here.
+   * `tags`/`excludeTags` both have their own tri-state "Tags" bar control
+   * now (tested separately below), same as CS team's "Team" control (see
+   * the describe block below) — deliberately NOT chipped, to avoid showing
+   * the same selection twice. `excludeTags` used to have no bar control of
+   * its own (only a dashboard click-through could set it) and fell back to
+   * a chip here; now that `TagsMultiSelect` is tri-state, its own "- tag"
+   * chip inside that control is the only rendering, same as `tags`.
    */
   it("does not render a chip for tags — it has its own 'Tags' bar control", () => {
     renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["micro-gw"] });
     expect(screen.queryByText(/^Tag: /)).not.toBeInTheDocument();
   });
 
-  it("renders a chip for excludeTags, since it has no bar control of its own", () => {
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      excludeTags: ["s_dip"],
-    });
-
-    expect(screen.getByText("Excluding tag: s_dip")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByText("Excluding tag: s_dip").closest(".MuiChip-root")!.querySelector("svg")!);
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeTags: [] }),
-    );
+  it("does not render a chip for excludeTags — it has its own 'Tags' bar control now", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, excludeTags: ["s_dip"] });
+    expect(screen.queryByText(/^Excluding tag:/)).not.toBeInTheDocument();
   });
 
   it("does not render a chip for csTeams — it has its own 'Team' bar control", () => {
@@ -205,29 +194,12 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
     expect(screen.queryByText(/^CS team:/)).not.toBeInTheDocument();
   });
 
-  // Regression: reported live against a dashboard widget's `state notIn`
-  // click-through, which showed an INCLUDE chip (the exact opposite of the
-  // widget's own filter) because the exclusion had nowhere of its own to
-  // render. `excludeStates` has no bar control of its own, so its chip is
-  // the only way to see or clear it. `onboardingStatuses` has its own
-  // "Onboarding status" bar control (tested separately below) and
-  // is deliberately NOT chipped, same as `csTeams`.
-  it("renders a distinct chip for excludeStates, never conflated with its include counterpart", () => {
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      states: ["open"],
-      excludeStates: ["closed"],
-    });
-
-    expect(screen.getByText("Excluding state: Closed")).toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByText("Excluding state: Closed").closest(".MuiChip-root")!
-        .querySelector("svg")!,
-    );
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ excludeStates: [] }),
-    );
+  // `excludeStates` now has its own "State" bar control (the tri-state
+  // `TriStateMultiSelectField`, digiops-cs#2907 follow-up), same as
+  // `excludeTags` above — no second, redundant chip.
+  it("does not render a chip for excludeStates — it has its own 'State' bar control now", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, states: ["open"], excludeStates: ["closed"] });
+    expect(screen.queryByText(/^Excluding state:/)).not.toBeInTheDocument();
   });
 
   it("does not render a chip for onboardingStatuses — it has its own 'Onboarding status' bar control", () => {
@@ -268,7 +240,42 @@ describe("CasesFilterBar — 'Team' control (replaces the removed 'Work state' o
   });
 });
 
-describe("CasesFilterBar — 'Tags' control (replaces the removed chip-only field)", () => {
+describe("CasesFilterBar — 'State' control (tri-state include/exclude, digiops-cs#2907 follow-up)", () => {
+  it("clicking an unselected state once includes it", async () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Closed" }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ states: ["closed"], excludeStates: [] }),
+    );
+  });
+
+  it("clicking an included state a second time moves it to excluded", async () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS, states: ["closed"] });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Closed" }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ states: [], excludeStates: ["closed"] }),
+    );
+  });
+
+  it("clicking an excluded state a third time clears it back to unselected", async () => {
+    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS, excludeStates: ["closed"] });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "State" }));
+    fireEvent.click(await screen.findByRole("option", { name: "Closed" }));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ states: [], excludeStates: [] }),
+    );
+  });
+});
+
+describe("CasesFilterBar — 'Tags' control (tri-state include/exclude, digiops-cs#2907)", () => {
   it("renders matching tag suggestions from the search endpoint", () => {
     mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
     renderBar({ ...DEFAULT_CASES_FILTERS });
@@ -277,7 +284,7 @@ describe("CasesFilterBar — 'Tags' control (replaces the removed chip-only fiel
     expect(screen.getByText("micro-gw")).toBeInTheDocument();
   });
 
-  it("selecting a suggested tag adds it to the filter", () => {
+  it("clicking an unselected suggested tag once includes it", () => {
     mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
     const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
 
@@ -285,13 +292,63 @@ describe("CasesFilterBar — 'Tags' control (replaces the removed chip-only fiel
     fireEvent.click(screen.getByText("micro-gw"));
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: ["micro-gw"] }),
+      expect.objectContaining({ tags: ["micro-gw"], excludeTags: [] }),
+    );
+  });
+
+  it("clicking an included tag a second time moves it to excluded", () => {
+    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
+    const { onChange } = renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      tags: ["micro-gw"],
+    });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
+    fireEvent.click(screen.getByText("micro-gw"));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: [], excludeTags: ["micro-gw"] }),
+    );
+  });
+
+  it("clicking an excluded tag a third time clears it back to unselected", () => {
+    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
+    const { onChange } = renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      excludeTags: ["micro-gw"],
+    });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
+    fireEvent.click(screen.getByText("micro-gw"));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: [], excludeTags: [] }),
+    );
+  });
+
+  it("leaves any other selected tag untouched when cycling one option", () => {
+    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
+    const { onChange } = renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      tags: ["already-included"],
+      excludeTags: ["already-excluded"],
+    });
+
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
+    fireEvent.click(screen.getByText("micro-gw"));
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tags: ["already-included", "micro-gw"],
+        excludeTags: ["already-excluded"],
+      }),
     );
   });
 
   // Tags are genuinely free-text (see TagsMultiSelect.tsx's doc comment) --
   // typing one with no matching suggestion must still work, not just picking
-  // from the search results.
+  // from the search results. A freshly typed tag starts at "included", same
+  // as a first click on a suggested option.
   it("still accepts a free-typed tag with no matching suggestion", () => {
     const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
 
@@ -300,7 +357,48 @@ describe("CasesFilterBar — 'Tags' control (replaces the removed chip-only fiel
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: ["brand-new-tag"] }),
+      expect.objectContaining({ tags: ["brand-new-tag"], excludeTags: [] }),
+    );
+  });
+
+  it("renders a single included tag as a neutral '+' chip", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["urgent"] });
+    const includedChip = screen.getByText("+ urgent").closest(".MuiChip-root");
+    expect(includedChip).toBeInTheDocument();
+    expect(includedChip).not.toHaveClass("MuiChip-colorError");
+  });
+
+  it("renders a single excluded tag as an 'error'-tinted '-' chip", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, excludeTags: ["spam"] });
+    const excludedChip = screen.getByText("- spam").closest(".MuiChip-root");
+    expect(excludedChip).toBeInTheDocument();
+    expect(excludedChip).toHaveClass("MuiChip-colorError");
+  });
+
+  it("collapses to a 'N tags' summary once both an included and an excluded tag are selected, instead of rendering both chips individually", () => {
+    // The bar's Tags control sits in a narrow filter-grid column that can't
+    // fit two real Chip pills without the row's own `overflow: hidden`
+    // silently clipping the second one -- see TagsMultiSelect's own test
+    // for the full repro (tags=patch&excludeTags=am showed only one,
+    // truncated chip even though both filters were genuinely active).
+    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["urgent"], excludeTags: ["spam"] });
+
+    expect(screen.getByText("2 tags")).toBeInTheDocument();
+    expect(screen.queryByText("+ urgent")).not.toBeInTheDocument();
+    expect(screen.queryByText("- spam")).not.toBeInTheDocument();
+  });
+
+  it("deleting the one selected excluded tag's chip clears just that tag", () => {
+    const { onChange } = renderBar({
+      ...DEFAULT_CASES_FILTERS,
+      excludeTags: ["spam"],
+    });
+
+    const excludedChip = screen.getByText("- spam").closest(".MuiChip-root")!;
+    fireEvent.click(excludedChip.querySelector("svg")!);
+
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: [], excludeTags: [] }),
     );
   });
 });
