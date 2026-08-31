@@ -52,8 +52,15 @@ export default function AsyncAssignedUserIdMultiSelect({
   const debounced = useDebouncedValue(input, 300);
   const query = debounced.trim();
 
-  const { users, isFetching, isFetchingNextPage, hasNextPage, isError, fetchNextPage } =
+  const { users: searchResults, isFetching, isFetchingNextPage, hasNextPage, isError, fetchNextPage } =
     useInfiniteUserSearch(query, open);
+  // `id` is optional on `UserSearchOption` (`POST /users/search` doesn't
+  // guarantee it) — this picker filters on the id, so a row without one is
+  // unusable here and dropped, unlike the email-keyed pickers.
+  const users = useMemo(
+    () => searchResults.filter((u): u is typeof u & { id: string } => Boolean(u.id)),
+    [searchResults],
+  );
 
   const handleListboxScroll = (event: React.UIEvent<HTMLElement>): void => {
     const el = event.currentTarget;

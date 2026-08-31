@@ -7,12 +7,12 @@ working a case once you're on its detail page.
 ## Finding cases
 
 The search box at the top of the list matches on case number, subject, or internal ID only —
-use the **Assignee**, **Project**, or **Team** filters below it to narrow by customer, project,
-or assignee instead. Next to the search box, **Filters** expands a grid of additional
+use the **Assignee**, **Project**, or **CRE Team** filters below it to narrow by assignee,
+project, or CRE team instead. Next to the search box, **Filters** expands a grid of additional
 controls, with a **Simple** / **Advanced** toggle above it:
 
-- **Simple** (the default) is a fixed grid: **Severity**, **State**, **Team**, **Case type**,
-  **Assignee** (search the engineer directory, or pick "Me"), **Product**, **Onboarding
+- **Simple** (the default) is a fixed grid: **Severity**, **State**, **CRE Team**, **Case
+  type**, **Assignee** (search the engineer directory, or pick "Me"), **Product**, **Onboarding
   status**, and **Project**.
   - **Severity**: S0 (Catastrophic) through S4 (Low / Query). S0 is reserved for Managed Cloud
     projects.
@@ -34,10 +34,13 @@ controls, with a **Simple** / **Advanced** toggle above it:
   the current filters can't be shown there; clear the Advanced-only ones to switch back.
 
 When a case list arrives already filtered, for example after clicking into a dashboard
-widget, any filter that doesn't have its own control in the Simple grid (an SLA-percent bound,
-an escalation filter, and so on) still shows up as a removable chip above the grid regardless
-of which mode you're in, so you can always see why the list is filtered and undo it with one
-click.
+widget, an Advanced-only filter (an SLA-percent bound, an escalation filter, and so on)
+switches the bar into Advanced mode automatically, where the filter row or OR group it landed
+in is itself the way you see and remove it — Advanced mode doesn't show a separate chip for
+it. The one exception is the work-state sub-filter (Ongoing/Paused, a narrow slice of State
+that stays Simple-representable and has no dedicated control of its own): if one arrives, say
+from a dashboard click-through, while you're in Simple mode, it shows up as a removable chip
+above the grid instead.
 
 Once any filter is active, the **Filters** button turns into **Clear filters (N)**, showing
 how many are active and clearing all of them in one click.

@@ -214,32 +214,27 @@ describe("CasesFilterBar — Simple mode keeps its existing chip behavior unchan
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ workStates: [] }));
   });
 
-  // The scenario from the bug report: a page already sitting in Simple mode
-  // (mounted with no advanced-only value active) picks one up mid-session --
-  // e.g. an applied saved view's `onChange`, which updates `filters` without
-  // remounting `CasesFilterBar` -- rather than arriving pre-set at mount
-  // (which would instead auto-switch to Advanced, see the mode gating tests
-  // above). `mode` state persists across that update, so the value must
-  // still be visible/removable via its old chip, same as before this fix --
-  // this fix only suppresses chips for fields whose row is ALSO on screen
-  // (`mode === "advanced"`), never for Simple mode itself.
-  it("still chips a date-range bound that arrives while already in Simple mode, formatted as the same local calendar date", () => {
+  // Originally this test asserted that a date-range bound arriving while
+  // already in Simple mode (e.g. an applied saved view's `onChange`, which
+  // updates `filters` without remounting `CasesFilterBar`) stayed on a chip,
+  // because `mode` state -- set once at mount -- doesn't re-derive on its
+  // own. CodeRabbit correctly flagged that as a real bug: it left an active
+  // filter with no visible control at all once Advanced-mode chips were
+  // suppressed for it (see `activeFilterChips`'s `effectiveMode` gating).
+  // `effectiveMode` now recomputes every render, so this same sequence must
+  // switch into Advanced mode and show the row instead.
+  it("switches into Advanced mode when a date-range bound arrives mid-session in Simple mode, rather than leaving it on a stranded chip", () => {
     const { rerenderWith } = renderBar({ ...DEFAULT_CASES_FILTERS });
     expect(screen.queryByText("Advanced filters")).not.toBeInTheDocument();
 
     rerenderWith({ ...DEFAULT_CASES_FILTERS, createdOnGte: "2026-07-27" });
 
-    // Still Simple mode (persisted `mode` state) -- the row list never
-    // mounted, so the chip is still the only visible/removable UI, exactly
-    // as before this fix.
-    expect(screen.queryByText("Advanced filters")).not.toBeInTheDocument();
-    // A bare YYYY-MM-DD bound must render as that same calendar date
-    // regardless of the runner's local timezone offset from UTC -- pinning
-    // this to a fixed local Date (not `new Date("2026-07-27")`, which is
-    // parsed as UTC midnight and can roll back a day) is what makes this
-    // assertion timezone-safe.
+    // `effectiveMode` flips Simple -> Advanced now that the filters are no
+    // longer Simple-representable, even though `mode` state itself never
+    // changed -- the row list is what's visible, not a chip.
+    expect(screen.getByText("Advanced filters")).toBeInTheDocument();
     const expected = new Date(2026, 6, 27).toLocaleDateString();
-    expect(screen.getByText(`Created after ${expected}`)).toBeInTheDocument();
+    expect(screen.queryByText(`Created after ${expected}`)).not.toBeInTheDocument();
   });
 });
 

@@ -82,6 +82,17 @@ function key(field: string, op: string): string {
   return `${field}:${op}`;
 }
 
+/** Parses an SLA-percent row value, treating a non-numeric input (a
+ * hand-edited or stale `af` URL, e.g. `af=[["taskSLABusinessElapsedPercent",
+ * "gte",["abc"]]]`) as unset rather than writing `NaN` into `CasesFilters` —
+ * `NaN` isn't `null`, so it would otherwise propagate into the active-filter
+ * count, the URL, and the `/cases/search` request body. */
+function parseSlaPct(values: string[]): number | null {
+  if (values.length === 0) return null;
+  const n = Number(values[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
 const TYPED_ADAPTERS: Record<string, TypedFieldAdapter> = {
   [key("severity", "in")]: simpleAdapter(
     (f) => f.severities,
@@ -147,11 +158,11 @@ const TYPED_ADAPTERS: Record<string, TypedFieldAdapter> = {
   ),
   [key("taskSLABusinessElapsedPercent", "gte")]: simpleAdapter(
     (f) => (f.slaElapsedPctGte !== null ? [String(f.slaElapsedPctGte)] : []),
-    (f, v) => ({ ...f, slaElapsedPctGte: v.length > 0 ? Number(v[0]) : null }),
+    (f, v) => ({ ...f, slaElapsedPctGte: parseSlaPct(v) }),
   ),
   [key("taskSLABusinessElapsedPercent", "lte")]: simpleAdapter(
     (f) => (f.slaElapsedPctLte !== null ? [String(f.slaElapsedPctLte)] : []),
-    (f, v) => ({ ...f, slaElapsedPctLte: v.length > 0 ? Number(v[0]) : null }),
+    (f, v) => ({ ...f, slaElapsedPctLte: parseSlaPct(v) }),
   ),
   [key("escalationLevel", "in")]: simpleAdapter(
     (f) => f.escalationLevels,

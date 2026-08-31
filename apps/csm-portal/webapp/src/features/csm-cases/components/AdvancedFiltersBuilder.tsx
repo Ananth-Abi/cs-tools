@@ -98,6 +98,9 @@ function isRelativeDatePreset(value: string): boolean {
 }
 
 interface DateOrPresetValueInputProps {
+  /** Unique per rendered row, so the label/`labelId` pair stays unambiguous
+   * when several date rows are open at once. */
+  labelId: string;
   /** A relative-date placeholder (one of `RELATIVE_DATE_PRESETS`), a literal
    * `YYYY-MM-DD`, or `""` (nothing chosen yet). */
   value: string;
@@ -116,7 +119,11 @@ interface DateOrPresetValueInputProps {
  * `AdvancedFiltersBuilder`) so switching to a different date row/op resets
  * that local state instead of carrying it over.
  */
-function DateOrPresetValueInput({ value, onChange }: DateOrPresetValueInputProps): JSX.Element {
+function DateOrPresetValueInput({
+  labelId,
+  value,
+  onChange,
+}: DateOrPresetValueInputProps): JSX.Element {
   const [mode, setMode] = useState<"preset" | "custom">(
     value && !isRelativeDatePreset(value) ? "custom" : "preset",
   );
@@ -124,9 +131,9 @@ function DateOrPresetValueInput({ value, onChange }: DateOrPresetValueInputProps
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       <FormControl size="small" fullWidth>
-        <InputLabel id="advanced-filter-date-mode-label">Date</InputLabel>
+        <InputLabel id={labelId}>Date</InputLabel>
         <Select
-          labelId="advanced-filter-date-mode-label"
+          labelId={labelId}
           label="Date"
           value={mode === "custom" ? CUSTOM_DATE_SENTINEL : value}
           displayEmpty
@@ -385,6 +392,7 @@ export default function AdvancedFiltersBuilder({
               {opMeta?.valueKind === "dateOrPreset" && (
                 <DateOrPresetValueInput
                   key={`${row.field}-${row.op}`}
+                  labelId={`advanced-filter-date-mode-${index}-label`}
                   value={row.values[0] ?? ""}
                   onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next ? [next] : [] })}
                 />

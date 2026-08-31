@@ -524,6 +524,15 @@ export default function CasesFilterBar({
     isSimpleRepresentable(filters) ? "simple" : "advanced",
   );
   const canShowSimple = isSimpleRepresentable(filters);
+  // A filter Simple mode cannot render must never sit silently active behind
+  // the Simple grid with nothing on screen showing it — e.g. applying a
+  // saved view that carries `tags` while already in Simple mode: `onChange`
+  // updates `filters` without remounting this component, so the mount-time
+  // `mode` state above never re-derives on its own. This only ever pushes
+  // Simple -> Advanced (never the reverse), so it doesn't touch the
+  // mount-time-only guarantee `mode`'s own comment describes for the
+  // Advanced-authoring case.
+  const effectiveMode = mode === "simple" && !canShowSimple ? "advanced" : mode;
 
   const unifiedRows: UnifiedFilterRow[] = useMemo(
     () => filtersToAdvancedRows(filters),
@@ -579,11 +588,14 @@ export default function CasesFilterBar({
   // Simple mode only -- see `buildActiveFilterChips`'s doc comment. In
   // Advanced mode every field it would chip is already its own row (via
   // `AdvancedFiltersBuilder`) or branch (via `AnyOfGroupsBuilder`), both
-  // rendered below whenever `mode === "advanced"`, so a chip there would
-  // just duplicate what's already visible and editable.
+  // rendered below whenever `effectiveMode === "advanced"`, so a chip there
+  // would just duplicate what's already visible and editable. Uses
+  // `effectiveMode`, not `mode`, so a non-simple-representable value that
+  // arrives without a remount (e.g. an applied saved view) doesn't sit
+  // chip-less behind a Simple grid that no longer matches reality.
   const activeFilterChips = useMemo(
-    () => (mode === "simple" ? buildActiveFilterChips(filters, teamLabels) : []),
-    [filters, teamLabels, mode],
+    () => (effectiveMode === "simple" ? buildActiveFilterChips(filters, teamLabels) : []),
+    [filters, teamLabels, effectiveMode],
   );
 
   // ── Saved views ──────────────────────────────────────────────────────────
@@ -874,9 +886,9 @@ export default function CasesFilterBar({
               <span>
                 <Button
                   size="small"
-                  variant={mode === "simple" ? "contained" : "outlined"}
-                  color={mode === "simple" ? "primary" : "inherit"}
-                  aria-pressed={mode === "simple"}
+                  variant={effectiveMode === "simple" ? "contained" : "outlined"}
+                  color={effectiveMode === "simple" ? "primary" : "inherit"}
+                  aria-pressed={effectiveMode === "simple"}
                   disabled={!canShowSimple}
                   onClick={() => setMode("simple")}
                   sx={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }}
@@ -887,16 +899,16 @@ export default function CasesFilterBar({
             </Tooltip>
             <Button
               size="small"
-              variant={mode === "advanced" ? "contained" : "outlined"}
-              color={mode === "advanced" ? "primary" : "inherit"}
-              aria-pressed={mode === "advanced"}
+              variant={effectiveMode === "advanced" ? "contained" : "outlined"}
+              color={effectiveMode === "advanced" ? "primary" : "inherit"}
+              aria-pressed={effectiveMode === "advanced"}
               onClick={() => setMode("advanced")}
               sx={{ borderTopLeftRadius: 0, borderBottomLeftRadius: 0, ml: "-1px" }}
             >
               Advanced
             </Button>
           </Box>
-          {mode === "simple" ? (
+          {effectiveMode === "simple" ? (
           <Grid container spacing={2} sx={{ mt: 0 }}>
             {showSeverityFilter && (
               <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
