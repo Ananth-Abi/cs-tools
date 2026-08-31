@@ -326,3 +326,38 @@ describe("buildCaseSearchFilters — workState only applies when state is exactl
     expect(filterOf(filters, "workState")).toEqual([]);
   });
 });
+
+describe("mapCaseSearchViewToRow — issueType and createdBy (reporter)", () => {
+  const BASE: BeCaseSearchView = { id: "case-1", number: "CS0000001", subject: "Cluster degraded" };
+
+  it("carries issueType through unchanged when present", () => {
+    const row = mapCaseSearchViewToRow({ ...BASE, issueType: "total_outage" }, undefined);
+    expect(row.issueType).toBe("total_outage");
+  });
+
+  it("leaves issueType undefined when the response doesn't carry one", () => {
+    const row = mapCaseSearchViewToRow(BASE, undefined);
+    expect(row.issueType).toBeUndefined();
+  });
+
+  it("prefers the creator's display name for createdBy", () => {
+    const row = mapCaseSearchViewToRow(
+      { ...BASE, createdBy: { id: null, email: "jane.doe@example.com", name: "Jane Doe" } },
+      undefined,
+    );
+    expect(row.createdBy).toBe("Jane Doe");
+  });
+
+  it("falls back to the creator's email when there's no name", () => {
+    const row = mapCaseSearchViewToRow(
+      { ...BASE, createdBy: { id: null, email: "jane.doe@example.com", name: "" } },
+      undefined,
+    );
+    expect(row.createdBy).toBe("jane.doe@example.com");
+  });
+
+  it("falls back to 'Unknown' when the response carries no creator at all", () => {
+    const row = mapCaseSearchViewToRow(BASE, undefined);
+    expect(row.createdBy).toBe("Unknown");
+  });
+});

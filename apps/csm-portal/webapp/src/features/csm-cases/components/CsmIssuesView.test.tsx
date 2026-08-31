@@ -15,6 +15,7 @@
 // under the License.
 
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactNode } from "react";
 import {
   MemoryRouter,
   Route,
@@ -63,7 +64,16 @@ vi.mock("@features/csm-cases/components/CasesFilterBar", () => ({
   default: () => <div>FilterBar</div>,
 }));
 vi.mock("@features/csm-cases/components/CasesList", () => ({
-  default: () => <div>CasesList</div>,
+  // Forwards `columnCustomizer` (the "Customise columns" trigger, rendered
+  // by the real CasesList in a toolbar row above the table) so the column
+  // customization tests below can still find/click it, even though this
+  // stub renders none of CasesList's own row markup.
+  default: ({ columnCustomizer }: { columnCustomizer?: ReactNode }) => (
+    <div>
+      CasesList
+      {columnCustomizer}
+    </div>
+  ),
 }));
 vi.mock("@components/FilteredCsvExportButton", () => ({
   default: () => <div>ExportButton</div>,
@@ -150,13 +160,15 @@ describe("CsmIssuesView column customization", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders the picker and lists Product/Type/Assignee/Customer/Created (not Severity) when hideSeverityColumn is set", () => {
+  it("renders the picker and lists Product/Type/Issue type/Assignee/Reporter/Customer/Created (not Severity) when hideSeverityColumn is set", () => {
     renderEngagementsLike();
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
 
     expect(screen.getByText("Product")).toBeInTheDocument();
     expect(screen.getByText("Type")).toBeInTheDocument();
+    expect(screen.getByText("Issue type")).toBeInTheDocument();
     expect(screen.getByText("Assignee")).toBeInTheDocument();
+    expect(screen.getByText("Reporter")).toBeInTheDocument();
     expect(screen.getByText("Customer")).toBeInTheDocument();
     expect(screen.getByText("Created")).toBeInTheDocument();
     expect(screen.queryByText("Severity")).not.toBeInTheDocument();
@@ -166,15 +178,18 @@ describe("CsmIssuesView column customization", () => {
     renderEngagementsLike();
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
 
-    // Order mirrors `CASE_OPTIONAL_COLUMNS`: Product, Type, Assignee, Customer, Created
-    // (Severity is excluded entirely here via hideSeverityColumn).
+    // Order mirrors `CASE_OPTIONAL_COLUMNS`: Product, Type, Issue type, Assignee,
+    // Reporter, Customer, Created (Severity is excluded entirely here via
+    // hideSeverityColumn).
     const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes).toHaveLength(5);
+    expect(checkboxes).toHaveLength(7);
     expect(checkboxes[0]).toBeChecked(); // Product — the one default-visible column
     expect(checkboxes[1]).not.toBeChecked(); // Type
-    expect(checkboxes[2]).not.toBeChecked(); // Assignee
-    expect(checkboxes[3]).not.toBeChecked(); // Customer
-    expect(checkboxes[4]).not.toBeChecked(); // Created
+    expect(checkboxes[2]).not.toBeChecked(); // Issue type
+    expect(checkboxes[3]).not.toBeChecked(); // Assignee
+    expect(checkboxes[4]).not.toBeChecked(); // Reporter
+    expect(checkboxes[5]).not.toBeChecked(); // Customer
+    expect(checkboxes[6]).not.toBeChecked(); // Created
   });
 
   it("persists a toggled column across a remount for the same user + view", () => {
@@ -186,7 +201,7 @@ describe("CsmIssuesView column customization", () => {
     renderEngagementsLike();
     fireEvent.click(screen.getByRole("button", { name: "Customise engagements columns" }));
     const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes[2]).toBeChecked(); // Assignee, toggled on above
+    expect(checkboxes[3]).toBeChecked(); // Assignee, toggled on above
   });
 });
 

@@ -246,6 +246,7 @@ export default function CsmAnnouncementsPage(): JSX.Element {
             isVisible={columnPrefs.isVisible}
             onToggle={columnPrefs.toggleColumn}
             onMove={columnPrefs.moveColumn}
+            onReorder={columnPrefs.reorderColumn}
             onReset={columnPrefs.resetToDefault}
             label="Customise announcements columns"
           />

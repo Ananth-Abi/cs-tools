@@ -271,14 +271,6 @@ export default function ChangeRequestsTab(): JSX.Element {
           fetchPage={fetchChangeRequestsPage}
           disabled={isError}
         />
-        <ColumnCustomizerButton
-          allColumns={columnPrefs.allColumns}
-          isVisible={columnPrefs.isVisible}
-          onToggle={columnPrefs.toggleColumn}
-          onMove={columnPrefs.moveColumn}
-          onReset={columnPrefs.resetToDefault}
-          label="Customise change request columns"
-        />
         <Button
           variant="contained"
           color="primary"
@@ -297,6 +289,18 @@ export default function ChangeRequestsTab(): JSX.Element {
         isFiltersOpen={isFiltersOpen}
         onFiltersToggle={() => setIsFiltersOpen((prev: boolean) => !prev)}
       />
+
+      <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
+        <ColumnCustomizerButton
+          allColumns={columnPrefs.allColumns}
+          isVisible={columnPrefs.isVisible}
+          onToggle={columnPrefs.toggleColumn}
+          onMove={columnPrefs.moveColumn}
+          onReorder={columnPrefs.reorderColumn}
+          onReset={columnPrefs.resetToDefault}
+          label="Customise change request columns"
+        />
+      </Box>
 
       <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1, overflow: "hidden" }}>
         <TableContainer>

@@ -51,19 +51,16 @@ import { useEngineerDisplayName } from "@hooks/useEngineerDisplayName";
 import { SEVERITY_LABEL } from "@features/csm-dashboard/utils/abtDashboard";
 import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
 import type { BeCaseIssueType } from "@api/backend/types";
+import { ALL_ISSUE_TYPES, ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
 import type { CreateRelatedCaseNavState } from "@features/csm-cases/types/csmCases";
 import { useNavTransition } from "@hooks/useNavTransition";
 
 const SEVERITIES: Severity[] = ["S0", "S1", "S2", "S3", "S4"];
 
-const ISSUE_TYPES: { value: BeCaseIssueType; label: string }[] = [
-  { value: "total_outage", label: "Total outage" },
-  { value: "partial_outage", label: "Partial outage" },
-  { value: "performance_degradation", label: "Performance degradation" },
-  { value: "error", label: "Error" },
-  { value: "security_or_compliance", label: "Security / compliance" },
-  { value: "question", label: "Question" },
-];
+const ISSUE_TYPES: { value: BeCaseIssueType; label: string }[] = ALL_ISSUE_TYPES.map((value) => ({
+  value,
+  label: ISSUE_TYPE_LABEL[value],
+}));
 
 /** The rich-text editor emits `<p></p>` when empty; check the stripped text. */
 function isEmptyHtml(html: string): boolean {

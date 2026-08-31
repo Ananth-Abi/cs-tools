@@ -22,6 +22,10 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { BeIncidentDetail } from "@api/backend/types";
+import { CaseTabsProvider, useCaseTabsController } from "@context/case-tabs/CaseTabsContext";
+import { CaseTabsBehaviorProvider } from "@context/case-tabs/CaseTabsBehaviorContext";
+import { useCaseTabCloseConfirm } from "@features/case-tabs/hooks/useCaseTabCloseConfirm";
+import LoggerProvider from "@context/logger/LoggerProvider";
 
 const navigateMock = vi.fn();
 const useGetIncidentMock = vi.fn();
@@ -68,6 +72,10 @@ vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
   usePostCsmCaseAttachment: () => ({ isPending: false, mutate: vi.fn() }),
   useDownloadCsmCaseAttachment: () => vi.fn(),
   useGetCsmCaseAttachmentContent: () => vi.fn(),
+  // Only reached by the reply composer's upload modal (`CsmUploadAttachmentModal`),
+  // not exercised by this file's existing tests — the "reports its own draft
+  // state" tests below are the first to actually mount the composer.
+  MAX_ATTACHMENT_SIZE_BYTES: 10 * 1024 * 1024,
 }));
 vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
   default: () => null,
@@ -194,6 +202,58 @@ function renderPage(initialEntry = "/operations/incidents/inc-1"): ReturnType<ty
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
+  );
+}
+
+/**
+ * Wraps the real page in a real open case-tab (`CaseTabsProvider` +
+ * `useCaseTabCloseConfirm`), exposing a "close-this-tab" trigger — for the
+ * `hasDraft`/close-confirm regression test below, which needs the real
+ * `useReportCaseTabDraft` wiring inside the page to actually reach the tab
+ * strip's own close-confirm dialog, not just a mocked stand-in for it.
+ */
+function CloseTabHarness({ caseId }: { caseId: string }): JSX.Element {
+  const { openTab, tabs } = useCaseTabsController();
+  const { requestClose, dialog } = useCaseTabCloseConfirm();
+  return (
+    <div>
+      <button onClick={() => openTab(caseId, "incident", `/operations/incidents/${caseId}`)}>
+        open-tab
+      </button>
+      <button
+        onClick={() => {
+          const tab = tabs.find((t) => t.caseId === caseId);
+          if (tab) requestClose(tab);
+        }}
+      >
+        close-tab
+      </button>
+      {dialog}
+    </div>
+  );
+}
+
+function renderPageWithOpenTab(
+  initialEntry = "/operations/incidents/inc-1",
+): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <LoggerProvider>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[initialEntry]}>
+          <CaseTabsBehaviorProvider>
+            <CaseTabsProvider>
+              <CloseTabHarness caseId="inc-1" />
+              <Routes>
+                <Route path="/operations/incidents/:id" element={<CsmIncidentDetailPage />} />
+              </Routes>
+            </CaseTabsProvider>
+          </CaseTabsBehaviorProvider>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </LoggerProvider>,
   );
 }
 
@@ -472,5 +532,34 @@ describe("CsmIncidentDetailPage — state-transition action bar", () => {
     renderPage();
     expect(screen.queryByRole("button", { name: /in progress/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /change state/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("CsmIncidentDetailPage — reports its own draft state to the tab strip", () => {
+  // Regression test for bug: this page only called `useReportCaseTabMeta`,
+  // not `useReportCaseTabDraft` (unlike `CsmCaseDetailPage`, which calls
+  // both) — its tab's `hasDraft` never became `true`, so closing an
+  // incident's tab with a reply half-written skipped the discard-confirm
+  // dialog entirely, unlike a case tab in the same situation.
+  it("closing this incident's tab with an open (unsent) reply asks for confirmation, same as a case tab does", async () => {
+    localStorage.setItem("csm.caseTabs.enabled", "1");
+    mockQueryResult({ data: BASE_INCIDENT });
+    renderPageWithOpenTab();
+
+    fireEvent.click(screen.getByText("open-tab"));
+    fireEvent.click(screen.getByText("Add a comment…"));
+
+    fireEvent.click(screen.getByText("close-tab"));
+    expect(screen.getByText("Close this case tab?")).toBeInTheDocument();
+  });
+
+  it("closing this incident's tab with no reply open closes it immediately, without confirming", async () => {
+    localStorage.setItem("csm.caseTabs.enabled", "1");
+    mockQueryResult({ data: BASE_INCIDENT });
+    renderPageWithOpenTab();
+
+    fireEvent.click(screen.getByText("open-tab"));
+    fireEvent.click(screen.getByText("close-tab"));
+    expect(screen.queryByText("Close this case tab?")).not.toBeInTheDocument();
   });
 });

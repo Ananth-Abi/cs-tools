@@ -47,6 +47,7 @@ import { ErrorBannerProvider } from "@context/error-banner/ErrorBannerContext";
 import { SuccessBannerProvider } from "@context/success-banner/SuccessBannerContext";
 import { LoaderProvider } from "@context/linear-loader/LoaderContext";
 import { ErrorPageProvider } from "@context/error-page/ErrorPageContext";
+import CaseDetailRouteSync from "@features/case-tabs/components/CaseDetailRouteSync";
 
 /*
  * Authenticated feature pages are lazily loaded so each lands in its own chunk
@@ -67,23 +68,14 @@ const CsmCasesPage = lazy(
 const CsmCaseCreatePage = lazy(
   () => import("@features/csm-cases/pages/CsmCaseCreatePage"),
 );
-const CsmCaseDetailPage = lazy(
-  () => import("@features/csm-cases/pages/CsmCaseDetailPage"),
-);
 const OperationsPage = lazy(
   () => import("@features/csm-operations/pages/OperationsPage"),
 );
 const CreateServiceRequestPage = lazy(
   () => import("@features/csm-operations/pages/CreateServiceRequestPage"),
 );
-const CsmChangeRequestDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmChangeRequestDetailPage"),
-);
 const CreateChangeRequestPage = lazy(
   () => import("@features/csm-operations/pages/CreateChangeRequestPage"),
-);
-const CsmIncidentDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmIncidentDetailPage"),
 );
 const CreateIncidentPage = lazy(
   () => import("@features/csm-operations/pages/CreateIncidentPage"),
@@ -493,7 +485,10 @@ export default function App(): JSX.Element {
                   />
                   <Route path="cases" element={<CsmCasesPage />} />
                   <Route path="cases/new" element={<CsmCaseCreatePage />} />
-                  <Route path="cases/:caseId" element={<CsmCaseDetailPage />} />
+                  <Route
+                    path="cases/:caseId"
+                    element={<CaseDetailRouteSync kind="case" />}
+                  />
 
                   {/* A project's chat sessions ("Conversations" sub-tab of
                       Work items) each get a dedicated detail page, flat at
@@ -524,7 +519,7 @@ export default function App(): JSX.Element {
                     <Route path="service-requests/new" element={<CreateServiceRequestPage />} />
                     <Route
                       path="service-requests/:caseId"
-                      element={<CsmCaseDetailPage />}
+                      element={<CaseDetailRouteSync kind="service_request" />}
                     />
                     <Route
                       path="change-requests/new"
@@ -532,17 +527,23 @@ export default function App(): JSX.Element {
                     />
                     <Route
                       path="change-requests/:id"
-                      element={<CsmChangeRequestDetailPage />}
+                      element={<CaseDetailRouteSync kind="change_request" paramName="id" />}
                     />
                     <Route path="incidents/new" element={<CreateIncidentPage />} />
-                    <Route path="incidents/:id" element={<CsmIncidentDetailPage />} />
+                    <Route
+                      path="incidents/:id"
+                      element={<CaseDetailRouteSync kind="incident" paramName="id" />}
+                    />
                     <Route path="problems/new" element={<CreateProblemPage />} />
                     <Route path="problems/:id" element={<ProblemDetailPage />} />
                   </Route>
 
                   <Route path="engagements" element={<CsmEngagementsPage />} />
                   <Route path="engagements/new" element={<CsmEngagementCreatePage />} />
-                  <Route path="engagements/:caseId" element={<CsmCaseDetailPage />} />
+                  <Route
+                    path="engagements/:caseId"
+                    element={<CaseDetailRouteSync kind="engagement" />}
+                  />
                   <Route path="updates" element={<CsmUpdatesPage />} />
                   {/* Security Center's own Security reports / Vulnerabilities
                       switch — same path-segment + legacy-`?tab=`-redirect
@@ -565,7 +566,7 @@ export default function App(): JSX.Element {
                     />
                     <Route
                       path="security-reports/:caseId"
-                      element={<CsmCaseDetailPage />}
+                      element={<CaseDetailRouteSync kind="security_report_analysis" />}
                     />
                   </Route>
                   <Route path="time-cards" element={<CsmTimeCardsPage />} />
@@ -576,7 +577,7 @@ export default function App(): JSX.Element {
                   />
                   <Route
                     path="announcements/:caseId"
-                    element={<CsmCaseDetailPage />}
+                    element={<CaseDetailRouteSync kind="announcement" />}
                   />
 
                   {/* Help — static, bundled Markdown docs, all rendered on

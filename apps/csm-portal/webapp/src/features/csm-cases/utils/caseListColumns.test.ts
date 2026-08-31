@@ -23,8 +23,10 @@ describe("CASE_OPTIONAL_COLUMNS", () => {
     const expected: CaseOptionalColumnId[] = [
       "product",
       "type",
+      "issueType",
       "severity",
       "assignee",
+      "createdBy",
       "customer",
       "createdAt",
     ];

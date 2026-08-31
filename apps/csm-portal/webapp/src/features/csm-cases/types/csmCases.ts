@@ -70,6 +70,11 @@ export interface CsmCaseRow {
    * omit it, in which case the type filter treats it as unmatched.
    */
   caseType?: BeCaseType;
+  /** How the issue was categorized at creation (outage/degradation/question/
+   * etc. — see {@link BeCaseIssueType}). Optional: a legacy row, or one not
+   * created through the "Case" flow (service requests etc. don't collect
+   * this), may have none. */
+  issueType?: BeCaseIssueType;
   /**
    * Engagement type (e.g. "Migration"), only meaningful when `caseType` is
    * `"engagement"`. Carried through unmodified from the backend's raw display
@@ -88,6 +93,13 @@ export interface CsmCaseRow {
   /** CRE / engineer working the case. "Unassigned" for cases with no one picked up yet. */
   assignee: string;
   assigneeIsMe: boolean;
+  /** Who reported/opened the case — distinct from {@link assignee}. Optional:
+   * absent for any `CsmCaseRow` source that doesn't resolve a creator (e.g.
+   * `CsmCaseDetail`'s own {@link CsmCaseDetail.createdBy}, resolved from a
+   * different, richer data source, already declares this same field
+   * optionally). `mapCaseSearchViewToRow` always sets it, falling back to
+   * "Unknown" rather than leaving it unset. */
+  createdBy?: string;
   slaClockType: SlaClockType;
   // Minutes until breach (negative = already breached).
   minutesToBreach: number;

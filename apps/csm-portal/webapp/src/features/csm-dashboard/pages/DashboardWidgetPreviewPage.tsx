@@ -33,9 +33,19 @@ import type { BeWidgetResourceType } from "@api/backend/types";
 import { BE_MAX_PAGE_LIMIT } from "@constants/apiConstants";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
+import {
+  getColumnPreferencesUserKey,
+  useColumnPreferences,
+} from "@hooks/useColumnPreferences";
 import { useWidgetData } from "@features/csm-dashboard/api/useWidgetData";
+import ColumnCustomizerButton from "@components/column-customizer/ColumnCustomizerButton";
 import RefreshButton from "@components/RefreshButton";
 import { WIDGET_LIST_RENDERERS } from "@features/csm-dashboard/config/widgetListConfig";
+import {
+  CASE_OPTIONAL_COLUMNS,
+  type CaseOptionalColumnId,
+} from "@features/csm-cases/utils/caseListColumns";
 import {
   resourceTypeForPreviewSlug,
   translateCaseDashboardFilters,
@@ -173,6 +183,7 @@ export default function DashboardWidgetPreviewPage(): JSX.Element {
         displayName={displayName}
         filters={filters}
         backButton={backButton}
+        resourceType={resourceType}
       />
     );
   }
@@ -203,6 +214,31 @@ interface CaseFamilyWidgetPreviewProps {
   displayName: string;
   filters: Record<string, unknown>;
   backButton: JSX.Element;
+  resourceType: BeWidgetResourceType;
+}
+
+/**
+ * The `useColumnPreferences` `viewId` this preview's "Customise columns"
+ * picker should share with the corresponding main list page, for a
+ * `resourceType` whose main page routes through `CsmIssuesView`/`CasesList`
+ * (the exact same `CaseOptionalColumnId` column vocabulary this preview's
+ * own `CasesList` renders) — so a viewer's column choices carry over between
+ * "View more" and the real tab. `announcement` is deliberately excluded: its
+ * main page (`CsmAnnouncementsPage.tsx`) has its own, unrelated column set
+ * (`ANNOUNCEMENT_COLUMNS`, a different bespoke table), so reusing its
+ * `"announcements"` viewId here would misapply a saved preference built for
+ * an entirely different set of column ids. Any resourceType not listed here
+ * (including `announcement`) falls back to its own dedicated bucket.
+ */
+const CASE_FAMILY_COLUMNS_VIEW_ID: Partial<Record<BeWidgetResourceType, string>> = {
+  case: "cases",
+  service_request: "service-requests",
+  security_report_analysis: "security-reports",
+  engagement: "engagements",
+};
+
+function columnsViewIdForResourceType(resourceType: BeWidgetResourceType): string {
+  return CASE_FAMILY_COLUMNS_VIEW_ID[resourceType] ?? `dashboard-preview-${resourceType}`;
 }
 
 /**
@@ -224,6 +260,7 @@ function CaseFamilyWidgetPreview({
   displayName,
   filters,
   backButton,
+  resourceType,
 }: CaseFamilyWidgetPreviewProps): JSX.Element {
   // Frozen once at mount (a fresh "View more"/slice click is a fresh mount)
   // so a later Reset restores what the widget actually linked here with,
@@ -252,6 +289,37 @@ function CaseFamilyWidgetPreview({
     setRowsPerPage(parseInt(e.target.value, 10));
     setPage(0);
   };
+
+  // "Customise columns" — mirrors `CsmIssuesView`'s own wiring exactly (same
+  // severity gate, same "exclude Type by default" reasoning) since this
+  // preview is, like every `CsmIssuesView` caller, locked to one case type
+  // (the widget's own `resourceType`). Sharing a `viewId` with the matching
+  // main list page (see `columnsViewIdForResourceType`) means a viewer's
+  // column choices carry over between "View more" and the real tab, rather
+  // than starting from scratch here.
+  const currentUserId = useCurrentUser().user?.id;
+  const currentUserEmail = useIdTokenClaims()?.email;
+  const showSeverityColumn = resourceType === "case";
+  const availableOptionalColumns: CaseOptionalColumnId[] = [
+    "product",
+    "type",
+    "issueType",
+    ...(showSeverityColumn ? (["severity"] as const) : []),
+    "assignee",
+    "createdBy",
+    "customer",
+    "createdAt",
+  ];
+  const defaultVisibleOptionalColumns: CaseOptionalColumnId[] = [
+    "product",
+    ...(showSeverityColumn ? (["severity"] as const) : []),
+  ];
+  const columnPrefs = useColumnPreferences({
+    viewId: `case-list:${columnsViewIdForResourceType(resourceType)}`,
+    userKey: getColumnPreferencesUserKey({ id: currentUserId, email: currentUserEmail }),
+    columns: availableOptionalColumns.map((id) => ({ id, label: CASE_OPTIONAL_COLUMNS[id].label })),
+    defaultVisibleIds: defaultVisibleOptionalColumns,
+  });
 
   const { data, isLoading, isError, isFetching, refetch, dataUpdatedAt } = useGetCsmCases(
     casesFilters,
@@ -287,7 +355,24 @@ function CaseFamilyWidgetPreview({
         </Typography>
       ) : (
         <>
-          <CasesList cases={data?.cases ?? []} isLoading={isLoading} skeletonCount={rowsPerPage} />
+          <CasesList
+            cases={data?.cases ?? []}
+            isLoading={isLoading}
+            skeletonCount={rowsPerPage}
+            hideSeverityColumn={!showSeverityColumn}
+            optionalColumns={columnPrefs.visibleColumns.map((c) => c.id as CaseOptionalColumnId)}
+            columnCustomizer={
+              <ColumnCustomizerButton
+                allColumns={columnPrefs.allColumns}
+                isVisible={columnPrefs.isVisible}
+                onToggle={columnPrefs.toggleColumn}
+                onMove={columnPrefs.moveColumn}
+                onReorder={columnPrefs.reorderColumn}
+                onReset={columnPrefs.resetToDefault}
+                label={`Customise ${displayName} columns`}
+              />
+            }
+          />
           <TablePagination
             component="div"
             count={data?.total ?? 0}
@@ -457,7 +542,11 @@ function CaseFeedbackWidgetPreview({
         </Typography>
       ) : (
         <>
-          <ListRenderer items={data?.items ?? []} isLoading={isLoading} />
+          <ListRenderer
+            items={data?.items ?? []}
+            isLoading={isLoading}
+            resourceType="case_feedback"
+          />
           <TablePagination
             component="div"
             count={data?.total ?? 0}
@@ -573,7 +662,11 @@ function DashboardWidgetPreviewContent({
         </Typography>
       ) : (
         <>
-          <ListRenderer items={data?.items ?? []} isLoading={isLoading} />
+          <ListRenderer
+            items={data?.items ?? []}
+            isLoading={isLoading}
+            resourceType={resourceType}
+          />
           <TablePagination
             component="div"
             count={data?.total ?? 0}
