@@ -16,8 +16,10 @@
 
 import { describe, expect, it } from "vitest";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
+import type { AdvancedFilterRow } from "@features/csm-cases/utils/advancedFilters";
 import {
   casesHref,
+  countActiveFilters,
   DEFAULT_CASES_FILTERS,
   readCasesFiltersFromUrl,
   writeCasesFiltersToUrl,
@@ -220,6 +222,77 @@ describe("op-awareness (regression: the widgetPreviewUrl field~op bug)", () => {
     const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
     expect(round.slaElapsedPctGte).toBe(90);
     expect(round.slaElapsedPctLte).toBeNull();
+  });
+});
+
+describe("advanced filters (`af` param)", () => {
+  it("round-trips a multi-value `in` row through the URL", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "creTeam", op: "in", values: ["team-1", "team-2"] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.advancedFilters).toEqual(advancedFilters);
+  });
+
+  it("round-trips a value-less op (`escalation isNotEmpty`) without dropping it", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "escalation", op: "isNotEmpty", values: [] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    const href = writeCasesFiltersToUrl(filters);
+    expect(href.get("af")).not.toBeNull();
+    const round = readCasesFiltersFromUrl(href);
+    expect(round.advancedFilters).toEqual(advancedFilters);
+  });
+
+  it("round-trips a date `gte`/`lte` pair on the same field as two distinct rows", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "updatedOn", op: "gte", values: ["2026-01-01"] },
+      { field: "updatedOn", op: "lte", values: ["2026-03-31"] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.advancedFilters).toEqual(advancedFilters);
+  });
+
+  it("drops an incomplete row (no value where the op requires one) rather than writing it to the URL", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "number", op: "eq", values: [] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    expect(writeCasesFiltersToUrl(filters).get("af")).toBeNull();
+  });
+
+  it("silently drops an unknown field/op on a hand-edited or stale `af` param instead of throwing", () => {
+    const params = new URLSearchParams();
+    params.set(
+      "af",
+      JSON.stringify([
+        ["not_a_real_field", "in", ["x"]],
+        ["tag", "not_a_real_op", ["y"]],
+        ["tag", "in", ["ok"]],
+      ]),
+    );
+    expect(readCasesFiltersFromUrl(params).advancedFilters).toEqual([
+      { field: "tag", op: "in", values: ["ok"] },
+    ]);
+  });
+
+  it("silently returns no advanced filters for garbage JSON in `af`", () => {
+    const params = new URLSearchParams();
+    params.set("af", "not json{{{");
+    expect(readCasesFiltersFromUrl(params).advancedFilters).toEqual([]);
+  });
+
+  it("counts each complete advanced-filter row individually toward the active-filter count", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "tag", op: "in", values: ["a"] },
+      { field: "number", op: "eq", values: ["CS0441174"] },
+    ];
+    expect(
+      countActiveFilters({ ...DEFAULT_CASES_FILTERS, advancedFilters }),
+    ).toBe(2);
   });
 });
 

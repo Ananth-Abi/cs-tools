@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
 import { DEFAULT_CASES_FILTERS } from "@features/csm-cases/utils/casesFiltersUrl";
+import type { AdvancedFilterRow } from "@features/csm-cases/utils/advancedFilters";
 import type { BeCaseSearchView } from "@api/backend/types";
 import { buildCaseSearchFilters, mapCaseSearchViewToRow } from "./caseSearchPayload";
 
@@ -359,5 +360,71 @@ describe("mapCaseSearchViewToRow — issueType and createdBy (reporter)", () => 
   it("falls back to 'Unknown' when the response carries no creator at all", () => {
     const row = mapCaseSearchViewToRow(BASE, undefined);
     expect(row.createdBy).toBe("Unknown");
+  });
+});
+
+describe("buildCaseSearchFilters — advanced filter rows", () => {
+  it("emits a multi-value `in` row as a BeCaseFieldFilter with the field's values array", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "creTeam", op: "in", values: ["team-1", "team-2"] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    expect(filterOf(filters, "creTeam")).toEqual([
+      { field: "creTeam", op: "in", values: ["team-1", "team-2"] },
+    ]);
+  });
+
+  it("emits a value-less op (`resolutionNotes` isEmpty) with no `values` at all", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "resolutionNotes", op: "isEmpty", values: [] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    expect(filterOf(filters, "resolutionNotes")).toEqual([
+      { field: "resolutionNotes", op: "isEmpty" },
+    ]);
+  });
+
+  it("emits a date `gte` row's literal value straight through (relative-date resolution happens upstream in useGetCsmCases)", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "createdOn", op: "gte", values: ["2026-01-01"] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    expect(filterOf(filters, "createdOn")).toEqual([
+      { field: "createdOn", op: "gte", values: ["2026-01-01"] },
+    ]);
+  });
+
+  it("drops an incomplete row (a field/op with no value entered) rather than sending an empty predicate", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "number", op: "eq", values: [] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    expect(filterOf(filters, "number")).toEqual([]);
+  });
+
+  it("emits the `createdBy eq` current-user placeholder value regardless of what's stored in `values`", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "createdBy", op: "eq", values: [] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    expect(filterOf(filters, "createdBy")).toEqual([
+      { field: "createdBy", op: "eq", values: ["__current_user_email__"] },
+    ]);
+  });
+
+  it("appends advanced rows alongside the dedicated-control fields, not in place of them", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "tag", op: "notIn", values: ["s_dip"] },
+    ];
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      severities: ["S1"],
+      advancedFilters,
+    };
+    const result = buildCaseSearchFilters(filters, "", undefined).filters ?? [];
+    expect(result).toEqual([
+      { field: "severity", op: "in", values: ["critical"] },
+      { field: "tag", op: "notIn", values: ["s_dip"] },
+    ]);
   });
 });

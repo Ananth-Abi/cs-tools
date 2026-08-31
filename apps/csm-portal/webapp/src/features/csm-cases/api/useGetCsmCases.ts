@@ -26,6 +26,7 @@ import {
   resolveAssignedUserIds,
 } from "@features/csm-cases/utils/caseSearchPayload";
 import { resolveRelativeDatePlaceholder } from "@utils/resolveRelativeDatePlaceholder";
+import { resolveAdvancedFilterDateValues } from "@features/csm-cases/utils/advancedFilters";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
 import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
@@ -140,6 +141,12 @@ export function useGetCsmCases(
       filters.updatedOnLte,
       filters.closedOnGte,
       filters.closedOnLte,
+      // JSON-stable-enough for a query key: row order is already
+      // user-controlled (add/remove), and every field/op/values combination
+      // that would otherwise collide is exactly the same shape the `/cases/
+      // search` payload itself carries — no separate normalization needed
+      // here beyond what `buildCaseSearchFilters` already applies.
+      JSON.stringify(filters.advancedFilters),
       currentUserEmail ?? "",
       wantsMe ? (currentUserId ?? "") : "",
       page,
@@ -195,6 +202,10 @@ export function useGetCsmCases(
             ? null
             : (resolveRelativeDatePlaceholder(filters.createdOnLte, "lte", now) ??
               filters.createdOnLte),
+        // Same relative-date resolution, extended to any `createdOn`/
+        // `updatedOn`/`closedOn` row from the "Advanced filters" builder —
+        // see `resolveAdvancedFilterDateValues`.
+        advancedFilters: resolveAdvancedFilterDateValues(filters.advancedFilters, now),
       };
 
       // One cross-project case search. No separate account/project directory

@@ -83,6 +83,13 @@ import TriStateMultiSelectField from "@components/TriStateMultiSelectField";
 import AsyncAssigneeMultiSelect from "@features/csm-cases/components/AsyncAssigneeMultiSelect";
 import ProductNameMultiSelect from "@features/csm-cases/components/ProductNameMultiSelect";
 import TagsMultiSelect from "@features/csm-cases/components/TagsMultiSelect";
+import AdvancedFiltersBuilder from "@features/csm-cases/components/AdvancedFiltersBuilder";
+import {
+  getAdvancedFilterFieldMeta,
+  getAdvancedFilterOpMeta,
+  isCompleteAdvancedFilterRow,
+  type AdvancedFilterRow,
+} from "@features/csm-cases/utils/advancedFilters";
 
 
 /**
@@ -161,6 +168,19 @@ export interface CasesFilters {
   /** `closedOn` range bounds — same shape as `createdOnGte`/`createdOnLte`. */
   closedOnGte: string | null;
   closedOnLte: string | null;
+  /**
+   * Ad-hoc field/op/value rows from the "Advanced filters" builder — the
+   * escape hatch for `/cases/search` fields the dedicated bar controls above
+   * don't cover (`tag`, `projectOnboardingStatus`, `projectType`, `creTeam`,
+   * `sreTeam`, `deploymentId`, `number`, `internalId`, `resolutionNotes`,
+   * `parentId`, `taskSLABusinessElapsedPercent`, `escalationLevel`,
+   * `escalation`, `createdBy`, and the `createdOn`/`updatedOn`/`closedOn`
+   * date ranges) — see `advancedFilters.ts`'s field catalogue. Each row maps
+   * to one extra `BeCaseFieldFilter` entry (`caseSearchPayload.ts`); an
+   * incomplete row (a field/op picked but no value where one is required) is
+   * never emitted — see `isCompleteAdvancedFilterRow`.
+   */
+  advancedFilters: AdvancedFilterRow[];
 }
 
 /**
@@ -403,6 +423,28 @@ function buildActiveFilterChips(
       });
     }
   }
+
+  // Advanced-filter rows (see `AdvancedFiltersBuilder`) each get their own
+  // chip too — same reasoning as the SLA/escalation/date-range group above:
+  // they're an ad-hoc escape hatch with no bar control of their own, so a
+  // chip is the only way to see or clear one once the filter grid is
+  // collapsed (e.g. after a saved view or a shared URL sets one). Only
+  // *complete* rows are chipped; an in-progress row (no value yet) is only
+  // ever visible inside the open builder itself.
+  filters.advancedFilters.forEach((row, index) => {
+    if (!isCompleteAdvancedFilterRow(row)) return;
+    const fieldMeta = getAdvancedFilterFieldMeta(row.field);
+    const opMeta = getAdvancedFilterOpMeta(row.field, row.op);
+    const valueText = row.values.length > 0 ? ` ${row.values.join(", ")}` : "";
+    chips.push({
+      key: `advanced-${row.field}-${row.op}-${index}`,
+      label: `${fieldMeta?.label ?? row.field} ${opMeta?.label ?? row.op}${valueText}`,
+      onRemove: (f) => ({
+        ...f,
+        advancedFilters: f.advancedFilters.filter((_, i) => i !== index),
+      }),
+    });
+  });
 
   return chips;
 }
@@ -873,6 +915,11 @@ export default function CasesFilterBar({
               </Grid>
             )}
           </Grid>
+          <Divider />
+          <AdvancedFiltersBuilder
+            rows={filters.advancedFilters}
+            onChange={(next) => onChange({ ...filters, advancedFilters: next })}
+          />
           {activeCount > 0 && (
             <Box sx={{ display: "flex", justifyContent: "flex-end" }}>
               <Typography variant="caption" color="text.secondary">

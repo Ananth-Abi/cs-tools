@@ -32,6 +32,10 @@ import type {
 } from "@api/backend/types";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
 import type { CsmCaseRow } from "@features/csm-cases/types/csmCases";
+import {
+  advancedFilterRowToFieldFilter,
+  isCompleteAdvancedFilterRow,
+} from "@features/csm-cases/utils/advancedFilters";
 
 /**
  * Builds the `/cases/search` `filters` object for the given UI filter state
@@ -212,6 +216,20 @@ export function buildCaseSearchFilters(
   }
   if (filters.closedOnLte !== null) {
     fieldFilters.push({ field: "closedOn", op: "lte", values: [filters.closedOnLte] });
+  }
+
+  // Ad-hoc rows from the "Advanced filters" builder (`AdvancedFiltersBuilder`)
+  // — each becomes one extra `BeCaseFieldFilter` entry. Only complete rows
+  // (see `isCompleteAdvancedFilterRow`) are emitted; an incomplete one (a
+  // field/op picked but no value where the op requires one) is silently
+  // skipped rather than sent as an empty predicate. `filters` here is the
+  // already relative-date-resolved copy the caller (`useGetCsmCases`) passes
+  // in — this function does no date resolution of its own, same as the
+  // dedicated `createdOnGte`/`createdOnLte` fields above.
+  for (const row of filters.advancedFilters) {
+    if (!isCompleteAdvancedFilterRow(row)) continue;
+    const ff = advancedFilterRowToFieldFilter(row);
+    if (ff) fieldFilters.push(ff);
   }
 
   // A typed case number / WSO2 case id goes through as an exact-match field

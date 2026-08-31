@@ -25,6 +25,11 @@ import type {
 } from "@api/backend/types";
 import type { CasesFilters } from "@features/csm-cases/components/CasesFilterBar";
 import { ALL_CASE_TYPES } from "@features/csm-cases/utils/caseType";
+import {
+  isCompleteAdvancedFilterRow,
+  parseAdvancedFiltersParam,
+  writeAdvancedFiltersParam,
+} from "@features/csm-cases/utils/advancedFilters";
 
 export const DEFAULT_CASES_FILTERS: CasesFilters = {
   search: "",
@@ -53,6 +58,7 @@ export const DEFAULT_CASES_FILTERS: CasesFilters = {
   updatedOnLte: null,
   closedOnGte: null,
   closedOnLte: null,
+  advancedFilters: [],
   // Note: `tags`/`excludeTags` are real, wired-through fields (round-trip
   // URL + `/cases/search` payload), both driven by the one tri-state
   // "Tags" bar control (`TagsMultiSelect`, digiops-cs#2907) — see its own
@@ -179,6 +185,7 @@ export function readCasesFiltersFromUrl(
     updatedOnLte: parseFreeFormScalar(params.get("updatedTo")),
     closedOnGte: parseFreeFormScalar(params.get("closedFrom")),
     closedOnLte: parseFreeFormScalar(params.get("closedTo")),
+    advancedFilters: parseAdvancedFiltersParam(params.get("af")),
   };
 }
 
@@ -262,6 +269,14 @@ export function writeCasesFiltersToUrl(f: CasesFilters): URLSearchParams {
   if (f.updatedOnLte !== null) out.set("updatedTo", f.updatedOnLte);
   if (f.closedOnGte !== null) out.set("closedFrom", f.closedOnGte);
   if (f.closedOnLte !== null) out.set("closedTo", f.closedOnLte);
+  // `af` is the one exception to the "one param per field+op pair" rule this
+  // doc comment argues for above — it IS the generic escape hatch the
+  // comment calls out, so `field~op` (or here, a JSON `[field, op, values]`
+  // triple) is the right shape for it: each row already carries its own op
+  // explicitly, so there's no default-op fallback for a decode to silently
+  // mis-attribute a value to.
+  const af = writeAdvancedFiltersParam(f.advancedFilters);
+  if (af !== null) out.set("af", af);
   return out;
 }
 
@@ -299,6 +314,10 @@ export function countActiveFilters(f: CasesFilters): number {
   if (f.updatedOnLte !== null) n += 1;
   if (f.closedOnGte !== null) n += 1;
   if (f.closedOnLte !== null) n += 1;
+  // Each advanced-filter row is its own distinct predicate (unlike e.g.
+  // `tags`, where every selected tag is really one "tag in [...]" filter) —
+  // count complete rows individually rather than the whole array as one.
+  n += f.advancedFilters.filter(isCompleteAdvancedFilterRow).length;
   return n;
 }
 
