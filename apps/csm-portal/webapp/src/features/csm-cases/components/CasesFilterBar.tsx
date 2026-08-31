@@ -643,7 +643,7 @@ export default function CasesFilterBar({
           <TextField
             fullWidth
             size="small"
-            placeholder="Search by case #, subject, customer, project, assignee…"
+            placeholder="Search by case #, subject or internal ID…"
             value={filters.search}
             onChange={(e) => onChange({ ...filters, search: e.target.value })}
             slotProps={{

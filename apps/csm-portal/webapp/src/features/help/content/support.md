@@ -6,9 +6,10 @@ working a case once you're on its detail page.
 
 ## Finding cases
 
-The search box at the top of the list matches on case number, subject, customer, project, or
-assignee. Next to it, **Filters** expands a grid of additional controls, with a **Simple** /
-**Advanced** toggle above it:
+The search box at the top of the list matches on case number, subject, or internal ID only —
+use the **Assignee**, **Project**, or **Team** filters below it to narrow by customer, project,
+or assignee instead. Next to the search box, **Filters** expands a grid of additional
+controls, with a **Simple** / **Advanced** toggle above it:
 
 - **Simple** (the default) is a fixed grid: **Severity**, **State**, **Team**, **Case type**,
   **Assignee** (search the engineer directory, or pick "Me"), **Product**, **Onboarding

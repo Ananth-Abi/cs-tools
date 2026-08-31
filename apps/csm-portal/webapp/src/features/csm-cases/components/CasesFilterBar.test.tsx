@@ -586,3 +586,25 @@ describe("CasesFilterBar — case-type control label", () => {
     expect(screen.queryByLabelText("Case type")).not.toBeInTheDocument();
   });
 });
+
+describe("CasesFilterBar — search box placeholder", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+  });
+
+  it("only claims to match case #, subject and internal ID — not customer/project/assignee", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS });
+    const search = screen.getByPlaceholderText(
+      "Search by case #, subject or internal ID…",
+    );
+    expect(search).toBeInTheDocument();
+    // Regression guard for the removed, inaccurate claim (`searchQuery` never
+    // matched customer/project/assignee on the backend) — checked against
+    // this one input's own placeholder, not the whole bar (the Project
+    // picker below legitimately has its own, unrelated "Type a project…"
+    // placeholder).
+    expect(search).not.toHaveAttribute(
+      "placeholder",
+      "Search by case #, subject, customer, project, assignee…",
+    );
+  });
