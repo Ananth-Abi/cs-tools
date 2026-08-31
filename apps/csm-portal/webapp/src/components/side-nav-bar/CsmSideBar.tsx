@@ -22,7 +22,6 @@ import {
   navNodeById,
   navNodeHref,
   navNodeMatchForPath,
-  navNodePath,
   navSectionForPath,
 } from "@config/csmNavItems";
 import {
@@ -31,7 +30,6 @@ import {
   visibleNavSections,
 } from "@config/featureFlags";
 import { useNavTransition } from "@hooks/useNavTransition";
-import { preloadRoute } from "@utils/routePreloaders";
 
 /** Tooltip for a disabled WIP item. Includes the label so the collapsed rail
  *  (which hides the label) still says which feature it is. */
@@ -270,7 +268,6 @@ export default function CsmSideBar({
                 to={item.href}
                 color="inherit"
                 underline="none"
-                onMouseEnter={() => preloadRoute(navNodePath(item))}
               >
                 {itemContent}
               </Link>
