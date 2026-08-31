@@ -207,10 +207,43 @@ type searchCaseView struct {
 	Subject          *string        `json:"subject"`
 	State            string         `json:"state"`
 	Severity         *string        `json:"severity"`
-	CreatedOn        time.Time      `json:"createdOn"`
-	UpdatedOn        time.Time      `json:"updatedOn"`
+	CreatedOn        string         `json:"createdOn"`
+	UpdatedOn        string         `json:"updatedOn"`
 	AssignedEngineer *userReference `json:"assignedEngineer"`
 	AccountDetails   *accountRef    `json:"account"`
+}
+
+// caseDateTimeLayouts are tried in order to parse a case-search
+// createdOn/updatedOn value. entity-service's own domain.SearchCaseView
+// declares these as plain strings, not a guaranteed RFC3339 shape: the
+// ServiceNow-backed data source passes ServiceNow's raw datetime fields
+// straight through unreformatted (see entity-service's own
+// internal/service.parseSNDateTime and snCreatedOnLayout/snAltCreatedOnLayout
+// — root-caused there to a GlideRecord.getDisplayValue() vs getValue() bug on
+// the ServiceNow side that occasionally renders a locale-formatted date
+// instead of canonical ISO). This client tries the same two layouts for the
+// same reason, plus RFC3339 first for a Postgres-backed data source.
+var caseDateTimeLayouts = []string{
+	time.RFC3339,
+	"2006-01-02 15:04:05",
+	"01-02-2006 15:04:05",
+}
+
+// parseCaseDateTime parses value against caseDateTimeLayouts in order,
+// returning the first successful result. A value in any of these formats
+// with no explicit zone offset is treated as UTC, matching
+// entity-service's own parseSNDateTime (time.Parse with no zone abbreviation
+// in the layout defaults to UTC).
+func parseCaseDateTime(value string) (time.Time, error) {
+	var lastErr error
+	for _, layout := range caseDateTimeLayouts {
+		t, err := time.Parse(layout, value)
+		if err == nil {
+			return t, nil
+		}
+		lastErr = err
+	}
+	return time.Time{}, fmt.Errorf("unrecognized date-time format %q: %w", value, lastErr)
 }
 
 type searchCasesResponse struct {
@@ -257,7 +290,11 @@ func (c *Client) SearchOpenCasesOlderThan(ctx context.Context, olderThan time.Du
 		}
 
 		for _, cv := range resp.Cases {
-			all = append(all, toCase(cv))
+			c, err := toCase(cv)
+			if err != nil {
+				return nil, fmt.Errorf("entitycases: case %s: %w", cv.ID, err)
+			}
+			all = append(all, c)
 		}
 
 		offset += searchPageSize
@@ -268,14 +305,23 @@ func (c *Client) SearchOpenCasesOlderThan(ctx context.Context, olderThan time.Du
 	return all, nil
 }
 
-func toCase(cv searchCaseView) Case {
+func toCase(cv searchCaseView) (Case, error) {
+	createdOn, err := parseCaseDateTime(cv.CreatedOn)
+	if err != nil {
+		return Case{}, fmt.Errorf("createdOn: %w", err)
+	}
+	updatedOn, err := parseCaseDateTime(cv.UpdatedOn)
+	if err != nil {
+		return Case{}, fmt.Errorf("updatedOn: %w", err)
+	}
+
 	c := Case{
 		ID:         cv.ID,
 		Number:     cv.Number,
 		InternalID: cv.InternalID,
 		State:      cv.State,
-		CreatedOn:  cv.CreatedOn,
-		UpdatedOn:  cv.UpdatedOn,
+		CreatedOn:  createdOn,
+		UpdatedOn:  updatedOn,
 	}
 	if cv.Subject != nil {
 		c.Subject = *cv.Subject
@@ -289,5 +335,5 @@ func toCase(cv searchCaseView) Case {
 	if cv.AccountDetails != nil {
 		c.Account = cv.AccountDetails.Name
 	}
-	return c
+	return c, nil
 }

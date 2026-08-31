@@ -76,7 +76,7 @@ func SendReport(cases CaseSearcher, email EmailSender, olderThan time.Duration, 
 		}
 
 		thresholdDays := int(olderThan.Hours() / 24)
-		subject := fmt.Sprintf("[csm-scheduled-tasks] %d case(s) open more than %d days", len(found), thresholdDays)
+		subject := fmt.Sprintf("[Action-Required][Report] Cases open for more than %d days", thresholdDays)
 		body := notify.RenderStaleCasesReport(notify.StaleCasesReportData{
 			ThresholdDays: thresholdDays,
 			Cases:         found,
