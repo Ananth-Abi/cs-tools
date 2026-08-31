@@ -671,7 +671,11 @@ function CaseFeedbackWidgetPreview({
         </Typography>
       ) : (
         <>
-          <ListRenderer items={data?.items ?? []} isLoading={isLoading} />
+          <ListRenderer
+            items={data?.items ?? []}
+            isLoading={isLoading}
+            resourceType="case_feedback"
+          />
           <TablePagination
             component="div"
             count={data?.total ?? 0}
@@ -787,7 +791,11 @@ function DashboardWidgetPreviewContent({
         </Typography>
       ) : (
         <>
-          <ListRenderer items={data?.items ?? []} isLoading={isLoading} />
+          <ListRenderer
+            items={data?.items ?? []}
+            isLoading={isLoading}
+            resourceType={resourceType}
+          />
           <TablePagination
             component="div"
             count={data?.total ?? 0}

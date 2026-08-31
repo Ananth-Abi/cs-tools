@@ -567,7 +567,11 @@ export default function DashboardWidgetTile({
                   columns={columns ?? []}
                 />
               ) : (
-                <ListRenderer items={data?.items ?? []} isLoading={false} />
+                <ListRenderer
+                  items={data?.items ?? []}
+                  isLoading={false}
+                  resourceType={resourceType}
+                />
               )}
             </Box>
             {(data?.total ?? 0) > (listLimit ?? 4) && (

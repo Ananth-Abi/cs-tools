@@ -32,9 +32,20 @@ import type {
   BeWidgetResourceType,
 } from "@api/backend/types";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
+import { useCurrentUser } from "@context/current-user/CurrentUserContext";
+import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { useNavTransition } from "@hooks/useNavTransition";
+import {
+  getColumnPreferencesUserKey,
+  useColumnPreferences,
+} from "@hooks/useColumnPreferences";
+import ColumnCustomizerButton from "@components/column-customizer/ColumnCustomizerButton";
 import CasesList from "@features/csm-cases/components/CasesList";
 import { mapCaseSearchViewToRow } from "@features/csm-cases/utils/caseSearchPayload";
+import {
+  CASE_OPTIONAL_COLUMNS,
+  type CaseOptionalColumnId,
+} from "@features/csm-cases/utils/caseListColumns";
 import TimeCardsTable from "@features/csm-timecards/components/TimeCardsTable";
 import { mapTimeCard } from "@features/csm-timecards/api/useTimeSheets";
 import DashboardMiniTable from "@features/csm-dashboard/components/DashboardMiniTable";
@@ -112,6 +123,10 @@ function formatDateTime(value?: string | null): string {
 export interface WidgetListRendererProps {
   items: WidgetItem[];
   isLoading: boolean;
+  /** Only read by `CaseWidgetList` today (to gate the Severity column and to
+   * key its own "Customise columns" preferences per resourceType) — every
+   * other renderer below ignores it. */
+  resourceType: BeWidgetResourceType;
 }
 
 /**
@@ -144,23 +159,67 @@ const PREVIEW_COLUMN = { label: "Preview", width: "auto" };
 /** Case: reuses `CasesList` (the Cases tab's own table) verbatim, via the
  * same `mapCaseSearchViewToRow` mapper the tab itself uses — real reuse, not
  * a lookalike. `currentUserEmail` is omitted (only affects the "assigned to
- * me" highlight, not relevant to a dashboard preview). `optionalColumns` adds
- * Assignee to this widget's default set (`CasesList`'s own long-standing
- * default of product/type/severity omits it) -- a dashboard reviewer scanning
- * a list of cases needs to see who owns each one without opening it. This
- * renderer is shared by every `resourceType` whose rows are case rows
+ * me" highlight, not relevant to a dashboard preview). This renderer is
+ * shared by every `resourceType` whose rows are case rows
  * (`service_request`/`security_report_analysis`/`announcement`/`engagement`
- * — see `WIDGET_LIST_RENDERERS` below), so they all get the same column. */
-function CaseWidgetList({ items, isLoading }: WidgetListRendererProps): JSX.Element {
+ * — see `WIDGET_LIST_RENDERERS` below), so they all get the same columns,
+ * gated the same way `CsmIssuesView`/`CaseFamilyWidgetPreview` gate theirs:
+ * Severity only where it's a real concept (`case`), and it's shown by
+ * default since that matched this renderer's own long-standing hardcoded
+ * set before "Customise columns" existed here at all — only Product/Type/
+ * (Severity)/Assignee were ever on by default, so that default is
+ * preserved exactly, just now genuinely editable (and, for a non-`case`
+ * resourceType, no longer offering a Severity column that only ever
+ * rendered "—"). Preferences are keyed per resourceType, not per widget, so
+ * every "case"-shaped tile across the dashboard (there can be more than
+ * one) shares one layout — the same granularity the main list pages use. */
+function CaseWidgetList({ items, isLoading, resourceType }: WidgetListRendererProps): JSX.Element {
   const cases = items.map((item) =>
     mapCaseSearchViewToRow(item as unknown as BeCaseSearchView, undefined),
   );
+
+  const currentUserId = useCurrentUser().user?.id;
+  const currentUserEmail = useIdTokenClaims()?.email;
+  const showSeverityColumn = resourceType === "case";
+  const availableOptionalColumns: CaseOptionalColumnId[] = [
+    "product",
+    "type",
+    ...(showSeverityColumn ? (["severity"] as const) : []),
+    "assignee",
+    "customer",
+    "createdAt",
+  ];
+  const defaultVisibleOptionalColumns: CaseOptionalColumnId[] = [
+    "product",
+    "type",
+    ...(showSeverityColumn ? (["severity"] as const) : []),
+    "assignee",
+  ];
+  const columnPrefs = useColumnPreferences({
+    viewId: `case-list:dashboard-tile-${resourceType}`,
+    userKey: getColumnPreferencesUserKey({ id: currentUserId, email: currentUserEmail }),
+    columns: availableOptionalColumns.map((id) => ({ id, label: CASE_OPTIONAL_COLUMNS[id].label })),
+    defaultVisibleIds: defaultVisibleOptionalColumns,
+  });
+
   return (
     <CasesList
       cases={cases}
       isLoading={isLoading}
       skeletonCount={4}
-      optionalColumns={["product", "type", "severity", "assignee"]}
+      hideSeverityColumn={!showSeverityColumn}
+      optionalColumns={columnPrefs.visibleColumns.map((c) => c.id as CaseOptionalColumnId)}
+      columnCustomizer={
+        <ColumnCustomizerButton
+          allColumns={columnPrefs.allColumns}
+          isVisible={columnPrefs.isVisible}
+          onToggle={columnPrefs.toggleColumn}
+          onMove={columnPrefs.moveColumn}
+          onReorder={columnPrefs.reorderColumn}
+          onReset={columnPrefs.resetToDefault}
+          label="Customise columns"
+        />
+      }
     />
   );
 }
