@@ -73,11 +73,22 @@ interface AppLayoutProps {
    * the sidebar from flashing on screen for one frame before that context
    * update lands. */
   minimalHeader?: boolean;
+  /** Gates whether `<CaseTabsContentHost />` (below) renders at all. Defaults
+   * to `true` — every normal, signed-in render path has a
+   * `CurrentUserProvider` ancestor and case tabs are safe to mount
+   * immediately. Must be `false` wherever `AppLayout` is rendered WITHOUT
+   * that ancestor (see `AuthGuard.tsx`'s `AuthPendingShell`): a restored
+   * open case tab renders `CsmCaseDetailPage`, which calls `useCurrentUser`
+   * via `useFindMyOngoingCases`, and that throws outside the provider. Like
+   * `minimalHeader`, applied in the same render as `children`, not a render
+   * later via an effect. */
+  showCaseTabs?: boolean;
 }
 
 export default function AppLayout({
   children,
   minimalHeader = false,
+  showCaseTabs = true,
 }: AppLayoutProps): JSX.Element {
   const location = useLocation();
   const mainContentRef = useRef<HTMLDivElement>(null);
@@ -251,7 +262,7 @@ export default function AppLayout({
                         own element now renders nothing itself once its tab
                         is open (see CaseDetailRouteSync), so there's no
                         double-render. */}
-                    <CaseTabsContentHost />
+                    {showCaseTabs && <CaseTabsContentHost />}
                     {children || <Outlet />}
                   </Suspense>
                 )}
