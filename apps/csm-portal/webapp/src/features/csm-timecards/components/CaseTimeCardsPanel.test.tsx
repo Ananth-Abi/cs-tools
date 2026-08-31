@@ -14,7 +14,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
@@ -92,35 +92,59 @@ describe("CaseTimeCardsPanel — view details", () => {
     refetch.mockReset();
   });
 
+  it("renders time cards as a grid table with a header row and one row per card", () => {
+    render(<CaseTimeCardsPanel caseId="case-1" onLogTime={vi.fn()} onEditTimeCard={vi.fn()} />);
+
+    // Header cells for the grid/subgrid table (matches the "Call requests"
+    // tab's CallRequestsTable convention). "State" and "Billable" also occur
+    // as row cell values (state chip label, billable label), so those two
+    // just assert at least one match rather than exactly one.
+    for (const label of ["Preview", "Engineer", "Minutes", "Logged", "Actions"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    for (const label of ["State", "Billable"]) {
+      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
+    }
+
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+    expect(screen.getByText("John Smith")).toBeInTheDocument();
+    expect(screen.getByText("45 min")).toBeInTheDocument();
+    expect(screen.getByText("20 min")).toBeInTheDocument();
+  });
+
   it("shows a 'View details' action on every card row, regardless of state or ownership", () => {
     render(<CaseTimeCardsPanel caseId="case-1" onLogTime={vi.fn()} onEditTimeCard={vi.fn()} />);
 
-    expect(screen.getAllByRole("button", { name: "View details" })).toHaveLength(2);
+    expect(screen.getByTestId("timecard-view-tc-1")).toBeInTheDocument();
+    expect(screen.getByTestId("timecard-view-tc-2")).toBeInTheDocument();
   });
 
   it("opens the read-only details view with the row's own fields when clicked", () => {
     render(<CaseTimeCardsPanel caseId="case-1" onLogTime={vi.fn()} onEditTimeCard={vi.fn()} />);
 
-    const [viewButtonA] = screen.getAllByRole("button", { name: "View details" });
-    fireEvent.click(viewButtonA);
+    fireEvent.click(screen.getByTestId("timecard-view-tc-1"));
 
-    expect(screen.getByText("Engineer's comment")).toBeInTheDocument();
-    expect(screen.getByText("Investigated the reported latency issue.")).toBeInTheDocument();
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Engineer's comment")).toBeInTheDocument();
+    expect(dialog.getByText("Investigated the reported latency issue.")).toBeInTheDocument();
   });
 
   it("opens the details view for an approved, other-engineer's card too", () => {
     render(<CaseTimeCardsPanel caseId="case-1" onLogTime={vi.fn()} onEditTimeCard={vi.fn()} />);
 
-    const [, viewButtonB] = screen.getAllByRole("button", { name: "View details" });
-    fireEvent.click(viewButtonB);
+    fireEvent.click(screen.getByTestId("timecard-view-tc-2"));
 
-    expect(screen.getByText("Approved by: Lead Person")).toBeInTheDocument();
+    // The table row's own State column also shows the decision summary
+    // ("Approved by: Lead Person"), so scope to the dialog specifically.
+    expect(
+      within(screen.getByRole("dialog")).getByText("Approved by: Lead Person"),
+    ).toBeInTheDocument();
   });
 
   it("closes the details view when its row's action is clicked again", () => {
     render(<CaseTimeCardsPanel caseId="case-1" onLogTime={vi.fn()} onEditTimeCard={vi.fn()} />);
 
-    const [viewButtonA] = screen.getAllByRole("button", { name: "View details" });
+    const viewButtonA = screen.getByTestId("timecard-view-tc-1");
     fireEvent.click(viewButtonA);
     expect(screen.getByText("Engineer's comment")).toBeInTheDocument();
 
@@ -131,10 +155,19 @@ describe("CaseTimeCardsPanel — view details", () => {
   it("closes the details view via its own Close button", () => {
     render(<CaseTimeCardsPanel caseId="case-1" onLogTime={vi.fn()} onEditTimeCard={vi.fn()} />);
 
-    const [viewButtonA] = screen.getAllByRole("button", { name: "View details" });
-    fireEvent.click(viewButtonA);
+    fireEvent.click(screen.getByTestId("timecard-view-tc-1"));
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.queryByText("Engineer's comment")).not.toBeInTheDocument();
+  });
+
+  it("shows Edit/Delete actions only for your own still-submitted card", () => {
+    render(<CaseTimeCardsPanel caseId="case-1" onLogTime={vi.fn()} onEditTimeCard={vi.fn()} />);
+
+    // CARD_A (tc-1) is owned by the signed-in engineer (user-1) and
+    // "submitted" -- editable. CARD_B (tc-2) belongs to someone else and is
+    // "approved" -- neither editable.
+    expect(screen.getByRole("button", { name: "Edit time card" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete time card" })).toBeInTheDocument();
   });
 });

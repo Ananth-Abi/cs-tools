@@ -298,9 +298,13 @@ vi.mock("@features/csm-cases/api/useRequestCaseUpdate", () => ({
     isPending: false,
   }),
 }));
+// Two placeholder cards (shape doesn't matter beyond `.length` -- the tab
+// label count is the only thing this page reads from the result;
+// CaseTimeCardsPanel itself is stubbed below and never sees this data).
 vi.mock("@features/csm-timecards/api/useTimeCards", () => ({
   usePostTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
+  useCaseTimeCards: () => ({ data: { cards: [{}, {}], truncated: false } }),
 }));
 
 // Simple presentational stubs — none of this test's assertions touch these.
@@ -877,6 +881,19 @@ describe("CsmCaseDetailPage — dashless id normalization", () => {
     expect(screen.getByTestId("location-probe")).toHaveTextContent(
       `/cases/${DASHED_ID}`,
     );
+  });
+});
+
+describe("CsmCaseDetailPage — tab label counts", () => {
+  it("shows the time cards count on the 'Time tracking' tab, sourced from useCaseTimeCards", () => {
+    renderPage();
+
+    // Mocked useCaseTimeCards above returns 2 cards -- this was previously
+    // always 0 because the count read `c.timeLogs.length`, and `timeLogs` is
+    // hardcoded to `[]` in useGetCsmCaseDetail and never populated.
+    expect(
+      screen.getByRole("tab", { name: /time tracking \(2\)/i }),
+    ).toBeInTheDocument();
   });
 });
 

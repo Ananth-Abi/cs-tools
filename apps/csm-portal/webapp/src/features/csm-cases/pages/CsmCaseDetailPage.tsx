@@ -142,7 +142,11 @@ import { CaseSlaTable } from "@features/csm-cases/components/CaseSlaTable";
 import { useGetCsmCaseSlas } from "@features/csm-cases/api/useGetCsmCaseSlas";
 import CaseTimeCardsPanel from "@features/csm-timecards/components/CaseTimeCardsPanel";
 import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDialog";
-import { usePostTimeCard, useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
+import {
+  useCaseTimeCards,
+  usePostTimeCard,
+  useUpdateTimeCard,
+} from "@features/csm-timecards/api/useTimeCards";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
 import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
@@ -532,6 +536,9 @@ export default function CsmCaseDetailPage(): JSX.Element {
     isFetching: isFetchingCallRequests,
   } = useGetCsmCaseCallRequests(isAnnouncement ? undefined : caseId);
   const { data: caseTasks } = useSearchCaseTasks(
+    isAnnouncement ? undefined : caseId,
+  );
+  const { data: caseTimeCards } = useCaseTimeCards(
     isAnnouncement ? undefined : caseId,
   );
   // Live deployment lookup for the Details tab's "Deployment info" widget —
@@ -2138,7 +2145,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   : t.id === "attachments"
                     ? attachmentList.length
                     : t.id === "time"
-                      ? c.timeLogs.length
+                      ? caseTimeCards?.cards.length
                       : t.id === "call-requests"
                         ? callRequests?.length
                         : t.id === "tasks"
