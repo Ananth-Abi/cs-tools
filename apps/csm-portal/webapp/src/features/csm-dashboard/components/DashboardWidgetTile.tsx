@@ -210,6 +210,13 @@ export default function DashboardWidgetTile({
   // mirrors the section-level `RefreshButton`'s own `hasManuallyRefreshed`
   // pattern, just tracked per-widget here instead of per-section.
   const [lastRefreshedAt, setLastRefreshedAt] = useState<number | undefined>(undefined);
+  // A `shape: "list"` renderer with its own "Customise columns" button
+  // (today, only `CaseWidgetList`) hands it up here via
+  // `onColumnCustomizerChange` instead of rendering it in its own row, so it
+  // can sit right next to `refreshButton` below — reported live as reading
+  // like two unrelated controls when split across two separate rows. `null`
+  // for every other resourceType, which never calls this back.
+  const [inlineColumnCustomizer, setInlineColumnCustomizer] = useState<ReactNode>(null);
   // Re-renders exactly when the "Last refreshed …" text below would next
   // change (adaptive shared scheduler — see RelativeTime.tsx), without
   // requiring another fetch. Passed explicitly into `formatRelativeTime`
@@ -540,7 +547,21 @@ export default function DashboardWidgetTile({
         variant="outlined"
         sx={{ position: "relative", p: 1.75, height: "100%", ...cardRefreshRevealSx }}
       >
-        <Box sx={{ position: "absolute", top: 8, right: 8, zIndex: 1 }}>{refreshButton}</Box>
+        <Box
+          data-testid="widget-tile-actions"
+          sx={{
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+          }}
+        >
+          {inlineColumnCustomizer}
+          {refreshButton}
+        </Box>
         {/* The rows below are capped at `listLimit` (see `useWidgetData`'s
             DEFAULT_LIST_LIMIT) — this badge next to the title is the only
             place the widget's own full count is visible, since "View more"
@@ -571,6 +592,7 @@ export default function DashboardWidgetTile({
                   items={data?.items ?? []}
                   isLoading={false}
                   resourceType={resourceType}
+                  onColumnCustomizerChange={setInlineColumnCustomizer}
                 />
               )}
             </Box>

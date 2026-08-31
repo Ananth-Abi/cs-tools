@@ -18,7 +18,7 @@
 
 import { Box, Chip, IconButton, Tooltip, Typography } from "@wso2/oxygen-ui";
 import { Eye } from "@wso2/oxygen-ui-icons-react";
-import { useState, type JSX } from "react";
+import { useEffect, useMemo, useState, type JSX, type ReactNode } from "react";
 import { useLocation } from "react-router";
 import type {
   BeCaseFeedback,
@@ -127,6 +127,20 @@ export interface WidgetListRendererProps {
    * key its own "Customise columns" preferences per resourceType) — every
    * other renderer below ignores it. */
   resourceType: BeWidgetResourceType;
+  /**
+   * Lets a renderer that has its own "Customise columns" button (today,
+   * only `CaseWidgetList`) hand that button up to the caller instead of
+   * rendering it in its own toolbar row — `DashboardWidgetTile.tsx` uses
+   * this to put it next to the tile's existing refresh button (same line)
+   * rather than splitting the two across separate rows, reported live as
+   * reading like two unrelated controls. Called with the built button
+   * element whenever the caller supplies this (and the renderer re-renders
+   * with new column state), or `null` right before this component
+   * unmounts, so a caller holding it in state can clear it. When omitted
+   * (every other current caller), `CaseWidgetList` keeps rendering its own
+   * button in-place, exactly as before this prop existed.
+   */
+  onColumnCustomizerChange?: (node: ReactNode | null) => void;
 }
 
 /**
@@ -173,7 +187,12 @@ const PREVIEW_COLUMN = { label: "Preview", width: "auto" };
  * rendered "—"). Preferences are keyed per resourceType, not per widget, so
  * every "case"-shaped tile across the dashboard (there can be more than
  * one) shares one layout — the same granularity the main list pages use. */
-function CaseWidgetList({ items, isLoading, resourceType }: WidgetListRendererProps): JSX.Element {
+function CaseWidgetList({
+  items,
+  isLoading,
+  resourceType,
+  onColumnCustomizerChange,
+}: WidgetListRendererProps): JSX.Element {
   const cases = items.map((item) =>
     mapCaseSearchViewToRow(item as unknown as BeCaseSearchView, undefined),
   );
@@ -181,28 +200,79 @@ function CaseWidgetList({ items, isLoading, resourceType }: WidgetListRendererPr
   const currentUserId = useCurrentUser().user?.id;
   const currentUserEmail = useIdTokenClaims()?.email;
   const showSeverityColumn = resourceType === "case";
-  const availableOptionalColumns: CaseOptionalColumnId[] = [
-    "product",
-    "type",
-    "issueType",
-    ...(showSeverityColumn ? (["severity"] as const) : []),
-    "assignee",
-    "createdBy",
-    "customer",
-    "createdAt",
-  ];
-  const defaultVisibleOptionalColumns: CaseOptionalColumnId[] = [
-    "product",
-    "type",
-    ...(showSeverityColumn ? (["severity"] as const) : []),
-    "assignee",
-  ];
+  // Memoized so `columnPrefs`'s own `allColumns`/etc. stay referentially
+  // stable across renders that don't actually change anything — without
+  // this, a fresh array literal on every render made `useColumnPreferences`
+  // recompute (and return new references for) `allColumns` on every render
+  // too, which made the `onColumnCustomizerChange` effect below re-fire
+  // every render, which (via the caller's own setState) re-rendered this
+  // component, which created a new array again: an infinite loop. Content
+  // only actually changes when `showSeverityColumn` does.
+  const availableOptionalColumns = useMemo<CaseOptionalColumnId[]>(
+    () => [
+      "product",
+      "type",
+      "issueType",
+      ...(showSeverityColumn ? (["severity"] as const) : []),
+      "assignee",
+      "createdBy",
+      "customer",
+      "createdAt",
+    ],
+    [showSeverityColumn],
+  );
+  const defaultVisibleOptionalColumns = useMemo<CaseOptionalColumnId[]>(
+    () => [
+      "product",
+      "type",
+      ...(showSeverityColumn ? (["severity"] as const) : []),
+      "assignee",
+    ],
+    [showSeverityColumn],
+  );
+  const columnOptions = useMemo(
+    () => availableOptionalColumns.map((id) => ({ id, label: CASE_OPTIONAL_COLUMNS[id].label })),
+    [availableOptionalColumns],
+  );
   const columnPrefs = useColumnPreferences({
     viewId: `case-list:dashboard-tile-${resourceType}`,
     userKey: getColumnPreferencesUserKey({ id: currentUserId, email: currentUserEmail }),
-    columns: availableOptionalColumns.map((id) => ({ id, label: CASE_OPTIONAL_COLUMNS[id].label })),
+    columns: columnOptions,
     defaultVisibleIds: defaultVisibleOptionalColumns,
   });
+
+  const columnCustomizerButton = (
+    <ColumnCustomizerButton
+      allColumns={columnPrefs.allColumns}
+      isVisible={columnPrefs.isVisible}
+      onToggle={columnPrefs.toggleColumn}
+      onMove={columnPrefs.moveColumn}
+      onReorder={columnPrefs.reorderColumn}
+      onReset={columnPrefs.resetToDefault}
+      label="Customise columns"
+    />
+  );
+
+  // `onColumnCustomizerChange` lets a caller (the dashboard tile, so it can
+  // show this next to its own refresh button instead of in a separate row)
+  // take over where the button renders. Re-hands it up whenever the
+  // underlying column state actually changes (these callbacks are only ever
+  // new references when `state` itself changes — see `useColumnPreferences`),
+  // and clears it on unmount so the caller doesn't keep holding a stale node.
+  useEffect(() => {
+    if (!onColumnCustomizerChange) return;
+    onColumnCustomizerChange(columnCustomizerButton);
+    return () => onColumnCustomizerChange(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-fires exactly when the button's own inputs change, per the comment above.
+  }, [
+    onColumnCustomizerChange,
+    columnPrefs.allColumns,
+    columnPrefs.isVisible,
+    columnPrefs.toggleColumn,
+    columnPrefs.moveColumn,
+    columnPrefs.reorderColumn,
+    columnPrefs.resetToDefault,
+  ]);
 
   return (
     <CasesList
@@ -211,17 +281,7 @@ function CaseWidgetList({ items, isLoading, resourceType }: WidgetListRendererPr
       skeletonCount={4}
       hideSeverityColumn={!showSeverityColumn}
       optionalColumns={columnPrefs.visibleColumns.map((c) => c.id as CaseOptionalColumnId)}
-      columnCustomizer={
-        <ColumnCustomizerButton
-          allColumns={columnPrefs.allColumns}
-          isVisible={columnPrefs.isVisible}
-          onToggle={columnPrefs.toggleColumn}
-          onMove={columnPrefs.moveColumn}
-          onReorder={columnPrefs.reorderColumn}
-          onReset={columnPrefs.resetToDefault}
-          label="Customise columns"
-        />
-      }
+      columnCustomizer={onColumnCustomizerChange ? undefined : columnCustomizerButton}
     />
   );
 }
