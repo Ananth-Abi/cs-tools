@@ -107,6 +107,23 @@ describe("TagsMultiSelect — tri-state cycling", () => {
       excluded: ["first-excluded"],
     });
   });
+
+  // Regression: MUI reports the same "removeOption" onChange reason for
+  // Enter-on-a-highlighted-already-selected-option as it does for a genuine
+  // chip removal (Backspace/clear) -- the component used to treat both as a
+  // full removal, silently dropping an included tag instead of cycling it to
+  // excluded the way a mouse click on that same row does.
+  it("pressing Enter on a keyboard-highlighted included option cycles it to excluded, not removes it", () => {
+    mockTagSearchResult({ data: [{ id: "t1", label: "urgent" }] });
+    const { onChange } = renderControl({ includedValues: ["urgent"] });
+
+    const input = screen.getByRole("combobox");
+    fireEvent.mouseDown(input);
+    fireEvent.keyDown(input, { key: "ArrowDown" });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onChange).toHaveBeenCalledWith({ included: [], excluded: ["urgent"] });
+  });
 });
 
 describe("TagsMultiSelect — chip rendering", () => {

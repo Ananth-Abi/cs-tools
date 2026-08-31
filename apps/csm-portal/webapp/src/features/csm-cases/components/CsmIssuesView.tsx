@@ -199,23 +199,36 @@ export default function CsmIssuesView({
   columnsViewId,
 }: CsmIssuesViewProps): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
-  const filters = useMemo<CasesFilters>(() => {
-    const fromUrl = readCasesFiltersFromUrl(searchParams);
-    // Only on a fresh visit -- no `types` param in the URL at all, not even
-    // an explicitly-cleared empty one (that still round-trips as "absent",
-    // see `writeCasesFiltersToUrl`, so this can't tell a first visit apart
-    // from the user having deliberately broadened back to "every type" and
-    // reloading -- an accepted trade-off for a page whose baseline purpose
-    // is "Cases", not a live "was this touched" flag).
+  const filters = useMemo<CasesFilters>(
+    () => readCasesFiltersFromUrl(searchParams),
+    [searchParams],
+  );
+
+  // Writes `defaultCaseTypes` into the URL at most once per mount, the first
+  // time it finds no `types` param at all. Done as a real URL write (in an
+  // effect, gated by a ref) rather than an in-memory override inside the
+  // `filters` memo above: a memo can't tell "fresh visit" apart from "the
+  // user cleared the type filter back to every type" -- both just look like
+  // "no `types` param" -- so an in-memory default would keep reasserting
+  // itself every time the user broadened back, making that choice
+  // impossible to keep. Writing it into the URL once, right after mount,
+  // means every later render (including a later clear) is driven purely by
+  // `searchParams` like every other filter, with no special-casing.
+  const defaultCaseTypesAppliedRef = useRef(false);
+  useEffect(() => {
     if (
-      defaultCaseTypes?.length &&
-      !hideTypeFilter &&
-      !searchParams.has("types")
+      defaultCaseTypesAppliedRef.current ||
+      !defaultCaseTypes?.length ||
+      hideTypeFilter ||
+      searchParams.has("types")
     ) {
-      return { ...fromUrl, caseTypes: defaultCaseTypes };
+      return;
     }
-    return fromUrl;
-  }, [searchParams, defaultCaseTypes, hideTypeFilter]);
+    defaultCaseTypesAppliedRef.current = true;
+    const next = new URLSearchParams(searchParams);
+    next.set("types", defaultCaseTypes.join(","));
+    setSearchParams(next, { replace: true });
+  }, [searchParams, defaultCaseTypes, hideTypeFilter, setSearchParams]);
 
   const location = useLocation();
   const navigate = useNavTransition();

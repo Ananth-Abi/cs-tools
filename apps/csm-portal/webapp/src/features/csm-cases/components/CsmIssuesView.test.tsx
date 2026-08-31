@@ -14,8 +14,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  MemoryRouter,
+  Route,
+  RouterProvider,
+  Routes,
+  createMemoryRouter,
+  useLocation,
+} from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 
@@ -66,6 +73,7 @@ vi.mock("@components/RefreshButton", () => ({
 }));
 
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
+import { ALL_CASE_TYPES } from "@features/csm-cases/utils/caseType";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -245,6 +253,61 @@ describe("CsmIssuesView defaultCaseTypes (Support page's case-type default, digi
       expect.anything(),
       expect.anything(),
       expect.anything(),
+    );
+  });
+
+  // Regression: the default used to be re-derived from "does the URL have a
+  // `types` param" on every render, not just the first -- so once the user
+  // picked an explicit type and then cleared the control back to "every
+  // type" (removing `types` from the URL, same as a fresh visit looks),
+  // the default silently reasserted itself instead of staying cleared.
+  it("does not reassert the default once the user has broadened back to every type, later in the same session", async () => {
+    const router = createMemoryRouter(
+      [{ path: "/cases", element: <CsmIssuesView title="Cases" defaultCaseTypes={["case"]} /> }],
+      { initialEntries: ["/cases"] },
+    );
+    render(<RouterProvider router={router} />);
+
+    // Fresh visit: default applied.
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ["case"] }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    // User picks a different type explicitly.
+    await act(async () => { await router.navigate("/cases?types=service_request"); });
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ["service_request"] }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    // User clears the type control back to "every type" -- `types` drops out
+    // of the URL, identical in shape to the original fresh-visit URL. The
+    // default must NOT reassert itself here: the query goes out for every
+    // known type (CsmIssuesView's own "empty selection means no type filter"
+    // fallback), not back to the single-type default.
+    await act(async () => { await router.navigate("/cases"); });
+    await waitFor(() =>
+      expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({ caseTypes: ALL_CASE_TYPES }),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+        expect.anything(),
+      ),
     );
   });
 });

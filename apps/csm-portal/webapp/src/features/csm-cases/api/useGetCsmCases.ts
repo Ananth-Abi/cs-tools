@@ -25,7 +25,7 @@ import {
   mapCaseSearchViewToRow,
   resolveAssignedUserIds,
 } from "@features/csm-cases/utils/caseSearchPayload";
-import { resolveRelativeDatePlaceholder } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
+import { resolveRelativeDatePlaceholder } from "@utils/resolveRelativeDatePlaceholder";
 import { ASSIGNEE_ME_TOKEN } from "@features/csm-cases/utils/assignee";
 import { classifyCaseQuery } from "@features/csm-cases/utils/caseQueryScope";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";

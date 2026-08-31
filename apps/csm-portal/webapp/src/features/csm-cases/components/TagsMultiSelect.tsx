@@ -178,7 +178,7 @@ export default function TagsMultiSelect({
       // must stay in `options` so their rows keep showing their indicator).
       filterOptions={(opts) => opts}
       sx={{ "& .MuiAutocomplete-inputRoot": { flexWrap: "nowrap", minHeight: 40 } }}
-      onChange={(_event, next, reason) => {
+      onChange={(event, next, reason) => {
         // Mouse clicks on an option row are handled entirely in
         // `renderOption`'s own `onClick` below (MUI's built-in click
         // handler for a row is deliberately never attached -- see there),
@@ -192,7 +192,19 @@ export default function TagsMultiSelect({
         // to excluded, not clear).
         if (reason === "removeOption") {
           const removed = comboValue.find((v) => !next.includes(v));
-          if (removed) removeTag(removed);
+          if (!removed) return;
+          // MUI reports the same "removeOption" reason for two different
+          // user actions it can't otherwise distinguish here: pressing Enter
+          // on an already-selected, keyboard-highlighted option (should
+          // cycle it, same as a mouse click on that row), and Backspace/the
+          // clear icon removing the last chip (a genuine removal). The
+          // triggering key tells them apart -- Enter means "activate the
+          // highlighted option".
+          if ((event as React.KeyboardEvent)?.key === "Enter") {
+            cycle(removed);
+          } else {
+            removeTag(removed);
+          }
           return;
         }
         const added = next.find((v) => !comboValue.includes(v));
