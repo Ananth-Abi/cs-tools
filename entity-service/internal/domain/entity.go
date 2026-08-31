@@ -277,10 +277,10 @@ type AccountView struct {
 	RenewalAccountManager *PersonRef `json:"renewalAccountManager"`
 	// CreTeam is the account's CRE (customer relationship engineering) team, resolved to a
 	// named group reference (ServiceNow data source only). Mirrors AccountRef.CreTeam.
-	CreTeam *EntityRef `json:"creTeam,omitempty"`
+	CreTeam *EntityRef `json:"creTeam"`
 	// SreTeam is the account's SRE team, resolved to a named group reference (ServiceNow
 	// data source only). Mirrors AccountRef.SreTeam.
-	SreTeam          *EntityRef `json:"sreTeam,omitempty"`
+	SreTeam          *EntityRef `json:"sreTeam"`
 	ActivationDate   *string    `json:"activationDate"`
 	DeactivationDate *string    `json:"deactivationDate"`
 	HasAgent         bool       `json:"hasAgent"`
@@ -323,10 +323,10 @@ type AccountDetail struct {
 	RenewalAccountManager *PersonRef        `json:"renewalAccountManager"`
 	// CreTeam is the account's CRE (customer relationship engineering) team, resolved to a
 	// named group reference (ServiceNow data source only). Mirrors AccountRef.CreTeam.
-	CreTeam *EntityRef `json:"creTeam,omitempty"`
+	CreTeam *EntityRef `json:"creTeam"`
 	// SreTeam is the account's SRE team, resolved to a named group reference (ServiceNow
 	// data source only). Mirrors AccountRef.SreTeam.
-	SreTeam          *EntityRef `json:"sreTeam,omitempty"`
+	SreTeam          *EntityRef `json:"sreTeam"`
 	ActivationDate   *string    `json:"activationDate"`
 	DeactivationDate *string    `json:"deactivationDate"`
 	HasAgent         bool       `json:"hasAgent"`
