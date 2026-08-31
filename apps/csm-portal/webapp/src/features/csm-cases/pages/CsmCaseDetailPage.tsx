@@ -145,6 +145,9 @@ import LogTimeCardDialog from "@features/csm-timecards/components/LogTimeCardDia
 import { usePostTimeCard, useUpdateTimeCard } from "@features/csm-timecards/api/useTimeCards";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 import { caseIdLabel } from "@features/csm-cases/utils/caseIdentity";
+import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
+import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
+import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 import { formatAbsoluteForUser } from "@utils/dateTime";
 import {
   isBlankHtml,
@@ -322,9 +325,34 @@ const CASE_TAB_IDS: readonly CaseTabId[] = TAB_DEFS.filter(
 ).map((t) => t.id);
 
 export default function CsmCaseDetailPage(): JSX.Element {
-  const caseId = useNormalizedIdParam("caseId");
-  const navigate = useNavTransition();
-  const location = useLocation();
+  // Real router hooks — called unconditionally regardless of `routeOverride`
+  // below (rules of hooks), but their VALUES are only actually used when
+  // this instance isn't part of an open in-app case tab. `routeOverride`
+  // presence never changes for the lifetime of a given mounted instance
+  // (an isolated-tab instance always has one; a directly-routed page — a
+  // deep link, or a case opened past the open-tab cap — never does), so
+  // preferring one or the other is stable across this instance's renders.
+  //
+  // The override exists because this page can be mounted several times at
+  // once (one per open tab, all kept alive in the background — see
+  // `CaseTabIsolatedRouter`), while there is only ever ONE real matched
+  // route/location for the app as a whole. Without it, every background
+  // tab's `useParams`/`useLocation` would resolve to whatever route is
+  // CURRENTLY on-screen, not the case this particular instance represents.
+  const routedCaseId = useNormalizedIdParam("caseId");
+  const routedNavigate = useNavTransition();
+  const routedLocation = useLocation();
+  const routeOverride = useCaseRouteOverride();
+  const caseId = routeOverride?.caseId ?? routedCaseId;
+  const navigate = routeOverride?.navigate ?? routedNavigate;
+  const location = routeOverride
+    ? {
+        pathname: routeOverride.pathname,
+        search: routeOverride.search,
+        hash: routeOverride.hash,
+        state: routeOverride.state,
+      }
+    : routedLocation;
   const isEngagementRoute = location.pathname.startsWith("/engagements/");
   const isServiceRequestRoute = location.pathname.startsWith("/operations/service-requests/");
   const isAnnouncementRoute = location.pathname.startsWith("/announcements/");
@@ -365,6 +393,17 @@ export default function CsmCaseDetailPage(): JSX.Element {
     isFetching: isFetchingCaseDetail,
     dataUpdatedAt: caseDetailUpdatedAt,
   } = useGetCsmCaseDetail(caseId);
+  // Reports this case's number ONLY (not the wso2CaseId/subject the header
+  // and recent-views entry show — a deliberately short tab chip label, by
+  // request) up to the in-app case-tabs layer. Same field for all five
+  // case-like kinds this page renders (engagements, service requests,
+  // announcements, security reports all carry a `caseNumber` too, from the
+  // same `CsmCaseDetail` shape).
+  useReportCaseTabMeta(caseId, {
+    label: data?.caseNumber,
+    internalId: data?.wso2CaseId,
+    subject: data?.subject,
+  });
   // The route alone isn't a reliable signal once data has loaded: a "Related
   // case" link always points at /cases/:id regardless of the target's actual
   // type, so an announcement opened that way would otherwise render the full
@@ -562,6 +601,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const [isAcknowledging, setIsAcknowledging] = useState(false);
   const [metaCollapsed, setMetaCollapsed] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
+  // Reports composerOpen up to the in-app case-tabs layer, purely so closing
+  // this case's tab from the tab strip can confirm first — see the hook's
+  // own doc comment for what this signal does and doesn't guarantee.
+  useReportCaseTabDraft(caseId, composerOpen);
   const [assignOpen, setAssignOpen] = useState(false);
   const [linkCaseOpen, setLinkCaseOpen] = useState(false);
   const [linkIncidentOpen, setLinkIncidentOpen] = useState(false);

@@ -15,12 +15,13 @@
 // under the License.
 
 import { UserMenu } from "@wso2/oxygen-ui";
-import { LogOut, User } from "@wso2/oxygen-ui-icons-react";
+import { LogOut, Settings, User } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, useState } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 import { useLogger } from "@hooks/useLogger";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import UserProfileModal from "@components/header/UserProfileModal";
+import PreferencesDialog from "@components/header/PreferencesDialog";
 import { resolveUserInfo } from "@utils/userClaims";
 
 export default function UserProfile(): JSX.Element {
@@ -28,6 +29,7 @@ export default function UserProfile(): JSX.Element {
   const claims = useIdTokenClaims();
   const logger = useLogger();
   const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [preferencesOpen, setPreferencesOpen] = useState(false);
 
   const handleSignOut = async () => {
     window.dispatchEvent(new CustomEvent("app:signing-out"));
@@ -55,6 +57,11 @@ export default function UserProfile(): JSX.Element {
           label="Profile"
           onClick={() => setProfileModalOpen(true)}
         />
+        <UserMenu.Item
+          icon={<Settings size={16} />}
+          label="Preferences"
+          onClick={() => setPreferencesOpen(true)}
+        />
         <UserMenu.Logout
           icon={<LogOut size={16} />}
           label="Sign out"
@@ -64,6 +71,10 @@ export default function UserProfile(): JSX.Element {
       <UserProfileModal
         open={profileModalOpen}
         onClose={() => setProfileModalOpen(false)}
+      />
+      <PreferencesDialog
+        open={preferencesOpen}
+        onClose={() => setPreferencesOpen(false)}
       />
     </>
   );

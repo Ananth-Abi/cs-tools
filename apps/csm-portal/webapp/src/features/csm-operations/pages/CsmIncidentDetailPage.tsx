@@ -79,6 +79,9 @@ import type {
 import { useNavTransition } from "@hooks/useNavTransition";
 import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 import { useQueryParamTabs } from "@hooks/useSectionTabs";
+import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
+import { useReportCaseTabMeta } from "@features/case-tabs/hooks/useReportCaseTabMeta";
+import { useReportCaseTabDraft } from "@features/case-tabs/hooks/useReportCaseTabDraft";
 
 const OPERATIONS_INCIDENTS_PATH = "/operations/incidents";
 
@@ -162,14 +165,37 @@ const INCIDENT_TAB_IDS: readonly IncidentTabId[] = TAB_DEFS.map((t) => t.id);
  * for the related, already-handled `additionalComments`/`workNotes` quirk).
  */
 export default function CsmIncidentDetailPage(): JSX.Element {
-  const id = useNormalizedIdParam("id");
-  const navigate = useNavTransition();
+  // Real router hooks — called unconditionally regardless of `routeOverride`
+  // below (rules of hooks), but their VALUES are only actually used when
+  // this instance isn't part of an open in-app tab. See the identical
+  // pattern (and its own longer doc comment) at the top of
+  // `CsmCaseDetailPage`, which this mirrors: this page can be mounted
+  // several times at once (one per open tab, kept alive in the background —
+  // see `CaseTabIsolatedRouter`), while there is only ever one real matched
+  // route/location for the app as a whole.
+  const routedId = useNormalizedIdParam("id");
+  const routedNavigate = useNavTransition();
+  const routedLocationState = useLocation().state;
+  const routeOverride = useCaseRouteOverride();
+  const id = routeOverride?.caseId ?? routedId;
+  const navigate = routeOverride?.navigate ?? routedNavigate;
   // Prefer the list URL the row link captured (if any) so "back" returns to
   // the exact view the engineer came from, falling back to the bare tab path
   // for a bookmarked or directly-linked incident.
-  const backState = useLocation().state as { from?: string } | undefined;
+  const backState = (routeOverride ? routeOverride.state : routedLocationState) as
+    | { from?: string }
+    | undefined;
   const backTarget = backState?.from ?? OPERATIONS_INCIDENTS_PATH;
   const { data, isLoading, isError } = useGetIncident(id);
+  // The incident number as the short chip label (matching `CsmCaseDetailPage`'s
+  // own `caseNumber`-only report); incidents have no separate project-scoped
+  // id the way cases do, so the tooltip's `internalId` reuses the same
+  // number, with the subject alongside it.
+  useReportCaseTabMeta(id, {
+    label: data?.number ?? undefined,
+    internalId: data?.number ?? undefined,
+    subject: data?.subject ?? undefined,
+  });
   const { showError } = useErrorBanner();
   const patchIncident = usePatchIncident();
   const [editOpen, setEditOpen] = useState(false);
@@ -192,6 +218,13 @@ export default function CsmIncidentDetailPage(): JSX.Element {
   const downloadAttachment = useDownloadCsmCaseAttachment();
   const getAttachmentPreviewContent = useGetCsmCaseAttachmentContent();
   const [composerOpen, setComposerOpen] = useState(false);
+  // Reports composerOpen up to the in-app case-tabs layer, purely so closing
+  // this incident's tab from the tab strip can confirm first — see
+  // CsmCaseDetailPage's identical call, and the hook's own doc comment for
+  // what this signal does and doesn't guarantee. Missing here was itself a
+  // bug: this tab's `hasDraft` never became true, so its close-confirm
+  // never fired for an unsent reply.
+  useReportCaseTabDraft(id, composerOpen);
   // Shared between the Activities feed and the Attachments tab, same as
   // CsmCaseDetailPage — one attachment previewed at a time regardless of
   // which surface opened it.
