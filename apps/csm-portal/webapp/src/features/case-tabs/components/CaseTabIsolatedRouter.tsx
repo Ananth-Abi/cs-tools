@@ -15,7 +15,6 @@
 // under the License.
 
 import {
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -121,27 +120,29 @@ export default function CaseTabIsolatedRouter({
   // and the tab record both showed the new section, but this component's
   // own `routeState` — seeded once and otherwise only ever written by this
   // tab's OWN in-tab `navigate` — kept serving the OLD `search`/`hash` to
-  // `CsmCaseDetailPage`'s `useSectionTabs`-backed tab strip. A no-op for
-  // in-tab navigation itself: `navigate` below already updates `routeState`
-  // directly, and reports the identical derived values back to the
-  // controller via `updateTabPath`, so by the time this effect's own
-  // dependencies change, `routeState` already matches — the bail-out below
-  // (`return prev`) keeps that a single render, not two.
-  useEffect(() => {
-    setRouteState((prev) => {
-      const parsed = parseTabPath(tab.path);
-      if (
-        prev.pathname === parsed.pathname &&
-        prev.search === parsed.search &&
-        prev.hash === parsed.hash &&
-        prev.kind === tab.kind &&
-        prev.state === tab.state
-      ) {
-        return prev;
-      }
-      return { ...parsed, kind: tab.kind, state: tab.state };
-    });
-  }, [tab.path, tab.kind, tab.state]);
+  // `CsmCaseDetailPage`'s `useSectionTabs`-backed tab strip.
+  //
+  // Render-time state adjustment (not a `useEffect` — this repo's lint
+  // config forbids `setState` inside one, same `react-hooks/set-state-in-
+  // effect` class of constraint as `CaseTabsContext`'s own `openTab` fix
+  // earlier this session; same pattern `useCurrentLocationTab` already uses
+  // elsewhere in this feature): compares `tab.path`/`kind`/`state` against
+  // the CURRENT `routeState` synchronously within this render, and calls
+  // `setRouteState` directly — not in an effect — whenever they differ. A
+  // no-op for in-tab navigation itself: `navigate` below already updates
+  // `routeState` directly to the identical derived values it also reports
+  // to the controller via `updateTabPath`, so this comparison already finds
+  // them equal by the time it runs.
+  const parsedFromTab = parseTabPath(tab.path);
+  if (
+    routeState.pathname !== parsedFromTab.pathname ||
+    routeState.search !== parsedFromTab.search ||
+    routeState.hash !== parsedFromTab.hash ||
+    routeState.kind !== tab.kind ||
+    routeState.state !== tab.state
+  ) {
+    setRouteState({ ...parsedFromTab, kind: tab.kind, state: tab.state });
+  }
 
   // `tab.id` and `tab.caseId` are both invariant for the lifetime of a given
   // tab instance: this component is keyed by `tab.id` (never changes by
