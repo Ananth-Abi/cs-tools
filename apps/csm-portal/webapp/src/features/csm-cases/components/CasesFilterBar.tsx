@@ -514,20 +514,31 @@ export default function CasesFilterBar({
   // `creGroupId` (not the registry `id`) is what a `creTeam`/`csTeams` filter
   // entry actually matches on; only teams with one configured are
   // selectable here (an id-less team has nothing such a filter could hold).
+  // Also scoped to the `cre-abt` family, matching `abtFamilyForDashboardType`
+  // -- a team of a different family (e.g. plain `cre`) may still carry a
+  // `creGroupId` but isn't one of the CRE Team filter's intended options.
   const teamOptions = useMemo(
     () =>
       (teams ?? [])
-        .filter((t): t is typeof t & { creGroupId: string } => Boolean(t.creGroupId))
+        .filter(
+          (t): t is typeof t & { creGroupId: string } =>
+            Boolean(t.creGroupId) && t.family === "cre-abt",
+        )
         .map((t) => ({ value: t.creGroupId, label: t.name })),
     [teams],
   );
   // Same shape, keyed off `sreGroupId` instead — feeds the "Advanced
   // filters" builder's `sreTeam` row (a real multi-select now, not
-  // hand-typed team ids/UUIDs).
+  // hand-typed team ids/UUIDs). Scoped to `cre-abt` family per explicit
+  // product instruction, not `sre-abt` -- see the "SRE Team" filter's
+  // family-scoping note in `advancedFilters.ts` for the caveat.
   const sreTeamOptions = useMemo(
     () =>
       (teams ?? [])
-        .filter((t): t is typeof t & { sreGroupId: string } => Boolean(t.sreGroupId))
+        .filter(
+          (t): t is typeof t & { sreGroupId: string } =>
+            Boolean(t.sreGroupId) && t.family === "cre-abt",
+        )
         .map((t) => ({ value: t.sreGroupId, label: t.name })),
     [teams],
   );
@@ -904,7 +915,7 @@ export default function CasesFilterBar({
                   instead (see `buildActiveFilterChips`). */}
               <MultiSelectField
                 id="cases-filter-cs-team"
-                label="Team"
+                label="CRE Team"
                 values={filters.csTeams}
                 options={teamOptions}
                 onChange={(next) => onChange({ ...filters, csTeams: next })}

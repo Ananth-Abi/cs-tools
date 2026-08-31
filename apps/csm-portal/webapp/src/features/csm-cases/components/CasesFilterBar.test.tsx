@@ -207,7 +207,7 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
   });
 });
 
-describe("CasesFilterBar — 'Team' control (replaces the removed 'Work state' one)", () => {
+describe("CasesFilterBar — 'CRE Team' control (replaces the removed 'Work state' one)", () => {
   beforeEach(() => {
     postMock.mockReset();
     postMock.mockResolvedValue({
@@ -216,6 +216,8 @@ describe("CasesFilterBar — 'Team' control (replaces the removed 'Work state' o
         { id: "abt-2", name: "ABT Two", family: "cre-abt", creGroupId: "g-2" },
         // No creGroupId configured -- must not appear as a selectable option.
         { id: "abt-3", name: "ABT Three", family: "cre-abt" },
+        // Has a creGroupId but a non-`cre-abt` family -- must not appear either.
+        { id: "abt-4", name: "ABT Four", family: "cre", creGroupId: "g-4" },
       ],
     });
   });
@@ -223,16 +225,17 @@ describe("CasesFilterBar — 'Team' control (replaces the removed 'Work state' o
   it("renders team display names as options, backed by creGroupId (what the filter actually matches on)", async () => {
     renderBar({ ...DEFAULT_CASES_FILTERS });
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Team" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "CRE Team" }));
     expect(await screen.findByRole("option", { name: "ABT One" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "ABT Two" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "ABT Three" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "ABT Four" })).not.toBeInTheDocument();
   });
 
   it("selecting a team sets csTeams to its creGroupId, not its registry id", async () => {
     const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
 
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Team" }));
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "CRE Team" }));
     fireEvent.click(await screen.findByRole("option", { name: "ABT One" }));
 
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ csTeams: ["g-1"] }));

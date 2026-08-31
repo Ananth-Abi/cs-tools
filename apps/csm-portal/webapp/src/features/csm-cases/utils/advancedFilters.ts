@@ -234,10 +234,10 @@ export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
   {
     // Options are supplied at render time by `AdvancedFiltersBuilder` (the
     // `creTeamOptions` prop, computed in `CasesFilterBar.tsx` from the same
-    // `useTeams(true)` fetch the old "Team" bar control used) — fetched
+    // `useTeams(true)` fetch the "CRE Team" bar control used) — fetched
     // data, not a fixed enum, same reasoning as `sreTeam` below.
     field: "creTeam",
-    label: "Team",
+    label: "CRE Team",
     ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
   },
   {
@@ -275,9 +275,9 @@ export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
   {
     // Options are supplied at render time by `AdvancedFiltersBuilder` (the
     // `sreTeamOptions` prop, computed once in `CasesFilterBar.tsx` from the
-    // same `useTeams(true)` fetch the "Team" (`creTeam`) bar control uses) —
-    // not listed statically here, since the team registry is fetched data,
-    // not a fixed enum like `projectType`/`issueType` above.
+    // same `useTeams(true)` fetch the "CRE Team" (`creTeam`) bar control
+    // uses) — not listed statically here, since the team registry is
+    // fetched data, not a fixed enum like `projectType`/`issueType` above.
     field: "sreTeam",
     label: "SRE team",
     ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
