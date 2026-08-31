@@ -29,7 +29,7 @@ Feature-based: each `src/features/<name>/` folder owns its own `api/` (React Que
 
 ## Routing (`src/App.tsx`)
 
-- Every route page component is `React.lazy`-loaded individually (one `lazy(() => import(...))` call per page); only error pages and the coming-soon placeholder are eager.
+- Route page components are statically imported (eager), not `React.lazy`-loaded — deliberate, to ship as one JS bundle instead of one chunk per route. Per-route `React.lazy()` caused a real UX bug: navigating to a route not yet visited that session fetched a fresh chunk on the critical path, freezing the UI mid-navigation. See `index.html`'s boot loader (shown until the single bundle finishes loading) for the tradeoff this enables. One dynamic `import()` remains outside routing — the click-triggered PDF export in the Updates feature — since it's not on any navigation path and inlining it would grow the main bundle for a rarely-used feature.
 - Declared with `react-router` v7's JSX `<Routes>`/`<Route>` API, not a data router (`createBrowserRouter`).
 - Everything except `/401`/`/403`/`/404` sits under `<Route element={<AuthGuard />}>` → `<Route element={<FeatureRouteGuard />}>` (a runtime feature-flag/WIP gate keyed by `CSM_PORTAL_FEATURE_OVERRIDES`).
 - Legacy paths (e.g. `/accounts`, `/projects`) are kept as `<Navigate>` redirects for backward compatibility rather than removed outright.

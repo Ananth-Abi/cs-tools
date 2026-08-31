@@ -60,9 +60,9 @@
         background: #ff7300;
         transition: width 0.15s ease-out;
       }
-      /* Indeterminate fallback, used when the entry script's response has no
-         Content-Length (e.g. behind gzip/CDN compression that strips it) so
-         real byte-progress can't be computed. */
+      /* Indeterminate motion, not a real byte-progress percentage — see the
+         boot script's comment for why a duplicate-fetch progress tracker was
+         rejected. */
       #csm-boot-loader .csm-boot-track.csm-boot-indeterminate .csm-boot-bar {
         width: 40%;
         transition: none;
@@ -109,11 +109,6 @@
         var label = document.getElementById("csm-boot-label");
         if (!loader || !bar || !track || !label) return;
 
-        function setProgress(fraction) {
-          var pct = Math.max(0, Math.min(1, fraction)) * 100;
-          bar.style.width = pct + "%";
-        }
-
         function goIndeterminate() {
           track.classList.add("csm-boot-indeterminate");
         }
@@ -134,62 +129,16 @@
         // has nothing useful to show underneath it anyway.
         window.addEventListener("csm:app-mounted", hideLoader, { once: true });
 
-        // Vite hoists/relocates the entry `<script type="module">` and does
-        // not preserve custom attributes/ids on it, so it has to be found by
-        // shape, not by id.
-        var entryScript = document.querySelector(
-          'script[type="module"][src]',
-        );
-        if (!entryScript) {
-          // No module entry to track (unexpected build shape) — fall back to
-          // an indeterminate bar so there's still visible motion.
-          goIndeterminate();
-          return;
-        }
-
-        var src = entryScript.getAttribute("src");
-
-        fetch(src)
-          .then(function (response) {
-            if (!response.ok || !response.body) {
-              goIndeterminate();
-              return;
-            }
-            var contentLength = response.headers.get("Content-Length");
-            var total = contentLength ? parseInt(contentLength, 10) : 0;
-            if (!total || Number.isNaN(total)) {
-              // Common under gzip/CDN compression, which strips
-              // Content-Length (or reports the compressed size, not the
-              // decoded size actually being streamed) — no reliable total
-              // to compute a real fraction against.
-              goIndeterminate();
-              return;
-            }
-
-            var received = 0;
-            var reader = response.body.getReader();
-
-            function pump() {
-              return reader.read().then(function (result) {
-                if (result.done) {
-                  setProgress(1);
-                  return;
-                }
-                received += result.value ? result.value.length : 0;
-                setProgress(received / total);
-                return pump();
-              });
-            }
-
-            return pump();
-          })
-          .catch(function () {
-            // A network hiccup on this tracking fetch must not block the
-            // real module load (the browser's own <script type="module">
-            // tag fetches and runs it independently) — just fall back to
-            // showing indeterminate motion.
-            goIndeterminate();
-          });
+        // A separate fetch() of the entry script (to track real byte
+        // progress) races the browser's own <script type="module"> fetch of
+        // the same URL — the Fetch API gives no guaranteed dedup of
+        // concurrent identical requests, so on a cold cache this could
+        // download the ~multi-MB single bundle twice, doubling load time and
+        // defeating the point of this loader (CodeRabbit catch on the PR
+        // that introduced it). Indeterminate motion plus the real
+        // csm:app-mounted completion signal is the correct tradeoff: still
+        // real activity, no risk of a duplicate transfer.
+        goIndeterminate();
       })();
     </script>
 
