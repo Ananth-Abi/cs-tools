@@ -28,7 +28,7 @@ import {
   Skeleton,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Clock, Pencil, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
+import { Clock, Eye, Pencil, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import RelativeDate from "@components/RelativeDate";
 import {
   useCaseTimeCards,
@@ -41,6 +41,7 @@ import { billableLabel } from "@features/csm-timecards/constants/timeCardConstan
 import { decisionSummary } from "@features/csm-timecards/utils/timeCardDecision";
 import { BackendApiError } from "@api/backend/client";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
+import TimeCardDetailsDialog from "@features/csm-timecards/components/TimeCardDetailsDialog";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
 import TimeCardReviewDialog from "@features/csm-timecards/components/TimeCardReviewDialog";
 import TimeCardTruncatedNotice from "@features/csm-timecards/components/TimeCardTruncatedNotice";
@@ -77,6 +78,7 @@ export default function CaseTimeCardsPanel({
   const { showError } = useErrorBanner();
   const [reviewCard, setReviewCard] = useState<CsmTimeCard | null>(null);
   const [pendingDelete, setPendingDelete] = useState<CsmTimeCard | null>(null);
+  const [detailCard, setDetailCard] = useState<CsmTimeCard | null>(null);
 
   const cards = useMemo(() => data?.cards ?? [], [data]);
   const total = useMemo(
@@ -191,6 +193,20 @@ export default function CaseTimeCardsPanel({
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   <Typography variant="body2">{c.totalMinutes} min</Typography>
                   <TimeCardStatusChip state={c.state} />
+                  {/* Read-only, so shown on every card regardless of state or
+                   ownership — unlike Edit/Review below, there's no
+                   authorization concern here. Matches the toggle-to-close
+                   "eye" convention in TimeCardsTable. */}
+                  <IconButton
+                    size="small"
+                    aria-label="View details"
+                    aria-pressed={detailCard?.id === c.id}
+                    onClick={() =>
+                      setDetailCard((prev) => (prev?.id === c.id ? null : c))
+                    }
+                  >
+                    <Eye size={14} />
+                  </IconButton>
                   {/* Own card, still submitted: only the submitter can edit
                    its content, matching the backend's own submitter-only +
                    submitted-state-only enforcement (see cardActions). */}
@@ -244,6 +260,10 @@ export default function CaseTimeCardsPanel({
             );
           })}
         </Box>
+      )}
+
+      {detailCard && (
+        <TimeCardDetailsDialog card={detailCard} onClose={() => setDetailCard(null)} />
       )}
 
       {reviewCard && (
