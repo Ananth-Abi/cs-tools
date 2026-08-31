@@ -7,24 +7,36 @@ working a case once you're on its detail page.
 ## Finding cases
 
 The search box at the top of the list matches on case number, subject, customer, project, or
-assignee. Next to it, **Filters** expands a grid of additional controls:
+assignee. Next to it, **Filters** expands a grid of additional controls, with a **Simple** /
+**Advanced** toggle above it:
 
-- **Severity**: S0 (Catastrophic) through S4 (Low / Query). S0 is reserved for Managed Cloud
-  projects.
-- **State**: Open, Work in progress, Solution proposed, Awaiting info, Waiting on WSO2,
-  Closed. The state chip's color tells you whose move it is: blue for active states on us
-  (Open, Work in progress), amber for an elevated on-us state (Waiting on WSO2), grey for
-  waiting on the customer (Solution proposed, Awaiting info), green for Closed.
-- **Team**, **Case type**, **Assignee** (search the engineer directory, or pick "Me"),
-  **Product**, **Onboarding status**, **Tags**, and **Project**.
-- **Tags** is include/exclude: click a tag once to require it (shown as a `+ tag` chip), click
-  it again to exclude it instead (`- tag`, in red), and a third click clears it. You can mix
-  included and excluded tags at once.
+- **Simple** (the default) is a fixed grid: **Severity**, **State**, **Team**, **Case type**,
+  **Assignee** (search the engineer directory, or pick "Me"), **Product**, **Onboarding
+  status**, and **Project**.
+  - **Severity**: S0 (Catastrophic) through S4 (Low / Query). S0 is reserved for Managed Cloud
+    projects.
+  - **State**: Open, Work in progress, Solution proposed, Awaiting info, Waiting on WSO2,
+    Closed. Click a state once to require it, again to exclude it instead, a third time to
+    clear it — the chip's color tells you whose move it is: blue for active states on us
+    (Open, Work in progress), amber for an elevated on-us state (Waiting on WSO2), grey for
+    waiting on the customer (Solution proposed, Awaiting info), green for Closed.
+- **Advanced** replaces the grid with a list of field/operator/value rows — every field Simple
+  mode covers, plus more (**Tags** — include or exclude a tag by picking the "includes" or
+  "excludes" operator on its row — SRE team, project type, escalation, SLA business-elapsed
+  percent, created/updated/closed date ranges, created-by, and a few opaque IDs). Click **Add
+  filter** for a new row, pick its field, operator, and value, and the trash icon to remove it.
+  Below the rows, **OR groups** lets you combine several conditions with OR instead of the
+  default AND (e.g. "Severity is S1 OR Type is Engagement").
+- The bar switches to Advanced automatically if the filters it's showing (from a saved view, a
+  shared link, or a dashboard click-through) include anything Simple mode can't express — Tags
+  is the most common reason. **Simple** is greyed out (with a tooltip explaining why) whenever
+  the current filters can't be shown there; clear the Advanced-only ones to switch back.
 
 When a case list arrives already filtered, for example after clicking into a dashboard
-widget, any filter that doesn't have its own control in the grid (an excluded state, an
-SLA-percent bound, an escalation filter, and so on) still shows up as a removable chip above
-the grid, so you can always see why the list is filtered and undo it with one click.
+widget, any filter that doesn't have its own control in the Simple grid (an SLA-percent bound,
+an escalation filter, and so on) still shows up as a removable chip above the grid regardless
+of which mode you're in, so you can always see why the list is filtered and undo it with one
+click.
 
 Once any filter is active, the **Filters** button turns into **Clear filters (N)**, showing
 how many are active and clearing all of them in one click.
