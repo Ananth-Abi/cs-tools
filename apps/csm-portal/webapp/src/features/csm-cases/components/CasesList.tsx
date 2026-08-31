@@ -45,6 +45,7 @@ import {
   caseTypeDetailBasePath,
   caseTypeHasSeverity,
 } from "@features/csm-cases/utils/caseType";
+import { ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
 import { effectiveWorkState } from "@features/csm-cases/utils/caseWorkState";
 import {
   CASE_OPTIONAL_COLUMNS,
@@ -138,10 +139,22 @@ function renderOptionalCell(id: CaseOptionalColumnId, c: CsmCaseRow): JSX.Elemen
           )}
         </Box>
       );
+    case "issueType":
+      return (
+        <Typography variant="body2" noWrap>
+          {c.issueType ? ISSUE_TYPE_LABEL[c.issueType] : "—"}
+        </Typography>
+      );
     case "assignee":
       return (
         <Typography variant="body2" noWrap title={c.assignee || undefined}>
           {c.assignee}
+        </Typography>
+      );
+    case "createdBy":
+      return (
+        <Typography variant="body2" noWrap title={c.createdBy || undefined}>
+          {c.createdBy || "—"}
         </Typography>
       );
     case "customer":

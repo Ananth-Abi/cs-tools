@@ -184,8 +184,10 @@ function CaseWidgetList({ items, isLoading, resourceType }: WidgetListRendererPr
   const availableOptionalColumns: CaseOptionalColumnId[] = [
     "product",
     "type",
+    "issueType",
     ...(showSeverityColumn ? (["severity"] as const) : []),
     "assignee",
+    "createdBy",
     "customer",
     "createdAt",
   ];

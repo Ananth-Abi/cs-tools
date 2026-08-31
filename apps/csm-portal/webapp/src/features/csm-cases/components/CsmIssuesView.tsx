@@ -320,8 +320,10 @@ export default function CsmIssuesView({
   const availableOptionalColumns: CaseOptionalColumnId[] = [
     "product",
     "type",
+    "issueType",
     ...(showSeverityColumn ? (["severity"] as const) : []),
     "assignee",
+    "createdBy",
     "customer",
     "createdAt",
   ];
