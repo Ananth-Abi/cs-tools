@@ -16,6 +16,7 @@
 
 import type { BeCaseFieldFilter, BeCaseFieldFilterOp } from "@api/backend/types";
 import { BE_CURRENT_USER_FILTER_PLACEHOLDER } from "@api/backend/types";
+import { ALL_ISSUE_TYPES, ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
 import { ALL_ONBOARDING_STATUSES } from "@features/csm-cases/utils/onboardingStatus";
 import { resolveRelativeDatePlaceholder } from "@utils/resolveRelativeDatePlaceholder";
 
@@ -38,6 +39,7 @@ export type AdvancedFilterField =
   | "tag"
   | "projectOnboardingStatus"
   | "projectType"
+  | "issueType"
   | "creTeam"
   | "sreTeam"
   | "deploymentId"
@@ -105,6 +107,11 @@ const PROJECT_TYPE_OPTIONS: { value: string; label: string }[] = [
   "Professional Services",
 ].map((v) => ({ value: v, label: v }));
 
+const ISSUE_TYPE_OPTIONS: { value: string; label: string }[] = ALL_ISSUE_TYPES.map((v) => ({
+  value: v,
+  label: ISSUE_TYPE_LABEL[v],
+}));
+
 const ESCALATION_LEVEL_OPTIONS: { value: string; label: string }[] = [
   "0",
   "1",
@@ -145,6 +152,12 @@ export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
     label: "Project type",
     ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
     options: PROJECT_TYPE_OPTIONS,
+  },
+  {
+    field: "issueType",
+    label: "Issue type",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
+    options: ISSUE_TYPE_OPTIONS,
   },
   {
     field: "creTeam",

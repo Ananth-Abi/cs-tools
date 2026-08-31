@@ -374,6 +374,16 @@ describe("buildCaseSearchFilters — advanced filter rows", () => {
     ]);
   });
 
+  it("emits an issueType `in` row (fixed multi-select) as a BeCaseFieldFilter", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "issueType", op: "in", values: ["error", "total_outage"] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    expect(filterOf(filters, "issueType")).toEqual([
+      { field: "issueType", op: "in", values: ["error", "total_outage"] },
+    ]);
+  });
+
   it("emits a value-less op (`resolutionNotes` isEmpty) with no `values` at all", () => {
     const advancedFilters: AdvancedFilterRow[] = [
       { field: "resolutionNotes", op: "isEmpty", values: [] },
