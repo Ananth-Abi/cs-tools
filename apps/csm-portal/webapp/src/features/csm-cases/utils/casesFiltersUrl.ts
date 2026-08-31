@@ -35,6 +35,7 @@ import {
   parseAnyOfBranchesParam,
   writeAnyOfBranchesParam,
 } from "@features/csm-cases/utils/anyOfFilters";
+import { normalizeCasesFilters } from "@features/csm-cases/utils/filterFieldAdapters";
 
 export const DEFAULT_CASES_FILTERS: CasesFilters = {
   search: "",
@@ -164,7 +165,11 @@ export function readCasesFiltersFromUrl(
     states.length === 1 && states[0] === "work_in_progress"
       ? parseCsv(params.get("workStates"), VALID_WORK_STATES)
       : [];
-  return {
+  // `normalizeCasesFilters` folds any `af` row targeting a field that now
+  // has its own typed `CasesFilters` slot (severity/state/tag/...) into that
+  // real property, so a legacy or hand-edited URL can never produce a
+  // dangling duplicate of the same predicate — see its own doc comment.
+  return normalizeCasesFilters({
     search: params.get("search") ?? "",
     severities: parseCsv(params.get("severities"), VALID_SEVERITIES),
     states,
@@ -193,7 +198,7 @@ export function readCasesFiltersFromUrl(
     closedOnLte: parseFreeFormScalar(params.get("closedTo")),
     advancedFilters: parseAdvancedFiltersParam(params.get("af")),
     anyOfBranches: parseAnyOfBranchesParam(params.get("anyOf")),
-  };
+  });
 }
 
 /**

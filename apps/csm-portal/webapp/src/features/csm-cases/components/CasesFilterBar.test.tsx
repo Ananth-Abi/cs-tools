@@ -36,7 +36,9 @@ vi.mock("@config/apiConfig", () => ({
 }));
 
 // Mocked directly (same approach as AddTagDialog.test.tsx) so tests don't
-// have to drive the real 300ms debounce in TagsMultiSelect.
+// have to drive the real 300ms debounce in `AsyncTagMultiSelect` (rendered
+// only for an Advanced-mode `tag` row now — Tags is Advanced-only, see the
+// mode-toggle tests below).
 vi.mock("@features/csm-cases/api/useSearchTags", () => ({
   useSearchTags: vi.fn(),
 }));
@@ -51,10 +53,9 @@ function mockTagSearchResult(
     ...overrides,
   } as unknown as ReturnType<typeof useSearchTags>);
 }
-// `TagsMultiSelect` (and its `useSearchTags` call) now renders unconditionally
-// as part of every `CasesFilterBar`, so every describe block below needs a
-// default mock return value -- set once here, at file scope, rather than
-// repeating it in each describe block's own `beforeEach`.
+// A default mock return value, set once here at file scope, so any test that
+// does land in Advanced mode with a `tag` row visible doesn't crash for want
+// of a mock.
 beforeEach(() => {
   mockTagSearchResult({});
 });
@@ -171,20 +172,18 @@ describe("CasesFilterBar — removed bar controls fall back to chips", () => {
 
 
   /**
-   * `tags`/`excludeTags` both have their own tri-state "Tags" bar control
-   * now (tested separately below), same as CS team's "Team" control (see
-   * the describe block below) — deliberately NOT chipped, to avoid showing
-   * the same selection twice. `excludeTags` used to have no bar control of
-   * its own (only a dashboard click-through could set it) and fell back to
-   * a chip here; now that `TagsMultiSelect` is tri-state, its own "- tag"
-   * chip inside that control is the only rendering, same as `tags`.
+   * `tags`/`excludeTags` are Advanced-mode-only now (see the mode toggle in
+   * `CasesFilterBar.tsx`): any non-empty value forces Advanced mode on
+   * mount, where the Tag row itself (in the unified builder) is the visible/
+   * removable UI — deliberately still NOT chipped here, to avoid showing the
+   * same selection twice.
    */
-  it("does not render a chip for tags — it has its own 'Tags' bar control", () => {
+  it("does not render a chip for tags — Advanced mode's own Tag row is the visible/removable UI", () => {
     renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["micro-gw"] });
     expect(screen.queryByText(/^Tag: /)).not.toBeInTheDocument();
   });
 
-  it("does not render a chip for excludeTags — it has its own 'Tags' bar control now", () => {
+  it("does not render a chip for excludeTags — Advanced mode's own Tag row is the visible/removable UI", () => {
     renderBar({ ...DEFAULT_CASES_FILTERS, excludeTags: ["s_dip"] });
     expect(screen.queryByText(/^Excluding tag:/)).not.toBeInTheDocument();
   });
@@ -275,131 +274,25 @@ describe("CasesFilterBar — 'State' control (tri-state include/exclude, digiops
   });
 });
 
-describe("CasesFilterBar — 'Tags' control (tri-state include/exclude, digiops-cs#2907)", () => {
-  it("renders matching tag suggestions from the search endpoint", () => {
-    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
+// Tags moved out of Simple mode entirely (Advanced-only now, see
+// `CasesFilterBar.tsx`'s mode toggle) -- the old tri-state cycling control
+// (`TagsMultiSelect`) tested here is no longer rendered in the Simple grid
+// at all. Its replacement — a plain `tag` `in`/`notIn` row in the unified
+// Advanced-mode builder, backed by `AsyncTagMultiSelect` — is covered by
+// `filterFieldAdapters.test.ts`'s adapter round-trip tests and
+// `advancedFilters.test.ts`'s catalogue tests instead.
+describe("CasesFilterBar — Tags is Advanced-only", () => {
+  it("does not render a 'Tags' control in the Simple grid", () => {
     renderBar({ ...DEFAULT_CASES_FILTERS });
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
-    expect(screen.getByText("micro-gw")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Tags" })).not.toBeInTheDocument();
   });
 
-  it("clicking an unselected suggested tag once includes it", () => {
-    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
-    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
-    fireEvent.click(screen.getByText("micro-gw"));
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: ["micro-gw"], excludeTags: [] }),
-    );
-  });
-
-  it("clicking an included tag a second time moves it to excluded", () => {
-    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      tags: ["micro-gw"],
-    });
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
-    fireEvent.click(screen.getByText("micro-gw"));
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: [], excludeTags: ["micro-gw"] }),
-    );
-  });
-
-  it("clicking an excluded tag a third time clears it back to unselected", () => {
-    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      excludeTags: ["micro-gw"],
-    });
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
-    fireEvent.click(screen.getByText("micro-gw"));
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: [], excludeTags: [] }),
-    );
-  });
-
-  it("leaves any other selected tag untouched when cycling one option", () => {
-    mockTagSearchResult({ data: [{ id: "t1", label: "micro-gw" }] });
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      tags: ["already-included"],
-      excludeTags: ["already-excluded"],
-    });
-
-    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Tags" }));
-    fireEvent.click(screen.getByText("micro-gw"));
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({
-        tags: ["already-included", "micro-gw"],
-        excludeTags: ["already-excluded"],
-      }),
-    );
-  });
-
-  // Tags are genuinely free-text (see TagsMultiSelect.tsx's doc comment) --
-  // typing one with no matching suggestion must still work, not just picking
-  // from the search results. A freshly typed tag starts at "included", same
-  // as a first click on a suggested option.
-  it("still accepts a free-typed tag with no matching suggestion", () => {
-    const { onChange } = renderBar({ ...DEFAULT_CASES_FILTERS });
-
-    const input = screen.getByRole("combobox", { name: "Tags" });
-    fireEvent.change(input, { target: { value: "brand-new-tag" } });
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: ["brand-new-tag"], excludeTags: [] }),
-    );
-  });
-
-  it("renders a single included tag as a neutral '+' chip", () => {
-    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["urgent"] });
-    const includedChip = screen.getByText("+ urgent").closest(".MuiChip-root");
-    expect(includedChip).toBeInTheDocument();
-    expect(includedChip).not.toHaveClass("MuiChip-colorError");
-  });
-
-  it("renders a single excluded tag as an 'error'-tinted '-' chip", () => {
-    renderBar({ ...DEFAULT_CASES_FILTERS, excludeTags: ["spam"] });
-    const excludedChip = screen.getByText("- spam").closest(".MuiChip-root");
-    expect(excludedChip).toBeInTheDocument();
-    expect(excludedChip).toHaveClass("MuiChip-colorError");
-  });
-
-  it("collapses to a 'N tags' summary once both an included and an excluded tag are selected, instead of rendering both chips individually", () => {
-    // The bar's Tags control sits in a narrow filter-grid column that can't
-    // fit two real Chip pills without the row's own `overflow: hidden`
-    // silently clipping the second one -- see TagsMultiSelect's own test
-    // for the full repro (tags=patch&excludeTags=am showed only one,
-    // truncated chip even though both filters were genuinely active).
-    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["urgent"], excludeTags: ["spam"] });
-
-    expect(screen.getByText("2 tags")).toBeInTheDocument();
-    expect(screen.queryByText("+ urgent")).not.toBeInTheDocument();
-    expect(screen.queryByText("- spam")).not.toBeInTheDocument();
-  });
-
-  it("deleting the one selected excluded tag's chip clears just that tag", () => {
-    const { onChange } = renderBar({
-      ...DEFAULT_CASES_FILTERS,
-      excludeTags: ["spam"],
-    });
-
-    const excludedChip = screen.getByText("- spam").closest(".MuiChip-root")!;
-    fireEvent.click(excludedChip.querySelector("svg")!);
-
-    expect(onChange).toHaveBeenCalledWith(
-      expect.objectContaining({ tags: [], excludeTags: [] }),
-    );
+  it("any active tags/excludeTags filter forces the bar into Advanced mode on mount", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS, tags: ["micro-gw"] });
+    // In Advanced mode, the Simple-only "State" combobox is gone and the
+    // "Advanced filters" row builder is showing instead.
+    expect(screen.queryByRole("combobox", { name: "State" })).not.toBeInTheDocument();
+    expect(screen.getByText("Advanced filters")).toBeInTheDocument();
   });
 });
 
@@ -412,10 +305,8 @@ describe("CasesFilterBar — 'Project' control is last and wider than its siblin
     renderBar({ ...DEFAULT_CASES_FILTERS });
 
     const project = screen.getByRole("combobox", { name: "Project" });
-    const tags = screen.getByRole("combobox", { name: "Tags" });
     const onboarding = screen.getByRole("combobox", { name: "Onboarding status" });
 
-    expect(project.compareDocumentPosition(tags) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
     expect(
       project.compareDocumentPosition(onboarding) & Node.DOCUMENT_POSITION_PRECEDING,
     ).toBeTruthy();

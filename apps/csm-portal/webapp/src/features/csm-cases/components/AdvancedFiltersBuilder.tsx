@@ -31,28 +31,44 @@ import { Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
 import MultiSelectField from "@components/MultiSelectField";
 import AsyncCreatedByMultiSelect from "@features/csm-cases/components/AsyncCreatedByMultiSelect";
+import AsyncAssigneeMultiSelect from "@features/csm-cases/components/AsyncAssigneeMultiSelect";
+import AsyncProjectMultiSelect from "@features/csm-cases/components/AsyncProjectMultiSelect";
+import ProductNameMultiSelect from "@features/csm-cases/components/ProductNameMultiSelect";
+import AsyncTagMultiSelect from "@features/csm-cases/components/AsyncTagMultiSelect";
 import {
   ADVANCED_FILTER_FIELDS,
   RELATIVE_DATE_PRESETS,
-  defaultAdvancedFilterRow,
   getAdvancedFilterFieldMeta,
   getAdvancedFilterOpMeta,
   type AdvancedFilterField,
   type AdvancedFilterRow,
 } from "@features/csm-cases/utils/advancedFilters";
+import type { UnifiedFilterRow } from "@features/csm-cases/utils/filterFieldAdapters";
 
 const { DatePicker, LocalizationProvider } = DatePickers;
 
 interface AdvancedFiltersBuilderProps {
-  rows: AdvancedFilterRow[];
-  onChange: (next: AdvancedFilterRow[]) => void;
-  /** SRE team options (`sreGroupId` → display name), computed once in
-   * `CasesFilterBar.tsx` from the same `useTeams(true)` fetch the "Team"
-   * (`creTeam`) bar control uses — the `sreTeam` row's value kind is
-   * `multiSelect`, but its options are fetched data, not a fixed enum, so
-   * they're threaded in here rather than living in the static
-   * `advancedFilters.ts` catalogue. */
+  /** The unified row list — one row per non-empty typed field, plus every
+   * untyped ad-hoc row, see `filtersToAdvancedRows`. */
+  rows: UnifiedFilterRow[];
+  onUpdateRow: (row: UnifiedFilterRow, next: AdvancedFilterRow) => void;
+  onRemoveRow: (row: UnifiedFilterRow) => void;
+  onAddRow: () => void;
+  /** CS team options (`creGroupId` → display name) for the `creTeam` row —
+   * fetched data, not part of the static catalogue. */
+  creTeamOptions: { value: string; label: string }[];
+  /** SRE team options (`sreGroupId` → display name) for the `sreTeam` row —
+   * same reasoning as `creTeamOptions`. */
   sreTeamOptions: { value: string; label: string }[];
+  /** Known email → name pairs for the `assignedUserId` row's value input
+   * (`AsyncAssigneeMultiSelect`), so already-selected chips are labelled
+   * before any search has run — same seed the Simple grid's own "Assignee"
+   * control uses. */
+  assigneeNameSeed?: Map<string, string>;
+  /** Known id → name pairs for the `projectId` row's value input
+   * (`AsyncProjectMultiSelect`) — same seed the Simple grid's own "Project"
+   * control uses. */
+  projectNameSeed?: Map<string, string>;
 }
 
 /** "YYYY-MM-DD" to a local-midnight Date (avoids the UTC-parse day-shift
@@ -168,28 +184,40 @@ function splitCsv(raw: string): string[] {
 }
 
 /**
- * Ad-hoc "field → operator → value" filter row builder, additive to the
- * dedicated bar controls (severity, state, case type, work state, engagement
- * type, assignee, project, product) above it — those already cover their own
- * fields well and are never offered here (see `advancedFilters.ts`'s field
- * catalogue). Each row becomes one extra `BeCaseFieldFilter` entry in the
- * `/cases/search` payload (see `caseSearchPayload.ts`).
+ * Strips a {@link UnifiedFilterRow}'s `origin`/`arrayIndex` bookkeeping back
+ * down to a plain {@link AdvancedFilterRow} before spreading it into an edit.
+ * Every `onUpdateRow(row, { ...row, ... })`-shaped call site below needs
+ * this — `UnifiedFilterRow extends AdvancedFilterRow`, so `{ ...row, ... }`
+ * type-checks fine but silently carries `origin`/`arrayIndex` into what's
+ * supposed to be a clean row, and (via the "stays in the untyped array"
+ * branch of `updateUnifiedRow`) that cruft would otherwise land inside a
+ * `filters.advancedFilters` entry — state that round-trips through the URL
+ * and the `/cases/search` payload builder, neither of which expects it.
+ */
+function asRow(row: AdvancedFilterRow): AdvancedFilterRow {
+  return { field: row.field, op: row.op, values: row.values };
+}
+
+/**
+ * The unified "Advanced filters" field/op/value row builder — every field
+ * `/cases/search` accepts (see `advancedFilters.ts`'s catalogue), including
+ * the ones that also have a dedicated Simple-grid control. A row's field is
+ * itself a pickable dropdown (not fixed per row): picking, say, "Severity"
+ * here edits the exact same `filters.severities` the Simple grid's own
+ * "Severity" control does (see `filterFieldAdapters.ts`'s typed-adapter
+ * registry) — there is only ever one place a given predicate lives, this
+ * builder just offers a second, more flexible way to edit it.
  */
 export default function AdvancedFiltersBuilder({
   rows,
-  onChange,
+  onUpdateRow,
+  onRemoveRow,
+  onAddRow,
+  creTeamOptions,
   sreTeamOptions,
+  assigneeNameSeed,
+  projectNameSeed,
 }: AdvancedFiltersBuilderProps): JSX.Element {
-  const updateRow = (index: number, next: AdvancedFilterRow): void => {
-    onChange(rows.map((r, i) => (i === index ? next : r)));
-  };
-  const removeRow = (index: number): void => {
-    onChange(rows.filter((_, i) => i !== index));
-  };
-  const addRow = (): void => {
-    onChange([...rows, defaultAdvancedFilterRow()]);
-  };
-
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       <Typography variant="subtitle2" color="text.secondary">
@@ -198,9 +226,16 @@ export default function AdvancedFiltersBuilder({
       {rows.map((row, index) => {
         const fieldMeta = getAdvancedFilterFieldMeta(row.field);
         const opMeta = getAdvancedFilterOpMeta(row.field, row.op);
+        // Stable-ish key: typed rows are keyed by field+op (there is only
+        // ever one row per field+op, whether typed or not), array rows by
+        // their array index — matches how `updateUnifiedRow` addresses them.
+        const rowKey =
+          row.origin === "typed"
+            ? `typed-${row.field}-${row.op}`
+            : `array-${row.arrayIndex}`;
         return (
           <Box
-            key={`advanced-filter-row-${index}`}
+            key={rowKey}
             sx={{ display: "flex", gap: 1, alignItems: "flex-start", flexWrap: "wrap" }}
           >
             <FormControl size="small" sx={{ minWidth: 200 }}>
@@ -213,7 +248,7 @@ export default function AdvancedFiltersBuilder({
                   const nextField = e.target.value as AdvancedFilterField;
                   const nextFieldMeta = getAdvancedFilterFieldMeta(nextField);
                   const nextOp = nextFieldMeta?.ops[0]?.op ?? row.op;
-                  updateRow(index, { field: nextField, op: nextOp, values: [] });
+                  onUpdateRow(row, { field: nextField, op: nextOp, values: [] });
                 }}
               >
                 {ADVANCED_FILTER_FIELDS.map((m) => (
@@ -231,7 +266,7 @@ export default function AdvancedFiltersBuilder({
                 label="Operator"
                 value={row.op}
                 onChange={(e) => {
-                  updateRow(index, { ...row, op: e.target.value as typeof row.op, values: [] });
+                  onUpdateRow(row, { ...asRow(row), op: e.target.value as typeof row.op, values: [] });
                 }}
               >
                 {(fieldMeta?.ops ?? []).map((o) => (
@@ -250,7 +285,9 @@ export default function AdvancedFiltersBuilder({
                   label="Value(s)"
                   placeholder={fieldMeta?.placeholder ?? "Comma-separated values"}
                   value={row.values.join(", ")}
-                  onChange={(e) => updateRow(index, { ...row, values: splitCsv(e.target.value) })}
+                  onChange={(e) =>
+                    onUpdateRow(row, { ...asRow(row), values: splitCsv(e.target.value) })
+                  }
                   helperText={
                     fieldMeta?.suggestions?.length
                       ? `Suggestions: ${fieldMeta.suggestions.join(", ")}`
@@ -263,19 +300,56 @@ export default function AdvancedFiltersBuilder({
                   id={`advanced-filter-value-${index}`}
                   label="Value(s)"
                   values={row.values}
-                  // `sreTeam`'s options are fetched data (the team registry),
-                  // not part of the static catalogue -- see the
-                  // `sreTeamOptions` prop's own doc comment.
+                  // `creTeam`/`sreTeam` options are fetched data (the team
+                  // registry), not part of the static catalogue -- see
+                  // `creTeamOptions`/`sreTeamOptions`'s own doc comments.
                   options={
-                    row.field === "sreTeam" ? sreTeamOptions : (fieldMeta?.options ?? [])
+                    row.field === "creTeam"
+                      ? creTeamOptions
+                      : row.field === "sreTeam"
+                        ? sreTeamOptions
+                        : (fieldMeta?.options ?? [])
                   }
-                  onChange={(next) => updateRow(index, { ...row, values: next })}
+                  onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next })}
                 />
               )}
               {opMeta?.valueKind === "asyncEmailMultiSelect" && (
                 <AsyncCreatedByMultiSelect
                   values={row.values}
-                  onChange={(next) => updateRow(index, { ...row, values: next })}
+                  onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next })}
+                />
+              )}
+              {opMeta?.valueKind === "asyncAssigneeMultiSelect" && (
+                <AsyncAssigneeMultiSelect
+                  id={`advanced-filter-value-${index}`}
+                  label="Value(s)"
+                  values={row.values}
+                  onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next })}
+                  nameSeed={assigneeNameSeed}
+                />
+              )}
+              {opMeta?.valueKind === "asyncProjectMultiSelect" && (
+                <AsyncProjectMultiSelect
+                  id={`advanced-filter-value-${index}`}
+                  label="Value(s)"
+                  values={row.values}
+                  onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next })}
+                  nameSeed={projectNameSeed}
+                />
+              )}
+              {opMeta?.valueKind === "asyncProductMultiSelect" && (
+                <ProductNameMultiSelect
+                  id={`advanced-filter-value-${index}`}
+                  label="Value(s)"
+                  values={row.values}
+                  onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next })}
+                />
+              )}
+              {opMeta?.valueKind === "asyncTagMultiSelect" && (
+                <AsyncTagMultiSelect
+                  id={`advanced-filter-value-${index}`}
+                  values={row.values}
+                  onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next })}
                 />
               )}
               {opMeta?.valueKind === "text" && (
@@ -286,7 +360,10 @@ export default function AdvancedFiltersBuilder({
                   placeholder={fieldMeta?.placeholder}
                   value={row.values[0] ?? ""}
                   onChange={(e) =>
-                    updateRow(index, { ...row, values: e.target.value ? [e.target.value] : [] })
+                    onUpdateRow(row, {
+                      ...asRow(row),
+                      values: e.target.value ? [e.target.value] : [],
+                    })
                   }
                 />
               )}
@@ -298,7 +375,10 @@ export default function AdvancedFiltersBuilder({
                   label="Value"
                   value={row.values[0] ?? ""}
                   onChange={(e) =>
-                    updateRow(index, { ...row, values: e.target.value ? [e.target.value] : [] })
+                    onUpdateRow(row, {
+                      ...asRow(row),
+                      values: e.target.value ? [e.target.value] : [],
+                    })
                   }
                 />
               )}
@@ -306,7 +386,7 @@ export default function AdvancedFiltersBuilder({
                 <DateOrPresetValueInput
                   key={`${row.field}-${row.op}`}
                   value={row.values[0] ?? ""}
-                  onChange={(next) => updateRow(index, { ...row, values: next ? [next] : [] })}
+                  onChange={(next) => onUpdateRow(row, { ...asRow(row), values: next ? [next] : [] })}
                 />
               )}
               {(opMeta?.valueKind === "none" || opMeta?.valueKind === "currentUser") && (
@@ -319,7 +399,7 @@ export default function AdvancedFiltersBuilder({
             <IconButton
               size="small"
               aria-label="Remove filter row"
-              onClick={() => removeRow(index)}
+              onClick={() => onRemoveRow(row)}
               sx={{ mt: 0.5 }}
             >
               <Trash2 size={16} />
@@ -328,7 +408,7 @@ export default function AdvancedFiltersBuilder({
         );
       })}
       <Box>
-        <Button size="small" variant="outlined" startIcon={<Plus size={16} />} onClick={addRow}>
+        <Button size="small" variant="outlined" startIcon={<Plus size={16} />} onClick={onAddRow}>
           Add filter
         </Button>
       </Box>

@@ -18,15 +18,27 @@ import type { BeCaseFieldFilter, BeCaseFieldFilterOp } from "@api/backend/types"
 import { BE_CURRENT_USER_FILTER_PLACEHOLDER } from "@api/backend/types";
 import { ALL_ISSUE_TYPES, ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
 import { resolveRelativeDatePlaceholder } from "@utils/resolveRelativeDatePlaceholder";
+import {
+  ENGAGEMENT_TYPE_OPTIONS,
+  ONBOARDING_STATUS_OPTIONS,
+  SEVERITY_OPTIONS,
+  STATE_OPTIONS,
+  WORK_STATE_OPTIONS,
+} from "@features/csm-cases/utils/caseFilterOptions";
+import { ALL_CASE_TYPES, CASE_TYPE_LABEL } from "@features/csm-cases/utils/caseType";
 
 /**
- * The `POST /cases/search` fields the dedicated bar controls in
- * `CasesFilterBar.tsx` (severity, state, case type, work state, engagement
- * type, assignee, project, product, tags, onboarding status, CS team) do NOT
- * already cover, exposed instead through the generic "Advanced filters"
- * field/op/value builder. Every one of these is a real, backend-accepted
- * `BeCaseFieldFilterField` — see `types.ts`'s own doc comment on that enum,
- * which mirrors the entity-service's `caseFilterFieldSet` exactly.
+ * The complete `POST /cases/search` field/op catalogue offered by the
+ * unified "Advanced filters" builder — every field/op the backend accepts,
+ * whether or not it also has a value slot on `CasesFilters` (see
+ * `filterFieldAdapters.ts`'s per-field typed-adapter registry, which is what
+ * makes switching between Simple and Advanced lossless: a field with a typed
+ * adapter is rendered here from — and written back to — the same real
+ * `CasesFilters` property the Simple grid's own dedicated control reads,
+ * never a second, parallel copy of it). Every one of these is a real,
+ * backend-accepted `BeCaseFieldFilterField` — see `types.ts`'s own doc
+ * comment on that enum, which mirrors the entity-service's
+ * `caseFilterFieldSet` exactly.
  *
  * Deliberately excludes two fields a hand-off brief once listed
  * (`accountId`, `resolvedOn`): neither appears in `BeCaseFieldFilterField`,
@@ -34,16 +46,28 @@ import { resolveRelativeDatePlaceholder } from "@utils/resolveRelativeDatePlaceh
  * contract change, out of scope for this FE-only builder. Flagged in
  * `PROGRESS.md`, not silently worked around.
  *
- * Also deliberately excludes `tag`, `projectOnboardingStatus`, and `creTeam`
- * even though all three are real, accepted fields: each already has its own
- * dedicated bar control in `CasesFilterBar.tsx` (the "Tags" tri-state
- * control, "Onboarding status", and "Team" respectively). Offering a second,
- * generic advanced-filter row for the same backend field alongside its own
- * dedicated control would be two independent UI paths writing the same
- * `/cases/search` predicate — confusing, not additive. Removed 2026-08-31
- * (they were briefly in this catalogue before the duplication was caught).
+ * `tag`, `projectOnboardingStatus`, and `creTeam` were briefly excluded here
+ * (2026-08-31) on the theory that a field with its own dedicated Simple-grid
+ * control shouldn't also get a second, generic row — that created two
+ * independent UI paths writing the same predicate. The unification that
+ * follows replaces that with a single rule instead: every field lives here,
+ * and a field with a typed adapter is *rendered differently* depending on
+ * mode (a dedicated control in Simple, a generic row in Advanced) while
+ * writing to the exact same `CasesFilters` property either way — so there is
+ * only ever one UI path per field, not two.
  */
 export type AdvancedFilterField =
+  | "severity"
+  | "state"
+  | "workState"
+  | "type"
+  | "assignedUserId"
+  | "projectId"
+  | "product"
+  | "creTeam"
+  | "tag"
+  | "engagementType"
+  | "projectOnboardingStatus"
   | "projectType"
   | "issueType"
   | "sreTeam"
@@ -86,8 +110,27 @@ export type AdvancedFilterValueKind =
   | "currentUser"
   /** Multi-value, backend-directory-search-backed email picker (type to
    * search, same directory `/users/search` the assignee filter already
-   * searches) rather than hand-typed emails. */
-  | "asyncEmailMultiSelect";
+   * searches) rather than hand-typed emails. `createdBy`'s `in` op only —
+   * `assignedUserId` uses {@link AdvancedFilterValueKind.asyncAssigneeMultiSelect}
+   * instead (it also offers the `@me` sentinel, `createdBy` does not). */
+  | "asyncEmailMultiSelect"
+  /** {@link AsyncAssigneeMultiSelect} — the `assignedUserId` row's value
+   * input, same user-directory search plus the pinned `@me` sentinel the
+   * Simple grid's own "Assignee" control uses. */
+  | "asyncAssigneeMultiSelect"
+  /** {@link AsyncProjectMultiSelect} — the `projectId` row's value input,
+   * same type-to-search project picker the Simple grid's own "Project"
+   * control uses. */
+  | "asyncProjectMultiSelect"
+  /** {@link ProductNameMultiSelect} — the `product` row's value input, same
+   * type-to-search product-name picker the Simple grid's own "Product"
+   * control uses. */
+  | "asyncProductMultiSelect"
+  /** {@link AsyncTagMultiSelect} — the `tag` row's value input (both `in`
+   * and `notIn` ops), same `/tags/search` type-ahead the removed dedicated
+   * "Tags" bar control used, minus its tri-state cycling (the row's own op
+   * carries the include/exclude direction now). */
+  | "asyncTagMultiSelect";
 
 export interface AdvancedFilterOpMeta {
   op: BeCaseFieldFilterOp;
@@ -124,6 +167,11 @@ const ISSUE_TYPE_OPTIONS: { value: string; label: string }[] = ALL_ISSUE_TYPES.m
   label: ISSUE_TYPE_LABEL[v],
 }));
 
+const CASE_TYPE_OPTIONS: { value: string; label: string }[] = ALL_CASE_TYPES.map((v) => ({
+  value: v,
+  label: CASE_TYPE_LABEL[v],
+}));
+
 const ESCALATION_LEVEL_OPTIONS: { value: string; label: string }[] = [
   "0",
   "1",
@@ -141,6 +189,77 @@ const ESCALATION_LEVEL_OPTIONS: { value: string; label: string }[] = [
  * something to extend speculatively.
  */
 export const ADVANCED_FILTER_FIELDS: AdvancedFilterFieldMeta[] = [
+  {
+    field: "severity",
+    label: "Severity",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
+    options: SEVERITY_OPTIONS,
+  },
+  {
+    field: "state",
+    label: "State",
+    ops: [
+      { op: "in", label: "is one of", valueKind: "multiSelect" },
+      { op: "notIn", label: "is not one of", valueKind: "multiSelect" },
+    ],
+    options: STATE_OPTIONS,
+  },
+  {
+    field: "workState",
+    label: "Work state",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
+    options: WORK_STATE_OPTIONS,
+  },
+  {
+    field: "type",
+    label: "Case type",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
+    options: CASE_TYPE_OPTIONS,
+  },
+  {
+    field: "assignedUserId",
+    label: "Assignee",
+    ops: [{ op: "in", label: "is one of", valueKind: "asyncAssigneeMultiSelect" }],
+  },
+  {
+    field: "projectId",
+    label: "Project",
+    ops: [{ op: "in", label: "is one of", valueKind: "asyncProjectMultiSelect" }],
+  },
+  {
+    field: "product",
+    label: "Product",
+    ops: [{ op: "in", label: "is one of", valueKind: "asyncProductMultiSelect" }],
+  },
+  {
+    // Options are supplied at render time by `AdvancedFiltersBuilder` (the
+    // `creTeamOptions` prop, computed in `CasesFilterBar.tsx` from the same
+    // `useTeams(true)` fetch the old "Team" bar control used) — fetched
+    // data, not a fixed enum, same reasoning as `sreTeam` below.
+    field: "creTeam",
+    label: "Team",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
+  },
+  {
+    field: "tag",
+    label: "Tag",
+    ops: [
+      { op: "in", label: "includes", valueKind: "asyncTagMultiSelect" },
+      { op: "notIn", label: "excludes", valueKind: "asyncTagMultiSelect" },
+    ],
+  },
+  {
+    field: "engagementType",
+    label: "Engagement type",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
+    options: ENGAGEMENT_TYPE_OPTIONS,
+  },
+  {
+    field: "projectOnboardingStatus",
+    label: "Onboarding status",
+    ops: [{ op: "in", label: "is one of", valueKind: "multiSelect" }],
+    options: ONBOARDING_STATUS_OPTIONS,
+  },
   {
     field: "projectType",
     label: "Project type",

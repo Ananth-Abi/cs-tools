@@ -512,7 +512,6 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
     await waitFor(() => expect(screen.getByText("CS-1")).toBeInTheDocument());
     expect(screen.getByRole("combobox", { name: "Severity" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "State" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Tags" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Active filters" })).not.toBeInTheDocument();
 
     expect(postMock).toHaveBeenCalledWith(
@@ -599,11 +598,14 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
     expect(lastCall?.[1]).toMatchObject({ filters: { searchQuery: "disk" } });
   });
 
-  // The tri-state `TagsMultiSelect` (digiops-cs#2907) means a widget's
-  // `tag notIn [...]` seeds `excludeTags` directly now -- no more catalog
-  // fetch, no more display/query divergence. What's shown and what's
-  // queried are the same `CasesFilters` value from the start.
-  it("seeds a widget's tag notIn directly into excludeTags -- shown as an excluded chip and queried as the same notIn condition", async () => {
+  // `tag`/`excludeTags` is Advanced-mode-only now (see `CasesFilterBar.tsx`'s
+  // mode toggle): a widget's `tag notIn [...]` seeds `excludeTags` directly
+  // (no catalog fetch, no display/query divergence), which also means
+  // `isSimpleRepresentable` is false, so the preview mounts straight into
+  // Advanced mode with the `tag`/`notIn` row already showing that value --
+  // what's shown and what's queried are the same `CasesFilters` value from
+  // the start, same invariant as before, just via the unified builder now.
+  it("seeds a widget's tag notIn directly into excludeTags -- shown in the Advanced-mode tag row and queried as the same notIn condition", async () => {
     mockPost({ cases: { cases: [], total: 0, limit: 10, offset: 0 } });
 
     renderAt(
@@ -618,7 +620,8 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
     expect(postMock).not.toHaveBeenCalledWith("/tags/search", expect.anything());
 
     await waitFor(() => {
-      expect(screen.getByText("- s_dip")).toBeInTheDocument();
+      expect(screen.getByText("Advanced filters")).toBeInTheDocument();
+      expect(screen.getByText("s_dip")).toBeInTheDocument();
     });
 
     await waitFor(() => {
@@ -648,7 +651,7 @@ describe("DashboardWidgetPreviewPage — case-family widgets get the real, edita
       }),
     );
 
-    await waitFor(() => expect(screen.getByText("- s_dip")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("s_dip")).toBeInTheDocument());
 
     fireEvent.change(screen.getByPlaceholderText(/search by case #/i), {
       target: { value: "disk" },

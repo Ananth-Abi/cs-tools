@@ -236,7 +236,12 @@ describe("advanced filters (`af` param)", () => {
     expect(round.advancedFilters).toEqual(advancedFilters);
   });
 
-  it("round-trips a value-less op (`escalation isNotEmpty`) without dropping it", () => {
+  // `escalation` now has a typed `CasesFilters` slot (`hasEscalation`, see
+  // `filterFieldAdapters.ts`'s typed-adapter registry) — an `af` row
+  // targeting it is folded (`normalizeCasesFilters`) into that real property
+  // on read rather than staying a dangling `advancedFilters` entry, so the
+  // round-trip is still lossless, just visible on a different property now.
+  it("round-trips a value-less op (`escalation isNotEmpty`) into the typed `hasEscalation` field, not a dangling `af` row", () => {
     const advancedFilters: AdvancedFilterRow[] = [
       { field: "escalation", op: "isNotEmpty", values: [] },
     ];
@@ -244,17 +249,22 @@ describe("advanced filters (`af` param)", () => {
     const href = writeCasesFiltersToUrl(filters);
     expect(href.get("af")).not.toBeNull();
     const round = readCasesFiltersFromUrl(href);
-    expect(round.advancedFilters).toEqual(advancedFilters);
+    expect(round.hasEscalation).toBe(true);
+    expect(round.advancedFilters).toEqual([]);
   });
 
-  it("round-trips a date `gte`/`lte` pair on the same field as two distinct rows", () => {
+  // `createdOn`/`updatedOn`/`closedOn` also now have typed slots
+  // (`updatedOnGte`/`updatedOnLte`, ...) — same normalization as above.
+  it("round-trips a date `gte`/`lte` pair on the same field into the typed `updatedOnGte`/`updatedOnLte` fields", () => {
     const advancedFilters: AdvancedFilterRow[] = [
       { field: "updatedOn", op: "gte", values: ["2026-01-01"] },
       { field: "updatedOn", op: "lte", values: ["2026-03-31"] },
     ];
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
     const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
-    expect(round.advancedFilters).toEqual(advancedFilters);
+    expect(round.updatedOnGte).toBe("2026-01-01");
+    expect(round.updatedOnLte).toBe("2026-03-31");
+    expect(round.advancedFilters).toEqual([]);
   });
 
   it("round-trips an in-progress row (field/op picked, no value yet) rather than dropping it", () => {

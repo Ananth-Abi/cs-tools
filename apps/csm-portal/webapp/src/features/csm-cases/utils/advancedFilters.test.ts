@@ -22,35 +22,54 @@ import {
   getAdvancedFilterOpMeta,
 } from "./advancedFilters";
 
-describe("ADVANCED_FILTER_FIELDS — duplication fix", () => {
-  it("no longer offers tag, projectOnboardingStatus, or creTeam (each has its own dedicated bar control)", () => {
-    const fields = ADVANCED_FILTER_FIELDS.map((m) => m.field);
-    expect(fields).not.toContain("tag");
-    expect(fields).not.toContain("projectOnboardingStatus");
-    expect(fields).not.toContain("creTeam");
-  });
-
-  it("still offers every other previously-supported field", () => {
+describe("ADVANCED_FILTER_FIELDS — full unification", () => {
+  it("offers every field, including the ones that also have a dedicated Simple-grid control", () => {
     const fields = ADVANCED_FILTER_FIELDS.map((m) => m.field);
     expect(fields).toEqual(
       expect.arrayContaining([
+        // Fields with a typed `CasesFilters` slot AND a Simple-grid control
+        // (see `filterFieldAdapters.ts`'s typed-adapter registry) — the
+        // whole point of the unification is that these are no longer
+        // excluded here just because Simple mode also renders them.
+        "severity",
+        "state",
+        "workState",
+        "type",
+        "assignedUserId",
+        "projectId",
+        "product",
+        "creTeam",
+        "tag",
+        "engagementType",
+        "projectOnboardingStatus",
+        // Fields with a typed slot but no Simple-grid control of their own.
         "projectType",
-        "issueType",
         "sreTeam",
+        "taskSLABusinessElapsedPercent",
+        "escalationLevel",
+        "escalation",
+        "createdOn",
+        "updatedOn",
+        "closedOn",
+        // Fields with no typed slot at all (the untyped escape hatch).
+        "issueType",
         "deploymentId",
         "number",
         "internalId",
         "resolutionNotes",
         "parentId",
-        "taskSLABusinessElapsedPercent",
-        "escalationLevel",
-        "escalation",
         "createdBy",
-        "createdOn",
-        "updatedOn",
-        "closedOn",
       ]),
     );
+  });
+
+  it("`tag` offers both `in` (\"includes\") and `notIn` (\"excludes\") — replaces the old tri-state cycling control", () => {
+    expect(getAdvancedFilterOpMeta("tag", "in")?.valueKind).toBe("asyncTagMultiSelect");
+    expect(getAdvancedFilterOpMeta("tag", "notIn")?.valueKind).toBe("asyncTagMultiSelect");
+  });
+
+  it("`state` offers both `in` and `notIn`, same as the Simple grid's tri-state control", () => {
+    expect(getAdvancedFilterFieldMeta("state")?.ops.map((o) => o.op)).toEqual(["in", "notIn"]);
   });
 });
 
