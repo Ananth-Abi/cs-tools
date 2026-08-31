@@ -256,12 +256,42 @@ describe("advanced filters (`af` param)", () => {
     expect(round.advancedFilters).toEqual(advancedFilters);
   });
 
-  it("drops an incomplete row (no value where the op requires one) rather than writing it to the URL", () => {
+  it("round-trips an in-progress row (field/op picked, no value yet) rather than dropping it", () => {
+    // Regression test for the "Add filter" bug: `CsmIssuesView` treats the
+    // URL as the single source of truth (`filters =
+    // readCasesFiltersFromUrl(searchParams)`), so a freshly-added row with no
+    // value yet used to vanish within the same tick — `writeAdvancedFiltersParam`
+    // filtered it out before it ever reached the URL, and the very next
+    // re-read from that URL then rendered zero rows. An incomplete row must
+    // survive this URL round trip (it's still correctly excluded from the
+    // `/cases/search` request payload — see `caseSearchPayload.test.ts`).
     const advancedFilters: AdvancedFilterRow[] = [
       { field: "number", op: "eq", values: [] },
     ];
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
-    expect(writeCasesFiltersToUrl(filters).get("af")).toBeNull();
+    const href = writeCasesFiltersToUrl(filters);
+    expect(href.get("af")).not.toBeNull();
+    const round = readCasesFiltersFromUrl(href);
+    expect(round.advancedFilters).toEqual(advancedFilters);
+  });
+
+  it("round-trips a row whose op takes a value but none has been typed yet (empty `values` array)", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "tag", op: "in", values: [] },
+    ];
+    const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, advancedFilters };
+    const round = readCasesFiltersFromUrl(writeCasesFiltersToUrl(filters));
+    expect(round.advancedFilters).toEqual(advancedFilters);
+  });
+
+  it("does not count an in-progress (incomplete) row toward the active-filter badge, even though it now round-trips", () => {
+    const advancedFilters: AdvancedFilterRow[] = [
+      { field: "tag", op: "in", values: ["a"] },
+      { field: "number", op: "eq", values: [] },
+    ];
+    expect(
+      countActiveFilters({ ...DEFAULT_CASES_FILTERS, advancedFilters }),
+    ).toBe(1);
   });
 
   it("silently drops an unknown field/op on a hand-edited or stale `af` param instead of throwing", () => {

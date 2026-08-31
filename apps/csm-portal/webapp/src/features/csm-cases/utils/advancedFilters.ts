@@ -367,6 +367,14 @@ const MAX_ADVANCED_FILTER_VALUES_PER_ROW = 50;
  * `casesFiltersUrl.ts`: a malformed param, an unknown field/op, or an
  * over-long/over-many value list is dropped rather than raising — a
  * hand-edited or stale URL degrades to "that one row is gone", not a crash.
+ *
+ * Deliberately does **not** drop an incomplete row (field+op chosen, no
+ * value yet) — those must round-trip through the URL so the builder can
+ * re-render an in-progress row after `setSearchParams` fires (every other
+ * piece of filter state in this URL is edited the same way: write, re-read,
+ * re-render). Only {@link writeCaseSearchFilters}/`buildCaseSearchFilters`
+ * (the `/cases/search` request-payload boundary) may skip an incomplete row
+ * — never this URL-persistence boundary.
  */
 export function parseAdvancedFiltersParam(raw: string | null): AdvancedFilterRow[] {
   if (!raw) return [];
@@ -396,22 +404,34 @@ export function parseAdvancedFiltersParam(raw: string | null): AdvancedFilterRow
         .slice(0, MAX_ADVANCED_FILTER_VALUES_PER_ROW);
     }
     const row: AdvancedFilterRow = { field: field as AdvancedFilterField, op: op as BeCaseFieldFilterOp, values };
-    if (isCompleteAdvancedFilterRow(row)) rows.push(row);
+    rows.push(row);
   }
   return rows;
 }
 
 /**
- * Serializes only *complete* rows (see {@link isCompleteAdvancedFilterRow})
- * as a single JSON-encoded `af` param value — `URLSearchParams` handles the
- * percent-encoding, so no extra escaping is needed here. An in-progress row
- * (field picked, no value yet) is deliberately not persisted: reloading mid-
- * edit loses only the draft, never emits an empty predicate to the backend.
+ * Serializes every row (complete or not) as a single JSON-encoded `af` param
+ * value — `URLSearchParams` handles the percent-encoding, so no extra
+ * escaping is needed here.
+ *
+ * An in-progress row (field/op picked, no value yet) IS persisted here: this
+ * is purely the URL-persistence boundary, the same one every other filter
+ * field round-trips through, and dropping incomplete rows here — rather than
+ * only at the `/cases/search` request-payload boundary
+ * ({@link advancedFilterRowToFieldFilter}, gated by
+ * {@link isCompleteAdvancedFilterRow} in `caseSearchPayload.ts`) — is exactly
+ * the bug this comment used to describe: `CsmIssuesView` treats the URL as
+ * the single source of truth (`filters = readCasesFiltersFromUrl(searchParams)`),
+ * so a row dropped here on write never survives the round trip back into
+ * `AdvancedFiltersBuilder`'s render — the just-added "Add filter" row
+ * vanished within the same tick, before the user could ever pick a value.
+ * The backend never sees an empty predicate regardless, because
+ * `advancedFilterRowToFieldFilter` still filters incomplete rows out at
+ * request-build time.
  */
 export function writeAdvancedFiltersParam(rows: AdvancedFilterRow[]): string | null {
-  const complete = rows.filter(isCompleteAdvancedFilterRow);
-  if (complete.length === 0) return null;
+  if (rows.length === 0) return null;
   return JSON.stringify(
-    complete.map((r) => (r.values.length > 0 ? [r.field, r.op, r.values] : [r.field, r.op])),
+    rows.map((r) => (r.values.length > 0 ? [r.field, r.op, r.values] : [r.field, r.op])),
   );
 }
