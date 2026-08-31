@@ -62,8 +62,18 @@ vi.mock("@asgardeo/react", () => ({
   }),
 }));
 
+const appLayoutPropsMock = vi.fn();
 vi.mock("@layouts/AppLayout", () => ({
-  default: ({ children }: { children?: React.ReactNode }) => <>{children}</>,
+  default: ({
+    children,
+    minimalHeader = false,
+  }: {
+    children?: React.ReactNode;
+    minimalHeader?: boolean;
+  }) => {
+    appLayoutPropsMock({ minimalHeader });
+    return <>{children}</>;
+  },
 }));
 
 // Mutable so individual tests can simulate a /users/me outcome. Defaults to
@@ -82,16 +92,6 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
     isLoading: currentUserState.isLoading,
     isError: currentUserState.isError,
     error: currentUserState.error,
-  }),
-}));
-
-const setIsErrorPageDisplayedMock = vi.fn();
-vi.mock("@context/error-page/ErrorPageContext", () => ({
-  useErrorPageContext: () => ({
-    isErrorPageDisplayed: false,
-    setIsErrorPageDisplayed: setIsErrorPageDisplayedMock,
-    isProjectSuspended: false,
-    setIsProjectSuspended: vi.fn(),
   }),
 }));
 
@@ -290,7 +290,14 @@ describe("AuthGuard's response to a /users/me failure once signed in", () => {
     expect(
       screen.getByText("You don't have access to this portal yet"),
     ).toBeInTheDocument();
-    expect(setIsErrorPageDisplayedMock).toHaveBeenCalledWith(true);
+    // minimalHeader (which also suppresses the sidebar in the real AppLayout)
+    // must be true on every call, including the very first — it's derived
+    // synchronously from the same render as `children`, not settled a render
+    // later via an effect, so the sidebar never flashes on screen first.
+    for (const call of appLayoutPropsMock.mock.calls) {
+      expect(call[0]).toEqual({ minimalHeader: true });
+    }
+    expect(appLayoutPropsMock).toHaveBeenCalled();
   });
 
   it("shows the not-authorized page when /users/me fails with 403", async () => {
@@ -333,6 +340,7 @@ describe("AuthGuard's response to a /users/me failure once signed in", () => {
     expect(
       screen.queryByText("You don't have access to this portal yet"),
     ).not.toBeInTheDocument();
+    expect(appLayoutPropsMock).toHaveBeenCalledWith({ minimalHeader: false });
   });
 
   it("does not show the not-authorized page for an unrelated /users/me failure (e.g. 500)", async () => {
@@ -354,5 +362,6 @@ describe("AuthGuard's response to a /users/me failure once signed in", () => {
     expect(
       screen.queryByText("You don't have access to this portal yet"),
     ).not.toBeInTheDocument();
+    expect(appLayoutPropsMock).toHaveBeenCalledWith({ minimalHeader: false });
   });
 });

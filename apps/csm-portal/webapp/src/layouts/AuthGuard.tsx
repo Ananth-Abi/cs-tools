@@ -25,7 +25,6 @@ import {
   CurrentUserProvider,
   useCurrentUser,
 } from "@context/current-user/CurrentUserContext";
-import { useErrorPageContext } from "@context/error-page/ErrorPageContext";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
 import NoPortalAccessPage from "@components/error/NoPortalAccessPage";
 import { useLogger } from "@hooks/useLogger";
@@ -137,22 +136,18 @@ function SignInRedirect(): JSX.Element {
  * Renders through `AppLayout` itself (not a bare error layout) so the real
  * header/branding still shows — this is a signed-in user, just one without
  * access yet, not someone who has left the portal. The sidebar has nothing
- * to navigate to in this state, so it's suppressed via `ErrorPageContext`,
- * the same flag `AppLayout` already checks for any other full-page state.
+ * to navigate to in this state, so it's suppressed via `AppLayout`'s
+ * `minimalHeader` prop — applied in the very same render as `children`
+ * below, not a context flag settled a render later via an effect, so the
+ * sidebar never flashes on screen for a frame before disappearing.
  *
  * @returns {JSX.Element} AppLayout, showing the routed page or the
  * "not authorized" page in its content area.
  */
 function AuthorizedAppShell(): JSX.Element {
   const { isLoading, isError, error } = useCurrentUser();
-  const { setIsErrorPageDisplayed } = useErrorPageContext();
   const notAuthorized =
     !isLoading && isError && (isUnauthorizedError(error) || isForbiddenError(error));
-
-  useEffect(() => {
-    setIsErrorPageDisplayed(notAuthorized);
-    return () => setIsErrorPageDisplayed(false);
-  }, [notAuthorized, setIsErrorPageDisplayed]);
 
   if (notAuthorized) {
     return (
