@@ -608,3 +608,56 @@ describe("CasesFilterBar — search box placeholder", () => {
       "Search by case #, subject, customer, project, assignee…",
     );
   });
+});
+
+describe("CasesFilterBar — per-consumer hidden Simple-mode controls", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockResolvedValue({ teams: [] });
+  });
+
+  it("shows Onboarding status and CRE Team by default", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS });
+    expect(
+      screen.getByRole("combobox", { name: "Onboarding status" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "CRE Team" })).toBeInTheDocument();
+  });
+
+  it("hides Onboarding status when hideOnboardingStatusFilter is set (e.g. a project-scoped view)", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS }, vi.fn(), {
+      hideOnboardingStatusFilter: true,
+    });
+    expect(
+      screen.queryByRole("combobox", { name: "Onboarding status" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "CRE Team" })).toBeInTheDocument();
+  });
+
+  it("hides CRE Team when hideCreTeamFilter is set (e.g. a project-scoped view)", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS }, vi.fn(), {
+      hideCreTeamFilter: true,
+    });
+    expect(
+      screen.queryByRole("combobox", { name: "CRE Team" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Onboarding status" }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides both when both flags are set, without affecting the Severity control", () => {
+    renderBar({ ...DEFAULT_CASES_FILTERS }, vi.fn(), {
+      hideOnboardingStatusFilter: true,
+      hideCreTeamFilter: true,
+      showSeverityFilter: true,
+    });
+    expect(
+      screen.queryByRole("combobox", { name: "Onboarding status" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "CRE Team" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Severity" })).toBeInTheDocument();
+  });
+});

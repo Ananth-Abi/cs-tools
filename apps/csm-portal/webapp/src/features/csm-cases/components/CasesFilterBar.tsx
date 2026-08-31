@@ -248,6 +248,22 @@ interface CasesFilterBarProps {
   hideProjectFilter?: boolean;
   /** Show the engagement-type multi-select (only relevant when type is locked to engagement). */
   showEngagementTypeFilter?: boolean;
+  /**
+   * Hide the "Onboarding status" Simple-mode control. `onboardingStatuses` is
+   * a per-project attribute, not a per-case one — on a view already scoped to
+   * a single project (e.g. that project's own Work items tab), every case
+   * shown shares the same value, so the control is a no-op that only adds
+   * clutter. The field itself stays in the Advanced-mode catalogue; this only
+   * hides the dedicated Simple control.
+   */
+  hideOnboardingStatusFilter?: boolean;
+  /**
+   * Hide the "CRE Team" Simple-mode control. Same reasoning as
+   * {@link hideOnboardingStatusFilter}: the CS team a case's project is
+   * scoped to is a per-project attribute, a no-op filter on a
+   * single-project-scoped view. Advanced mode still offers the field.
+   */
+  hideCreTeamFilter?: boolean;
 }
 
 // Work state has no bar control of its own (see `buildActiveFilterChips`'s
@@ -486,6 +502,8 @@ export default function CasesFilterBar({
   availableProjects,
   showSeverityFilter = true,
   hideTypeFilter = false,
+  hideOnboardingStatusFilter = false,
+  hideCreTeamFilter = false,
   typeFilterLabel = "Case type",
   hideProjectFilter = false,
   showEngagementTypeFilter = false,
@@ -924,23 +942,25 @@ export default function CasesFilterBar({
                 }
               />
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-              {/* CS team the case's project is scoped to (`creTeam`). Options
-                  are `creGroupId`s (what the filter actually matches on);
-                  labels are team display names, never the raw group-id
-                  UUID. `workStates` has no bar control of its own now (it's
-                  a narrow, rarely hand-picked sub-filter of "state") -- it
-                  still round-trips losslessly via the URL/a saved view/a
-                  dashboard click-through, surfaced as a removable chip
-                  instead (see `buildActiveFilterChips`). */}
-              <MultiSelectField
-                id="cases-filter-cs-team"
-                label="CRE Team"
-                values={filters.csTeams}
-                options={teamOptions}
-                onChange={(next) => onChange({ ...filters, csTeams: next })}
-              />
-            </Grid>
+            {!hideCreTeamFilter && (
+              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
+                {/* CS team the case's project is scoped to (`creTeam`). Options
+                    are `creGroupId`s (what the filter actually matches on);
+                    labels are team display names, never the raw group-id
+                    UUID. `workStates` has no bar control of its own now (it's
+                    a narrow, rarely hand-picked sub-filter of "state") -- it
+                    still round-trips losslessly via the URL/a saved view/a
+                    dashboard click-through, surfaced as a removable chip
+                    instead (see `buildActiveFilterChips`). */}
+                <MultiSelectField
+                  id="cases-filter-cs-team"
+                  label="CRE Team"
+                  values={filters.csTeams}
+                  options={teamOptions}
+                  onChange={(next) => onChange({ ...filters, csTeams: next })}
+                />
+              </Grid>
+            )}
             {showEngagementTypeFilter && (
               <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
                 <MultiSelectField
@@ -982,15 +1002,17 @@ export default function CasesFilterBar({
                 onChange={(next) => onChange({ ...filters, productNames: next })}
               />
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-              <MultiSelectField
-                id="cases-filter-onboarding-status"
-                label="Onboarding status"
-                values={filters.onboardingStatuses}
-                options={ONBOARDING_STATUS_OPTIONS}
-                onChange={(next) => onChange({ ...filters, onboardingStatuses: next })}
-              />
-            </Grid>
+            {!hideOnboardingStatusFilter && (
+              <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
+                <MultiSelectField
+                  id="cases-filter-onboarding-status"
+                  label="Onboarding status"
+                  values={filters.onboardingStatuses}
+                  options={ONBOARDING_STATUS_OPTIONS}
+                  onChange={(next) => onChange({ ...filters, onboardingStatuses: next })}
+                />
+              </Grid>
+            )}
             {!hideProjectFilter && (
               // Last, and wider than every other control: selected project
               // names render as one ellipsized line (see
