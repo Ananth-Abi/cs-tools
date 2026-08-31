@@ -298,9 +298,25 @@ vi.mock("@features/csm-cases/api/useRequestCaseUpdate", () => ({
     isPending: false,
   }),
 }));
+// Two placeholder cards (shape doesn't matter beyond `.length` -- the tab
+// label count is the only thing this page reads from the result;
+// CaseTimeCardsPanel itself is stubbed below and never sees this data).
+// `total` defaults to `cards.length` (no truncation); a test overriding this
+// mock can set `total` higher than `cards.length` to simulate a truncated
+// page and assert the tab count still reflects the real total.
+const useCaseTimeCardsMock = vi.fn();
+function defaultCaseTimeCardsImpl(): unknown {
+  return { data: { cards: [{}, {}], total: 2, truncated: false } };
+}
+useCaseTimeCardsMock.mockImplementation(defaultCaseTimeCardsImpl);
+afterEach(() => {
+  useCaseTimeCardsMock.mockImplementation(defaultCaseTimeCardsImpl);
+});
 vi.mock("@features/csm-timecards/api/useTimeCards", () => ({
   usePostTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
   useUpdateTimeCard: () => ({ mutate: vi.fn(), isPending: false }),
+  useCaseTimeCards: (caseId: string | undefined) =>
+    useCaseTimeCardsMock(caseId),
 }));
 
 // Simple presentational stubs — none of this test's assertions touch these.
@@ -877,6 +893,34 @@ describe("CsmCaseDetailPage — dashless id normalization", () => {
     expect(screen.getByTestId("location-probe")).toHaveTextContent(
       `/cases/${DASHED_ID}`,
     );
+  });
+});
+
+describe("CsmCaseDetailPage — tab label counts", () => {
+  it("shows the time cards count on the 'Time tracking' tab, sourced from useCaseTimeCards", () => {
+    renderPage();
+
+    // Mocked useCaseTimeCards above returns 2 cards -- this was previously
+    // always 0 because the count read `c.timeLogs.length`, and `timeLogs` is
+    // hardcoded to `[]` in useGetCsmCaseDetail and never populated.
+    expect(
+      screen.getByRole("tab", { name: /time tracking \(2\)/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the case's real total on a truncated time-cards page, not the fetched page size", () => {
+    // A case with more time cards than the fetch page limit: only 2 cards
+    // came back, but the case really has 9. The tab badge must read `total`,
+    // not `cards.length`, or it under-reports the case's real count.
+    useCaseTimeCardsMock.mockImplementation(() => ({
+      data: { cards: [{}, {}], total: 9, truncated: true },
+    }));
+
+    renderPage();
+
+    expect(
+      screen.getByRole("tab", { name: /time tracking \(9\)/i }),
+    ).toBeInTheDocument();
   });
 });
 
