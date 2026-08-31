@@ -161,10 +161,13 @@ empty — it still fails and retries normally either way, just silently as far a
 without editing any recipients config. Despite the name, it's not limited to failure alerts: it's
 the single switch for every email this component sends, so `stale_cases_report`'s own report email
 (see "Stale cases report" above) reads the same underlying value directly too, since that email
-isn't sent through `Engine.recordFailure` at all. Failures are still recorded in entity-service and
-logged either way, and a report task still runs and succeeds either way — this only silences the
-email send itself. When it's `false`, `EMAIL_BASE_URL` is also no longer required at startup even
-if recipients are configured, since no email will ever actually be sent — see
+isn't sent through `Engine.recordFailure` at all. For a failed task, `false` only silences the
+email — the failure is still recorded in entity-service and logged either way, and retries proceed
+normally. For `stale_cases_report` specifically, `false` skips the entity-service query and report
+rendering entirely, not just the send (see `stalecases.SendReport`'s own doc comment) — the task
+still succeeds and its ledger row still updates, it just does no work that tick. When
+`ALERTS_ENABLED` is `false`, `EMAIL_BASE_URL` is also no longer required at startup even if
+recipients are configured, since no email will ever actually be sent — see
 cmd/server/main.go's startup check.
 
 **Every single failed attempt sends an alert, not just a final give-up** — there is no "fully

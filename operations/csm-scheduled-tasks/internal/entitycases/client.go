@@ -260,6 +260,11 @@ type searchCasesResponse struct {
 // returned order as given. Paginates through entity-service's own 50-row
 // page cap internally (see searchPageSize/maxSearchPages); the caller
 // always gets one flat slice back.
+//
+// Returns an error, rather than a silently-truncated slice, if the result
+// set is still larger than maxSearchPages*searchPageSize after the last
+// allowed page — a caller building a report from a partial result would
+// otherwise under-report without any indication it happened.
 func (c *Client) SearchOpenCasesOlderThan(ctx context.Context, olderThan time.Duration) ([]Case, error) {
 	cutoff := time.Now().Add(-olderThan).UTC().Format(time.RFC3339)
 
@@ -299,9 +304,15 @@ func (c *Client) SearchOpenCasesOlderThan(ctx context.Context, olderThan time.Du
 
 		offset += searchPageSize
 		if len(resp.Cases) == 0 || offset >= resp.Total {
-			break
+			return all, nil
+		}
+		if page == maxSearchPages-1 {
+			return nil, fmt.Errorf("entitycases: search results exceed the %d-row pagination cap (total=%d) — refusing to return a silently-incomplete report",
+				maxSearchPages*searchPageSize, resp.Total)
 		}
 	}
+	// Unreachable: every iteration above returns before the loop can exit on
+	// its own condition. Required only because the compiler can't prove that.
 	return all, nil
 }
 
