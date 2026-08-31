@@ -21,10 +21,15 @@ import { useLocation, useNavigate } from "react-router";
 import AppLayout from "@layouts/AppLayout";
 import { POST_LOGIN_REDIRECT_KEY } from "@layouts/postLoginRedirect";
 import { isTopLevelWindow } from "@utils/isTopLevelWindow";
-import { CurrentUserProvider } from "@context/current-user/CurrentUserContext";
+import {
+  CurrentUserProvider,
+  useCurrentUser,
+} from "@context/current-user/CurrentUserContext";
 import RouteSuspenseFallback from "@components/route-fallback/RouteSuspenseFallback";
+import NoPortalAccessPage from "@components/error/NoPortalAccessPage";
 import { useLogger } from "@hooks/useLogger";
 import { trySilentSignInOnce } from "@hooks/silentSignIn";
+import { isForbiddenError, isUnauthorizedError } from "@utils/ApiError";
 
 /**
  * The app shell with the routed page deliberately suppressed.
@@ -117,6 +122,42 @@ function SignInRedirect(): JSX.Element {
   ]);
 
   return <AuthPendingShell />;
+}
+
+/**
+ * Renders the app shell, unless `/users/me` (via `CurrentUserProvider`)
+ * failed with a 401 or 403 that survived `useAuthApiClient`'s own recovery
+ * chain — that chain already retries/silently refreshes/redirects-to-sign-in
+ * on a recoverable 401, so an error still reaching here means the caller is
+ * genuinely not entitled to use this portal (or in the rare case a fresh
+ * sign-in still comes back 401, the redirect-loop guard gave up), not just a
+ * transient expired token.
+ *
+ * Renders through `AppLayout` itself (not a bare error layout) so the real
+ * header/branding still shows — this is a signed-in user, just one without
+ * access yet, not someone who has left the portal. The sidebar has nothing
+ * to navigate to in this state, so it's suppressed via `AppLayout`'s
+ * `minimalHeader` prop — applied in the very same render as `children`
+ * below, not a context flag settled a render later via an effect, so the
+ * sidebar never flashes on screen for a frame before disappearing.
+ *
+ * @returns {JSX.Element} AppLayout, showing the routed page or the
+ * "not authorized" page in its content area.
+ */
+function AuthorizedAppShell(): JSX.Element {
+  const { isLoading, isError, error } = useCurrentUser();
+  const notAuthorized =
+    !isLoading && isError && (isUnauthorizedError(error) || isForbiddenError(error));
+
+  if (notAuthorized) {
+    return (
+      <AppLayout minimalHeader>
+        <NoPortalAccessPage />
+      </AppLayout>
+    );
+  }
+
+  return <AppLayout />;
 }
 
 /**
@@ -224,7 +265,7 @@ export default function AuthGuard(): JSX.Element {
   if (hasSignedInOnce && !isSigningOut) {
     return (
       <CurrentUserProvider>
-        <AppLayout />
+        <AuthorizedAppShell />
       </CurrentUserProvider>
     );
   }
@@ -232,7 +273,7 @@ export default function AuthGuard(): JSX.Element {
   return (
     <ProtectedRoute loader={<AuthPendingShell />} fallback={<SignInRedirect />}>
       <CurrentUserProvider>
-        <AppLayout />
+        <AuthorizedAppShell />
       </CurrentUserProvider>
     </ProtectedRoute>
   );

@@ -64,9 +64,21 @@ function setSidebarCollapsed(collapsed: boolean): void {
 
 interface AppLayoutProps {
   children?: ReactNode;
+  /** Forces the header's project controls (search, pin, recent views, sidebar
+   * toggle) AND the sidebar itself hidden, even once signed in and
+   * initialized — for a full-page state with no real pages to navigate to,
+   * search, pin, or revisit (e.g. "not authorized"). Applied synchronously in
+   * the same render as `children`, unlike `isErrorPageDisplayed` (context,
+   * settles a render later via an effect) — this prop is what actually keeps
+   * the sidebar from flashing on screen for one frame before that context
+   * update lands. */
+  minimalHeader?: boolean;
 }
 
-export default function AppLayout({ children }: AppLayoutProps): JSX.Element {
+export default function AppLayout({
+  children,
+  minimalHeader = false,
+}: AppLayoutProps): JSX.Element {
   const location = useLocation();
   const mainContentRef = useRef<HTMLDivElement>(null);
   const { isLoading: isAuthLoading, isSignedIn } = useAsgardeo();
@@ -150,11 +162,11 @@ export default function AppLayout({ children }: AppLayoutProps): JSX.Element {
               <Header
                 onToggleSidebar={shellActions.toggleSidebar}
                 collapsed={shellState.sidebarCollapsed}
-                hideProjectControls={!isSignedIn || !hasInitialized}
+                hideProjectControls={!isSignedIn || !hasInitialized || minimalHeader}
               />
             }
             sidebar={
-              hasInitialized && isSignedIn && !isErrorPageDisplayed ? (
+              hasInitialized && isSignedIn && !isErrorPageDisplayed && !minimalHeader ? (
                 <CsmSideBar
                   collapsed={shellState.sidebarCollapsed}
                   expandedMenus={shellState.expandedMenus}

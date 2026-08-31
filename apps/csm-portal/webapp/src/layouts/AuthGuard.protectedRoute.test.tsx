@@ -42,6 +42,7 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
   CurrentUserProvider: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="current-user-provider">{children}</div>
   ),
+  useCurrentUser: () => ({ user: undefined, isLoading: false, isError: false, error: null }),
 }));
 
 const isTopLevel = { value: true };

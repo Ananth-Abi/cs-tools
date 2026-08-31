@@ -15,9 +15,10 @@
 // under the License.
 
 import "@testing-library/jest-dom/vitest";
-import { act, render, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@utils/ApiError";
 
 // Mutable so individual tests can flip `isSignedIn` across rerenders to
 // simulate a token expiring mid-session, after an initial successful sign-in.
@@ -61,12 +62,37 @@ vi.mock("@asgardeo/react", () => ({
   }),
 }));
 
+const appLayoutPropsMock = vi.fn();
 vi.mock("@layouts/AppLayout", () => ({
-  default: () => null,
+  default: ({
+    children,
+    minimalHeader = false,
+  }: {
+    children?: React.ReactNode;
+    minimalHeader?: boolean;
+  }) => {
+    appLayoutPropsMock({ minimalHeader });
+    return <>{children}</>;
+  },
 }));
+
+// Mutable so individual tests can simulate a /users/me outcome. Defaults to
+// "loaded fine, no error" — the common case for every pre-existing test in
+// this file, which don't care about CurrentUserContext at all.
+const currentUserState: { isLoading: boolean; isError: boolean; error: Error | null } = {
+  isLoading: false,
+  isError: false,
+  error: null,
+};
 
 vi.mock("@context/current-user/CurrentUserContext", () => ({
   CurrentUserProvider: ({ children }: { children: React.ReactNode }) => children,
+  useCurrentUser: () => ({
+    user: undefined,
+    isLoading: currentUserState.isLoading,
+    isError: currentUserState.isError,
+    error: currentUserState.error,
+  }),
 }));
 
 const loggerDebugMock = vi.fn();
@@ -89,6 +115,9 @@ describe("AuthGuard sign-in fallback (before any successful sign-in)", () => {
     vi.clearAllMocks();
     sessionStorage.clear();
     asgardeoState.isSignedIn = false;
+    currentUserState.isLoading = false;
+    currentUserState.isError = false;
+    currentUserState.error = null;
     signInMock.mockResolvedValue(undefined);
   });
 
@@ -146,6 +175,9 @@ describe("AuthGuard after an initial successful sign-in (transient token-clock e
     vi.clearAllMocks();
     sessionStorage.clear();
     asgardeoState.isSignedIn = false;
+    currentUserState.isLoading = false;
+    currentUserState.isError = false;
+    currentUserState.error = null;
   });
 
   it("stops rendering ProtectedRoute (and therefore its loader-swap) once signed in, and never re-enters it for a later transient clock expiry", async () => {
@@ -224,5 +256,112 @@ describe("AuthGuard after an initial successful sign-in (transient token-clock e
     // content — for the brief window before the browser actually navigates
     // away to the IdP's sign-out endpoint.
     expect(protectedRouteRenderCount).toHaveBeenCalled();
+  });
+});
+
+describe("AuthGuard's response to a /users/me failure once signed in", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sessionStorage.clear();
+    asgardeoState.isSignedIn = true;
+    currentUserState.isLoading = false;
+    currentUserState.isError = false;
+    currentUserState.error = null;
+  });
+
+  it("shows the not-authorized page when /users/me fails with 401 (a token useAuthApiClient's own recovery chain could not fix)", async () => {
+    currentUserState.isError = true;
+    currentUserState.error = new ApiError(401, "Unauthorized");
+    let rerender!: ReturnType<typeof renderAuthGuard>["rerender"];
+
+    await act(async () => {
+      ({ rerender } = renderAuthGuard());
+    });
+    // Re-render to let the render-time `setHasSignedInOnce(true)` commit —
+    // see the equivalent comment above on the pre-existing sign-in tests.
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={["/some/protected/path"]}>
+          <AuthGuard />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(
+      screen.getByText("You don't have access to this portal yet"),
+    ).toBeInTheDocument();
+    // minimalHeader (which also suppresses the sidebar in the real AppLayout)
+    // must be true on every call, including the very first — it's derived
+    // synchronously from the same render as `children`, not settled a render
+    // later via an effect, so the sidebar never flashes on screen first.
+    for (const call of appLayoutPropsMock.mock.calls) {
+      expect(call[0]).toEqual({ minimalHeader: true });
+    }
+    expect(appLayoutPropsMock).toHaveBeenCalled();
+  });
+
+  it("shows the not-authorized page when /users/me fails with 403", async () => {
+    currentUserState.isError = true;
+    currentUserState.error = new ApiError(403, "Forbidden");
+    let rerender!: ReturnType<typeof renderAuthGuard>["rerender"];
+
+    await act(async () => {
+      ({ rerender } = renderAuthGuard());
+    });
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={["/some/protected/path"]}>
+          <AuthGuard />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(
+      screen.getByText("You don't have access to this portal yet"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the not-authorized page while /users/me is still loading", async () => {
+    currentUserState.isLoading = true;
+    currentUserState.isError = false;
+    let rerender!: ReturnType<typeof renderAuthGuard>["rerender"];
+
+    await act(async () => {
+      ({ rerender } = renderAuthGuard());
+    });
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={["/some/protected/path"]}>
+          <AuthGuard />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(
+      screen.queryByText("You don't have access to this portal yet"),
+    ).not.toBeInTheDocument();
+    expect(appLayoutPropsMock).toHaveBeenCalledWith({ minimalHeader: false });
+  });
+
+  it("does not show the not-authorized page for an unrelated /users/me failure (e.g. 500)", async () => {
+    currentUserState.isError = true;
+    currentUserState.error = new ApiError(500, "Internal Server Error");
+    let rerender!: ReturnType<typeof renderAuthGuard>["rerender"];
+
+    await act(async () => {
+      ({ rerender } = renderAuthGuard());
+    });
+    await act(async () => {
+      rerender(
+        <MemoryRouter initialEntries={["/some/protected/path"]}>
+          <AuthGuard />
+        </MemoryRouter>,
+      );
+    });
+
+    expect(
+      screen.queryByText("You don't have access to this portal yet"),
+    ).not.toBeInTheDocument();
+    expect(appLayoutPropsMock).toHaveBeenCalledWith({ minimalHeader: false });
   });
 });
