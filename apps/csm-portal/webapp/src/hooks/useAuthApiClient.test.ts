@@ -220,6 +220,45 @@ describe("useAuthApiClient", () => {
     });
   });
 
+  it("skipSignInRedirect: surfaces a persistent 401 immediately after the poll budget, without ever redirecting, even on the very first occurrence", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(401));
+
+    const { result } = renderHook(() => useAuthApiClient());
+    const responsePromise = result.current(
+      "https://example.test/api/thing",
+      undefined,
+      { skipSignInRedirect: true },
+    );
+
+    await vi.advanceTimersByTimeAsync(POLL_BUDGET_MS + POLL_INTERVAL_MS);
+    const response = await responsePromise;
+
+    expect(response.status).toBe(401);
+    // Silent sign-in is still attempted (cheap, non-disruptive, and is what
+    // actually recovers a routine expired token) — only the disruptive
+    // full-page redirect is what this option skips.
+    expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
+    expect(signInMock).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem("csm.auth.lastForcedSignInAt")).toBeNull();
+  });
+
+  it("skipSignInRedirect: does not suppress the redirect for an unrelated call that didn't opt out", async () => {
+    fetchMock.mockResolvedValue(jsonResponse(401));
+    signInSilentlyMock.mockResolvedValue(false);
+
+    const { result } = renderHook(() => useAuthApiClient());
+    void result.current("https://example.test/api/skip-thing", undefined, {
+      skipSignInRedirect: true,
+    });
+    await vi.advanceTimersByTimeAsync(POLL_BUDGET_MS + POLL_INTERVAL_MS);
+
+    void result.current("https://example.test/api/normal-thing");
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    await vi.waitFor(() => {
+      expect(signInMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("loop guard: does not redirect again, and instead lets the 401 propagate as a normal failure, when a forced sign-in happened moments ago", async () => {
     sessionStorage.setItem("csm.auth.lastForcedSignInAt", String(Date.now()));
     fetchMock.mockResolvedValue(jsonResponse(401));
