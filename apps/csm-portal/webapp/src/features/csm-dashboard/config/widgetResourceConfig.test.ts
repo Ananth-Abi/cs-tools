@@ -23,7 +23,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
+import {
+  callRequestWidgetFiltersToQuery,
+  DEFAULT_CALL_REQUEST_WIDGET_FILTERS,
+  translateCallRequestDashboardFilters,
+  WIDGET_RESOURCE_CONFIG,
+} from "@features/csm-dashboard/config/widgetResourceConfig";
 import { readCasesFiltersFromUrl } from "@features/csm-cases/utils/casesFiltersUrl";
 
 function hrefParams(href: string): URLSearchParams {
@@ -500,5 +505,83 @@ describe("WIDGET_RESOURCE_CONFIG.case_feedback.buildSearchRequestBody", () => {
     }) as { filters: Record<string, unknown> };
 
     expect(body.filters).toEqual({ dateFrom: "2026-08-01", rating: 5 });
+  });
+});
+
+/**
+ * `translateCallRequestDashboardFilters`/`callRequestWidgetFiltersToQuery` —
+ * the call-requests "View more" landing's own seed/query pair, mirroring
+ * `translateCaseDashboardFilters` for the much smaller (4-field, no op
+ * choice except caseStates/excludeCaseStates) `/call-requests/search`
+ * contract confirmed against `apps/csm-portal/backend/openapi.yaml`'s
+ * `SearchAllCallRequestsPayload`.
+ */
+describe("translateCallRequestDashboardFilters", () => {
+  it("passes every field of a widget's flat call-request filters through unchanged", () => {
+    const out = translateCallRequestDashboardFilters({
+      assignedUserIds: ["11111111-1111-1111-1111-111111111111"],
+      states: ["scheduled", "pending_on_wso2"],
+      caseStates: ["open", "work_in_progress"],
+      excludeCaseStates: ["closed"],
+      assignmentTeamIds: ["22222222-2222-2222-2222-222222222222"],
+    });
+
+    expect(out).toEqual({
+      assignedUserIds: ["11111111-1111-1111-1111-111111111111"],
+      states: ["scheduled", "pending_on_wso2"],
+      caseStates: ["open", "work_in_progress"],
+      excludeCaseStates: ["closed"],
+      assignmentTeamIds: ["22222222-2222-2222-2222-222222222222"],
+    });
+  });
+
+  it("omits a field entirely when its widget value is an empty array, rather than seeding an explicit empty filter", () => {
+    const out = translateCallRequestDashboardFilters({
+      assignedUserIds: [],
+      states: ["scheduled"],
+    });
+
+    expect(out).toEqual({ states: ["scheduled"] });
+    expect(out.assignedUserIds).toBeUndefined();
+  });
+
+  it("returns an empty object for a widget with no call-request filters at all", () => {
+    expect(translateCallRequestDashboardFilters({})).toEqual({});
+  });
+
+  it("ignores a non-array/non-string value for a field rather than throwing", () => {
+    expect(translateCallRequestDashboardFilters({ states: "scheduled" })).toEqual({});
+  });
+});
+
+describe("callRequestWidgetFiltersToQuery", () => {
+  it("omits every empty-array field so an untouched control means 'unfiltered', not 'match nothing'", () => {
+    expect(callRequestWidgetFiltersToQuery(DEFAULT_CALL_REQUEST_WIDGET_FILTERS)).toEqual({});
+  });
+
+  it("includes only the fields that carry a value", () => {
+    const query = callRequestWidgetFiltersToQuery({
+      ...DEFAULT_CALL_REQUEST_WIDGET_FILTERS,
+      states: ["concluded"],
+      excludeCaseStates: ["closed"],
+    });
+
+    expect(query).toEqual({ states: ["concluded"], excludeCaseStates: ["closed"] });
+  });
+
+  it("round-trips a full filter set through translate -> toQuery unchanged", () => {
+    const widgetFilters = {
+      assignedUserIds: ["11111111-1111-1111-1111-111111111111"],
+      states: ["scheduled"],
+      caseStates: ["open"],
+      excludeCaseStates: ["closed"],
+      assignmentTeamIds: ["22222222-2222-2222-2222-222222222222"],
+    };
+    const seeded = {
+      ...DEFAULT_CALL_REQUEST_WIDGET_FILTERS,
+      ...translateCallRequestDashboardFilters(widgetFilters),
+    };
+
+    expect(callRequestWidgetFiltersToQuery(seeded)).toEqual(widgetFilters);
   });
 });

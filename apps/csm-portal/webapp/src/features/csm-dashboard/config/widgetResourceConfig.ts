@@ -33,8 +33,9 @@ import {
   ListChecks,
   type LucideIcon,
 } from "@wso2/oxygen-ui-icons-react";
-import type { BeWidgetResourceType } from "@api/backend/types";
+import type { BeCallRequestStateKey, BeWidgetResourceType } from "@api/backend/types";
 import { humanizeState } from "@features/csm-dashboard/utils/abtDashboard";
+import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import {
   casesHref,
   DEFAULT_CASES_FILTERS,
@@ -508,6 +509,103 @@ function translateChangeRequestDashboardFilters(
   if (states) out.states = states as ChangeRequestFilters["states"];
   const impacts = asStringArray(filters.impacts);
   if (impacts) out.impacts = impacts as ChangeRequestFilters["impacts"];
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// call_request — POST /call-requests/search, whose flat `filters` shape is
+// its own thing (assignee/state/case-state/team, not the case-search DSL).
+// ---------------------------------------------------------------------------
+
+/**
+ * Filter state for the call-requests "View more" landing page's own filter
+ * bar. Mirrors `SearchAllCallRequestsPayload.filters` (the CSM backend's
+ * `POST /call-requests/search` contract — confirmed directly against
+ * `apps/csm-portal/backend/openapi.yaml`, not inferred): `assignedUserIds`
+ * (the parent case's assigned user(s), platform UUIDs — this endpoint has no
+ * `@me` sentinel of its own; any `__current_user__`/`@me` placeholder in a
+ * widget's own filters is already resolved to a real id upstream, before
+ * `translateCallRequestDashboardFilters` below ever sees it — see
+ * `resolveCurrentUserSentinels` in `DashboardWidgetPreviewPage.tsx`),
+ * `states` (call-request state keys — `ALL_CALL_REQUEST_STATES` in
+ * `callRequestState.ts`), `caseStates`/`excludeCaseStates` (the parent
+ * case's state, in vs. not-in — confirmed independent fields on this
+ * contract, "either, both, or neither may be supplied", not one field with
+ * an inferred op), and `assignmentTeamIds` (the parent case's assigned CRE
+ * team, `creGroupId` values — confirmed CRE-only per digiops-cs#2732 "Calls
+ * To Attend"; this contract has no SRE-team equivalent field). Scoped here
+ * rather than exported alongside `CasesFilters` from a shared filter-bar
+ * component: call requests have no other list page of their own for this
+ * shape to be shared with.
+ */
+export interface CallRequestWidgetFilters {
+  assignedUserIds: string[];
+  states: BeCallRequestStateKey[];
+  caseStates: CaseState[];
+  excludeCaseStates: CaseState[];
+  assignmentTeamIds: string[];
+}
+
+export const DEFAULT_CALL_REQUEST_WIDGET_FILTERS: CallRequestWidgetFilters = {
+  assignedUserIds: [],
+  states: [],
+  caseStates: [],
+  excludeCaseStates: [],
+  assignmentTeamIds: [],
+};
+
+/**
+ * Translate a call-request widget's opaque flat filters (the same shape its
+ * own tile fetch already POSTs to `/call-requests/search` — see
+ * `WIDGET_RESOURCE_CONFIG.call_request`, which has no
+ * `buildSearchRequestBody` override, so `useWidgetData`'s default
+ * `{filters, pagination, sortBy?}` passthrough already matches this
+ * endpoint's own contract) into `CallRequestWidgetFilters`, the same "seed
+ * once, then fully editable" input `translateCaseDashboardFilters` builds
+ * for the case-family resourceTypes. No value remapping is needed here
+ * (unlike that translator's severity/state-code tables): every field this
+ * endpoint accepts already uses its own wire values, so this is a
+ * structural narrow, not a translation.
+ */
+export function translateCallRequestDashboardFilters(
+  filters: Record<string, unknown>,
+): Partial<CallRequestWidgetFilters> {
+  const out: Partial<CallRequestWidgetFilters> = {};
+  const assignedUserIds = asStringArray(filters.assignedUserIds);
+  if (assignedUserIds && assignedUserIds.length > 0) out.assignedUserIds = assignedUserIds;
+  const states = asStringArray(filters.states);
+  if (states && states.length > 0) out.states = states as BeCallRequestStateKey[];
+  const caseStates = asStringArray(filters.caseStates);
+  if (caseStates && caseStates.length > 0) out.caseStates = caseStates as CaseState[];
+  const excludeCaseStates = asStringArray(filters.excludeCaseStates);
+  if (excludeCaseStates && excludeCaseStates.length > 0) {
+    out.excludeCaseStates = excludeCaseStates as CaseState[];
+  }
+  const assignmentTeamIds = asStringArray(filters.assignmentTeamIds);
+  if (assignmentTeamIds && assignmentTeamIds.length > 0) {
+    out.assignmentTeamIds = assignmentTeamIds;
+  }
+  return out;
+}
+
+/**
+ * Inverse of `translateCallRequestDashboardFilters`: the filter bar's own
+ * `CallRequestWidgetFilters` state back into the flat `filters` object
+ * `useWidgetData` POSTs to `/call-requests/search`. Empty arrays are
+ * omitted rather than sent as `field: []` — same convention every other
+ * resourceType's own filter-building already follows (an empty array here
+ * would ask the backend to match zero call requests, not "unfiltered",
+ * which is the opposite of what an untouched control means).
+ */
+export function callRequestWidgetFiltersToQuery(
+  filters: CallRequestWidgetFilters,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (filters.assignedUserIds.length > 0) out.assignedUserIds = filters.assignedUserIds;
+  if (filters.states.length > 0) out.states = filters.states;
+  if (filters.caseStates.length > 0) out.caseStates = filters.caseStates;
+  if (filters.excludeCaseStates.length > 0) out.excludeCaseStates = filters.excludeCaseStates;
+  if (filters.assignmentTeamIds.length > 0) out.assignmentTeamIds = filters.assignmentTeamIds;
   return out;
 }
 
