@@ -27,7 +27,9 @@ import RecentViewsButton from "@features/csm-recent/components/RecentViewsButton
 import PinThisPageButton from "@features/csm-recent/components/PinThisPageButton";
 
 interface ActionsProps {
-  /** Hides pin/recent-views (nothing to pin or revisit without real pages). */
+  /** Hides pin/recent-views (nothing to pin or revisit without real pages)
+   * and Profile/Preferences in the avatar menu (nothing to view/configure
+   * without real portal access). */
   hideProjectControls?: boolean;
 }
 
@@ -49,7 +51,11 @@ export default function Actions({ hideProjectControls = false }: ActionsProps): 
           visibility: isSignedIn ? "visible" : "hidden",
         }}
       />
-      {isSignedIn ? <UserProfile /> : <Box sx={{ width: 40, height: 40 }} />}
+      {isSignedIn ? (
+        <UserProfile hideProjectControls={hideProjectControls} />
+      ) : (
+        <Box sx={{ width: 40, height: 40 }} />
+      )}
     </HeaderUI.Actions>
   );
 }

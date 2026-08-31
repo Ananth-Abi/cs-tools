@@ -24,7 +24,15 @@ import UserProfileModal from "@components/header/UserProfileModal";
 import PreferencesDialog from "@components/header/PreferencesDialog";
 import { resolveUserInfo } from "@utils/userClaims";
 
-export default function UserProfile(): JSX.Element {
+interface UserProfileProps {
+  /** Hides Profile/Preferences (nothing meaningful to view/configure without
+   * real portal access) — the identity header and Sign out still show. */
+  hideProjectControls?: boolean;
+}
+
+export default function UserProfile({
+  hideProjectControls = false,
+}: UserProfileProps): JSX.Element {
   const { signOut } = useAsgardeo();
   const claims = useIdTokenClaims();
   const logger = useLogger();
@@ -51,31 +59,39 @@ export default function UserProfile(): JSX.Element {
           email={info.email}
           avatar={info.avatarUrl}
         />
-        <UserMenu.Divider />
-        <UserMenu.Item
-          icon={<User size={16} />}
-          label="Profile"
-          onClick={() => setProfileModalOpen(true)}
-        />
-        <UserMenu.Item
-          icon={<Settings size={16} />}
-          label="Preferences"
-          onClick={() => setPreferencesOpen(true)}
-        />
+        {!hideProjectControls && <UserMenu.Divider />}
+        {!hideProjectControls && (
+          <UserMenu.Item
+            icon={<User size={16} />}
+            label="Profile"
+            onClick={() => setProfileModalOpen(true)}
+          />
+        )}
+        {!hideProjectControls && (
+          <UserMenu.Item
+            icon={<Settings size={16} />}
+            label="Preferences"
+            onClick={() => setPreferencesOpen(true)}
+          />
+        )}
         <UserMenu.Logout
           icon={<LogOut size={16} />}
           label="Sign out"
           onClick={handleSignOut}
         />
       </UserMenu>
-      <UserProfileModal
-        open={profileModalOpen}
-        onClose={() => setProfileModalOpen(false)}
-      />
-      <PreferencesDialog
-        open={preferencesOpen}
-        onClose={() => setPreferencesOpen(false)}
-      />
+      {!hideProjectControls && (
+        <>
+          <UserProfileModal
+            open={profileModalOpen}
+            onClose={() => setProfileModalOpen(false)}
+          />
+          <PreferencesDialog
+            open={preferencesOpen}
+            onClose={() => setPreferencesOpen(false)}
+          />
+        </>
+      )}
     </>
   );
 }

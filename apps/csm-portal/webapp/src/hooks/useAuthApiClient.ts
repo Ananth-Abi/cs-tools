@@ -69,12 +69,18 @@ function isSdkNotInitializedError(error: unknown): boolean {
 // sessionStorage marker used to stop the chain below from redirect-looping
 // forever against an account whose 401 genuinely can't be fixed by
 // re-authenticating (e.g. a valid token but a backend/upstream-data problem
-// on that account). A short window is enough to recognise "we just forced a
-// sign-in and immediately got the SAME 401 again" without misfiring on a
-// user who legitimately signs in again minutes later for an unrelated
-// reason — see `recentlyForcedSignIn`/`markForcedSignIn` below.
+// on that account). The window has to comfortably outlast the chain's own
+// worst-case duration on the SECOND attempt (retry + up to
+// SILENT_RECOVERY_POLL_BUDGET_MS = 8s of polling, run again in full after
+// the redirect) plus the real round trip through the IdP and this app's own
+// full reinitialization — a real account with no fixable 401 was observed
+// redirect-looping forever with a 10s window, since that 8s poll alone ate
+// most of it before this guard was ever checked again. 30s comfortably
+// covers that worst case while still being far short of "minutes later,"
+// the case this guard must NOT misfire on (a legitimate, unrelated sign-in)
+// — see `recentlyForcedSignIn`/`markForcedSignIn` below.
 const FORCED_SIGN_IN_GUARD_KEY = "csm.auth.lastForcedSignInAt";
-const FORCED_SIGN_IN_GUARD_WINDOW_MS = 10_000;
+const FORCED_SIGN_IN_GUARD_WINDOW_MS = 30_000;
 
 function recentlyForcedSignIn(): boolean {
   try {
