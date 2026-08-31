@@ -64,9 +64,16 @@ function setSidebarCollapsed(collapsed: boolean): void {
 
 interface AppLayoutProps {
   children?: ReactNode;
+  /** Forces the header's project controls (search, pin, recent views) and
+   * sidebar toggle hidden even once signed in and initialized — for a full-page
+   * state with no real pages to search/pin/revisit (e.g. "not authorized"). */
+  minimalHeader?: boolean;
 }
 
-export default function AppLayout({ children }: AppLayoutProps): JSX.Element {
+export default function AppLayout({
+  children,
+  minimalHeader = false,
+}: AppLayoutProps): JSX.Element {
   const location = useLocation();
   const mainContentRef = useRef<HTMLDivElement>(null);
   const { isLoading: isAuthLoading, isSignedIn } = useAsgardeo();
@@ -150,7 +157,7 @@ export default function AppLayout({ children }: AppLayoutProps): JSX.Element {
               <Header
                 onToggleSidebar={shellActions.toggleSidebar}
                 collapsed={shellState.sidebarCollapsed}
-                hideProjectControls={!isSignedIn || !hasInitialized}
+                hideProjectControls={!isSignedIn || !hasInitialized || minimalHeader}
               />
             }
             sidebar={

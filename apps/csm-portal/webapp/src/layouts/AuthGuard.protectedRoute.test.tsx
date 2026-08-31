@@ -42,6 +42,16 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
   CurrentUserProvider: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="current-user-provider">{children}</div>
   ),
+  useCurrentUser: () => ({ user: undefined, isLoading: false, isError: false, error: null }),
+}));
+
+vi.mock("@context/error-page/ErrorPageContext", () => ({
+  useErrorPageContext: () => ({
+    isErrorPageDisplayed: false,
+    setIsErrorPageDisplayed: vi.fn(),
+    isProjectSuspended: false,
+    setIsProjectSuspended: vi.fn(),
+  }),
 }));
 
 const isTopLevel = { value: true };
