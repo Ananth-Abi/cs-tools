@@ -30,6 +30,7 @@ import {
   WIDGET_RESOURCE_CONFIG,
 } from "@features/csm-dashboard/config/widgetResourceConfig";
 import { readCasesFiltersFromUrl } from "@features/csm-cases/utils/casesFiltersUrl";
+import { WIDGET_TITLE_PARAM } from "@features/csm-dashboard/utils/widgetPreviewUrl";
 
 function hrefParams(href: string): URLSearchParams {
   const [, qs] = href.split("?");
@@ -387,6 +388,47 @@ describe("WIDGET_RESOURCE_CONFIG — case-table resourceTypes beyond `case`", ()
     expect(href.startsWith("/engagements?")).toBe(true);
     const params = hrefParams(href);
     expect(params.get("states")).toBe("open");
+  });
+
+  // digiops-cs#2914: case/engagement click-throughs land on real, permanent
+  // nav pages (/cases, /engagements) with a hardcoded heading — the widget's
+  // own displayName must be carried through as WIDGET_TITLE_PARAM so that
+  // page can show it instead, since several widgets all drill through to the
+  // same page.
+  it("case's buildHref carries the widget's displayName as WIDGET_TITLE_PARAM", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref(
+      { filters: [{ field: "state", op: "in", values: ["open"] }] },
+      { widgetId: "outstanding_cases", displayName: "Total Outstanding" },
+    );
+    const params = hrefParams(href);
+    expect(params.get(WIDGET_TITLE_PARAM)).toBe("Total Outstanding");
+    // The rest of the translated filter is unaffected by the addition.
+    expect(params.get("states")).toBe("open");
+  });
+
+  it("case's buildHref omits WIDGET_TITLE_PARAM when no ctx/displayName is given", () => {
+    const href = WIDGET_RESOURCE_CONFIG.case.buildHref({
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+    });
+    expect(hrefParams(href).has(WIDGET_TITLE_PARAM)).toBe(false);
+  });
+
+  it("engagement's buildHref carries the widget's displayName as WIDGET_TITLE_PARAM", () => {
+    const href = WIDGET_RESOURCE_CONFIG.engagement.buildHref(
+      { filters: [{ field: "state", op: "in", values: ["open"] }] },
+      { widgetId: "migration_summary_outstanding", displayName: "Total Outstanding" },
+    );
+    expect(href.startsWith("/engagements?")).toBe(true);
+    const params = hrefParams(href);
+    expect(params.get(WIDGET_TITLE_PARAM)).toBe("Total Outstanding");
+    expect(params.get("states")).toBe("open");
+  });
+
+  it("engagement's buildHref omits WIDGET_TITLE_PARAM when no ctx/displayName is given", () => {
+    const href = WIDGET_RESOURCE_CONFIG.engagement.buildHref({
+      filters: [{ field: "state", op: "in", values: ["open"] }],
+    });
+    expect(hrefParams(href).has(WIDGET_TITLE_PARAM)).toBe(false);
   });
 
   it("announcement's buildHref is the unfiltered /announcements page (no URL filter scheme exists there yet)", () => {
