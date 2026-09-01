@@ -46,8 +46,8 @@ import {
   Phone,
   X,
 } from "@wso2/oxygen-ui-icons-react";
-import { useCallback, useEffect, useMemo, useState, type JSX } from "react";
-import { useLocation, useParams } from "react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "react";
+import { useLocation } from "react-router";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
 import {
   usePatchCsmCase,
@@ -74,12 +74,13 @@ import {
 } from "@features/csm-cases/api/useCsmCaseComments";
 import { useGetCsmConversationMessages } from "@features/csm-cases/api/useCsmConversationMessages";
 import { useGetCsmCaseActivities } from "@features/csm-cases/api/useCsmCaseActivities";
+import { useCaseActivityStream } from "@features/csm-cases/api/useCaseActivityStream";
 import {
   useGetCsmCaseAttachments,
   usePostCsmCaseAttachment,
   useDownloadCsmCaseAttachment,
   useDeleteCsmCaseAttachment,
-  useGetCsmCaseAttachmentContent,
+  useGetCsmCaseAttachmentPreviewSource,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
 import CsmCaseCommentInput from "@features/csm-cases/components/CsmCaseCommentInput";
 import CaseActionBar, {
@@ -167,6 +168,8 @@ import type {
 } from "@features/csm-cases/types/csmCases";
 import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
+import { useQueryParamTabs } from "@hooks/useSectionTabs";
 
 function MetaCell({
   label,
@@ -307,9 +310,18 @@ const TAB_DEFS: Array<{
   // it's just unreachable via tab navigation while hidden.
   { id: "tasks", label: "Tasks", icon: <CheckSquare size={16} />, hidden: true },
 ];
+// Only the ids with a rendered `<Tab>` — a caller-supplied list for
+// `useQueryParamTabs`, not the nav tree. A hidden tab like "tasks" is
+// deliberately excluded: `useQueryParamTabs` would otherwise treat
+// `?tab=tasks` as "recognised" and select it as `activeTab`, but with no
+// matching `<Tab>` in the strip that leaves the underlying MUI `Tabs` value
+// out of range and nothing visually selected.
+const CASE_TAB_IDS: readonly CaseTabId[] = TAB_DEFS.filter(
+  (t) => !t.hidden,
+).map((t) => t.id);
 
 export default function CsmCaseDetailPage(): JSX.Element {
-  const { caseId } = useParams<{ caseId: string }>();
+  const caseId = useNormalizedIdParam("caseId");
   const navigate = useNavTransition();
   const location = useLocation();
   const isEngagementRoute = location.pathname.startsWith("/engagements/");
@@ -321,11 +333,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const backPath = isEngagementRoute
     ? "/engagements"
     : isServiceRequestRoute
-      ? "/operations?tab=service_requests"
+      ? "/operations/service-requests"
       : isAnnouncementRoute
         ? "/announcements"
         : isSecurityReportRoute
-          ? "/security-center?tab=security_reports"
+          ? "/security-center/security-reports"
           : "/cases";
   const detailPath = isEngagementRoute
     ? `/engagements/${caseId}`
@@ -393,8 +405,26 @@ export default function CsmCaseDetailPage(): JSX.Element {
     // requests, engagements, security reports) lands on its dedicated route with
     // empty state, and Back then falls through to the bare route-specific path,
     // dropping the filters, search and sort that got the user here.
-    navigate(canonicalDetailPath, { replace: true, state: { from: resolvedBackPath } });
-  }, [isMisrouted, canonicalDetailPath, caseId, navigate, resolvedBackPath]);
+    //
+    // Also carries the current `?tab=` and `#fragment` forward onto the
+    // canonical target — without this, following a "Related case" link (which
+    // always points at the non-canonical /cases/:id) to a case opened on a
+    // specific tab, or a permalink, silently dropped both the moment the case
+    // turned out to be an engagement/announcement/service request/security
+    // report and got redirected to its real route.
+    navigate(
+      { pathname: canonicalDetailPath, search: location.search, hash: location.hash },
+      { replace: true, state: { from: resolvedBackPath } },
+    );
+  }, [
+    isMisrouted,
+    canonicalDetailPath,
+    caseId,
+    navigate,
+    resolvedBackPath,
+    location.search,
+    location.hash,
+  ]);
 
   const {
     data: comments,
@@ -413,6 +443,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     refetch: refetchActivities,
     isFetching: isFetchingActivities,
   } = useGetCsmCaseActivities(caseId);
+  // Live updates: invalidates the two queries above whenever another viewer
+  // adds a comment or the case's status changes, so this tab doesn't rely
+  // solely on their own staleTime/a manual refresh to catch up.
+  useCaseActivityStream(caseId);
   // The chat transcript the case was spawned from, when linked. Loaded lazily
   // off the case's conversation id and merged into the comment stream below so
   // it renders as the earliest activity entries — mirrors the customer portal.
@@ -436,7 +470,7 @@ export default function CsmCaseDetailPage(): JSX.Element {
   } = useGetCsmCaseAttachments(caseId);
   const postAttachment = usePostCsmCaseAttachment();
   const downloadAttachment = useDownloadCsmCaseAttachment();
-  const getAttachmentPreviewContent = useGetCsmCaseAttachmentContent();
+  const getAttachmentPreviewContent = useGetCsmCaseAttachmentPreviewSource();
   const deleteAttachment = useDeleteCsmCaseAttachment();
   // Fetched unconditionally (not just while their tab is active) purely for
   // the tab-label counts below; each widget still runs its own scoped query
@@ -497,7 +531,19 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const { showSuccess } = useSuccessBanner();
   const isDarkMode = useDarkMode();
   const [feedback, setFeedback] = useState<Feedback | null>(null);
-  const [activeTab, setActiveTab] = useState<CaseTabId>("activities");
+  // Kept in the URL (`?tab=`), not local state, so a shared/bookmarked link
+  // to a specific tab survives a refresh. Unlike the plain `useState` this
+  // replaced, `setActiveTab` writes through the router — see the two
+  // "force to Activities" effects below for why the render-time adjustments
+  // that used to call it directly were moved into effects instead: calling a
+  // *router* navigation synchronously during render (as opposed to this
+  // component's own local `useState` setters, which the surrounding
+  // render-time resets still use safely) risks updating the Router's state
+  // while this component is still rendering.
+  const { activeTab, setActiveTab } = useQueryParamTabs<CaseTabId>(
+    CASE_TAB_IDS,
+    "activities",
+  );
   // Permalink fragment (`/cases/:id#<entry-id>`), consumed by the scroll and
   // highlight effect further down. Hoisted up here because two render-time
   // state adjustments below both need it: the per-case reset and the
@@ -588,29 +634,34 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setCreateTaskOpen(false);
     setFixEtaOpen(false);
     setAddTagOpen(false);
-    // Following a permalink from one case to another keeps this page mounted and
-    // can carry the *same* fragment (e.g. #description → #description), so the
-    // fragment-keyed force below won't fire. Force it here instead, otherwise
-    // the new case would open on whatever tab the previous one was left on.
-    if (permalinkFragment) setActiveTab("activities");
+    // The permalink-fragment-triggered force to Activities (for both this
+    // case-change and a same-case fragment change) lives in one effect below
+    // — see `permalinkForceRef` — rather than here, since `setActiveTab` now
+    // writes through the router and so can't be called synchronously during
+    // render the way this block's own local `useState` resets safely can.
   }
 
   // isAnnouncement can only be confirmed once `data` loads (see its
   // definition above) — if a case reached via /cases/:id turns out to be an
   // announcement and the active tab is one hidden for announcements, fall
-  // back to Activities. Same render-time adjustment pattern as the reset
-  // above rather than an effect, to avoid an extra render pass.
-  if (
-    isAnnouncement &&
-    (activeTab === "related" ||
-      activeTab === "watchers" ||
-      activeTab === "sla" ||
-      activeTab === "time" ||
-      activeTab === "call-requests" ||
-      activeTab === "tasks")
-  ) {
-    setActiveTab("activities");
-  }
+  // back to Activities. Unlike the plain local-state resets above, this
+  // can't safely run during render any more: `setActiveTab` now writes
+  // through the router (`useQueryParamTabs`), and a router write during
+  // render risks updating the Router's state while this component is still
+  // rendering — so it's an effect instead.
+  useEffect(() => {
+    if (
+      isAnnouncement &&
+      (activeTab === "related" ||
+        activeTab === "watchers" ||
+        activeTab === "sla" ||
+        activeTab === "time" ||
+        activeTab === "call-requests" ||
+        activeTab === "tasks")
+    ) {
+      setActiveTab("activities");
+    }
+  }, [isAnnouncement, activeTab, setActiveTab]);
 
   // Twitter-style permalinks: when the URL has a fragment matching an entry id,
   // jump to the Activities tab and hand off to `scrollToFragmentWithRetry`,
@@ -629,24 +680,41 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // fragment link is followed, which is why the bug reads as "new tab only."
   const activitiesFeedReady =
     !isCommentsLoading && !isChatLoading && !isActivityLoading;
-  // Forcing the Activities tab is a state adjustment, done during render like
-  // the prevCaseId reset above — not in the effect below. It has to be keyed on
-  // the fragment *changing*: the effect's other dependency
-  // (`activitiesFeedReady`) flips false → true as the three feed sources
-  // settle, so a setActiveTab living inside the effect re-ran on that flip and
-  // dragged a user who had switched tabs while the feed loaded back to
-  // Activities. Keyed on the fragment, the tab is forced once per link.
+  // Forces the Activities tab exactly once per permalink — on the case or the
+  // fragment actually changing, tracked by this ref rather than `activeTab`
+  // itself (which would re-force every time the *effect* below re-ran, e.g.
+  // when `activitiesFeedReady` flips false → true as the three feed sources
+  // settle, dragging a user who had since switched tabs back to Activities).
+  // A ref rather than the `prevCaseId`-style render-time `useState` reset
+  // above: `setActiveTab` now writes through the router (`useQueryParamTabs`),
+  // so it can't run synchronously during render — this has to be an effect,
+  // and an effect needs its "did this change" comparison done inside itself
+  // (a `useState`-based previous-value comparison during render, like
+  // `prevCaseId`'s, would have already resolved to "unchanged" by the time
+  // this effect runs).
   //
-  // No adjustment is needed on first mount: `activeTab` already starts at
-  // "activities", so initialising prevFragment to the current fragment is
-  // correct rather than a missed force. Following a permalink to a *different*
-  // case with the same fragment is handled by the prevCaseId block above,
-  // since the fragment itself does not change there.
-  const [prevFragment, setPrevFragment] = useState(permalinkFragment);
-  if (permalinkFragment !== prevFragment) {
-    setPrevFragment(permalinkFragment);
-    if (permalinkFragment) setActiveTab("activities");
-  }
+  // Following a permalink to a *different* case with the *same* fragment
+  // (e.g. #description → #description) is covered by comparing `caseId` here
+  // too, not just `permalinkFragment` — the fragment alone wouldn't change in
+  // that case, so the old case's tab would otherwise carry over unforced.
+  // Starts unset rather than pre-seeded with the current `caseId`/fragment:
+  // on a cold load that already has a permalink fragment in the URL (e.g.
+  // `?tab=attachments#entry-9`), a pre-seeded ref would make the "did it
+  // change" check below false on the very first render, so the tab would
+  // never get forced to Activities and the page would stay wherever `?tab=`
+  // pointed instead of jumping to the linked entry.
+  const permalinkForceRef = useRef<
+    { caseId: string | undefined; fragment: string } | undefined
+  >(undefined);
+  useEffect(() => {
+    const prev = permalinkForceRef.current;
+    const changed =
+      !prev || prev.caseId !== caseId || prev.fragment !== permalinkFragment;
+    permalinkForceRef.current = { caseId, fragment: permalinkFragment };
+    if (changed && permalinkFragment) {
+      setActiveTab("activities");
+    }
+  }, [caseId, permalinkFragment, setActiveTab]);
   useEffect(() => {
     // Wait for the feed to actually be able to render the target before
     // attempting to find it — see the comment above.
@@ -1509,6 +1577,16 @@ export default function CsmCaseDetailPage(): JSX.Element {
 
   const attachmentList = useMemo(() => attachments ?? [], [attachments]);
 
+  // `postAttachment` is a single shared mutation object that stays mounted
+  // across `caseId` changes (this page doesn't remount on navigation between
+  // cases). Without this check, an upload still in flight for a previously
+  // viewed case would show its progress/disabled state on whichever case is
+  // open now. `variables` reflects whichever call is currently pending, so
+  // comparing its `caseId` to the page's current `caseId` scopes the
+  // in-flight state to the case it actually belongs to.
+  const isUploadingForThisCase =
+    postAttachment.isPending && postAttachment.variables?.caseId === caseId;
+
   // Case comments + the linked chat transcript, as one list for the activity
   // feed. Memoised so the feed's own sort doesn't rerun on every render.
   const mergedComments = useMemo(
@@ -2305,9 +2383,11 @@ export default function CsmCaseDetailPage(): JSX.Element {
             onRefresh={() => void refetchAttachments()}
             isRefreshing={isFetchingAttachments}
             refreshedAt={attachmentsUpdatedAt}
-            uploading={postAttachment.isPending}
+            uploading={isUploadingForThisCase}
+            uploadProgress={isUploadingForThisCase ? postAttachment.uploadProgress : null}
             uploadError={
-              postAttachment.isError
+              postAttachment.isError &&
+              postAttachment.variables?.caseId === caseId
                 ? (postAttachment.error?.message ??
                   "Could not upload the attachment.")
                 : null

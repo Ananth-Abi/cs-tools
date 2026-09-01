@@ -16,23 +16,24 @@
 
 package sweep
 
-import (
-	"context"
-	"log/slog"
-)
+import "context"
 
 // DryRunProjectUpdater satisfies projectUpdater without ever calling
-// entity-service — it only logs what would have been written. This is the
+// entity-service — it silently no-ops instead of writing. This is the
 // entire mechanism behind DRY_RUN: main.go injects this instead of the real
 // *entity.Client when dry-run is active, and processProject/Run are
 // completely unaware of the distinction — they just call whichever
 // projectUpdater they were given.
-type DryRunProjectUpdater struct {
-	Logger *slog.Logger
-}
+//
+// Deliberately does not log the write it would have made: per user
+// direction, the only log output that matters for a dry run is the
+// notify.LoggingNotifier "notice" line (the actual email content) — a
+// separate "would update project" line describing the raw PATCH body is
+// noise once every window produces a real notice log, and stays noise once
+// real email sending replaces LoggingNotifier.
+type DryRunProjectUpdater struct{}
 
-// UpdateProject logs the write that would have happened and always succeeds.
+// UpdateProject always succeeds without doing anything.
 func (u *DryRunProjectUpdater) UpdateProject(ctx context.Context, id string, body []byte) ([]byte, error) {
-	u.Logger.InfoContext(ctx, "dry-run: would update project", "projectID", id, "body", string(body))
 	return []byte(`{}`), nil
 }

@@ -88,9 +88,15 @@ function mergeFilterArrays(
 }
 
 export function mergeWidgetFilters(
-  base: Record<string, unknown>,
-  slice: Record<string, unknown>,
+  base: Record<string, unknown> | undefined,
+  slice: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
+  // Both callers pass a slice's or widget's own `filters` field straight
+  // from backend-driven config (DASHBOARDS_CONFIG, a raw JSON env var not
+  // schema-validated beyond basic decoding) — either can be genuinely
+  // absent at runtime despite the wire type declaring it required.
+  base ??= {};
+  slice ??= {};
   const merged = { ...base, ...slice };
 
   const baseArr = base.filters;

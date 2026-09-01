@@ -127,4 +127,141 @@ describe("CasesList quick preview", () => {
     expect(screen.getByText("View full details")).toBeInTheDocument();
     expect(screen.queryByTestId("from-state")).not.toBeInTheDocument();
   });
+
+  it("closes the preview when the same row's eye is clicked again", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    const eye = screen.getByRole("button", { name: "Quick preview CS-1007" });
+    fireEvent.click(eye);
+    expect(screen.getByText("View full details")).toBeInTheDocument();
+
+    fireEvent.click(eye);
+    expect(screen.queryByText("View full details")).not.toBeInTheDocument();
+  });
+
+  it("switches the preview to a different row without requiring a close first", () => {
+    const otherCase: CsmCaseRow = {
+      ...CASE,
+      id: "case-2",
+      caseNumber: "CS-1008",
+      subject: "Login fails intermittently",
+    };
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE, otherCase]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick preview CS-1007" }));
+    expect(screen.getByRole("link", { name: "View full details" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/case-1"),
+    );
+
+    // The open preview is a non-modal `FloatingSlidePanel`, not a `Drawer` --
+    // it has no backdrop and doesn't mark the rest of the page `aria-hidden`,
+    // so the other row's eye button is a normal, reachable element (no
+    // `hidden: true` needed to find it, unlike a `Modal`-backed `Drawer`).
+    //
+    // A real click fires `mousedown` then `click` -- firing both (not just
+    // `click`) exercises `useCloseOnOutsideClick`'s own `mousedown` listener
+    // too, proving it excludes this eye button rather than racing its click
+    // handler and undoing the switch.
+    const otherEye = screen.getByRole("button", { name: "Quick preview CS-1008" });
+    fireEvent.mouseDown(otherEye);
+    fireEvent.click(otherEye);
+    expect(screen.getByRole("link", { name: "View full details" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/case-2"),
+    );
+  });
+
+  it("does not isolate the rest of the page from assistive tech while the preview is open (no focus trap, no aria-hidden)", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    // A `Modal`-backed `Drawer` would mark this sibling row's own subject
+    // text `aria-hidden` (and remove it from the accessibility tree, so
+    // `getByText` without `hidden: true` would throw) for as long as it's
+    // open, regardless of any pointer-events workaround -- exactly the
+    // CodeRabbit-flagged accessibility bug `FloatingSlidePanel` fixes.
+    fireEvent.click(screen.getByRole("button", { name: "Quick preview CS-1007" }));
+    expect(screen.getByText("View full details")).toBeInTheDocument();
+
+    // The case's subject renders twice once the preview is open (once in
+    // the row itself, once inside the preview content) -- assert on the
+    // row's own copy specifically.
+    const [rowSubject] = screen.getAllByText("Cluster fails to start");
+    expect(rowSubject.closest('[aria-hidden="true"]')).not.toBeInTheDocument();
+    expect(document.body).not.toHaveAttribute("aria-hidden");
+
+    // Still keyboard-reachable, not stranded behind a focus trap.
+    const quickPreviewButton = screen.getByRole("button", { name: "Quick preview CS-1007" });
+    quickPreviewButton.focus();
+    expect(quickPreviewButton).toHaveFocus();
+  });
+
+  it("closes the preview when clicking outside it, without needing the close button or the eye again", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick preview CS-1007" }));
+    expect(screen.getByText("View full details")).toBeInTheDocument();
+
+    // Any outside element -- here, the page body itself, well outside the
+    // drawer's own content -- should close it via the mousedown-level
+    // click-away listener, matching a real click's actual first event.
+    fireEvent.mouseDown(document.body);
+
+    expect(screen.queryByText("View full details")).not.toBeInTheDocument();
+  });
+
+  it("does not close the preview when clicking inside its own content", () => {
+    renderWithProviders(
+      <Routes>
+        <Route
+          path="/cases"
+          element={<CasesList cases={[CASE]} isLoading={false} />}
+        />
+        <Route path="/cases/:id" element={<DetailStub />} />
+      </Routes>,
+      ["/cases"],
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick preview CS-1007" }));
+    const detailsLink = screen.getByRole("link", { name: "View full details" });
+    fireEvent.mouseDown(detailsLink);
+
+    expect(screen.getByRole("link", { name: "View full details" })).toBeInTheDocument();
+  });
 });

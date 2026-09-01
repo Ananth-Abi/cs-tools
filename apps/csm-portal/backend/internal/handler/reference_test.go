@@ -82,10 +82,10 @@ func TestReferenceHandler_SearchTeams(t *testing.T) {
 		assertStatus(t, w, http.StatusOK)
 		got := decodeJSON[struct {
 			Teams []struct {
-				ID      string `json:"id"`
-				Name    string `json:"name"`
-				Family  string `json:"family"`
-				GroupID string `json:"groupId"`
+				ID         string `json:"id"`
+				Name       string `json:"name"`
+				Family     string `json:"family"`
+				CreGroupID string `json:"creGroupId"`
 			} `json:"teams"`
 			Total  int `json:"total"`
 			Limit  int `json:"limit"`
@@ -103,13 +103,13 @@ func TestReferenceHandler_SearchTeams(t *testing.T) {
 		if got.Teams[2].Family != "sre-abt" {
 			t.Errorf("teams[2].family = %q, want sre-abt", got.Teams[2].Family)
 		}
-		// The backing group id is resolved to UUID form at startup...
-		if got.Teams[0].GroupID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
-			t.Errorf("groupId = %q, want the UUID form of the configured id", got.Teams[0].GroupID)
+		// The backing CRE group id is resolved to UUID form at startup...
+		if got.Teams[0].CreGroupID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+			t.Errorf("creGroupId = %q, want the UUID form of the configured id", got.Teams[0].CreGroupID)
 		}
 		// ...and a row that configured none is still listed, just without one.
-		if got.Teams[1].GroupID != "" {
-			t.Errorf("groupId = %q, want it omitted for a team with no configured id", got.Teams[1].GroupID)
+		if got.Teams[1].CreGroupID != "" {
+			t.Errorf("creGroupId = %q, want it omitted for a team with no configured id", got.Teams[1].CreGroupID)
 		}
 	})
 
@@ -150,7 +150,7 @@ func TestUsersHandler_GetUser(t *testing.T) {
 	const testUserID = "11111111-1111-1111-1111-111111111111"
 
 	t.Run("rejects an unauthenticated caller", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t))
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false)
 		w := httptest.NewRecorder()
 		h.GetUser(w, httptest.NewRequest(http.MethodGet, "/users/abc", nil))
 		assertStatus(t, w, http.StatusUnauthorized)
@@ -163,7 +163,7 @@ func TestUsersHandler_GetUser(t *testing.T) {
 				gotID = id
 				return []byte(`{"id":"` + id + `","userType":"internal","groups":[],"teams":[]}`), nil
 			},
-		}, testDirectory(t))
+		}, testDirectory(t), false)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+testUserID, nil))
 		r.SetPathValue("id", testUserID)
 		w := httptest.NewRecorder()
@@ -176,7 +176,7 @@ func TestUsersHandler_GetUser(t *testing.T) {
 	})
 
 	t.Run("rejects a missing id", func(t *testing.T) {
-		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t))
+		h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{}, testDirectory(t), false)
 		w := httptest.NewRecorder()
 		h.GetUser(w, withUser(httptest.NewRequest(http.MethodGet, "/users/", nil)))
 		assertStatus(t, w, http.StatusBadRequest)
@@ -192,7 +192,7 @@ func TestUsersHandler_GetUser(t *testing.T) {
 				called = true
 				return []byte(`{}`), nil
 			},
-		}, testDirectory(t))
+		}, testDirectory(t), false)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/not-a-uuid", nil))
 		r.SetPathValue("id", "not-a-uuid")
 		w := httptest.NewRecorder()
@@ -210,7 +210,7 @@ func TestUsersHandler_GetUser(t *testing.T) {
 			getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 				return nil, errors.New("not found")
 			},
-		}, testDirectory(t))
+		}, testDirectory(t), false)
 		r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+testUserID, nil))
 		r.SetPathValue("id", testUserID)
 		w := httptest.NewRecorder()

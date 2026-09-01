@@ -102,8 +102,12 @@ export interface CasesFilters {
   engagementTypes: BeEngagementType[];
   /** Product family names (e.g. "API Manager"); matches all versions of each. */
   productNames: string[];
-  /** CS team group ids (`integrationCsTeam` op:in) the case's project is scoped to. */
+  /** CS team group ids (`creTeam` op:in) the case's project is scoped to. */
   csTeams: string[];
+  /** SRE team group ids (`sreTeam` op:in) the case's project is scoped to.
+   * Independent of `csTeams` -- a case's account may carry both a CRE and
+   * an SRE team assignment. */
+  sreTeams: string[];
   /** Tags the case must carry (`tag` op:in). Independent of `excludeTags` —
    * both may be set at once (the backend ANDs them). */
   tags: string[];
@@ -167,6 +171,15 @@ interface CasesFilterBarProps {
   showSeverityFilter?: boolean;
   /** Hide the case-type control when the surrounding view locks the type. */
   hideTypeFilter?: boolean;
+  /**
+   * Label for the case-type control. Defaults to "Case type"; a view that
+   * mixes every record type under a broader umbrella term (e.g. a project's
+   * Work items tab, which spans cases/service requests/security reports/
+   * engagements/announcements) can override it to "Work item type" so the
+   * label matches what the surrounding page calls these records, without
+   * changing the control's behavior or its `caseTypes` value shape.
+   */
+  typeFilterLabel?: string;
   /** Hide the project control when the surrounding view is project-scoped. */
   hideProjectFilter?: boolean;
   /** Show the engagement-type multi-select (only relevant when type is locked to engagement). */
@@ -247,9 +260,9 @@ interface ActiveFilterChip {
  * individually removable, though, or a user landing on a dashboard-filtered
  * cases list has no way to see (or undo) *why* it's filtered — hence one
  * chip per active value here, shown regardless of whether the filter grid
- * itself is expanded. `csTeams`/`tags`/`excludeTags` are included here too:
- * their bar controls were removed as clutter (they are advanced, rarely
- * hand-picked, and a better home for advanced filters is still to be
+ * itself is expanded. `csTeams`/`sreTeams`/`tags`/`excludeTags` are included
+ * here too: their bar controls were removed as clutter (they are advanced,
+ * rarely hand-picked, and a better home for advanced filters is still to be
  * designed), so a chip is now the ONLY way a user can see or clear them
  * after arriving from a dashboard click-through.
  */
@@ -258,7 +271,9 @@ function buildActiveFilterChips(
   /** groupId -> team display name, so a team chip never shows a raw UUID.
    * Falls back to the id when the lookup has not resolved (or the team is
    * unknown) rather than hiding the chip — an unlabelled filter the user can
-   * still see and remove beats an invisible one. */
+   * still see and remove beats an invisible one. Covers both `creGroupId`
+   * and `sreGroupId` keys — a caller passing a merged map lets one lookup
+   * serve both `csTeams` and `sreTeams` chips. */
   teamLabels: Record<string, string> = {},
 ): ActiveFilterChip[] {
   const chips: ActiveFilterChip[] = [];
@@ -268,6 +283,14 @@ function buildActiveFilterChips(
       key: `csTeam-${groupId}`,
       label: `CS team: ${teamLabels[groupId] ?? groupId}`,
       onRemove: (f) => ({ ...f, csTeams: f.csTeams.filter((t) => t !== groupId) }),
+    });
+  });
+
+  filters.sreTeams.forEach((groupId) => {
+    chips.push({
+      key: `sreTeam-${groupId}`,
+      label: `SRE team: ${teamLabels[groupId] ?? groupId}`,
+      onRemove: (f) => ({ ...f, sreTeams: f.sreTeams.filter((t) => t !== groupId) }),
     });
   });
 
@@ -383,25 +406,26 @@ export default function CasesFilterBar({
   availableProjects,
   showSeverityFilter = true,
   hideTypeFilter = false,
+  typeFilterLabel = "Case type",
   hideProjectFilter = false,
   showEngagementTypeFilter = false,
 }: CasesFilterBarProps): JSX.Element {
   const activeCount = countActiveFilters(filters);
   const hasActive = activeCount > 0;
 
-  // Only fetch the team registry when a CS-team filter is actually set -- it
-  // exists solely to label that chip, and the cases page should not pay for it
-  // on every load now that the team bar control is gone.
-  const { data: teams } = useTeams(filters.csTeams.length > 0);
-  const teamLabels = useMemo(
-    () =>
-      Object.fromEntries(
-        (teams ?? [])
-          .filter((t): t is typeof t & { groupId: string } => Boolean(t.groupId))
-          .map((t) => [t.groupId, t.name]),
-      ),
-    [teams],
-  );
+  // Only fetch the team registry when a CS-team or SRE-team filter is
+  // actually set -- it exists solely to label those chips, and the cases
+  // page should not pay for it on every load now that the team bar control
+  // is gone.
+  const { data: teams } = useTeams(filters.csTeams.length > 0 || filters.sreTeams.length > 0);
+  const teamLabels = useMemo(() => {
+    const labels: Record<string, string> = {};
+    for (const t of teams ?? []) {
+      if (t.creGroupId) labels[t.creGroupId] = t.name;
+      if (t.sreGroupId) labels[t.sreGroupId] = t.name;
+    }
+    return labels;
+  }, [teams]);
 
   const activeFilterChips = useMemo(
     () => buildActiveFilterChips(filters, teamLabels),
@@ -697,36 +721,41 @@ export default function CasesFilterBar({
                 label="State"
                 values={filters.states}
                 options={stateOptions}
-                // Work sub-state only applies to `work_in_progress` cases, so
-                // drop any selected work states when that state leaves the
-                // filter — keeps shared URLs / saved views from carrying an
-                // inert work-state selection.
+                // Work sub-state only applies when `work_in_progress` is the
+                // *sole* selected state — with other states also selected the
+                // work-state filter can't be applied server-side, so drop any
+                // selected work states as soon as the selection stops being
+                // exactly that one state.
                 onChange={(next) =>
                   onChange({
                     ...filters,
                     states: next,
-                    workStates: next.includes("work_in_progress")
-                      ? filters.workStates
-                      : [],
+                    workStates:
+                      next.length === 1 && next[0] === "work_in_progress"
+                        ? filters.workStates
+                        : [],
                   })
                 }
               />
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
-              {/* Only meaningful for `work_in_progress` cases (ongoing/paused
-                  are sub-states of it); disabled until that state is filtered
-                  in, so the control can't add an inert filter. */}
+              {/* Only meaningful when `work_in_progress` is the sole selected
+                  state (ongoing/paused are sub-states of it); disabled
+                  otherwise, so the control can't add an inert/unusable
+                  filter when combined with other states. */}
               <MultiSelectField
                 id="cases-filter-work-state"
                 label="Work state"
                 values={filters.workStates}
                 options={workStateOptions}
                 onChange={(next) => onChange({ ...filters, workStates: next })}
-                disabled={!filters.states.includes("work_in_progress")}
+                disabled={
+                  !(filters.states.length === 1 && filters.states[0] === "work_in_progress")
+                }
                 disabledTooltip={
-                  filters.states.includes("work_in_progress")
+                  filters.states.length === 1 && filters.states[0] === "work_in_progress"
                     ? undefined
-                    : `Select the "${STATE_LABEL.work_in_progress}" state to filter by work state`
+                    : `Select only the "${STATE_LABEL.work_in_progress}" state to filter by work state`
                 }
               />
             </Grid>
@@ -745,7 +774,7 @@ export default function CasesFilterBar({
               <Grid size={{ xs: 12, sm: 6, md: 4, lg: 2 }}>
                 <MultiSelectField
                   id="cases-filter-type"
-                  label="Case type"
+                  label={typeFilterLabel}
                   values={filters.caseTypes}
                   options={caseTypeOptions}
                   onChange={(next) => onChange({ ...filters, caseTypes: next })}

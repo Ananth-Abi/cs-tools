@@ -24,40 +24,63 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/closure"
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/recipients"
 )
 
-// Kind distinguishes the purpose of a Notice, since the same window can
-// produce different recipients and content depending on audience.
-type Kind string
-
-const (
-	// KindCustomer is the customer-facing closure notice for a given window.
-	KindCustomer Kind = "customer"
-	// KindInternal is the Account Manager notice sent for every firing window.
-	KindInternal Kind = "internal"
-	// KindAMNudge is a distinct "please configure a business contact" email,
-	// sent to the Account Manager instead of (not in addition to) a customer
-	// notice when recipients.Resolution.NeedsAMNudge is true.
-	KindAMNudge Kind = "am_nudge"
-)
+// Recipients is the structured set of people one Notice should reach.
+// AccountOwner (the Account Manager), RenewalManager, and TechnicalOwner are
+// always populated for a day-count reminder — an individual Contact's Email
+// may legitimately be "" per recipients.AccountManagerEmail's existing
+// convention (role assigned but no email on file, or no role assigned at
+// all), which is not an error state. Customer is nil except on a resolved
+// 15/7/0-window notice; it is also nil (not a zero-value Contact) on the
+// separate no-business-contact notice, which names only an Account Owner.
+type Recipients struct {
+	AccountOwner   recipients.Contact
+	RenewalManager recipients.Contact
+	TechnicalOwner recipients.Contact
+	Customer       *recipients.Contact
+}
 
 // Notice is everything a Notifier needs to send (or, today, log) one ACP
-// notification.
+// notification. There is no more Kind field distinguishing
+// internal/customer/am_nudge audiences — that distinction is now implied by
+// Subject's wording and which Recipients fields are populated, per Chamara's
+// request that the log stop saying "internal"/"external" explicitly.
 type Notice struct {
-	Kind      Kind
-	Window    closure.NoticeWindow
-	ProjectID string
-	Recipient string
+	ProjectID   string
+	ProjectName string
+	ProjectKey  string
+	StartDate   time.Time
+	EndDate     time.Time
+	Window      closure.NoticeWindow
+	// Subject is the notice's title line — one of five templates depending
+	// on notice type and window (see sweep.go's internalNoticeSubject/
+	// customerNoticeSubject for the exact wording): the internal day-count
+	// reminder (90/60/30/15/7, [ACP]-prefixed — every internal window, not
+	// just 90/60/30), the internal day-0 suspension notice (also
+	// [ACP]-prefixed, distinct wording since there's no "days remaining"
+	// left to report), the customer day-count/day-0 notices (never
+	// [ACP]-prefixed), or the no-business-contact notice's fixed
+	// "[Urgent] [ACP] No Business Contacts Specified for Project
+	// {ProjectName}".
+	Subject string
+	// Body is the notice's full email body — populated for every notice
+	// type today (day-count reminder, day-0 suspension, customer notice,
+	// no-business-contact urgent notice all have their own template).
+	Body       string
+	Recipients Recipients
 	// ResolvedVia records which tier of the three-tier customer-contact
-	// fallback produced Recipient (see recipients.ResolveCustomerContact).
-	// Only meaningful for KindCustomer/KindAMNudge — left at its zero value
-	// ("") for KindInternal, which never goes through that fallback chain at
-	// all. Deliberately distinct from recipients.ResolvedViaNone ("none"),
-	// which means "every tier was tried and none resolved" — a different,
-	// more specific fact than "this notice doesn't use tiers."
+	// fallback was attempted (see recipients.ResolveCustomerContact). Left
+	// at its zero value ("") only when the fallback was never attempted at
+	// all — an internal-only 90/60/30 notice. It IS set on the
+	// no-business-contact notice too, to recipients.ResolvedViaNone — the
+	// fallback was attempted there, it just found nothing; that's a
+	// different, more specific fact than "never attempted," worth keeping
+	// distinct in the log.
 	ResolvedVia recipients.ResolvedVia
 }
 
@@ -68,13 +91,30 @@ type LoggingNotifier struct {
 
 // Send logs the notice and always succeeds.
 func (n *LoggingNotifier) Send(ctx context.Context, notice Notice) error {
-	n.Logger.InfoContext(ctx, "notice",
-		"kind", notice.Kind,
+	attrs := []any{
+		"subject", notice.Subject,
 		"window", notice.Window,
 		"projectID", notice.ProjectID,
-		"recipient", notice.Recipient,
+		"projectName", notice.ProjectName,
+		"projectKey", notice.ProjectKey,
+		"startDate", notice.StartDate,
+		"endDate", notice.EndDate,
+		"accountOwner", notice.Recipients.AccountOwner.Email,
+		"accountOwnerName", notice.Recipients.AccountOwner.Name,
+		"renewalManager", notice.Recipients.RenewalManager.Email,
+		"renewalManagerName", notice.Recipients.RenewalManager.Name,
+		"technicalOwner", notice.Recipients.TechnicalOwner.Email,
+		"technicalOwnerName", notice.Recipients.TechnicalOwner.Name,
 		"resolvedVia", notice.ResolvedVia,
-	)
+	}
+	if notice.Recipients.Customer != nil {
+		attrs = append(attrs, "customer", notice.Recipients.Customer.Email, "customerName", notice.Recipients.Customer.Name)
+	}
+	if notice.Body != "" {
+		attrs = append(attrs, "body", notice.Body)
+	}
+
+	n.Logger.InfoContext(ctx, "notice", attrs...)
 	return nil
 }
 

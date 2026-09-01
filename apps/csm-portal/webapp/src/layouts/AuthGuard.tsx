@@ -14,13 +14,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type JSX, useEffect } from "react";
+import { type JSX, useEffect, useState } from "react";
 import { useAsgardeo } from "@asgardeo/react";
 import { ProtectedRoute } from "@asgardeo/react-router";
 import { useLocation, useNavigate } from "react-router";
 import AppLayout from "@layouts/AppLayout";
 import { POST_LOGIN_REDIRECT_KEY } from "@layouts/postLoginRedirect";
 import { CurrentUserProvider } from "@context/current-user/CurrentUserContext";
+import { useLogger } from "@hooks/useLogger";
+import { trySilentSignInOnce } from "@hooks/silentSignIn";
 
 /**
  * AuthGuard renders AppLayout (header/footer) so loading state is visible
@@ -38,9 +40,47 @@ import { CurrentUserProvider } from "@context/current-user/CurrentUserContext";
  * @returns {JSX.Element} AppLayout or redirect to home.
  */
 export default function AuthGuard(): JSX.Element {
-  const { isSignedIn } = useAsgardeo();
+  const { isSignedIn, signInSilently } = useAsgardeo();
   const location = useLocation();
   const navigate = useNavigate();
+  const logger = useLogger();
+
+  // Latches true the first time `isSignedIn` is observed true, and never
+  // resets — see the render branch below for why. Set directly in the render
+  // body (React's documented "adjusting state during rendering" pattern, not
+  // an effect) so the very same render that first sees `isSignedIn` also
+  // switches branches, instead of committing one extra render through
+  // `ProtectedRoute` first.
+  const [hasSignedInOnce, setHasSignedInOnce] = useState(false);
+  // One-way latch, separate from `hasSignedInOnce`: once an explicit
+  // sign-out starts, the "bypass ProtectedRoute" branch below must stop
+  // unconditionally, and stay stopped, regardless of what `isSignedIn` does
+  // afterward. `app:signing-out` (this app's existing signal, dispatched by
+  // every manual "Sign out" action in `UserProfile.tsx`/
+  // `IdleTimeoutProvider.tsx`) fires *before* the SDK's `signOut()` call —
+  // i.e. before `isSignedIn` has necessarily flipped to `false` yet. A
+  // reset tied to `isSignedIn` directly would race the render-time
+  // `hasSignedInOnce` latch below (still seeing `isSignedIn === true` on
+  // the very next render) and get immediately re-latched back to `true` in
+  // the same update; `isSigningOut` sidesteps that race entirely by not
+  // depending on `isSignedIn` at all once it's set.
+  const [isSigningOut, setIsSigningOut] = useState(false);
+  if (isSignedIn && !hasSignedInOnce && !isSigningOut) {
+    setHasSignedInOnce(true);
+  }
+
+  // Without this, an explicit sign-out was indistinguishable from a
+  // transient token-clock expiry once `hasSignedInOnce` had latched true —
+  // both just flip `isSignedIn` to `false` eventually — and this component
+  // would keep `CurrentUserProvider`/`AppLayout` mounted with the
+  // just-signed-out user's data during the brief window before the SDK's
+  // `signOut()` redirect actually navigates away, instead of falling back
+  // to `ProtectedRoute`'s neutral loader.
+  useEffect(() => {
+    const handleSigningOut = (): void => setIsSigningOut(true);
+    window.addEventListener("app:signing-out", handleSigningOut);
+    return () => window.removeEventListener("app:signing-out", handleSigningOut);
+  }, []);
 
   // After login, restore the saved deep link so it survives the Asgardeo SDK
   // reloading the page to `afterSignInUrl` ("/") after the callback (which would
@@ -62,6 +102,39 @@ export default function AuthGuard(): JSX.Element {
     }
   }, [isSignedIn, navigate, location.pathname, location.search, location.hash]);
 
+  // Once a session has been established at least once, never again let
+  // `ProtectedRoute` hide the app behind its `loader` for a transient
+  // client-side token-clock expiry. `ProtectedRoute` swaps to `loader`
+  // (unmounting `children`) for as long as `isSignedIn` is false, however
+  // briefly and however recoverable — that is a full React-level unmount of
+  // everything under it, indistinguishable in effect from a page reload even
+  // though the browser itself never navigates. Live reproduction confirmed
+  // this destroys in-progress work (an open case-comment composer and its
+  // draft) within the same instant the token's local clock expires, well
+  // before any silent-reauth attempt could even begin — a plain in-memory
+  // marker on `window` survived the whole cycle while the React tree's own
+  // state did not.
+  //
+  // No background effect proactively re-runs `signInSilently()` here for
+  // this case (an earlier version of this fix added one, driven by
+  // `isSignedIn` transitions) — it raced `useAuthApiClient.ts`'s own
+  // call-level recovery: the shared single-flight guard only dedupes
+  // *concurrent* attempts, so a background poller and a real failing
+  // request could still each trigger their own attempt back-to-back, and
+  // that duplicate cycle was observed to leave an in-flight mutation's own
+  // promise chain stuck (a case comment created successfully server-side,
+  // but the composer's "Sending…" state never cleared). `useAuthApiClient`
+  // already recovers correctly on any actual 401 from real use — once
+  // signed in, that is the ONLY recovery trigger this app needs; a token
+  // expiring while the user does nothing at all needs no proactive fix.
+  if (hasSignedInOnce && !isSigningOut) {
+    return (
+      <CurrentUserProvider>
+        <AppLayout />
+      </CurrentUserProvider>
+    );
+  }
+
   return (
     <ProtectedRoute
       loader={<AppLayout />}
@@ -71,7 +144,13 @@ export default function AuthGuard(): JSX.Element {
         if (intended !== "/") {
           sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, intended);
         }
-        defaultSignIn(signInOptions);
+        trySilentSignInOnce(signInSilently, (message) =>
+          logger.debug("[auth] silent sign-in failed", message),
+        ).then((result) => {
+          if (!result) {
+            defaultSignIn(signInOptions);
+          }
+        });
       }}
     >
       <CurrentUserProvider>

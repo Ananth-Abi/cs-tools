@@ -111,3 +111,19 @@ func (h *IncidentHandler) SearchIncidents(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
 }
+
+// GroupIncidentsBy handles POST /incidents/group-by.
+func (h *IncidentHandler) GroupIncidentsBy(w http.ResponseWriter, r *http.Request) {
+	var req domain.GroupIncidentsByRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.GroupIncidentsBy(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}

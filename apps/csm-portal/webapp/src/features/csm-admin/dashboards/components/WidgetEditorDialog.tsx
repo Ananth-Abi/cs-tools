@@ -128,17 +128,21 @@ interface WidgetEditorDialogProps {
    * autocomplete suggestions (freeform text is still accepted — a widget
    * can also start a brand-new section right here). */
   sectionSuggestions: string[];
-  /** The team the Preview tile below should scope its data to, threaded
-   * through exactly as `DashboardWidgetGrid` threads it to every real tile
-   * (see that component's own doc comment) — otherwise a widget using the
-   * `__current_team__` filter placeholder or a `{{currentTeam}}` display-text
-   * token previews unfiltered data / an unresolved placeholder instead of
-   * what an admin would actually see on the live dashboard. `undefined` for
-   * a non-team-based dashboard, or while the team isn't resolved yet — see
-   * the editor page's own doc comment for where this comes from. */
-  selectedTeamGroupId?: string | string[];
-  /** See `selectedTeamGroupId` above; the human-readable counterpart for the
-   * `{{currentTeam}}` text token — see `DashboardWidgetGrid`. */
+  /** The team's `creGroupId` the Preview tile below should scope its data
+   * to, threaded through exactly as `DashboardWidgetGrid` threads it to
+   * every real tile (see that component's own doc comment) — otherwise a
+   * widget using the `__current_team__` filter placeholder in a `creTeam`
+   * entry or a `{{currentTeam}}` display-text token previews unfiltered
+   * data / an unresolved placeholder instead of what an admin would
+   * actually see on the live dashboard. `undefined` for a non-team-based
+   * dashboard, or while the team isn't resolved yet — see the editor
+   * page's own doc comment for where this comes from. */
+  selectedTeamCreGroupId?: string | string[];
+  /** See `selectedTeamCreGroupId` above; the `sreTeam`-filter counterpart,
+   * resolved independently. */
+  selectedTeamSreGroupId?: string | string[];
+  /** See `selectedTeamCreGroupId` above; the human-readable counterpart for
+   * the `{{currentTeam}}` text token — see `DashboardWidgetGrid`. */
   selectedTeamLabel?: string;
   onClose: () => void;
   onSave: (widget: BeDashboardWidget) => void;
@@ -158,7 +162,8 @@ export default function WidgetEditorDialog({
   widget,
   defaultSection,
   sectionSuggestions,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
   onClose,
   onSave,
@@ -175,7 +180,19 @@ export default function WidgetEditorDialog({
   const [section, setSection] = useState(widget?.section ?? defaultSection ?? "");
   const [gridWidth, setGridWidth] = useState(widget?.gridWidth ?? 3);
   const [listLimit, setListLimit] = useState<number | undefined>(widget?.listLimit);
-  const [groupBy, setGroupBy] = useState(widget?.groupBy ?? "");
+  // No authoring UI for `groupBy` yet (it's now a real object config, not
+  // the stale unused string this dialog used to expose as a raw text
+  // field) — round-trip an existing widget's own `groupBy` verbatim so
+  // editing this dialog without touching shape/resourceType doesn't
+  // silently drop it. `groupBy.field` is only meaningful for the
+  // resourceType it was configured under (there's no per-resourceType
+  // groupBy field list to validate against, unlike `slices`' filter
+  // conditions, so a resourceType change can't be reconciled — it's
+  // cleared outright, same as `conditions`/`columns` below) and only for
+  // shape `"pie"`/`"bar"` (the backend enforces `groupBy`/`slices` as
+  // mutually exclusive) — cleared on either change so a widget edited away
+  // from its original group-by config doesn't save a stale one.
+  const [existingGroupBy, setExistingGroupBy] = useState(widget?.groupBy);
   const [conditions, setConditions] = useState<FilterCondition[]>(() =>
     filterConditionsFromQuery(widget?.resourceType ?? "case", widget?.query),
   );
@@ -205,6 +222,22 @@ export default function WidgetEditorDialog({
     setSliceDrafts((prev) => prev.map((d) => ({ ...d, conditions: [] })));
     setColumnDrafts([]);
     setPreviewSnapshot(undefined);
+    // See `existingGroupBy`'s own doc comment: its `field` is only valid
+    // for the resourceType it was configured under, and there's nothing
+    // here to reconcile it against the new one.
+    setExistingGroupBy(undefined);
+  };
+
+  // See `existingGroupBy`'s own doc comment: `groupBy` only makes sense for
+  // shape `"pie"`/`"bar"` — clear it the moment the admin moves off either,
+  // so re-selecting "pie" a moment later doesn't accidentally resurrect it
+  // (the admin would need to know it was silently retained in state to
+  // expect that) and so `buildWidget`'s own shape check below and this
+  // state agree, rather than one masking a stale value the other would
+  // otherwise expose again.
+  const handleShapeChange = (next: BeWidgetShape): void => {
+    setShape(next);
+    if (next !== "pie" && next !== "bar") setExistingGroupBy(undefined);
   };
 
   const { user } = useCurrentUser();
@@ -227,7 +260,8 @@ export default function WidgetEditorDialog({
     previewSnapshot?.listLimit,
     0,
     columnPathSampleEnabled,
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     previewSnapshot?.sortBy,
     user?.id,
   );
@@ -259,10 +293,24 @@ export default function WidgetEditorDialog({
       gridWidth,
       query: queryFromFilterConditions(resourceType, conditions),
       section: section.trim() || undefined,
-      groupBy: groupBy.trim() || undefined,
+      // Belt-and-suspenders alongside `existingGroupBy` already being
+      // cleared in state on an incompatible shape/resourceType change
+      // (see its own doc comment): `buildWidget` is the actual
+      // save-time serialization, so it re-asserts the same "pie"/"bar"
+      // gate here rather than trusting state alone stayed in sync.
+      groupBy: shape === "pie" || shape === "bar" ? existingGroupBy : undefined,
       listLimit: shape === "list" ? listLimit : undefined,
+      // `groupBy` and `slices` are mutually exclusive on the wire (the
+      // backend enforces this — see `existingGroupBy`'s own doc comment) —
+      // an admin can still have stale rows sitting in `sliceDrafts` (the
+      // manual slice editor below is hidden, not cleared, while
+      // `existingGroupBy` is set), so this omits `slices` outright rather
+      // than trusting the UI having hidden the editor was enough on its
+      // own.
       slices:
-        shape === "pie" || shape === "bar" ? draftsToSlices(resourceType, sliceDrafts) : undefined,
+        (shape === "pie" || shape === "bar") && existingGroupBy === undefined
+          ? draftsToSlices(resourceType, sliceDrafts)
+          : undefined,
       columns: builtColumns.length > 0 ? builtColumns : undefined,
     };
   };
@@ -337,7 +385,7 @@ export default function WidgetEditorDialog({
               select
               label="Shape"
               value={shape}
-              onChange={(e) => setShape(e.target.value as BeWidgetShape)}
+              onChange={(e) => handleShapeChange(e.target.value as BeWidgetShape)}
               size="small"
               sx={{ minWidth: 160 }}
             >
@@ -394,14 +442,6 @@ export default function WidgetEditorDialog({
                 slotProps={{ htmlInput: { min: 1 } }}
               />
             )}
-            <TextField
-              label="Group by (optional)"
-              value={groupBy}
-              onChange={(e) => setGroupBy(e.target.value)}
-              size="small"
-              sx={{ minWidth: 180 }}
-              helperText="Present on the wire; not used by the frontend today."
-            />
           </Box>
 
           <Divider />
@@ -492,7 +532,21 @@ export default function WidgetEditorDialog({
             </>
           )}
 
-          {isChartShape && (
+          {isChartShape && existingGroupBy !== undefined && (
+            <>
+              <Divider />
+              <Typography variant="subtitle2">Slices</Typography>
+              <Typography variant="body2" color="text.secondary">
+                This widget groups its data by {existingGroupBy.field} instead of manual
+                slices — the two are mutually exclusive. There's no authoring UI yet to edit
+                or clear a group-by config from here (see this dialog's own doc comment); to
+                switch back to manual slices, change the shape away from pie/bar and back,
+                which clears it.
+              </Typography>
+            </>
+          )}
+
+          {isChartShape && existingGroupBy === undefined && (
             <>
               <Divider />
               <Typography variant="subtitle2">
@@ -580,9 +634,11 @@ export default function WidgetEditorDialog({
                 filters={previewSnapshot.query}
                 listLimit={previewSnapshot.listLimit}
                 slices={previewSnapshot.slices}
+                groupBy={previewSnapshot.groupBy}
                 columns={previewSnapshot.columns}
                 sortBy={previewSnapshot.sortBy}
-                selectedTeamGroupId={selectedTeamGroupId}
+                selectedTeamCreGroupId={selectedTeamCreGroupId}
+                selectedTeamSreGroupId={selectedTeamSreGroupId}
                 selectedTeamLabel={selectedTeamLabel}
               />
             </Box>

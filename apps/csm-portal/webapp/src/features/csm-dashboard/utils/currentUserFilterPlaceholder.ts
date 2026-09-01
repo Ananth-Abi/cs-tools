@@ -45,7 +45,7 @@ export const CURRENT_USER_PLACEHOLDER = "__current_user__";
  *   record (e.g. `{ assignedUserIds: ["__current_user__"] }`)
  *
  * Unlike the case-search DSL's `field`-scoped `resolveTeamPlaceholder` (which
- * only ever looks at `integrationCsTeam`), this walks every field generically
+ * only ever looks at `creTeam`/`sreTeam`), this walks every field generically
  * — mirroring the backend's own now-removed `substituteCurrentUser`, which
  * substituted the placeholder by VALUE wherever it appeared, with no
  * hardcoded field name — since a widget can put "the signed-in user" in any

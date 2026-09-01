@@ -36,9 +36,21 @@ import (
 // never read Account directly, so callers don't need to duplicate the nil
 // check.
 type project struct {
-	ID      string             `json:"id"`
-	Account *projectAccountRef `json:"account"`
-	EndDate *time.Time         `json:"endDate"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// ProjectKey is the short project identifier (e.g. "APPSUB") used in
+	// notice bodies, alongside Name. Tagged "key", not "projectKey" —
+	// csm-integration-service's own openapi.yaml documents this field as
+	// "projectKey", but the live response actually names it "key"
+	// (confirmed directly via Postman against the dedicated test project;
+	// "projectKey" silently produced an always-empty ProjectKey until this
+	// was caught). Trust the wire over the spec if they disagree again.
+	ProjectKey string             `json:"key"`
+	Account    *projectAccountRef `json:"account"`
+	// StartDate is nil only when genuinely absent on the wire — mirrors
+	// EndDate's existing nullable-pointer convention.
+	StartDate *time.Time `json:"startDate"`
+	EndDate   *time.Time `json:"endDate"`
 	// ClosureState is the derived roll-up over EndDateClosureState,
 	// InvoiceDueDateClosureState, and ComplianceViolationClosureState — not
 	// settable directly, and not what suspend()'s idempotency guard checks
@@ -56,11 +68,12 @@ type project struct {
 }
 
 // projectAccountRef is the nested account reference on both GetProject's and
-// SearchProjects's response shapes. Only id is used; the upstream shape
-// carries more (name, activationDate, tier, region, ...) that this
-// component doesn't need.
+// SearchProjects's response shapes. id and name are used (name for the
+// notice subject line); the upstream shape carries more (activationDate,
+// tier, region, ...) that this component doesn't need.
 type projectAccountRef struct {
-	ID string `json:"id"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // accountID returns the project's account ID, or "" if the project
@@ -112,8 +125,14 @@ type personRefDTO struct {
 }
 
 // accountDTO is the subset of GetAccount's response this component reads.
+// TechnicalOwner and RenewalAccountManager are confirmed present on the real
+// response (verified directly against the live API) alongside
+// AccountManager; all three now feed the notice-content redesign's
+// Recipients (see sweep.go's resolveAccountContacts).
 type accountDTO struct {
-	AccountManager *personRefDTO `json:"accountManager"`
+	AccountManager        *personRefDTO `json:"accountManager"`
+	TechnicalOwner        *personRefDTO `json:"technicalOwner"`
+	RenewalAccountManager *personRefDTO `json:"renewalAccountManager"`
 }
 
 // entityReader is the minimal read surface processProject needs. Satisfied
@@ -154,12 +173,14 @@ type searchProjectsRequest struct {
 	SortOrder     string     `json:"sortOrder"`
 }
 
-// Result summarizes one full Run: how many projects were evaluated, and any
-// per-project failures encountered along the way. A non-empty Failures list
-// is a "soft" outcome — Run's own error return is reserved for a fatal
-// page-fetch failure that prevented the sweep from completing at all.
+// Result summarizes one full Run: how many projects were evaluated, how
+// many were skipped via EXCLUDED_PROJECT_IDS, and any per-project failures
+// encountered along the way. A non-empty Failures list is a "soft"
+// outcome — Run's own error return is reserved for a fatal page-fetch
+// failure that prevented the sweep from completing at all.
 type Result struct {
 	ProjectsEvaluated int
+	ProjectsExcluded  int
 	Failures          []ProjectFailure
 }
 

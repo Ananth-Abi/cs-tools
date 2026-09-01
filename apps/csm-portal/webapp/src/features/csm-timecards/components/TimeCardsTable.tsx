@@ -16,7 +16,7 @@
 
 import { Fragment, useState, type JSX } from "react";
 import { Box, Checkbox, IconButton, Skeleton, Tooltip, Typography } from "@wso2/oxygen-ui";
-import { Check, Eye, Pencil, X } from "@wso2/oxygen-ui-icons-react";
+import { Check, Eye, Pencil, Trash2, X } from "@wso2/oxygen-ui-icons-react";
 import RelativeDate from "@components/RelativeDate";
 import TimeCardCasePreviewDrawer from "@features/csm-timecards/components/TimeCardCasePreviewDrawer";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
@@ -73,11 +73,12 @@ interface TimeCardsTableProps {
   onToggleSelectAll?: (selectableCards: CsmTimeCard[]) => void;
 }
 
-// "edit" isn't in here — unlike approve/reject, it renders as its own icon
-// button (matching the Eye view icon) shown unconditionally when a card is
-// editable, not as an icon button gated by showActionsColumn (see below).
+// "edit"/"delete" aren't in here — unlike approve/reject, they each render as
+// their own icon button (matching the Eye view icon) shown unconditionally
+// when a card is eligible, not as an icon button gated by showActionsColumn
+// (see below).
 const ACTION_BUTTONS: Record<
-  Exclude<TimecardAction, "edit">,
+  Exclude<TimecardAction, "edit" | "delete">,
   { label: string; color: "primary" | "error"; icon: JSX.Element }
 > = {
   approve: { label: "Approve", color: "primary", icon: <Check size={16} /> },
@@ -114,6 +115,7 @@ export default function TimeCardsTable({
   const [detailCard, setDetailCard] = useState<CsmTimeCard | null>(null);
 
   const headerCells = [
+    "Preview",
     ...(showCaseColumn ? ["Case"] : []),
     ...(showEngineerColumn ? ["Engineer"] : []),
     "Project",
@@ -124,6 +126,7 @@ export default function TimeCardsTable({
   ];
   const grid = [
     ...(selectable ? ["40px"] : []),
+    "auto",
     ...(showCaseColumn ? ["minmax(120px, 0.9fr)"] : []),
     ...(showEngineerColumn ? ["minmax(140px, 1fr)"] : []),
     "minmax(160px, 1.4fr)",
@@ -275,6 +278,25 @@ export default function TimeCardsTable({
                     )}
                   </Box>
                 )}
+                {/* Quick preview, at the row's left edge (right after the
+                    optional bulk-select checkbox) so it's reachable without
+                    hunting across the row; the drawer opens on the right.
+                    Clicking the eye for the row already open closes it
+                    instead of re-opening the same preview. */}
+                <Box role="cell" sx={{ display: "flex", alignItems: "center" }}>
+                  <IconButton
+                    size="small"
+                    aria-label="View details"
+                    aria-pressed={detailCard?.id === c.id}
+                    data-testid={`timecard-view-${c.id}`}
+                    data-quick-preview-eye="true"
+                    onClick={() =>
+                      setDetailCard((prev) => (prev?.id === c.id ? null : c))
+                    }
+                  >
+                    <Eye size={16} />
+                  </IconButton>
+                </Box>
                 {showCaseColumn && (
                   <Typography role="cell" variant="body2" noWrap title={c.caseNumber}>
                     {c.caseNumber}
@@ -310,18 +332,10 @@ export default function TimeCardsTable({
                   role="cell"
                   sx={{ display: "flex", alignItems: "center", gap: 0.75, justifySelf: "end" }}
                 >
-                  <IconButton
-                    size="small"
-                    aria-label="View details"
-                    data-testid={`timecard-view-${c.id}`}
-                    onClick={() => setDetailCard(c)}
-                  >
-                    <Eye size={16} />
-                  </IconButton>
-                  {/* Own actionable button regardless of showActionsColumn —
-                      unlike approve/reject, editing is offered to the card's
-                      own owner on every tab it can appear on (My time
-                      sheets, All), not just the Approvals queue. */}
+                  {/* Own actionable buttons regardless of showActionsColumn —
+                      unlike approve/reject, editing and deleting are offered
+                      to the card's own owner on every tab it can appear on
+                      (My time sheets, All), not just the Approvals queue. */}
                   {actions.includes("edit") && (
                     <IconButton
                       size="small"
@@ -332,9 +346,23 @@ export default function TimeCardsTable({
                       <Pencil size={16} />
                     </IconButton>
                   )}
+                  {actions.includes("delete") && (
+                    <IconButton
+                      size="small"
+                      color="error"
+                      aria-label="Delete time card"
+                      data-testid={`timecard-delete-${c.id}`}
+                      onClick={() => onCardAction(c, "delete")}
+                    >
+                      <Trash2 size={16} />
+                    </IconButton>
+                  )}
                   {showActionsColumn &&
                     actions
-                      .filter((a): a is Exclude<TimecardAction, "edit"> => a !== "edit")
+                      .filter(
+                        (a): a is Exclude<TimecardAction, "edit" | "delete"> =>
+                          a !== "edit" && a !== "delete",
+                      )
                       .map((a) => {
                         const b = ACTION_BUTTONS[a];
                         return (
@@ -370,7 +398,19 @@ export default function TimeCardsTable({
       </Box>
       <TimeCardCasePreviewDrawer
         card={detailCard}
-        actions={detailCard ? cardActions(detailCard.state, roleFor(detailCard)) : []}
+        // Same gating as the row-level Approve/Reject buttons above: while a
+        // bulk selection is active, approve/reject only happens through the
+        // bulk toolbar. Without this filter the drawer would still offer its
+        // own Approve/Reject regardless of `selectionActive`, letting a
+        // direct decision bypass the same restriction the row buttons
+        // enforce.
+        actions={
+          detailCard
+            ? cardActions(detailCard.state, roleFor(detailCard)).filter(
+                (a) => !selectionActive || (a !== "approve" && a !== "reject"),
+              )
+            : []
+        }
         onClose={() => setDetailCard(null)}
         onDecide={(action) => {
           if (detailCard) onCardAction(detailCard, action);

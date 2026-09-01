@@ -31,6 +31,7 @@ import {
   Maximize2,
   Minimize2,
   Send,
+  Upload,
 } from "@wso2/oxygen-ui-icons-react";
 import {
   useCallback,
@@ -38,9 +39,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type JSX,
 } from "react";
 import Editor from "@components/rich-text-editor/Editor";
+import {
+  ALLOWED_IMAGE_TYPES_LABEL,
+  MAX_IMAGE_SIZE_BYTES,
+} from "@components/rich-text-editor/richTextConstants";
 import { formatBytes } from "@utils/formatBytes";
 import { MAX_ATTACHMENT_SIZE_BYTES } from "@features/csm-cases/api/useCsmCaseAttachments";
 import CsmUploadAttachmentModal from "@features/csm-cases/components/CsmUploadAttachmentModal";
@@ -144,6 +150,104 @@ export default function CsmCaseCommentInput({
   const onAttachmentRemove = useCallback((index: number) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   }, []);
+  const onPasteError = useCallback((reason: "size" | "type") => {
+    setError(
+      reason === "type"
+        ? `That image format isn't supported. Allowed formats: ${ALLOWED_IMAGE_TYPES_LABEL}.`
+        : `Pasted image exceeds the maximum allowed size of ${formatBytes(MAX_IMAGE_SIZE_BYTES)}.`,
+    );
+  }, []);
+
+  // Dropping files directly onto the composer, as an alternative to the
+  // paperclip button's naming-modal flow (see CsmUploadAttachmentModal) —
+  // faster for the common case of "just attach these," at the cost of
+  // skipping the custom-name step. dragCounter handles dragenter/dragleave
+  // firing on every child element as the pointer crosses them; dragOver
+  // should only go false once the pointer has actually left the composer,
+  // not just moved between its children.
+  const [dragOver, setDragOver] = useState(false);
+  const dragCounter = useRef(0);
+
+  const isFileDrag = useCallback(
+    (e: DragEvent) => Array.from(e.dataTransfer.types).includes("Files"),
+    [],
+  );
+
+  const onDragEnter = useCallback(
+    (e: DragEvent) => {
+      // preventDefault unconditionally for a real file drag, before the
+      // disabled/submitting check below — otherwise a file dropped while
+      // the composer is unavailable falls through to the browser's own
+      // default handling (navigating the tab to open the file), discarding
+      // whatever was on the page.
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      if (disabled || submitting) return;
+      dragCounter.current += 1;
+      setDragOver(true);
+    },
+    [disabled, submitting, isFileDrag],
+  );
+  const onDragOver = useCallback(
+    (e: DragEvent) => {
+      // Required on dragover too (not just dragenter) — without this the
+      // browser refuses to fire a drop event at all.
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+    },
+    [isFileDrag],
+  );
+  const onDragLeave = useCallback((e: DragEvent) => {
+    if (!isFileDrag(e)) return;
+    dragCounter.current = Math.max(0, dragCounter.current - 1);
+    if (dragCounter.current === 0) setDragOver(false);
+  }, [isFileDrag]);
+
+  const addDroppedFiles = useCallback((files: FileList) => {
+    const incoming = Array.from(files);
+    if (incoming.length === 0) return;
+
+    // Same size limit the naming modal enforces. Report the first offender
+    // (matching submit()'s own single-message pattern below) but still
+    // attach whichever dropped files DO pass, rather than rejecting the
+    // whole drop over one oversized file.
+    const tooLarge = incoming.find((f) => f.size > MAX_ATTACHMENT_SIZE_BYTES);
+    const accepted = incoming.filter((f) => f.size <= MAX_ATTACHMENT_SIZE_BYTES);
+
+    if (accepted.length > 0) {
+      setAttachments((prev) => {
+        const next = [...prev];
+        for (const file of accepted) {
+          // Same dedupe rule as the modal-driven path.
+          if (next.some((a) => fileSignature(a.file) === fileSignature(file))) continue;
+          next.push({ file, name: file.name });
+        }
+        return next;
+      });
+    }
+    setError(
+      tooLarge
+        ? `"${tooLarge.name}" is too large. The maximum attachment size is ${formatBytes(
+            MAX_ATTACHMENT_SIZE_BYTES,
+          )}.`
+        : null,
+    );
+  }, []);
+
+  const onDrop = useCallback(
+    (e: DragEvent) => {
+      // Same ordering as onDragEnter: prevent the browser's default file
+      // handling before checking whether the composer can actually accept
+      // the drop, and always reset the drag-visual state either way.
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      dragCounter.current = 0;
+      setDragOver(false);
+      if (disabled || submitting) return;
+      addDroppedFiles(e.dataTransfer.files);
+    },
+    [disabled, submitting, isFileDrag, addDroppedFiles],
+  );
 
   // Incrementing this trigger clears the editor (see Editor's ResetPlugin).
   const resetTriggerRef = useRef(0);
@@ -255,7 +359,13 @@ export default function CsmCaseCommentInput({
 
   return (
     <Box
+      data-testid="csm-comment-composer"
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
       sx={{
+        position: "relative",
         display: "flex",
         flexDirection: "column",
         gap: 1,
@@ -267,6 +377,29 @@ export default function CsmCaseCommentInput({
         ...(internal && { borderLeftWidth: "3px", borderLeftColor: "primary.main" }),
       }}
     >
+      {dragOver && (
+        <Box
+          aria-hidden
+          sx={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 1,
+            pointerEvents: "none",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 0.5,
+            borderRadius: 1,
+            border: "2px dashed",
+            borderColor: "primary.main",
+            bgcolor: "action.hover",
+          }}
+        >
+          <Upload size={22} />
+          <Typography variant="body2">Drop files to attach</Typography>
+        </Box>
+      )}
       <Box
         sx={{
           display: "flex",
@@ -411,6 +544,7 @@ export default function CsmCaseCommentInput({
           onSubmitKeyDown={() => {
             void submit();
           }}
+          onPasteError={onPasteError}
         />
       )}
 

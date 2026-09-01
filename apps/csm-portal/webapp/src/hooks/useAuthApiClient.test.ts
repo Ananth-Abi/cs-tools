@@ -15,7 +15,13 @@
 // under the License.
 
 import { renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// The token-recovery chain (retry, then silent sign-in) now lives entirely
+// in useAuthTokens, exercised here for real (not mocked) since this file
+// only mocks @asgardeo/react's own primitives. Fake timers are advanced past
+// this to let its internal promise chain settle between steps.
+const POLL_INTERVAL_MS = 700;
 
 const ASGARDEO_UNAUTHENTICATED_CODE = "SPA-AUTH_CLIENT-VM-IV02";
 
@@ -63,6 +69,7 @@ describe("useAuthApiClient", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.stubGlobal("fetch", fetchMock);
     fetchMock.mockReset();
     getAccessTokenMock.mockReset().mockResolvedValue("access-token");
@@ -72,6 +79,10 @@ describe("useAuthApiClient", () => {
     debugMock.mockReset();
     errorMock.mockReset();
     sessionStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("returns the response untouched on a plain success", async () => {
@@ -125,21 +136,7 @@ describe("useAuthApiClient", () => {
     expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it("recovers from a resolved 401 via the bare retry alone, once the second fetch succeeds", async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse(401))
-      .mockResolvedValue(jsonResponse(200, { ok: true }));
-
-    const { result } = renderHook(() => useAuthApiClient());
-    const response = await result.current("https://example.test/api/thing");
-
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(signInSilentlyMock).not.toHaveBeenCalled();
-    expect(signInMock).not.toHaveBeenCalled();
-  });
-
-  it("on a thrown token-expiry error that survives the bare retry, tries silent sign-in then retries again", async () => {
+  it("on a thrown token-expiry error that survives the bare retry, tries silent sign-in then recovers via the first poll", async () => {
     getAccessTokenMock
       .mockRejectedValueOnce(TOKEN_EXPIRED_ERROR)
       .mockRejectedValueOnce(TOKEN_EXPIRED_ERROR)
@@ -147,78 +144,43 @@ describe("useAuthApiClient", () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { ok: true }));
 
     const { result } = renderHook(() => useAuthApiClient());
-    const response = await result.current("https://example.test/api/thing");
+    const responsePromise = result.current("https://example.test/api/thing");
+    // Silent sign-in's own return value isn't trusted as the sole recovery
+    // signal (see useAuthApiClient.ts) — the chain polls the original
+    // request on an interval instead; advance past the first one.
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
+    const response = await responsePromise;
 
     expect(response.status).toBe(200);
     expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
     expect(signInMock).not.toHaveBeenCalled();
   });
 
-  it("on a resolved 401 that survives the bare retry, tries silent sign-in then retries again", async () => {
-    fetchMock
-      .mockResolvedValueOnce(jsonResponse(401))
-      .mockResolvedValueOnce(jsonResponse(401))
-      .mockResolvedValue(jsonResponse(200, { ok: true }));
-
-    const { result } = renderHook(() => useAuthApiClient());
-    const response = await result.current("https://example.test/api/thing");
-
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
-    expect(signInMock).not.toHaveBeenCalled();
-  });
-
-  it("forces a full sign-in redirect when a resolved 401 survives retry, silent sign-in, and the retry after it", async () => {
-    fetchMock.mockResolvedValue(jsonResponse(401));
-
-    const { result } = renderHook(() => useAuthApiClient());
-    // redirectToSignIn returns a never-resolving promise once the redirect is
-    // triggered, so only assert on the calls it makes rather than awaiting it.
-    void result.current("https://example.test/api/thing");
-
-    await vi.waitFor(() => {
-      expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
-      expect(signInMock).toHaveBeenCalledTimes(1);
-    });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(sessionStorage.getItem("csm.auth.lastForcedSignInAt")).not.toBeNull();
-  });
-
-  it("forces a full sign-in redirect when a thrown token-expiry error survives every recovery attempt", async () => {
+  it("forces a full sign-in redirect when silent sign-in itself reports failure, without waiting out the full poll budget", async () => {
     getAccessTokenMock.mockRejectedValue(TOKEN_EXPIRED_ERROR);
+    signInSilentlyMock.mockResolvedValue(false);
 
     const { result } = renderHook(() => useAuthApiClient());
     void result.current("https://example.test/api/thing");
 
+    // Silent sign-in reporting failure ends polling after the next interval,
+    // not the full budget.
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     await vi.waitFor(() => {
       expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
       expect(signInMock).toHaveBeenCalledTimes(1);
     });
   });
 
-  it("loop guard: does not redirect again, and instead lets the 401 propagate as a normal failure, when a forced sign-in happened moments ago", async () => {
-    sessionStorage.setItem("csm.auth.lastForcedSignInAt", String(Date.now()));
-    fetchMock.mockResolvedValue(jsonResponse(401));
-
-    const { result } = renderHook(() => useAuthApiClient());
-    const response = await result.current("https://example.test/api/thing");
-
-    expect(response.status).toBe(401);
-    expect(signInMock).not.toHaveBeenCalled();
-    // Silent sign-in is still attempted (it's cheap and non-disruptive); only
-    // the disruptive full-page redirect is what the guard suppresses.
-    expect(signInSilentlyMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("recovers a POST Request with a body from a resolved 401 via the bare retry, without the body being consumed", async () => {
+  it("recovers a POST Request with a body from a thrown token-expiry error via the bare retry, without the body being consumed", async () => {
+    getAccessTokenMock
+      .mockRejectedValueOnce(TOKEN_EXPIRED_ERROR)
+      .mockResolvedValue("fresh-token");
     const body = JSON.stringify({ hello: "world" });
     const requestBodies: string[] = [];
     fetchMock.mockImplementation(async (input) => {
       requestBodies.push(await (input as Request).text());
-      return requestBodies.length === 1
-        ? jsonResponse(401)
-        : jsonResponse(200, { ok: true });
+      return jsonResponse(200, { ok: true });
     });
 
     const request = new Request("https://example.test/api/thing", {
@@ -230,25 +192,10 @@ describe("useAuthApiClient", () => {
     const response = await result.current(request);
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(requestBodies).toEqual([body, body]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(requestBodies).toEqual([body]);
     // The original Request must stay pristine (not directly fetched) so it
-    // remains clonable across every retry attempt.
+    // remains clonable across a future attempt.
     expect(request.bodyUsed).toBe(false);
-  });
-
-  it("loop guard: still redirects for a stale marker well outside the guard window", async () => {
-    sessionStorage.setItem(
-      "csm.auth.lastForcedSignInAt",
-      String(Date.now() - 60_000),
-    );
-    fetchMock.mockResolvedValue(jsonResponse(401));
-
-    const { result } = renderHook(() => useAuthApiClient());
-    void result.current("https://example.test/api/thing");
-
-    await vi.waitFor(() => {
-      expect(signInMock).toHaveBeenCalledTimes(1);
-    });
   });
 });

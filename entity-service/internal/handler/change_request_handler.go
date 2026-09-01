@@ -65,6 +65,21 @@ func (h *ChangeRequestHandler) SearchChangeRequests(w http.ResponseWriter, r *ht
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// GroupChangeRequestsBy handles POST /change-requests/group-by.
+func (h *ChangeRequestHandler) GroupChangeRequestsBy(w http.ResponseWriter, r *http.Request) {
+	var req domain.GroupChangeRequestsByRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.GroupChangeRequestsBy(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // PatchChangeRequest handles PATCH /change-requests/{id}.
 func (h *ChangeRequestHandler) PatchChangeRequest(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

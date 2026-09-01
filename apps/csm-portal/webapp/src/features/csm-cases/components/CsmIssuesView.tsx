@@ -68,16 +68,39 @@ const DEFAULT_ROWS_PER_PAGE = 20;
 const ROWS_PER_PAGE_OPTIONS = [10, DEFAULT_ROWS_PER_PAGE, BE_MAX_PAGE_LIMIT];
 
 // URL params owned by the filter state; cleared/rewritten on change while any
-// other params (e.g. a `tab` selection) are preserved.
+// other params (e.g. a `tab` selection) are preserved. Must cover every key
+// `writeCasesFiltersToUrl` can write — a key missing here never gets deleted
+// when its filter clears back to empty/null, so the stale URL value keeps
+// getting read back on the next render, making that one filter look
+// impossible to fully clear (found via workStates: selecting a work state
+// then trying to deselect it back to none silently failed because
+// `workStates` wasn't in this list).
 const FILTER_PARAM_KEYS = [
   "search",
   "severities",
   "states",
   "types",
   "assignees",
+  "workStates",
   "projects",
   "engagementTypes",
   "products",
+  "csTeams",
+  "sreTeams",
+  "tags",
+  "excludeTags",
+  "onboardingStatuses",
+  "slaPctGte",
+  "slaPctLte",
+  "escalation",
+  "escalationLevels",
+  "projectTypes",
+  "createdFrom",
+  "createdTo",
+  "updatedFrom",
+  "updatedTo",
+  "closedFrom",
+  "closedTo",
 ] as const;
 
 interface CsmIssuesViewProps {
@@ -92,6 +115,9 @@ interface CsmIssuesViewProps {
   lockedFilters?: Partial<CasesFilters>;
   /** Hide the case-type filter control (use when `lockedFilters` fixes it). */
   hideTypeFilter?: boolean;
+  /** Label for the case-type filter control; see `CasesFilterBar`'s own
+   * `typeFilterLabel` doc comment. Defaults to "Case type". */
+  typeFilterLabel?: string;
   /** Hide the project filter control (use when the view is project-scoped). */
   hideProjectFilter?: boolean;
   /** Show the engagement-type sub-filter (pass when the view is locked to engagement cases). */
@@ -102,6 +128,15 @@ interface CsmIssuesViewProps {
    * concept — SRA and Engagements don't surface it, but the main case list
    * keeps it). */
   hideSeverityColumn?: boolean;
+  /**
+   * Suppress this view's own "Back" button. Set when embedding this view as
+   * a sub-tab of a page that already renders its own page-level Back button
+   * (e.g. a project's Work items tab) — `location.state.from` is set on the
+   * *route*, not per-tab, so an embedded view still sees it and would
+   * otherwise render a second, redundant Back button pointing at the exact
+   * same destination as the outer page's.
+   */
+  hideBackButton?: boolean;
 }
 
 /**
@@ -117,10 +152,12 @@ export default function CsmIssuesView({
   entityNoun = "cases",
   lockedFilters,
   hideTypeFilter,
+  typeFilterLabel,
   hideProjectFilter,
   showEngagementTypeFilter,
   detailBasePath,
   hideSeverityColumn,
+  hideBackButton,
 }: CsmIssuesViewProps): JSX.Element {
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo<CasesFilters>(
@@ -133,9 +170,12 @@ export default function CsmIssuesView({
   // Set by DashboardWidgetTile's count/pie/bar click-throughs, since this
   // view has no dashboard context of its own (unlike the dashboard's
   // list-shape widget, whose embedded CasesList sets the same `from` shape
-  // pointing at the dashboard itself). Absent for every other way of
-  // reaching this view (nav-bar tab, project-issues tab, etc.), so the Back
-  // button only ever appears when there's somewhere meaningful to return to.
+  // pointing at the dashboard itself). `location.state` belongs to the
+  // *route*, not this component, so when this view is embedded as a
+  // project's Work items sub-tab it still sees whatever `from` the project
+  // page itself was reached with -- callers embedding it that way must pass
+  // `hideBackButton`, since the outer page already renders its own Back
+  // button to the same destination.
   const backTo = (location.state as { from?: string } | null)?.from;
 
   const [page, setPage] = useState(0);
@@ -361,7 +401,7 @@ export default function CsmIssuesView({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      {backTo && (
+      {backTo && !hideBackButton && (
         <Button
           variant="text"
           size="small"
@@ -421,6 +461,7 @@ export default function CsmIssuesView({
         availableProjects={availableProjects}
         showSeverityFilter={showSeverityFilter}
         hideTypeFilter={hideTypeFilter}
+        typeFilterLabel={typeFilterLabel}
         hideProjectFilter={hideProjectFilter}
         showEngagementTypeFilter={showEngagementTypeFilter}
       />

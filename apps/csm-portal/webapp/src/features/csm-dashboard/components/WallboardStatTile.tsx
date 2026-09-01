@@ -56,7 +56,8 @@ export interface WallboardStatTileProps {
    * `wallboardMetricStyle.ts` for why. */
   section: WallboardSection;
   variant?: WallboardStatTileVariant;
-  selectedTeamGroupId?: string | string[];
+  selectedTeamCreGroupId?: string | string[];
+  selectedTeamSreGroupId?: string | string[];
   selectedTeamLabel?: string;
 }
 
@@ -74,7 +75,8 @@ export default function WallboardStatTile({
   filters,
   section,
   variant = "primary",
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
 }: WallboardStatTileProps): JSX.Element {
   const { user } = useCurrentUser();
@@ -89,7 +91,8 @@ export default function WallboardStatTile({
     undefined,
     0,
     !awaitingCurrentUser,
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     undefined,
     currentUserId,
     CS_OVERVIEW_REFETCH_INTERVAL_MS,
@@ -103,7 +106,9 @@ export default function WallboardStatTile({
   const hasAlert = colors !== undefined && total > 0;
 
   const resolvedFilters = resolveCurrentUserPlaceholder(
-    resolveRelativeDateFilters(resolveTeamPlaceholder(filters, selectedTeamGroupId)),
+    resolveRelativeDateFilters(
+      resolveTeamPlaceholder(filters, selectedTeamCreGroupId, selectedTeamSreGroupId),
+    ),
     currentUserId,
   );
   const href = config ? config.buildHref(resolvedFilters) : undefined;

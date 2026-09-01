@@ -263,10 +263,14 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
     : undefined;
   const previewTeamId = previewTeamOverride ?? defaultPreviewTeamId;
   const previewTeam = teams.data?.find((t) => t.id === previewTeamId);
-  const selectedTeamGroupId: string | string[] | undefined =
+  const selectedTeamCreGroupId: string | string[] | undefined =
     previewTeamId === ALL_TEAMS_SENTINEL
-      ? (teams.data ?? []).map((t) => t.groupId).filter((g): g is string => Boolean(g))
-      : previewTeam?.groupId;
+      ? (teams.data ?? []).map((t) => t.creGroupId).filter((g): g is string => Boolean(g))
+      : previewTeam?.creGroupId;
+  const selectedTeamSreGroupId: string | string[] | undefined =
+    previewTeamId === ALL_TEAMS_SENTINEL
+      ? (teams.data ?? []).map((t) => t.sreGroupId).filter((g): g is string => Boolean(g))
+      : previewTeam?.sreGroupId;
   const selectedTeamLabel: string | undefined =
     previewTeamId === ALL_TEAMS_SENTINEL ? "All ABTs" : previewTeam?.name;
 
@@ -493,7 +497,8 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
         ) : (
           <DashboardWidgetGrid
             widgets={working.widgets}
-            selectedTeamGroupId={selectedTeamGroupId}
+            selectedTeamCreGroupId={selectedTeamCreGroupId}
+            selectedTeamSreGroupId={selectedTeamSreGroupId}
             selectedTeamLabel={selectedTeamLabel}
             renderWidgetAction={(widget) => (
               <Box sx={{ display: "flex", gap: 0.5 }}>
@@ -608,7 +613,8 @@ export default function CsmDashboardBuilderEditorPage(): JSX.Element {
           widget={editingWidget.widget}
           defaultSection={editingWidget.defaultSection}
           sectionSuggestions={sectionNames}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
           onClose={() => setEditingWidget(undefined)}
           onSave={handleSaveWidget}

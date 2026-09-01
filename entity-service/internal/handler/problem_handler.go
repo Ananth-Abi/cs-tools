@@ -50,6 +50,22 @@ func (h *ProblemHandler) SearchProblems(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// GroupProblemsBy handles POST /problems/group-by.
+func (h *ProblemHandler) GroupProblemsBy(w http.ResponseWriter, r *http.Request) {
+	var req domain.GroupProblemsByRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.GroupProblemsBy(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 // GetProblem handles GET /problems/{id}.
 func (h *ProblemHandler) GetProblem(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

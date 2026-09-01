@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -159,5 +160,187 @@ func TestSNChangeRequestService_SearchChangeRequests_NumberFilterPassedThrough(t
 	}
 	if _, hasSearchQuery := gotFilters["searchQuery"]; hasSearchQuery {
 		t.Fatalf("filters.searchQuery: expected omitted (empty), got %v", gotFilters["searchQuery"])
+	}
+}
+
+// TestSNChangeRequestService_SearchChangeRequests_NewAssessAuthorizeStatesAccepted
+// verifies the New/Assess/Authorize states -- already fully wired end-to-end
+// (domain enum, SN key mapping) except for validChangeRequestState -- no longer
+// fail search validation and reach the outgoing payload with the correct SN
+// numeric state keys (-5/-4/-3).
+func TestSNChangeRequestService_SearchChangeRequests_NewAssessAuthorizeStatesAccepted(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/change-requests/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"changeRequests": [], "totalRecords": 0, "offset": 0, "limit": 20}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowChangeRequestService(client)
+
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{
+			States: []domain.ChangeRequestState{
+				domain.ChangeRequestStateNew,
+				domain.ChangeRequestStateAssess,
+				domain.ChangeRequestStateAuthorize,
+			},
+		},
+	}
+	if _, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gotFilters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters object in payload, got %+v", gotBody["filters"])
+	}
+	gotStateKeys, ok := gotFilters["stateKeys"].([]any)
+	if !ok || len(gotStateKeys) != 3 {
+		t.Fatalf("filters.stateKeys: got %v, want [-5, -4, -3]", gotFilters["stateKeys"])
+	}
+	want := []float64{-5, -4, -3}
+	for i, w := range want {
+		if gotStateKeys[i] != w {
+			t.Fatalf("filters.stateKeys[%d]: got %v, want %v", i, gotStateKeys[i], w)
+		}
+	}
+}
+
+// TestSNChangeRequestService_SearchChangeRequests_NewFiltersPassedThrough verifies
+// the generic filters array's createdOn (gte/lte) and assignmentGroupId (in)
+// predicates translate into createdStartDate/createdEndDate/assignmentGroupIds
+// on the outgoing payload under the exact wire names Ballerina accepts,
+// mirroring the existing closedStartDate/closedEndDate coverage.
+func TestSNChangeRequestService_SearchChangeRequests_NewFiltersPassedThrough(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/change-requests/search", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"changeRequests": [], "totalRecords": 0, "offset": 0, "limit": 20}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowChangeRequestService(client)
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{
+			Filters: []domain.ChangeRequestFieldFilter{
+				{Field: "createdOn", Op: "gte", Values: []string{start.Format(time.RFC3339)}},
+				{Field: "createdOn", Op: "lte", Values: []string{end.Format(time.RFC3339)}},
+				{Field: "assignmentGroupId", Op: "in", Values: []string{testCaseUUID}},
+			},
+		},
+	}
+	if _, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gotFilters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters object in payload, got %+v", gotBody["filters"])
+	}
+	if gotFilters["createdStartDate"] != formatSNDateTimeUTC(&start) {
+		t.Fatalf("filters.createdStartDate: got %v, want %q", gotFilters["createdStartDate"], formatSNDateTimeUTC(&start))
+	}
+	if gotFilters["createdEndDate"] != formatSNDateTimeUTC(&end) {
+		t.Fatalf("filters.createdEndDate: got %v, want %q", gotFilters["createdEndDate"], formatSNDateTimeUTC(&end))
+	}
+	gotAssignmentGroupIDs, ok := gotFilters["assignmentGroupIds"].([]any)
+	if !ok || len(gotAssignmentGroupIDs) != 1 || gotAssignmentGroupIDs[0] != uuidToSysid(testCaseUUID) {
+		t.Fatalf("filters.assignmentGroupIds: got %v, want [%q] (raw UUID must not be sent to SN)", gotFilters["assignmentGroupIds"], uuidToSysid(testCaseUUID))
+	}
+}
+
+// TestSNChangeRequestService_SearchChangeRequests_CreatedEndDateBeforeStart verifies
+// a createdOn lte predicate earlier than its own gte predicate is rejected,
+// mirroring the existing closedEndDate/closedStartDate ordering check.
+func TestSNChangeRequestService_SearchChangeRequests_CreatedEndDateBeforeStart(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowChangeRequestService(nil)
+
+	start := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{
+			Filters: []domain.ChangeRequestFieldFilter{
+				{Field: "createdOn", Op: "gte", Values: []string{start.Format(time.RFC3339)}},
+				{Field: "createdOn", Op: "lte", Values: []string{end.Format(time.RFC3339)}},
+			},
+		},
+	}
+	_, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNChangeRequestService_SearchChangeRequests_CreatedOnMultipleValuesRejected
+// verifies a createdOn predicate carrying more than one value is rejected rather
+// than silently using only Values[0] and discarding the rest.
+func TestSNChangeRequestService_SearchChangeRequests_CreatedOnMultipleValuesRejected(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowChangeRequestService(nil)
+
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 1, 31, 0, 0, 0, 0, time.UTC)
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{
+			Filters: []domain.ChangeRequestFieldFilter{
+				{Field: "createdOn", Op: "gte", Values: []string{start.Format(time.RFC3339), end.Format(time.RFC3339)}},
+			},
+		},
+	}
+	_, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNChangeRequestService_SearchChangeRequests_InvalidFilterField verifies an
+// unsupported filters[] field name is rejected before any SN call.
+func TestSNChangeRequestService_SearchChangeRequests_InvalidFilterField(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowChangeRequestService(nil)
+
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{
+			Filters: []domain.ChangeRequestFieldFilter{
+				{Field: "notAField", Op: "in", Values: []string{"x"}},
+			},
+		},
+	}
+	_, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNChangeRequestService_SearchChangeRequests_AssignmentGroupIdInvalidUUID
+// verifies a malformed assignmentGroupId filter value is rejected with a clean
+// validation error before any SN call.
+func TestSNChangeRequestService_SearchChangeRequests_AssignmentGroupIdInvalidUUID(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowChangeRequestService(nil)
+
+	req := domain.SearchChangeRequestsRequest{
+		Filters: domain.SearchChangeRequestsFilters{
+			Filters: []domain.ChangeRequestFieldFilter{
+				{Field: "assignmentGroupId", Op: "in", Values: []string{"not-a-uuid"}},
+			},
+		},
+	}
+	_, err := svc.SearchChangeRequests(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
 	}
 }

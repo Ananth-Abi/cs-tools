@@ -65,8 +65,7 @@ describe("CsmDashboardBuilderListPage", () => {
     await waitFor(() => expect(screen.getByText("Engineer overview")).toBeInTheDocument());
     expect(screen.getByText("Team performance")).toBeInTheDocument();
 
-    const editButtons = screen.getAllByRole("button", { name: "Edit" });
-    fireEvent.click(editButtons[0]);
+    fireEvent.click(screen.getByText("Engineer overview"));
 
     await waitFor(() =>
       expect(screen.getByTestId("location-probe")).toHaveTextContent("/admin/dashboards/agents_pilot"),

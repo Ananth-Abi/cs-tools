@@ -69,7 +69,7 @@ func TestSNIncidentService_CreateIncident_WatchListConvertedToSysids(t *testing.
 	})
 
 	client := newTestSNClient(t, mux)
-	svc := NewServiceNowIncidentService(client)
+	svc := NewServiceNowIncidentService(client, nil)
 
 	req := validCreateIncidentRequest()
 	req.WatchList = []string{testIncidentWatcherUUID1, testIncidentWatcherUUID2}
@@ -97,7 +97,7 @@ func TestSNIncidentService_CreateIncident_WatchListConvertedToSysids(t *testing.
 // watchList entry is rejected with a clean validation error before any SN call.
 func TestSNIncidentService_CreateIncident_WatchList_InvalidUUID(t *testing.T) {
 	// client is intentionally nil: validation must fail before touching it.
-	svc := NewServiceNowIncidentService(nil)
+	svc := NewServiceNowIncidentService(nil, nil)
 
 	req := validCreateIncidentRequest()
 	req.WatchList = []string{"not-a-uuid"}
@@ -128,7 +128,7 @@ func TestSNIncidentService_UpdateIncident_WatchListConvertedToSysids(t *testing.
 	})
 
 	client := newTestSNClient(t, mux)
-	svc := NewServiceNowIncidentService(client)
+	svc := NewServiceNowIncidentService(client, nil)
 
 	watchList := []string{testIncidentWatcherUUID1, testIncidentWatcherUUID2}
 	_, err := svc.UpdateIncident(contextWithUserIDToken("token"), domain.UpdateIncidentRequest{
@@ -158,7 +158,7 @@ func TestSNIncidentService_UpdateIncident_WatchListConvertedToSysids(t *testing.
 // watchList entry is rejected with a clean validation error before any SN call.
 func TestSNIncidentService_UpdateIncident_WatchList_InvalidUUID(t *testing.T) {
 	// client is intentionally nil: validation must fail before touching it.
-	svc := NewServiceNowIncidentService(nil)
+	svc := NewServiceNowIncidentService(nil, nil)
 
 	watchList := []string{"not-a-uuid"}
 	_, err := svc.UpdateIncident(contextWithUserIDToken("token"), domain.UpdateIncidentRequest{
@@ -188,7 +188,7 @@ func TestSNIncidentService_SearchIncidents_NumberFilterPassedThrough(t *testing.
 	})
 
 	client := newTestSNClient(t, mux)
-	svc := NewServiceNowIncidentService(client)
+	svc := NewServiceNowIncidentService(client, nil)
 
 	req := domain.SearchIncidentsRequest{
 		Filters: domain.SearchIncidentsFilters{Number: strPtr("INC0010001")},
@@ -206,5 +206,142 @@ func TestSNIncidentService_SearchIncidents_NumberFilterPassedThrough(t *testing.
 	}
 	if _, hasSearchQuery := gotFilters["searchQuery"]; hasSearchQuery {
 		t.Fatalf("filters.searchQuery: expected omitted (empty), got %v", gotFilters["searchQuery"])
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_NewFiltersPassedThrough verifies the
+// generic filters array's state/assignmentGroupId/businessServiceId predicates
+// reach the outgoing payload under the exact wire names Ballerina accepts,
+// with the domain enum state values translated to SN numeric keys and the two
+// UUID arrays converted to ServiceNow sysids.
+func TestSNIncidentService_SearchIncidents_NewFiltersPassedThrough(t *testing.T) {
+	var gotBody map[string]any
+	mux := http.NewServeMux()
+	mux.HandleFunc("/incidents/search", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("expected POST, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"incidents": [], "totalRecords": 0, "offset": 0, "limit": 20}`))
+	})
+
+	client := newTestSNClient(t, mux)
+	svc := NewServiceNowIncidentService(client, nil)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"NEW", "CLOSED"}},
+				{Field: "assignmentGroupId", Op: "in", Values: []string{testIncidentWatcherUUID1}},
+				{Field: "businessServiceId", Op: "in", Values: []string{testIncidentWatcherUUID2}},
+			},
+		},
+	}
+	if _, err := svc.SearchIncidents(contextWithUserIDToken("token"), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	gotFilters, ok := gotBody["filters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected filters object in payload, got %+v", gotBody["filters"])
+	}
+
+	gotStateKeys, ok := gotFilters["stateKeys"].([]any)
+	if !ok || len(gotStateKeys) != 2 || gotStateKeys[0] != float64(1) || gotStateKeys[1] != float64(7) {
+		t.Fatalf("filters.stateKeys: got %v, want [1, 7]", gotFilters["stateKeys"])
+	}
+
+	gotAssignmentGroupIDs, ok := gotFilters["assignmentGroupIds"].([]any)
+	if !ok || len(gotAssignmentGroupIDs) != 1 || gotAssignmentGroupIDs[0] != testIncidentWatcherSysid1 {
+		t.Fatalf("filters.assignmentGroupIds: got %v, want [%q] (raw UUID must not be sent to SN)", gotFilters["assignmentGroupIds"], testIncidentWatcherSysid1)
+	}
+
+	gotBusinessServiceIDs, ok := gotFilters["businessServiceIds"].([]any)
+	if !ok || len(gotBusinessServiceIDs) != 1 || gotBusinessServiceIDs[0] != testIncidentWatcherSysid2 {
+		t.Fatalf("filters.businessServiceIds: got %v, want [%q] (raw UUID must not be sent to SN)", gotFilters["businessServiceIds"], testIncidentWatcherSysid2)
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_InvalidStateValue verifies an
+// unrecognized state filter value is rejected with a clean validation error
+// before any SN call.
+func TestSNIncidentService_SearchIncidents_InvalidStateValue(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowIncidentService(nil, nil)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"BOGUS"}},
+			},
+		},
+	}
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_InvalidFilterField verifies an
+// unsupported filters[] field name is rejected before any SN call.
+func TestSNIncidentService_SearchIncidents_InvalidFilterField(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowIncidentService(nil, nil)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "notAField", Op: "in", Values: []string{"x"}},
+			},
+		},
+	}
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_RejectsInvertedCreatedOnRange verifies
+// a createdOn lte bound before its gte bound is rejected with a validation
+// error before any SN call, instead of reaching ServiceNow and coming back
+// as an empty (200) result indistinguishable from "no matching incidents".
+func TestSNIncidentService_SearchIncidents_RejectsInvertedCreatedOnRange(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowIncidentService(nil, nil)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "createdOn", Op: "gte", Values: []string{"2026-08-10"}},
+				{Field: "createdOn", Op: "lte", Values: []string{"2026-08-01"}},
+			},
+		},
+	}
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+	}
+}
+
+// TestSNIncidentService_SearchIncidents_BusinessServiceIdInvalidUUID verifies a
+// malformed businessServiceId filter value is rejected with a clean
+// validation error before any SN call.
+func TestSNIncidentService_SearchIncidents_BusinessServiceIdInvalidUUID(t *testing.T) {
+	// client is intentionally nil: validation must fail before touching it.
+	svc := NewServiceNowIncidentService(nil, nil)
+
+	req := domain.SearchIncidentsRequest{
+		Filters: domain.SearchIncidentsFilters{
+			Filters: []domain.IncidentFieldFilter{
+				{Field: "businessServiceId", Op: "in", Values: []string{"not-a-uuid"}},
+			},
+		},
+	}
+	_, err := svc.SearchIncidents(contextWithUserIDToken("token"), req)
+	if _, ok := err.(*apierror.ValidationError); !ok {
+		t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
 	}
 }

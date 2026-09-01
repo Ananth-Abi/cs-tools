@@ -92,7 +92,7 @@ describe("useWidgetPieData", () => {
     expect(result.current.isLoading).toBe(false);
   });
 
-  it("resolves __current_team__ (in either the base or a slice's own filters) after merging, using the selected team's groupId", async () => {
+  it("resolves __current_team__ (in either the base or a slice's own filters) after merging, using the selected team's creGroupId", async () => {
     postMock.mockResolvedValue({ total: 1 });
 
     const { result } = renderHook(
@@ -106,12 +106,13 @@ describe("useWidgetPieData", () => {
               label: "My team",
               query: {
                 filters: [
-                  { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+                  { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
                 ],
               },
             },
           ],
           "22222222-2222-2222-2222-222222222222",
+          undefined,
         ),
       { wrapper },
     );
@@ -125,7 +126,7 @@ describe("useWidgetPieData", () => {
           filters: [
             { field: "state", op: "in", values: ["open"] },
             {
-              field: "integrationCsTeam",
+              field: "creTeam",
               op: "in",
               values: ["22222222-2222-2222-2222-222222222222"],
             },
@@ -137,7 +138,53 @@ describe("useWidgetPieData", () => {
     );
   });
 
-  it("drops the integrationCsTeam entry rather than sending the literal placeholder when no team groupId is selected", async () => {
+  it("resolves __current_team__ in a slice's own filters using the selected team's sreGroupId, independently of creGroupId", async () => {
+    postMock.mockResolvedValue({ total: 1 });
+
+    const { result } = renderHook(
+      () =>
+        useWidgetPieData(
+          "widget-1",
+          "case",
+          { filters: [{ field: "state", op: "in", values: ["open"] }] },
+          [
+            {
+              label: "My SRE team",
+              query: {
+                filters: [
+                  { field: "sreTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+                ],
+              },
+            },
+          ],
+          undefined,
+          "33333333-3333-3333-3333-333333333333",
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            {
+              field: "sreTeam",
+              op: "in",
+              values: ["33333333-3333-3333-3333-333333333333"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("drops the creTeam entry rather than sending the literal placeholder when no team creGroupId is selected", async () => {
     postMock.mockResolvedValue({ total: 1 });
 
     renderHook(
@@ -151,11 +198,12 @@ describe("useWidgetPieData", () => {
               label: "My team",
               query: {
                 filters: [
-                  { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+                  { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
                 ],
               },
             },
           ],
+          undefined,
           undefined,
         ),
       { wrapper },
@@ -194,6 +242,7 @@ describe("useWidgetPieData", () => {
               },
             },
           ],
+          undefined,
           undefined,
           "11111111-aaaa-bbbb-cccc-000000000001",
         ),
@@ -240,6 +289,7 @@ describe("useWidgetPieData", () => {
               },
             },
           ],
+          undefined,
           undefined,
           undefined,
         ),

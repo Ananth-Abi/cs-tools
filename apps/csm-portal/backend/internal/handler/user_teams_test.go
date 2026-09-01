@@ -36,7 +36,7 @@ func capturedSearch(t *testing.T, body string) (string, *httptest.ResponseRecord
 			captured = string(b)
 			return []byte(`{"users":[],"total":0,"limit":10,"offset":0}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 	w := httptest.NewRecorder()
 	h.SearchUsers(w, withUser(httptest.NewRequest(http.MethodPost, "/users/search", strings.NewReader(body))))
 	return captured, w
@@ -95,6 +95,50 @@ func TestSearchUsers_UnfilteredBodyIsForwardedVerbatim(t *testing.T) {
 	}
 }
 
+// TestSearchUsers_TeamFilterAcceptsUUIDForm: a teamIds entry may also be the
+// platform UUID form of a team's backing group id -- the same shape
+// accounts.creTeam.id/sreTeam.id already expose -- and must resolve to the
+// same group name a teamKey would.
+func TestSearchUsers_TeamFilterAcceptsUUIDForm(t *testing.T) {
+	// abt-1's fixture CreGroupID "aaaa...aaaa" (32 hex chars, see
+	// testTeamRegistry in helpers_test.go) resolves to this UUID.
+	captured, w := capturedSearch(t, `{"filters":{"teamIds":["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]}}`)
+	assertStatus(t, w, http.StatusOK)
+
+	var got struct {
+		Filters struct {
+			GroupNames []string `json:"groupNames"`
+		} `json:"filters"`
+	}
+	if err := json.Unmarshal([]byte(captured), &got); err != nil {
+		t.Fatalf("forwarded body is not JSON: %v (%s)", err, captured)
+	}
+	if len(got.Filters.GroupNames) != 1 || got.Filters.GroupNames[0] != "ABT One" {
+		t.Errorf("groupNames = %v, want [\"ABT One\"] resolved from the UUID form", got.Filters.GroupNames)
+	}
+}
+
+// A UUID-shaped teamIds entry that matches no configured team's group id is
+// still the same caller-facing "unknown team" error as an unknown teamKey.
+func TestSearchUsers_UnknownTeamUUIDIsRejectedWithoutCallingUpstream(t *testing.T) {
+	called := false
+	h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{
+		searchUsersFn: func(_ context.Context, _ []byte) ([]byte, error) {
+			called = true
+			return []byte(`{}`), nil
+		},
+	}, testDirectory(t), false)
+	w := httptest.NewRecorder()
+	h.SearchUsers(w, withUser(httptest.NewRequest(http.MethodPost, "/users/search",
+		strings.NewReader(`{"filters":{"teamIds":["ffffffff-ffff-ffff-ffff-ffffffffffff"]}}`))))
+
+	assertStatus(t, w, http.StatusBadRequest)
+	assertErrorMessage(t, w, "teamIds contains unknown team: ffffffff-ffff-ffff-ffff-ffffffffffff")
+	if called {
+		t.Error("the entity service was called with an unresolvable team UUID")
+	}
+}
+
 // An unknown team key is a client error, not a silent empty page. It has to be
 // caught here now: the entity service has nothing to check it against.
 func TestSearchUsers_UnknownTeamKeyIsRejectedWithoutCallingUpstream(t *testing.T) {
@@ -104,7 +148,7 @@ func TestSearchUsers_UnknownTeamKeyIsRejectedWithoutCallingUpstream(t *testing.T
 			called = true
 			return []byte(`{}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 	w := httptest.NewRecorder()
 	h.SearchUsers(w, withUser(httptest.NewRequest(http.MethodPost, "/users/search",
 		strings.NewReader(`{"filters":{"teamIds":["no-such-team"]}}`))))
@@ -124,7 +168,7 @@ func TestSearchUsers_RejectsARoleOutsideTheAllowList(t *testing.T) {
 			called = true
 			return []byte(`{"users":[],"total":0}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 
 	w := httptest.NewRecorder()
 	h.SearchUsers(w, withUser(httptest.NewRequest(http.MethodPost, "/users/search",
@@ -165,7 +209,7 @@ func TestSearchUsers_TeamResolutionMakesNoEntityCalls(t *testing.T) {
 			calls++
 			return []byte(`{"users":[],"total":0}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 
 	const iterations = 20
 	for i := 0; i < iterations; i++ {
@@ -185,10 +229,10 @@ func TestGetUser_DerivesTeamsFromGroups(t *testing.T) {
 	const id = "11111111-1111-1111-1111-111111111111"
 	h := NewUsersHandler(&mockSCIMClient{}, &mockEntityUserClient{
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
-			return []byte(`{"id":"` + id + `","email":"staff@example.com","groups":[` +
+			return []byte(`{"id":"` + id + `","email":"staff@example.com","lockedOut":true,"groups":[` +
 				`{"id":"g-1","name":"ABT One"},{"id":"g-2","name":"Some Other Group"}]}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)
@@ -197,8 +241,9 @@ func TestGetUser_DerivesTeamsFromGroups(t *testing.T) {
 
 	assertStatus(t, w, http.StatusOK)
 	got := decodeJSON[struct {
-		Email  string `json:"email"`
-		Groups []struct {
+		Email     string `json:"email"`
+		LockedOut bool   `json:"lockedOut"`
+		Groups    []struct {
 			Name string `json:"name"`
 		} `json:"groups"`
 		Teams []struct {
@@ -220,6 +265,12 @@ func TestGetUser_DerivesTeamsFromGroups(t *testing.T) {
 	if got.Email != "staff@example.com" {
 		t.Errorf("email = %q, want the rest of the profile preserved", got.Email)
 	}
+	// The entity service's lockedOut field is not something this layer knows
+	// about; the envelope-based re-encoding in withUserTeams must still carry
+	// it through untouched.
+	if !got.LockedOut {
+		t.Errorf("lockedOut = %v, want true (passed through from the entity service)", got.LockedOut)
+	}
 }
 
 // A user in no registry team gets an empty teams list, never a missing key.
@@ -229,7 +280,7 @@ func TestGetUser_EmptyTeamsWhenNoneMatch(t *testing.T) {
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","groups":[{"id":"g-2","name":"Some Other Group"}]}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)

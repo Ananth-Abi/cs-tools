@@ -36,6 +36,15 @@ const (
 	NoticeWindow0  NoticeWindow = 0
 )
 
+// IsTerminal reports whether w is the terminal day-0/suspension window, as
+// opposed to a day-count reminder window (90/60/30/15/7). The single
+// canonical definition of this check — callers that need to branch on it
+// (e.g. sweep.go's subject/body builders) should call this rather than
+// independently comparing against NoticeWindow0.
+func (w NoticeWindow) IsTerminal() bool {
+	return w == NoticeWindow0
+}
+
 // noticeWindows is the notify cascade, ordered widest (earliest) to
 // narrowest (latest). NoticeWindow0 is deliberately excluded: its notify
 // gating and its suspend signal are handled separately in Decide, since

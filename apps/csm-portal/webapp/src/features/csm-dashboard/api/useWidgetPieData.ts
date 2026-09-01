@@ -33,6 +33,12 @@ import {
 
 export interface PieSliceResult extends BeDashboardPieSlice {
   value: number;
+  /** Defaults to `true` (every hand-authored slice is click-through by
+   * design). `false` only for a groupBy widget's synthetic "Others" bucket
+   * when the API gives it no safe selector of its own to navigate to (see
+   * `useWidgetGroupByData`) — `DashboardWidgetTile` skips click-through for
+   * a slice carrying this. */
+  navigable?: boolean;
 }
 
 export interface WidgetPieData {
@@ -56,18 +62,26 @@ export function useWidgetPieData(
   resourceType: BeWidgetResourceType,
   baseFilters: Record<string, unknown>,
   slices: BeDashboardPieSlice[],
-  /** The currently selected team's own `groupId`, or an array of every
-   * team's `groupId` in the current dashboard's family for the "All ABTs"
-   * option (see `ALL_TEAMS_SENTINEL`), for resolving a `__current_team__`
-   * filter placeholder (see `teamFilterPlaceholder.ts`) — applied AFTER
-   * `mergeWidgetFilters`, since a slice's own `query` may carry the
-   * placeholder too, not just the widget's base `query`. */
-  selectedTeamGroupId?: string | string[],
+  /** The currently selected team's own `creGroupId`, or an array of every
+   * team's `creGroupId` in the current dashboard's family for the "All
+   * ABTs" option (see `ALL_TEAMS_SENTINEL`), for resolving a
+   * `__current_team__` filter placeholder for a `creTeam` filter entry (see
+   * `teamFilterPlaceholder.ts`) — applied AFTER `mergeWidgetFilters`, since
+   * a slice's own `query` may carry the placeholder too, not just the
+   * widget's base `query`. */
+  selectedTeamCreGroupId?: string | string[],
+  /** The currently selected team's own `sreGroupId`, or an array of every
+   * team's `sreGroupId` in the current dashboard's family for the "All
+   * ABTs" option — the `sreTeam`-filter counterpart of
+   * {@link selectedTeamCreGroupId}, resolved independently, applied the
+   * same AFTER `mergeWidgetFilters`. */
+  selectedTeamSreGroupId?: string | string[],
   /** The signed-in user's own platform id (`useCurrentUser().user.id`), for
    * resolving a `__current_user__` filter placeholder (see
    * `currentUserFilterPlaceholder.ts`) — applied AFTER `mergeWidgetFilters`,
-   * same as `selectedTeamGroupId`, since a slice's own `query` may carry the
-   * placeholder too, not just the widget's base `query`. */
+   * same as `selectedTeamCreGroupId`/`selectedTeamSreGroupId`, since a
+   * slice's own `query` may carry the placeholder too, not just the
+   * widget's base `query`. */
   currentUserId?: string,
   /** Set to `false` to hold every slice query without firing it — used by
    * `DashboardWidgetTile` to defer a pie/bar widget's fetch until its tile
@@ -86,7 +100,8 @@ export function useWidgetPieData(
       resolveRelativeDateFilters(
         resolveTeamPlaceholder(
           mergeWidgetFilters(baseFilters, slice.query),
-          selectedTeamGroupId,
+          selectedTeamCreGroupId,
+          selectedTeamSreGroupId,
         ),
       ),
       currentUserId,

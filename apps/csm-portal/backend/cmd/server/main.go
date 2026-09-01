@@ -19,11 +19,12 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -36,8 +37,8 @@ import (
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/entity"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/handler"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
-	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/notifications"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/scim"
+	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/sftpgo"
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/updates"
 )
 
@@ -71,6 +72,7 @@ func main() {
 	}
 
 	customerEntityClient := entity.NewCustomerEntityClient(customerEntityCfg)
+
 	caseHandler := handler.NewCaseHandler(customerEntityClient)
 	dashboardHandler := handler.NewDashboardHandler()
 	accountHandler := handler.NewAccountHandler(customerEntityClient)
@@ -92,14 +94,22 @@ func main() {
 	incidentHandler := handler.NewIncidentHandler(customerEntityClient)
 	problemHandler := handler.NewProblemHandler(customerEntityClient)
 
-	// Google Chat is not yet configured for every deployment, so its spaces
-	// are read with os.Getenv (never mustEnv) — a missing or malformed value
-	// only surfaces as an error the first time an alert is sent for a product
-	// with no matching space.
-	googleChatClient := notifications.NewGoogleChatClient(notifications.GoogleChatConfig{
-		Spaces: parseGoogleChatSpaces(os.Getenv("NOTIFICATIONS_GOOGLE_CHAT_SPACES")),
-	})
-	notificationHandler := handler.NewNotificationHandler(googleChatClient, os.Getenv("CSM_PORTAL_WEB_BASE_URL"))
+	// SFTPGo-backed attachment storage — off by default (see loadSftpgoConfig).
+	// When disabled, no SFTPGO_* env var is read at all and neither the client
+	// nor its routes are constructed: the existing streaming attachment
+	// endpoints on caseHandler above are completely unaffected either way.
+	sftpgoAttachmentStorageEnabled, sftpgoCfg := loadSftpgoConfig()
+	var attachmentStorageHandler *handler.AttachmentStorageHandler
+	if sftpgoAttachmentStorageEnabled {
+		sftpgoClientInst := sftpgo.NewClient(sftpgoCfg)
+		attachmentStorageHandler = handler.NewAttachmentStorageHandler(customerEntityClient, sftpgoClientInst)
+		// Inline-image extraction on CreateCaseComment (base64 data: URIs
+		// rewritten into real SFTPGo-backed attachments) shares the same
+		// SFTPGo client and is gated by the same flag — see
+		// CaseHandler.WithInlineImageProcessor. SN-backed comment creation is
+		// unaffected: it never reaches this branch.
+		caseHandler.WithInlineImageProcessor(handler.NewInlineImageProcessor(customerEntityClient, sftpgoClientInst))
+	}
 
 	updatesCfg := updates.Config{
 		BaseURL:      mustEnv("UPDATES_BASE_URL"),
@@ -119,7 +129,7 @@ func main() {
 		Scopes:       splitComma(os.Getenv("SCIM_SCOPES")),
 	}
 	scimClient := scim.NewClient(scimCfg)
-	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir)
+	usersHandler := handler.NewUsersHandler(scimClient, customerEntityClient, dir, sftpgoAttachmentStorageEnabled)
 
 	authCfg := middleware.Config{
 		JWKSEndpoint:          mustEnv("AUTH_JWKS_ENDPOINT"),
@@ -143,6 +153,15 @@ func main() {
 	mux.HandleFunc("POST /attachments/search", caseHandler.SearchCaseAttachments)
 	mux.HandleFunc("GET /attachments/{id}/content", caseHandler.GetCaseAttachmentContent)
 	mux.HandleFunc("DELETE /attachments/{id}", caseHandler.DeleteCaseAttachment)
+	// The SFTPGo-backed attachment-storage routes only exist on the mux when
+	// the feature flag is on: with it off (default), these paths are not
+	// registered at all and 404, rather than existing but erroring, so
+	// shipping this dark carries zero risk to the routes above.
+	if attachmentStorageHandler != nil {
+		mux.HandleFunc("POST /cases/{id}/attachments/upload-token", attachmentStorageHandler.MintUploadToken)
+		mux.HandleFunc("POST /attachments/{id}/share", attachmentStorageHandler.CreateAttachmentShare)
+		mux.HandleFunc("POST /cases/{caseId}/attachments/{attachmentId}/confirm", attachmentStorageHandler.ConfirmUpload)
+	}
 	mux.HandleFunc("POST /cases/{id}/call-requests", caseHandler.CreateCallRequest)
 	mux.HandleFunc("POST /cases/{id}/call-requests/search", caseHandler.SearchCallRequests)
 	mux.HandleFunc("POST /call-requests/search", caseHandler.SearchAllCallRequests)
@@ -196,6 +215,7 @@ func main() {
 	mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 	mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 	mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+	mux.HandleFunc("DELETE /time-cards/{id}", timeCardHandler.DeleteTimeCard)
 	mux.HandleFunc("POST /catalogs/search", catalogHandler.SearchCatalogs)
 	mux.HandleFunc("GET /catalogs/{catalogId}/items/{catalogItemId}/variables", catalogHandler.GetCatalogItemVariables)
 	mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
@@ -221,23 +241,42 @@ func main() {
 	mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
 	mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
 	mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
-	// Called manually today; not yet wired into real incident/case creation.
-	mux.HandleFunc("POST /notifications/google-chat/alerts", notificationHandler.PostGoogleChatAlert)
+
+	// Built once and reused on both listeners below: Auth() does a real JWKS
+	// fetch (when TokenValidatorEnabled), so calling it a second time would
+	// duplicate that startup network round-trip and double the chance of a
+	// transient JWKS hiccup aborting startup, for no benefit — both
+	// listeners validate the exact same tokens the exact same way.
+	authMiddleware := middleware.Auth(authCfg)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	addr := ":" + mustPort("PORT", "8080")
 
-	ln, err := net.Listen("tcp", addr)
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
 	if err != nil {
 		slog.Error("failed to bind", "addr", addr, "err", err)
 		os.Exit(1)
 	}
-	slog.Info("CSM Portal Backend started", "addr", addr)
 
 	srv := &http.Server{
+		// SecurityHeaders must stay outermost so its headers are present on
+		// every response, including a CORS preflight — CORS runs next,
+		// still ahead of Auth (see middleware.CORS's doc comment): a
+		// preflight OPTIONS carries no x-jwt-assertion for Auth to accept.
+		// In a real deployment Choreo's gateway supplies CORS itself, so
+		// this is a no-op there; it matters when the gateway isn't in the
+		// path (local development, where the browser calls this listener
+		// directly). CORS_ALLOWED_ORIGINS is a comma-separated allow-list;
+		// unset allows any origin (see middleware.CORS on why that's safe
+		// here).
 		Handler: middleware.SecurityHeaders(
-			middleware.CorrelationID(
-				middleware.Auth(authCfg)(
-					middleware.Logger(mux),
+			middleware.CORS(splitComma(os.Getenv("CORS_ALLOWED_ORIGINS")))(
+				middleware.CorrelationID(
+					authMiddleware(
+						middleware.Logger(mux),
+					),
 				),
 			),
 		),
@@ -247,25 +286,29 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			slog.Error("server exited", "err", err)
 			os.Exit(1)
 		}
 	}()
+	slog.Info("CSM Portal Backend started", "addr", addr)
 
 	<-ctx.Done()
 	stop()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+
+	var srvErr error
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("graceful shutdown failed", "err", err)
+		srvErr = err
+	}
+	if srvErr != nil {
+		slog.Error("graceful shutdown failed", "err", srvErr)
 		os.Exit(1)
 	}
+
 	slog.Info("CSM Portal Backend stopped")
 }
 
@@ -346,13 +389,14 @@ func loadDashboards() *dashboard.Registry {
 // loadDirectory resolves the reference catalogues from environment
 // configuration, once, at startup:
 //
-//	CSM_TEAM_REGISTRY  the team registry as "teamKey|Display Name|FAMILY|groupId"
-//	                   rows separated by commas, where FAMILY is one of cre-abt,
-//	                   cre, sre-abt or sre (case insensitive) and FAMILY and
-//	                   groupId are both optional. Unset means no teams are
-//	                   configured; there is deliberately no default, because
-//	                   team names are organisation vocabulary that must not be
-//	                   committed here.
+//	CSM_TEAM_REGISTRY  the team registry as
+//	                   "teamKey|Display Name|FAMILY|creGroupId|sreGroupId" rows
+//	                   separated by commas, where FAMILY is one of cre-abt,
+//	                   cre, sre-abt or sre (case insensitive) and FAMILY,
+//	                   creGroupId, and sreGroupId are all optional. Unset means
+//	                   no teams are configured; there is deliberately no
+//	                   default, because team names are organisation vocabulary
+//	                   that must not be committed here.
 //	CSM_USER_ROLES     the assignable-role allow-list, comma separated. Unset
 //	                   falls back to the committed default list.
 //
@@ -385,6 +429,107 @@ func loadDirectory() *directory.Directory {
 	}
 	slog.Info("resolved reference catalogues", "teams", dir.TeamCount(), "roles", dir.RoleCount())
 	return dir
+}
+
+// loadSftpgoConfig resolves the SFTPGo-backed attachment-storage feature
+// flag and, only when it is on, the client configuration it needs:
+//
+//	SFTPGO_ATTACHMENT_STORAGE_ENABLED  Any strconv.ParseBool-true value (1, t,
+//	                                   T, TRUE, true, True). Off by default —
+//	                                   unset, empty, or any other value keeps
+//	                                   this feature dark and every other
+//	                                   env var below unread. This mirrors
+//	                                   DASHBOARDS_HOT_RELOAD's parsing: an
+//	                                   unparseable non-empty value is a
+//	                                   warning, not fatal, and defaults to off.
+//	SFTPGO_BASE_URL                    SFTPGo's REST API base URL. Required
+//	                                   when the flag is on.
+//	SFTPGO_PUBLIC_BASE_URL             Public host for constructing share
+//	                                   URLs, e.g. when SFTPGo's WebClient
+//	                                   share pages are fronted separately
+//	                                   from its REST API. Optional; defaults
+//	                                   to SFTPGO_BASE_URL when unset.
+//
+// Returns (false, zero Config) when the flag is off, so the caller never
+// touches the returned Config in that case.
+func loadSftpgoConfig() (bool, sftpgo.Config) {
+	enabled := false
+	if raw := strings.TrimSpace(os.Getenv("SFTPGO_ATTACHMENT_STORAGE_ENABLED")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			slog.Warn("SFTPGO_ATTACHMENT_STORAGE_ENABLED is not a boolean; treating it as false",
+				"value", raw, "expected", "1, t, T, TRUE, true, True, 0, f, F, FALSE, false, False")
+		}
+		enabled = parsed
+	}
+	if !enabled {
+		return false, sftpgo.Config{}
+	}
+
+	slog.Info("SFTPGO_ATTACHMENT_STORAGE_ENABLED is on: the SFTPGo-backed attachment-storage endpoints are active")
+	baseURL := mustHTTPSURL("SFTPGO_BASE_URL", mustEnv("SFTPGO_BASE_URL"))
+	publicBaseURL := baseURL
+	if raw := os.Getenv("SFTPGO_PUBLIC_BASE_URL"); raw != "" {
+		publicBaseURL = mustHTTPSURL("SFTPGO_PUBLIC_BASE_URL", raw)
+	}
+	return true, sftpgo.Config{
+		BaseURL:       baseURL,
+		PublicBaseURL: publicBaseURL,
+	}
+}
+
+// mustHTTPSURL validates value via validateHTTPSURL, exiting the process with
+// a logged error if it is invalid. Both SFTPGO_BASE_URL and
+// SFTPGO_PUBLIC_BASE_URL are used to build requests/URLs that carry the
+// caller's email and raw gateway JWT (see internal/sftpgo.Client.MintToken)
+// or are handed to end users as a public download link (see
+// internal/sftpgo.Client.PublicShareURL), so a non-HTTPS or spoofed-looking
+// value here is a credential-leak/MITM risk, not just a misconfiguration —
+// refuse to start rather than proceed with it.
+func mustHTTPSURL(key, value string) string {
+	if err := validateHTTPSURL(value); err != nil {
+		// Deliberately omit the raw value from this log line: it may carry
+		// embedded userinfo (e.g. "https://user:pass@host"), which would
+		// otherwise write a credential straight into the startup log.
+		slog.Error("invalid environment variable", "key", key, "err", err)
+		os.Exit(1)
+	}
+	return value
+}
+
+// validateHTTPSURL reports an error unless value parses as a URL with scheme
+// "https", a non-empty host, no embedded userinfo (e.g.
+// "https://user:pass@host/...", which could indicate a misconfigured or
+// spoofed URL), and no path/query/fragment beyond an empty or bare "/" path.
+// The path restriction matters beyond cosmetics: internal/sftpgo.Client
+// builds request URLs by plain string concatenation (baseURL +
+// "/api/v2/user/token", etc.), so a configured value with a path component
+// (e.g. "https://host/api") would silently double up into
+// "https://host/api/api/v2/user/token" rather than erroring.
+func validateHTTPSURL(value string) error {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return fmt.Errorf("not a valid URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("must use the https scheme, got %q", parsed.Scheme)
+	}
+	if parsed.Hostname() == "" {
+		return errors.New("must include a host (e.g. \"https://host/...\")")
+	}
+	if parsed.User != nil {
+		return errors.New("must not contain embedded userinfo (e.g. \"https://user:pass@host/...\")")
+	}
+	if path := parsed.EscapedPath(); path != "" && path != "/" {
+		return fmt.Errorf("must not include a path (got %q); this value is concatenated with API paths, e.g. \"https://host\" not \"https://host/api\"", path)
+	}
+	if parsed.RawQuery != "" {
+		return errors.New("must not include a query string")
+	}
+	if parsed.Fragment != "" {
+		return errors.New("must not include a fragment")
+	}
+	return nil
 }
 
 func mustEnv(key string) string {
@@ -464,21 +609,4 @@ func splitComma(s string) []string {
 		}
 	}
 	return result
-}
-
-// parseGoogleChatSpaces decodes NOTIFICATIONS_GOOGLE_CHAT_SPACES, a JSON array
-// of {"product":"...","webhookUrl":"..."} objects — one per Google Chat space.
-// A missing or malformed value logs a warning and yields no spaces rather
-// than failing startup, since this channel is not required for every
-// deployment.
-func parseGoogleChatSpaces(raw string) []notifications.GoogleChatSpace {
-	if raw == "" {
-		return nil
-	}
-	var spaces []notifications.GoogleChatSpace
-	if err := json.Unmarshal([]byte(raw), &spaces); err != nil {
-		slog.Error("failed to parse NOTIFICATIONS_GOOGLE_CHAT_SPACES; Google Chat alerts will be unavailable", "err", err)
-		return nil
-	}
-	return spaces
 }

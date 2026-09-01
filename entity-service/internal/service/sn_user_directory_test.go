@@ -32,7 +32,7 @@ import (
 func snUserRowJSON(sysid, email, userType string) string {
 	return `{"id":"` + sysid + `","userName":"` + email + `","name":"Test User","email":"` + email +
 		`","timeZone":"Asia/Colombo","mobilePhone":"+94700000000","userType":"` + userType +
-		`","active":true,"createdOn":"2020-01-01 00:00:00","updatedOn":"2020-01-02 00:00:00",` +
+		`","active":true,"lockedOut":true,"createdOn":"2020-01-01 00:00:00","updatedOn":"2020-01-02 00:00:00",` +
 		`"roles":["snc_internal"]}`
 }
 
@@ -125,6 +125,9 @@ func TestSNUserService_SearchUsers_GroupNameFilterSendsUserIDs(t *testing.T) {
 	if got.Users[0].MobilePhone == nil || *got.Users[0].MobilePhone != "+94700000000" {
 		t.Fatalf("mobilePhone = %v, want +94700000000", got.Users[0].MobilePhone)
 	}
+	if !got.Users[0].LockedOut {
+		t.Fatalf("lockedOut = %v, want true", got.Users[0].LockedOut)
+	}
 
 	var req struct {
 		Filters struct {
@@ -168,6 +171,9 @@ func TestSNUserService_GetUser_Groups(t *testing.T) {
 	// Staff get no project-access block.
 	if got.ProjectAccess != nil {
 		t.Fatalf("projectAccess = %+v, want nil for an internal user", got.ProjectAccess)
+	}
+	if !got.LockedOut {
+		t.Fatalf("lockedOut = %v, want true", got.LockedOut)
 	}
 }
 

@@ -259,6 +259,41 @@ describe("UserProfilePage", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders a 'Locked out' chip when the account is locked out", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, lockedOut: true } });
+    renderPage();
+    expect(screen.getByText("Locked out", { selector: ".MuiChip-label" })).toBeInTheDocument();
+  });
+
+  it("does not render a 'Locked out' chip when the account isn't locked out", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, lockedOut: false } });
+    renderPage();
+    expect(screen.queryByText("Locked out", { selector: ".MuiChip-label" })).not.toBeInTheDocument();
+  });
+
+  it("shows only the 'Locked out' chip in the header — not 'Active' — for an active-but-locked-out user", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, active: true, lockedOut: true } });
+    renderPage();
+    // Exactly one "Locked out" chip (header) and exactly one "Active" chip
+    // (the Overview card's own, unconditional "Account status" field) — the
+    // header itself must not also render a second "Active" chip.
+    expect(screen.getAllByText("Locked out", { selector: ".MuiChip-label" })).toHaveLength(1);
+    expect(screen.getAllByText("Active", { selector: ".MuiChip-label" })).toHaveLength(1);
+  });
+
+  it("still shows both Account status and Locked out as separate fields in the Overview card", () => {
+    mockQueryResult({ data: { ...INTERNAL_USER, active: true, lockedOut: true } });
+    renderPage();
+    expect(screen.getByText("Account status")).toBeInTheDocument();
+    // "Locked out" appears twice: the header chip's label and the Overview
+    // field's caption — both are expected here, not a duplicate bug.
+    expect(screen.getAllByText("Locked out").length).toBeGreaterThanOrEqual(2);
+    // The header collapses to one "Locked out" chip; the Overview card still
+    // shows "Active" for account status and "Yes" for locked-out separately.
+    expect(screen.getByText("Active", { selector: ".MuiChip-label" })).toBeInTheDocument();
+    expect(screen.getByText("Yes", { selector: ".MuiChip-label" })).toBeInTheDocument();
+  });
+
   it("calls out an inactive account as blocking access to every project", () => {
     mockQueryResult({ data: { ...BLOCKED_EXTERNAL_USER, active: false } });
     renderPage();
@@ -304,6 +339,23 @@ describe("UserProfilePage", () => {
     mockQueryResult({ data: INTERNAL_USER });
     renderPage();
     expect(screen.queryByText("External account")).not.toBeInTheDocument();
+  });
+
+  // A wso2.com contact can be tagged with a customer-facing userType/role in
+  // ServiceNow (e.g. for testing) despite never being able to exist in the
+  // SCIM "external" org, which is reserved for WSO2 staff. The field/alert
+  // must stay hidden even when externalAccount data is present.
+  it("does not render the External account field or locked alert for a wso2.com email, even if externalAccount data is present", () => {
+    mockQueryResult({
+      data: {
+        ...BLOCKED_EXTERNAL_USER,
+        email: "tester@wso2.com",
+        externalAccount: { exists: true, locked: true },
+      },
+    });
+    renderPage();
+    expect(screen.queryByText("External account")).not.toBeInTheDocument();
+    expect(screen.queryByText(/external account is locked/i)).not.toBeInTheDocument();
   });
 
   it("falls back to browser history when no origin was captured (e.g. a bookmarked/direct link)", () => {

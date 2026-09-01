@@ -28,15 +28,12 @@ import (
 )
 
 // Type classifies a dashboard by the audience it is built for. It is the
-// field automatic dashboard selection is intended to key off: a caller whose
-// team family is cre-abt/cre would land on the default TypeCRE dashboard,
-// sre-abt/sre on the default TypeSRE one, and a caller with no team at all on
-// the default TypeCS one.
-//
-// That selection is NOT implemented yet. The frontend still picks its landing
-// dashboard on IsDefault plus IsTeamBased and never reads Type, which is why
-// validate below still permits only one IsDefault dashboard in total rather
-// than one per type.
+// field automatic dashboard selection keys off: a caller whose team family is
+// cre-abt/cre lands on the default TypeCRE dashboard, sre-abt/sre on the
+// default TypeSRE one, and a caller with no team at all on the default
+// TypeCS one. validate enforces at most one IsDefault dashboard per Type, so
+// a default of each type can coexist without either resolving by nothing
+// more than file ordering.
 type Type string
 
 const (
@@ -258,7 +255,7 @@ func loadDir(dir string, sharedPresets map[string]map[string]any) ([]Dashboard, 
 	loaded := make([]sourced, 0, len(names))
 	for _, name := range names {
 		path := filepath.Join(dir, name)
-		raw, err := os.ReadFile(path) //nolint:gosec // path is deployment configuration, not user input
+		raw, err := os.ReadFile(path) // #nosec G304 -- path is deployment configuration, not user input
 		if err != nil {
 			return nil, fmt.Errorf("dashboard definitions: read %q: %w", path, err)
 		}
@@ -287,7 +284,7 @@ func LoadSharedPresets(path string) (map[string]map[string]any, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, nil
 	}
-	raw, err := os.ReadFile(path) //nolint:gosec // path is deployment configuration, not user input
+	raw, err := os.ReadFile(path) // #nosec G304 -- path is deployment configuration, not user input
 	if err != nil {
 		return nil, fmt.Errorf("dashboard filter presets: read %q: %w", path, err)
 	}
@@ -357,18 +354,21 @@ func finalize(loaded []sourced, requireType bool, sharedPresets map[string]map[s
 //   - type cs with isTeamBased true. cs is the organisation-wide dashboard,
 //     and it is what a caller with no team at all falls back to. A team
 //     picker on it contradicts both roles.
-//   - more than one isDefault dashboard, of any type. This is deliberately
-//     stricter than the eventual rule. Once the frontend keys default
-//     selection off "type" it will be one default PER type; today it does
-//     not -- CsmDashboardPage picks on isDefault + isTeamBased, and "type"
-//     is not even carried on the dashboard-list response yet -- so a second
-//     typed default would be accepted here and then resolved by nothing more
-//     than LoadDir's filename ordering. Loosen this to one-per-type in the
-//     same change that makes the frontend type-aware, not before.
+//   - more than one isDefault dashboard of the same type -- or, on the
+//     deprecated untyped DASHBOARDS_CONFIG path, more than one untyped
+//     isDefault dashboard. One isDefault dashboard per type is legal and by
+//     design: the frontend selects its landing dashboard from the caller's
+//     own team family against Type, so a cre default and an sre default (and
+//     a cs default) can all coexist without any of them resolving by nothing
+//     more than LoadDir's filename ordering. An untyped default does not
+//     share a "slot" with any typed default -- it has no type to key off --
+//     so it only ever collides with another untyped default, which is only
+//     reachable via the deprecated single-variable path.
 func validate(loaded []sourced, requireType bool) error {
 	byID := make(map[string]string, len(loaded))
-	defaultSource := ""
-	defaultType := Type("")
+	defaultByType := make(map[Type]string, len(loaded))
+	untypedDefaultSource := ""
+	defaultForTeamKeyOwner := make(map[string]string, len(loaded))
 
 	for _, l := range loaded {
 		d := l.dashboard
@@ -389,17 +389,43 @@ func validate(loaded []sourced, requireType bool) error {
 			return err
 		}
 
+		// CsmDashboardPage selects a caller's landing dashboard by matching
+		// its team key against DefaultForTeamKeys, taking the first list
+		// entry with find. If two dashboards claimed the same team key, that
+		// choice would silently fall to list order instead of config intent.
+		// Track which dashboard claims each key and reject a second claim
+		// from a different dashboard. Ownership is keyed by dashboard id, not
+		// source file: the deprecated DASHBOARDS_CONFIG path can decode
+		// multiple distinct dashboard objects from one source value, so two
+		// different dashboards sharing that source would otherwise both look
+		// like the same owner and never trip this check.
+		for _, teamKey := range d.DefaultForTeamKeys {
+			if prev, claimed := defaultForTeamKeyOwner[teamKey]; claimed && prev != d.ID {
+				return fmt.Errorf("dashboard definitions: %s (id %q): defaultForTeamKeys key %q is already claimed by %s; each team key must resolve to exactly one dashboard",
+					l.source, d.ID, teamKey, prev)
+			}
+			defaultForTeamKeyOwner[teamKey] = d.ID
+		}
+
 		// Before the type branch below, which skips the rest of the loop for an
 		// untyped definition: an untyped isDefault dashboard counts here too,
 		// so two of them on the deprecated DASHBOARDS_CONFIG path are caught
-		// rather than left to file ordering.
+		// rather than left to file ordering. It is kept in its own bucket,
+		// separate from defaultByType, so it never collides with a typed
+		// default -- there is no type to key on, so there is no shared slot.
 		if d.IsDefault {
-			if defaultSource != "" {
-				return fmt.Errorf("dashboard definitions: %s (id %q, type %q): a second \"isDefault\" dashboard; %s (type %q) already claims it, and selection needs exactly one. Automatic selection is not type-aware yet, so which of the two you land on would depend only on filename ordering",
-					l.source, d.ID, d.Type, defaultSource, defaultType)
+			if d.Type == "" {
+				if untypedDefaultSource != "" {
+					return fmt.Errorf("dashboard definitions: %s (id %q): a second untyped \"isDefault\" dashboard; %s already claims the untyped default slot, and selection needs exactly one. This is only reachable via the deprecated DASHBOARDS_CONFIG path, which predates \"type\"",
+						l.source, d.ID, untypedDefaultSource)
+				}
+				untypedDefaultSource = l.source
+			} else if prev, claimed := defaultByType[d.Type]; claimed {
+				return fmt.Errorf("dashboard definitions: %s (id %q, type %q): a second \"isDefault\" dashboard of type %q; %s already claims that type's default, and selection needs exactly one default per type",
+					l.source, d.ID, d.Type, d.Type, prev)
+			} else {
+				defaultByType[d.Type] = l.source
 			}
-			defaultSource = l.source
-			defaultType = d.Type
 		}
 
 		if d.Type == "" {
@@ -437,8 +463,9 @@ func validate(loaded []sourced, requireType bool) error {
 var validWidgetResourceTypes = map[ResourceType]bool{
 	ResourceCase: true, ResourceIncident: true, ResourceChangeRequest: true,
 	ResourceAccount: true, ResourceProject: true, ResourceUser: true,
-	ResourceTimeCard: true, ResourceProblem: true, ResourceProductVulnerability: true,
-	ResourceCallRequest: true,
+	ResourceTimeCard: true, ResourceProblem: true, ResourceIncidentTask: true,
+	ResourceProductVulnerability: true,
+	ResourceCallRequest:          true,
 	// The remaining four case-table values (see ResourceServiceRequest's doc
 	// comment) — same /cases/search endpoint as ResourceCase, distinguished
 	// only by the auto-injected "type" filter (caseTableResourceTypes,
@@ -491,6 +518,18 @@ func validateWidgets(d Dashboard, source string) error {
 		if w.GridWidth < 1 || w.GridWidth > 12 {
 			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"gridWidth\" is %d; it is a column count out of 12 and must be between 1 and 12",
 				source, d.ID, w.ID, w.GridWidth)
+		}
+		if (w.Shape == ShapePie || w.Shape == ShapeBar) && len(w.Slices) > 0 && w.GroupBy != nil {
+			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: carries both \"slices\" and \"groupBy\"; a %q/%q widget must use exactly one",
+				source, d.ID, w.ID, ShapePie, ShapeBar)
+		}
+		if (w.Shape == ShapePie || w.Shape == ShapeBar) && len(w.Slices) == 0 && w.GroupBy == nil {
+			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: shape %q needs either \"slices\" or \"groupBy\"",
+				source, d.ID, w.ID, w.Shape)
+		}
+		if w.GroupBy != nil && strings.TrimSpace(w.GroupBy.Field) == "" {
+			return fmt.Errorf("dashboard definitions: %s (id %q): widget %q: \"groupBy.field\" is empty",
+				source, d.ID, w.ID)
 		}
 	}
 

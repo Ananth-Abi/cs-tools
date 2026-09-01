@@ -27,7 +27,8 @@ export interface WallboardStatGridProps {
   section: WallboardSection;
   columns: number;
   variant?: WallboardStatTileVariant;
-  selectedTeamGroupId?: string | string[];
+  selectedTeamCreGroupId?: string | string[];
+  selectedTeamSreGroupId?: string | string[];
   selectedTeamLabel?: string;
 }
 
@@ -44,7 +45,8 @@ export default function WallboardStatGrid({
   section,
   columns,
   variant = "primary",
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
 }: WallboardStatGridProps): JSX.Element {
   return (
@@ -64,7 +66,8 @@ export default function WallboardStatGrid({
           filters={widget.query}
           section={section}
           variant={variant}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
       ))}

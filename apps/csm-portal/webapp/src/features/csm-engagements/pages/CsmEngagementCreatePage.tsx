@@ -29,7 +29,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { ArrowLeft } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type JSX } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import Editor from "@components/rich-text-editor/Editor";
 import { useErrorBanner } from "@context/error-banner/ErrorBannerContext";
 import ProjectSelectionField from "@features/csm-cases/components/ProjectSelectionField";
@@ -60,6 +60,13 @@ export default function CsmEngagementCreatePage(): JSX.Element {
   // is fixed and shown read-only, mirroring CsmCaseCreatePage's convention.
   const [searchParams] = useSearchParams();
   const lockedProjectId = searchParams.get("projectId") ?? "";
+
+  // Set when opened from a project's page Create menu (state: { from:
+  // "/customers/projects/:id" }), so Back/Cancel return there instead of the
+  // hardcoded engagements list, and the newly created engagement's own Back
+  // button (reading this same convention) returns there too.
+  const backState = useLocation().state as { from?: string } | undefined;
+  const backTarget = backState?.from ?? "/engagements";
 
   const [projectId, setProjectId] = useState(lockedProjectId);
   const [deploymentId, setDeploymentId] = useState("");
@@ -122,7 +129,7 @@ export default function CsmEngagementCreatePage(): JSX.Element {
         description,
         engagementType,
       });
-      navigate(`/engagements/${created.id}`);
+      navigate(`/engagements/${created.id}`, { state: { from: backTarget } });
     } catch (err) {
       setSubmitting(false);
       showError("Could not create the engagement. Please try again.", err);
@@ -134,10 +141,10 @@ export default function CsmEngagementCreatePage(): JSX.Element {
       <Button
         variant="text"
         startIcon={<ArrowLeft size={16} />}
-        onClick={() => navigate("/engagements")}
+        onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to engagements
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: 2 }}>
         New engagement
@@ -280,7 +287,7 @@ export default function CsmEngagementCreatePage(): JSX.Element {
         </Grid>
 
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, mt: 2.5 }}>
-          <Button variant="outlined" onClick={() => navigate("/engagements")}>
+          <Button variant="outlined" onClick={() => navigate(backTarget)}>
             Cancel
           </Button>
           <Button

@@ -41,7 +41,7 @@ func TestGetUser_ExternalAccountStatus_AppendedForExternalContacts(t *testing.T)
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","email":"contact@example.com","userType":"external"}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)
@@ -81,7 +81,7 @@ func TestGetUser_ExternalAccountStatus_SkippedForInternalStaff(t *testing.T) {
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","email":"staff@example.com","userType":"internal"}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)
@@ -98,6 +98,39 @@ func TestGetUser_ExternalAccountStatus_SkippedForInternalStaff(t *testing.T) {
 	}
 }
 
+// TestGetUser_ExternalAccountStatus_SkippedForWso2Email: a ServiceNow row can
+// carry a wso2.com email under a customer-facing role/userType (e.g. a
+// wso2.com contact recorded under snc_external for testing) -- that account
+// can never exist in the SCIM "external" org, so the lookup must not run.
+func TestGetUser_ExternalAccountStatus_SkippedForWso2Email(t *testing.T) {
+	const id = "11111111-1111-1111-1111-111111111111"
+	called := false
+	h := NewUsersHandler(&mockSCIMClient{
+		searchExternalUserFn: func(_ context.Context, _ string) (*scim.ExternalUserInfo, error) {
+			called = true
+			return &scim.ExternalUserInfo{Exists: true}, nil
+		},
+	}, &mockEntityUserClient{
+		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
+			return []byte(`{"id":"` + id + `","email":"tester@wso2.com","userType":"external"}`), nil
+		},
+	}, testDirectory(t), false)
+
+	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
+	r.SetPathValue("id", id)
+	w := httptest.NewRecorder()
+	h.GetUser(w, r)
+
+	assertStatus(t, w, http.StatusOK)
+	if called {
+		t.Error("SearchExternalUser was called for a wso2.com email, want no SCIM external lookup")
+	}
+	got := decodeJSON[map[string]any](t, w)
+	if _, ok := got["externalAccount"]; ok {
+		t.Error("externalAccount present for a wso2.com email, want absent")
+	}
+}
+
 // TestGetUser_ExternalAccountStatus_FailureDoesNotFailTheRequest: a SCIM
 // error must not turn a 200 into an error response -- this enrichment is
 // best-effort, same as teams.
@@ -111,7 +144,7 @@ func TestGetUser_ExternalAccountStatus_FailureDoesNotFailTheRequest(t *testing.T
 		getUserFn: func(_ context.Context, _ string) ([]byte, error) {
 			return []byte(`{"id":"` + id + `","email":"contact@example.com","userType":"external"}`), nil
 		},
-	}, testDirectory(t))
+	}, testDirectory(t), false)
 
 	r := withUser(httptest.NewRequest(http.MethodGet, "/users/"+id, nil))
 	r.SetPathValue("id", id)

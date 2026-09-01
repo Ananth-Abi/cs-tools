@@ -69,22 +69,42 @@ export class SecurityReportCreatePage {
       this.page.getByRole("button", { name: GET_HELP_BUTTON, exact: true }),
     ).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
 
-    await this.page.getByRole("button", { name: GET_HELP_MENU.trigger }).click();
-    const menu = this.page.getByRole("menu");
-    await expect(menu).toBeVisible();
-    await menu
-      .getByRole("menuitem")
-      .filter({ hasText: GET_HELP_MENU.items.securityReport })
-      .click();
+    await this.openGetHelpMenu();
+    await this.securityReportMenuItem().click();
 
     await expect(this.page).toHaveURL(
       new RegExp(`/projects/${projectId}/support/security-report/create`),
     );
-    // The Product select is the readiness signal — it is present for every
-    // project type and only renders once deployments/products resolve.
+    // The Product select is the readiness signal: verified present on all three
+    // project types, whereas Deployment is absent on Cloud Support, whose
+    // deployment is locked to primary production.
     await expect(this.productVersionSelect()).toBeVisible({
       timeout: LOAD_TIMEOUT_MS,
     });
+  }
+
+  /**
+   * Opens the Get Help dropdown from the split button's arrow half.
+   *
+   * The menu gets the long timeout rather than the 5s default: the header
+   * renders skeletons until the projects list resolves, so on a cold dashboard
+   * the click can land before the real menu is mounted.
+   */
+  async openGetHelpMenu(): Promise<void> {
+    await this.page.getByRole("button", { name: GET_HELP_MENU.trigger }).click();
+    await expect(this.getHelpMenu()).toBeVisible({ timeout: LOAD_TIMEOUT_MS });
+  }
+
+  getHelpMenu(): Locator {
+    return this.page.getByRole("menu");
+  }
+
+  /** The "Security Report" item. Present only when the project has SRA write
+   * access, so its absence is itself an assertable fact. */
+  securityReportMenuItem(): Locator {
+    return this.getHelpMenu()
+      .getByRole("menuitem")
+      .filter({ hasText: GET_HELP_MENU.items.securityReport });
   }
 
   deploymentSelect(): Locator {
@@ -195,20 +215,27 @@ export class SecurityReportCreatePage {
    * rather than hardcoded so it is always today's, matching how CreateCasePage
    * generates it.
    *
-   * @param deployment - Deployment label the report is filed against.
+   * @param deployment - Deployment label the report is filed against, or null
+   * when the project auto-selects it (Cloud Support): the generator uses whichever
+   * primary production deployment it picked, whose label the fixtures do not
+   * record, so that segment is matched loosely.
    * @param productName - Product name *without* its version, as the generator
    * uses (`ProjectFixture.productName`, not `productVersion`).
    * @returns A regex the Title field's value should satisfy.
    */
-  static expectedTitlePattern(deployment: string, productName: string): RegExp {
+  static expectedTitlePattern(
+    deployment: string | null,
+    productName: string,
+  ): RegExp {
     const today = new Date();
     const date = [
       today.getFullYear(),
       String(today.getMonth() + 1).padStart(2, "0"),
       String(today.getDate()).padStart(2, "0"),
     ].join("-");
+    const deploymentSegment = deployment ? escapeForRegExp(deployment) : ".+";
     return new RegExp(
-      `^${escapeForRegExp(deployment)} - ${escapeForRegExp(productName)} - ${date}$`,
+      `^${deploymentSegment} - ${escapeForRegExp(productName)} - ${date}$`,
     );
   }
 

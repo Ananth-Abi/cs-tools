@@ -41,17 +41,17 @@ type dashboardPieSliceView struct {
 // resolves each widget's own data by issuing its own POST /{resourceType}s/search
 // request (see ResourceType), passing Query as that request's filters.
 type dashboardWidgetView struct {
-	WidgetID     string                  `json:"widgetId"`
-	DisplayName  string                  `json:"displayName"`
-	Description  string                  `json:"description,omitempty"`
-	ResourceType dashboard.ResourceType  `json:"resourceType"`
-	Shape        dashboard.Shape         `json:"shape"`
-	GridWidth    int                     `json:"gridWidth"`
-	Query        map[string]any          `json:"query"`
-	GroupBy      string                  `json:"groupBy,omitempty"`
-	ListLimit    int                     `json:"listLimit,omitempty"`
-	Slices       []dashboardPieSliceView `json:"slices,omitempty"`
-	Section      string                  `json:"section,omitempty"`
+	WidgetID     string                   `json:"widgetId"`
+	DisplayName  string                   `json:"displayName"`
+	Description  string                   `json:"description,omitempty"`
+	ResourceType dashboard.ResourceType   `json:"resourceType"`
+	Shape        dashboard.Shape          `json:"shape"`
+	GridWidth    int                      `json:"gridWidth"`
+	Query        map[string]any           `json:"query"`
+	GroupBy      *dashboard.GroupByConfig `json:"groupBy,omitempty"`
+	ListLimit    int                      `json:"listLimit,omitempty"`
+	Slices       []dashboardPieSliceView  `json:"slices,omitempty"`
+	Section      string                   `json:"section,omitempty"`
 	// Columns and SortBy are only meaningful for Shape "list" — see
 	// dashboard.WidgetTemplate.Columns/SortBy. Forwarded verbatim: Columns
 	// is display config the BE never resolves, and SortBy is opaque search
@@ -76,6 +76,12 @@ type dashboardListItemView struct {
 	Type        dashboard.Type `json:"type,omitempty"`
 	IsDefault   bool           `json:"isDefault"`
 	IsTeamBased bool           `json:"isTeamBased"`
+	// DefaultForTeamKeys is this dashboard's identity-override list (see
+	// dashboard.Dashboard.DefaultForTeamKeys). It has to be on the list
+	// view, not just the detail view: the frontend resolves default
+	// dashboard selection against the caller's own team key before it ever
+	// fetches a dashboard's detail.
+	DefaultForTeamKeys []string `json:"defaultForTeamKeys,omitempty"`
 }
 
 // dashboardDetailView is a dashboard's full metadata plus its resolved
@@ -121,11 +127,12 @@ func (h *DashboardHandler) GetDashboards(w http.ResponseWriter, r *http.Request)
 	views := make([]dashboardListItemView, 0, len(dashboards))
 	for _, d := range dashboards {
 		views = append(views, dashboardListItemView{
-			ID:          d.ID,
-			DisplayName: d.DisplayName,
-			Type:        d.Type,
-			IsDefault:   d.IsDefault,
-			IsTeamBased: d.IsTeamBased,
+			ID:                 d.ID,
+			DisplayName:        d.DisplayName,
+			Type:               d.Type,
+			IsDefault:          d.IsDefault,
+			IsTeamBased:        d.IsTeamBased,
+			DefaultForTeamKeys: d.DefaultForTeamKeys,
 		})
 	}
 

@@ -21,10 +21,14 @@ import {
   Clock,
   Cog,
   Headset,
+  KeyRound,
   Megaphone,
   RefreshCw,
   Settings,
   Shield,
+  UserCog,
+  Users,
+  UsersRound,
 } from "@wso2/oxygen-ui-icons-react";
 import type { ComponentType } from "react";
 
@@ -213,21 +217,25 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
             id: "admin.user-management.users",
             label: "Users",
             href: "/admin/user-management/users",
+            icon: Users,
           },
           {
             id: "admin.user-management.roles",
             label: "Roles",
             href: "/admin/user-management/roles",
+            icon: UserCog,
           },
           {
             id: "admin.user-management.groups",
             label: "Groups",
             href: "/admin/user-management/groups",
+            icon: UsersRound,
           },
           {
             id: "admin.user-management.teams",
             label: "Teams",
             href: "/admin/user-management/teams",
+            icon: Building2,
           },
           // Routes to a placeholder that already names its backend blocker, so
           // it renders itself rather than the generic WIP page.
@@ -236,6 +244,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
             label: "Permissions",
             href: "/admin/user-management/permissions",
             rendersOwnWipPage: true,
+            icon: KeyRound,
           },
         ],
       },
@@ -261,6 +270,20 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
 /** The pathname part of `href`, dropping any query string or hash. */
 export function navNodePath(node: CsmNavNode): string {
   return node.href.split(/[?#]/)[0];
+}
+
+/**
+ * Where actually navigating to `node` should go. For a query-param tab
+ * (`tab` set), `href` is kept in the legacy `?tab=` shape purely so an old
+ * bookmarked/shared link in that form still resolves (see
+ * `LegacyQueryTabRedirect`) — the real, canonical destination is its first
+ * declared {@link CsmNavNode.routes} entry, the actual path-segment route
+ * (`/operations/incidents`, not `/operations?tab=incidents`). Every other
+ * node has no such split: `href` already is the real destination.
+ */
+export function navNodeHref(node: CsmNavNode): string {
+  if (node.tab && node.routes?.[0]) return node.routes[0];
+  return node.href;
 }
 
 /**

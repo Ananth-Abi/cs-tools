@@ -23,8 +23,8 @@ const ADMIN = { isOwner: false, isApprover: false, isAdmin: true };
 const NONE = { isOwner: false, isApprover: false, isAdmin: false };
 
 describe("cardActions", () => {
-  it("owner can edit their own submitted card", () => {
-    expect(cardActions("submitted", OWNER)).toEqual(["edit"]);
+  it("owner can edit or delete their own submitted card", () => {
+    expect(cardActions("submitted", OWNER)).toEqual(["edit", "delete"]);
   });
   it("approver approves/rejects a submitted card that isn't their own", () => {
     expect(cardActions("submitted", APPROVER)).toEqual(["approve", "reject"]);

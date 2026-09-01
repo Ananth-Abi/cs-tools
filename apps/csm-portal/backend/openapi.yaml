@@ -4176,6 +4176,61 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+    delete:
+      summary: >
+        Delete a time card (ServiceNow data source only). Only validates that
+        id is a well-formed UUID; the entity service (and, underneath it,
+        ServiceNow) enforces that the caller is the card's own submitter and
+        that it's still in the submitted state, the same trust model the
+        PATCH operation above uses.
+      operationId: deleteTimeCard
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          description: UUID of the time card.
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Time card deleted successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteTimeCardResponse'
+        "400":
+          description: BadRequest
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Time card not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
 
   /incidents/search:
     post:
@@ -4535,60 +4590,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
 
-  /notifications/google-chat/alerts:
-    post:
-      summary: >-
-        Send an incident alert card message to the Google Chat space
-        configured for the given product. Triggered manually today, pending
-        integration into real case/incident creation.
-      operationId: postNotificationsGoogleChatAlerts
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GoogleChatAlertPayload'
-        required: true
-      responses:
-        "200":
-          description: Ok
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-        "400":
-          description: BadRequest
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorPayload'
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorPayload'
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorPayload'
-        "413":
-          description: RequestEntityTooLarge
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorPayload'
-        "500":
-          description: InternalServerError
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorPayload'
-
 components:
   securitySchemes:
     bearerAuth:
@@ -4905,6 +4906,12 @@ components:
           type: string
         timeCard:
           $ref: '#/components/schemas/TimeCardView'
+
+    DeleteTimeCardResponse:
+      type: object
+      properties:
+        message:
+          type: string
 
     UpdateCaseRequest:
       type: object
@@ -5344,7 +5351,8 @@ components:
             - product
             - projectOnboardingStatus
             - projectType
-            - integrationCsTeam
+            - creTeam
+            - sreTeam
             - resolutionNotes
             - parentId
             - taskSLABusinessElapsedPercent
@@ -5419,8 +5427,12 @@ components:
           "Not-Applicable" -- not a closed enum at this layer).
         - **projectType** (in): the parent project's type, matched by the
           project type's name (e.g. "Subscription").
-        - **integrationCsTeam** (in): the parent account's integration CS
-          team, as team UUIDs.
+        - **creTeam** (in): the parent account's CRE (Customer Renewal &
+          Expansion) team, as team UUIDs.
+        - **sreTeam** (in): the parent account's SRE (Site Reliability
+          Engineering) team, as team UUIDs. Distinct from creTeam -- an
+          account can be assigned to both a CRE and an SRE team
+          independently.
         - **resolutionNotes** (isEmpty): values ignored; matches cases with
           empty resolution notes. isNotEmpty is not supported: false and
           omitted were always treated identically for this filter, so there
@@ -5528,6 +5540,7 @@ components:
             - user
             - time_card
             - problem
+            - incident_task
             - product_vulnerability
             - call_request
             - service_request
@@ -5550,10 +5563,11 @@ components:
             - bar
           description: >
             How the widget's data should be rendered once resolved. shapes
-            "pie" and "bar" both resolve one search per slices entry, the
-            same way "count" resolves its own single search (see slices
-            below) — they differ only in how the frontend renders the same
-            resolved data (wedges vs. bars), not in how it's fetched.
+            "pie" and "bar" resolve via either "slices" (one search per
+            entry) or "groupBy" (one server-side aggregation call) — see
+            both below — and differ from each other only in how the
+            frontend renders the same resolved data (wedges vs. bars), not
+            in how it's fetched.
         gridWidth:
           type: integer
           minimum: 1
@@ -5573,18 +5587,47 @@ components:
             (caller-side; slices entry keys win on conflict) rather than
             queried on its own.
         groupBy:
-          type: string
-          description: Unused
+          type: object
+          description: >
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "slices" — a widget carries exactly one of the two (enforced at
+            dashboard-load time). Configures a single server-side
+            aggregation call instead of one search per literal slice: the
+            caller issues one POST /{resourceType}/group-by request (filters
+            = this widget's own query) and maps the response's groups/
+            othersCount into the same per-slice shape "slices" already
+            produces.
+          properties:
+            field:
+              type: string
+              description: >
+                Which field to group by. Each resourceType enforces its own
+                small allowlist server-side; an unsupported value is
+                rejected by the group-by call itself with a 400, not caught
+                here.
+            maxGroups:
+              type: integer
+              description: >
+                Top-N cutoff by count, descending; the remainder is summed
+                into one "Others" bucket. Omitted/zero defers to the
+                group-by endpoint's own default (12).
+            othersLabel:
+              type: string
+              description: >
+                Overrides the default "Others" label for the summed
+                remainder bucket.
+          required: [field]
         listLimit:
           type: integer
           description: Only meaningful for shape list; how many records to show
         slices:
           type: array
           description: >
-            Only meaningful for shapes "pie"/"bar": one search per entry,
-            each resolved via its own total, the same mechanism shape
-            "count" uses. Merge each entry's query under this widget's
-            own query (entry keys win on conflict) before searching.
+            Only meaningful for shapes "pie"/"bar", as an alternative to
+            "groupBy": one search per entry, each resolved via its own
+            total, the same mechanism shape "count" uses. Merge each
+            entry's query under this widget's own query (entry keys win on
+            conflict) before searching.
           items:
             type: object
             properties:
@@ -5668,13 +5711,10 @@ components:
           enum: [cre, sre, cs]
           description: >
             Who the dashboard is built for. This is the field automatic
-            dashboard selection is intended to key off: a caller whose team
-            family is `cre-abt`/`cre` would land on the default `cre`
-            dashboard, `sre-abt`/`sre` on the default `sre` one, and a caller
-            with no team on the default `cs` one. That selection is NOT
-            implemented yet: the frontend still picks on isDefault plus
-            isTeamBased, and the loader correspondingly permits only one
-            isDefault dashboard in total.
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
             `cre` and `sre` are team-scoped and always carry
             isTeamBased true; `cs` is organisation-wide and always carries it
             false — the loader rejects any other combination at startup.
@@ -5683,9 +5723,24 @@ components:
         isDefault:
           type: boolean
           description: >
-            Whether this is the default dashboard to show first. At most one
-            dashboard in the registry may set it: the loader rejects a second
-            at startup, of any type, until selection becomes type-aware.
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
+        defaultForTeamKeys:
+          type: array
+          items:
+            type: string
+          description: >
+            Team registry keys (not group ids) that should land a
+            signed-in user on this dashboard by default, regardless of its
+            own type/isDefault/isTeamBased — an identity override resolved
+            client-side against the signed-in user's own team key. Most
+            dashboards leave this empty and rely on type-based selection
+            instead; it exists for a dashboard built for one specific
+            team's own workflow rather than the type/family model.
         isTeamBased:
           type: boolean
           description: >
@@ -5707,13 +5762,10 @@ components:
           enum: [cre, sre, cs]
           description: >
             Who the dashboard is built for. This is the field automatic
-            dashboard selection is intended to key off: a caller whose team
-            family is `cre-abt`/`cre` would land on the default `cre`
-            dashboard, `sre-abt`/`sre` on the default `sre` one, and a caller
-            with no team on the default `cs` one. That selection is NOT
-            implemented yet: the frontend still picks on isDefault plus
-            isTeamBased, and the loader correspondingly permits only one
-            isDefault dashboard in total.
+            dashboard selection keys off: a caller whose team family is
+            `cre-abt`/`cre` lands on the default `cre` dashboard,
+            `sre-abt`/`sre` on the default `sre` one, and a caller with no
+            team on the default `cs` one.
             `cre` and `sre` are team-scoped and always carry
             isTeamBased true; `cs` is organisation-wide and always carries it
             false — the loader rejects any other combination at startup.
@@ -5722,9 +5774,12 @@ components:
         isDefault:
           type: boolean
           description: >
-            Whether this is the default dashboard to show first. At most one
-            dashboard in the registry may set it: the loader rejects a second
-            at startup, of any type, until selection becomes type-aware.
+            Whether this is the default dashboard to show first for its
+            type. At most one dashboard per type may set it: the loader
+            rejects a second isDefault dashboard of the same type (or, for a
+            definition with no type at all, a second untyped one) at
+            startup, but isDefault dashboards of different types coexist by
+            design.
         targetTeam:
           type: string
           description: >
@@ -6418,13 +6473,20 @@ components:
             not every team is. This is the field a discipline-scoped team picker filters
             on via `SearchTeamsRequest.filters.family` — an SRE-scoped dashboard's picker
             requests `sre-abt` and gets only those teams back.
-        groupId:
+        creGroupId:
           type: string
           description: >
-            The backing group's id, suitable for the case search integrationCsTeamIds
-            filter. Present only when the deployment's team registry configured a
-            backing group id for this team; a team without one is still listed, just
-            not filter-scopable.
+            The backing CRE (Customer Renewal & Expansion) group's id, suitable for the
+            case search creTeamIds filter. Present only when the deployment's team
+            registry configured a backing CRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
+        sreGroupId:
+          type: string
+          description: >
+            The backing SRE (Site Reliability Engineering) group's id, suitable for the
+            case search sreTeamIds filter. Present only when the deployment's team
+            registry configured a backing SRE group id for this team; a team without
+            one is still listed, just not filter-scopable.
 
     SearchTeamsRequest:
       type: object
@@ -9157,11 +9219,22 @@ components:
               type: array
               items:
                 type: string
-                enum: [ACTIVE, RESOLVED]
+                enum: [ACTIVE, RESOLVED, CONVERTED, ABANDONED, CLOSED]
+            number:
+              type: string
+              description: >-
+                A single conversation number (e.g. "CHAT0000012345"); matches
+                exactly. Routed as a first-class filter rather than through
+                the free-text searchQuery scan.
             searchQuery:
               type: string
             createdByMe:
               type: boolean
+            createdBy:
+              type: array
+              items:
+                type: string
+              description: Filter to conversations initiated by any of these email addresses.
         sortBy:
           type: object
           properties:
@@ -9204,7 +9277,7 @@ components:
         state:
           type: string
           nullable: true
-          enum: [ACTIVE, RESOLVED]
+          enum: [ACTIVE, RESOLVED, CONVERTED, ABANDONED, CLOSED]
         createdOn:
           type: string
         createdBy:
@@ -9515,29 +9588,6 @@ components:
           type: integer
         offset:
           type: integer
-
-    GoogleChatAlertPayload:
-      type: object
-      required: [product, title, shortDescription, caseId]
-      additionalProperties: false
-      properties:
-        product:
-          type: string
-          description: >-
-            Selects which configured Google Chat space receives the alert
-            (e.g. "api-manager", "identity-server"); matched case- and
-            whitespace-insensitively against NOTIFICATIONS_GOOGLE_CHAT_SPACES.
-        title:
-          type: string
-          description: Card header title (e.g. "P1 Incident - CASE-001").
-        shortDescription:
-          type: string
-          description: Card body text shown under "Short Description".
-        caseId:
-          type: string
-          description: >-
-            Case ID used to build the "Open in CSM Portal" link
-            (/operations/incidents/{caseId}).
 
     Incident:
       type: object

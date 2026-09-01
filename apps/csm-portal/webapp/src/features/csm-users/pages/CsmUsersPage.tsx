@@ -468,7 +468,21 @@ export default function CsmUsersPage(): JSX.Element {
                         )}
                       </TableCell>
                       <TableCell>
-                        {u.active === undefined ? (
+                        {u.lockedOut ? (
+                          <Stack direction="row" spacing={0.75} alignItems="center">
+                            <Box
+                              aria-hidden
+                              sx={{
+                                width: 7,
+                                height: 7,
+                                flexShrink: 0,
+                                borderRadius: "50%",
+                                bgcolor: "error.main",
+                              }}
+                            />
+                            <Typography variant="body2">Locked out</Typography>
+                          </Stack>
+                        ) : u.active === undefined ? (
                           "—"
                         ) : (
                           <Stack direction="row" spacing={0.75} alignItems="center">

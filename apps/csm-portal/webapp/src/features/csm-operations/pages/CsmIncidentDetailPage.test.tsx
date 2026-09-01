@@ -17,6 +17,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
+import type { JSX } from "react";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { UseQueryResult } from "@tanstack/react-query";
 import type { BeIncidentDetail } from "@api/backend/types";
 
@@ -41,10 +44,6 @@ vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ get: vi.fn(), patch: vi.fn() }),
 }));
 
-vi.mock("react-router", () => ({
-  useParams: () => ({ id: "inc-1" }),
-  useLocation: () => ({ pathname: "/operations/incidents/inc-1", search: "", state: undefined }),
-}));
 vi.mock("@hooks/useNavTransition", () => ({
   useNavTransition: () => navigateMock,
 }));
@@ -68,7 +67,7 @@ vi.mock("@features/csm-cases/api/useCsmCaseAttachments", () => ({
   useGetCsmCaseAttachments: () => ({ data: [] }),
   usePostCsmCaseAttachment: () => ({ isPending: false, mutate: vi.fn() }),
   useDownloadCsmCaseAttachment: () => vi.fn(),
-  useGetCsmCaseAttachmentContent: () => vi.fn(),
+  useGetCsmCaseAttachmentPreviewSource: () => vi.fn(),
 }));
 vi.mock("@features/csm-cases/components/CaseActivitiesFeed", () => ({
   default: () => null,
@@ -120,6 +119,43 @@ function goToTab(name: RegExp): void {
   fireEvent.click(screen.getByRole("tab", { name }));
 }
 
+/** Surfaces the router's current search string, for the `?tab=` sync tests
+ * below. */
+function LocationSearchProbe(): JSX.Element {
+  const location = useLocation();
+  return <div data-testid="search-probe">{location.search}</div>;
+}
+
+/**
+ * Real `<MemoryRouter>`/`<Routes>` (not a mocked `react-router`), matching
+ * this app's own convention for a hook/page that reads the router itself
+ * (see `useNormalizedIdParam.test.tsx`) — `useQueryParamTabs` needs a real
+ * `useSearchParams` to actually read/write the URL, which a mocked
+ * `react-router` module can't provide.
+ */
+function renderPage(initialEntry = "/operations/incidents/inc-1"): ReturnType<typeof render> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <Routes>
+          <Route
+            path="/operations/incidents/:id"
+            element={
+              <>
+                <CsmIncidentDetailPage />
+                <LocationSearchProbe />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 // `patchMutateMock`/`showErrorMock`/`navigateMock` are module-scoped `vi.fn()`s
 // shared across every test in this file — without a reset, a call recorded by
 // an earlier test (e.g. the direct-PATCH transition test) is still present
@@ -132,7 +168,7 @@ afterEach(() => {
 describe("CsmIncidentDetailPage — tabs", () => {
   it("renders all five tabs and defaults to Activities", () => {
     mockQueryResult({ data: BASE_INCIDENT });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
 
     expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
       "aria-selected",
@@ -146,7 +182,7 @@ describe("CsmIncidentDetailPage — tabs", () => {
 
   it("switches to the Details tab and shows classification fields", () => {
     mockQueryResult({ data: { ...BASE_INCIDENT, category: "INQUIRY" } });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     goToTab(/details/i);
     expect(screen.getByText("Classification")).toBeInTheDocument();
     expect(screen.getByText("INQUIRY")).toBeInTheDocument();
@@ -154,7 +190,7 @@ describe("CsmIncidentDetailPage — tabs", () => {
 
   it("renders parent incident, change request, and problem as clickable references under Related", () => {
     mockQueryResult({ data: BASE_INCIDENT });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     goToTab(/related/i);
 
     clickChip("INC0011111");
@@ -169,7 +205,7 @@ describe("CsmIncidentDetailPage — tabs", () => {
 
   it("renders 'Caused by' as plain, non-navigable text since its target type is unconfirmed", () => {
     mockQueryResult({ data: BASE_INCIDENT });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     goToTab(/related/i);
 
     const causedByText = screen.getByText("Some obscure record");
@@ -183,7 +219,7 @@ describe("CsmIncidentDetailPage — tabs", () => {
         watchList: [{ id: "u1", name: "Jane Doe", email: "jane.doe@example.com" }],
       },
     });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     goToTab(/watchers/i);
     expect(screen.getByText("Jane Doe")).toBeInTheDocument();
   });
@@ -196,7 +232,7 @@ describe("CsmIncidentDetailPage — tabs", () => {
         workNotes: "Checked the gateway logs.",
       },
     });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     goToTab(/details/i);
     expect(screen.queryByText("Comments & notes")).not.toBeInTheDocument();
     expect(screen.queryByText("Customer says the issue recurred.")).not.toBeInTheDocument();
@@ -212,7 +248,7 @@ describe("CsmIncidentDetailPage — Watchers tab is read-only (watchList PATCH i
         watchList: [{ id: "u1", name: "Jane Doe", email: "jane.doe@example.com" }],
       },
     });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     goToTab(/watchers/i);
 
     const chip = screen.getByText("Jane Doe").closest(".MuiChip-root");
@@ -221,11 +257,42 @@ describe("CsmIncidentDetailPage — Watchers tab is read-only (watchList PATCH i
 
   it("disables the 'Add watcher' button", () => {
     mockQueryResult({ data: { ...BASE_INCIDENT, watchList: [] } });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     goToTab(/watchers/i);
 
     expect(screen.getByRole("button", { name: /add watcher/i })).toBeDisabled();
     expect(patchMutateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("CsmIncidentDetailPage — tab lives in the URL", () => {
+  it("writes the selected tab to ?tab= when switching tabs", () => {
+    mockQueryResult({ data: BASE_INCIDENT });
+    renderPage();
+
+    goToTab(/watchers/i);
+
+    expect(screen.getByTestId("search-probe")).toHaveTextContent("tab=watchers");
+  });
+
+  it("restores the tab named in the URL on a direct/cold load, instead of always defaulting to Activities", () => {
+    mockQueryResult({ data: BASE_INCIDENT });
+    renderPage("/operations/incidents/inc-1?tab=details");
+
+    expect(screen.getByRole("tab", { name: /details/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("falls back to Activities for an unrecognised ?tab= value, without crashing", () => {
+    mockQueryResult({ data: BASE_INCIDENT });
+    renderPage("/operations/incidents/inc-1?tab=not-a-real-tab");
+
+    expect(screen.getByRole("tab", { name: /activities/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });
 
@@ -240,7 +307,7 @@ describe("CsmIncidentDetailPage — state-transition action bar", () => {
 
   it("dispatches a direct PATCH for a simple transition (IN_PROGRESS -> ON_HOLD)", () => {
     mockQueryResult({ data: { ...BASE_INCIDENT, state: "IN_PROGRESS" } });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     openChangeState();
     fireEvent.click(screen.getByRole("menuitem", { name: /on hold/i }));
     expect(patchMutateMock).toHaveBeenCalledWith(
@@ -251,7 +318,7 @@ describe("CsmIncidentDetailPage — state-transition action bar", () => {
 
   it("opens the resolution dialog for RESOLVED instead of PATCHing immediately", () => {
     mockQueryResult({ data: { ...BASE_INCIDENT, state: "IN_PROGRESS" } });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     openChangeState();
     fireEvent.click(screen.getByRole("menuitem", { name: /resolved/i }));
     expect(patchMutateMock).not.toHaveBeenCalled();
@@ -263,7 +330,7 @@ describe("CsmIncidentDetailPage — state-transition action bar", () => {
 
   it("submits the resolution dialog with state + resolutionCode + resolutionNotes", () => {
     mockQueryResult({ data: { ...BASE_INCIDENT, state: "IN_PROGRESS" } });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     openChangeState();
     fireEvent.click(screen.getByRole("menuitem", { name: /resolved/i }));
 
@@ -293,7 +360,7 @@ describe("CsmIncidentDetailPage — state-transition action bar", () => {
 
   it("renders no state-transition buttons for a terminal incident (CLOSED)", () => {
     mockQueryResult({ data: { ...BASE_INCIDENT, state: "CLOSED" } });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     expect(screen.queryByRole("button", { name: /in progress/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /change state/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /cancelled/i })).not.toBeInTheDocument();
@@ -301,7 +368,7 @@ describe("CsmIncidentDetailPage — state-transition action bar", () => {
 
   it("renders no state-transition buttons for a terminal incident (CANCELLED)", () => {
     mockQueryResult({ data: { ...BASE_INCIDENT, state: "CANCELLED" } });
-    render(<CsmIncidentDetailPage />);
+    renderPage();
     expect(screen.queryByRole("button", { name: /in progress/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /change state/i })).not.toBeInTheDocument();
   });

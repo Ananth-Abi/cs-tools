@@ -56,7 +56,7 @@ describe("useSearchConversations", () => {
           case: null,
           state: "ACTIVE",
           createdOn: "2026-07-01T10:00:00Z",
-          createdBy: "Jane Doe",
+          createdBy: { id: null, email: "jane@example.com", name: "" },
         },
       ],
       total: 1,
@@ -94,6 +94,130 @@ describe("useSearchConversations", () => {
     expect(postMock).toHaveBeenCalledWith(
       "/conversations/search",
       expect.objectContaining({ pagination: { limit: 50, offset: 100 } }),
+    );
+  });
+
+  it("includes states/searchQuery/createdByMe in the request only when set", async () => {
+    postMock.mockResolvedValue({ conversations: [], total: 0, limit: 20, offset: 0 });
+
+    const { result } = renderHook(
+      () =>
+        useSearchConversations(
+          "proj-1",
+          { page: 0, rowsPerPage: 20 },
+          { states: ["ACTIVE", "CONVERTED"], searchQuery: "  billing  ", createdByMe: true },
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/conversations/search",
+      expect.objectContaining({
+        filters: {
+          projectIds: ["proj-1"],
+          states: ["ACTIVE", "CONVERTED"],
+          searchQuery: "billing",
+          createdByMe: true,
+        },
+      }),
+    );
+  });
+
+  it("routes a CHAT-number-shaped search to filters.number, not searchQuery", async () => {
+    postMock.mockResolvedValue({ conversations: [], total: 0, limit: 20, offset: 0 });
+
+    const { result } = renderHook(
+      () =>
+        useSearchConversations(
+          "proj-1",
+          { page: 0, rowsPerPage: 20 },
+          { searchQuery: "CHAT0000012345" },
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/conversations/search",
+      expect.objectContaining({
+        filters: { projectIds: ["proj-1"], number: "CHAT0000012345" },
+      }),
+    );
+  });
+
+  it("omits empty filter fields from the request payload", async () => {
+    postMock.mockResolvedValue({ conversations: [], total: 0, limit: 20, offset: 0 });
+
+    const { result } = renderHook(
+      () =>
+        useSearchConversations(
+          "proj-1",
+          { page: 0, rowsPerPage: 20 },
+          { states: [], searchQuery: "   ", createdByMe: false, number: "  ", createdBy: [] },
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/conversations/search",
+      expect.objectContaining({
+        filters: { projectIds: ["proj-1"] },
+      }),
+    );
+  });
+
+  it("includes the explicit number and createdBy filters when set", async () => {
+    postMock.mockResolvedValue({ conversations: [], total: 0, limit: 20, offset: 0 });
+
+    const { result } = renderHook(
+      () =>
+        useSearchConversations(
+          "proj-1",
+          { page: 0, rowsPerPage: 20 },
+          { number: "CHAT0000012345", createdBy: ["jane.doe@example.com"] },
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/conversations/search",
+      expect.objectContaining({
+        filters: {
+          projectIds: ["proj-1"],
+          number: "CHAT0000012345",
+          createdBy: ["jane.doe@example.com"],
+        },
+      }),
+    );
+  });
+
+  it("prefers the explicit number filter over a CHAT-number-shaped search box value", async () => {
+    postMock.mockResolvedValue({ conversations: [], total: 0, limit: 20, offset: 0 });
+
+    const { result } = renderHook(
+      () =>
+        useSearchConversations(
+          "proj-1",
+          { page: 0, rowsPerPage: 20 },
+          { searchQuery: "CHAT0000099999", number: "CHAT0000012345" },
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/conversations/search",
+      expect.objectContaining({
+        filters: { projectIds: ["proj-1"], number: "CHAT0000012345" },
+      }),
     );
   });
 });

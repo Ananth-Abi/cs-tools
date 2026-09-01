@@ -141,14 +141,18 @@ export function buildWidgetPreviewHref(params: {
     }
   }
   if (usesCaseFieldFilterShape) q.set(CASE_FILTER_MARKER, "1");
-  return `/dashboard/${params.previewSlug}?${q.toString()}`;
+  // Under "/dashboard/preview/", not directly under "/dashboard/" — that
+  // shape collides with the dashboard-selection route
+  // (`/dashboard/:dashboardId`, see App.tsx), so this needs its own static
+  // prefix rather than sharing the single-dynamic-segment shape.
+  return `/dashboard/preview/${params.previewSlug}?${q.toString()}`;
 }
 
 /** One human-readable "what's actually being queried" entry — a single
  * filter field and the value(s) it's currently set to, `op` set only for a
  * non-default (non-`in`) operator so a plain `field: value` reads cleanly
  * for the common case. Field names are the raw camelCase filter key (e.g.
- * `integrationCsTeam`); no friendly-label lookup exists for every filter
+ * `creTeam`); no friendly-label lookup exists for every filter
  * field across every resourceType, so this deliberately stays literal
  * rather than inventing a large label-mapping table for partial coverage. */
 export interface WidgetFilterSummaryEntry {

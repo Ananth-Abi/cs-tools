@@ -147,3 +147,68 @@ func TestUpdateTimeCard(t *testing.T) {
 		}
 	})
 }
+
+func TestDeleteTimeCard(t *testing.T) {
+	t.Run("rejects unauthenticated requests", func(t *testing.T) {
+		h := NewTimeCardHandler(&mockEntityTimeCardClient{})
+		r := httptest.NewRequest(http.MethodDelete, "/time-cards/"+testTCID, nil)
+		r.SetPathValue("id", testTCID)
+		w := httptest.NewRecorder()
+		h.DeleteTimeCard(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+	})
+
+	t.Run("rejects malformed UUID", func(t *testing.T) {
+		h := NewTimeCardHandler(&mockEntityTimeCardClient{})
+		r := withUser(httptest.NewRequest(http.MethodDelete, "/time-cards/not-a-uuid", nil))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.DeleteTimeCard(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+	})
+
+	t.Run("forwards id and returns 200", func(t *testing.T) {
+		var capturedID string
+		client := &mockEntityTimeCardClient{
+			deleteTimeCardFn: func(_ context.Context, id string) ([]byte, error) {
+				capturedID = id
+				return []byte(`{"message":"Time card deleted"}`), nil
+			},
+		}
+		h := NewTimeCardHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodDelete, "/time-cards/"+testTCID, nil))
+		r.SetPathValue("id", testTCID)
+		w := httptest.NewRecorder()
+		h.DeleteTimeCard(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+		if capturedID != testTCID {
+			t.Errorf("upstream received id %q, want %q", capturedID, testTCID)
+		}
+		resp := decodeJSON[map[string]any](t, w)
+		if resp["message"] != "Time card deleted" {
+			t.Errorf("message = %v, want %q", resp["message"], "Time card deleted")
+		}
+	})
+
+	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to delete time card.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityTimeCardClient{
+					deleteTimeCardFn: func(_ context.Context, _ string) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewTimeCardHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodDelete, "/time-cards/"+testTCID, nil))
+				r.SetPathValue("id", testTCID)
+				w := httptest.NewRecorder()
+				h.DeleteTimeCard(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+			})
+		}
+	})
+}

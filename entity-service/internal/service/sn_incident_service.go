@@ -20,12 +20,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
+
+// publishIncidentCreatedTimeout bounds publishIncidentCreated's publish call
+// — see that function's doc comment for why this runs synchronously rather
+// than detached.
+const publishIncidentCreatedTimeout = 5 * time.Second
 
 // snIncidentsResponse mirrors the Choreo POST /incidents/search response.
 type snIncidentsResponse struct {
@@ -89,6 +97,18 @@ type snIncidentFilters struct {
 	// match against ServiceNow's `number` column -- not part of the
 	// free-text SearchQuery scan.
 	Number string `json:"number,omitempty"`
+	// StateKeys: see domain.SearchIncidentsFilters.StateKeys doc comment.
+	StateKeys []int `json:"stateKeys,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+	// BusinessServiceIDs: business_service sys_ids (converted from UUIDs).
+	BusinessServiceIDs []string `json:"businessServiceIds,omitempty"`
+	// StartCreatedDate/EndCreatedDate: see domain.SearchIncidentsFilters
+	// Filters "createdOn" doc comment. Wire keys match case search's own
+	// startCreatedDate/endCreatedDate exactly (same UtcDateTimeString
+	// contract on the Ballerina/SN side).
+	StartCreatedDate string `json:"startCreatedDate,omitempty"`
+	EndCreatedDate   string `json:"endCreatedDate,omitempty"`
 }
 
 // snIncidentPriorityKeyMap maps domain IncidentPriority enums to SN numeric priority keys.
@@ -164,11 +184,16 @@ var validIncidentSortOrder = map[domain.IncidentSortOrder]bool{
 
 type snIncidentService struct {
 	client *integrationservice.Client
+	// publisher is nil when Event Hub is not configured — every call site
+	// must check before using it. See publishIncidentCreated.
+	publisher EventPublisherService
 }
 
-// NewServiceNowIncidentService constructs an IncidentService backed by the Choreo API.
-func NewServiceNowIncidentService(client *integrationservice.Client) IncidentService {
-	return &snIncidentService{client: client}
+// NewServiceNowIncidentService constructs an IncidentService backed by the
+// Choreo API. publisher may be nil (see snIncidentService.publisher's doc
+// comment).
+func NewServiceNowIncidentService(client *integrationservice.Client, publisher EventPublisherService) IncidentService {
+	return &snIncidentService{client: client, publisher: publisher}
 }
 
 func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.SearchIncidentsRequest) (domain.SearchIncidentsResponse, error) {
@@ -195,6 +220,14 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
 		return domain.SearchIncidentsResponse{}, err
 	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.SearchIncidentsResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.SearchIncidentsResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -214,10 +247,15 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 
 	payload := snIncidentSearchPayload{
 		Filters: snIncidentFilters{
-			SearchQuery:  req.Filters.SearchQuery,
-			PriorityKeys: priorityKeys,
-			ParentIDs:    uuidsToSysids(req.Filters.ParentIDs),
-			Number:       stringPtrValue(req.Filters.Number),
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
@@ -289,6 +327,92 @@ func (s *snIncidentService) SearchIncidents(ctx context.Context, req domain.Sear
 		Limit:     req.Pagination.Limit,
 		Offset:    req.Pagination.Offset,
 	}, nil
+}
+
+// snIncidentGroupByPayload is the Choreo POST /incidents/group-by request body.
+type snIncidentGroupByPayload struct {
+	Filters   snIncidentFilters `json:"filters,omitempty"`
+	GroupBy   string            `json:"groupBy"`
+	MaxGroups int               `json:"maxGroups,omitempty"`
+}
+
+// validIncidentGroupByField is the allow-list for
+// GroupIncidentsByRequest.GroupBy, matching openapi.yaml's
+// GroupIncidentsByRequest.groupBy enum exactly.
+var validIncidentGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+	"businessService": true,
+}
+
+// GroupIncidentsBy implements IncidentService by calling the Choreo POST
+// /incidents/group-by endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into GroupByResponse.OthersCount. Filter parsing and validation
+// mirror SearchIncidents.
+func (s *snIncidentService) GroupIncidentsBy(ctx context.Context, req domain.GroupIncidentsByRequest) (domain.GroupByResponse, error) {
+	if req.GroupBy == "" {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validIncidentGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	for _, p := range req.Filters.Priorities {
+		if !validIncidentPriority[p] {
+			return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "priorities contains invalid value: " + string(p)}
+		}
+	}
+	if err := validateUUIDs("parentIds", req.Filters.ParentIDs); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	parsedFilters, err := ParseIncidentFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if parsedFilters.EndCreatedDate != nil && parsedFilters.StartCreatedDate != nil &&
+		parsedFilters.EndCreatedDate.Before(*parsedFilters.StartCreatedDate) {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	priorityKeys := make([]int, 0, len(req.Filters.Priorities))
+	for _, p := range req.Filters.Priorities {
+		priorityKeys = append(priorityKeys, snIncidentPriorityKeyMap[p])
+	}
+
+	payload := snIncidentGroupByPayload{
+		Filters: snIncidentFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			PriorityKeys:       priorityKeys,
+			ParentIDs:          uuidsToSysids(req.Filters.ParentIDs),
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			BusinessServiceIDs: uuidsToSysids(parsedFilters.BusinessServiceIDs),
+			StartCreatedDate:   formatSNDateTimeUTC(parsedFilters.StartCreatedDate),
+			EndCreatedDate:     formatSNDateTimeUTC(parsedFilters.EndCreatedDate),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/incidents/group-by", token, payload)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	var resp domain.GroupByResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.GroupByResponse{}, fmt.Errorf("sn incidents: parse group-by response: %w", err)
+	}
+	return resp, nil
 }
 
 // snIncidentCategoryKeyMap maps domain IncidentCategory enums to SN category string values.
@@ -612,7 +736,65 @@ func (s *snIncidentService) CreateIncident(ctx context.Context, req domain.Creat
 	resp.Incident.Number = snResp.Incident.Number
 	resp.Incident.CreatedOn = snResp.Incident.CreatedOn
 	resp.Incident.CreatedBy = snResp.Incident.CreatedBy
+	s.publishIncidentCreated(ctx, req, resp.Incident.ID)
 	return resp, nil
+}
+
+// publishIncidentCreated best-effort publishes an incident.created event for
+// a newly created incident. Unlike publishCaseCreated, no enrichment round
+// trip is needed: Title/ShortDescription come directly from req, which
+// already carries everything the notification needs (Subject, and
+// optionally AdditionalComments) without a follow-up GetIncidentByID call.
+//
+// ShortDescription falls back to req.Subject when req.AdditionalComments is
+// absent — a freshly created incident often has no additional comments yet,
+// and events.Validate on the receiving side requires ShortDescription
+// non-empty.
+//
+// Product/CallTo/IncidentLink are all left unset — this service only
+// publishes the fact that an incident was created; it has no
+// product→Chat-space mapping or on-call number of its own (Product/CallTo),
+// and doesn't know csm-notification-service's own portal URL configuration
+// either (IncidentLink, unlike an earlier version of this payload, isn't a
+// field at all — that service builds its own portal link from EntityID, the
+// same way it already does for case.created). csm-notification-service
+// substitutes its own configured Product/CallTo defaults when they're
+// absent — see events.IncidentCreatedPayload's doc comment.
+//
+// Runs synchronously, bounded by publishIncidentCreatedTimeout — see
+// publishCaseCreated's doc comment for why (same reasoning applies here).
+// Any failure is logged and does not fail CreateIncident itself: the
+// incident already exists in ServiceNow by this point.
+func (s *snIncidentService) publishIncidentCreated(ctx context.Context, req domain.CreateIncidentRequest, incidentID string) {
+	if s.publisher == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, publishIncidentCreatedTimeout)
+	defer cancel()
+
+	shortDescription := req.Subject
+	if req.AdditionalComments != nil && *req.AdditionalComments != "" {
+		shortDescription = *req.AdditionalComments
+	}
+
+	payload, err := json.Marshal(events.IncidentCreatedPayload{
+		Title:            req.Subject,
+		ShortDescription: shortDescription,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn create incident: encode incident.created payload failed", "incidentId", incidentID, "error", err)
+		return
+	}
+	if err := s.publisher.Publish(ctx, events.TypeIncidentCreated, incidentID, payload); err != nil {
+		// Not logging err itself: it can carry a raw Event Hub client error
+		// (potentially including connection/broker details), and this
+		// service's own convention is to log only ids and sanitised
+		// summaries (see CLAUDE.md's Security section). The full error is
+		// already durably recorded in event_publish_failures by Publish
+		// itself (see EventPublisherService's doc comment) for anyone who
+		// needs to debug this specific failure.
+		slog.ErrorContext(ctx, "sn create incident: publish incident.created failed", "incidentId", incidentID)
+	}
 }
 
 // snIncidentSubcategoryLabelMap maps SN subcategory string values to domain enum strings.

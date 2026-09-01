@@ -79,8 +79,8 @@ func TestStartupResolution_BuildsTheExpectedIndex(t *testing.T) {
 	}
 
 	resp := dir.SearchTeams(SearchRequest{})
-	if resp.Teams[0].GroupID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
-		t.Errorf("groupId = %q, want the UUID form resolved at startup", resp.Teams[0].GroupID)
+	if resp.Teams[0].CreGroupID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Errorf("creGroupId = %q, want the UUID form resolved at startup", resp.Teams[0].CreGroupID)
 	}
 }
 
@@ -101,8 +101,8 @@ func TestRowsWithoutAGroupIDAreStillUsable(t *testing.T) {
 		if found == nil {
 			t.Fatalf("team %q is missing from the catalogue", want)
 		}
-		if found.GroupID != "" {
-			t.Errorf("team %q groupId = %q, want it omitted", want, found.GroupID)
+		if found.CreGroupID != "" {
+			t.Errorf("team %q creGroupId = %q, want it omitted", want, found.CreGroupID)
 		}
 		if _, ok := dir.TeamByGroupName(found.Name); !ok {
 			t.Errorf("team %q cannot be resolved by group name", want)
@@ -180,6 +180,13 @@ func TestNew_RejectsDuplicates(t *testing.T) {
 	dupName, _ := ParseTeamRegistry("alpha|Alpha Team,beta|Alpha Team")
 	if _, err := New(dupName, DefaultRoles); err == nil {
 		t.Error("duplicate display name was accepted")
+	}
+	// Two teams configured with the same backing CreGroupID would shadow each
+	// other in byCreGroupID exactly as a duplicate key would in byKey.
+	dupGroupID, _ := ParseTeamRegistry(
+		"alpha|Alpha Team||aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,beta|Beta Team||aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if _, err := New(dupGroupID, DefaultRoles); err == nil {
+		t.Error("duplicate creGroupId was accepted")
 	}
 }
 
@@ -321,10 +328,40 @@ func TestSearchTeams_PageDoesNotAliasTheSnapshot(t *testing.T) {
 	}
 }
 
+// TeamByUUID is the reverse of the id -> UUID conversion done at startup: a
+// caller holding the platform UUID form of a team's backing CRE group id (the
+// same form TeamResult.CreGroupID and accounts.creTeam.id expose) must be
+// able to resolve the team from it.
+func TestTeamByUUID_ResolvesTheConfiguredTeam(t *testing.T) {
+	dir := mustDirectory(t, registryFixture, "")
+
+	// alpha's fixture CreGroupID "aaaa...aaaa" (32 hex chars) resolves to this
+	// UUID -- see TestStartupResolution_BuildsTheExpectedIndex.
+	team, ok := dir.TeamByUUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	if !ok {
+		t.Fatal("TeamByUUID missed the configured alpha team")
+	}
+	if team.Key != "alpha" {
+		t.Fatalf("TeamByUUID resolved %+v, want the alpha row", team)
+	}
+
+	// A well-formed UUID that matches no configured team's group id.
+	if _, ok := dir.TeamByUUID("ffffffff-ffff-ffff-ffff-ffffffffffff"); ok {
+		t.Error("TeamByUUID matched a UUID no team is configured with")
+	}
+
+	// beta and gamma have no CreGroupID configured at all, so they have no
+	// UUID to be looked up by -- confirm neither is reachable through some
+	// unintended fallback.
+	if _, ok := dir.TeamByUUID(""); ok {
+		t.Error("TeamByUUID matched the empty string against an unconfigured group id")
+	}
+}
+
 // Regression: sourceIDToUUID preserved the configured id's case, but canonical
 // UUID text is lowercase and this value is compared against ids the entity
-// service renders -- an uppercase configured id produced a groupId that matched
-// nothing on the integrationCsTeam filter, with no error anywhere.
+// service renders -- an uppercase configured id produced a creGroupId/sreGroupId
+// that matched nothing on the creTeam/sreTeam filters, with no error anywhere.
 func TestSourceIDToUUID_LowercasesTheConvertedID(t *testing.T) {
 	const upper = "760E87B247C13910A0A29CD3846D4301"
 	const lower = "760e87b247c13910a0a29cd3846d4301"

@@ -106,6 +106,8 @@ type mockEntityCaseClient struct {
 	searchCaseAttachmentsFn    func(ctx context.Context, body []byte) ([]byte, error)
 	getCaseAttachmentContentFn func(ctx context.Context, attachmentID string) ([]byte, string, error)
 	deleteCaseAttachmentFn     func(ctx context.Context, attachmentID string) ([]byte, error)
+	getCaseAttachmentFn        func(ctx context.Context, attachmentID string) ([]byte, error)
+	confirmCaseAttachmentFn    func(ctx context.Context, attachmentID string) ([]byte, error)
 	createCallRequestFn        func(ctx context.Context, body []byte) ([]byte, error)
 	searchCallRequestsFn       func(ctx context.Context, body []byte) ([]byte, error)
 	searchAllCallRequestsFn    func(ctx context.Context, body []byte) ([]byte, error)
@@ -202,6 +204,20 @@ func (m *mockEntityCaseClient) DeleteCaseAttachment(ctx context.Context, attachm
 		return m.deleteCaseAttachmentFn(ctx, attachmentID)
 	}
 	return []byte(`{"message":"Attachment deleted successfully."}`), nil
+}
+
+func (m *mockEntityCaseClient) GetCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	if m.getCaseAttachmentFn != nil {
+		return m.getCaseAttachmentFn(ctx, attachmentID)
+	}
+	return []byte(`{}`), nil
+}
+
+func (m *mockEntityCaseClient) ConfirmCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	if m.confirmCaseAttachmentFn != nil {
+		return m.confirmCaseAttachmentFn(ctx, attachmentID)
+	}
+	return []byte(`{"message":"Attachment confirmed successfully","attachment":{"id":"` + attachmentID + `","status":"complete"}}`), nil
 }
 
 func (m *mockEntityCaseClient) CreateCallRequest(ctx context.Context, body []byte) ([]byte, error) {
@@ -690,6 +706,7 @@ type mockEntityTimeCardClient struct {
 	searchTimeCardsFn func(ctx context.Context, body []byte) ([]byte, error)
 	createTimeCardFn  func(ctx context.Context, body []byte) ([]byte, error)
 	updateTimeCardFn  func(ctx context.Context, id string, body []byte) ([]byte, error)
+	deleteTimeCardFn  func(ctx context.Context, id string) ([]byte, error)
 }
 
 func (m *mockEntityTimeCardClient) SearchTimeCards(ctx context.Context, body []byte) ([]byte, error) {
@@ -711,6 +728,13 @@ func (m *mockEntityTimeCardClient) UpdateTimeCard(ctx context.Context, id string
 		return m.updateTimeCardFn(ctx, id, body)
 	}
 	return []byte(`{"timeCard":{"id":"` + id + `","state":"submitted"}}`), nil
+}
+
+func (m *mockEntityTimeCardClient) DeleteTimeCard(ctx context.Context, id string) ([]byte, error) {
+	if m.deleteTimeCardFn != nil {
+		return m.deleteTimeCardFn(ctx, id)
+	}
+	return []byte(`{"message":"Time card deleted"}`), nil
 }
 
 // ----- mock entity deployment client -----

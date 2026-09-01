@@ -43,19 +43,27 @@ function widgetGridColumnSx(widget: BeDashboardWidget) {
 
 export interface DashboardWidgetGridProps {
   widgets: BeDashboardWidget[];
-  /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
-   * an array of every team's `groupId` in the current dashboard's family
-   * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL` in
-   * `teamFilterPlaceholder.ts`) — only meaningful for an `isTeamBased`
-   * dashboard, threaded straight through to every tile so each can resolve
-   * its own `__current_team__` filter placeholder. `undefined` for a
-   * non-team-based dashboard, or while the team isn't resolved yet. */
-  selectedTeamGroupId?: string | string[];
+  /** The currently selected team's own `creGroupId` (see
+   * `BeTeam.creGroupId`), or an array of every team's `creGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected (see
+   * `ALL_TEAMS_SENTINEL` in `teamFilterPlaceholder.ts`) — only meaningful
+   * for an `isTeamBased` dashboard, threaded straight through to every tile
+   * so each can resolve its own `__current_team__` filter placeholder for a
+   * `creTeam` filter entry. `undefined` for a non-team-based dashboard, or
+   * while the team isn't resolved yet. */
+  selectedTeamCreGroupId?: string | string[];
+  /** The currently selected team's own `sreGroupId` (see
+   * `BeTeam.sreGroupId`), or an array of every team's `sreGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected — the
+   * `sreTeam`-filter counterpart of {@link selectedTeamCreGroupId}, resolved
+   * independently. `undefined` in the same cases `selectedTeamCreGroupId`
+   * is. */
+  selectedTeamSreGroupId?: string | string[];
   /** Human-readable label for the selected team (its own display `name`,
    * or the literal `"All ABTs"`) — threaded down for each tile's own
    * `{{currentTeam}}` widget text placeholder (see
    * `widgetTextPlaceholder.ts`). `undefined` in the same cases
-   * `selectedTeamGroupId` is. */
+   * `selectedTeamCreGroupId` is. */
   selectedTeamLabel?: string;
   /** Per-widget action rendered as a small overlay on that widget's own
    * tile (e.g. the dashboard builder's "Edit widget" gear) — absent
@@ -97,7 +105,8 @@ export interface DashboardWidgetGridProps {
  */
 export default function DashboardWidgetGrid({
   widgets,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
   renderWidgetAction,
   renderSectionActions,
@@ -109,17 +118,19 @@ export default function DashboardWidgetGrid({
 
   /**
    * Invalidates only the widget-data queries belonging to `widgetIds` —
-   * both shapes' query keys carry a widget id, just at a different
+   * every shape's query key carries a widget id, just at a different
    * position: `[KEY, widgetId, ...]` for count/list (see `useWidgetData`),
-   * `[KEY, "pie-slice", widgetId, ...]` for pie/bar (see
-   * `useWidgetPieData`).
+   * `[KEY, "pie-slice", widgetId, ...]` for pie/bar via `slices` (see
+   * `useWidgetPieData`), `[KEY, "group-by", widgetId, ...]` for pie/bar via
+   * `groupBy` (see `useWidgetGroupByData`).
    */
   const invalidateWidgets = (widgetIds: Set<string>): Promise<void> =>
     queryClient.invalidateQueries({
       predicate: (query) => {
         const key = query.queryKey;
         if (key[0] !== ApiQueryKeys.CSM_DASHBOARD_WIDGET_DATA) return false;
-        const widgetId = key[1] === "pie-slice" ? key[2] : key[1];
+        const widgetId =
+          key[1] === "pie-slice" || key[1] === "group-by" ? key[2] : key[1];
         return typeof widgetId === "string" && widgetIds.has(widgetId);
       },
     });
@@ -150,9 +161,11 @@ export default function DashboardWidgetGrid({
           filters={widget.query}
           listLimit={widget.listLimit}
           slices={widget.slices}
+          groupBy={widget.groupBy}
           columns={widget.columns}
           sortBy={widget.sortBy}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
         {action && (

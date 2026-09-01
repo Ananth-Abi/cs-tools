@@ -21,7 +21,12 @@
 // step.
 //
 
-import { expect, test, type Page } from "../fixtures/test";
+import {
+  expect,
+  test,
+  type Page,
+  type Response,
+} from "../fixtures/test";
 import { CaseCreatePage } from "../pages/CaseCreatePage";
 import type { CaseInput, ProjectFixture } from "../config/testData";
 import { CREATE_CASE } from "./selectors";
@@ -43,6 +48,29 @@ export interface CreatedCase {
  */
 export function isSuccess(status: number): boolean {
   return status >= 200 && status < 300;
+}
+
+/**
+ * Asserts a mutation succeeded, quoting the server's message when it did not.
+ *
+ * The body is read ONLY on failure. Reading it eagerly — to build the message
+ * up front — throws once the page has navigated, because Playwright discards
+ * bodies for responses that were navigated away from, and a successful create
+ * usually does navigate or refetch.
+ *
+ * @param response - The mutation's response.
+ * @param action - What was attempted, for the failure message.
+ */
+export async function expectSuccess(
+  response: Response,
+  action: string,
+): Promise<void> {
+  const status = response.status();
+  if (isSuccess(status)) return;
+  const body = await response
+    .text()
+    .catch(() => "(response body unavailable)");
+  expect(isSuccess(status), `${action} failed: ${status} ${body}`).toBe(true);
 }
 
 /** Fixture fields a create-case run cannot proceed without. `deployment` is

@@ -19,13 +19,22 @@ import {
   Box,
   Button,
   Card,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
+  IconButton,
   Skeleton,
   Typography,
 } from "@wso2/oxygen-ui";
-import { Clock, Pencil, Plus } from "@wso2/oxygen-ui-icons-react";
+import { Clock, Pencil, Plus, Trash2 } from "@wso2/oxygen-ui-icons-react";
 import RelativeDate from "@components/RelativeDate";
-import { useCaseTimeCards, useDecideTimeCard } from "@features/csm-timecards/api/useTimeCards";
+import {
+  useCaseTimeCards,
+  useDecideTimeCard,
+  useDeleteTimeCard,
+} from "@features/csm-timecards/api/useTimeCards";
 import { useCurrentEngineer } from "@features/csm-timecards/api/useTimeSheets";
 import { useIsTeamLead } from "@features/csm-timecards/hooks/useIsTeamLead";
 import { billableLabel } from "@features/csm-timecards/constants/timeCardConstants";
@@ -64,8 +73,10 @@ export default function CaseTimeCardsPanel({
   const isTeamLead = useIsTeamLead();
   const me = useCurrentEngineer();
   const decide = useDecideTimeCard();
+  const deleteTimeCard = useDeleteTimeCard();
   const { showError } = useErrorBanner();
   const [reviewCard, setReviewCard] = useState<CsmTimeCard | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<CsmTimeCard | null>(null);
 
   const cards = useMemo(() => data?.cards ?? [], [data]);
   const total = useMemo(
@@ -184,14 +195,24 @@ export default function CaseTimeCardsPanel({
                    its content, matching the backend's own submitter-only +
                    submitted-state-only enforcement (see cardActions). */}
                   {c.state === "submitted" && !!me.id && c.userId === me.id && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<Pencil size={14} />}
-                      onClick={() => onEditTimeCard(c)}
-                    >
-                      Edit
-                    </Button>
+                    <>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<Pencil size={14} />}
+                        onClick={() => onEditTimeCard(c)}
+                      >
+                        Edit
+                      </Button>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        aria-label="Delete time card"
+                        onClick={() => setPendingDelete(c)}
+                      >
+                        <Trash2 size={14} />
+                      </IconButton>
+                    </>
                   )}
                   {/* Never shown on your own card: the backend 403s a
                    self-decide regardless of approver status, so a card you
@@ -248,6 +269,54 @@ export default function CaseTimeCardsPanel({
           }
         />
       )}
+
+      <Dialog
+        open={!!pendingDelete}
+        onClose={() => {
+          if (!deleteTimeCard.isPending) setPendingDelete(null);
+        }}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Delete time card?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            Permanently delete this {pendingDelete?.totalMinutes} min entry? This can&apos;t be
+            undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            color="inherit"
+            onClick={() => setPendingDelete(null)}
+            disabled={deleteTimeCard.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={deleteTimeCard.isPending}
+            onClick={() => {
+              if (!pendingDelete) return;
+              const target = pendingDelete;
+              deleteTimeCard.mutate(target.id, {
+                onSuccess: () => setPendingDelete(null),
+                onError: (err) => {
+                  setPendingDelete(null);
+                  const msg =
+                    err instanceof BackendApiError && err.status < 500 && err.message
+                      ? err.message
+                      : "Could not delete this time card.";
+                  showError(msg, err);
+                },
+              });
+            }}
+          >
+            {deleteTimeCard.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Card>
   );
 }

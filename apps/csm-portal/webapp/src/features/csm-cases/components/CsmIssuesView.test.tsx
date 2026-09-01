@@ -68,11 +68,14 @@ function LocationProbe() {
   return <div data-testid="location-probe">{location.pathname}</div>;
 }
 
-function renderAt(initialState: unknown) {
+function renderAt(initialState: unknown, hideBackButton?: boolean) {
   return render(
     <MemoryRouter initialEntries={[{ pathname: "/cases", state: initialState }]}>
       <Routes>
-        <Route path="/cases" element={<CsmIssuesView title="Cases" />} />
+        <Route
+          path="/cases"
+          element={<CsmIssuesView title="Cases" hideBackButton={hideBackButton} />}
+        />
         <Route path="/dashboard" element={<LocationProbe />} />
       </Routes>
     </MemoryRouter>,
@@ -92,5 +95,14 @@ describe("CsmIssuesView back navigation", () => {
     fireEvent.click(backButton);
 
     expect(screen.getByTestId("location-probe")).toHaveTextContent("/dashboard");
+  });
+
+  // Regression test: embedding this view as a project's Work items sub-tab
+  // still sees the outer page's `from` state (location.state belongs to the
+  // route, not this component) and used to render a second, redundant Back
+  // button on top of the page-level one. `hideBackButton` must suppress it.
+  it("suppresses its own Back button when hideBackButton is set, even with a `from` state present", () => {
+    renderAt({ from: "/dashboard" }, true);
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
   });
 });

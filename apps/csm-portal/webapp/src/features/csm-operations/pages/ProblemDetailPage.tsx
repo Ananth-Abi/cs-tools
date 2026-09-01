@@ -17,12 +17,13 @@
 import { Box, Button, Card, Chip, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { ArrowLeft, Link as LinkIcon } from "@wso2/oxygen-ui-icons-react";
 import { type JSX, type ReactNode, useEffect } from "react";
-import { useLocation, useParams } from "react-router";
+import { useLocation } from "react-router";
 import { formatBackendTimestampForDisplay } from "@utils/dateTime";
 import { useGetProblem } from "@features/csm-operations/api/useGetProblem";
 import { problemStateColor, problemStateLabel } from "@features/csm-operations/utils/problems";
 import type { BeEntityRef, BeProblemRef } from "@api/backend/types";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useNormalizedIdParam } from "@hooks/useNormalizedIdParam";
 import { useRecordRecentView } from "@features/csm-recent/hooks/useRecentViews";
 
 const OPERATIONS_PROBLEMS_PATH = "/operations?tab=problems";
@@ -95,7 +96,7 @@ function ProblemRefItem({
  * endpoint for them (unlike change requests/incidents).
  */
 export default function ProblemDetailPage(): JSX.Element {
-  const { id } = useParams<{ id: string }>();
+  const id = useNormalizedIdParam("id");
   const navigate = useNavTransition();
   // Prefer the list URL the row link captured (if any) so "back" returns to
   // the exact view the engineer came from, falling back to the bare tab path

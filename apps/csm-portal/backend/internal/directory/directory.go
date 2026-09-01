@@ -28,9 +28,11 @@ import (
 // Everything derivable from the configured rows is derived exactly once, in
 // New, at startup:
 //
-//   - teams sorted for stable paging, with each team's backing group id already
-//     converted to this platform's UUID form (Team.GroupID -> Result.GroupID),
-//   - key -> team and group-name -> team lookups as maps,
+//   - teams sorted for stable paging, with each team's backing group ids already
+//     converted to this platform's UUID form (Team.CreGroupID -> Result.CreGroupID,
+//     Team.SreGroupID -> Result.SreGroupID),
+//   - key -> team, group-name -> team, and resolved-CRE-group-UUID -> team lookups
+//     as maps,
 //   - the group-name list a membership query needs,
 //   - the role catalogue with its display names, and the role membership set.
 //
@@ -40,11 +42,12 @@ import (
 // back into a team) is answered from these fields. Configuration changes take a
 // restart, which is what deployment configuration means everywhere else here.
 type Directory struct {
-	teams       []Team
-	teamResults []TeamResult
-	byKey       map[string]Team
-	byGroupName map[string]Team
-	groupNames  []string
+	teams        []Team
+	teamResults  []TeamResult
+	byKey        map[string]Team
+	byGroupName  map[string]Team
+	byCreGroupID map[string]Team
+	groupNames   []string
 
 	roleResults []RoleResult
 	roleSet     map[string]bool
@@ -54,17 +57,22 @@ type Directory struct {
 //
 // A duplicate team key or duplicate display name is an error: both would be
 // silently swallowed by the lookup maps, and a shadowed row is always a typo.
-// Callers are expected to treat any error here as fatal at startup -- a
-// half-resolved directory would mis-route dashboards rather than fail visibly.
+// A duplicate resolved group-id UUID is the same class of mistake -- two rows
+// configured with the same backing CreGroupID would shadow each other in
+// byCreGroupID exactly as a duplicate key would in byKey -- so it fails
+// startup too. Callers are expected to treat any error here as fatal at
+// startup -- a half-resolved directory would mis-route dashboards rather than
+// fail visibly.
 func New(teams []Team, roles []string) (*Directory, error) {
 	d := &Directory{
-		teams:       append([]Team(nil), teams...),
-		teamResults: make([]TeamResult, 0, len(teams)),
-		byKey:       make(map[string]Team, len(teams)),
-		byGroupName: make(map[string]Team, len(teams)),
-		groupNames:  make([]string, 0, len(teams)),
-		roleResults: make([]RoleResult, 0, len(roles)),
-		roleSet:     make(map[string]bool, len(roles)),
+		teams:        append([]Team(nil), teams...),
+		teamResults:  make([]TeamResult, 0, len(teams)),
+		byKey:        make(map[string]Team, len(teams)),
+		byGroupName:  make(map[string]Team, len(teams)),
+		byCreGroupID: make(map[string]Team, len(teams)),
+		groupNames:   make([]string, 0, len(teams)),
+		roleResults:  make([]RoleResult, 0, len(roles)),
+		roleSet:      make(map[string]bool, len(roles)),
 	}
 
 	for _, t := range teams {
@@ -79,8 +87,15 @@ func New(teams []Team, roles []string) (*Directory, error) {
 		d.groupNames = append(d.groupNames, t.Name)
 
 		result := TeamResult{ID: t.Key, Name: t.Name, Family: string(t.Family)}
-		if t.GroupID != "" {
-			result.GroupID = sourceIDToUUID(t.GroupID)
+		if t.CreGroupID != "" {
+			result.CreGroupID = sourceIDToUUID(t.CreGroupID)
+			if _, dup := d.byCreGroupID[result.CreGroupID]; dup {
+				return nil, fmt.Errorf("team registry: creGroupId %q (team %q) is configured more than once", t.CreGroupID, t.Key)
+			}
+			d.byCreGroupID[result.CreGroupID] = t
+		}
+		if t.SreGroupID != "" {
+			result.SreGroupID = sourceIDToUUID(t.SreGroupID)
 		}
 		d.teamResults = append(d.teamResults, result)
 	}
@@ -121,6 +136,21 @@ func (d *Directory) TeamByGroupName(name string) (Team, bool) {
 	return t, ok
 }
 
+// TeamByUUID looks a team up by this platform's canonical UUID form of its
+// backing CRE group id -- the same form Team.CreGroupID is converted to for
+// TeamResult.CreGroupID and for accounts.creTeam.id elsewhere. ok is false if
+// uuid does not match any configured team's resolved CRE group id, including
+// for a team that has no CreGroupID configured at all: such a team has no
+// UUID to be looked up by. It does not look up by SreGroupID -- no caller
+// needs that yet.
+//
+// uuid is lowercased before lookup, matching sourceIDToUUID's canonical
+// lowercase form, so a caller-supplied uppercase UUID still resolves.
+func (d *Directory) TeamByUUID(uuid string) (Team, bool) {
+	t, ok := d.byCreGroupID[strings.ToLower(uuid)]
+	return t, ok
+}
+
 // GroupNames returns the backing data source's group display name for every
 // configured team, suitable for a single group-names-IN membership query.
 // Empty if no teams are configured.
@@ -145,8 +175,9 @@ func sourceIDToUUID(id string) string {
 	// Lowercase the result: isHex accepts uppercase digits, but canonical UUID
 	// text is lowercase, and this value is compared against ids the entity
 	// service renders. An uppercase configured id would otherwise produce an
-	// uppercase groupId that silently matches nothing on the case-search
-	// integrationCsTeam filter -- no error, just an empty team-scoped result.
+	// uppercase creGroupId/sreGroupId that silently matches nothing on the
+	// case-search creTeam/sreTeam filters -- no error, just an empty
+	// team-scoped result.
 	id = strings.ToLower(id)
 	return id[0:8] + "-" + id[8:12] + "-" + id[12:16] + "-" + id[16:20] + "-" + id[20:32]
 }

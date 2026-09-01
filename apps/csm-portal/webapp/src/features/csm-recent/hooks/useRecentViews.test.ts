@@ -27,6 +27,7 @@ vi.mock("@hooks/useIdTokenClaims", () => ({
 
 import {
   clearRecentViews,
+  renameRecentView,
   toggleRecentViewPin,
   useRecentViews,
   useRecordRecentView,
@@ -201,6 +202,52 @@ describe("useRecentViews + useRecordRecentView", () => {
 
       act(() => clearRecentViews());
       expect(reader.result.current.map((v) => v.id)).toEqual(["pinned"]);
+    });
+  });
+
+  describe("renameRecentView", () => {
+    it("updates the title of the matching kind+id entry", () => {
+      const reader = renderHook(() => useRecentViews());
+      const recorder = renderHook(() => useRecordRecentView());
+      act(() => recorder.result.current(entry("1")));
+      act(() => toggleRecentViewPin("case", "1"));
+
+      act(() => renameRecentView("case", "1", "My renamed tab"));
+
+      expect(reader.result.current[0].title).toBe("My renamed tab");
+      // Pinned state survives a rename.
+      expect(reader.result.current[0].pinned).toBe(true);
+    });
+
+    it("is a no-op for a blank/whitespace-only name", () => {
+      const reader = renderHook(() => useRecentViews());
+      const recorder = renderHook(() => useRecordRecentView());
+      act(() => recorder.result.current(entry("1")));
+
+      act(() => renameRecentView("case", "1", "   "));
+
+      expect(reader.result.current[0].title).toBe("Case 1");
+    });
+
+    it("is a no-op for an untracked kind+id", () => {
+      const reader = renderHook(() => useRecentViews());
+      const recorder = renderHook(() => useRecordRecentView());
+      act(() => recorder.result.current(entry("1")));
+
+      act(() => renameRecentView("case", "does-not-exist", "New name"));
+
+      expect(reader.result.current).toHaveLength(1);
+      expect(reader.result.current[0].title).toBe("Case 1");
+    });
+
+    it("strips HTML tags from the new title before storing", () => {
+      const reader = renderHook(() => useRecentViews());
+      const recorder = renderHook(() => useRecordRecentView());
+      act(() => recorder.result.current(entry("1")));
+
+      act(() => renameRecentView("case", "1", "<b>Bold</b> name"));
+
+      expect(reader.result.current[0].title).toBe("Bold name");
     });
   });
 

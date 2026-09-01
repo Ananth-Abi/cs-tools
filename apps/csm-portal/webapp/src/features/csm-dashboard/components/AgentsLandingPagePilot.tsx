@@ -27,19 +27,27 @@ const PILOT_TILE_COUNT = 3;
 interface AgentsLandingPagePilotProps {
   /** Id of the dashboard to render (e.g. "agents_pilot"). */
   dashboardId: string;
-  /** The currently selected team's own `groupId` (see `BeTeam.groupId`), or
-   * an array of every team's `groupId` in the current dashboard's family
-   * when the "All ABTs" option is selected (see `ALL_TEAMS_SENTINEL` in
-   * `teamFilterPlaceholder.ts`) — only meaningful for an `isTeamBased`
-   * dashboard, threaded straight through to every tile so each can resolve
-   * its own `__current_team__` filter placeholder. `undefined` for a
-   * non-team-based dashboard, or while the team isn't resolved yet. */
-  selectedTeamGroupId?: string | string[];
+  /** The currently selected team's own `creGroupId` (see
+   * `BeTeam.creGroupId`), or an array of every team's `creGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected (see
+   * `ALL_TEAMS_SENTINEL` in `teamFilterPlaceholder.ts`) — only meaningful
+   * for an `isTeamBased` dashboard, threaded straight through to every tile
+   * so each can resolve its own `__current_team__` filter placeholder for a
+   * `creTeam` filter entry. `undefined` for a non-team-based dashboard, or
+   * while the team isn't resolved yet. */
+  selectedTeamCreGroupId?: string | string[];
+  /** The currently selected team's own `sreGroupId` (see
+   * `BeTeam.sreGroupId`), or an array of every team's `sreGroupId` in the
+   * current dashboard's family when the "All ABTs" option is selected — the
+   * `sreTeam`-filter counterpart of {@link selectedTeamCreGroupId}, resolved
+   * independently. `undefined` in the same cases `selectedTeamCreGroupId`
+   * is. */
+  selectedTeamSreGroupId?: string | string[];
   /** Human-readable label for the selected team (its own display `name`,
    * or the literal `"All ABTs"`) — threaded down for each tile's own
    * `{{currentTeam}}` widget text placeholder (see
    * `widgetTextPlaceholder.ts`). `undefined` in the same cases
-   * `selectedTeamGroupId` is. */
+   * `selectedTeamCreGroupId` is. */
   selectedTeamLabel?: string;
 }
 
@@ -55,7 +63,8 @@ interface AgentsLandingPagePilotProps {
  */
 export default function AgentsLandingPagePilot({
   dashboardId,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
 }: AgentsLandingPagePilotProps): JSX.Element {
   const { data, isLoading, isError } = useDashboard(dashboardId);
@@ -77,7 +86,8 @@ export default function AgentsLandingPagePilot({
       ) : (
         <DashboardWidgetGrid
           widgets={data?.widgets ?? []}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
       )}

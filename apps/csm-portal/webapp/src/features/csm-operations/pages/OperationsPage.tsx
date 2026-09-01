@@ -18,13 +18,12 @@ import { Box, Button, Typography } from "@wso2/oxygen-ui";
 import { ArrowLeft, Plus } from "@wso2/oxygen-ui-icons-react";
 import { type JSX } from "react";
 import { useLocation } from "react-router";
-import SectionTabs from "@components/section-tabs/SectionTabs";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ChangeRequestsTab from "@features/csm-operations/components/ChangeRequestsTab";
 import IncidentsTab from "@features/csm-operations/components/IncidentsTab";
 import ProblemsTab from "@features/csm-operations/components/ProblemsTab";
 import { useNavTransition } from "@hooks/useNavTransition";
-import { useQueryTabs } from "@hooks/useSectionTabs";
+import { usePathSectionTabs } from "@hooks/useSectionTabs";
 
 /**
  * Operations landing — the home for the managed-cloud operational entities,
@@ -34,12 +33,15 @@ import { useQueryTabs } from "@hooks/useSectionTabs";
  *
  * Which tabs exist comes from the navigation tree, so a deployment can restrict
  * one through `CSM_PORTAL_FEATURE_OVERRIDES` without touching this page.
+ *
+ * The tab switch itself lives in the sidebar now (Operations' submenu), not
+ * an in-page strip — `usePathSectionTabs` is kept only for its
+ * enabled/WIP-aware fallback (an invalid or restricted `:tab` still resolves
+ * to the first usable one) reading the same real path segment
+ * (`/operations/:tab`) the sidebar's submenu links navigate to.
  */
 export default function OperationsPage(): JSX.Element {
-  // Active tab lives in the URL (`?tab=`) so the change-request detail page can
-  // link back to the right tab, and the tab survives a refresh / share.
-  const tabs = useQueryTabs("operations");
-  const activeTab = tabs.activeKey;
+  const { activeKey: activeTab } = usePathSectionTabs("operations", "/operations");
   const navigate = useNavTransition();
   // Set by a dashboard widget's click-through (see DashboardWidgetTile /
   // widgetListConfig.tsx), since this page has no dashboard context of its
@@ -50,7 +52,7 @@ export default function OperationsPage(): JSX.Element {
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      {backState?.from && activeTab !== "service_requests" && (
+      {backState?.from && activeTab !== "service-requests" && (
         <Button
           variant="text"
           size="small"
@@ -69,9 +71,7 @@ export default function OperationsPage(): JSX.Element {
         </Typography>
       </Box>
 
-      <SectionTabs {...tabs} ariaLabel="Operations tabs" />
-
-      {activeTab === "service_requests" && (
+      {activeTab === "service-requests" && (
         <CsmIssuesView
           entityNoun="service requests"
           lockedFilters={{ caseTypes: ["service_request"] }}
@@ -91,7 +91,7 @@ export default function OperationsPage(): JSX.Element {
         />
       )}
 
-      {activeTab === "change_requests" && <ChangeRequestsTab />}
+      {activeTab === "change-requests" && <ChangeRequestsTab />}
 
       {activeTab === "incidents" && <IncidentsTab />}
 

@@ -14,16 +14,19 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Button, Divider, Drawer, IconButton, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
+import { Box, Button, Divider, IconButton, Skeleton, Stack, Typography } from "@wso2/oxygen-ui";
 import { Check, X } from "@wso2/oxygen-ui-icons-react";
-import type { JSX, ReactNode } from "react";
+import { useRef, type JSX, type ReactNode } from "react";
+import FloatingSlidePanel from "@components/FloatingSlidePanel";
 import RelativeDate from "@components/RelativeDate";
 import CasePreviewContent from "@features/csm-cases/components/CasePreviewContent";
 import { useGetCsmCaseDetail } from "@features/csm-cases/api/useGetCsmCaseDetail";
+import { QUICK_PREVIEW_EYE_SELECTOR } from "@features/csm-cases/utils/quickPreviewEye";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
 import { billableLabel } from "@features/csm-timecards/constants/timeCardConstants";
 import { decisionSummary } from "@features/csm-timecards/utils/timeCardDecision";
 import { isBlankHtml, sanitizeRichTextHtml } from "@utils/sanitizeHtml";
+import { useCloseOnOutsideClick } from "@hooks/useCloseOnOutsideClick";
 import type { TimecardAction } from "@features/csm-timecards/utils/timeSheetState";
 import type { CsmTimeCard } from "@features/csm-timecards/types/timeCards";
 
@@ -103,16 +106,28 @@ export default function TimeCardCasePreviewDrawer({
 }: TimeCardCasePreviewDrawerProps): JSX.Element {
   const { data: caseDetail, isLoading, isError } = useGetCsmCaseDetail(card?.caseId);
   const decision = card ? decisionSummary(card) : null;
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  useCloseOnOutsideClick(!!card, contentRef, QUICK_PREVIEW_EYE_SELECTOR, onClose);
 
   return (
-    <Drawer
-      anchor="right"
-      open={!!card}
-      onClose={onClose}
-      slotProps={{ paper: { sx: { width: { xs: "100%", sm: 420 } } } }}
-    >
+    // `FloatingSlidePanel` (not `Drawer`) -- a `Drawer` is `Modal`-backed,
+    // which enforces a focus trap and marks the rest of the page
+    // `aria-hidden` for as long as it's open, regardless of `hideBackdrop`
+    // or pointer-events tricks (those only ever affected mouse clicks, not
+    // `Modal`'s own accessibility isolation). This panel has no backdrop
+    // and no modal behavior at all, so the rest of the page stays fully
+    // interactive for every input method -- not just the mouse -- letting
+    // a click on a different row's quick-preview eye land normally while
+    // this preview is already open. `useCloseOnOutsideClick` below replaces
+    // the click-to-close behavior a `Drawer`'s backdrop would otherwise
+    // give, minus the eye buttons (their own onClick already decides the
+    // next state).
+    <FloatingSlidePanel open={!!card} ariaLabel="Time card preview">
       {card && (
-        <Box sx={{ display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}>
+        <Box
+          ref={contentRef}
+          sx={{ display: "flex", flexDirection: "column", height: "100%", overflowY: "auto" }}
+        >
           <Box sx={{ p: 2.5, display: "flex", flexDirection: "column", gap: 1.5 }}>
             <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1 }}>
               <Typography variant="subtitle2" color="text.secondary">
@@ -148,18 +163,20 @@ export default function TimeCardCasePreviewDrawer({
 
             <WorkLogComment html={card.workLogComment} />
 
-            {decision && (
+            {card.state === "submitted" && card.approvers && card.approvers.length > 0 && (
               <Field
-                label="Decision"
-                value={
-                  <Typography variant="body2" sx={{ whiteSpace: "normal", wordBreak: "break-word" }}>
-                    {decision}
-                  </Typography>
-                }
+                label="Approvers"
+                value={card.approvers.map((approver) => approver.name).join(", ")}
               />
             )}
 
-            {actions.some((a) => a !== "edit") && (
+            {decision && (
+              <Typography variant="body2" sx={{ whiteSpace: "normal", wordBreak: "break-word" }}>
+                {decision}
+              </Typography>
+            )}
+
+            {actions.some((a) => a === "approve" || a === "reject") && (
               <Box sx={{ display: "flex", gap: 1 }}>
                 {actions.includes("reject") && (
                   <Button
@@ -204,6 +221,6 @@ export default function TimeCardCasePreviewDrawer({
           )}
         </Box>
       )}
-    </Drawer>
+    </FloatingSlidePanel>
   );
 }

@@ -26,10 +26,24 @@ function filterOf(filters: CasesFilters, field: string) {
 }
 
 describe("buildCaseSearchFilters — new advanced-filter fields", () => {
-  it("emits integrationCsTeam op:in for csTeams", () => {
+  it("emits creTeam op:in for csTeams", () => {
     const filters: CasesFilters = { ...DEFAULT_CASES_FILTERS, csTeams: ["team-a"] };
-    expect(filterOf(filters, "integrationCsTeam")).toEqual([
-      { field: "integrationCsTeam", op: "in", values: ["team-a"] },
+    expect(filterOf(filters, "creTeam")).toEqual([
+      { field: "creTeam", op: "in", values: ["team-a"] },
+    ]);
+  });
+
+  it("emits sreTeam op:in for sreTeams, independently of creTeam", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      csTeams: ["team-a"],
+      sreTeams: ["team-sre-b"],
+    };
+    expect(filterOf(filters, "creTeam")).toEqual([
+      { field: "creTeam", op: "in", values: ["team-a"] },
+    ]);
+    expect(filterOf(filters, "sreTeam")).toEqual([
+      { field: "sreTeam", op: "in", values: ["team-sre-b"] },
     ]);
   });
 
@@ -214,5 +228,48 @@ describe("buildCaseSearchFilters — exact case-number / WSO2-id search", () => 
 
     expect(result.searchQuery).toBeUndefined();
     expect(result.filters).toBeUndefined();
+  });
+});
+
+describe("buildCaseSearchFilters — workState only applies when state is exactly work_in_progress", () => {
+  it("emits workState when work_in_progress is the sole selected state", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: ["work_in_progress"],
+      workStates: ["ongoing", "paused"],
+    };
+
+    expect(filterOf(filters, "workState")).toEqual([
+      { field: "workState", op: "in", values: ["ongoing", "paused"] },
+    ]);
+  });
+
+  // Regression guard: a stale `workStates` value reaching this builder any
+  // way other than the filter bar's own onChange (a saved view, a
+  // dashboard/pinned-view URL that predates the exact-match fix, a future
+  // caller) must never silently narrow results to just in-progress/paused
+  // cases once another state is also selected.
+  it("drops workState from the payload when another state is selected alongside work_in_progress", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: ["work_in_progress", "open"],
+      workStates: ["ongoing", "paused"],
+    };
+
+    expect(filterOf(filters, "workState")).toEqual([]);
+    // The state filter itself still applies normally.
+    expect(filterOf(filters, "state")).toEqual([
+      { field: "state", op: "in", values: ["work_in_progress", "open"] },
+    ]);
+  });
+
+  it("drops workState from the payload when no state is selected", () => {
+    const filters: CasesFilters = {
+      ...DEFAULT_CASES_FILTERS,
+      states: [],
+      workStates: ["ongoing"],
+    };
+
+    expect(filterOf(filters, "workState")).toEqual([]);
   });
 });

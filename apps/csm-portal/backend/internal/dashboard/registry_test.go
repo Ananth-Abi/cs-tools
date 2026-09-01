@@ -312,26 +312,67 @@ func TestLoadDir_ContradictoryCombinations(t *testing.T) {
 	}
 }
 
-// Two defaults of DIFFERENT types are rejected too, for now. One default per
-// type is where this ends up, but only once the frontend selects on "type" --
-// today CsmDashboardPage picks on isDefault + isTeamBased and the
-// dashboard-list response does not even carry "type", so a second typed
-// default would be resolved by nothing but LoadDir's filename ordering.
-// Rejecting is the conservative half of that pair. When the frontend becomes
-// type-aware, this test flips to asserting they coexist.
-func TestLoadDir_RejectsASecondDefaultEvenOfADifferentType(t *testing.T) {
+// Two defaults of DIFFERENT types coexist: the frontend selects its landing
+// dashboard from the caller's own team family against "type", so a cre
+// default and an sre default (or a cs default) do not compete for one
+// global slot -- each type gets its own.
+func TestLoadDir_AllowsDefaultsOfDifferentTypesToCoexist(t *testing.T) {
 	dir := t.TempDir()
 	writeDefinition(t, dir, "a.json", `{"id": "a", "displayName": "A", "type": "cs", "isDefault": true, "widgets": []}`)
 	writeDefinition(t, dir, "b.json", `{"id": "b", "displayName": "B", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
 
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir rejected two isDefault dashboards of different types: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LoadDir returned %d dashboards, want 2", len(got))
+	}
+	if !got[0].IsDefault || got[0].Type != TypeCS {
+		t.Fatalf("a = %+v; want isDefault true, type cs", got[0])
+	}
+	if !got[1].IsDefault || got[1].Type != TypeCRE {
+		t.Fatalf("b = %+v; want isDefault true, type cre", got[1])
+	}
+}
+
+// A second isDefault dashboard of the SAME type is still rejected, exactly as
+// before -- the one-per-type rule is not "no rule at all".
+func TestLoadDir_RejectsASecondDefaultOfTheSameType(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "a", "displayName": "A", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "b", "displayName": "B", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
+
 	_, err := LoadDir(dir)
 	if err == nil {
-		t.Fatal("LoadDir accepted two isDefault dashboards of different types; expected an error")
+		t.Fatal("LoadDir accepted two isDefault dashboards of the same type; expected an error")
 	}
-	for _, want := range []string{"a.json", "b.json", "isDefault"} {
+	for _, want := range []string{"a.json", "b.json", "isDefault", "cre"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
 		}
+	}
+}
+
+// An untyped isDefault dashboard (only reachable via the deprecated
+// DASHBOARDS_CONFIG path) does not share a "slot" with a typed isDefault
+// dashboard -- it has no type to key off, so it must not collide with one.
+func TestParseDashboardsConfig_UntypedDefaultDoesNotCollideWithTypedDefault(t *testing.T) {
+	got, err := ParseDashboardsConfig(`[
+		{"id":"a","displayName":"A","isDefault":true,"widgets":[]},
+		{"id":"b","displayName":"B","type":"cs","isDefault":true,"widgets":[]}
+	]`)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig rejected an untyped default alongside a typed one: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ParseDashboardsConfig returned %d dashboards, want 2", len(got))
+	}
+	if !got[0].IsDefault || got[0].Type != "" {
+		t.Fatalf("a = %+v; want isDefault true, no type", got[0])
+	}
+	if !got[1].IsDefault || got[1].Type != TypeCS {
+		t.Fatalf("b = %+v; want isDefault true, type cs", got[1])
 	}
 }
 
@@ -774,6 +815,24 @@ func TestLoadDir_RejectsInvalidWidgets(t *testing.T) {
 			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "count", "gridWidth": 13}`,
 			want:    `widget "w": "gridWidth" is 13`,
 		},
+		{
+			name: "pie widget with neither slices nor groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "pie", "gridWidth": 3,
+			 "query": {}}`,
+			want: `widget "w": shape "pie" needs either "slices" or "groupBy"`,
+		},
+		{
+			name: "bar widget with both slices and groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "bar", "gridWidth": 3,
+			 "query": {}, "slices": [{"label": "A", "query": {}}], "groupBy": {"field": "account"}}`,
+			want: `widget "w": carries both "slices" and "groupBy"`,
+		},
+		{
+			name: "groupBy with an empty field",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "pie", "gridWidth": 3,
+			 "query": {}, "groupBy": {"field": ""}}`,
+			want: `widget "w": "groupBy.field" is empty`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -813,6 +872,75 @@ func TestParseDashboardsConfig_RejectsInvalidWidgets(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "DASHBOARDS_CONFIG[0]") {
 		t.Errorf("err = %q, want it to name the offending config index", err.Error())
+	}
+}
+
+// A dashboard may claim a defaultForTeamKeys entry without any conflict --
+// the common case, and the one every real deployment relies on to land a
+// team's members on their own specialist dashboard.
+func TestLoadDir_DefaultForTeamKeysWithNoConflictIsFine(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "migration-engineer", "displayName": "Migration Engineer", "type": "cs", "defaultForTeamKeys": ["cs_migrations_team"], "widgets": []}`)
+
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LoadDir returned %d dashboards, want 2", len(got))
+	}
+}
+
+// TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership is the fix for the
+// gap CodeRabbit flagged: validate did not track defaultForTeamKeys
+// ownership at all, so two dashboards claiming the same team key would both
+// load, and CsmDashboardPage's find() would silently pick whichever came
+// first in dashboard list order -- an outcome driven by LoadDir's filename
+// ordering rather than by any config author's intent.
+//
+// Ownership is tracked by dashboard id (see
+// TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource
+// for why source alone is not enough), so the rejection here names the
+// owning dashboard's id, not its source file.
+func TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "migration-engineer", "displayName": "Migration Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+
+	_, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("LoadDir accepted two dashboards claiming the same defaultForTeamKeys entry; expected an error")
+	}
+	for _, want := range []string{"b.json", "migration-engineer", "onboarding-engineer", "customer_onboarding", "defaultForTeamKeys"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
+		}
+	}
+}
+
+// TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource
+// is the regression test for the bug in the fix above (commit faa5265a6):
+// ownership was tracked by l.source, which is fine for LoadDir (one source
+// file per dashboard) but not for the deprecated DASHBOARDS_CONFIG path,
+// where ParseDashboardsConfig decodes many distinct dashboard objects out of
+// one JSON payload -- so every dashboard in that payload shares the exact
+// same l.source string. Two different dashboards in that single payload
+// claiming the same defaultForTeamKeys entry used to pass validation because
+// prev == l.source for both; tracking by d.ID instead means they no longer
+// share an owner and the second claim is correctly rejected.
+func TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource(t *testing.T) {
+	_, err := ParseDashboardsConfig(`[
+		{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []},
+		{"id": "migration-engineer", "displayName": "Migration Engineer", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}
+	]`)
+	if err == nil {
+		t.Fatal("ParseDashboardsConfig accepted two dashboards (sharing one DASHBOARDS_CONFIG source) claiming the same defaultForTeamKeys entry; expected an error")
+	}
+	for _, want := range []string{"migration-engineer", "onboarding-engineer", "customer_onboarding", "defaultForTeamKeys"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
+		}
 	}
 }
 

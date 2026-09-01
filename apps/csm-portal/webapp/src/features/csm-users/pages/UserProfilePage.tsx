@@ -106,6 +106,22 @@ function isInternalUser(user: NormalizedUserDetail): boolean {
   );
 }
 
+const WSO2_EMAIL_DOMAIN = "@wso2.com";
+
+/**
+ * True for a wso2.com email, regardless of `userType`/`roles`. The SCIM
+ * "external" org can never contain such an account (reserved for WSO2
+ * staff), so the External account field/alert are skipped for one even when
+ * ServiceNow tags the row with a non-internal role -- e.g. a wso2.com
+ * contact recorded under a customer-facing role for testing. Narrower than
+ * {@link isInternalUser}: it only gates the SCIM-sourced UI below, not the
+ * page's broader internal/external framing (team vs. project access, etc.),
+ * which ServiceNow's own `userType`/roles still own.
+ */
+function isWso2Email(email: string): boolean {
+  return email.toLowerCase().endsWith(WSO2_EMAIL_DOMAIN);
+}
+
 type ChipColor = "success" | "warning" | "error" | "default";
 
 interface ProjectAccessStatus {
@@ -322,7 +338,7 @@ function AccessibleProjectsCard({ user }: { user: NormalizedUserDetail }): JSX.E
         </Alert>
       )}
 
-      {user.externalAccount?.locked === true && (
+      {user.externalAccount?.locked === true && !isWso2Email(user.email) && (
         <Alert severity="error" variant="outlined">
           This user's external account is locked — they can't sign in until it's unlocked.
         </Alert>
@@ -512,13 +528,25 @@ export default function UserProfilePage(): JSX.Element {
             color={internal ? "primary" : "default"}
             variant="outlined"
           />
-          {user.active !== undefined && (
-            <Chip
-              size="small"
-              label={user.active ? "Active" : "Inactive"}
-              color={user.active ? "success" : "default"}
-              variant="outlined"
-            />
+          {/* Locked out takes priority over Active in this single top-line status
+              chip — a locked-out account isn't usable regardless of its Active
+              flag, so showing "Active" here would be misleading. Both attributes
+              are still shown separately (and unconditionally) in the Overview
+              card below; this chip is just the headline. Named to be unambiguous
+              next to the unrelated SCIM "external" account lock chip in the
+              Overview grid (see `ExternalAccountMetaCell`), a different lock
+              concept. */}
+          {user.lockedOut === true ? (
+            <Chip size="small" label="Locked out" color="error" variant="outlined" />
+          ) : (
+            user.active !== undefined && (
+              <Chip
+                size="small"
+                label={user.active ? "Active" : "Inactive"}
+                color={user.active ? "success" : "default"}
+                variant="outlined"
+              />
+            )
           )}
         </Box>
         <Typography variant="body2" color="text.secondary">
@@ -547,16 +575,42 @@ export default function UserProfilePage(): JSX.Element {
               {user.email}
             </Typography>
           </MetaCell>
-          {internal && <TeamMetaCell user={user} />}
           <MetaCell label="Timezone">
             <Typography variant="body2">{user.timezone ?? "Not set"}</Typography>
           </MetaCell>
+          {/* Account status and Locked out are two independent attributes — a
+              locked-out user can also be Active — so both are always shown
+              here, separately, even though the header chip above collapses them
+              into one headline status. */}
+          {user.lockedOut !== undefined && (
+            <MetaCell label="Locked out">
+              <Chip
+                size="small"
+                label={user.lockedOut ? "Yes" : "No"}
+                color={user.lockedOut ? "error" : "default"}
+                variant="outlined"
+              />
+            </MetaCell>
+          )}
+          {internal && <TeamMetaCell user={user} />}
+          {user.active !== undefined && (
+            <MetaCell label="Account status">
+              <Chip
+                size="small"
+                label={user.active ? "Active" : "Inactive"}
+                color={user.active ? "success" : "default"}
+                variant="outlined"
+              />
+            </MetaCell>
+          )}
           {internal && (
             <MetaCell label="Phone">
               <Typography variant="body2">{user.phone ?? "Not set"}</Typography>
             </MetaCell>
           )}
-          {!internal && <ExternalAccountMetaCell status={user.externalAccount} />}
+          {!internal && !isWso2Email(user.email) && (
+            <ExternalAccountMetaCell status={user.externalAccount} />
+          )}
           <MetaCell label="Created on">
             <Typography variant="body2">{formatDateTime(user.createdOn)}</Typography>
           </MetaCell>

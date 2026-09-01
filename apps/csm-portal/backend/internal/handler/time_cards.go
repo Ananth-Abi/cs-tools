@@ -32,6 +32,7 @@ type entityTimeCardClient interface {
 	SearchTimeCards(ctx context.Context, body []byte) ([]byte, error)
 	CreateTimeCard(ctx context.Context, body []byte) ([]byte, error)
 	UpdateTimeCard(ctx context.Context, id string, body []byte) ([]byte, error)
+	DeleteTimeCard(ctx context.Context, id string) ([]byte, error)
 }
 
 // TimeCardHandler handles HTTP requests for time-card operations.
@@ -146,6 +147,33 @@ func (h *TimeCardHandler) UpdateTimeCard(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity UpdateTimeCard failed", "userID", user.UserID, "id", id, "err", err)
 		mapUpstreamError(w, err, "Failed to update time card.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// DeleteTimeCard handles DELETE /time-cards/{id}. Carries no body for
+// upstream to reject with a caller-fixable reason, so — unlike UpdateTimeCard
+// above — this uses mapUpstreamErrorGeneric, matching every other
+// non-PATCH-with-a-body handler (see backend CLAUDE.md's Handler conventions).
+func (h *TimeCardHandler) DeleteTimeCard(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	id := r.PathValue("id")
+	if id == "" || !uuidRe.MatchString(id) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.DeleteTimeCard(r.Context(), id)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity DeleteTimeCard failed", "userID", user.UserID, "id", id, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to delete time card.")
 		return
 	}
 

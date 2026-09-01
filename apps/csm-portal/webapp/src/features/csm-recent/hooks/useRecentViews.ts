@@ -424,6 +424,28 @@ export function toggleRecentViewPin(kind: RecentViewKind, id: string): void {
   writeStorage(capUnpinned(next));
 }
 
+/**
+ * Rename a tracked entry's display title by `kind`+`id` (currently only
+ * exposed for pinned top-bar chips — see `PinnedTabs.tsx`'s right-click
+ * rename, but not restricted to pinned entries at the storage layer since
+ * there's no reason it couldn't apply to any tracked entry later). No-op for
+ * an empty/whitespace-only name or an untracked `kind`+`id`, mirroring
+ * `saveFilterView`'s "blank name does nothing" behaviour. Title text is
+ * plain, user-authored text rendered via JSX interpolation (never
+ * `dangerouslySetInnerHTML`) — stripped of tag-like markup here for the same
+ * defense-in-depth reason `useRecordRecentView` strips it, not because this
+ * path is currently reachable by anything untrusted.
+ */
+export function renameRecentView(kind: RecentViewKind, id: string, title: string): void {
+  const trimmed = stripHtmlTags(title).trim();
+  if (!trimmed) return;
+  const current = readStorage();
+  const next = current.map((e) =>
+    e.kind === kind && e.id === id ? { ...e, title: trimmed } : e,
+  );
+  writeStorage(next);
+}
+
 export function clearRecentViews(): void {
   // Keep pinned entries — "Clear" wipes browsing history, not the working set
   // the engineer deliberately assembled.

@@ -33,7 +33,8 @@ import {
 
 export interface WallboardDashboardProps {
   dashboardId: string;
-  selectedTeamGroupId?: string | string[];
+  selectedTeamCreGroupId?: string | string[];
+  selectedTeamSreGroupId?: string | string[];
   selectedTeamLabel?: string;
 }
 
@@ -79,7 +80,8 @@ function LoadingSkeleton(): JSX.Element {
 
 function renderFallbackGrid(
   group: WidgetGroup,
-  selectedTeamGroupId: string | string[] | undefined,
+  selectedTeamCreGroupId: string | string[] | undefined,
+  selectedTeamSreGroupId: string | string[] | undefined,
   selectedTeamLabel: string | undefined,
 ): JSX.Element {
   return (
@@ -91,7 +93,8 @@ function renderFallbackGrid(
           displayName={widget.displayName}
           resourceType={widget.resourceType}
           filters={widget.query}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
       ))}
@@ -102,7 +105,8 @@ function renderFallbackGrid(
 function renderSectionBody(
   family: WallboardSection,
   widgets: BeDashboardWidget[],
-  selectedTeamGroupId: string | string[] | undefined,
+  selectedTeamCreGroupId: string | string[] | undefined,
+  selectedTeamSreGroupId: string | string[] | undefined,
   selectedTeamLabel: string | undefined,
 ): JSX.Element {
   switch (family) {
@@ -110,7 +114,8 @@ function renderSectionBody(
       return (
         <WallboardCreSection
           widgets={widgets}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
       );
@@ -118,7 +123,8 @@ function renderSectionBody(
       return (
         <WallboardSreSection
           widgets={widgets}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
       );
@@ -128,7 +134,8 @@ function renderSectionBody(
           widgets={widgets}
           section="security"
           columns={2}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
       );
@@ -138,7 +145,8 @@ function renderSectionBody(
           widgets={widgets}
           section="fde"
           columns={3}
-          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamCreGroupId={selectedTeamCreGroupId}
+          selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}
         />
       );
@@ -155,7 +163,8 @@ function renderSectionBody(
  */
 export default function WallboardDashboard({
   dashboardId,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
 }: WallboardDashboardProps): JSX.Element {
   const { data, isLoading, isError, dataUpdatedAt } = useDashboard(dashboardId, CS_OVERVIEW_REFETCH_INTERVAL_MS);
@@ -235,7 +244,13 @@ export default function WallboardDashboard({
           if (!group) return null;
           return (
             <WallboardPanel key={family} section={family} title={SECTION_TITLE[family]} icon={SECTION_ICON[family]}>
-              {renderSectionBody(family, group.widgets, selectedTeamGroupId, selectedTeamLabel)}
+              {renderSectionBody(
+                family,
+                group.widgets,
+                selectedTeamCreGroupId,
+                selectedTeamSreGroupId,
+                selectedTeamLabel,
+              )}
             </WallboardPanel>
           );
         })}
@@ -248,7 +263,7 @@ export default function WallboardDashboard({
                   {group.section}
                 </Typography>
               )}
-              {renderFallbackGrid(group, selectedTeamGroupId, selectedTeamLabel)}
+              {renderFallbackGrid(group, selectedTeamCreGroupId, selectedTeamSreGroupId, selectedTeamLabel)}
             </Box>
           ))}
       </Box>

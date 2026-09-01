@@ -58,7 +58,7 @@ test.describe("Security Report — validation", () => {
   test.describe.configure({ timeout: 180_000 });
 
   const project = PROJECTS[ProjectType.MANAGED_CLOUD_SUBSCRIPTION];
-  const input = SECURITY_REPORT_INPUT;
+  const input = SECURITY_REPORT_INPUT[ProjectType.MANAGED_CLOUD_SUBSCRIPTION];
 
   /** Opens the form ready for a validation assertion. */
   async function openForm(page: Page): Promise<SecurityReportCreatePage> {

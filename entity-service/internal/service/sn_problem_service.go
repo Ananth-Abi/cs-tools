@@ -57,6 +57,32 @@ type snProblemFilters struct {
 	// match against ServiceNow's `number` column -- not part of the
 	// free-text SearchQuery scan.
 	Number string `json:"number,omitempty"`
+	// StateKeys: see domain.SearchProblemsFilters.Filters doc comment.
+	StateKeys []int `json:"stateKeys,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+}
+
+// snProblemStateKeyMap maps domain ProblemState enums to ServiceNow's raw
+// problem_state numeric keys. Mirrors the SN Script Include's own
+// _PROBLEM_STATE_LABELS map -- note 105 does not exist in ServiceNow's own
+// numbering (a real gap, not an omission here).
+var snProblemStateKeyMap = map[domain.ProblemState]int{
+	domain.ProblemStateNew:               101,
+	domain.ProblemStateAssess:            102,
+	domain.ProblemStateRootCauseAnalysis: 103,
+	domain.ProblemStateFixInProgress:     104,
+	domain.ProblemStateResolved:          106,
+	domain.ProblemStateClosed:            107,
+}
+
+var validProblemState = map[domain.ProblemState]bool{
+	domain.ProblemStateNew:               true,
+	domain.ProblemStateAssess:            true,
+	domain.ProblemStateRootCauseAnalysis: true,
+	domain.ProblemStateFixInProgress:     true,
+	domain.ProblemStateResolved:          true,
+	domain.ProblemStateClosed:            true,
 }
 
 type snProblemService struct {
@@ -78,11 +104,20 @@ func (s *snProblemService) SearchProblems(ctx context.Context, req domain.Search
 	if err := validateExactNumber("number", req.Filters.Number); err != nil {
 		return domain.SearchProblemsResponse{}, err
 	}
+	parsedFilters, err := ParseProblemFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.SearchProblemsResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
 	payload := snProblemSearchPayload{
-		Filters:    snProblemFilters{SearchQuery: req.Filters.SearchQuery, Number: stringPtrValue(req.Filters.Number)},
+		Filters: snProblemFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+		},
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
 	}
 
@@ -122,6 +157,69 @@ func (s *snProblemService) SearchProblems(ctx context.Context, req domain.Search
 		Limit:    req.Pagination.Limit,
 		Offset:   req.Pagination.Offset,
 	}, nil
+}
+
+// snProblemGroupByPayload is the Choreo POST /problems/group-by request body.
+type snProblemGroupByPayload struct {
+	Filters   snProblemFilters `json:"filters,omitempty"`
+	GroupBy   string           `json:"groupBy"`
+	MaxGroups int              `json:"maxGroups,omitempty"`
+}
+
+// validProblemGroupByField is the allow-list for
+// GroupProblemsByRequest.GroupBy, matching openapi.yaml's
+// GroupProblemsByRequest.groupBy enum exactly.
+var validProblemGroupByField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+}
+
+// GroupProblemsBy implements ProblemService by calling the Choreo POST
+// /problems/group-by endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into GroupByResponse.OthersCount. Filter parsing and validation
+// mirror SearchProblems.
+func (s *snProblemService) GroupProblemsBy(ctx context.Context, req domain.GroupProblemsByRequest) (domain.GroupByResponse, error) {
+	if req.GroupBy == "" {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validProblemGroupByField[req.GroupBy] {
+		return domain.GroupByResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.GroupByResponse{}, err
+	}
+	parsedFilters, err := ParseProblemFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snProblemGroupByPayload{
+		Filters: snProblemFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/problems/group-by", token, payload)
+	if err != nil {
+		return domain.GroupByResponse{}, err
+	}
+
+	var resp domain.GroupByResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.GroupByResponse{}, fmt.Errorf("sn problems: parse group-by response: %w", err)
+	}
+	return resp, nil
 }
 
 // snProblemEntityRef is a compact id+number reference used for the problem's

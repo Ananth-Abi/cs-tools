@@ -806,7 +806,8 @@ export type BeCaseFieldFilterField =
   | "product"
   | "projectOnboardingStatus"
   | "projectType"
-  | "integrationCsTeam"
+  | "creTeam"
+  | "sreTeam"
   | "resolutionNotes"
   | "parentId"
   | "taskSLABusinessElapsedPercent"
@@ -1002,13 +1003,24 @@ export interface BeCommentSearchResponse extends BeSearchResponseBase {
 // Conversations (Novera chat sessions)
 // ---------------------------------------------------------------------------
 
-export type BeConversationState = "ACTIVE" | "RESOLVED";
+export type BeConversationState =
+  | "ACTIVE"
+  | "RESOLVED"
+  | "CONVERTED"
+  | "ABANDONED"
+  | "CLOSED";
 
 /**
  * A chat session as returned by `POST /conversations/search` — the ServiceNow
  * "conversation" record a case may originate from. `id`/`number`/`state` are
  * nullable on the wire (a conversation that never resolved to a real SN
  * record can have gaps); `case` is null for a chat that never became a case.
+ *
+ * `createdBy` carries the canonical {@link BeUserReference} shape, same as
+ * case `createdBy`. Known limitation specific to conversations: the upstream
+ * data only carries a single identity string for the initiator, so only ONE
+ * of `email`/`name` is usually populated (never both) — unlike cases, which
+ * usually have both. `null` when the initiator has no resolvable identity.
  */
 export interface BeConversationView {
   id: string | null;
@@ -1019,12 +1031,24 @@ export interface BeConversationView {
   case: BeEntityRef | null;
   state: BeConversationState | null;
   createdOn: string;
-  createdBy: string;
+  createdBy: BeUserReference | null;
 }
 
 export interface BeSearchConversationsFilters {
   projectIds?: string[];
   states?: BeConversationState[];
+  /** Free-text search across the conversation (matches the same fields the
+   * data source indexes for it — number, initiator, initial message). */
+  searchQuery?: string;
+  /** A single conversation number (e.g. "CHAT0000012345"), matched exactly —
+   * a first-class indexed filter rather than the free-text `searchQuery`
+   * scan. See `classifyConversationQuery`. */
+  number?: string;
+  /** When `true`, scopes results to conversations initiated by the
+   * signed-in user. */
+  createdByMe?: boolean;
+  /** Filter to conversations initiated by any of these email addresses. */
+  createdBy?: string[];
 }
 
 export interface BeSearchConversationsPayload {
@@ -1142,16 +1166,98 @@ export interface BeAttachmentSearchResponse extends BeSearchResponseBase {
 
 /**
  * Upload payload for `POST /attachments`. `referenceId` + `referenceType` link
- * the file to its owning entity; `file` is a base64 data URI (e.g.
- * `data:image/png;base64,...`); the BE caps the decoded size at 10 MB.
+ * the file to its owning entity.
+ *
+ * The two data sources populate mutually exclusive fields (see
+ * entity-service openapi.yaml's `CreateAttachmentRequest`): the default path
+ * sends `file`, a base64 data URI (e.g. `data:image/png;base64,...`), and the
+ * BE caps the decoded size at 10 MB. When the SFTPGo-backed attachment
+ * storage flag is on (`sftpgoAttachmentStorageEnabled` on `GET /users/me`),
+ * the file's bytes were already uploaded directly to SFTPGo out of band, so
+ * `storageKey` + `sizeBytes` are sent instead of `file` — see
+ * `usePostCsmCaseAttachment`.
  */
 export interface BeAttachmentCreatePayload {
   referenceId: string;
   referenceType: BeReferenceType;
   name: string;
   type: string;
-  file: string;
+  file?: string;
   description?: string | null;
+  /** Set instead of `file` when the attachment's bytes were uploaded directly
+   * to SFTPGo (see `POST /cases/{id}/attachments/upload-token`). */
+  storageKey?: string;
+  /** Required alongside `storageKey`; the entity service cannot compute this
+   * itself since it never sees the file's bytes on that path. */
+  sizeBytes?: number;
+}
+
+/**
+ * Request payload for `POST /cases/{id}/attachments/upload-token`. The
+ * backend never sees the file's bytes on this path, so this is the only
+ * source of truth for the attachment's metadata — it creates the
+ * attachment's row (in `"pending"` status) from exactly these fields before
+ * minting the upload share. All three of `filename`/`mimeType`/`sizeBytes`
+ * are required by the backend.
+ */
+export interface BeAttachmentUploadTokenRequest {
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  description?: string | null;
+}
+
+/**
+ * Response body of `POST /cases/{id}/attachments/upload-token`. Only
+ * reachable when `sftpgoAttachmentStorageEnabled` is on.
+ *
+ * `id` is the attachment's own id, already created server-side in `"pending"`
+ * status — it must be sent back as the path parameter to
+ * `POST /cases/{id}/attachments/{attachmentId}/confirm` once the browser's
+ * direct-to-SFTPGo upload succeeds.
+ *
+ * `shareId` is a write-scoped, passwordless SFTPGo share id restricted to
+ * `storageKey`'s parent directory. It is the entire upload credential — no
+ * bearer token is ever involved. The frontend embeds it as the `share_id` key
+ * in the TUS `Upload-Metadata` header sent to SFTPGo's
+ * `POST /shares-chunked-uploads`, and must send only `storageKey`'s final
+ * path segment (not the full `storageKey`) as the `path` key, since the
+ * share's own root already covers the directory portion.
+ *
+ * `storageKey` is the exact SFTPGo path the uploaded file must end up at.
+ */
+export interface BeAttachmentUploadTokenResponse {
+  id: string;
+  shareId: string;
+  sftpgoBaseUrl: string;
+  storageKey: string;
+}
+
+/**
+ * Response body of `POST /cases/{caseId}/attachments/{attachmentId}/confirm`,
+ * the second half of the two-step SFTPGo upload flow
+ * `BeAttachmentUploadTokenResponse` starts: called once the browser's direct
+ * TUS upload to SFTPGo has actually succeeded, transitioning the attachment
+ * row from `"pending"` to `"complete"`.
+ */
+export interface BeAttachmentConfirmResponse {
+  message?: string;
+  attachment?: BeAttachmentDetail & {
+    /** Upload lifecycle state; `"complete"` once this call succeeds. */
+    status?: "pending" | "complete";
+  };
+}
+
+/**
+ * Response body of `POST /attachments/{id}/share`. `shareUrl` is a public,
+ * short-lived (5 minute TTL) download URL for the attachment's stored file —
+ * see `AttachmentStorageHandler.CreateAttachmentShare` on the backend. Must
+ * be requested lazily (only when an inline image is actually rendered, or a
+ * specific attachment's download is actually clicked), never eagerly for a
+ * whole list.
+ */
+export interface BeAttachmentShareResponse {
+  shareUrl: string;
 }
 
 /** Thin ack returned by `POST /attachments`. */
@@ -2106,14 +2212,20 @@ export interface BeTeam {
   id: string;
   name: string;
   family?: string;
-  /** The backing data source's assignment group id, reformatted as this
-   * platform's UUID — present only when the deployment's team registry has
-   * one configured for this team. This is the id an `integrationCsTeam`
+  /** The backing CRE (Customer Renewal & Expansion) group's id, reformatted
+   * as this platform's UUID — present only when the deployment's team
+   * registry has one configured for this team. This is the id a `creTeam`
    * case filter entry actually needs (see
    * `BE_CURRENT_USER_FILTER_PLACEHOLDER`-style team filter substitution in
    * `teamFilterPlaceholder.ts`) — never `id` above, which is just the
    * registry key. */
-  groupId?: string;
+  creGroupId?: string;
+  /** The backing SRE (Site Reliability Engineering) group's id, reformatted
+   * as this platform's UUID — present only when the deployment's team
+   * registry has one configured for this team. This is the id an `sreTeam`
+   * case filter entry actually needs — never `id` above, which is just the
+   * registry key. */
+  sreGroupId?: string;
 }
 
 export interface BeTeamSearchPayload {
@@ -2599,6 +2711,41 @@ export interface BeProblemDetail {
 }
 
 /**
+ * List-item shape for `POST /incident-tasks/search`. No dedicated detail
+ * page exists for incident tasks in this app (unlike problem/incident), so
+ * there is no separate `BeIncidentTaskDetail` type yet — `description`,
+ * `priority`, `openedOn`, `closedOn` are on the backend's own
+ * `GET /incident-tasks/{id}` response but have no frontend consumer today.
+ * `stateLabel` is a pre-humanized display string the data source already
+ * resolves server-side — prefer it over trying to humanize `state` (a raw,
+ * data-source-specific integer with no stable domain enum here; see the
+ * `state` field's own doc comment).
+ */
+export interface BeIncidentTaskSearchView {
+  id?: string;
+  number?: string;
+  subject?: string;
+  /** Raw integer state value as a string, NOT a translated enum — the
+   * underlying state choice list is inconsistent across task subtypes, so
+   * there is no confirmed-complete, unambiguous domain enum to translate
+   * through. Use `stateLabel` for display. */
+  state?: string;
+  stateLabel?: string;
+  /** The parent incident this task belongs to. */
+  incident?: BeCaseNumberRef | null;
+  assignmentGroup?: BeEntityRef | null;
+  assignedTo?: BeEntityRef | null;
+}
+
+/** Note: mirrors the problem/change-request/incident search responses — no `hasMore`. */
+export interface BeIncidentTaskSearchResponse {
+  incidentTasks: BeIncidentTaskSearchView[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/**
  * `POST /problems` body (ServiceNow data source only). `subject` is the only
  * required field. There is no `priority` field — priority is not settable on
  * create (SN computes/defaults it server-side, confirmed by live testing), so
@@ -2835,6 +2982,10 @@ export interface BeTimeCardMutationResponse {
   timeCard: BeTimeCardView;
 }
 
+export interface BeDeleteTimeCardResponse {
+  message?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
@@ -2883,7 +3034,8 @@ export type BeWidgetResourceType =
   | "service_request"
   | "security_report_analysis"
   | "announcement"
-  | "engagement";
+  | "engagement"
+  | "incident_task";
 
 /**
  * How a widget's resolved data should be rendered. `pie` and `bar` both
@@ -2914,6 +3066,38 @@ export interface BeDashboardPieSlice {
   /** Falls back to a fixed rotation over the same palette if omitted. */
   color?: BeWidgetPaletteColor;
   query: Record<string, unknown>;
+}
+
+/** Alternative to {@link BeDashboardPieSlice}[] for shapes "pie"/"bar":
+ * one server-side `POST /{resourceType}/group-by` call instead of one
+ * `search` per hand-authored slice. Mutually exclusive with `slices` —
+ * the backend enforces exactly one of the two at config-load time. */
+export interface BeDashboardGroupByConfig {
+  /** The field to aggregate on — forwarded verbatim as that request's
+   * `groupBy` key. */
+  field: string;
+  /** Caps the number of returned buckets; anything beyond that rolls up
+   * into the response's `othersCount`. */
+  maxGroups?: number;
+  /** Label for the synthetic "everything else" bucket built from
+   * `othersCount`. Defaults to `"Others"` when omitted. */
+  othersLabel?: string;
+}
+
+/** One bucket of a `POST /{resourceType}/group-by` response. */
+export interface BeGroupByBucket {
+  key: string;
+  label: string;
+  count: number;
+}
+
+/** Response shape of `POST /{resourceType}/group-by`. `othersCount` covers
+ * every record outside the returned `groups` (capped by `maxGroups`);
+ * `totalRecords` is the grand total across `groups` plus `othersCount`. */
+export interface BeGroupByResponse {
+  groups: BeGroupByBucket[];
+  othersCount: number;
+  totalRecords: number;
 }
 
 /** Rendering hint for a {@link BeDashboardWidgetColumn}'s resolved value.
@@ -2967,11 +3151,13 @@ export interface BeDashboardWidget {
    * than queried on its own.
    */
   query: Record<string, unknown>;
-  /** Present on the wire; unused today — `slices` is what actually drives
-   * pie/bar grouping. */
-  groupBy?: string;
+  /** Only meaningful for shapes "pie"/"bar": one server-side
+   * `POST /{resourceType}/group-by` call instead of one `search` per
+   * slice. Mutually exclusive with `slices` — the backend enforces
+   * exactly one of the two for those shapes (never both, never neither). */
+  groupBy?: BeDashboardGroupByConfig;
   /** Only meaningful for shapes "pie"/"bar": one search per slice, each
-   * read via its own `total`. */
+   * read via its own `total`. Mutually exclusive with `groupBy`. */
   slices?: BeDashboardPieSlice[];
   /** Only meaningful for shape list; how many records to show. */
   listLimit?: number;
@@ -3019,6 +3205,14 @@ export interface BeDashboardListItem {
    * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`
    * in the webapp). */
   isTeamBased: boolean;
+  /** Team keys (the signed-in user's own `team.teamKey`) that should land
+   * on this dashboard outright as their default, regardless of this
+   * dashboard's own `isDefault`/`isTeamBased`/`type` — for specialist,
+   * non-team-based dashboards the `isDefault`+`isTeamBased`+`type` default
+   * mechanism can't reach (e.g. `onboarding-engineer` for
+   * `customer_onboarding`). Omitted where unused; see `CsmDashboardPage`'s
+   * module doc comment for how this tier fits into default selection. */
+  defaultForTeamKeys?: string[];
 }
 
 /**
@@ -3038,10 +3232,3 @@ export interface BeDashboard {
   widgets: BeDashboardWidget[];
 }
 
-/** One team from `POST /teams/search`. `id` is the registry team key,
- * stable across environments (unlike a group id). */
-export interface BeTeam {
-  id: string;
-  name: string;
-  family?: string;
-}

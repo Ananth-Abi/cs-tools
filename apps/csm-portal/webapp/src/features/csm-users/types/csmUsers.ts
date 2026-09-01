@@ -74,6 +74,13 @@ export interface SnUser {
   mobilePhone?: string | null;
   userType?: UserType;
   active: boolean;
+  /**
+   * Whether the data source has locked the account out (e.g. too many failed
+   * sign-in attempts) — independent of {@link active}: a user can be active
+   * but locked out. Distinct from {@link ExternalAccountStatus.locked}, which
+   * is a separate concept from the SCIM "external" org.
+   */
+  lockedOut: boolean;
   createdOn: string;
   updatedOn: string;
   roles: string[];
@@ -214,6 +221,8 @@ export interface NormalizedUser {
   userType?: UserType;
   /** Present only from the ServiceNow source. */
   active?: boolean;
+  /** Present only from the ServiceNow source; see {@link SnUser.lockedOut}. */
+  lockedOut?: boolean;
   /** Present only from the ServiceNow source. */
   roles?: string[];
   /** Present from either source, when the caller requested the full profile. */
@@ -245,6 +254,7 @@ export function normalizeUser(u: User | SnUser): NormalizedUser {
       timezone: u.timeZone ?? null,
       userType: u.userType,
       active: u.active,
+      lockedOut: u.lockedOut,
       roles: u.roles,
       phone: u.mobilePhone ?? null,
       createdOn: u.createdOn,

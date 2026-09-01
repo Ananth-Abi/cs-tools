@@ -21,6 +21,30 @@ import (
 	"time"
 )
 
+// TestNoticeWindow_IsTerminal covers the single canonical "is this the
+// terminal/day-0 window" predicate — added so callers needing this check
+// (e.g. sweep.go's subject/body builders) share one definition instead of
+// each independently comparing against NoticeWindow0 (PR #1440 review,
+// Sajith Ekanayake: that re-derivation had already gone wrong once).
+func TestNoticeWindow_IsTerminal(t *testing.T) {
+	tests := []struct {
+		window NoticeWindow
+		want   bool
+	}{
+		{NoticeWindow90, false},
+		{NoticeWindow60, false},
+		{NoticeWindow30, false},
+		{NoticeWindow15, false},
+		{NoticeWindow7, false},
+		{NoticeWindow0, true},
+	}
+	for _, tt := range tests {
+		if got := tt.window.IsTerminal(); got != tt.want {
+			t.Errorf("NoticeWindow(%d).IsTerminal() = %v, want %v", tt.window, got, tt.want)
+		}
+	}
+}
+
 func TestDecide_FiresCorrectWindowWhenNoPriorNotice(t *testing.T) {
 	now := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
 

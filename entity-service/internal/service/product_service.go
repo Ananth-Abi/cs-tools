@@ -20,9 +20,19 @@ package service
 import (
 	"context"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
 )
+
+// validProductClass enumerates the class values the products table accepts.
+// Unlike the ServiceNow-backed search, an empty Class here means "no
+// filter" — the products table already stores one row per distinct
+// product, so there is no version-duplication problem to default around.
+var validProductClass = map[domain.ProductClass]bool{
+	domain.ProductClassSoftware: true,
+	domain.ProductClassService:  true,
+}
 
 type productService struct {
 	repo repository.ProductRepository
@@ -40,6 +50,9 @@ func (s *productService) SearchProducts(ctx context.Context, req domain.SearchPr
 	}
 	if err := validateSearchQuery(req.SearchQuery); err != nil {
 		return domain.SearchProductsResponse{}, err
+	}
+	if req.Class != "" && !validProductClass[domain.ProductClass(req.Class)] {
+		return domain.SearchProductsResponse{}, &apierror.ValidationError{Msg: "invalid class"}
 	}
 
 	products, total, err := s.repo.SearchProducts(ctx, req)

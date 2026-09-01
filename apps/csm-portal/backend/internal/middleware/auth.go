@@ -17,9 +17,11 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -78,7 +80,8 @@ type jwtClaims struct {
 func Auth(cfg Config) func(http.Handler) http.Handler {
 	var keyFunc jwt.Keyfunc
 	if cfg.TokenValidatorEnabled {
-		jwks, err := keyfunc.NewDefault([]string{cfg.JWKSEndpoint})
+		client := &http.Client{Transport: &x5cStrippingTransport{base: http.DefaultTransport}}
+		jwks, err := keyfunc.NewDefaultOverrideCtx(context.Background(), []string{cfg.JWKSEndpoint}, keyfunc.Override{Client: client})
 		if err != nil {
 			// Misconfigured auth must not silently pass — fail at startup.
 			panic("auth: failed to initialise JWKS from " + cfg.JWKSEndpoint + ": " + err.Error())
@@ -118,6 +121,51 @@ func Auth(cfg Config) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+// x5cStrippingTransport removes the "x5c" certificate chain from every key in
+// a JWKS response before it reaches the jwkset parser. Verification only
+// needs "n"/"e" (or the EC/OKP equivalents); jwkset unconditionally parses
+// "x5c" as X.509 certificates, and some IdPs (e.g. Asgardeo) publish certs
+// with a negative serial number that Go's x509 parser rejects since Go 1.23,
+// which would otherwise make the whole JWK Set fail to load.
+type x5cStrippingTransport struct {
+	base http.RoundTripper
+}
+
+func (t *x5cStrippingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return resp, err
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		return nil, fmt.Errorf("read JWKS response body: %w", err)
+	}
+
+	var jwks struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	if err := json.Unmarshal(body, &jwks); err != nil {
+		// Not a JWKS document we can sanitize; hand back the original body untouched.
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp, nil
+	}
+
+	for _, key := range jwks.Keys {
+		delete(key, "x5c")
+	}
+	sanitized, err := json.Marshal(jwks)
+	if err != nil {
+		return nil, fmt.Errorf("marshal sanitized JWKS: %w", err)
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(sanitized))
+	resp.ContentLength = int64(len(sanitized))
+	resp.Header.Set("Content-Length", fmt.Sprint(len(sanitized)))
+	return resp, nil
 }
 
 // UserInfoFromContext retrieves the authenticated user's info from the context.

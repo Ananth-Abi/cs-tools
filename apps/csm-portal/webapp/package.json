@@ -23,6 +23,7 @@
     "@lexical/rich-text": "0.40.0",
     "@lexical/selection": "0.40.0",
     "@lexical/utils": "0.40.0",
+    "@sanity/eventsource": "5.0.4",
     "@tanstack/react-query": "5.90.20",
     "@types/markdown-it": "14.1.2",
     "@wso2/oxygen-ui": "0.6.0",

@@ -109,6 +109,7 @@ vi.mock("@wso2/oxygen-ui-charts-react", () => ({
   ),
 }));
 
+import type { BeDashboardPieSlice } from "@api/backend/types";
 import DashboardWidgetTile from "@features/csm-dashboard/components/DashboardWidgetTile";
 import { CURRENT_TEAM_PLACEHOLDER } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
 import { CURRENT_USER_PLACEHOLDER } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
@@ -429,7 +430,7 @@ describe("DashboardWidgetTile", () => {
     const href = viewMoreLink.getAttribute("href") ?? "";
     // Goes to the widget's own preview page (real, bookmarkable URL — see
     // widgetPreviewUrl.ts), not straight to the resource's own tab.
-    expect(href.startsWith("/dashboard/cases?")).toBe(true);
+    expect(href.startsWith("/dashboard/preview/cases?")).toBe(true);
     const params = new URLSearchParams(href.split("?")[1]);
     expect(params.get("w")).toBe("my_critical_open_2");
     expect(params.get("n")).toBe("My Critical & High Cases");
@@ -493,11 +494,11 @@ describe("DashboardWidgetTile", () => {
         shape="list"
         filters={{
           filters: [
-            { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+            { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
           ],
         }}
         listLimit={5}
-        selectedTeamGroupId="22222222-2222-2222-2222-222222222222"
+        selectedTeamCreGroupId="22222222-2222-2222-2222-222222222222"
       />,
     );
 
@@ -510,10 +511,10 @@ describe("DashboardWidgetTile", () => {
     // every team's cases instead of just the viewer's own team's.
     expect(href).not.toContain(CURRENT_TEAM_PLACEHOLDER);
     const params = new URLSearchParams(href.split("?")[1]);
-    expect(params.get("integrationCsTeam")).toBe("22222222-2222-2222-2222-222222222222");
+    expect(params.get("creTeam")).toBe("22222222-2222-2222-2222-222222222222");
   });
 
-  it("drops the integrationCsTeam filter from the 'View more' href (list-shape) rather than sending the literal placeholder when no team groupId is selected", async () => {
+  it("drops the creTeam filter from the 'View more' href (list-shape) rather than sending the literal placeholder when no team groupId is selected", async () => {
     postMock.mockResolvedValue({
       total: 6,
       cases: [{ id: "11111111-1111-1111-1111-111111111111", number: "CS-1", subject: "Disk full", state: "open" }],
@@ -531,7 +532,7 @@ describe("DashboardWidgetTile", () => {
         filters={{
           filters: [
             { field: "state", op: "in", values: ["open"] },
-            { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+            { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
           ],
         }}
         listLimit={5}
@@ -542,7 +543,7 @@ describe("DashboardWidgetTile", () => {
     const href = viewMoreLink.getAttribute("href") ?? "";
     expect(href).not.toContain(CURRENT_TEAM_PLACEHOLDER);
     const params = new URLSearchParams(href.split("?")[1]);
-    expect(params.get("integrationCsTeam")).toBeNull();
+    expect(params.get("creTeam")).toBeNull();
     expect(params.get("state")).toBe("open");
   });
 
@@ -835,10 +836,10 @@ describe("DashboardWidgetTile", () => {
         shape="count"
         filters={{
           filters: [
-            { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+            { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
           ],
         }}
-        selectedTeamGroupId="22222222-2222-2222-2222-222222222222"
+        selectedTeamCreGroupId="22222222-2222-2222-2222-222222222222"
       />,
     );
 
@@ -849,7 +850,7 @@ describe("DashboardWidgetTile", () => {
         filters: {
           filters: [
             {
-              field: "integrationCsTeam",
+              field: "creTeam",
               op: "in",
               values: ["22222222-2222-2222-2222-222222222222"],
             },
@@ -861,7 +862,7 @@ describe("DashboardWidgetTile", () => {
     );
   });
 
-  it("re-fetches with the new team's own filters when selectedTeamGroupId changes (team switch must not reuse a stale cached query)", async () => {
+  it("re-fetches with the new team's own filters when selectedTeamCreGroupId changes (team switch must not reuse a stale cached query)", async () => {
     // Regression guard: this widget's react-query queryKey must include the
     // RESOLVED filters (placeholder already substituted with the selected
     // team's groupId), not the raw `filters` prop (which still carries the
@@ -870,7 +871,7 @@ describe("DashboardWidgetTile", () => {
     // which team is selected, so switching teams would keep serving the
     // first team's cached response — the exact bug this guards against.
     const filters = {
-      filters: [{ field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] }],
+      filters: [{ field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] }],
     };
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     postMock.mockResolvedValueOnce({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
@@ -884,7 +885,7 @@ describe("DashboardWidgetTile", () => {
             resourceType="case"
             shape="count"
             filters={filters}
-            selectedTeamGroupId="team-a-group-id"
+            selectedTeamCreGroupId="team-a-group-id"
           />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -894,7 +895,7 @@ describe("DashboardWidgetTile", () => {
     expect(postMock).toHaveBeenLastCalledWith(
       "/cases/search",
       {
-        filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-a-group-id"] }] },
+        filters: { filters: [{ field: "creTeam", op: "in", values: ["team-a-group-id"] }] },
         pagination: { offset: 0, limit: 1 },
       },
       { signal: expect.any(AbortSignal) },
@@ -911,7 +912,7 @@ describe("DashboardWidgetTile", () => {
             resourceType="case"
             shape="count"
             filters={filters}
-            selectedTeamGroupId="team-b-group-id"
+            selectedTeamCreGroupId="team-b-group-id"
           />
         </MemoryRouter>
       </QueryClientProvider>,
@@ -921,14 +922,14 @@ describe("DashboardWidgetTile", () => {
     expect(postMock).toHaveBeenLastCalledWith(
       "/cases/search",
       {
-        filters: { filters: [{ field: "integrationCsTeam", op: "in", values: ["team-b-group-id"] }] },
+        filters: { filters: [{ field: "creTeam", op: "in", values: ["team-b-group-id"] }] },
         pagination: { offset: 0, limit: 1 },
       },
       { signal: expect.any(AbortSignal) },
     );
   });
 
-  it("drops the integrationCsTeam filter (request and href) rather than sending the literal placeholder when no team groupId is selected", async () => {
+  it("drops the creTeam filter (request and href) rather than sending the literal placeholder when no team groupId is selected", async () => {
     postMock.mockResolvedValue({ total: 3, cases: [], limit: 1, offset: 0, hasMore: false });
 
     renderWithClient(
@@ -940,7 +941,7 @@ describe("DashboardWidgetTile", () => {
         filters={{
           filters: [
             { field: "state", op: "in", values: ["open"] },
-            { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+            { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
           ],
         }}
       />,
@@ -975,12 +976,12 @@ describe("DashboardWidgetTile", () => {
             label: "My team",
             query: {
               filters: [
-                { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+                { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
               ],
             },
           },
         ]}
-        selectedTeamGroupId="22222222-2222-2222-2222-222222222222"
+        selectedTeamCreGroupId="22222222-2222-2222-2222-222222222222"
       />,
       "/cases",
     );
@@ -1145,6 +1146,42 @@ describe("DashboardWidgetTile", () => {
           ],
         },
         pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("shape pie: renders a groupBy-configured widget via a single group-by call, including a synthetic Others slice", async () => {
+    postMock.mockResolvedValue({
+      groups: [
+        { key: "critical", label: "S1 · Critical", count: 1 },
+        { key: "high", label: "S2 · High", count: 3 },
+      ],
+      othersCount: 4,
+      totalRecords: 8,
+    });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="cases-by-severity"
+        displayName="Cases by severity"
+        resourceType="case"
+        shape="pie"
+        filters={{ filters: [{ field: "state", op: "in", values: ["open"] }] }}
+        groupBy={{ field: "severity", maxGroups: 2 }}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("slice:S1 · Critical:1")).toBeInTheDocument());
+    expect(screen.getByText("slice:S2 · High:3")).toBeInTheDocument();
+    expect(screen.getByText("slice:Others:4")).toBeInTheDocument();
+    expect(postMock).toHaveBeenCalledTimes(1);
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/group-by",
+      {
+        filters: { filters: [{ field: "state", op: "in", values: ["open"] }] },
+        groupBy: "severity",
+        maxGroups: 2,
       },
       { signal: expect.any(AbortSignal) },
     );
@@ -1598,6 +1635,31 @@ describe("DashboardWidgetTile", () => {
     expect(screen.getByText("Cases by severity")).toBeInTheDocument();
     expect(screen.getByText("Nothing to show here right now")).toBeInTheDocument();
     expect(postMock).not.toHaveBeenCalled();
+  });
+
+  // Regression test: DASHBOARDS_CONFIG is a raw JSON env var, not
+  // schema-validated beyond basic decoding — a slice entry missing its own
+  // `filters` field entirely used to crash the whole tile with "Cannot read
+  // properties of undefined (reading 'filters')" inside mergeWidgetFilters,
+  // despite the wire type declaring it required.
+  it("shape pie: renders a slice whose config is missing its own `filters` instead of crashing", async () => {
+    postMock.mockResolvedValue({ total: 4 });
+
+    renderWithClient(
+      <DashboardWidgetTile
+        widgetId="cases-by-severity"
+        displayName="Cases by severity"
+        resourceType="case"
+        shape="pie"
+        filters={{ filters: [{ field: "state", op: "in", values: ["open"] }] }}
+        slices={[
+          // filters intentionally omitted
+          { label: "Critical" } as BeDashboardPieSlice,
+        ]}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText("slice:Critical:4")).toBeInTheDocument());
   });
 
   it("resolves the {{currentTeam}} text token in displayName/description to the selected team's own label", async () => {

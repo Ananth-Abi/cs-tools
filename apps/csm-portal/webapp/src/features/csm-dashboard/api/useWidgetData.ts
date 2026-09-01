@@ -65,14 +65,21 @@ export function useWidgetData(
    * `widgetPreviewUrl.ts`) into the signed-in user's real id, so a request
    * never goes out with the literal placeholder still in it. */
   enabled = true,
-  /** The currently selected team's own `groupId`, or an array of every
-   * team's `groupId` in the current dashboard's family for the "All ABTs"
-   * option (see `ALL_TEAMS_SENTINEL`), used to resolve a case widget's
-   * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`)
-   * before it's sent. `undefined` for a non-team-based dashboard, or while
-   * the team isn't resolved yet — in which case any `integrationCsTeam`
-   * entry carrying that placeholder is dropped rather than sent literally. */
-  selectedTeamGroupId?: string | string[],
+  /** The currently selected team's own `creGroupId`, or an array of every
+   * team's `creGroupId` in the current dashboard's family for the "All
+   * ABTs" option (see `ALL_TEAMS_SENTINEL`), used to resolve a case
+   * widget's `__current_team__` filter placeholder for a `creTeam` filter
+   * entry (see `teamFilterPlaceholder.ts`) before it's sent. `undefined`
+   * for a non-team-based dashboard, or while the team isn't resolved yet —
+   * in which case any `creTeam` entry carrying that placeholder is dropped
+   * rather than sent literally. */
+  selectedTeamCreGroupId?: string | string[],
+  /** The currently selected team's own `sreGroupId`, or an array of every
+   * team's `sreGroupId` in the current dashboard's family for the "All
+   * ABTs" option — the `sreTeam`-filter counterpart of
+   * {@link selectedTeamCreGroupId}, resolved independently. `undefined` in
+   * the same cases `selectedTeamCreGroupId` is. */
+  selectedTeamSreGroupId?: string | string[],
   /** Only meaningful for shape "list". Opaque sort criteria (see
    * `BeDashboardWidget.sortBy`), forwarded verbatim as this search
    * request's own `sortBy` — same passthrough philosophy as `filters`. The
@@ -100,7 +107,7 @@ export function useWidgetData(
   const effectiveOffset = shape === "list" ? offset : 0;
   const resolvedFilters = resolveCurrentUserPlaceholder(
     resolveRelativeDateFilters(
-      resolveTeamPlaceholder(filters, selectedTeamGroupId),
+      resolveTeamPlaceholder(filters, selectedTeamCreGroupId, selectedTeamSreGroupId),
     ),
     currentUserId,
   );

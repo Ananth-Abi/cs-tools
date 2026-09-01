@@ -113,7 +113,3 @@ Applies only to the dev `serve` command — `pnpm build` / `pnpm preview`
 can never carry this behaviour. The mock provider, backend, entity service
 and seeded PostgreSQL it talks to must be running separately (the local
 backend stack); this flag only changes the dev server's behaviour.
-
-## Branching
-
-This webapp lives in the `cs-tools` repo. Work on a feature branch off `v2` (never commit directly to `v2`). Rebase on `origin/v2` before opening a PR.

@@ -35,7 +35,8 @@ export interface WallboardSecondaryStatProps {
   displayName: string;
   resourceType: BeWidgetResourceType;
   filters: Record<string, unknown>;
-  selectedTeamGroupId?: string | string[];
+  selectedTeamCreGroupId?: string | string[];
+  selectedTeamSreGroupId?: string | string[];
   selectedTeamLabel?: string;
 }
 
@@ -54,7 +55,8 @@ export default function WallboardSecondaryStat({
   displayName,
   resourceType,
   filters,
-  selectedTeamGroupId,
+  selectedTeamCreGroupId,
+  selectedTeamSreGroupId,
   selectedTeamLabel,
 }: WallboardSecondaryStatProps): JSX.Element {
   const { user } = useCurrentUser();
@@ -69,7 +71,8 @@ export default function WallboardSecondaryStat({
     undefined,
     0,
     !awaitingCurrentUser,
-    selectedTeamGroupId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
     undefined,
     currentUserId,
     CS_OVERVIEW_REFETCH_INTERVAL_MS,
@@ -80,7 +83,9 @@ export default function WallboardSecondaryStat({
   const total = data?.total ?? 0;
 
   const resolvedFilters = resolveCurrentUserPlaceholder(
-    resolveRelativeDateFilters(resolveTeamPlaceholder(filters, selectedTeamGroupId)),
+    resolveRelativeDateFilters(
+      resolveTeamPlaceholder(filters, selectedTeamCreGroupId, selectedTeamSreGroupId),
+    ),
     currentUserId,
   );
   const href = config ? config.buildHref(resolvedFilters) : undefined;

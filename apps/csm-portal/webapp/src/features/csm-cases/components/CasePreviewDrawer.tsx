@@ -14,10 +14,13 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Drawer } from "@wso2/oxygen-ui";
-import type { JSX } from "react";
+import { Box } from "@wso2/oxygen-ui";
+import { useRef, type JSX } from "react";
+import FloatingSlidePanel from "@components/FloatingSlidePanel";
 import CasePreviewContent from "@features/csm-cases/components/CasePreviewContent";
+import { QUICK_PREVIEW_EYE_SELECTOR } from "@features/csm-cases/utils/quickPreviewEye";
 import type { CsmCaseRow } from "@features/csm-cases/types/csmCases";
+import { useCloseOnOutsideClick } from "@hooks/useCloseOnOutsideClick";
 
 interface CasePreviewDrawerProps {
   /** The row being previewed. `null` keeps the drawer mounted-but-closed, so
@@ -38,14 +41,29 @@ interface CasePreviewDrawerProps {
  * a time card's own summary, rather than duplicating it.
  */
 export default function CasePreviewDrawer({ row, onClose }: CasePreviewDrawerProps): JSX.Element {
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  useCloseOnOutsideClick(!!row, contentRef, QUICK_PREVIEW_EYE_SELECTOR, onClose);
+
   return (
-    <Drawer
-      anchor="right"
-      open={!!row}
-      onClose={onClose}
-      slotProps={{ paper: { sx: { width: { xs: "100%", sm: 420 } } } }}
-    >
-      {row && <CasePreviewContent row={row} onClose={onClose} />}
-    </Drawer>
+    // `FloatingSlidePanel` (not `Drawer`) -- a `Drawer` is `Modal`-backed,
+    // which enforces a focus trap and marks the rest of the page
+    // `aria-hidden` for as long as it's open, regardless of `hideBackdrop`
+    // or pointer-events tricks (those only ever affected mouse clicks, not
+    // `Modal`'s own accessibility isolation). This panel has no backdrop
+    // and no modal behavior at all, so the rest of the page stays fully
+    // interactive for every input method -- not just the mouse -- letting
+    // a click on a different row's quick-preview eye land normally while
+    // this preview is already open. `useCloseOnOutsideClick` below replaces
+    // the click-to-close behavior a `Drawer`'s backdrop would otherwise
+    // give, minus the eye buttons (their own onClick already decides the
+    // next state -- open a different row, or toggle the current one
+    // closed).
+    <FloatingSlidePanel open={!!row} ariaLabel="Case preview">
+      {row && (
+        <Box ref={contentRef} sx={{ height: "100%" }}>
+          <CasePreviewContent row={row} onClose={onClose} />
+        </Box>
+      )}
+    </FloatingSlidePanel>
   );
 }
