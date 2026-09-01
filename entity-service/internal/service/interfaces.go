@@ -440,6 +440,13 @@ type ProductVulnerabilityService interface {
 	// GetProductVulnerability returns the detail of a single vulnerability by its UUID.
 	// A NotFoundError is returned if the vulnerability does not exist.
 	GetProductVulnerability(ctx context.Context, id string) (domain.ProductVulnerabilityView, error)
+
+	// SyncProductVulnerabilities replaces the full set of product vulnerabilities with the
+	// given items. This is a full-replace sync: ServiceNow deletes any existing record whose
+	// WSO2ID is not present in items and upserts everything that is. Callers MUST submit the
+	// complete current set, never a partial delta, or downstream records will be deleted.
+	// Supported by the ServiceNow data source only.
+	SyncProductVulnerabilities(ctx context.Context, items []domain.ProductVulnerabilitySyncItem) (domain.ProductVulnerabilitySyncResult, error)
 }
 
 // AlertService defines the operations available on alerts.
