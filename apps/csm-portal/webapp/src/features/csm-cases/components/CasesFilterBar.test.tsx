@@ -458,6 +458,53 @@ describe("CasesFilterBar — switching to Quick filters from an Advanced-only fi
     // caller's current (edited) filters, not a resurrected old tags filter.
     expect(onChange).not.toHaveBeenCalledWith(original);
   });
+
+  // CodeRabbit catch on the PR that introduced the stash: applyView and the
+  // reset button both replace `filters` via a path that bypasses
+  // `handleSimpleFieldChange` (a saved view calls `onChange` directly; reset
+  // calls the `onReset` prop) — neither used to clear a pending stash, so
+  // clicking Advanced right after either one could resurrect the
+  // pre-Quick-filters criteria over what the user just deliberately applied
+  // or cleared.
+  it("applying a saved view drops the stash — Advanced afterward shows the view, not resurrected tags", () => {
+    localStorage.clear();
+    localStorage.setItem(
+      "csm.savedFilters.v1",
+      JSON.stringify([{ name: "First", qs: "states=open" }]),
+    );
+    const original = { ...DEFAULT_CASES_FILTERS, tags: ["micro-gw"] };
+    const { onChange, rerenderWith } = renderBar(original);
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick filters" }));
+    rerenderWith(onChange.mock.calls[0][0] as CasesFilters);
+
+    fireEvent.click(screen.getByRole("button", { name: /Saved views/ }));
+    fireEvent.click(screen.getByText("First"));
+    const viewApplied = onChange.mock.calls[1][0] as CasesFilters;
+    expect(viewApplied.states).toEqual(["open"]);
+    rerenderWith(viewApplied);
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(onChange).not.toHaveBeenCalledWith(original);
+  });
+
+  it("resetting drops the stash — Advanced afterward does not resurrect the cleared tags filter", () => {
+    // search stays active (and preserved) through the Quick-filters switch,
+    // so "Clear filters" is still the button shown — this is the realistic
+    // way to reach a reset with a stash still pending, since any actual
+    // edit in the Quick filters grid itself already drops the stash on its
+    // own (the case above).
+    const original = { ...DEFAULT_CASES_FILTERS, tags: ["micro-gw"], search: "printer" };
+    const { onChange, rerenderWith } = renderBar(original);
+
+    fireEvent.click(screen.getByRole("button", { name: "Quick filters" }));
+    rerenderWith(onChange.mock.calls[0][0] as CasesFilters);
+
+    fireEvent.click(screen.getByRole("button", { name: /Clear filters/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(onChange).not.toHaveBeenCalledWith(original);
+  });
 });
 
 // Regression: reported live — with every control the same width, a project

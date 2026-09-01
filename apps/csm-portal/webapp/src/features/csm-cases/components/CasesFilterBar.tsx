@@ -674,7 +674,18 @@ export default function CasesFilterBar({
 
   const applyView = (qs: string): void => {
     setSavedAnchor(null);
+    // A pending stash is about to be replaced wholesale by this saved view —
+    // if left in place, clicking Advanced afterward would resurrect the
+    // pre-Quick-filters criteria instead of the view the user just applied.
+    setStashedAdvancedFilters(null);
     onChange(readCasesFiltersFromUrl(new URLSearchParams(qs)));
+  };
+
+  // Same reasoning as applyView above: a reset must not be silently undoable
+  // via a later "Advanced" click restoring what was just cleared.
+  const handleReset = (): void => {
+    setStashedAdvancedFilters(null);
+    onReset();
   };
 
   const handleSaveView = (): void => {
@@ -847,7 +858,7 @@ export default function CasesFilterBar({
         <Button
           variant="outlined"
           size="small"
-          onClick={hasActive ? onReset : onFiltersToggle}
+          onClick={hasActive ? handleReset : onFiltersToggle}
           startIcon={hasActive ? <X size={16} /> : <ListFilter size={16} />}
           endIcon={
             !hasActive &&
