@@ -19,6 +19,7 @@ import { useCallback, useMemo, type JSX } from "react";
 import { useLocation, useNavigate } from "react-router";
 import AbtDashboardHeader from "@features/csm-dashboard/components/AbtDashboardHeader";
 import AgentsLandingPagePilot from "@features/csm-dashboard/components/AgentsLandingPagePilot";
+import WallboardDashboard from "@features/csm-dashboard/components/WallboardDashboard";
 import { useDashboardList } from "@features/csm-dashboard/api/useDashboardList";
 import { abtFamilyForDashboardType, useTeams } from "@features/csm-dashboard/api/useTeams";
 import { useCurrentUser } from "@context/current-user/CurrentUserContext";
@@ -28,6 +29,14 @@ import {
   parseDashboardHash,
 } from "@features/csm-dashboard/utils/dashboardUrlHash";
 import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+
+// The one specific dashboard styled to match `digiops-cs`'s Wallboard.tsx
+// (see CS_Dashboard.png). Scoped by exact id, not by `type === "cs"`: the
+// real registry has three OTHER dashboards sharing `type: "cs"`
+// (`case-feedback`, `migration-engineer`, `onboarding-engineer` — "cs"
+// only means "not scoped to a team") which must keep rendering exactly as
+// they do today, unchanged.
+const CS_OVERVIEW_DASHBOARD_ID = "cs-overview";
 
 /**
  * Top-level CSM dashboard. The dashboard list is BE-driven (`GET
@@ -45,7 +54,10 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * Dashboards are selected purely by dropdown — there is no other
  * per-dashboard scoping control. Every dashboard in the registry has at
  * least one real (config-driven) widget, so this always renders the real
- * widget grid.
+ * widget grid. Rendering itself branches on `currentEntry.id`: only
+ * `CS_OVERVIEW_DASHBOARD_ID` renders through `WallboardDashboard`; every
+ * other dashboard renders through the original `AgentsLandingPagePilot`,
+ * completely unchanged.
  */
 export default function CsmDashboardPage(): JSX.Element {
   const location = useLocation();
@@ -225,11 +237,19 @@ export default function CsmDashboardPage(): JSX.Element {
         selectedTeamId={selectedTeamId}
         onTeamChange={handleTeamChange}
       />
-      <AgentsLandingPagePilot
-        dashboardId={dashboardKey}
-        selectedTeamGroupId={selectedTeamGroupId}
-        selectedTeamLabel={selectedTeamLabel}
-      />
+      {currentEntry?.id === CS_OVERVIEW_DASHBOARD_ID ? (
+        <WallboardDashboard
+          dashboardId={dashboardKey}
+          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamLabel={selectedTeamLabel}
+        />
+      ) : (
+        <AgentsLandingPagePilot
+          dashboardId={dashboardKey}
+          selectedTeamGroupId={selectedTeamGroupId}
+          selectedTeamLabel={selectedTeamLabel}
+        />
+      )}
     </Box>
   );
 }
