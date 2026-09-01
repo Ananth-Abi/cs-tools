@@ -981,6 +981,19 @@ export interface BeCaseSearchFilters {
   /** The generic field/op/values filter array. Omit (or send `[]`) for an
    * unfiltered cross-project search. */
   filters?: BeCaseFieldFilter[];
+  /**
+   * Cross-field OR groups: each entry's own `filters` are ANDed, the entries
+   * themselves are OR'd together, then the whole `anyOf` result is ANDed
+   * with the top-level `filters` array above. Only a restricted field subset
+   * is accepted inside a branch (`type`, `state` `in`-only, `severity`,
+   * `engagementType`, `issueType`, `workState`, `projectId`, `deploymentId`,
+   * `assignedUserId` `in`-only, `escalationLevel`) — see
+   * `features/csm-cases/utils/anyOfFilters.ts`'s own doc comment for the
+   * FE-side allowlist this mirrors. An empty branch (`{filters: []}`/`{}`)
+   * is rejected by the backend (400) rather than silently OR-widening the
+   * result set — never emit one.
+   */
+  anyOf?: { filters: BeCaseFieldFilter[] }[];
 }
 
 export interface BeCaseSearchPayload {

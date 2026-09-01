@@ -60,8 +60,12 @@ vi.mock("@features/csm-cases/api/useGetCsmCases", () => ({
     };
   },
 }));
+const casesFilterBarPropsSpy = vi.fn();
 vi.mock("@features/csm-cases/components/CasesFilterBar", () => ({
-  default: () => <div>FilterBar</div>,
+  default: (props: unknown) => {
+    casesFilterBarPropsSpy(props);
+    return <div>FilterBar</div>;
+  },
 }));
 vi.mock("@features/csm-cases/components/CasesList", () => ({
   // Forwards `columnCustomizer` (the "Customise columns" trigger, rendered
@@ -88,6 +92,7 @@ import { ALL_CASE_TYPES } from "@features/csm-cases/utils/caseType";
 beforeEach(() => {
   window.localStorage.clear();
   useGetCsmCasesMock.mockClear();
+  casesFilterBarPropsSpy.mockClear();
 });
 
 function LocationProbe() {
@@ -363,6 +368,62 @@ describe("CsmIssuesView defaultCaseTypes (Support page's case-type default, digi
         expect.anything(),
         expect.anything(),
       ),
+    );
+  });
+});
+
+describe("CsmIssuesView showSeverityFilter override (project Work items tab)", () => {
+  it("defaults to hidden when the type filter is unlocked (multi-type view, no lockedFilters.caseTypes)", () => {
+    render(
+      <MemoryRouter initialEntries={["/cases"]}>
+        <CsmIssuesView title="Cases" />
+      </MemoryRouter>,
+    );
+    expect(casesFilterBarPropsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ showSeverityFilter: false }),
+    );
+  });
+
+  it("shows Severity when the caller passes showSeverityFilter, even though the type filter is unlocked", () => {
+    render(
+      <MemoryRouter initialEntries={["/projects/p1"]}>
+        <CsmIssuesView
+          entityNoun="work items"
+          lockedFilters={{ projects: ["p1"] }}
+          hideProjectFilter
+          hideOnboardingStatusFilter
+          hideCreTeamFilter
+          showSeverityFilter
+          typeFilterLabel="Work item type"
+        />
+      </MemoryRouter>,
+    );
+    expect(casesFilterBarPropsSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        showSeverityFilter: true,
+        hideOnboardingStatusFilter: true,
+        hideCreTeamFilter: true,
+      }),
+    );
+  });
+
+  it("does not force-clear a chosen severity out of the query when showSeverityFilter is overridden true", () => {
+    render(
+      <MemoryRouter initialEntries={["/projects/p1?severities=S1"]}>
+        <CsmIssuesView
+          entityNoun="work items"
+          lockedFilters={{ projects: ["p1"] }}
+          showSeverityFilter
+        />
+      </MemoryRouter>,
+    );
+    expect(useGetCsmCasesMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ severities: ["S1"] }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
     );
   });
 });
