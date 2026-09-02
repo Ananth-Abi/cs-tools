@@ -1368,16 +1368,18 @@ func TestPatchCase(t *testing.T) {
 		var (
 			commentCaseID string
 			commentBody   []byte
-			commentCalled bool
 		)
+		commentCalled := make(chan struct{})
 		client := &mockEntityCaseClient{
+			// No prior autoclosureStateTime (getCaseFn unset -> default "{}"), so the
+			// new hold date always counts as a change here.
 			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
 				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
 			},
 			createCaseCommentFn: func(_ context.Context, caseID string, body []byte) ([]byte, error) {
-				commentCalled = true
 				commentCaseID = caseID
 				commentBody = body
+				close(commentCalled)
 				return []byte(`{"id":"wn-1"}`), nil
 			},
 		}
@@ -1389,7 +1391,11 @@ func TestPatchCase(t *testing.T) {
 
 		assertStatus(t, w, http.StatusOK)
 
-		if !commentCalled {
+		// The work note is recorded fire-and-forget in a goroutine so it never delays
+		// the PATCH response; wait for it (bounded) rather than asserting immediately.
+		select {
+		case <-commentCalled:
+		case <-time.After(2 * time.Second):
 			t.Fatal("expected CreateCaseComment to be called after a successful autocloseHoldUntil PATCH")
 		}
 		if commentCaseID != testCaseID {
@@ -1409,6 +1415,34 @@ func TestPatchCase(t *testing.T) {
 		wantContent := "Please note that this case is on-hold until 2026-08-01, hence it will not go through the auto closure process. It will be eligible for auto-closure again after this date passes, or if the case state is changed to 'Waiting on WSO2'."
 		if note.Content != wantContent {
 			t.Errorf("comment content = %q, want %q", note.Content, wantContent)
+		}
+	})
+
+	t.Run("autocloseHoldUntil PATCH does not record a duplicate work note when the hold date is unchanged", func(t *testing.T) {
+		commentCalled := false
+		client := &mockEntityCaseClient{
+			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"id":"` + testCaseID + `","autoclosureStateTime":"2026-08-01T00:00:00Z"}`), nil
+			},
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				commentCalled = true
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		// Give a would-be goroutine a moment to run; there should be none to wait for.
+		time.Sleep(100 * time.Millisecond)
+		if commentCalled {
+			t.Error("expected no work note for a PATCH that resends the existing hold date")
 		}
 	})
 

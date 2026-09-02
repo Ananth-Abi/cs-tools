@@ -1107,6 +1107,25 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The auto-closure hold work note (below) must only fire for an actual change in
+	// the hold date, not for a retry or a no-op PATCH that resends the existing value —
+	// otherwise every duplicate request pollutes the case's activity feed with an
+	// identical note. Read the prior value before the PATCH; after it, the case
+	// already reflects the new value and there'd be nothing to diff against.
+	var priorHoldDate string
+	if patchErr == nil && patch.AutocloseHoldUntil != nil {
+		if current, err := h.entity.GetCase(r.Context(), caseID); err != nil {
+			slog.WarnContext(r.Context(), "entity GetCase failed reading prior autoclose hold date; proceeding without dedup", "userID", user.UserID, "caseID", caseID, "err", err)
+		} else {
+			var currentCase struct {
+				AutoclosureStateTime *string `json:"autoclosureStateTime"`
+			}
+			if err := json.Unmarshal(current, &currentCase); err == nil && currentCase.AutoclosureStateTime != nil {
+				priorHoldDate = formatHoldDate(*currentCase.AutoclosureStateTime)
+			}
+		}
+	}
+
 	result, err := h.entity.PatchCase(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity PatchCase failed", "userID", user.UserID, "caseID", caseID, "err", err)
@@ -1117,13 +1136,32 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 	// Setting/extending the auto-closure hold has no visible trail of its own on the
 	// case (unlike the legacy ticketing UI's equivalent action, which records a work
 	// note). Record one here so CS engineers can see when a hold was set/extended and
-	// until when. Best-effort: the hold PATCH above already succeeded and must not be
-	// rolled back or fail the request just because this secondary write-note fails.
-	if patchErr == nil && patch.AutocloseHoldUntil != nil {
-		h.recordAutocloseHoldWorkNote(r.Context(), user, caseID, *patch.AutocloseHoldUntil)
+	// until when. Best-effort and fire-and-forget: the hold PATCH above already
+	// succeeded, so this secondary write must not delay the response or fail/roll back
+	// the request if it errors. Detached from the request context (which is canceled
+	// once the handler returns) and bounded by its own timeout instead.
+	if patchErr == nil && patch.AutocloseHoldUntil != nil && formatHoldDate(*patch.AutocloseHoldUntil) != priorHoldDate {
+		holdUntil := *patch.AutocloseHoldUntil
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			h.recordAutocloseHoldWorkNote(ctx, user, caseID, holdUntil)
+		}()
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// formatHoldDate renders an auto-closure hold timestamp (RFC3339, as sent by the
+// FE or read back from the entity service) as the date-only form CS engineers see
+// in the UI and in the work note, since the hold is date-granularity. Falls back
+// to the raw input when it doesn't parse, so an already-invalid value is not
+// silently dropped from the comparison/note.
+func formatHoldDate(raw string) string {
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return t.Format("2006-01-02")
+	}
+	return raw
 }
 
 // recordAutocloseHoldWorkNote adds an internal work note documenting an
@@ -1132,12 +1170,7 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 // logged, never surfaced to the caller, since the primary hold PATCH already
 // succeeded by the time this runs.
 func (h *CaseHandler) recordAutocloseHoldWorkNote(ctx context.Context, user *middleware.UserInfo, caseID, holdUntil string) {
-	displayDate := holdUntil
-	if t, err := time.Parse(time.RFC3339, holdUntil); err == nil {
-		displayDate = t.Format("2006-01-02")
-	}
-
-	note := "Please note that this case is on-hold until " + displayDate +
+	note := "Please note that this case is on-hold until " + formatHoldDate(holdUntil) +
 		", hence it will not go through the auto closure process. It will be eligible " +
 		"for auto-closure again after this date passes, or if the case state is changed " +
 		"to 'Waiting on WSO2'."
