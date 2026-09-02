@@ -27,6 +27,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
@@ -1076,10 +1077,12 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 
 	// Validate state transition and workState guard before forwarding to the entity service.
 	var patch struct {
-		State     *string `json:"state"`
-		WorkState *string `json:"workState"`
+		State              *string `json:"state"`
+		WorkState          *string `json:"workState"`
+		AutocloseHoldUntil *string `json:"autocloseHoldUntil"`
 	}
-	if err := json.Unmarshal(body, &patch); err == nil && (patch.State != nil || patch.WorkState != nil) {
+	patchErr := json.Unmarshal(body, &patch)
+	if patchErr == nil && (patch.State != nil || patch.WorkState != nil) {
 		current, err := h.entity.GetCase(r.Context(), caseID)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "entity GetCase failed during state validation", "userID", user.UserID, "caseID", caseID, "err", err)
@@ -1111,7 +1114,46 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Setting/extending the auto-closure hold has no visible trail of its own on the
+	// case (unlike the legacy ticketing UI's equivalent action, which records a work
+	// note). Record one here so CS engineers can see when a hold was set/extended and
+	// until when. Best-effort: the hold PATCH above already succeeded and must not be
+	// rolled back or fail the request just because this secondary write-note fails.
+	if patchErr == nil && patch.AutocloseHoldUntil != nil {
+		h.recordAutocloseHoldWorkNote(r.Context(), user, caseID, *patch.AutocloseHoldUntil)
+	}
+
 	writeJSON(w, http.StatusOK, result)
+}
+
+// recordAutocloseHoldWorkNote adds an internal work note documenting an
+// auto-closure hold set/extension, mirroring the work note the legacy
+// ticketing UI's equivalent action used to write. Best-effort: failures are
+// logged, never surfaced to the caller, since the primary hold PATCH already
+// succeeded by the time this runs.
+func (h *CaseHandler) recordAutocloseHoldWorkNote(ctx context.Context, user *middleware.UserInfo, caseID, holdUntil string) {
+	displayDate := holdUntil
+	if t, err := time.Parse(time.RFC3339, holdUntil); err == nil {
+		displayDate = t.Format("2006-01-02")
+	}
+
+	note := "Please note that this case is on-hold until " + displayDate +
+		", hence it will not go through the auto closure process. It will be eligible " +
+		"for auto-closure again after this date passes, or if the case state is changed " +
+		"to 'Waiting on WSO2'."
+
+	body, err := json.Marshal(map[string]string{
+		"type":    "work_note",
+		"content": note,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to build autoclose hold work note body", "userID", user.UserID, "caseID", caseID, "err", err)
+		return
+	}
+
+	if _, err := h.entity.CreateCaseComment(ctx, caseID, body); err != nil {
+		slog.WarnContext(ctx, "failed to record autoclose hold work note", "userID", user.UserID, "caseID", caseID, "err", err)
+	}
 }
 
 // GetCase handles GET /cases/{id}.

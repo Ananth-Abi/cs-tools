@@ -1364,6 +1364,96 @@ func TestPatchCase(t *testing.T) {
 		}
 	})
 
+	t.Run("autocloseHoldUntil PATCH also records a work note documenting the hold", func(t *testing.T) {
+		var (
+			commentCaseID string
+			commentBody   []byte
+			commentCalled bool
+		)
+		client := &mockEntityCaseClient{
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, caseID string, body []byte) ([]byte, error) {
+				commentCalled = true
+				commentCaseID = caseID
+				commentBody = body
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+
+		if !commentCalled {
+			t.Fatal("expected CreateCaseComment to be called after a successful autocloseHoldUntil PATCH")
+		}
+		if commentCaseID != testCaseID {
+			t.Errorf("comment posted against caseID %q, want %q", commentCaseID, testCaseID)
+		}
+
+		var note struct {
+			Type    string `json:"type"`
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal(commentBody, &note); err != nil {
+			t.Fatalf("decode comment body: %v; raw: %s", err, commentBody)
+		}
+		if note.Type != "work_note" {
+			t.Errorf("comment type = %q, want %q", note.Type, "work_note")
+		}
+		wantContent := "Please note that this case is on-hold until 2026-08-01, hence it will not go through the auto closure process. It will be eligible for auto-closure again after this date passes, or if the case state is changed to 'Waiting on WSO2'."
+		if note.Content != wantContent {
+			t.Errorf("comment content = %q, want %q", note.Content, wantContent)
+		}
+	})
+
+	t.Run("autocloseHoldUntil PATCH still succeeds when the work-note comment call fails", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				return nil, errors.New("entity service unavailable")
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("PATCH without autocloseHoldUntil does not record a work note", func(t *testing.T) {
+		commentCalled := false
+		client := &mockEntityCaseClient{
+			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
+				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","subject":"New subject text"}}`), nil
+			},
+			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				commentCalled = true
+				return []byte(`{"id":"wn-1"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"subject":"New subject text"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.PatchCase(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		if commentCalled {
+			t.Error("expected CreateCaseComment not to be called when autocloseHoldUntil is absent from the PATCH")
+		}
+	})
+
 	t.Run("GetCase failure during state validation is mapped correctly", func(t *testing.T) {
 		for _, tc := range upstreamErrorsGeneric("Failed to retrieve current case state.") {
 			t.Run(tc.name, func(t *testing.T) {
