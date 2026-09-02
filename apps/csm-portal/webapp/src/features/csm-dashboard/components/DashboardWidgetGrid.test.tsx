@@ -120,7 +120,7 @@ describe("DashboardWidgetGrid", () => {
     // regardless of array position, so reordering this config array had no
     // visible effect. This asserts the fix: DOM order follows array order.
     renderGrid([
-      makeWidget({ widgetId: "trend_widget", shape: "bar" }),
+      makeWidget({ widgetId: "trend_widget", shape: "bar", groupBy: { field: "status" } }),
       makeWidget({ widgetId: "list_widget", shape: "list" }),
       makeWidget({ widgetId: "count_widget", shape: "count" }),
     ]);
