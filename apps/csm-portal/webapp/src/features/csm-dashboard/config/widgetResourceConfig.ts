@@ -60,6 +60,7 @@ import { writeChangeRequestFiltersToUrl } from "@features/csm-operations/utils/c
 import { taskStateLabel } from "@features/csm-cases/utils/taskState";
 import type { BeTaskState } from "@api/backend/types";
 import {
+  appendWidgetTitleParam,
   buildWidgetPreviewHref,
   isAnyOfBranchArray,
 } from "@features/csm-dashboard/utils/widgetPreviewUrl";
@@ -448,13 +449,25 @@ function securityCenterHref(tab: string, params?: URLSearchParams): string {
  * output — always just this one type — doesn't need to be (and isn't)
  * dropped here; it's simply redundant with what the page already locks.
  */
-function caseTypeListHref(basePath: string, filters: Record<string, unknown>): string {
+function caseTypeListHref(
+  basePath: string,
+  filters: Record<string, unknown>,
+  displayName?: string,
+): string {
   const full: CasesFilters = {
     ...DEFAULT_CASES_FILTERS,
     ...translateCaseDashboardFilters(filters),
   };
   const qs = writeCasesFiltersToUrl(full).toString();
-  return qs ? `${basePath}?${qs}` : basePath;
+  const href = qs ? `${basePath}?${qs}` : basePath;
+  // `displayName`, when given, is appended as WIDGET_TITLE_PARAM so the
+  // destination page (a real, permanent nav page with its own hardcoded
+  // heading -- see CsmEngagementsPage.tsx) can show the originating
+  // widget's own name instead (digiops-cs#2914) -- see
+  // appendWidgetTitleParam's own doc comment for why this is a separate,
+  // cosmetic-only param from every CasesFilters field this function
+  // otherwise writes.
+  return appendWidgetTitleParam(href, displayName);
 }
 
 /**
@@ -659,7 +672,10 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     secondaryLabel: stateSecondaryLabel,
     buildHref: (filters, ctx) =>
       caseFamilyBuildHref("cases", filters, ctx, () =>
-        casesHref(translateCaseDashboardFilters(filters)),
+        appendWidgetTitleParam(
+          casesHref(translateCaseDashboardFilters(filters)),
+          ctx?.displayName,
+        ),
       ),
     icon: Briefcase,
     iconColor: "primary",
@@ -749,7 +765,9 @@ export const WIDGET_RESOURCE_CONFIG: Record<
     primaryLabel: numberSubjectLabel,
     secondaryLabel: stateSecondaryLabel,
     buildHref: (filters, ctx) =>
-      caseFamilyBuildHref("engagements", filters, ctx, () => caseTypeListHref("/engagements", filters)),
+      caseFamilyBuildHref("engagements", filters, ctx, () =>
+        caseTypeListHref("/engagements", filters, ctx?.displayName),
+      ),
     icon: Handshake,
     iconColor: "secondary",
     previewSlug: "engagements",
