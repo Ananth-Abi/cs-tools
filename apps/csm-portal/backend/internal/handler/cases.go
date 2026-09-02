@@ -1117,10 +1117,19 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		if current, err := h.entity.GetCase(r.Context(), caseID); err != nil {
 			slog.WarnContext(r.Context(), "entity GetCase failed reading prior autoclose hold date; proceeding without dedup", "userID", user.UserID, "caseID", caseID, "err", err)
 		} else {
+			// autoclosureStateTime is only "the hold date" while the case is actually
+			// ON_HOLD — for every other autoclosureStep it's when that other stage next
+			// advances, a value unrelated to any hold. Without gating on the step, the
+			// very first hold on a case (whose autoclosureStateTime already holds some
+			// unrelated staged-advance date matching the FE's pre-filled picker default)
+			// gets misread as "unchanged" and its note silently skipped.
 			var currentCase struct {
+				AutoclosureStep      *string `json:"autoclosureStep"`
 				AutoclosureStateTime *string `json:"autoclosureStateTime"`
 			}
-			if err := json.Unmarshal(current, &currentCase); err == nil && currentCase.AutoclosureStateTime != nil {
+			if err := json.Unmarshal(current, &currentCase); err == nil &&
+				currentCase.AutoclosureStep != nil && *currentCase.AutoclosureStep == "ON_HOLD" &&
+				currentCase.AutoclosureStateTime != nil {
 				priorHoldDate = formatHoldDate(*currentCase.AutoclosureStateTime)
 			}
 		}
@@ -1138,12 +1147,16 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 	// note). Record one here so CS engineers can see when a hold was set/extended and
 	// until when. Best-effort and fire-and-forget: the hold PATCH above already
 	// succeeded, so this secondary write must not delay the response or fail/roll back
-	// the request if it errors. Detached from the request context (which is canceled
-	// once the handler returns) and bounded by its own timeout instead.
+	// the request if it errors. context.WithoutCancel keeps the request-scoped values
+	// the entity client needs (x-user-id-token, correlation id) while detaching from
+	// the request's own cancellation, which fires as soon as the handler returns —
+	// a bare context.Background() would drop those values and the note would reach
+	// the entity service unattributed.
 	if patchErr == nil && patch.AutocloseHoldUntil != nil && formatHoldDate(*patch.AutocloseHoldUntil) != priorHoldDate {
 		holdUntil := *patch.AutocloseHoldUntil
+		detached := context.WithoutCancel(r.Context())
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			ctx, cancel := context.WithTimeout(detached, 15*time.Second)
 			defer cancel()
 			h.recordAutocloseHoldWorkNote(ctx, user, caseID, holdUntil)
 		}()
