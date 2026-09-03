@@ -224,12 +224,14 @@ func TestEmailNotifier_Send_SkipsWhenNoValidRecipientsRemain(t *testing.T) {
 	}
 }
 
-// TestEmailNotifier_Send_ConvertsBodyToHTML verifies the plain-text Body
-// (blank-line paragraph breaks, as every existing notice template uses) is
-// converted to simple HTML within the branded wrapper — line breaks become
-// <br>, and any HTML-special characters in the content are escaped rather
-// than passed through raw.
-func TestEmailNotifier_Send_ConvertsBodyToHTML(t *testing.T) {
+// TestEmailNotifier_Send_InternalNoticeStaysPlainHTML verifies an
+// internal-only notice (no Customer in Recipients — the 90/60/30/15/7/0
+// day-count/suspension reminders, and the no-business-contact notice) is
+// NOT wrapped in the branded shell — confirmed against a real received
+// example that the internal notice must stay plain text (converted to
+// simple HTML only: escaped, newlines to <br>), matching its own reference
+// design, distinct from the customer-facing one.
+func TestEmailNotifier_Send_InternalNoticeStaysPlainHTML(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
@@ -246,25 +248,27 @@ func TestEmailNotifier_Send_ConvertsBodyToHTML(t *testing.T) {
 	if len(sender.calls) != 1 {
 		t.Fatalf("SendEmail calls = %d, want 1", len(sender.calls))
 	}
-	const wantBody = "Dear Team<br>\n<br>\nProject: A &amp; B &lt;Special&gt;"
-	got := sender.calls[0].htmlBody
-	if !strings.Contains(got, wantBody) {
-		t.Errorf("htmlBody = %q, want it to contain %q", got, wantBody)
+	const want = "Dear Team<br>\n<br>\nProject: A &amp; B &lt;Special&gt;"
+	if got := sender.calls[0].htmlBody; got != want {
+		t.Errorf("htmlBody = %q, want %q (no branded wrapper on an internal-only notice)", got, want)
 	}
 }
 
-// TestEmailNotifier_Send_WrapsBodyInBrandedTemplate verifies the branded
-// WSO2 shell (logo, orange accent border, footer disclaimer) wraps every
-// outgoing email, per Chamara's real examples — not just the plain
-// paragraph-to-<br> conversion on its own.
-func TestEmailNotifier_Send_WrapsBodyInBrandedTemplate(t *testing.T) {
+// TestEmailNotifier_Send_CustomerNoticeGetsBrandedTemplate verifies the
+// branded WSO2 shell (logo, orange accent border, footer disclaimer) wraps
+// only the customer-facing notice — the one Recipients.Customer being
+// non-nil actually identifies — per Chamara's real examples.
+func TestEmailNotifier_Send_CustomerNoticeGetsBrandedTemplate(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
 	err := n.Send(context.Background(), Notice{
-		Subject:    "subject",
-		Body:       "body text",
-		Recipients: Recipients{AccountOwner: recipients.Contact{Email: "am@wso2.com"}},
+		Subject: "subject",
+		Body:    "body text",
+		Recipients: Recipients{
+			AccountOwner: recipients.Contact{Email: "am@wso2.com"},
+			Customer:     &recipients.Contact{Email: "customer@wso2.com"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Send() error = %v, want nil", err)
@@ -274,8 +278,8 @@ func TestEmailNotifier_Send_WrapsBodyInBrandedTemplate(t *testing.T) {
 	}
 	got := sender.calls[0].htmlBody
 
-	if !strings.Contains(got, "data:image/png;base64,") {
-		t.Error("htmlBody missing the embedded WSO2 logo (data:image/png;base64,...)")
+	if !strings.Contains(got, "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.webp") {
+		t.Error("htmlBody missing the WSO2 logo <img> reference")
 	}
 	if !strings.Contains(got, "This automated message was sent by WSO2's support system. Please do not reply to this email.") {
 		t.Error("htmlBody missing the standard footer disclaimer")

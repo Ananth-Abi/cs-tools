@@ -18,35 +18,29 @@ package notify
 
 import (
 	"context"
-	_ "embed"
-	"encoding/base64"
 	"fmt"
 	"html"
 	"log/slog"
 	"strings"
 )
 
-// wso2LogoPNG is the real WSO2 logo (circular pulse icon + wordmark),
-// embedded directly into the compiled binary so it ships with the code —
-// no external asset host, no broken image if that host is ever unreachable
-// from wherever the email is eventually read. Provided by Chamara,
-// confirmed as the same mark used in the real notice examples this
-// template is built from.
-//
-//go:embed assets/wso2-logo.png
-var wso2LogoPNG []byte
+// wso2LogoURL points at WSO2's own public CDN copy of the logo (circular
+// pulse icon + wordmark) used in real received notice examples — confirmed
+// pixel-identical to the file Chamara provided directly. A hosted URL, not
+// an embedded data: URI, deliberately: most email clients (confirmed
+// against a real Gmail inbox — the data: URI approach rendered as a broken
+// image icon there) refuse to render inline base64 images in received
+// mail, so the logo has to be fetched from a real reachable address like
+// any other web image.
+const wso2LogoURL = "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.webp"
 
-// wso2LogoDataURI is wso2LogoPNG pre-encoded as a data: URI once at
-// package init, ready to drop straight into an <img src="...">. Computed
-// here rather than per-send since the underlying bytes never change.
-var wso2LogoDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(wso2LogoPNG)
-
-// emailHTMLTemplate is the branded shell every outgoing notice is wrapped
-// in — logo header, orange accent border around the message body, and the
-// standard disclaimer footer — matching real examples Chamara shared
-// (screenshots of actual received notices), not a from-scratch design.
-// Two placeholders: the logo's data URI, then the notice body already
-// converted to simple HTML by plainTextToHTML.
+// emailHTMLTemplate is the branded shell the customer-facing notice is
+// wrapped in — logo header, orange accent border around the message body,
+// and the standard disclaimer footer — matching real examples Chamara
+// shared (screenshots of actual received notices), not a from-scratch
+// design. The internal notice does not use this — see Send. Two
+// placeholders: the logo URL, then the notice body already converted to
+// simple HTML by plainTextToHTML.
 const emailHTMLTemplate = `<div style="background-color:#fdece2;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
   <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:4px;overflow:hidden;">
     <div style="padding:24px 32px 16px 32px;">
@@ -110,7 +104,15 @@ func (n *EmailNotifier) Send(ctx context.Context, notice Notice) error {
 		return nil
 	}
 
-	htmlBody := renderEmailHTML(notice.Body)
+	htmlBody := plainTextToHTML(notice.Body)
+	if notice.Recipients.Customer != nil {
+		// Only the customer-facing notice gets the branded WSO2 shell — the
+		// internal notice (Account Owner/Renewal Manager/Technical Owner,
+		// no Customer) stays plain, matching its own separate reference
+		// design. Confirmed explicitly against real examples: applying the
+		// branded look to both was wrong.
+		htmlBody = renderEmailHTML(notice.Body)
+	}
 
 	if err := n.Sender.SendEmail(ctx, to, cc, notice.Subject, htmlBody); err != nil {
 		return fmt.Errorf("send email: %w", err)
@@ -173,9 +175,11 @@ func (n *EmailNotifier) filterRecipients(emails []string) []string {
 
 // renderEmailHTML wraps a notice's plain-text Body in the branded WSO2
 // email shell (emailHTMLTemplate) — logo, orange accent border, footer
-// disclaimer — matching real notice examples, not a bare text conversion.
+// disclaimer — matching real customer-facing notice examples. Used by Send
+// only when notice.Recipients.Customer is non-nil; the internal notice
+// stays on plainTextToHTML alone, per its own separate reference design.
 func renderEmailHTML(body string) string {
-	return fmt.Sprintf(emailHTMLTemplate, wso2LogoDataURI, plainTextToHTML(body))
+	return fmt.Sprintf(emailHTMLTemplate, wso2LogoURL, plainTextToHTML(body))
 }
 
 // plainTextToHTML converts a plain-text notice Body (every existing
