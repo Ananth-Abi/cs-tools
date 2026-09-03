@@ -33,7 +33,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -73,8 +75,19 @@ type Client struct {
 // NewClient constructs a Client that authenticates against the email
 // notification service using the OAuth2 client credentials grant type,
 // mirroring internal/entity.NewClient's identical setup for
-// csm-integration-service.
-func NewClient(cfg Config) *Client {
+// csm-integration-service. Returns an error if TokenURL or BaseURL isn't
+// https:// — the token request carries the real ClientSecret, and BaseURL
+// carries real notice content on every call, neither of which should ever
+// travel in cleartext (CodeRabbit, PR #1657). internal/entity.Client has
+// the same gap, not yet fixed there — see CLAUDE.md.
+func NewClient(cfg Config) (*Client, error) {
+	if err := requireHTTPS("TokenURL", cfg.TokenURL); err != nil {
+		return nil, err
+	}
+	if err := requireHTTPS("BaseURL", cfg.BaseURL); err != nil {
+		return nil, err
+	}
+
 	cc := clientcredentials.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
@@ -83,14 +96,25 @@ func NewClient(cfg Config) *Client {
 		// unlike csm-integration-service's, requires none.
 	}
 
-	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient,
-		&http.Client{Timeout: tokenFetchTimeout})
+	// The redirect protection below must go on *this* client, not the one
+	// cc.Client returns — this is the one that actually performs the
+	// token-fetch request (POSTing the real client secret to TokenURL).
+	// A version of this fix once applied CheckRedirect only to the
+	// client returned below, leaving this one — the one that matters for
+	// the secret itself — unprotected.
+	tokenHTTPClient := &http.Client{
+		Timeout: tokenFetchTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	tokenCtx := context.WithValue(context.Background(), oauth2.HTTPClient, tokenHTTPClient)
 	httpClient := cc.Client(tokenCtx)
 	httpClient.Timeout = 25 * time.Second
-	// Same protection as internal/entity.Client: oauth2.Transport
-	// reattaches the Authorization bearer token to every request it
-	// processes, including a followed redirect to a different host.
-	// Refuse to follow so the token can never leak to a redirect target.
+	// Same protection for regular API calls: oauth2.Transport reattaches
+	// the Authorization bearer token to every request it processes,
+	// including a followed redirect to a different host. Refuse to
+	// follow so the token can never leak to a redirect target.
 	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
@@ -99,7 +123,33 @@ func NewClient(cfg Config) *Client {
 		http:        httpClient,
 		baseURL:     strings.TrimRight(cfg.BaseURL, "/"),
 		fromAddress: cfg.FromAddress,
+	}, nil
+}
+
+// requireHTTPS rejects a URL that doesn't use the https scheme — name is
+// the config field being checked, used only to make the error message
+// point at the right place. A loopback host (127.0.0.1, ::1, localhost)
+// is exempt even over plain http: that traffic never leaves the machine,
+// so the cleartext-interception risk this check exists for doesn't apply
+// — and it's exactly what every test in this package uses via
+// httptest.NewServer, which only ever binds to loopback.
+func requireHTTPS(name, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("emailservice: parse %s %q: %w", name, rawURL, err)
 	}
+	if u.Scheme == "https" || isLoopback(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf("emailservice: %s must use https, got %q", name, rawURL)
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // do executes an authenticated HTTP request against the email notification

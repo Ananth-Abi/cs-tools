@@ -49,8 +49,7 @@ type projectUpdater interface {
 // hold either *notify.LoggingNotifier or *notify.EmailNotifier in one
 // variable depending on SEND_REAL_EMAILS.
 type notifier interface {
-	Send(ctx context.Context, n notify.Notice) error
-	Delivers() bool
+	Send(ctx context.Context, n notify.Notice) (delivered bool, err error)
 }
 
 func main() {
@@ -85,13 +84,17 @@ func main() {
 
 	var ntf notifier = &notify.LoggingNotifier{Logger: slog.Default()}
 	if sendRealEmails {
-		emailClient := emailservice.NewClient(emailservice.Config{
+		emailClient, err := emailservice.NewClient(emailservice.Config{
 			BaseURL:      mustEnv("EMAIL_SERVICE_BASE_URL"),
 			TokenURL:     mustEnv("EMAIL_SERVICE_TOKEN_URL"),
 			ClientID:     mustEnv("EMAIL_SERVICE_CLIENT_ID"),
 			ClientSecret: mustEnv("EMAIL_SERVICE_CLIENT_SECRET"),
 			FromAddress:  mustEnv("EMAIL_SERVICE_FROM_ADDRESS"),
 		})
+		if err != nil {
+			slog.Error("invalid email service configuration", "err", err)
+			os.Exit(1)
+		}
 		ntf = &notify.EmailNotifier{
 			Sender:                 emailClient,
 			Logger:                 slog.Default(),

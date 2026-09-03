@@ -55,7 +55,7 @@ func TestEmailNotifier_Send_InternalOnlyGoesToTo(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "body",
 		Recipients: Recipients{
@@ -92,7 +92,7 @@ func TestEmailNotifier_Send_CustomerGoesToToInternalGoesToCC(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "body",
 		Recipients: Recipients{
@@ -124,7 +124,7 @@ func TestEmailNotifier_Send_OmitsEmptyEmails(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "body",
 		Recipients: Recipients{
@@ -156,7 +156,7 @@ func TestEmailNotifier_Send_FiltersNonWSO2RecipientsByDefault(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger()} // AllowNonWSO2Recipients defaults to false
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "body",
 		Recipients: Recipients{
@@ -183,7 +183,7 @@ func TestEmailNotifier_Send_AllowsNonWSO2RecipientsWhenExplicitlyEnabled(t *test
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "body",
 		Recipients: Recipients{
@@ -209,7 +209,7 @@ func TestEmailNotifier_Send_SkipsWhenNoValidRecipientsRemain(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger()} // AllowNonWSO2Recipients: false
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "body",
 		Recipients: Recipients{
@@ -235,7 +235,7 @@ func TestEmailNotifier_Send_InternalNoticeStaysPlainHTML(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "Dear Team\n\nProject: A & B <Special>",
 		Recipients: Recipients{
@@ -262,7 +262,7 @@ func TestEmailNotifier_Send_CustomerNoticeGetsBrandedTemplate(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
 		Body:    "body text",
 		Recipients: Recipients{
@@ -289,6 +289,46 @@ func TestEmailNotifier_Send_CustomerNoticeGetsBrandedTemplate(t *testing.T) {
 	}
 }
 
+// TestEmailNotifier_Send_DoesNotLogRawRecipientAddresses verifies the
+// "email sent" log line never carries the actual to/cc email addresses —
+// real customer and internal-staff PII that shouldn't sit in the log
+// system any longer than necessary once this is genuinely sending to real
+// people. Recipient counts (not the addresses themselves) are enough to
+// debug/observe from logs alone.
+func TestEmailNotifier_Send_DoesNotLogRawRecipientAddresses(t *testing.T) {
+	sender := &mockEmailSender{}
+	h := &capturingHandler{}
+	n := &EmailNotifier{Sender: sender, Logger: slog.New(h), AllowNonWSO2Recipients: true}
+
+	const toAddr, ccAddr = "customer@wso2.example", "internal@wso2.example"
+	_, err := n.Send(context.Background(), Notice{
+		Subject: "subject",
+		Body:    "body",
+		Recipients: Recipients{
+			AccountOwner: recipients.Contact{Email: ccAddr},
+			Customer:     &recipients.Contact{Email: toAddr},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v, want nil", err)
+	}
+	if len(h.records) != 1 {
+		t.Fatalf("log records = %d, want 1", len(h.records))
+	}
+
+	var found bool
+	h.records[0].Attrs(func(a slog.Attr) bool {
+		if strings.Contains(a.Value.String(), toAddr) || strings.Contains(a.Value.String(), ccAddr) {
+			found = true
+			t.Errorf("log attribute %q = %q leaks a raw recipient address", a.Key, a.Value.String())
+		}
+		return true
+	})
+	if found {
+		t.Fatal("\"email sent\" log line must not contain raw recipient addresses")
+	}
+}
+
 // TestEmailNotifier_Send_PropagatesSenderError verifies a real send
 // failure surfaces as an error rather than being swallowed.
 func TestEmailNotifier_Send_PropagatesSenderError(t *testing.T) {
@@ -299,7 +339,7 @@ func TestEmailNotifier_Send_PropagatesSenderError(t *testing.T) {
 	}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
-	err := n.Send(context.Background(), Notice{
+	_, err := n.Send(context.Background(), Notice{
 		Subject:    "subject",
 		Body:       "body",
 		Recipients: Recipients{AccountOwner: recipients.Contact{Email: "am@wso2.com"}},
@@ -309,12 +349,49 @@ func TestEmailNotifier_Send_PropagatesSenderError(t *testing.T) {
 	}
 }
 
-// TestEmailNotifier_Delivers_ReturnsTrue distinguishes EmailNotifier from
-// LoggingNotifier for recordNoticeSent's actionSendEmailNotification
-// marker: this one genuinely attempts real delivery.
-func TestEmailNotifier_Delivers_ReturnsTrue(t *testing.T) {
-	n := &EmailNotifier{}
-	if !n.Delivers() {
-		t.Error("Delivers() = false, want true")
+// TestEmailNotifier_Send_ReportsDeliveredTrueOnRealSend verifies Send's
+// delivered return is true for a notice that genuinely reached the real
+// API — the per-call signal recordNoticeSent now relies on, replacing the
+// old blanket per-notifier Delivers() method.
+func TestEmailNotifier_Send_ReportsDeliveredTrueOnRealSend(t *testing.T) {
+	sender := &mockEmailSender{}
+	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
+
+	delivered, err := n.Send(context.Background(), Notice{
+		Subject:    "subject",
+		Body:       "body",
+		Recipients: Recipients{AccountOwner: recipients.Contact{Email: "am@wso2.com"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v, want nil", err)
+	}
+	if !delivered {
+		t.Error("delivered = false, want true for a notice that reached the real API")
+	}
+}
+
+// TestEmailNotifier_Send_ReportsDeliveredFalseWhenSkipped verifies Send's
+// delivered return is false — not an error, but not delivered either —
+// when every recipient gets filtered out. This is exactly the case
+// CodeRabbit flagged: recordNoticeSent must not record this window as
+// "SUCCESSFUL" just because EmailNotifier is, in general, a real-sending
+// notifier — this specific notice never reached anyone.
+func TestEmailNotifier_Send_ReportsDeliveredFalseWhenSkipped(t *testing.T) {
+	sender := &mockEmailSender{}
+	n := &EmailNotifier{Sender: sender, Logger: discardLogger()} // AllowNonWSO2Recipients: false
+
+	delivered, err := n.Send(context.Background(), Notice{
+		Subject:    "subject",
+		Body:       "body",
+		Recipients: Recipients{Customer: &recipients.Contact{Email: "customer@external.example"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v, want nil", err)
+	}
+	if delivered {
+		t.Error("delivered = true, want false — every recipient was filtered out, nothing was actually sent")
+	}
+	if len(sender.calls) != 0 {
+		t.Errorf("SendEmail calls = %d, want 0", len(sender.calls))
 	}
 }

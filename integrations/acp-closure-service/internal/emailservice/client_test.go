@@ -40,6 +40,54 @@ func tokenServer(t *testing.T) *httptest.Server {
 	return srv
 }
 
+// TestNewClient_RejectsInsecureTokenURL verifies NewClient refuses to
+// construct a Client whose TokenURL isn't https:// — the token request
+// carries the real ClientSecret, and an http:// endpoint would send it in
+// cleartext (CodeRabbit, PR #1657).
+func TestNewClient_RejectsInsecureTokenURL(t *testing.T) {
+	_, err := NewClient(Config{
+		BaseURL:      "https://email.example",
+		TokenURL:     "http://email.example/token",
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		FromAddress:  "no-reply@wso2.com",
+	})
+	if err == nil {
+		t.Fatal("NewClient() error = nil, want non-nil for an http:// TokenURL")
+	}
+}
+
+// TestNewClient_RejectsInsecureBaseURL mirrors the same check for BaseURL —
+// real notice content (project names, account names, customer emails)
+// flows through every request against this address.
+func TestNewClient_RejectsInsecureBaseURL(t *testing.T) {
+	_, err := NewClient(Config{
+		BaseURL:      "http://email.example",
+		TokenURL:     "https://email.example/token",
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		FromAddress:  "no-reply@wso2.com",
+	})
+	if err == nil {
+		t.Fatal("NewClient() error = nil, want non-nil for an http:// BaseURL")
+	}
+}
+
+// TestNewClient_AcceptsHTTPSURLs is the green counterpart — confirms the
+// validation doesn't false-positive on the correct, real configuration.
+func TestNewClient_AcceptsHTTPSURLs(t *testing.T) {
+	_, err := NewClient(Config{
+		BaseURL:      "https://email.example",
+		TokenURL:     "https://email.example/token",
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		FromAddress:  "no-reply@wso2.com",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil for valid https:// URLs", err)
+	}
+}
+
 // TestTokenFetchTimeout verifies that a stalled token endpoint fails requests
 // within the configured timeout rather than blocking indefinitely — mirrors
 // internal/entity's identical test, same underlying OAuth2 client-credentials
@@ -53,16 +101,19 @@ func TestTokenFetchTimeout(t *testing.T) {
 	tokenFetchTimeout = 100 * time.Millisecond
 	t.Cleanup(func() { tokenFetchTimeout = 10 * time.Second })
 
-	client := NewClient(Config{
+	client, err := NewClient(Config{
 		BaseURL:      tokenSrv.URL,
 		TokenURL:     tokenSrv.URL + "/token",
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
 		FromAddress:  "no-reply@wso2.com",
 	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
 
 	start := time.Now()
-	err := client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "subject", "<p>body</p>")
+	err = client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "subject", "<p>body</p>")
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -93,15 +144,18 @@ func TestSendEmail_Success(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{
+	client, err := NewClient(Config{
 		BaseURL:      upstream.URL,
 		TokenURL:     tokenSrv.URL,
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
 		FromAddress:  "no-reply@wso2.com",
 	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
 
-	err := client.SendEmail(context.Background(),
+	err = client.SendEmail(context.Background(),
 		[]string{"to@wso2.example"}, []string{"cc@wso2.example"},
 		"Test Subject", "<p>Test body</p>")
 	if err != nil {
@@ -138,15 +192,18 @@ func TestSendEmail_Success(t *testing.T) {
 // request, so a caller gets an immediate, specific error instead of a vague
 // upstream rejection.
 func TestSendEmail_RequiresAtLeastOneRecipient(t *testing.T) {
-	client := NewClient(Config{
-		BaseURL:      "http://unused.invalid",
-		TokenURL:     "http://unused.invalid",
+	client, err := NewClient(Config{
+		BaseURL:      "https://unused.invalid",
+		TokenURL:     "https://unused.invalid",
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
 		FromAddress:  "no-reply@wso2.com",
 	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
 
-	err := client.SendEmail(context.Background(), nil, nil, "subject", "<p>body</p>")
+	err = client.SendEmail(context.Background(), nil, nil, "subject", "<p>body</p>")
 	if err == nil {
 		t.Fatal("SendEmail() error = nil, want non-nil for zero recipients")
 	}
@@ -155,15 +212,18 @@ func TestSendEmail_RequiresAtLeastOneRecipient(t *testing.T) {
 // TestSendEmail_RequiresSubject mirrors the same client-side validation for
 // an empty subject.
 func TestSendEmail_RequiresSubject(t *testing.T) {
-	client := NewClient(Config{
-		BaseURL:      "http://unused.invalid",
-		TokenURL:     "http://unused.invalid",
+	client, err := NewClient(Config{
+		BaseURL:      "https://unused.invalid",
+		TokenURL:     "https://unused.invalid",
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
 		FromAddress:  "no-reply@wso2.com",
 	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
 
-	err := client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "", "<p>body</p>")
+	err = client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "", "<p>body</p>")
 	if err == nil {
 		t.Fatal("SendEmail() error = nil, want non-nil for empty subject")
 	}
@@ -180,15 +240,18 @@ func TestDoUpstreamError(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{
+	client, err := NewClient(Config{
 		BaseURL:      upstream.URL,
 		TokenURL:     tokenSrv.URL,
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
 		FromAddress:  "no-reply@wso2.com",
 	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
 
-	err := client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "subject", "<p>body</p>")
+	err = client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "subject", "<p>body</p>")
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -198,6 +261,48 @@ func TestDoUpstreamError(t *testing.T) {
 	}
 	if apiErr.StatusCode != http.StatusBadRequest {
 		t.Errorf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusBadRequest)
+	}
+}
+
+// TestTokenFetchRejectsRedirects verifies the redirect protection also
+// covers the token-fetch request itself, not just regular API calls. The
+// OAuth2 client-credentials flow POSTs the real client secret to TokenURL;
+// if that request follows a redirect, the secret could reach an
+// unintended host. A prior version of this fix applied CheckRedirect only
+// to the client returned for regular API calls, leaving the separate
+// client embedded in tokenCtx (the one that actually performs the
+// token-fetch request) unprotected.
+func TestTokenFetchRejectsRedirects(t *testing.T) {
+	var redirectTargetHit bool
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirectTargetHit = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"bearer","expires_in":3600}`))
+	}))
+	defer redirectTarget.Close()
+
+	tokenSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusFound)
+	}))
+	defer tokenSrv.Close()
+
+	client, err := NewClient(Config{
+		BaseURL:      "https://unused.invalid",
+		TokenURL:     tokenSrv.URL,
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+		FromAddress:  "no-reply@wso2.com",
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
+
+	err = client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "subject", "<p>body</p>")
+	if err == nil {
+		t.Fatal("expected error for a redirected token request, got nil")
+	}
+	if redirectTargetHit {
+		t.Error("redirect target was contacted; want the token fetch to never follow the redirect")
 	}
 }
 
@@ -221,15 +326,18 @@ func TestDoRejectsRedirects(t *testing.T) {
 	defer upstream.Close()
 
 	tokenSrv := tokenServer(t)
-	client := NewClient(Config{
+	client, err := NewClient(Config{
 		BaseURL:      upstream.URL,
 		TokenURL:     tokenSrv.URL,
 		ClientID:     "test-client",
 		ClientSecret: "test-secret",
 		FromAddress:  "no-reply@wso2.com",
 	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v, want nil", err)
+	}
 
-	err := client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "subject", "<p>body</p>")
+	err = client.SendEmail(context.Background(), []string{"to@wso2.example"}, nil, "subject", "<p>body</p>")
 	if err == nil {
 		t.Fatal("expected error for a 3xx upstream response, got nil")
 	}

@@ -86,14 +86,20 @@ type EmailNotifier struct {
 }
 
 // Send builds the to/cc recipient lists, converts Body to simple HTML, and
-// calls the real email service. If every recipient is filtered out (empty
-// email, or a non-WSO2 address with AllowNonWSO2Recipients false) — or
-// there were never any recipients to begin with — this logs and returns
-// nil rather than forcing a call the real API would reject anyway (it
-// requires at least one "to" address); a project with nobody to notify is
-// a legitimate, unremarkable state, not an error, matching the convention
-// already established throughout this codebase for absent recipients.
-func (n *EmailNotifier) Send(ctx context.Context, notice Notice) error {
+// calls the real email service. Reports whether this specific notice was
+// actually delivered — false (not an error) when every recipient got
+// filtered out (empty email, or a non-WSO2 address with
+// AllowNonWSO2Recipients false) or there were never any recipients to
+// begin with, rather than forcing a call the real API would reject anyway
+// (it requires at least one "to" address); a project with nobody to notify
+// is a legitimate, unremarkable state, not an error, matching the
+// convention already established throughout this codebase for absent
+// recipients. Callers (sweep.recordNoticeSent) use this per-call result,
+// not a blanket "this notifier type sends for real" signal — a customer
+// notice silently filtered out in staging must not be recorded as
+// delivered just because EmailNotifier is, in general, the real-sending
+// kind.
+func (n *EmailNotifier) Send(ctx context.Context, notice Notice) (bool, error) {
 	to, cc := recipientsToToCC(notice.Recipients)
 	to = n.filterRecipients(to)
 	cc = n.filterRecipients(cc)
@@ -101,7 +107,7 @@ func (n *EmailNotifier) Send(ctx context.Context, notice Notice) error {
 	if len(to) == 0 {
 		n.Logger.InfoContext(ctx, "email skipped: no valid recipients",
 			"projectID", notice.ProjectID, "window", notice.Window, "subject", notice.Subject)
-		return nil
+		return false, nil
 	}
 
 	htmlBody := plainTextToHTML(notice.Body)
@@ -115,23 +121,13 @@ func (n *EmailNotifier) Send(ctx context.Context, notice Notice) error {
 	}
 
 	if err := n.Sender.SendEmail(ctx, to, cc, notice.Subject, htmlBody); err != nil {
-		return fmt.Errorf("send email: %w", err)
+		return false, fmt.Errorf("send email: %w", err)
 	}
 
 	n.Logger.InfoContext(ctx, "email sent",
-		"projectID", notice.ProjectID, "window", notice.Window, "subject", notice.Subject, "to", to, "cc", cc)
-	return nil
-}
-
-// Delivers reports true: unlike LoggingNotifier, EmailNotifier genuinely
-// attempts real delivery. This is a blanket, per-notifier signal, not a
-// per-notice one — recordNoticeSent has no way to know from this alone
-// whether a specific notice's recipients all happened to get filtered out
-// by the WSO2-only staging safeguard; that's a known, accepted imprecision
-// in the existing Delivers() contract, not something this method tries to
-// work around.
-func (n *EmailNotifier) Delivers() bool {
-	return true
+		"projectID", notice.ProjectID, "window", notice.Window, "subject", notice.Subject,
+		"toCount", len(to), "ccCount", len(cc))
+	return true, nil
 }
 
 // recipientsToToCC maps Recipients onto the real API's to/cc shape. Empty

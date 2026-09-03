@@ -297,6 +297,15 @@ wrong answer:
   testing against real data shows this role is rarely configured in
   practice regardless — most real resolutions land on `primary_contact` or
   `am_nudge`, not `business_contact`.
+- **`internal/entity.Client` doesn't validate its configured URLs use
+  `https`** — the same gap `internal/emailservice.Client.NewClient` was
+  given a fix for (CodeRabbit, PR #1657; see `requireHTTPS` there).
+  Deliberately not fixed here in the same PR — scoped out to keep that PR
+  focused on the email code it was actually about. `entity.Client` carries
+  the same category of risk (its `ClientSecret` flows through the same
+  kind of token request) and should get the equivalent check in its own
+  follow-up.
+
 ## Real email sending
 
 `notify.EmailNotifier` calls WSO2's internal email notification service
@@ -346,15 +355,32 @@ plain authenticated HTTP call.
   parameter is named `htmlBody`). `notify.plainTextToHTML` escapes special
   characters first (so a project/account name containing `&`, `<`, etc.
   can never break the resulting markup), then converts every newline to
-  `<br>` — deliberately simple, not a fully-templated HTML document; revisit
-  if Rashmika's team ever says the real service needs more than that.
-- **`EmailNotifier.Delivers()` always reports `true`** — a blanket,
-  per-notifier signal like `LoggingNotifier.Delivers()`'s blanket `false`,
-  not a per-notice one. It has no way to know a specific notice's
-  recipients all got filtered out by the WSO2-only safeguard; that's a
-  known, accepted imprecision in the existing `Delivers()` contract
-  (`recordNoticeSent`'s `actionSendEmailNotification` marker), not
-  something worth complicating the interface to fix.
+  `<br>`. The internal notice stops there — plain text, no further
+  wrapping, per its own confirmed reference design (real screenshots
+  Chamara shared). The customer-facing notice additionally gets wrapped in
+  `emailHTMLTemplate` (`renderEmailHTML`) — a real branded shell (WSO2
+  logo, orange accent border, footer disclaimer), also confirmed against
+  real received examples — only when `notice.Recipients.Customer != nil`.
+  The logo is a hosted URL (`wso2LogoURL`, WSO2's own public CDN), not an
+  embedded `data:` URI — confirmed via a real send that Gmail blocks
+  inline `data:` images in received mail.
+- **`notifier.Send` reports delivery per call, not per notifier.** The
+  interface is `Send(ctx, notice) (delivered bool, err error)` — no
+  separate `Delivers()` method. `LoggingNotifier.Send` always returns
+  `(false, nil)`; `EmailNotifier.Send` returns `(true, nil)` only when the
+  notice actually reached the real API, and `(false, nil)` when every
+  recipient got filtered out (e.g. the WSO2-only staging safeguard leaving
+  zero `to` addresses) — not an error, but not delivered either. This
+  replaced an earlier, blanket per-notifier `Delivers()` signal that had a
+  real bug (CodeRabbit, PR #1657): a customer notice silently filtered out
+  in staging was still recorded as `"SUCCESSFUL"` in
+  `suspensionProcessState`, since the blanket signal only reflected "is
+  this notifier type capable of real delivery," not "did this specific
+  notice actually go out." `sweep.notifyForWindow` now ANDs the delivered
+  result across every `Send` call it makes for a window (internal +
+  customer, or internal + nudge) before handing that combined result to
+  `recordNoticeSent` — a window is only recorded `"SUCCESSFUL"` if every
+  notice sent for it actually delivered.
 
 ## Testing conventions
 
