@@ -212,6 +212,12 @@ export type Message = {
   createdOnRaw?: string;
   showFeedbackActions?: boolean;
   showCreateCaseAction?: boolean;
+  /** Stable id of this assistant answer (from the WS `final` event), used to rate it. */
+  feedbackMessageId?: string;
+  /** The rating the user has given this answer, if any (+1 up / -1 down). */
+  feedbackRating?: 1 | -1 | null;
+  /** Reason tags chosen alongside the rating. Slugs, not labels. */
+  feedbackTags?: string[];
   isLoading?: boolean;
   isError?: boolean;
   slotState?: SlotState;
@@ -250,8 +256,47 @@ export type ChatWebSocketPayload =
   | {
       type: "token_increase_request";
       accountId: string;
+      /**
+       * Readable customer name for the admin notification, which otherwise
+       * addresses the account by sys_id. Display only — the id stays the key.
+       */
+      accountName?: string;
+      /**
+       * The signed-in user, for the admin notification and the audit trail. The
+       * portal proxy overwrites this from the authenticated session whenever it
+       * can, so treat it as a fallback rather than the source of truth.
+       */
+      requestedBy?: string;
       reason: string;
       limitType: "session" | "monthly";
+    }
+  | {
+      type: "feedback";
+      messageId: string;
+      rating: 1 | -1;
+      conversationId?: string;
+      accountId?: string;
+      comment?: string;
+      /**
+       * Predefined reason slugs from feedbackTags.ts. The backend validates
+       * against its own allow-list and drops anything it does not recognise.
+       */
+      tags?: string[];
+      projectId?: string;
+      /**
+       * Display labels so the analytics dashboard can show "Acme Corp / Billing"
+       * instead of a pair of sys_ids. Cosmetic only — the ids above stay the join
+       * keys, and the backend caps and sanitises these before storing them.
+       */
+      accountName?: string;
+      projectName?: string;
+      /**
+       * The chat's own reference as shown in the UI, e.g. CHAT000002755, so the
+       * analytics drill-down can name the conversation a rating came from rather
+       * than showing a raw id. Absent when this page was deep-linked or
+       * refreshed, since the reference arrives in router state.
+       */
+      conversationName?: string;
     };
 
 // Model type for chat WebSocket hook options.

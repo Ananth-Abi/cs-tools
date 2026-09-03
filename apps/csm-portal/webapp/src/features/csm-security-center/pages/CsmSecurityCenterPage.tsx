@@ -15,30 +15,55 @@
 // under the License.
 
 import { Box, Button, Typography } from "@wso2/oxygen-ui";
-import { Plus } from "@wso2/oxygen-ui-icons-react";
+import { ArrowLeft, Plus } from "@wso2/oxygen-ui-icons-react";
 import { type JSX } from "react";
-import SectionTabs from "@components/section-tabs/SectionTabs";
+import { useLocation } from "react-router";
 import CsmIssuesView from "@features/csm-cases/components/CsmIssuesView";
 import ProductVulnerabilitiesTab from "@features/csm-security-center/components/ProductVulnerabilitiesTab";
 import { useNavTransition } from "@hooks/useNavTransition";
-import { useQueryTabs } from "@hooks/useSectionTabs";
+import { usePathSectionTabs } from "@hooks/useSectionTabs";
 
 /**
  * Security Center landing — the home for the customer-security entities, split
- * into Security Reports (SRA) / Vulnerabilities tabs. The active tab lives in
- * the URL (`?tab=`) so the vulnerability detail page can link back to the right
- * tab, and the selection survives a refresh or share.
+ * into Security Reports (SRA) / Vulnerabilities tabs. The active tab is a real
+ * path segment (`/security-center/:tab`) so the vulnerability detail page can
+ * link back to the right tab, and the selection survives a refresh or share.
+ * See `usePathSectionTabs` and the `security-center` routes in App.tsx.
  *
  * Which tabs exist comes from the navigation tree, so a deployment can restrict
  * one through `CSM_PORTAL_FEATURE_OVERRIDES` without touching this page.
+ *
+ * The tab switch itself lives in the sidebar now (Security Center's
+ * submenu), not an in-page strip — `usePathSectionTabs` is kept only for its
+ * enabled/WIP-aware fallback reading the same real path segment
+ * (`/security-center/:tab`) the sidebar's submenu links navigate to.
  */
 export default function CsmSecurityCenterPage(): JSX.Element {
-  const tabs = useQueryTabs("security-center");
-  const activeTab = tabs.activeKey;
+  const { activeKey: activeTab } = usePathSectionTabs(
+    "security-center",
+    "/security-center",
+  );
   const navigate = useNavTransition();
+  // Set by a dashboard widget's click-through, since this page has no
+  // dashboard context of its own. The security-reports tab renders its own
+  // Back button instead (via CsmIssuesView, which reads this same state) —
+  // skip here to avoid a duplicate.
+  const backState = useLocation().state as { from?: string } | undefined;
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+      {backState?.from && activeTab !== "security-reports" && (
+        <Button
+          variant="text"
+          size="small"
+          startIcon={<ArrowLeft size={16} />}
+          onClick={() => navigate(backState.from as string)}
+          sx={{ alignSelf: "flex-start" }}
+        >
+          Back
+        </Button>
+      )}
+
       <Box>
         <Typography variant="h5">Security Center</Typography>
         <Typography variant="body2" color="text.secondary">
@@ -46,15 +71,15 @@ export default function CsmSecurityCenterPage(): JSX.Element {
         </Typography>
       </Box>
 
-      <SectionTabs {...tabs} ariaLabel="Security Center tabs" />
-
-      {activeTab === "security_reports" && (
+      {activeTab === "security-reports" && (
         <CsmIssuesView
           entityNoun="security reports"
           lockedFilters={{ caseTypes: ["security_report_analysis"] }}
           hideTypeFilter
           hideSeverityColumn
           detailBasePath="/security-center/security-reports"
+          enableColumnCustomization
+          columnsViewId="security-reports"
           actions={
             <Button
               variant="contained"

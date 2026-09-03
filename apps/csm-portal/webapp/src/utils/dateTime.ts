@@ -337,8 +337,26 @@ export function formatAbsoluteForUser(
 export function parseDateOnly(value: string): Date | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return Number.isNaN(date.getTime()) ? null : date;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (Number.isNaN(date.getTime())) return null;
+  // The Date constructor silently normalizes an out-of-range day/month instead
+  // of failing -- new Date(2026, 1, 31) (Feb 31) rolls forward to Mar 3, 2026
+  // rather than returning an invalid date. `workDate` (the main caller through
+  // formatRelativeDateOnly/formatDateOnlyForDisplay) is documented as
+  // "occasionally unparseable on real records", so this isn't hypothetical:
+  // silently accepting the rolled-over date would show the wrong calendar day
+  // instead of the "—"/null fallback every caller already handles.
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+  return date;
 }
 
 /**
@@ -359,6 +377,48 @@ export function formatDateOnlyForDisplay(
     month: "short",
     day: "numeric",
   }).format(date);
+}
+
+/**
+ * "YYYY-MM-DD" to a relative-day label ("Today", "Yesterday", "3d ago"), for a
+ * date-only field that has no time-of-day component at all (e.g. a time
+ * card's `workDate` — "the date the engineer picked in the log form").
+ *
+ * Deliberately NOT built on {@link formatRelativeTime}'s epoch-millisecond
+ * diff: that treats the value as a precise instant, which parses a date-only
+ * string as UTC midnight and can drift into the wrong calendar day (or a
+ * misleading "Xh ago") once compared against the viewer's local "now",
+ * depending on their timezone offset. This compares calendar days instead —
+ * both `value` and "today" parsed/rounded to local midnight via
+ * {@link parseDateOnly} — so "today" reads as "Today" all day regardless of
+ * the current hour or the viewer's zone, exactly like {@link isPastDateOnly}.
+ *
+ * `Math.round` (not a plain integer divide) absorbs the 23/25-hour day a DST
+ * transition can produce between two local-midnight instants.
+ *
+ * @param value - Date-only string ("YYYY-MM-DD"), or null/empty/unparseable.
+ * @param now - Reference "today", for tests; defaults to the current instant.
+ * @returns {string} A relative-day label, or "—" when `value` is missing or unparseable.
+ */
+export function formatRelativeDateOnly(
+  value: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (!value) return "—";
+  const date = parseDateOnly(value);
+  if (!date) return "—";
+
+  const dayMs = 24 * 60 * 60 * 1000;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(date);
+  target.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.round((today.getTime() - target.getTime()) / dayMs);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays === -1) return "Tomorrow";
+  return diffDays > 1 ? `${diffDays}d ago` : `${Math.abs(diffDays)}d from now`;
 }
 
 /** Local-midnight Date back to "YYYY-MM-DD", the inverse of {@link parseDateOnly}. */

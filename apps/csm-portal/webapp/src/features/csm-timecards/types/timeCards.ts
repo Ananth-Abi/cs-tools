@@ -32,9 +32,9 @@ export type TimeCardState =
 /**
  * The fixed activity buckets a time card splits its time across — the
  * activity categories from the Time Management requirement (ISSU-009).
- * Write-only: the backend accepts these on create (`timeAnalyzing`,
- * `timeSettingUp`, …) but never returns them on read, so they shape the
- * log-time form only, not {@link CsmTimeCard}.
+ * Shapes the log/edit-time form; also the shape `CsmTimeCard.breakdown` reads
+ * an existing card's minutes into (see `mapTimeCard` in `useTimeSheets.ts`),
+ * now that the backend is confirmed to echo these back on read.
  */
 export const ACTIVITY_KEYS = [
   "analysisDebugging",
@@ -56,16 +56,18 @@ export interface TimeCardApprover {
   name: string;
 }
 
-/** Issue-complexity options (the ServiceNow "Issue Complexity" field). Write-only. */
+/** Issue-complexity options (the ServiceNow "Issue Complexity" field). */
 export type IssueComplexity = "N/A" | "Low" | "Medium" | "High";
 
 /**
  * A time card as returned by `POST /time-cards/search` and the mutation
- * endpoints (the backend's `TimeCardView`). This is the complete set of
- * fields the backend ever returns for a card — `issueComplexity`,
- * `workLogComment`, the per-activity minute breakdown, and any lead comment
- * are accepted on write but never read back, so editing an existing card
- * isn't supported (it would silently blank those fields).
+ * endpoints (the backend's `TimeCardView`). `breakdown` and
+ * `issueComplexity` are confirmed live to round-trip: a card's per-activity
+ * minutes and issue complexity come back unchanged on the next search after
+ * being set, which is what makes editing an existing card (see
+ * `LogTimeCardDialog`'s edit mode) safe — prefilling the edit form from these
+ * fields shows the card's real current values, not stale zeros. A lead
+ * comment other than {@link rejectionReason} is still write-only/unconfirmed.
  */
 export interface CsmTimeCard {
   id: string;
@@ -115,6 +117,16 @@ export interface CsmTimeCard {
    * needs this to know which ones the signed-in lead can actually decide.
    */
   approvers?: TimeCardApprover[];
+  /** The engineer's own comment entered when submitting the card, as
+   * ServiceNow rich-text HTML — sanitize with `sanitizeRichTextHtml` before
+   * rendering. Absent on a card logged before this field was mapped. */
+  workLogComment?: string;
+  /** Per-activity minute breakdown — absent on a card logged before this
+   * field was mapped, otherwise always present alongside `totalMinutes`. */
+  breakdown?: ActivityBreakdown;
+  /** The "Issue Complexity" picked when the card was logged (or last
+   * edited). Absent on a card logged before this field was mapped. */
+  issueComplexity?: IssueComplexity;
 }
 
 /**
@@ -135,6 +147,24 @@ export interface CreateTimeCardInput {
   workLogComment: string;
   issueComplexity: IssueComplexity;
   approver: TimeCardApprover;
+}
+
+/**
+ * Payload to edit an already-submitted card's own content — the backend
+ * enforces submitter-only + `submitted`-state-only server-side (matching
+ * ServiceNow's own edit-in-place behavior), so this is only ever offered to
+ * the card's own submitter while it's still `submitted` (see `cardActions`).
+ * No `approver` field: the approver is shown read-only in the edit form
+ * (matching ServiceNow's own UX once a card is submitted) even though the
+ * backend would technically accept a change.
+ */
+export interface UpdateTimeCardInput {
+  cardId: string;
+  date: string;
+  breakdown: ActivityBreakdown;
+  billable: boolean;
+  workLogComment: string;
+  issueComplexity: IssueComplexity;
 }
 
 /** Payload for a lead's accept/reject decision. */

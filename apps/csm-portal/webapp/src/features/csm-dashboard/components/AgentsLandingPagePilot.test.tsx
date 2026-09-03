@@ -24,8 +24,27 @@ import { MemoryRouter } from "react-router";
 const getMock = vi.fn();
 const postMock = vi.fn();
 
+// A minimal stand-in for the real BackendApiError (see client.ts) — needed
+// purely so DashboardWidgetTile's own `instanceof BackendApiError` status
+// check (rendered underneath this page) has a real class to check against;
+// this suite doesn't itself assert on status-specific behavior. Declared via
+// `vi.hoisted` since `vi.mock`'s factory is itself hoisted above any
+// top-level `const`/`class` in this file.
+const { MockBackendApiError } = vi.hoisted(() => {
+  class MockBackendApiError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.name = "BackendApiError";
+      this.status = status;
+    }
+  }
+  return { MockBackendApiError };
+});
+
 vi.mock("@api/backend/client", () => ({
   useBackendApi: () => ({ get: getMock, post: postMock }),
+  BackendApiError: MockBackendApiError,
 }));
 // A `shape: "list"` tile renders through widgetListConfig.tsx, which pulls in
 // useTimeSheets.ts (time_card's mapper) — that module reads `window.config`

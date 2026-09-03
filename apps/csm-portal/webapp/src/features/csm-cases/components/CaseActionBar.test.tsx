@@ -14,12 +14,45 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
+import {
+  fireEvent,
+  render as rtlRender,
+  screen,
+} from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router";
 import "@testing-library/jest-dom/vitest";
+
+// CaseActionBar renders `UserRefLink` (assignee), which resolves an unknown
+// id through `useResolvedUserId`, which needs the real API client — same
+// approach as CaseMetaBand.test.tsx.
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({ post: vi.fn().mockResolvedValue({ users: [] }) }),
+}));
+
 import CaseActionBar from "@features/csm-cases/components/CaseActionBar";
 import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
 import type { CaseState } from "@features/csm-dashboard/types/abtDashboard";
+
+/**
+ * Local `render` override: every case in this file renders `CaseActionBar`,
+ * which (via `UserRefLink`) needs both a `QueryClientProvider` (for
+ * `useResolvedUserId`'s `useQuery`) and a router context (for the profile
+ * `<Link>`) — wrapping here keeps every existing `render(<CaseActionBar ... />)`
+ * call site unchanged.
+ */
+function render(ui: ReactElement): ReturnType<typeof rtlRender> {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return rtlRender(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
 
 /** A complete, minimal case-detail fixture; tests override state/nextStates. */
 const BASE_CASE: CsmCaseDetail = {
@@ -79,10 +112,14 @@ function caseInState(
 }
 
 describe("CaseActionBar — nextStates-driven buttons", () => {
-  it("renders one button per backend nextState, labelled by the target state", () => {
+  it("renders one menu item per backend nextState, labelled by the target state", () => {
     // The reported bug: a solution_proposed case returns
     // nextStates [closed, waiting_on_wso2] but only one button showed. Both
-    // must appear, each named after the backend state it moves into.
+    // must appear, each named after the backend state it moves into. With
+    // more than one reachable state the bar now consolidates them behind a
+    // single "Change state" trigger (see the "advisory close-gate" describe
+    // block below), so both are asserted as menu items, not top-level
+    // buttons.
     render(
       <CaseActionBar
         caseDetail={caseInState("solution_proposed", [
@@ -92,8 +129,9 @@ describe("CaseActionBar — nextStates-driven buttons", () => {
         onAction={() => {}}
       />,
     );
-    expect(screen.getByRole("button", { name: /wait on wso2/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^close$/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /change state/i }));
+    expect(screen.getByRole("menuitem", { name: /wait on wso2/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /^close$/i })).toBeInTheDocument();
   });
 
   it("shows exactly the transitions the backend permits, nothing more", () => {
@@ -106,10 +144,11 @@ describe("CaseActionBar — nextStates-driven buttons", () => {
         onAction={() => {}}
       />,
     );
-    expect(screen.getByRole("button", { name: /propose solution/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /request information/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /wait on wso2/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^close$/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /change state/i }));
+    expect(screen.getByRole("menuitem", { name: /propose solution/i })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /request information/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /wait on wso2/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /^close$/i })).not.toBeInTheDocument();
   });
 
   it("labels a target the same regardless of source state (no UI-invented verbs)", () => {
@@ -363,20 +402,42 @@ describe("CaseActionBar — create related case (closed-case reopen replacement)
   });
 });
 
-describe("CaseActionBar — unbuilt roadmap items stay disabled, not silently mock", () => {
-  // Create incident / Link to incident have no backend flow yet. They must
-  // never be clickable — a click that reaches onAction would surface a mock
-  // toast to a real user — and they must never depend on case state, since
-  // it isn't state that's missing, it's the feature itself.
-  const ROADMAP_ITEMS = [/create incident from case/i, /link to incident/i];
+describe("CaseActionBar — Create incident from case / Create service request (ISSU-021)", () => {
+  // Both now have a real backend flow (CsmCaseDetailPage.tsx dispatches
+  // "create_incident" and "create_service_request" to their respective
+  // create form's nav state), so they follow the same closed-case read-only
+  // gate as every other secondary item rather than staying permanently
+  // disabled. "Link to incident" used to be a third item here — it's been
+  // relocated to the Related tab's LinkedIncidentWidget, see that widget's
+  // own test file.
+  const ITEMS: [RegExp, string][] = [
+    [/create incident from case/i, "create_incident"],
+    [/create service request/i, "create_service_request"],
+  ];
 
-  it.each(ROADMAP_ITEMS)("keeps %s disabled and inert", (name) => {
+  it.each(ITEMS)(
+    "dispatches %s as a secondary action when the case is open",
+    (name, expectedAction) => {
+      const onAction = vi.fn();
+      render(
+        <CaseActionBar
+          caseDetail={caseInState("awaiting_info", ["waiting_on_wso2"])}
+          onAction={onAction}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /more/i }));
+      const item = screen.getByRole("menuitem", { name });
+      expect(item).not.toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(item);
+      expect(onAction).toHaveBeenCalledTimes(1);
+      expect(onAction).toHaveBeenCalledWith({ secondary: expectedAction });
+    },
+  );
+
+  it.each(ITEMS)("disables %s once the case is closed", (name) => {
     const onAction = vi.fn();
     render(
-      <CaseActionBar
-        caseDetail={caseInState("awaiting_info", ["waiting_on_wso2"])}
-        onAction={onAction}
-      />,
+      <CaseActionBar caseDetail={caseInState("closed", [])} onAction={onAction} />,
     );
     fireEvent.click(screen.getByRole("button", { name: /more/i }));
     const item = screen.getByRole("menuitem", { name });
@@ -399,7 +460,25 @@ describe("CaseActionBar — Raise internal Git issue is blocked on a closed case
     expect(onAction).not.toHaveBeenCalled();
   });
 
-  it("keeps it enabled for a non-closed case", () => {
+  it("keeps it enabled for a case in an SN-actionable state", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("waiting_on_wso2", ["awaiting_info"])}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /raise internal git issue/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "raise_git_issue" });
+  });
+
+  // SN's own gate (CaseGithubIssueUtils.isCaseActionable) does not include
+  // Awaiting info — mirrored here so the FE doesn't offer an action SN will
+  // 409 on.
+  it("disables the menu item while the case is awaiting info", () => {
     const onAction = vi.fn();
     render(
       <CaseActionBar
@@ -409,9 +488,9 @@ describe("CaseActionBar — Raise internal Git issue is blocked on a closed case
     );
     fireEvent.click(screen.getByRole("button", { name: /more/i }));
     const item = screen.getByRole("menuitem", { name: /raise internal git issue/i });
-    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    expect(item).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(item);
-    expect(onAction).toHaveBeenCalledWith({ secondary: "raise_git_issue" });
+    expect(onAction).not.toHaveBeenCalled();
   });
 });
 
@@ -455,11 +534,8 @@ describe("CaseActionBar — Hold auto-closure / Edit case details", () => {
   );
 });
 
-describe("CaseActionBar — Create task / Set fix ETA", () => {
-  const ITEMS: Array<[RegExp, string]> = [
-    [/create task/i, "create_task"],
-    [/set fix eta/i, "set_fix_eta"],
-  ];
+describe("CaseActionBar — Set fix ETA", () => {
+  const ITEMS: Array<[RegExp, string]> = [[/set fix eta/i, "set_fix_eta"]];
 
   it.each(ITEMS)("dispatches %s as a secondary action when the case is open", (name, key) => {
     const onAction = vi.fn();
@@ -483,6 +559,71 @@ describe("CaseActionBar — Create task / Set fix ETA", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /more/i }));
     const item = screen.getByRole("menuitem", { name });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+});
+
+describe("CaseActionBar — Request update (enabled only in Awaiting info / Solution proposed)", () => {
+  it("dispatches request_update when the case is awaiting info", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("awaiting_info", ["waiting_on_wso2"])}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /request update/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "request_update" });
+  });
+
+  it("dispatches request_update when the case has a proposed solution", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("solution_proposed", ["closed"])}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /request update/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "request_update" });
+  });
+
+  it.each<CaseState>(["work_in_progress", "waiting_on_wso2", "open", "closed"])(
+    "disables request_update while the case is %s, with an explanatory tooltip",
+    (state) => {
+      const onAction = vi.fn();
+      render(
+        <CaseActionBar caseDetail={caseInState(state, [])} onAction={onAction} />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: /more/i }));
+      const item = screen.getByRole("menuitem", { name: /request update/i });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      fireEvent.click(item);
+      expect(onAction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("disables request_update in an eligible state when the caller isn't the assigned engineer", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...caseInState("awaiting_info", ["waiting_on_wso2"]),
+          assigneeIsMe: false,
+        }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /request update/i });
     expect(item).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(item);
     expect(onAction).not.toHaveBeenCalled();
@@ -564,6 +705,83 @@ describe("CaseActionBar — Change severity is blocked on a closed case", () => 
     expect(item).not.toHaveAttribute("aria-disabled", "true");
     fireEvent.click(item);
     expect(onAction).toHaveBeenCalledWith({ secondary: "change_severity" });
+  });
+});
+
+describe("CaseActionBar — Change case type is blocked on a closed case", () => {
+  it("disables the menu item once the case is closed", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar caseDetail={caseInState("closed", [])} onAction={onAction} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /change case type/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("keeps it enabled for a non-closed case", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={caseInState("awaiting_info", ["waiting_on_wso2"])}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /change case type/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "change_case_type" });
+  });
+});
+
+describe("CaseActionBar — Create change request (service requests only)", () => {
+  it("is offered for a service request", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{
+          ...caseInState("awaiting_info", ["waiting_on_wso2"]),
+          caseType: "service_request",
+        }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /create change request/i });
+    expect(item).not.toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).toHaveBeenCalledWith({ secondary: "create_change_request" });
+  });
+
+  it("is not offered for a plain case", () => {
+    render(
+      <CaseActionBar
+        caseDetail={{ ...caseInState("awaiting_info", ["waiting_on_wso2"]), caseType: "case" }}
+        onAction={() => {}}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    expect(
+      screen.queryByRole("menuitem", { name: /create change request/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables it once the service request is closed", () => {
+    const onAction = vi.fn();
+    render(
+      <CaseActionBar
+        caseDetail={{ ...caseInState("closed", []), caseType: "service_request" }}
+        onAction={onAction}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    const item = screen.getByRole("menuitem", { name: /create change request/i });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(item);
+    expect(onAction).not.toHaveBeenCalled();
   });
 });
 

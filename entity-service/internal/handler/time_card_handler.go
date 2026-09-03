@@ -86,3 +86,19 @@ func (h *TimeCardHandler) UpdateTimeCard(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
+
+// DeleteTimeCard handles DELETE /time-cards/{id}.
+func (h *TimeCardHandler) DeleteTimeCard(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		apierror.WriteJSON(w, http.StatusBadRequest, "time card ID is required")
+		return
+	}
+	resp, err := h.svc.DeleteTimeCard(r.Context(), domain.DeleteTimeCardRequest{ID: id})
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}

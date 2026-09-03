@@ -32,9 +32,10 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 
-/** Portal user types, each backed by its own captured session bundle.
- * See tests/e2e/auth/README.md for what each account must be granted. */
-export type PortalRole = "admin" | "lead" | "portal" | "security";
+/** The default captured session, used for login unless a spec asks for another.
+ * Additional identities (for multi-account specs) are captured alongside it as
+ * `storageState/<name>.json`; see tests/e2e/auth/README.md. */
+export const DEFAULT_SESSION = "session";
 
 /** A captured session: the origin's localStorage + sessionStorage snapshots.
  * `cookies` (optional) carries the IdP-domain cookies so the SDK's silent
@@ -50,24 +51,29 @@ interface SessionBundle {
   cookies?: Parameters<BrowserContext["addCookies"]>[0];
 }
 
-/** Absolute path to a role's captured session bundle. */
-export function sessionPath(role: PortalRole): string {
-  return path.join(process.cwd(), "tests", "e2e", "storageState", `${role}.json`);
+/** Absolute path to a captured session bundle. */
+export function sessionPath(name: string = DEFAULT_SESSION): string {
+  return path.join(process.cwd(), "tests", "e2e", "storageState", `${name}.json`);
 }
 
-export function hasSession(role: PortalRole): boolean {
-  return fs.existsSync(sessionPath(role));
+export function hasSession(name: string = DEFAULT_SESSION): boolean {
+  return fs.existsSync(sessionPath(name));
 }
 
-function readBundle(role: PortalRole): SessionBundle {
-  return JSON.parse(fs.readFileSync(sessionPath(role), "utf8")) as SessionBundle;
+function readBundle(name: string): SessionBundle {
+  return JSON.parse(fs.readFileSync(sessionPath(name), "utf8")) as SessionBundle;
+}
+
+/** Origin a captured bundle belongs to, or undefined if it has none/is absent. */
+export function sessionOrigin(name: string = DEFAULT_SESSION): string | undefined {
+  return hasSession(name) ? readBundle(name).origin : undefined;
 }
 
 async function applySession(
   context: BrowserContext,
-  role: PortalRole,
+  name: string,
 ): Promise<void> {
-  const bundle = readBundle(role);
+  const bundle = readBundle(name);
   if (!bundle.origin) {
     // Without an origin we cannot tell the portal's documents apart from the
     // IdP's, and the init script below would have to either skip everything or
@@ -75,13 +81,13 @@ async function applySession(
     // silently booting signed-out. The capture snippet in auth/README.md always
     // records `origin`; a bundle missing it predates that and must be recaptured.
     throw new Error(
-      `Session bundle for '${role}' has no "origin". Recapture it — see tests/e2e/auth/README.md.`,
+      `Session bundle '${name}.json' has no "origin". Recapture it — see tests/e2e/auth/README.md.`,
     );
   }
   if (bundle.cookies?.length) {
     // Best-effort: lets the SDK's hidden-iframe silent refresh reach the IdP
     // with an existing session when the access token expires during a long run.
-    // A malformed cookies array must not abort the role's beforeEach — degrade
+    // A malformed cookies array must not abort the beforeEach — degrade
     // gracefully, same as the storage replay below.
     try {
       await context.addCookies(bundle.cookies);
@@ -114,39 +120,62 @@ async function applySession(
 }
 
 /**
- * Opens a second, independent browser context authenticated as `role` — for
- * specs that need two identities in the same test (e.g. an admin edits another
- * user's roles). Caller must close the returned context. Requires that role's
- * session to have been captured.
+ * Opens a second, independent authenticated browser context — for specs that
+ * need two identities in the same test (e.g. an admin edits another user's
+ * roles). Pass the name of another captured bundle. Caller must close the
+ * returned context.
  */
 export async function openContextAs(
   browser: Browser,
-  role: PortalRole,
+  name: string,
 ): Promise<BrowserContext> {
   const context = await browser.newContext();
-  await applySession(context, role);
+  await applySession(context, name);
   return context;
 }
 
 /**
- * Configure a test file to run authenticated as `role`. Replays the captured
- * localStorage + sessionStorage before each page loads (so the Asgardeo SDK
- * finds its session and boots signed-in). Skips the whole file when the bundle
- * is absent, with a message pointing at the capture steps.
+ * Configure a test file to run authenticated. Replays the captured
+ * localStorage + sessionStorage from `storageState/session.json` before each
+ * page loads, so the Asgardeo SDK finds its session and boots signed-in.
+ * Defaults to the shared `session` bundle; pass a name to use another identity.
+ *
+ * It skips from `beforeEach`, so each test that uses it is reported
+ * individually as skipped (rather than the file being skipped as a unit) when
+ * the bundle is missing, or when the run targets an origin the bundle was not
+ * captured against — in that case the storage replay is scoped out and the app
+ * would silently boot signed-out, which reads as a mass assertion failure
+ * instead of a setup problem.
  *
  * Usage at the top of a spec:
- *   withRole(test, "admin");
+ *   withSession(test);
  */
-export function withRole(t: typeof base, role: PortalRole): void {
-  t.beforeEach(async ({ context }) => {
+export function withSession(t: typeof base, name: string = DEFAULT_SESSION): void {
+  t.beforeEach(async ({ context, baseURL }) => {
     t.skip(
-      !hasSession(role),
-      `No captured session for '${role}'. See tests/e2e/auth/README.md to create ` +
-        `tests/e2e/storageState/${role}.json.`,
+      !hasSession(name),
+      `No captured session '${name}'. See tests/e2e/auth/README.md to create ` +
+        `tests/e2e/storageState/${name}.json.`,
     );
-    await applySession(context, role);
+    const captured = sessionOrigin(name);
+    const target = baseURL ? new URL(baseURL).origin : undefined;
+    t.skip(
+      !!captured && !!target && captured !== target,
+      `Session '${name}' was captured against ${captured} but this run targets ` +
+        `${target}. Re-run with E2E_BASE_URL=${captured} E2E_NO_WEBSERVER=1, or ` +
+        `recapture against ${target}.`,
+    );
+    await applySession(context, name);
   });
 }
 
+//
+// Everything under tests/e2e imports `test`, `expect` and the Playwright types
+// from this module rather than from "@playwright/test" directly. Today `test` is
+// just `base`, so the two are equivalent — but the moment withSession becomes a
+// proper `base.extend()` fixture, a direct import would silently bypass it and
+// run without the session replay. Re-exporting here keeps that refactor safe.
+//
 export const test = base;
 export { expect };
+export type { Download, Locator, Page, Response } from "@playwright/test";

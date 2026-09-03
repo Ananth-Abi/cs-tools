@@ -51,19 +51,16 @@ import { useEngineerDisplayName } from "@hooks/useEngineerDisplayName";
 import { SEVERITY_LABEL } from "@features/csm-dashboard/utils/abtDashboard";
 import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
 import type { BeCaseIssueType } from "@api/backend/types";
+import { ALL_ISSUE_TYPES, ISSUE_TYPE_LABEL } from "@features/csm-cases/utils/caseIssueType";
 import type { CreateRelatedCaseNavState } from "@features/csm-cases/types/csmCases";
 import { useNavTransition } from "@hooks/useNavTransition";
 
 const SEVERITIES: Severity[] = ["S0", "S1", "S2", "S3", "S4"];
 
-const ISSUE_TYPES: { value: BeCaseIssueType; label: string }[] = [
-  { value: "total_outage", label: "Total outage" },
-  { value: "partial_outage", label: "Partial outage" },
-  { value: "performance_degradation", label: "Performance degradation" },
-  { value: "error", label: "Error" },
-  { value: "security_or_compliance", label: "Security / compliance" },
-  { value: "question", label: "Question" },
-];
+const ISSUE_TYPES: { value: BeCaseIssueType; label: string }[] = ALL_ISSUE_TYPES.map((value) => ({
+  value,
+  label: ISSUE_TYPE_LABEL[value],
+}));
 
 /** The rich-text editor emits `<p></p>` when empty; check the stripped text. */
 function isEmptyHtml(html: string): boolean {
@@ -96,9 +93,15 @@ export default function CsmCaseCreatePage(): JSX.Element {
   // carries over as editable starting values without a query-string round
   // trip or a full page load. See CsmCaseDetailPage.tsx's
   // `create_related_case` handler.
-  const relatedCaseState = useLocation().state as
-    | CreateRelatedCaseNavState
-    | undefined;
+  const location = useLocation();
+  const relatedCaseState = location.state as CreateRelatedCaseNavState | undefined;
+
+  // Set when opened from a project's page Create menu (`/cases/new?projectId=…
+  // `, state: { from: "/customers/projects/:id" }), so Back/Cancel return
+  // there instead of the hardcoded cases list, and the newly created case's
+  // own Back button (reading this same convention) returns there too.
+  const backState = location.state as { from?: string } | undefined;
+  const backTarget = backState?.from ?? "/cases";
 
   const lockedProjectId =
     searchParams.get("projectId") ?? relatedCaseState?.projectId ?? "";
@@ -264,7 +267,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
           `The case was created, but ${failed} attachment${failed === 1 ? "" : "s"} failed to upload. You can add ${failed === 1 ? "it" : "them"} from the case page.`,
         );
       }
-      navigate(`/cases/${created.id}`);
+      navigate(`/cases/${created.id}`, { state: { from: backTarget } });
     } catch (err) {
       setSubmitting(false);
       showError("Could not create the case. Please try again.", err);
@@ -276,10 +279,10 @@ export default function CsmCaseCreatePage(): JSX.Element {
       <Button
         variant="text"
         startIcon={<ArrowLeft size={16} />}
-        onClick={() => navigate("/cases")}
+        onClick={() => navigate(backTarget)}
         sx={{ mb: 1 }}
       >
-        Back to cases
+        Back
       </Button>
       <Typography variant="h5" sx={{ mb: relatedCaseId ? 0.5 : 2 }}>
         New case
@@ -324,11 +327,18 @@ export default function CsmCaseCreatePage(): JSX.Element {
           {!isCloudProject && (
             <Grid size={{ xs: 12, md: 4 }}>
               <FormControl fullWidth size="small" required>
-                <InputLabel id="case-deployment-label">Deployment</InputLabel>
+                <InputLabel
+                  id="case-deployment-label"
+                  shrink={deploymentId !== ""}
+                  sx={{ top: "0px !important" }}
+                >
+                  Deployment
+                </InputLabel>
                 <Select
                   labelId="case-deployment-label"
                   label="Deployment"
                   value={deploymentId}
+                  notched={deploymentId !== ""}
                   onChange={(e) => onDeploymentChange(String(e.target.value))}
                   disabled={!projectId || deployments.isLoading}
                 >
@@ -351,11 +361,18 @@ export default function CsmCaseCreatePage(): JSX.Element {
 
           <Grid size={{ xs: 12, md: 4 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="case-product-label">Deployed product</InputLabel>
+              <InputLabel
+                id="case-product-label"
+                shrink={deployedProductId !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Deployed product
+              </InputLabel>
               <Select
                 labelId="case-product-label"
                 label="Deployed product"
                 value={deployedProductId}
+                notched={deployedProductId !== ""}
                 onChange={(e) => setDeployedProductId(String(e.target.value))}
                 disabled={!effectiveDeploymentId || deployedProducts.isLoading}
               >
@@ -384,11 +401,18 @@ export default function CsmCaseCreatePage(): JSX.Element {
 
           <Grid size={{ xs: 12, sm: 6, md: 3 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="case-severity-label">Severity</InputLabel>
+              <InputLabel
+                id="case-severity-label"
+                shrink={severity !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Severity
+              </InputLabel>
               <Select
                 labelId="case-severity-label"
                 label="Severity"
                 value={severity}
+                notched={severity !== ""}
                 onChange={(e) => setSeverity(e.target.value as Severity)}
               >
                 {SEVERITIES.map((s) => (
@@ -403,11 +427,18 @@ export default function CsmCaseCreatePage(): JSX.Element {
 
           <Grid size={{ xs: 12, sm: 6, md: 3 }}>
             <FormControl fullWidth size="small" required>
-              <InputLabel id="case-issue-type-label">Issue type</InputLabel>
+              <InputLabel
+                id="case-issue-type-label"
+                shrink={issueType !== ""}
+                sx={{ top: "0px !important" }}
+              >
+                Issue type
+              </InputLabel>
               <Select
                 labelId="case-issue-type-label"
                 label="Issue type"
                 value={issueType}
+                notched={issueType !== ""}
                 onChange={(e) => setIssueType(e.target.value as BeCaseIssueType)}
               >
                 {ISSUE_TYPES.map((it) => (
@@ -484,7 +515,7 @@ export default function CsmCaseCreatePage(): JSX.Element {
         </Grid>
 
         <Box sx={{ display: "flex", justifyContent: "flex-end", gap: 1.5, mt: 2.5 }}>
-          <Button variant="outlined" onClick={() => navigate("/cases")}>
+          <Button variant="outlined" onClick={() => navigate(backTarget)}>
             Cancel
           </Button>
           <Button

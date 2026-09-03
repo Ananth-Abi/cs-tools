@@ -46,26 +46,27 @@ import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { initialsOf, resolveUserInfo } from "@utils/userClaims";
 import { useSearchUsers } from "@features/csm-users/api/useSearchUsers";
-import {
-  INTERNAL_USER_ROLES,
-  type NormalizedUser,
-} from "@features/csm-users/types/csmUsers";
+import type { NormalizedUser } from "@features/csm-users/types/csmUsers";
+import { useRecentApprovers } from "@features/csm-timecards/api/useTimeSheets";
 import TimeCardStatusChip from "@features/csm-timecards/components/TimeCardStatusChip";
-import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type { SeverityOrUnset } from "@features/csm-dashboard/types/abtDashboard";
 import {
   ACTIVITY_BUCKETS,
   DEFAULT_BILLABLE,
   DEFAULT_ISSUE_COMPLEXITY,
   ISSUE_COMPLEXITY_OPTIONS,
   NON_BILLABLE_SEVERITIES,
+  TIMECARD_APPROVER_GROUP,
   WORK_LOG_MAX,
 } from "@features/csm-timecards/constants/timeCardConstants";
 import type {
   ActivityBreakdown,
   ActivityKey,
   CreateTimeCardInput,
+  CsmTimeCard,
   IssueComplexity,
   TimeCardApprover,
+  UpdateTimeCardInput,
 } from "@features/csm-timecards/types/timeCards";
 import {
   emptyBreakdown,
@@ -75,6 +76,11 @@ import {
 import { localTodayIso } from "@features/csm-timecards/utils/timeSheetWeek";
 import { formatDateOnly, parseDateOnly } from "@utils/dateTime";
 
+/** Either a create ({@link CreateTimeCardInput}, POST) or an edit
+ * ({@link UpdateTimeCardInput}, PATCH) submission — the caller distinguishes
+ * by checking for `cardId`, present only on the edit shape. */
+export type LogTimeCardSubmit = CreateTimeCardInput | UpdateTimeCardInput;
+
 interface LogTimeCardDialogProps {
   /** The case the time was spent on — always known, this dialog only opens
    * from a case's Time tracking tab (the backend requires a real case UUID,
@@ -82,14 +88,32 @@ interface LogTimeCardDialogProps {
   caseId: string;
   caseNumber: string;
   /** Determines whether the billable switch is editable — see
-   * NON_BILLABLE_SEVERITIES. */
-  caseSeverity: Severity;
+   * NON_BILLABLE_SEVERITIES. Optional because a caller editing a card from a
+   * cross-case context (the Time cards page's "My time sheets" tab) has no
+   * severity to hand in; the switch stays enabled there rather than being
+   * force-disabled on a guess, and the backend's own business rule still
+   * enforces the real non-billable-severities constraint server-side either
+   * way (see NON_BILLABLE_SEVERITIES's doc comment). Also `"unset"` when the
+   * case has no severity value at all — treated the same as "no severity to
+   * hand in" below (switch stays enabled, backend still enforces server-side). */
+  caseSeverity?: SeverityOrUnset;
   projectId: string;
   projectName: string;
-  /** True while the create mutation is in flight. */
+  /** True while the create/edit mutation is in flight. */
   isSubmitting: boolean;
+  /**
+   * When set, the dialog opens in **edit mode** for this already-submitted
+   * card instead of logging a new one: every field prefills from the card's
+   * current values (see `CsmTimeCard.breakdown`/`issueComplexity`, confirmed
+   * live to round-trip), the approver becomes read-only (matching
+   * ServiceNow's own UX once a card is submitted — see `UpdateTimeCardInput`),
+   * the title/submit label change, and `onSubmit` is called with an
+   * {@link UpdateTimeCardInput} (`cardId` set) instead of a
+   * {@link CreateTimeCardInput}.
+   */
+  editingCard?: CsmTimeCard;
   onClose: () => void;
-  onSubmit: (input: CreateTimeCardInput) => void;
+  onSubmit: (input: LogTimeCardSubmit) => void;
 }
 
 interface ApproverOption {
@@ -100,6 +124,52 @@ interface ApproverOption {
 
 function fullName(u: NormalizedUser): string {
   return u.name.trim() || u.userName;
+}
+
+/** One clickable approver candidate — shared between the "recently selected"
+ * list (shown before typing) and the live search results (shown once typed),
+ * so the two never drift into rendering the row differently. */
+function ApproverCandidateButton({
+  option,
+  onSelect,
+}: {
+  option: ApproverOption;
+  onSelect: (option: ApproverOption) => void;
+}): JSX.Element {
+  return (
+    <Button
+      data-testid="approver-candidate"
+      variant="text"
+      color="inherit"
+      onClick={() => onSelect(option)}
+      sx={{
+        justifyContent: "flex-start",
+        textTransform: "none",
+        px: 1,
+        py: 0.5,
+        gap: 1,
+      }}
+    >
+      <Avatar sx={{ width: 24, height: 24, fontSize: "0.7rem" }}>
+        {initialsOf(option.name)}
+      </Avatar>
+      <Box sx={{ minWidth: 0, textAlign: "left" }}>
+        <Typography variant="body2" noWrap>
+          {option.name}
+        </Typography>
+        {option.email && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            noWrap
+            sx={{ display: "block" }}
+          >
+            {option.email}
+          </Typography>
+        )}
+      </Box>
+    </Button>
+  );
 }
 
 /** One activity row: a labelled whole-minutes input plus a proportion bar
@@ -152,15 +222,17 @@ function ActivityRow({
 }
 
 /**
- * "Log time" form. Mirrors the ServiceNow fields (date, the five activity
- * buckets, work-log comment, issue complexity, approver) with a live
+ * "Log time" form, doubling as the **edit** form for an already-submitted
+ * card (see `editingCard`). Mirrors the ServiceNow fields (date, the five
+ * activity buckets, work-log comment, issue complexity, approver) with a live
  * running total, per-activity proportion bars, and inline validation. There
  * was a "Category" field here too, but it was never actually sent anywhere
  * (`usePostTimeCard`'s payload has no such field) — removed rather than kept
  * as a choice that silently did nothing.
  * Creating a card submits it immediately — the backend has no draft step, so
- * there is no "Pending" status and no edit-after-create (see the module-level
- * note in `types/timeCards.ts` on why edit isn't supported).
+ * there is no "Pending" status. Editing is only offered (see `cardActions`)
+ * to the card's own submitter while it's still `submitted`, matching what
+ * the backend itself enforces server-side.
  */
 export default function LogTimeCardDialog({
   caseId,
@@ -169,23 +241,37 @@ export default function LogTimeCardDialog({
   projectId,
   projectName,
   isSubmitting,
+  editingCard,
   onClose,
   onSubmit,
 }: LogTimeCardDialogProps): JSX.Element {
   const me = resolveUserInfo(useIdTokenClaims());
+  const isEditMode = !!editingCard;
 
-  const isAlwaysNonBillable = NON_BILLABLE_SEVERITIES.includes(caseSeverity);
+  const isAlwaysNonBillable =
+    !!caseSeverity &&
+    caseSeverity !== "unset" &&
+    NON_BILLABLE_SEVERITIES.includes(caseSeverity);
 
-  const [date, setDate] = useState(localTodayIso());
+  const [date, setDate] = useState(editingCard?.workDate ?? localTodayIso());
   const [issueComplexity, setIssueComplexity] = useState<IssueComplexity>(
-    DEFAULT_ISSUE_COMPLEXITY,
+    editingCard?.issueComplexity ?? DEFAULT_ISSUE_COMPLEXITY,
   );
   const [billable, setBillable] = useState<boolean>(
-    isAlwaysNonBillable ? false : DEFAULT_BILLABLE,
+    editingCard ? editingCard.billable : isAlwaysNonBillable ? false : DEFAULT_BILLABLE,
   );
-  const [breakdown, setBreakdown] = useState<ActivityBreakdown>(emptyBreakdown());
-  const [workLogComment, setWorkLogComment] = useState("");
-  const [approver, setApprover] = useState<TimeCardApprover | null>(null);
+  const [breakdown, setBreakdown] = useState<ActivityBreakdown>(
+    editingCard?.breakdown ?? emptyBreakdown(),
+  );
+  // workLogComment is rich-text HTML (see Editor below); an edited card's
+  // existing comment is already HTML on the wire, so it loads straight in.
+  const [workLogComment, setWorkLogComment] = useState(editingCard?.workLogComment ?? "");
+  // The approver is read-only once editing (see UpdateTimeCardInput's doc
+  // comment) — this state only exists to satisfy timeCardDraftErrors'
+  // approver-required check and is never sent on an edit submit.
+  const [approver, setApprover] = useState<TimeCardApprover | null>(
+    editingCard?.approvers?.[0] ?? null,
+  );
   const [approverInput, setApproverInput] = useState("");
   const [touched, setTouched] = useState<Set<string>>(new Set());
   const touch = (field: string): void =>
@@ -198,6 +284,11 @@ export default function LogTimeCardDialog({
     breakdown,
     workLogComment,
     approverId: approver?.id,
+    // approvers is optional on a card, so an edited card may legitimately have
+    // none. The field is read-only in edit mode and never sent, so requiring it
+    // here would only make Save invalid and then disabled, blocking the edit
+    // outright for exactly those cards.
+    requireApprover: !isEditMode,
   });
   const isValid = Object.keys(errors).length === 0;
 
@@ -205,10 +296,11 @@ export default function LogTimeCardDialog({
   const { data } = useSearchUsers({
     filters: {
       ...(search.length > 0 && { searchQuery: search }),
-      // Approvers must be real internal accounts — the backend requires a
-      // real UUID in `approverIds`, so there is no offline/mock fallback
-      // (a fabricated id would always be rejected on submit).
-      roleIds: INTERNAL_USER_ROLES,
+      // Approvers must hold the timecard_approver role — listing every
+      // internal WSO2 account here (the old INTERNAL_USER_ROLES filter)
+      // let a submitter pick literally anyone at the company, including
+      // people with no CS/team-lead involvement at all.
+      roleIds: [TIMECARD_APPROVER_GROUP],
       active: true,
     },
     pagination: { limit: 6, offset: 0 },
@@ -234,12 +326,71 @@ export default function LogTimeCardDialog({
       .map((u) => ({ id: u.id, name: fullName(u), email: u.email }));
   }, [data, hasApproverInput, me.email]);
 
+  // Previously-selected approvers (digiops-cs#2839) — surfaced before the
+  // engineer types anything, and prioritized within the typed results, so
+  // picking the same team lead again doesn't require retyping the same
+  // search every time. Only fetched in create mode: the approver field is
+  // read-only once editing, so there's nothing for this list to feed there.
+  const { data: rawRecentApprovers = [] } = useRecentApprovers(!isEditMode);
+  const recentApproverIds = useMemo(
+    () => rawRecentApprovers.map((a) => a.id),
+    [rawRecentApprovers],
+  );
+  // Re-checked against the same active/TIMECARD_APPROVER_GROUP eligibility as
+  // live search candidates: `rawRecentApprovers` is derived purely from past
+  // card submissions (see useRecentApprovers), so an approver deactivated or
+  // removed from the role since then would otherwise still show up here.
+  // Only queried once there's something to check (empty `userIds` would
+  // otherwise be an unscoped users search).
+  const { data: recentEligibility } = useSearchUsers(
+    {
+      filters: { userIds: recentApproverIds, roleIds: [TIMECARD_APPROVER_GROUP], active: true },
+      pagination: { limit: recentApproverIds.length || 1, offset: 0 },
+    },
+    recentApproverIds.length > 0,
+  );
+  const recentApprovers: ApproverOption[] = useMemo(() => {
+    if (recentApproverIds.length === 0) return [];
+    const eligibleIds = new Set((recentEligibility?.users ?? []).map((u) => u.id));
+    return rawRecentApprovers.filter((a) => eligibleIds.has(a.id));
+  }, [rawRecentApprovers, recentApproverIds, recentEligibility]);
+  // Merges recents matching the current query ahead of the live search's own
+  // candidates, deduped by id — a recent approver who still matches what was
+  // typed should stay at the top rather than getting buried in whatever order
+  // useSearchUsers's page happens to return.
+  const approverCandidates: ApproverOption[] = useMemo(() => {
+    if (!hasApproverInput) return recentApprovers;
+    const typed = approverInput.trim().toLowerCase();
+    const recentMatches = recentApprovers.filter((a) =>
+      a.name.toLowerCase().includes(typed),
+    );
+    const recentIds = new Set(recentMatches.map((a) => a.id));
+    return [...recentMatches, ...candidates.filter((c) => !recentIds.has(c.id))];
+  }, [approverInput, candidates, hasApproverInput, recentApprovers]);
+
   const setActivity = (key: ActivityKey, next: number): void =>
     setBreakdown((prev) => ({ ...prev, [key]: next }));
 
   const ALL_FIELDS = ["date", "minutes", "workLogComment", "approver"];
   const handleSubmit = (): void => {
-    if (!isValid || !approver) {
+    if (!isValid) {
+      setTouched(new Set(ALL_FIELDS));
+      return;
+    }
+    if (isEditMode && editingCard) {
+      onSubmit({
+        cardId: editingCard.id,
+        date,
+        breakdown,
+        billable,
+        workLogComment: workLogComment.trim(),
+        issueComplexity,
+      });
+      return;
+    }
+    // Create only: an approver is mandatory here, and isValid already covers
+    // it (requireApprover is true outside edit mode). This narrows the type.
+    if (!approver) {
       setTouched(new Set(ALL_FIELDS));
       return;
     }
@@ -275,7 +426,9 @@ export default function LogTimeCardDialog({
 
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>Log time · {caseNumber}</DialogTitle>
+      <DialogTitle>
+        {isEditMode ? "Edit time card" : "Log time"} · {caseNumber}
+      </DialogTitle>
       <DialogContent dividers>
         <Box
           onKeyDown={handleKeyDown}
@@ -297,7 +450,9 @@ export default function LogTimeCardDialog({
               >
                 {initialsOf(me.fullName)}
               </Avatar>
-              <Typography variant="body2">{me.fullName}</Typography>
+              <Typography variant="body2">
+                {isEditMode ? editingCard.userName : me.fullName}
+              </Typography>
             </Box>
             <TimeCardStatusChip state="submitted" />
           </Box>
@@ -384,6 +539,14 @@ export default function LogTimeCardDialog({
               value={issueComplexity}
               onChange={(e) => setIssueComplexity(e.target.value as IssueComplexity)}
               sx={{ maxWidth: { sm: 220 }, minWidth: 160 }}
+              slotProps={{
+                // `issueComplexity` always holds a real value (no empty
+                // option), so the label is always shrunk -- see
+                // MultiSelectField.tsx's doc comment for why this override
+                // is needed at all against oxygen-ui's own theme.
+                inputLabel: { shrink: true, sx: { top: "0px !important" } },
+                select: { notched: true },
+              }}
             >
               {ISSUE_COMPLEXITY_OPTIONS.map((o) => (
                 <MenuItem key={o} value={o}>
@@ -457,10 +620,15 @@ export default function LogTimeCardDialog({
             </Typography>
           </Box>
 
-          {/* Approver */}
+          {/* Approver — read-only once editing: ServiceNow's own UX locks
+              this field after submit, and the portal follows that rather
+              than letting an edit silently reassign the approver even
+              though the backend would technically accept the change. */}
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
             <Typography variant="subtitle2">Approver (team lead)</Typography>
-            {approver ? (
+            {isEditMode ? (
+              <Chip label={approver?.name ?? "—"} sx={{ alignSelf: "flex-start" }} />
+            ) : approver ? (
               <Chip
                 label={approver.name}
                 onDelete={() => setApprover(null)}
@@ -499,14 +667,36 @@ export default function LogTimeCardDialog({
                   }}
                 >
                   {!hasApproverInput ? (
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ p: 1 }}
-                    >
-                      Start typing to search for an approver.
-                    </Typography>
-                  ) : candidates.length === 0 ? (
+                    approverCandidates.length === 0 ? (
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ p: 1 }}
+                      >
+                        Start typing to search for an approver.
+                      </Typography>
+                    ) : (
+                      <>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ px: 1, pt: 1 }}
+                        >
+                          Recently selected
+                        </Typography>
+                        {approverCandidates.map((u) => (
+                          <ApproverCandidateButton
+                            key={u.id}
+                            option={u}
+                            onSelect={(picked) => {
+                              setApprover({ id: picked.id, name: picked.name });
+                              setApproverInput("");
+                            }}
+                          />
+                        ))}
+                      </>
+                    )
+                  ) : approverCandidates.length === 0 ? (
                     <Typography
                       variant="caption"
                       color="text.secondary"
@@ -515,43 +705,15 @@ export default function LogTimeCardDialog({
                       No matching engineers.
                     </Typography>
                   ) : (
-                    candidates.map((u) => (
-                      <Button
+                    approverCandidates.map((u) => (
+                      <ApproverCandidateButton
                         key={u.id}
-                        data-testid="approver-candidate"
-                        variant="text"
-                        color="inherit"
-                        onClick={() => {
-                          setApprover({ id: u.id, name: u.name });
+                        option={u}
+                        onSelect={(picked) => {
+                          setApprover({ id: picked.id, name: picked.name });
                           setApproverInput("");
                         }}
-                        sx={{
-                          justifyContent: "flex-start",
-                          textTransform: "none",
-                          px: 1,
-                          py: 0.5,
-                          gap: 1,
-                        }}
-                      >
-                        <Avatar sx={{ width: 24, height: 24, fontSize: "0.7rem" }}>
-                          {initialsOf(u.name)}
-                        </Avatar>
-                        <Box sx={{ minWidth: 0, textAlign: "left" }}>
-                          <Typography variant="body2" noWrap>
-                            {u.name}
-                          </Typography>
-                          {u.email && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              noWrap
-                              sx={{ display: "block" }}
-                            >
-                              {u.email}
-                            </Typography>
-                          )}
-                        </Box>
-                      </Button>
+                      />
                     ))
                   )}
                 </Box>
@@ -569,7 +731,7 @@ export default function LogTimeCardDialog({
           onClick={handleSubmit}
           disabled={isSubmitting || (touched.size > 0 && !isValid)}
         >
-          Submit for review
+          {isEditMode ? "Save changes" : "Submit for review"}
         </Button>
       </DialogActions>
     </Dialog>

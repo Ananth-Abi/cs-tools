@@ -29,6 +29,27 @@ export const QUICK_INCIDENT_MIN_QUERY_LEN = 2;
 /** A small result page — the palette only shows the top few hits. */
 const QUICK_INCIDENT_LIMIT = 5;
 
+/** An incident number, e.g. "INC0090472" — always "INC" plus exactly 7 digits. */
+const INCIDENT_NUMBER_RE = /^INC\d{7}$/;
+
+/**
+ * What kind of lookup a typed quick-search string should run as — mirrors
+ * {@link "@features/csm-cases/api/useQuickCaseSearch".QuickCaseSearchScope},
+ * just without the internalId variant cases have (incidents have only one
+ * exact-match identifier).
+ */
+export type QuickIncidentSearchScope = "number" | "text";
+
+/**
+ * Classifies a typed (already-trimmed) quick-search string into the scope
+ * {@link useQuickIncidentSearch} should route it through.
+ */
+export function classifyQuickIncidentQuery(
+  query: string,
+): QuickIncidentSearchScope {
+  return INCIDENT_NUMBER_RE.test(query) ? "number" : "text";
+}
+
 /** One hit from the global-search incident lookup, enough for the palette's result row. */
 export interface QuickIncidentHit {
   id: string;
@@ -41,29 +62,36 @@ export interface QuickIncidentHit {
 }
 
 /**
- * Free-text incident lookup for the global quick-nav palette. Calls
- * `POST /incidents/search` with the typed text as `searchQuery` (ServiceNow
- * data source only) — same endpoint `useSearchIncidents` uses for the
- * Operations tab's listing, just capped to a handful of hits and shaped for
- * the palette instead of a paginated table.
+ * Incident lookup for the global quick-nav palette. Calls
+ * `POST /incidents/search` (ServiceNow data source only) — same endpoint
+ * `useSearchIncidents` uses for the Operations tab's listing, just capped to
+ * a handful of hits and shaped for the palette instead of a paginated table.
+ * Routes the typed text one of two ways (see {@link classifyQuickIncidentQuery}):
+ * an `INC\d{7}` incident number goes through as an exact-match, first-class
+ * field filter (an indexed lookup); anything else falls back to the same
+ * free-text `searchQuery` search the incidents list uses. Pass
+ * `forceFreeText` to opt back into the free-text path even when the query
+ * matches the exact pattern — the quick-nav palette's "search in subject and description too" affordance uses this to widen a scoped result.
  *
  * Disabled until the trimmed text reaches {@link QUICK_INCIDENT_MIN_QUERY_LEN},
  * so opening the palette costs no network.
  */
 export function useQuickIncidentSearch(
   query: string,
+  options?: { forceFreeText?: boolean },
 ): UseQueryResult<QuickIncidentHit[], Error> {
   const api = useBackendApi();
   const q = query.trim();
+  const scope = options?.forceFreeText ? "text" : classifyQuickIncidentQuery(q);
 
   return useQuery<QuickIncidentHit[], Error>({
-    queryKey: [ApiQueryKeys.INCIDENTS, "quick-search", q],
+    queryKey: [ApiQueryKeys.INCIDENTS, "quick-search", q, scope],
     queryFn: async (): Promise<QuickIncidentHit[]> => {
       const res = await api.post<BeIncidentSearchPayload, BeIncidentSearchResponse>(
         "/incidents/search",
         {
           pagination: { offset: 0, limit: QUICK_INCIDENT_LIMIT },
-          filters: { searchQuery: q },
+          filters: scope === "number" ? { number: q } : { searchQuery: q },
         },
       );
       return (res.incidents ?? [])

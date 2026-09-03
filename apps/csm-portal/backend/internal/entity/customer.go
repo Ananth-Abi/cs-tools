@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 )
 
 // CreateCase calls POST /cases on the entity service.
@@ -34,6 +33,31 @@ func (c *CustomerEntityClient) CreateCase(ctx context.Context, body []byte) ([]b
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) SearchCases(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/cases/search", body)
+}
+
+// AggregateCases calls POST /cases/aggregate on the entity service: a
+// server-side aggregation of cases by a single field (e.g. account, state),
+// capped to the top maxGroups buckets with the remainder folded into
+// othersCount. Response is returned as raw JSON; typed response structs are
+// deferred.
+func (c *CustomerEntityClient) AggregateCases(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/cases/aggregate", body)
+}
+
+// SearchFeedback calls POST /cases/feedback/search on the entity service:
+// search of case-feedback (satisfaction rating) records across cases,
+// filterable by case, accounts, and submission date range. Response is
+// returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) SearchFeedback(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/cases/feedback/search", body)
+}
+
+// AggregateFeedback calls POST /cases/feedback/aggregate on the entity
+// service: date-bucketed rating aggregation of case-feedback records across
+// cases. Response is returned as raw JSON; typed response structs are
+// deferred.
+func (c *CustomerEntityClient) AggregateFeedback(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/cases/feedback/aggregate", body)
 }
 
 // GetCase calls GET /cases/{id} on the entity service.
@@ -165,6 +189,15 @@ func (c *CustomerEntityClient) SearchIncidents(ctx context.Context, body []byte)
 	return c.do(ctx, http.MethodPost, "/incidents/search", body)
 }
 
+// AggregateIncidents calls POST /incidents/aggregate on the entity service: a
+// server-side aggregation of incidents by a single field (e.g. state,
+// assignmentGroup, businessService), capped to the top maxGroups buckets
+// with the remainder folded into othersCount. Response is returned as raw
+// JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) AggregateIncidents(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incidents/aggregate", body)
+}
+
 // CreateIncident calls POST /incidents on the entity service to create a new incident.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) CreateIncident(ctx context.Context, body []byte) ([]byte, error) {
@@ -195,6 +228,15 @@ func (c *CustomerEntityClient) SearchProblems(ctx context.Context, body []byte) 
 	return c.do(ctx, http.MethodPost, "/problems/search", body)
 }
 
+// AggregateProblems calls POST /problems/aggregate on the entity service: a
+// server-side aggregation of problems by a single field (e.g. state,
+// assignmentGroup), capped to the top maxGroups buckets with the remainder
+// folded into othersCount. Response is returned as raw JSON; typed response
+// structs are deferred.
+func (c *CustomerEntityClient) AggregateProblems(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/problems/aggregate", body)
+}
+
 // CreateProblem calls POST /problems on the entity service to create a new problem.
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) CreateProblem(ctx context.Context, body []byte) ([]byte, error) {
@@ -205,6 +247,33 @@ func (c *CustomerEntityClient) CreateProblem(ctx context.Context, body []byte) (
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) GetProblem(ctx context.Context, id string) ([]byte, error) {
 	return c.do(ctx, http.MethodGet, fmt.Sprintf("/problems/%s", url.PathEscape(id)), nil)
+}
+
+// UpdateProblem calls PATCH /problems/{id} on the entity service to partially update a problem.
+// Response is returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) UpdateProblem(ctx context.Context, id string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/problems/%s", url.PathEscape(id)), body)
+}
+
+// SearchIncidentTasks calls POST /incident-tasks/search on the entity service.
+// Response is returned as raw JSON; field filtering to the portal shape is deferred.
+func (c *CustomerEntityClient) SearchIncidentTasks(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incident-tasks/search", body)
+}
+
+// AggregateIncidentTasks calls POST /incident-tasks/aggregate on the entity
+// service: a server-side aggregation of incident tasks by a single field
+// (e.g. state, assignmentGroup), capped to the top maxGroups buckets with
+// the remainder folded into othersCount. Response is returned as raw JSON;
+// typed response structs are deferred.
+func (c *CustomerEntityClient) AggregateIncidentTasks(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/incident-tasks/aggregate", body)
+}
+
+// GetIncidentTask calls GET /incident-tasks/{id} on the entity service.
+// Response is returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) GetIncidentTask(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/incident-tasks/%s", url.PathEscape(id)), nil)
 }
 
 // PostDeployment calls POST /deployments on the entity service to create a new deployment.
@@ -247,6 +316,15 @@ func (c *CustomerEntityClient) PatchDeployedProduct(ctx context.Context, deploye
 // Response is returned as raw JSON; typed response structs are deferred.
 func (c *CustomerEntityClient) SearchChangeRequests(ctx context.Context, body []byte) ([]byte, error) {
 	return c.do(ctx, http.MethodPost, "/change-requests/search", body)
+}
+
+// AggregateChangeRequests calls POST /change-requests/aggregate on the entity
+// service: a server-side aggregation of change requests by a single field
+// (e.g. state, assignmentGroup), capped to the top maxGroups buckets with
+// the remainder folded into othersCount. Response is returned as raw JSON;
+// typed response structs are deferred.
+func (c *CustomerEntityClient) AggregateChangeRequests(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/change-requests/aggregate", body)
 }
 
 // GetChangeRequest calls GET /change-requests/{id} on the entity service.
@@ -293,6 +371,11 @@ func (c *CustomerEntityClient) UpdateTimeCard(ctx context.Context, id string, bo
 	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/time-cards/%s", url.PathEscape(id)), body)
 }
 
+// DeleteTimeCard calls DELETE /time-cards/{id} on the entity service.
+func (c *CustomerEntityClient) DeleteTimeCard(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/time-cards/%s", url.PathEscape(id)), nil)
+}
+
 // CreateCaseAttachment calls POST /attachments on the entity service.
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) CreateCaseAttachment(ctx context.Context, body []byte) ([]byte, error) {
@@ -315,6 +398,18 @@ func (c *CustomerEntityClient) GetCaseAttachmentContent(ctx context.Context, att
 // Response is returned as raw JSON.
 func (c *CustomerEntityClient) DeleteCaseAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/attachments/%s", url.PathEscape(attachmentID)), nil)
+}
+
+// GetAttachment calls GET /attachments/{attachmentId} on the entity service.
+// Response is returned as raw JSON.
+func (c *CustomerEntityClient) GetAttachment(ctx context.Context, attachmentID string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/attachments/%s", url.PathEscape(attachmentID)), nil)
+}
+
+// UpdateAttachment calls PATCH /attachments/{attachmentId} on the entity service.
+// Response is returned as raw JSON.
+func (c *CustomerEntityClient) UpdateAttachment(ctx context.Context, attachmentID string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPatch, fmt.Sprintf("/attachments/%s", url.PathEscape(attachmentID)), body)
 }
 
 // SearchCatalogs calls POST /catalogs/search on the entity service.
@@ -470,19 +565,20 @@ func (c *CustomerEntityClient) RemoveCaseTag(ctx context.Context, caseID, tagID 
 	return c.do(ctx, http.MethodDelete, fmt.Sprintf("/cases/%s/tags/%s", url.PathEscape(caseID), url.PathEscape(tagID)), nil)
 }
 
-// SearchTags calls GET /tags/search on the entity service.
+// SearchTags calls POST /tags/search on the entity service.
+// The request body is forwarded verbatim; the response is returned as raw JSON.
+func (c *CustomerEntityClient) SearchTags(ctx context.Context, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/tags/search", body)
+}
+
+// GetAlert calls GET /alerts/{id} on the entity service.
 // Response is returned as raw JSON; typed response structs are deferred.
-func (c *CustomerEntityClient) SearchTags(ctx context.Context, query string, limit int) ([]byte, error) {
-	params := url.Values{}
-	if query != "" {
-		params.Set("q", query)
-	}
-	if limit > 0 {
-		params.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/tags/search"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
-	return c.do(ctx, http.MethodGet, path, nil)
+func (c *CustomerEntityClient) GetAlert(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/alerts/%s", url.PathEscape(id)), nil)
+}
+
+// GetSmartAlert calls GET /smart-alerts/{id} on the entity service.
+// Response is returned as raw JSON; typed response structs are deferred.
+func (c *CustomerEntityClient) GetSmartAlert(ctx context.Context, id string) ([]byte, error) {
+	return c.do(ctx, http.MethodGet, fmt.Sprintf("/smart-alerts/%s", url.PathEscape(id)), nil)
 }

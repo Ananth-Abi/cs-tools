@@ -39,3 +39,5 @@ config.js
 /playwright/.cache/
 # Captured auth sessions hold real tokens — never commit them.
 tests/e2e/storageState/*.json
+# Session-capture instructions — kept local.
+tests/e2e/auth/README.md

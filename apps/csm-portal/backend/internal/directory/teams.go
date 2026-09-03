@@ -92,28 +92,40 @@ type Team struct {
 	Name string
 	// Family may be empty -- not every team has a family assigned.
 	Family Family
-	// GroupID is the backing data source's own id for this team's group, in
+	// CreGroupID is the backing data source's own id for this team's group, in
 	// that source's compact 32-character form. It is distinct from Name: Name
-	// is what membership resolution matches on, while GroupID is what backs
-	// the case-search integrationCsTeam filter once converted to this
-	// platform's UUID form. It is optional -- a team with no configured id is
-	// still listed, it just cannot scope that filter, which degrades
-	// gracefully rather than erroring.
-	GroupID string
+	// is what membership resolution matches on, while CreGroupID is what backs
+	// the case-search creTeam filter once converted to this platform's UUID
+	// form. This is specifically the CRE (Customer Renewal & Expansion) group
+	// id, as opposed to SreGroupID below, which backs the parallel sreTeam
+	// filter -- the two disciplines have genuinely different backing groups,
+	// so a team may have one, the other, or both. It is optional -- a team
+	// with no configured id is still listed, it just cannot scope that
+	// filter, which degrades gracefully rather than erroring.
+	CreGroupID string
+	// SreGroupID is the backing data source's own id for this team's Site
+	// Reliability Engineering group, in the same compact 32-character form as
+	// CreGroupID. It backs the case-search sreTeam filter. Like CreGroupID it
+	// is optional and independent -- a team like an SRE ABT may configure only
+	// this one, with no CreGroupID at all.
+	SreGroupID string
 }
 
 // ParseTeamRegistry parses the team registry from its flat, single-line
 // configuration form:
 //
-//	teamKey|Display Name|FAMILY|groupId,teamKey|Display Name,...
+//	teamKey|Display Name|FAMILY|creGroupId|sreGroupId,teamKey|Display Name,...
 //
 // Rows are separated by ",", fields within a row by "|". A row carries two
-// fields (key and display name), three (plus the family), or four (plus the
-// backing group's id). family is a real optional middle field, not a slot that
-// can be skipped: a group id cannot be supplied without a family alongside it,
-// so a 2-field-plus-id shape is not accepted -- pad the family field (even
-// empty, e.g. "key|Name||id") if a team needs an id but no family. Whitespace
-// around every field is trimmed, so a value pasted into a web form survives. A
+// fields (key and display name), three (plus the family), four (plus the
+// backing CRE group's id), or five (plus the backing SRE group's id). family
+// is a real optional middle field, not a slot that can be skipped: a group id
+// cannot be supplied without a family alongside it, so a 2-field-plus-id shape
+// is not accepted -- pad the family field (even empty, e.g. "key|Name||id")
+// if a team needs an id but no family. Likewise, an sreGroupId cannot be
+// supplied without a creGroupId slot alongside it (even empty, e.g.
+// "key|Name|FAMILY||sreId") since fields are positional. Whitespace around
+// every field is trimmed, so a value pasted into a web form survives. A
 // wholly blank row is skipped, which tolerates a trailing comma.
 //
 // The single-line shape is deliberate: the deployment platform's configuration
@@ -133,9 +145,9 @@ func ParseTeamRegistry(raw string) ([]Team, error) {
 		}
 
 		fields := strings.Split(row, "|")
-		if len(fields) < 2 || len(fields) > 4 {
+		if len(fields) < 2 || len(fields) > 5 {
 			return nil, fmt.Errorf(
-				"team registry row %d (%q): expected 2, 3, or 4 %q-separated fields (teamKey|displayName[|family[|groupId]]), got %d",
+				"team registry row %d (%q): expected 2, 3, 4, or 5 %q-separated fields (teamKey|displayName[|family[|creGroupId[|sreGroupId]]]), got %d",
 				i+1, strings.TrimSpace(row), "|", len(fields))
 		}
 		for j := range fields {
@@ -160,17 +172,24 @@ func ParseTeamRegistry(raw string) ([]Team, error) {
 			}
 			team.Family = family
 		}
-		if len(fields) == 4 {
+		if len(fields) >= 4 {
 			// Validate a supplied group id for the same reason the fields above
 			// are validated: sourceIDToUUID passes anything that is not exactly
 			// 32 hex characters through unchanged, so a typo (a 31-character id,
 			// a stray character) yields a malformed value that matches nothing
-			// on the integrationCsTeam filter without erroring anywhere. An
-			// absent id stays legal -- that team just cannot scope the filter.
+			// on the creTeam filter without erroring anywhere. An absent id
+			// stays legal -- that team just cannot scope the filter.
 			if err := validateGroupID(fields[3]); err != nil {
 				return nil, fmt.Errorf("team registry row %d (%q): %w", i+1, strings.TrimSpace(row), err)
 			}
-			team.GroupID = fields[3]
+			team.CreGroupID = fields[3]
+		}
+		if len(fields) == 5 {
+			// Same validation, same reasoning, for the parallel sreTeam filter.
+			if err := validateGroupID(fields[4]); err != nil {
+				return nil, fmt.Errorf("team registry row %d (%q): %w", i+1, strings.TrimSpace(row), err)
+			}
+			team.SreGroupID = fields[4]
 		}
 		teams = append(teams, team)
 	}
@@ -178,10 +197,10 @@ func ParseTeamRegistry(raw string) ([]Team, error) {
 	return teams, nil
 }
 
-// validateGroupID rejects a configured group id that is not the backing data
-// source's compact 32-hex-character form. An empty value is legal: the id is
-// optional, and a team without one is still listed, it just cannot scope the
-// case-search integrationCsTeam filter.
+// validateGroupID rejects a configured group id (CRE or SRE) that is not the
+// backing data source's compact 32-hex-character form. An empty value is
+// legal: the id is optional, and a team without one is still listed, it just
+// cannot scope the corresponding case-search filter.
 func validateGroupID(id string) error {
 	if id == "" {
 		return nil

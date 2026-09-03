@@ -28,6 +28,27 @@ export const QUICK_PROBLEM_MIN_QUERY_LEN = 2;
 /** A small result page — the palette only shows the top few hits. */
 const QUICK_PROBLEM_LIMIT = 5;
 
+/** A problem number, e.g. "PRB0040192" — always "PRB" plus exactly 7 digits. */
+const PROBLEM_NUMBER_RE = /^PRB\d{7}$/;
+
+/**
+ * What kind of lookup a typed quick-search string should run as — mirrors
+ * {@link "@features/csm-cases/api/useQuickCaseSearch".QuickCaseSearchScope},
+ * just without the internalId variant cases have (problems have only one
+ * exact-match identifier).
+ */
+export type QuickProblemSearchScope = "number" | "text";
+
+/**
+ * Classifies a typed (already-trimmed) quick-search string into the scope
+ * {@link useQuickProblemSearch} should route it through.
+ */
+export function classifyQuickProblemQuery(
+  query: string,
+): QuickProblemSearchScope {
+  return PROBLEM_NUMBER_RE.test(query) ? "number" : "text";
+}
+
 /** One hit from the global-search problem lookup, enough for the palette's result row. */
 export interface QuickProblemHit {
   id: string;
@@ -38,29 +59,36 @@ export interface QuickProblemHit {
 }
 
 /**
- * Free-text problem lookup for the global quick-nav palette. Calls
- * `POST /problems/search` with the typed text as `searchQuery` (ServiceNow
- * data source only) — same endpoint `useSearchProblems` uses for the
- * Operations tab's listing, just capped to a handful of hits and shaped for
- * the palette instead of a paginated table.
+ * Problem lookup for the global quick-nav palette. Calls
+ * `POST /problems/search` (ServiceNow data source only) — same endpoint
+ * `useSearchProblems` uses for the Operations tab's listing, just capped to
+ * a handful of hits and shaped for the palette instead of a paginated table.
+ * Routes the typed text one of two ways (see {@link classifyQuickProblemQuery}):
+ * a `PRB\d{7}` problem number goes through as an exact-match, first-class
+ * field filter (an indexed lookup); anything else falls back to the same
+ * free-text `searchQuery` search the problems list uses. Pass
+ * `forceFreeText` to opt back into the free-text path even when the query
+ * matches the exact pattern — the quick-nav palette's "search in subject and description too" affordance uses this to widen a scoped result.
  *
  * Disabled until the trimmed text reaches {@link QUICK_PROBLEM_MIN_QUERY_LEN},
  * so opening the palette costs no network.
  */
 export function useQuickProblemSearch(
   query: string,
+  options?: { forceFreeText?: boolean },
 ): UseQueryResult<QuickProblemHit[], Error> {
   const api = useBackendApi();
   const q = query.trim();
+  const scope = options?.forceFreeText ? "text" : classifyQuickProblemQuery(q);
 
   return useQuery<QuickProblemHit[], Error>({
-    queryKey: [ApiQueryKeys.PROBLEMS, "quick-search", q],
+    queryKey: [ApiQueryKeys.PROBLEMS, "quick-search", q, scope],
     queryFn: async (): Promise<QuickProblemHit[]> => {
       const res = await api.post<BeProblemSearchPayload, BeProblemSearchResponse>(
         "/problems/search",
         {
           pagination: { offset: 0, limit: QUICK_PROBLEM_LIMIT },
-          filters: { searchQuery: q },
+          filters: scope === "number" ? { number: q } : { searchQuery: q },
         },
       );
       return (res.problems ?? []).map((p) => ({

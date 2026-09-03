@@ -20,36 +20,39 @@ import {
   beStateFromUi,
   commentTypeFromInternal,
   priorityFromSeverity,
-  severityFromPriority,
+  severityFromBe,
   uiCommentFromBe,
   uiStateFromBe,
 } from "./mappers";
 
-describe("severityFromPriority", () => {
+describe("severityFromBe", () => {
   it("maps legacy English names onto the S0-S4 scale", () => {
-    expect(severityFromPriority("catastrophic")).toBe("S0");
-    expect(severityFromPriority("critical")).toBe("S1");
-    expect(severityFromPriority("high")).toBe("S2");
-    expect(severityFromPriority("medium")).toBe("S3");
-    expect(severityFromPriority("low")).toBe("S4");
+    expect(severityFromBe("catastrophic")).toBe("S0");
+    expect(severityFromBe("critical")).toBe("S1");
+    expect(severityFromBe("high")).toBe("S2");
+    expect(severityFromBe("medium")).toBe("S3");
+    expect(severityFromBe("low")).toBe("S4");
   });
 
   it("maps the backend display-string format 'Label (Px)' onto S0-S4", () => {
-    expect(severityFromPriority("Catastrophic (P0)")).toBe("S0");
-    expect(severityFromPriority("Critical (P1)")).toBe("S1");
-    expect(severityFromPriority("High (P2)")).toBe("S2");
-    expect(severityFromPriority("Medium (P3)")).toBe("S3");
-    expect(severityFromPriority("Low (P4)")).toBe("S4");
+    expect(severityFromBe("Catastrophic (P0)")).toBe("S0");
+    expect(severityFromBe("Critical (P1)")).toBe("S1");
+    expect(severityFromBe("High (P2)")).toBe("S2");
+    expect(severityFromBe("Medium (P3)")).toBe("S3");
+    expect(severityFromBe("Low (P4)")).toBe("S4");
   });
 
-  it("falls back to S3 for an unknown/undefined priority", () => {
-    expect(severityFromPriority(undefined)).toBe("S3");
-    expect(severityFromPriority("unknown_value")).toBe("S3");
+  it("maps a falsy/unrecognized severity to the distinct 'unset' state, never to S3", () => {
+    // A case with no severity value is NOT the same fact as "the severity
+    // really is Medium" — it must never collapse into a real severity.
+    expect(severityFromBe(undefined)).toBe("unset");
+    expect(severityFromBe("")).toBe("unset");
+    expect(severityFromBe("unknown_value")).toBe("unset");
   });
 });
 
 describe("priorityFromSeverity", () => {
-  it("is the inverse of severityFromPriority for the known set", () => {
+  it("is the inverse of severityFromBe for the known set", () => {
     expect(priorityFromSeverity("S0")).toBe("catastrophic");
     expect(priorityFromSeverity("S1")).toBe("critical");
     expect(priorityFromSeverity("S2")).toBe("high");

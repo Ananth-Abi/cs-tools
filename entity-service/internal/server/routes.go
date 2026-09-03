@@ -134,7 +134,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 
 	var caseGithubIssueHandler *handler.CaseGithubIssueHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
-		caseGithubIssueHandler = handler.NewCaseGithubIssueHandler(service.NewServiceNowCaseGithubIssueService(serviceNowIntegrationServiceClient))
+		caseGithubIssueHandler = handler.NewCaseGithubIssueHandler(service.NewServiceNowCaseGithubIssueService(serviceNowIntegrationServiceClient, activeCaseSvc))
 	}
 
 	var changeRequestHandler *handler.ChangeRequestHandler
@@ -152,6 +152,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		catalogHandler = handler.NewCatalogHandler(service.NewServiceNowCatalogService(serviceNowIntegrationServiceClient))
 	}
 
+	var feedbackHandler *handler.FeedbackHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		feedbackHandler = handler.NewFeedbackHandler(service.NewServiceNowFeedbackService(serviceNowIntegrationServiceClient))
+	}
+
 	var productVulnerabilityHandler *handler.ProductVulnerabilityHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		productVulnerabilityHandler = handler.NewProductVulnerabilityHandler(service.NewServiceNowProductVulnerabilityService(serviceNowIntegrationServiceClient))
@@ -165,6 +170,21 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	var problemHandler *handler.ProblemHandler
 	if cfg.DataSource == config.DataSourceServiceNow {
 		problemHandler = handler.NewProblemHandler(service.NewServiceNowProblemService(serviceNowIntegrationServiceClient))
+	}
+
+	var alertHandler *handler.AlertHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		alertHandler = handler.NewAlertHandler(service.NewServiceNowAlertService(serviceNowIntegrationServiceClient))
+	}
+
+	var smartAlertHandler *handler.SmartAlertHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		smartAlertHandler = handler.NewSmartAlertHandler(service.NewServiceNowSmartAlertService(serviceNowIntegrationServiceClient))
+	}
+
+	var incidentTaskHandler *handler.IncidentTaskHandler
+	if cfg.DataSource == config.DataSourceServiceNow {
+		incidentTaskHandler = handler.NewIncidentTaskHandler(service.NewServiceNowIncidentTaskService(serviceNowIntegrationServiceClient))
 	}
 
 	var conversationHandler *handler.ConversationHandler
@@ -270,15 +290,27 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases", caseHandler.CreateCase)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
+	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
+	if feedbackHandler != nil {
+		mux.HandleFunc("POST /cases/feedback/search", feedbackHandler.SearchFeedback)
+		mux.HandleFunc("POST /cases/feedback/aggregate", feedbackHandler.AggregateFeedback)
+	}
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
 	mux.HandleFunc("POST /attachments", caseHandler.CreateCaseAttachment)
 	mux.HandleFunc("POST /attachments/search", caseHandler.SearchCaseAttachments)
 	mux.HandleFunc("GET /attachments/{id}/content", caseHandler.GetCaseAttachmentContent)
+	mux.HandleFunc("GET /attachments/{id}", caseHandler.GetAttachment)
+	mux.HandleFunc("PATCH /attachments/{id}", caseHandler.UpdateAttachment)
 	mux.HandleFunc("DELETE /attachments/{id}", caseHandler.DeleteCaseAttachment)
 	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseTag)
 	mux.HandleFunc("DELETE /cases/{id}/tags/{tagId}", caseHandler.RemoveCaseTag)
-	mux.HandleFunc("GET /tags/search", caseHandler.SearchTags)
+	mux.HandleFunc("POST /tags/search", caseHandler.SearchTags)
+	// Deprecated: the query-parameter form of tag search, kept for one release
+	// so callers can be rolled out independently of this service. Remove it
+	// (and CaseHandler.SearchTagsQuery) once they are all on the POST.
+	//nolint:staticcheck // SA1019: intentional one-release compatibility route; remove with the handler.
+	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 
 	if callRequestHandler != nil {
 		mux.HandleFunc("POST /call-requests", callRequestHandler.CreateCallRequest)
@@ -294,6 +326,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	if changeRequestHandler != nil {
 		mux.HandleFunc("POST /change-requests", changeRequestHandler.CreateChangeRequest)
 		mux.HandleFunc("POST /change-requests/search", changeRequestHandler.SearchChangeRequests)
+		mux.HandleFunc("POST /change-requests/aggregate", changeRequestHandler.AggregateChangeRequests)
 		mux.HandleFunc("GET /change-requests/{id}", changeRequestHandler.GetChangeRequest)
 		mux.HandleFunc("PATCH /change-requests/{id}", changeRequestHandler.PatchChangeRequest)
 		mux.HandleFunc("GET /change-requests/{id}/approvals", changeRequestHandler.GetChangeRequestApprovals)
@@ -304,6 +337,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 		mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 		mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+		mux.HandleFunc("DELETE /time-cards/{id}", timeCardHandler.DeleteTimeCard)
 	}
 
 	if catalogHandler != nil {
@@ -314,6 +348,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 	if productVulnerabilityHandler != nil {
 		mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
 		mux.HandleFunc("GET /products/vulnerabilities/{id}", productVulnerabilityHandler.GetProductVulnerability)
+		mux.HandleFunc("POST /products/vulnerabilities/sync", productVulnerabilityHandler.SyncProductVulnerabilities)
 	}
 
 	if itServiceHandler != nil {
@@ -355,13 +390,30 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) http.Handler {
 		mux.HandleFunc("PATCH /incidents/{id}", incidentHandler.PatchIncident)
 		mux.HandleFunc("POST /incidents", incidentHandler.CreateIncident)
 		mux.HandleFunc("POST /incidents/search", incidentHandler.SearchIncidents)
+		mux.HandleFunc("POST /incidents/aggregate", incidentHandler.AggregateIncidents)
 		mux.HandleFunc("POST /incidents/{id}/activities/search", incidentHandler.SearchIncidentActivities)
 	}
 
 	if problemHandler != nil {
 		mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
 		mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
+		mux.HandleFunc("POST /problems/aggregate", problemHandler.AggregateProblems)
 		mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
+		mux.HandleFunc("PATCH /problems/{id}", problemHandler.PatchProblem)
+	}
+
+	if incidentTaskHandler != nil {
+		mux.HandleFunc("POST /incident-tasks/search", incidentTaskHandler.SearchIncidentTasks)
+		mux.HandleFunc("POST /incident-tasks/aggregate", incidentTaskHandler.AggregateIncidentTasks)
+		mux.HandleFunc("GET /incident-tasks/{id}", incidentTaskHandler.GetIncidentTask)
+	}
+
+	if alertHandler != nil {
+		mux.HandleFunc("GET /alerts/{id}", alertHandler.GetAlert)
+	}
+
+	if smartAlertHandler != nil {
+		mux.HandleFunc("GET /smart-alerts/{id}", smartAlertHandler.GetSmartAlert)
 	}
 
 	if conversationHandler != nil {

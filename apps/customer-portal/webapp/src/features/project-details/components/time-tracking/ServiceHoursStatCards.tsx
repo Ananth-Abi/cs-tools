@@ -71,11 +71,11 @@ export default function ServiceHoursStatCards({
           md: hideOnboardingCard ? "1fr" : "1fr 1fr",
         },
         gap: 2,
-        mb: 3,
+        mb: 2,
       }}
     >
       {/* Query Hours Card */}
-      <Card sx={{ p: 2.5 }}>
+      <Card sx={{ p: 2 }}>
         <CardContent sx={{ p: 0, "&:last-child": { pb: 0 } }}>
           <Box
             sx={{
@@ -123,7 +123,7 @@ export default function ServiceHoursStatCards({
 
       {/* Onboarding Hours Card */}
       {!hideOnboardingCard && (
-        <Card sx={{ p: 2.5 }}>
+        <Card sx={{ p: 2 }}>
         <CardContent sx={{ p: 0, "&:last-child": { pb: 0 } }}>
           <Box
             sx={{

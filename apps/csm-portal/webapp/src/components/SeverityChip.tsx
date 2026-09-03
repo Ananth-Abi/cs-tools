@@ -15,7 +15,7 @@
 // under the License.
 
 import type { JSX } from "react";
-import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type { SeverityOrUnset } from "@features/csm-dashboard/types/abtDashboard";
 import {
   SEVERITY_COLOR,
   SEVERITY_LABEL,
@@ -23,7 +23,7 @@ import {
 import SemanticChip from "@components/SemanticChip";
 
 interface SeverityChipProps {
-  severity: Severity;
+  severity: SeverityOrUnset;
   /** Append the descriptive label, e.g. "S1 — Critical" (used on the case header). */
   withLabel?: boolean;
   size?: "small" | "medium";
@@ -36,6 +36,11 @@ interface SeverityChipProps {
  * the highest-priority scan signal in the portal, so it renders as a bold,
  * solid {@link SemanticChip} (which guarantees WCAG AA) — visually out-ranking
  * the quieter outlined state chip.
+ *
+ * `"unset"` (the source has no severity value) renders as a distinct
+ * outlined, non-bold "Unset" badge — deliberately unlike any of the solid
+ * S0-S4 badges (in particular S4's grey "default" role) so it can never be
+ * mistaken for a real severity.
  */
 export default function SeverityChip({
   severity,
@@ -43,6 +48,17 @@ export default function SeverityChip({
   size = "small",
   clickable = false,
 }: SeverityChipProps): JSX.Element {
+  if (severity === "unset") {
+    return (
+      <SemanticChip
+        role="default"
+        label="Unset"
+        variant="outlined"
+        size={size}
+        clickable={clickable}
+      />
+    );
+  }
   return (
     <SemanticChip
       role={SEVERITY_COLOR[severity]}

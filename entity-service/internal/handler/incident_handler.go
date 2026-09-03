@@ -111,3 +111,19 @@ func (h *IncidentHandler) SearchIncidents(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
 }
+
+// AggregateIncidents handles POST /incidents/aggregate.
+func (h *IncidentHandler) AggregateIncidents(w http.ResponseWriter, r *http.Request) {
+	var req domain.AggregateIncidentsRequest
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	resp, err := h.svc.AggregateIncidents(r.Context(), req)
+	if err != nil {
+		writeServiceError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}

@@ -19,7 +19,19 @@ import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import type { BeWidgetResourceType, BeWidgetShape } from "@api/backend/types";
 import { WIDGET_RESOURCE_CONFIG } from "@features/csm-dashboard/config/widgetResourceConfig";
-import { resolveTeamPlaceholder } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import {
+  hasTeamPlaceholder,
+  resolveTeamPlaceholder,
+} from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { resolveRelativeDateFilters } from "@features/csm-dashboard/utils/resolveRelativeDateFilters";
+import {
+  hasCurrentUserPlaceholder,
+  resolveCurrentUserPlaceholder,
+} from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
+import {
+  shouldRetryWidgetFetch,
+  withWidgetFetchSlot,
+} from "@features/csm-dashboard/utils/widgetFetchConcurrency";
 
 /** Default number of rows fetched for a `shape: "list"` widget when the
  * template doesn't set its own `listLimit`. */
@@ -56,20 +68,66 @@ export function useWidgetData(
    * `widgetPreviewUrl.ts`) into the signed-in user's real id, so a request
    * never goes out with the literal placeholder still in it. */
   enabled = true,
-  /** The currently selected team's own `groupId`, or an array of every
-   * team's `groupId` in the current dashboard's family for the "All ABTs"
-   * option (see `ALL_TEAMS_SENTINEL`), used to resolve a case widget's
-   * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`)
-   * before it's sent. `undefined` for a non-team-based dashboard, or while
-   * the team isn't resolved yet — in which case any `integrationCsTeam`
-   * entry carrying that placeholder is dropped rather than sent literally. */
-  selectedTeamGroupId?: string | string[],
+  /** The currently selected team's own `creGroupId`, or an array of every
+   * team's `creGroupId` in the current dashboard's family for the "All
+   * ABTs" option (see `ALL_TEAMS_SENTINEL`), used to resolve a case
+   * widget's `__current_team__` filter placeholder for a `creTeam` filter
+   * entry (see `teamFilterPlaceholder.ts`) before it's sent. `undefined`
+   * for a non-team-based dashboard, or while the team isn't resolved yet —
+   * in which case any `creTeam` entry carrying that placeholder is dropped
+   * rather than sent literally. */
+  selectedTeamCreGroupId?: string | string[],
+  /** The currently selected team's own `sreGroupId`, or an array of every
+   * team's `sreGroupId` in the current dashboard's family for the "All
+   * ABTs" option — the `sreTeam`-filter counterpart of
+   * {@link selectedTeamCreGroupId}, resolved independently. `undefined` in
+   * the same cases `selectedTeamCreGroupId` is. */
+  selectedTeamSreGroupId?: string | string[],
+  /** Only meaningful for shape "list". Opaque sort criteria (see
+   * `BeDashboardWidget.sortBy`), forwarded verbatim as this search
+   * request's own `sortBy` — same passthrough philosophy as `filters`. The
+   * widget config is responsible for a field name valid for that
+   * resourceType's own search contract. */
+  sortBy?: Record<string, unknown>,
+  /** The signed-in user's own platform id (`useCurrentUser().user.id`), used
+   * to resolve a widget's `__current_user__` filter placeholder (see
+   * `currentUserFilterPlaceholder.ts`) before it's sent — `undefined` while
+   * the user profile hasn't loaded yet, in which case any filter entry
+   * carrying that placeholder is dropped rather than sent literally. */
+  currentUserId?: string,
 ): UseQueryResult<WidgetData, Error> {
   const api = useBackendApi();
   const config = WIDGET_RESOURCE_CONFIG[resourceType];
   const limit = shape === "list" ? (listLimit ?? DEFAULT_LIST_LIMIT) : 1;
   const effectiveOffset = shape === "list" ? offset : 0;
-  const resolvedFilters = resolveTeamPlaceholder(filters, selectedTeamGroupId);
+  const resolvedFilters = resolveCurrentUserPlaceholder(
+    resolveRelativeDateFilters(
+      resolveTeamPlaceholder(filters, selectedTeamCreGroupId, selectedTeamSreGroupId),
+    ),
+    currentUserId,
+  );
+  const effectiveSortBy = shape === "list" ? sortBy : undefined;
+  // A `__current_user__` placeholder that survived resolution means the
+  // signed-in user's profile hasn't landed yet. Sending these filters would
+  // either 400 on the non-UUID value or — before this resolver started
+  // failing closed — silently widen a user-scoped widget to every user's
+  // records. Hold the request instead; the query re-enables itself on the
+  // render after `/users/me` resolves.
+  const awaitingCurrentUser = hasCurrentUserPlaceholder(resolvedFilters);
+  // Derived, not threaded down as its own prop: a stable serialization of
+  // both team-group-id params already reaching this hook, so
+  // `withWidgetFetchSlot` can drop this widget's queued fetch when the
+  // selected team changes out from under it (see
+  // widgetFetchConcurrency.ts's own `teamKey` doc). Constant for a
+  // non-team-based dashboard (both undefined) — never drops anything
+  // there.
+  const teamKey = JSON.stringify([selectedTeamCreGroupId, selectedTeamSreGroupId]);
+  // Whether THIS widget's own filters reference `__current_team__` — see
+  // `shouldRetryWidgetFetch`'s own doc comment for why a queue-drop retry
+  // is only worth anything when they don't (team-independent). Derived
+  // from the raw, pre-resolution `filters`, not `resolvedFilters` — by the
+  // time resolution runs the placeholder is already gone.
+  const isTeamIndependent = !hasTeamPlaceholder(filters);
 
   return useQuery<WidgetData, Error>({
     queryKey: [
@@ -79,8 +137,9 @@ export function useWidgetData(
       resolvedFilters,
       limit,
       effectiveOffset,
+      effectiveSortBy,
     ],
-    enabled,
+    enabled: enabled && !awaitingCurrentUser,
     queryFn: async (): Promise<WidgetData> => {
       if (!config) {
         // A widget's resourceType came back from the backend (now a
@@ -89,20 +148,61 @@ export function useWidgetData(
         // rather than crash on the property accesses below.
         throw new Error(`Unsupported widget resourceType: ${resourceType}`);
       }
-      const res = await api.post<
-        { filters: Record<string, unknown>; pagination: { offset: number; limit: number } },
-        Record<string, unknown>
-      >(config.searchEndpoint, {
-        filters: resolvedFilters,
-        pagination: { offset: effectiveOffset, limit },
-      });
-      const total = typeof res.total === "number" ? res.total : 0;
-      const rawItems = res[config.itemsKey];
-      const items = Array.isArray(rawItems)
-        ? (rawItems as Record<string, unknown>[])
-        : [];
-      return { total, items };
+      // Gated behind a shared concurrency slot (see widgetFetchConcurrency.ts)
+      // so an N-widget dashboard doesn't fire N simultaneous searches at
+      // customer-entity-service — the search call itself, not this
+      // queryFn's synchronous config check above, is what actually hits
+      // the network. The provided `signal` is wired to `api.post`'s own
+      // `signal` option so widgetFetchConcurrency's own timeout can
+      // actually abort this specific in-flight request, not just start a
+      // timer nothing observes.
+      return withWidgetFetchSlot(async (signal) => {
+        // Most resourceTypes' own search contract takes
+        // `{filters, pagination:{offset,limit}, sortBy?}` and returns
+        // `{total, [itemsKey]: [...]}` — `config.buildSearchRequestBody`/
+        // `config.parseSearchResponse` exist only for the resourceType(s)
+        // whose real contract diverges from that (today: `case_feedback`'s
+        // flat `page`/`pageSize` request and `totalRecords`/`results`
+        // response — see `WidgetResourceConfig`'s own doc comments). Both
+        // are omitted for every other resourceType, so this stays the exact
+        // request/response shape it always was for them.
+        const body = config.buildSearchRequestBody
+          ? config.buildSearchRequestBody({
+              filters: resolvedFilters,
+              offset: effectiveOffset,
+              limit,
+              sortBy: effectiveSortBy,
+            })
+          : {
+              filters: resolvedFilters,
+              pagination: { offset: effectiveOffset, limit },
+              ...(effectiveSortBy ? { sortBy: effectiveSortBy } : {}),
+            };
+        const res = await api.post<Record<string, unknown>, Record<string, unknown>>(
+          config.searchEndpoint,
+          body,
+          { signal },
+        );
+        if (config.parseSearchResponse) {
+          return config.parseSearchResponse(res);
+        }
+        const total = typeof res.total === "number" ? res.total : 0;
+        const rawItems = res[config.itemsKey];
+        const items = Array.isArray(rawItems)
+          ? (rawItems as Record<string, unknown>[])
+          : [];
+        return { total, items };
+      }, teamKey);
     },
+    // Explicit per-query retry (not inherited from AppWithConfig's global
+    // default) so a widget whose fetch timed out gets one retry — see
+    // shouldRetryWidgetFetch's own doc comment for why a timeout must not
+    // be a same-tick terminal failure, and why the retry needs no separate
+    // "back of the queue" bookkeeping of its own. Wrapped rather than
+    // passed directly: react-query's own `retry` option only ever calls
+    // the 2-arg `(failureCount, error)` form, so `isTeamIndependent` has to
+    // be closed over here instead of threaded through react-query itself.
+    retry: (failureCount, error) => shouldRetryWidgetFetch(failureCount, error, isTeamIndependent),
     staleTime: 60_000,
   });
 }

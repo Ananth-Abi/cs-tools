@@ -114,7 +114,9 @@ function toUser(dto: UserDto): User {
     email: dto.email,
     firstName: dto.firstName,
     lastName: dto.lastName,
-    status: dto.membershipStatus === "REGISTERED" ? "registered" : "invited",
+    // System/integration users never go through the human registration flow, so
+    // membershipStatus stays INVITED indefinitely even though the account is fully active.
+    status: dto.isCsIntegrationUser || dto.membershipStatus === "REGISTERED" ? "registered" : "invited",
     roles: roles,
     lastActive: new Date(), // TODO: Replace this placeholder with actual last active date from backend when available
   };

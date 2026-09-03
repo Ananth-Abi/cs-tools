@@ -19,7 +19,7 @@ import { useIdTokenClaims } from "@hooks/useIdTokenClaims";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import {
-  severityFromPriority,
+  severityFromBe,
   uiStateFromBe,
   userReferenceFromBe,
 } from "@api/backend/mappers";
@@ -74,12 +74,13 @@ function detailFromBeCase(
     wso2CaseId: c.internalId,
     subject: c.subject ?? "(no subject)",
     caseType: c.type ?? undefined,
+    engagementType: c.engagementType ?? undefined,
     customer,
     accountId: account?.id ?? "",
     projectId: c.project?.id ?? "",
     projectName: c.project?.name ?? "—",
     product,
-    severity: severityFromPriority(c.severity),
+    severity: severityFromBe(c.severity),
     state: uiStateFromBe(c.state),
     workState: c.workState ?? null,
     nextStates: (c.nextStates ?? []).map(uiStateFromBe),
@@ -91,6 +92,13 @@ function detailFromBeCase(
       : undefined,
     linkedServiceRequests: c.linkedServiceRequests ?? undefined,
     linkedChangeRequests: c.linkedChangeRequests ?? undefined,
+    catalog: c.catalog ? { id: c.catalog.id, name: c.catalog.name } : undefined,
+    catalogItem: c.catalogItem
+      ? { id: c.catalogItem.id, name: c.catalogItem.name }
+      : undefined,
+    // Passed through in the backend's order — the display order the catalog
+    // item defines for its questions. Never re-sorted.
+    requestVariables: c.variables?.map((v) => ({ name: v.name, value: v.value })),
     autoclosureStep: c.autoclosureStep ?? undefined,
     autoclosureStateTime: c.autoclosureStateTime ?? undefined,
     acknowledgedBy: c.acknowledgedBy

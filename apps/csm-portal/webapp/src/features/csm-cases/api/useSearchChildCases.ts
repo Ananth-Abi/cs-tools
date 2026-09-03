@@ -17,9 +17,12 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
-import { severityFromPriority, uiStateFromBe } from "@api/backend/mappers";
+import { severityFromBe, uiStateFromBe } from "@api/backend/mappers";
 import type { BeCaseSearchPayload, BeCaseSearchResponse } from "@api/backend/types";
-import type { CaseState, Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type {
+  CaseState,
+  SeverityOrUnset,
+} from "@features/csm-dashboard/types/abtDashboard";
 
 const CHILD_CASES_LIMIT = 20;
 
@@ -27,7 +30,7 @@ export interface ChildCaseRow {
   id: string;
   caseNumber?: string;
   subject: string;
-  severity: Severity;
+  severity: SeverityOrUnset;
   state: CaseState;
   assigneeName?: string;
 }
@@ -68,7 +71,7 @@ export function useSearchChildCases(
           id: c.id,
           caseNumber: c.number,
           subject: c.subject ?? "(no subject)",
-          severity: severityFromPriority(c.severity),
+          severity: severityFromBe(c.severity),
           state: uiStateFromBe(c.state),
           assigneeName: c.assignedEngineer?.name ?? undefined,
         })),

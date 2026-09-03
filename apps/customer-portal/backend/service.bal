@@ -6887,6 +6887,77 @@ isolated service class WsProxyService {
             check caller->writeTextMessage(string `{"type":"pong","ts":${ts}}`);
             return;
         }
+
+        // Side-channel messages: an answer rating, or a request to raise a token
+        // limit. Handled before everything below, because none of it applies to
+        // them and all of it causes harm:
+        //
+        //   - the streaming lock: the agent answers these with a "*_ack" and
+        //     never a "final", so the chat-turn path held the lock until the
+        //     upstream connection gave out. The customer's next message was then
+        //     rejected with "a response is already being streamed" and never
+        //     forwarded — the chat looked dead while the socket was fine.
+        //   - conversation creation: a rating carries no "message", so a rating
+        //     arriving before the id was known minted a conversation with an
+        //     empty initial message.
+        //   - the post-stream bookkeeping: persisting the "user query" and
+        //     updating conversation state makes no sense for a rating.
+        string inboundType = parsed is map<json> ? (parsed["type"] ?: "").toString() : "";
+        if inboundType == ai_chat_agent:MSG_TYPE_FEEDBACK
+            || inboundType == ai_chat_agent:MSG_TYPE_TOKEN_INCREASE_REQUEST {
+            string sideChannelConvId;
+            lock {
+                sideChannelConvId = self.conversationId ?: "";
+            }
+            if sideChannelConvId.length() == 0 {
+                // Fall back to the id the client names. It knows which answer it
+                // is rating even when this connection has not carried a turn yet.
+                sideChannelConvId = parsed is map<json>
+                    ? (parsed["conversationId"] ?: "").toString() : "";
+            }
+            if sideChannelConvId.length() == 0 {
+                log:printError(string `Discarding ${inboundType}: no conversation id available`);
+                return;
+            }
+            // Stamp the requester from the authenticated session rather than
+            // trusting the browser to say who it is: a token increase lands in
+            // the durable audit trail as the actor.
+            //
+            // Rewritten unconditionally. When there is no authenticated email to
+            // stamp, any requestedBy the page supplied is *removed* rather than
+            // forwarded — otherwise that one path would let a caller name
+            // themselves in the audit trail. So the field is either this
+            // session's user or absent, never client-supplied; the backend falls
+            // back to the account when it is absent.
+            string sideChannelPayload = data;
+            if parsed is map<json> {
+                if self.userEmail.length() > 0 {
+                    parsed["requestedBy"] = self.userEmail;
+                } else {
+                    // No authenticated email to stamp. The page also sends one now,
+                    // but it is not kept: this becomes the actor on a durable audit
+                    // row, and a value the browser chose would let a caller write
+                    // someone else's name into it. Better an honest "Unknown".
+                    //
+                    // Logged because it should not happen — userInfo.email is set
+                    // for every authenticated session — and an empty one is the
+                    // difference between a named requester and an anonymous row.
+                    if parsed.hasKey("requestedBy") {
+                        log:printWarn(string `Dropping client-supplied requestedBy for ${inboundType}: `
+                                + string `no authenticated email on this session (project ${self.projectId})`);
+                    }
+                    _ = parsed.removeIfHasKey("requestedBy");
+                }
+                sideChannelPayload = parsed.toJsonString();
+            }
+            error? sideChannelErr = ai_chat_agent:sendSideChannelMessage(
+                    string `${self.projectId}:${sideChannelConvId}`, sideChannelPayload, caller);
+            if sideChannelErr is error {
+                log:printError(string `Failed to forward ${inboundType} upstream`, sideChannelErr);
+            }
+            return;
+        }
+
         boolean alreadyStreaming;
         lock {
             alreadyStreaming = self.streaming;

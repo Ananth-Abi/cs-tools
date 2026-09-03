@@ -17,13 +17,16 @@
 import type { TimeCardState } from "@features/csm-timecards/types/timeCards";
 
 /**
- * Actions that can be taken on a card. The backend only supports a
- * state-transition PATCH (`approved` / `rejected`) — there's no submit
- * (cards are created already submitted), no edit (reads never return the
- * fields needed to safely round-trip an edit), no recall, and no process.
- * There's also no bulk/sheet-level endpoint, so there are no sheet actions.
+ * Actions that can be taken on a card. The backend supports a state-transition
+ * PATCH (`approved` / `rejected`), a content-only PATCH — `edit` — and now a
+ * DELETE, all while a card is still `submitted` and the caller is its own
+ * submitter (matching ServiceNow's own edit-in-place behavior — see
+ * DeleteTimeCard's own doc comment in the backend for why deletion follows
+ * the exact same trust model as editing). There's no submit (cards are
+ * created already submitted), no recall, and no process. There's also no
+ * bulk/sheet-level endpoint, so there are no sheet actions.
  */
-export type TimecardAction = "approve" | "reject";
+export type TimecardAction = "approve" | "reject" | "edit" | "delete";
 
 /** The capabilities of the current user relative to a card. */
 export interface TimecardRoleCtx {
@@ -37,14 +40,17 @@ export interface TimecardRoleCtx {
 
 /**
  * Allowed actions on a single card given its state and the user's role.
- * Single source of truth for which buttons render. Only an approver/admin
- * acting on a `submitted` card (not their own) has any action — the owner
- * has none, matching what the backend actually supports today.
+ * Single source of truth for which buttons render. On a `submitted` card,
+ * the owner can edit or delete it (never approve/reject their own — the
+ * backend 403s a self-decide regardless of approver status) and an
+ * approver/admin can only decide it (never edit or delete someone else's
+ * card). Once decided (approved/rejected), nobody has any action.
  */
 export function cardActions(
   state: TimeCardState,
   role: TimecardRoleCtx,
 ): TimecardAction[] {
-  if (state !== "submitted" || role.isOwner) return [];
+  if (state !== "submitted") return [];
+  if (role.isOwner) return ["edit", "delete"];
   return role.isApprover || role.isAdmin ? ["approve", "reject"] : [];
 }

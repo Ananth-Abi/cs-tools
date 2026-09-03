@@ -36,6 +36,8 @@ export interface CustomerPortalWindowConfig {
   CUSTOMER_PORTAL_FLOATING_NOVERA_ENABLED?: boolean;
   /** Enables the Novera chat "request a token limit increase" flow. */
   CUSTOMER_PORTAL_NOVERA_TOKEN_REQUEST_ENABLED?: boolean;
+  /** Enables 👍/👎 answer feedback, with its reason tags, on Novera answers. */
+  CUSTOMER_PORTAL_NOVERA_FEEDBACK_ENABLED?: boolean;
   CUSTOMER_PORTAL_TOP_BANNERS?: Array<{
     enabled: boolean;
     html: string;

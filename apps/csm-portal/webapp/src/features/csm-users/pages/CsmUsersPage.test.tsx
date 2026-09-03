@@ -17,7 +17,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const authFetchMock = vi.fn();
@@ -84,6 +84,43 @@ function renderPageWithDestinations(
           <Route path="/admin/users" element={<CsmUsersPage />} />
           <Route path="/admin/roles/:id" element={<div>Role members page</div>} />
           <Route path="/people/:id" element={<div>User profile page</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+/** Destination probe: renders wherever a navigation actually lands, showing
+ * both the resulting path and the location.state that came with it — so
+ * tests assert on real router navigation, not a static marker or a mocked
+ * navigate function. */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <>
+      <div data-testid="location-probe">{location.pathname + location.search}</div>
+      <div data-testid="location-state-probe">{JSON.stringify(location.state ?? null)}</div>
+    </>
+  );
+}
+
+/**
+ * Same as {@link renderPageWithDestinations}, but `/people/:id` and
+ * `/dashboard` both render {@link LocationProbe} instead of a static marker
+ * — used to assert a navigation actually carries the right `location.state`
+ * forward, not just that it landed on the right page.
+ */
+function renderPageWithLocationProbe(
+  initialPath: string | { pathname: string; state?: unknown },
+): ReturnType<typeof render> {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <Routes>
+          <Route path="/admin/users" element={<CsmUsersPage />} />
+          <Route path="/people/:id" element={<LocationProbe />} />
+          <Route path="/dashboard" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -286,5 +323,51 @@ describe("CsmUsersPage — role truncation and row navigation", () => {
     row.focus();
     fireEvent.keyDown(row, { key: "Enter" });
     expect(await screen.findByText("User profile page")).toBeInTheDocument();
+  });
+
+  it("carries this page's own URL forward as `from` when a row navigates to a profile", async () => {
+    renderPageWithLocationProbe("/admin/users");
+
+    await waitFor(() => expect(screen.getByText("John Smith")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("John Smith").closest("tr") as HTMLElement);
+
+    expect(await screen.findByTestId("location-state-probe")).toHaveTextContent(
+      JSON.stringify({ from: "/admin/users", parentState: null }),
+    );
+  });
+
+  it("shows 'Locked out' in the status column instead of 'Active', for a locked-out user even though they're active", async () => {
+    authFetchMock.mockResolvedValue(
+      jsonResponse({
+        users: [{ ...FEW_ROLES_USER, active: true, lockedOut: true }],
+        total: 1,
+        limit: 20,
+        offset: 0,
+      }),
+    );
+    renderPage("/admin/users");
+
+    await waitFor(() => expect(screen.getByText("John Smith")).toBeInTheDocument());
+    const row = screen.getByText("John Smith").closest("tr") as HTMLElement;
+    expect(within(row).getByText("Locked out")).toBeInTheDocument();
+    expect(within(row).queryByText("Active")).not.toBeInTheDocument();
+  });
+
+  // This page no longer renders its own Back button -- `CsmAdminLayout`
+  // (the parent route shell every `/admin/user-management/*` page is nested
+  // under) sees this exact same `location.state` and is the single Back
+  // button for every page it wraps (see `CsmAdminLayout.test.tsx` for that
+  // behavior). This page still reads `location.state.from` itself, purely to
+  // forward it as `parentState` when a row navigates to a person's profile,
+  // so a dashboard → users → profile → Back → Back round trip restores
+  // correctly instead of losing the dashboard origin partway through.
+  it("carries its own dashboard-return state forward as `parentState` when a row navigates to a profile", async () => {
+    renderPageWithLocationProbe({ pathname: "/admin/users", state: { from: "/dashboard" } });
+
+    await waitFor(() => expect(screen.getByText("John Smith")).toBeInTheDocument());
+    fireEvent.click(screen.getByText("John Smith").closest("tr") as HTMLElement);
+    expect(await screen.findByTestId("location-state-probe")).toHaveTextContent(
+      JSON.stringify({ from: "/admin/users", parentState: { from: "/dashboard" } }),
+    );
   });
 });

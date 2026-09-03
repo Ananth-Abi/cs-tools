@@ -82,10 +82,10 @@ func TestReferenceHandler_SearchTeams(t *testing.T) {
 		assertStatus(t, w, http.StatusOK)
 		got := decodeJSON[struct {
 			Teams []struct {
-				ID      string `json:"id"`
-				Name    string `json:"name"`
-				Family  string `json:"family"`
-				GroupID string `json:"groupId"`
+				ID         string `json:"id"`
+				Name       string `json:"name"`
+				Family     string `json:"family"`
+				CreGroupID string `json:"creGroupId"`
 			} `json:"teams"`
 			Total  int `json:"total"`
 			Limit  int `json:"limit"`
@@ -103,13 +103,13 @@ func TestReferenceHandler_SearchTeams(t *testing.T) {
 		if got.Teams[2].Family != "sre-abt" {
 			t.Errorf("teams[2].family = %q, want sre-abt", got.Teams[2].Family)
 		}
-		// The backing group id is resolved to UUID form at startup...
-		if got.Teams[0].GroupID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
-			t.Errorf("groupId = %q, want the UUID form of the configured id", got.Teams[0].GroupID)
+		// The backing CRE group id is resolved to UUID form at startup...
+		if got.Teams[0].CreGroupID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+			t.Errorf("creGroupId = %q, want the UUID form of the configured id", got.Teams[0].CreGroupID)
 		}
 		// ...and a row that configured none is still listed, just without one.
-		if got.Teams[1].GroupID != "" {
-			t.Errorf("groupId = %q, want it omitted for a team with no configured id", got.Teams[1].GroupID)
+		if got.Teams[1].CreGroupID != "" {
+			t.Errorf("creGroupId = %q, want it omitted for a team with no configured id", got.Teams[1].CreGroupID)
 		}
 	})
 

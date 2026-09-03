@@ -80,9 +80,22 @@ async function readError(
  * fetch and JSON (de)serialization. 404s on GET resolve to `null` so the
  * common "not found" case can be handled without exceptions.
  */
+/** Per-call options accepted by {@link BackendApi.post} on top of its
+ * `path`/`body` — currently just an optional `AbortSignal`, forwarded
+ * straight through to the underlying `fetch`. Its own object type (rather
+ * than a bare `AbortSignal` parameter) so a future addition here doesn't
+ * need every existing call site to learn a new positional argument. */
+export interface BackendApiPostOptions {
+  signal?: AbortSignal;
+}
+
 export interface BackendApi {
   get<T>(path: string): Promise<T | null>;
-  post<TRequest, TResponse>(path: string, body: TRequest): Promise<TResponse>;
+  post<TRequest, TResponse>(
+    path: string,
+    body: TRequest,
+    options?: BackendApiPostOptions,
+  ): Promise<TResponse>;
   patch<TRequest, TResponse>(path: string, body: TRequest): Promise<TResponse>;
   postEmpty<TResponse>(path: string): Promise<TResponse>;
   /** Authenticated DELETE. Returns the parsed JSON body (`null` on 204). */
@@ -126,6 +139,7 @@ export function useBackendApi(): BackendApi {
       async post<TRequest, TResponse>(
         path: string,
         body: TRequest,
+        options?: BackendApiPostOptions,
       ): Promise<TResponse> {
         const correlationId = newCorrelationId();
         const response = await authFetch(buildUrl(path), {
@@ -135,6 +149,7 @@ export function useBackendApi(): BackendApi {
             [CORRELATION_ID_HEADER]: correlationId,
           },
           body: JSON.stringify(body),
+          signal: options?.signal,
         });
         if (!response.ok) throw await readError(response, correlationId);
         return (await response.json()) as TResponse;

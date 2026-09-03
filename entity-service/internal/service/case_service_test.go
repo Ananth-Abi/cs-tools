@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -85,10 +86,13 @@ func TestCaseService_SearchCases_RejectsUnsupportedPostgresFields(t *testing.T) 
 		{name: "parentId", filter: domain.CaseFieldFilter{Field: "parentId", Op: "eq", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
 		{name: "product", filter: domain.CaseFieldFilter{Field: "product", Op: "in", Values: []string{"API Manager"}}},
 		{name: "projectOnboardingStatus", filter: domain.CaseFieldFilter{Field: "projectOnboardingStatus", Op: "in", Values: []string{"Completed"}}},
-		{name: "projectType", filter: domain.CaseFieldFilter{Field: "projectType", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
-		{name: "integrationCsTeam", filter: domain.CaseFieldFilter{Field: "integrationCsTeam", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
+		{name: "projectType", filter: domain.CaseFieldFilter{Field: "projectType", Op: "in", Values: []string{"Subscription"}}},
+		{name: "creTeam", filter: domain.CaseFieldFilter{Field: "creTeam", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
+		{name: "sreTeam", filter: domain.CaseFieldFilter{Field: "sreTeam", Op: "in", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
 		{name: "assignedUserId isEmpty (Unassigned)", filter: domain.CaseFieldFilter{Field: "assignedUserId", Op: "isEmpty"}},
 		{name: "resolutionNotes isEmpty", filter: domain.CaseFieldFilter{Field: "resolutionNotes", Op: "isEmpty"}},
+		// state+in IS supported by this backend; only the exclusion is not.
+		{name: "state notIn", filter: domain.CaseFieldFilter{Field: "state", Op: "notIn", Values: []string{"closed"}}},
 	}
 
 	for _, tc := range cases {
@@ -198,6 +202,34 @@ func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
 			wantMsg: `field "escalation" is not supported by this data source`,
 		},
 		{
+			name: "slaBreached",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true"}}},
+			}},
+			wantMsg: `field "slaBreached" is not supported by this data source`,
+		},
+		{
+			name: "accountEscalationActive",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true"}}},
+			}},
+			wantMsg: `field "accountEscalationActive" is not supported by this data source`,
+		},
+		{
+			name: "resolvedOn gte",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "resolvedOn", Op: "gte", Values: []string{"2026-01-01"}}},
+			}},
+			wantMsg: `field "resolvedOn" is not supported by this data source`,
+		},
+		{
+			name: "resolvedOn lte",
+			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
+				Filters: []domain.CaseFieldFilter{{Field: "resolvedOn", Op: "lte", Values: []string{"2026-01-31"}}},
+			}},
+			wantMsg: `field "resolvedOn" is not supported by this data source`,
+		},
+		{
 			name: "anyOf",
 			req: domain.SearchCasesRequest{Filters: domain.SearchCasesFilters{
 				AnyOf: []domain.CaseFilterBranch{
@@ -224,5 +256,85 @@ func TestCaseService_SearchCases_RejectsServiceNowOnlyOptions(t *testing.T) {
 				t.Errorf("Msg = %q, want %q", ve.Msg, tc.wantMsg)
 			}
 		})
+	}
+}
+
+// TestCaseService_UpdateCase_RejectsTypeTransferFields proves the case-type
+// transfer fields are rejected before the
+// Postgres-backed UpdateCase ever reaches the repository -- stubCaseRepo's
+// UpdateCase panics if called, so a passing test here proves the rejection,
+// not just a repository that happens to ignore the field. Postgres-backed
+// cases have no engagement_type column and are always type "case" (see
+// CreateCase's own "only type \"case\" is supported" guard), so none of these
+// fields have anywhere to go on this data source.
+func TestCaseService_UpdateCase_RejectsTypeTransferFields(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{})
+	ctx := context.Background()
+	strPtr := func(s string) *string { return &s }
+	engagement := domain.EngagementTypeMigration
+
+	cases := []struct {
+		name string
+		req  domain.UpdateCaseRequest
+	}{
+		{name: "type", req: domain.UpdateCaseRequest{ID: testDeploymentUUID, Type: strPtr("engagement")}},
+		{
+			name: "engagementType",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, EngagementType: &engagement},
+		},
+		{
+			name: "catalogId",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, CatalogID: strPtr(testDeploymentUUID)},
+		},
+		{
+			name: "catalogItemId",
+			req:  domain.UpdateCaseRequest{ID: testDeploymentUUID, CatalogItemID: strPtr(testDeploymentUUID)},
+		},
+		{
+			name: "variables",
+			req: domain.UpdateCaseRequest{
+				ID:        testDeploymentUUID,
+				Variables: []domain.Variable{{ID: testDeploymentUUID, Value: "x"}},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := svc.UpdateCase(ctx, tc.req)
+			var ve *apierror.ValidationError
+			if !asValidationError(err, &ve) {
+				t.Fatalf("expected *apierror.ValidationError, got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestCaseService_GetAttachment_ServiceUnavailable and
+// TestCaseService_UpdateAttachment_ServiceUnavailable prove the Postgres data
+// source reports the documented 503 for attachment reads/writes -- there is no
+// Postgres-backed attachment store, so the route must not silently succeed or
+// 404, it must say the operation is unsupported on this data source.
+func TestCaseService_GetAttachment_ServiceUnavailable(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{})
+
+	_, err := svc.GetAttachment(context.Background(), "11111111-1111-1111-1111-111111111111")
+	var sue *apierror.ServiceUnavailableError
+	if !errors.As(err, &sue) {
+		t.Fatalf("GetAttachment error = %v (%T), want *apierror.ServiceUnavailableError", err, err)
+	}
+}
+
+func TestCaseService_UpdateAttachment_ServiceUnavailable(t *testing.T) {
+	svc := NewCaseService(&stubCaseRepo{}, stubUserRepo{})
+
+	_, err := svc.UpdateAttachment(context.Background(), domain.UpdateAttachmentRequest{
+		AttachmentID:  "11111111-1111-1111-1111-111111111111",
+		ReferenceID:   "22222222-2222-2222-2222-222222222222",
+		ReferenceType: domain.ReferenceTypeDeployment,
+	})
+	var sue *apierror.ServiceUnavailableError
+	if !errors.As(err, &sue) {
+		t.Fatalf("UpdateAttachment error = %v (%T), want *apierror.ServiceUnavailableError", err, err)
 	}
 }

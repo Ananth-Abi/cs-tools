@@ -40,7 +40,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { X } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type ChangeEvent, type JSX, type KeyboardEvent } from "react";
-import { useSearchParams } from "react-router";
+import { useLocation, useSearchParams } from "react-router";
 import QueryErrorState from "@components/QueryErrorState";
 import UserRefLink from "@components/UserRefLink";
 import AsyncEntityMultiSelect from "@components/AsyncEntityMultiSelect";
@@ -80,6 +80,17 @@ const ROWS_PER_PAGE_OPTIONS = [10, 20, BE_MAX_PAGE_LIMIT];
  */
 export default function CsmUsersPage(): JSX.Element {
   const navigate = useNavTransition();
+  const location = useLocation();
+  // Set by a dashboard widget's click-through, since this page has no
+  // dashboard context of its own. No Back button of its own reads this
+  // directly any more -- `CsmAdminLayout` (the parent route shell) renders
+  // the single Back button for every page it wraps and reads this exact
+  // same `location.state`, since a layout component sees the same route
+  // match's state as its child. Still needed here to forward `parentState`
+  // onward below, so a dashboard → here → profile → Back → Back chain
+  // restores correctly instead of landing back on the tile grid partway
+  // through.
+  const backState = location.state as { from?: string } | undefined;
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(() => readUsersFiltersFromUrl(searchParams), [searchParams]);
 
@@ -181,10 +192,17 @@ export default function CsmUsersPage(): JSX.Element {
         />
 
         <FormControl size="small" sx={{ width: 200, flexShrink: 0 }}>
-          <InputLabel id="user-roles-label">Roles</InputLabel>
+          <InputLabel
+            id="user-roles-label"
+            shrink={filters.roleIds.length > 0}
+            sx={{ top: "0px !important" }}
+          >
+            Roles
+          </InputLabel>
           <Select
             labelId="user-roles-label"
             multiple
+            notched={filters.roleIds.length > 0}
             value={filters.roleIds}
             onChange={handleRoleChange}
             input={
@@ -252,10 +270,17 @@ export default function CsmUsersPage(): JSX.Element {
         </Box>
 
         <FormControl size="small" sx={{ width: 200, flexShrink: 0 }}>
-          <InputLabel id="user-teams-label">Teams</InputLabel>
+          <InputLabel
+            id="user-teams-label"
+            shrink={filters.teamIds.length > 0}
+            sx={{ top: "0px !important" }}
+          >
+            Teams
+          </InputLabel>
           <Select
             labelId="user-teams-label"
             multiple
+            notched={filters.teamIds.length > 0}
             value={filters.teamIds}
             onChange={handleTeamChange}
             input={
@@ -309,9 +334,16 @@ export default function CsmUsersPage(): JSX.Element {
         </FormControl>
 
         <FormControl size="small" sx={{ minWidth: 140 }}>
-          <InputLabel id="user-active-label">Status</InputLabel>
+          <InputLabel
+            id="user-active-label"
+            shrink={filters.active !== "all"}
+            sx={{ top: "0px !important" }}
+          >
+            Status
+          </InputLabel>
           <Select
             labelId="user-active-label"
+            notched={filters.active !== "all"}
             value={filters.active}
             onChange={handleActiveChange}
             input={<OutlinedInput label="Status" />}
@@ -375,7 +407,20 @@ export default function CsmUsersPage(): JSX.Element {
               ) : (
                 users.map((u) => {
                   const profilePath = `/people/${encodeURIComponent(u.id)}`;
-                  const goToProfile = (): void => navigate(profilePath);
+                  // `parentState` nests this page's OWN inherited state
+                  // (e.g. `{ from: "/dashboard" }`, when this page was
+                  // itself reached from a dashboard widget) so the profile
+                  // page can restore it on its own way back — otherwise a
+                  // dashboard → here → profile → Back round trip would land
+                  // back on this page with no `from`, silently dropping its
+                  // own Back button.
+                  const goToProfile = (): void =>
+                    navigate(profilePath, {
+                      state: {
+                        from: `${location.pathname}${location.search}`,
+                        parentState: backState ?? null,
+                      },
+                    });
                   const handleRowKeyDown = (e: KeyboardEvent<HTMLTableRowElement>): void => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
@@ -438,7 +483,21 @@ export default function CsmUsersPage(): JSX.Element {
                         )}
                       </TableCell>
                       <TableCell>
-                        {u.active === undefined ? (
+                        {u.lockedOut ? (
+                          <Stack direction="row" spacing={0.75} alignItems="center">
+                            <Box
+                              aria-hidden
+                              sx={{
+                                width: 7,
+                                height: 7,
+                                flexShrink: 0,
+                                borderRadius: "50%",
+                                bgcolor: "error.main",
+                              }}
+                            />
+                            <Typography variant="body2">Locked out</Typography>
+                          </Stack>
+                        ) : u.active === undefined ? (
                           "—"
                         ) : (
                           <Stack direction="row" spacing={0.75} alignItems="center">

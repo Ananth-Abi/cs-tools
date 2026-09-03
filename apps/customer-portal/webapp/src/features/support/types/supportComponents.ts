@@ -533,6 +533,8 @@ export type ChatMessageListProps = {
   onCreateCase?: () => void;
   onThumbsUp?: (messageId: string) => void;
   onThumbsDown?: (messageId: string) => void;
+  /** Toggle a reason tag on an already-rated answer. */
+  onFeedbackTag?: (messageId: string, tag: string) => void;
   onFetchOlder?: () => void;
   isFetchingOlder?: boolean;
   onSolutionWorked?: () => void;
@@ -545,6 +547,8 @@ export type ChatMessageBubbleProps = {
   onCreateCase?: () => void;
   onThumbsUp?: (messageId: string) => void;
   onThumbsDown?: (messageId: string) => void;
+  /** Toggle a reason tag on an already-rated answer. */
+  onFeedbackTag?: (messageId: string, tag: string) => void;
   onSolutionWorked?: () => void;
   /** When provided, usage-limit error bubbles show a "request token increase" CTA. */
   onRequestTokenIncrease?: () => void;

@@ -136,6 +136,18 @@ gosec -fmt=text ./...
 
 The scan should report **0 issues**. If a new finding appears, fix the root cause before merging — do not suppress it without a code review.
 
+Run [govulncheck](https://golang.org/x/vuln/cmd/govulncheck) to check for known vulnerabilities:
+
+```bash
+# Install govulncheck (once)
+go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# Run from entity-service
+govulncheck ./...
+```
+
+The scan should report **no vulnerabilities**. Most findings are Go standard-library CVEs tied to the toolchain patch pinned in `go.mod`'s `go` directive — bump it to the latest `1.26.x` patch and run `go mod tidy` to resolve them.
+
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).

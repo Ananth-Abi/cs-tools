@@ -19,6 +19,7 @@ import type {
   AssignedEngineerRefDto,
   CaseCommentDto,
   CaseCommentType,
+  CaseLinkRefDto,
   CaseNumberRefDto,
   CaseSearchViewDto,
   CaseSeverity,
@@ -70,7 +71,8 @@ export interface CaseSummary {
   createdOn: Date;
   updatedOn: Date;
   closedOn: Date | null;
-  /** Creator's email (the case-search view returns it as a plain string). */
+  /** Display-ready creator name, normalized from CaseSearchViewDto's raw UserReference/string/null
+   * by caseCreatorLabel — never render dto.createdBy directly, see that function's comment. */
   createdBy: string;
   project: EntityRefDto;
   deployment: EntityRefDto | null;
@@ -105,6 +107,8 @@ export interface CaseDetail {
   parentCase: CaseNumberRefDto | null;
   relatedCase: CaseNumberRefDto | null;
   nextStates: CaseState[];
+  linkedServiceRequests: CaseLinkRefDto[];
+  linkedChangeRequests: CaseLinkRefDto[];
 }
 
 export interface Comment {
@@ -116,11 +120,21 @@ export interface Comment {
   createdOn: Date;
 }
 
+// CaseSearchViewDto's createdBy is the canonical {id, email, name} UserReference (see that
+// field's comment) — not the plain string this codebase used to assume. Rendering it directly
+// crashes React ("Objects are not valid as a React child"); normalize it here the same way
+// commentAuthorLabel/attachmentAuthorLabel do for the same underlying shape elsewhere.
+function caseCreatorLabel(createdBy: CaseSearchViewDto["createdBy"] | null | undefined): string {
+  if (!createdBy) return "Unknown";
+  if (typeof createdBy === "string") return createdBy.trim() || "Unknown";
+  return createdBy.name?.trim() || createdBy.email?.trim() || "Unknown";
+}
+
 export function toCaseSummary(dto: CaseSearchViewDto): CaseSummary {
   return {
     id: dto.id,
     number: dto.number,
-    wso2Id: dto.wso2Id,
+    wso2Id: dto.internalId,
     subject: dto.subject,
     description: dto.description,
     severity: normalizeSeverity(dto.severity),
@@ -132,7 +146,7 @@ export function toCaseSummary(dto: CaseSearchViewDto): CaseSummary {
     createdOn: parseBackendTimestamp(dto.createdOn ?? ""),
     updatedOn: parseBackendTimestamp(dto.updatedOn ?? dto.createdOn ?? ""),
     closedOn: parseOptionalBackendTimestamp(dto.closedOn),
-    createdBy: dto.createdBy,
+    createdBy: caseCreatorLabel(dto.createdBy),
     project: dto.project,
     deployment: dto.deployment,
     product: dto.product,
@@ -147,7 +161,7 @@ export function toCaseDetail(dto: CaseViewDto): CaseDetail {
   return {
     id: dto.id,
     number: dto.number,
-    wso2Id: dto.wso2Id,
+    wso2Id: dto.internalId,
     subject: dto.subject,
     description: dto.description,
     severity: normalizeSeverity(dto.severity),
@@ -170,6 +184,8 @@ export function toCaseDetail(dto: CaseViewDto): CaseDetail {
     parentCase: dto.parentCase,
     relatedCase: dto.relatedCase,
     nextStates: dto.nextStates,
+    linkedServiceRequests: dto.linkedServiceRequests ?? [],
+    linkedChangeRequests: dto.linkedChangeRequests ?? [],
   };
 }
 function commentAuthorLabel(createdBy: CaseCommentDto["createdBy"] | null | undefined): string {

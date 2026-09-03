@@ -13,9 +13,16 @@ window.config = {
   // CSM_PORTAL_BACKEND_BASE_URL: "https://<choreo-org-id>-az-stg.prod.wdt.choreoapis.dev/<key>/csm-portal-backend/v1.0",
   CSM_PORTAL_BACKEND_BASE_URL: "<your-backend-base-url>",
 
-  // Default Oxygen UI theme. One of: "acrylicOrange", "acrylicPurple",
-  // "choreo", "classic", "highContrast". Users can override this at runtime via
-  // the header theme dropdown (the choice is persisted per browser).
+  // Default Oxygen UI theme. Derived at build time from whatever
+  // @wso2/oxygen-ui exports as a theme (see src/config/themeConfig.ts) --
+  // this list is illustrative, not exhaustive, and can grow on an
+  // oxygen-ui bump without a code change here. As of oxygen-ui 0.13.1, the
+  // theme picker offers: "acrylicOrange", "acrylicPurple", "oxygen",
+  // "paleBase", "paleGray", "paleIndigo", "wso2" ("classic" and
+  // "highContrast" still resolve as a config/persisted value for back-compat
+  // but are no longer offered in the picker). Users can override this at
+  // runtime via the header theme dropdown (the choice is persisted per
+  // browser).
   CSM_PORTAL_THEME: "acrylicOrange",
   CSM_PORTAL_LOG_LEVEL: "ERROR",
 
@@ -37,14 +44,15 @@ window.config = {
   // Available ids: dashboard, support, operations{.service-requests,
   // .change-requests, .incidents, .problems}, engagements, security-center
   // {.reports, .vulnerabilities}, updates, time-cards, announcements,
-  // customers{.accounts, .projects}, admin{.users, .roles, .groups,
-  // .permissions}. Unknown ids are ignored with a console warning.
+  // customers{.accounts, .projects}, admin{.user-management{.users, .roles,
+  // .groups, .teams, .permissions}, .dashboards}. Unknown ids are ignored
+  // with a console warning.
   CSM_PORTAL_FEATURE_OVERRIDES: {
     "operations": "wip",
     "operations.incidents": "enabled",
     "customers": "wip",
     "admin": "wip",
-    "admin.users": "enabled",
+    "admin.user-management.users": "enabled",
   },
 
   // Mock data: when true, data hooks short-circuit to seeded fixtures instead

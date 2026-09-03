@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/wso2-open-operations/cs-tools/apps/csm-portal/backend/internal/middleware"
 )
@@ -46,6 +47,8 @@ type searchConversationsRequest struct {
 	Filters struct {
 		ProjectIDs []string `json:"projectIds"`
 		States     []string `json:"states"`
+		Number     string   `json:"number"`
+		CreatedBy  []string `json:"createdBy"`
 	} `json:"filters"`
 	SortBy struct {
 		Field string `json:"field"`
@@ -54,9 +57,20 @@ type searchConversationsRequest struct {
 }
 
 var (
-	validConversationStates     = map[string]bool{"ACTIVE": true, "RESOLVED": true}
+	validConversationStates     = map[string]bool{"ACTIVE": true, "RESOLVED": true, "CONVERTED": true, "ABANDONED": true, "CLOSED": true}
 	validConversationSortFields = map[string]bool{"createdOn": true, "updatedOn": true}
 	validConversationSortOrders = map[string]bool{"asc": true, "desc": true}
+)
+
+// maxConversationNumberLen and the createdBy bounds mirror the entity service's own
+// runtime rules (entity-service/internal/service/sn_id.go's maxExactNumberLen and
+// sn_conversation_service.go's maxConversationCreatedByEntries/EntryLen) so obviously
+// invalid values are rejected at this boundary too, before ever reaching the entity
+// service. Length caps only, not format checks — same deliberate style as upstream.
+const (
+	maxConversationNumberLen         = 50
+	maxConversationCreatedByEntries  = 20
+	maxConversationCreatedByEntryLen = 254
 )
 
 // validateSearchConversationsBody checks the filter/sort fields with a known, fixed set of
@@ -74,6 +88,17 @@ func validateSearchConversationsBody(body []byte) bool {
 	}
 	for _, st := range req.Filters.States {
 		if !validConversationStates[st] {
+			return false
+		}
+	}
+	if utf8.RuneCountInString(req.Filters.Number) > maxConversationNumberLen {
+		return false
+	}
+	if len(req.Filters.CreatedBy) > maxConversationCreatedByEntries {
+		return false
+	}
+	for _, e := range req.Filters.CreatedBy {
+		if utf8.RuneCountInString(e) > maxConversationCreatedByEntryLen {
 			return false
 		}
 	}

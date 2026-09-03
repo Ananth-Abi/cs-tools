@@ -54,8 +54,9 @@ interface AbtDashboardHeaderProps {
  * not a query param) so a specific dashboard/team view is shareable. The
  * selected team scopes widget data client-side via the
  * `__current_team__` filter placeholder (see `teamFilterPlaceholder.ts`) —
- * the parent resolves the selected team's own `groupId` and threads it down
- * to the widget grid. The earlier My ABT / All customers toggle was removed
+ * the parent resolves the selected team's own `creGroupId`/`sreGroupId` and
+ * threads both down to the widget grid. The earlier My ABT / All customers
+ * toggle was removed
  * entirely — ABT scoping was never implemented and dashboards carry no
  * other special behavior beyond which one (and, for team-based ones, which
  * team) is selected. The picker's "All ABTs" entry (`ALL_TEAMS_SENTINEL`)

@@ -59,7 +59,7 @@ describe("MobileAppBanner", () => {
 
     render(<MobileAppBanner />);
 
-    expect(screen.queryByText("Get the WSO2 Super App")).toBeNull();
+    expect(screen.queryByText(/isn.t optimized for mobile/)).toBeNull();
   });
 
   it("renders nothing when the prompt is disabled even on a mobile device", () => {
@@ -71,7 +71,7 @@ describe("MobileAppBanner", () => {
 
     render(<MobileAppBanner />);
 
-    expect(screen.queryByText("Get the WSO2 Super App")).toBeNull();
+    expect(screen.queryByText(/isn.t optimized for mobile/)).toBeNull();
   });
 
   it("renders nothing when no store URL is configured for the detected OS", () => {
@@ -83,7 +83,7 @@ describe("MobileAppBanner", () => {
 
     render(<MobileAppBanner />);
 
-    expect(screen.queryByText("Get the WSO2 Super App")).toBeNull();
+    expect(screen.queryByText(/isn.t optimized for mobile/)).toBeNull();
   });
 
   it("shows the banner on a detected mobile phone", () => {
@@ -94,7 +94,7 @@ describe("MobileAppBanner", () => {
 
     render(<MobileAppBanner />);
 
-    expect(screen.getByText("Get the WSO2 Super App")).toBeInTheDocument();
+    expect(screen.getByText(/isn.t optimized for mobile/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /download/i })).toBeInTheDocument();
   });
 
@@ -105,12 +105,12 @@ describe("MobileAppBanner", () => {
     });
 
     render(<MobileAppBanner />);
-    expect(screen.getByText("Get the WSO2 Super App")).toBeInTheDocument();
+    expect(screen.getByText(/isn.t optimized for mobile/)).toBeInTheDocument();
 
     const dismissButton = screen.getByRole("button", { name: /close/i });
     fireEvent.click(dismissButton);
 
-    expect(screen.queryByText("Get the WSO2 Super App")).toBeNull();
+    expect(screen.queryByText(/isn.t optimized for mobile/)).toBeNull();
   });
 
   it("opens the store URL via window.open when the download action is used", () => {
@@ -138,7 +138,7 @@ describe("MobileAppBanner", () => {
 
     render(<MobileAppBanner />);
 
-    expect(screen.queryByText("Get the WSO2 Super App")).toBeNull();
+    expect(screen.queryByText(/isn.t optimized for mobile/)).toBeNull();
     expect(screen.queryByRole("button", { name: /download/i })).toBeNull();
     expect(window.open).not.toHaveBeenCalled();
   });
@@ -152,6 +152,6 @@ describe("MobileAppBanner", () => {
 
     render(<MobileAppBanner />);
 
-    expect(screen.queryByText("Get the WSO2 Super App")).toBeNull();
+    expect(screen.queryByText(/isn.t optimized for mobile/)).toBeNull();
   });
 });

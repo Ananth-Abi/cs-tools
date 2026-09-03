@@ -26,6 +26,16 @@ type scimSearchRequest struct {
 	StartIndex int      `json:"startIndex"`
 }
 
+// scimExternalSearchRequest is the request body for the "external" org search,
+// which has no domain concept and needs no pagination: itemsPerPage=1 is
+// enough to answer an existence check. Mirrors asgardeo-user-check's
+// searchRequest.
+type scimExternalSearchRequest struct {
+	Attributes   []string `json:"attributes"`
+	Filter       string   `json:"filter"`
+	ItemsPerPage int      `json:"itemsPerPage"`
+}
+
 type scimSearchResponse struct {
 	TotalResults int        `json:"totalResults"`
 	StartIndex   int        `json:"startIndex"`
@@ -49,6 +59,11 @@ type scimPhone struct {
 // scimSchema holds the WSO2-specific SCIM extension fields.
 type scimSchema struct {
 	LastPasswordUpdateTime *string `json:"lastPasswordUpdateTime,omitempty"`
+	// AccountLocked and AccountState are only populated on "external" org
+	// lookups. Asgardeo returns accountLocked as a quoted string ("true"/
+	// "false"), not a JSON boolean, hence the string type here too.
+	AccountLocked *string `json:"accountLocked,omitempty"`
+	AccountState  *string `json:"accountState,omitempty"`
 }
 
 type scimUpdateRequest struct {
@@ -65,4 +80,13 @@ type scimPhonePayload struct {
 type UserInfo struct {
 	PhoneNumber            *string
 	LastPasswordUpdateTime *string
+}
+
+// ExternalUserInfo holds the SCIM "external" org existence/lock status for a
+// user, mirroring the asgardeo-user-check service's {exists, locked} contract.
+// Locked is nil when the account doesn't exist or its lock state can't be
+// determined from the extension schema.
+type ExternalUserInfo struct {
+	Exists bool
+	Locked *bool
 }

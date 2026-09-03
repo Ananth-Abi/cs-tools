@@ -311,6 +311,42 @@ export default function VariableFormFields({
     const titleLength = displayValue.trim().length;
     const isTitleTooLong = isTitle && titleLength > 160;
 
+    if (variable.choices && variable.choices.length > 0) {
+      const sortedChoices = [...variable.choices].sort(
+        (a, b) => a.order - b.order,
+      );
+      return (
+        <Grid key={variable.id} size={{ xs: 12 }}>
+          <Box sx={{ mb: 1 }}>
+            <FieldLabel questionText={variable.questionText ?? ""} />
+          </Box>
+          <FormControl fullWidth size="small">
+            <Select
+              value={value}
+              onChange={(e) => onChange(variable.id, e.target.value as string)}
+              displayEmpty
+              disabled={isContext}
+              sx={{
+                "& .MuiSelect-select": {
+                  color: !value ? "text.secondary" : undefined,
+                },
+              }}
+              renderValue={(v) =>
+                sortedChoices.find((c) => c.value === v)?.text ||
+                "Select..."
+              }
+            >
+              {sortedChoices.map((choice) => (
+                <MenuItem key={choice.value} value={choice.value}>
+                  {choice.text}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </Grid>
+      );
+    }
+
     if (
       type === VARIABLE_TYPE_SELECT ||
       type === VARIABLE_TYPE_RADIO ||

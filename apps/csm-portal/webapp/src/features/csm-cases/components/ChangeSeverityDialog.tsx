@@ -27,13 +27,22 @@ import {
   Typography,
 } from "@wso2/oxygen-ui";
 import { useState, type JSX } from "react";
-import type { Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type {
+  Severity,
+  SeverityOrUnset,
+} from "@features/csm-dashboard/types/abtDashboard";
 import { SEVERITY_LABEL } from "@features/csm-dashboard/utils/abtDashboard";
 
 const SEVERITIES: Severity[] = ["S0", "S1", "S2", "S3", "S4"];
 
 interface ChangeSeverityDialogProps {
-  currentSeverity: Severity;
+  /**
+   * May be `"unset"` when the case has no severity value at all — the radio
+   * group then starts with nothing selected (none of `SEVERITIES` match),
+   * which correctly forces the engineer to pick a real value before "Change
+   * severity" enables.
+   */
+  currentSeverity: SeverityOrUnset;
   /** True when the case's project is a Managed Cloud subscription — S0 is
    * reserved for those, same rule as case creation (see CsmCaseCreatePage.tsx). */
   isManagedCloud: boolean;
@@ -59,7 +68,7 @@ export default function ChangeSeverityDialog({
   onClose,
   onChange,
 }: ChangeSeverityDialogProps): JSX.Element {
-  const [selected, setSelected] = useState<Severity>(currentSeverity);
+  const [selected, setSelected] = useState<SeverityOrUnset>(currentSeverity);
 
   const changed = selected !== currentSeverity;
 
@@ -70,7 +79,9 @@ export default function ChangeSeverityDialog({
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
           Current severity:{" "}
           <Typography component="span" variant="body2" sx={{ fontWeight: 600, color: "text.primary" }}>
-            {currentSeverity} · {SEVERITY_LABEL[currentSeverity]}
+            {currentSeverity === "unset"
+              ? "Not set"
+              : `${currentSeverity} · ${SEVERITY_LABEL[currentSeverity]}`}
           </Typography>
         </Typography>
 
@@ -104,9 +115,13 @@ export default function ChangeSeverityDialog({
         </Button>
         <Button
           variant="contained"
-          disabled={!changed || isChanging}
+          disabled={!changed || isChanging || selected === "unset"}
           loading={isChanging}
-          onClick={() => onChange(selected)}
+          onClick={() => {
+            // Guard is redundant with `disabled` above (the radio group never
+            // offers "unset" as an option) but keeps this call type-safe.
+            if (selected !== "unset") onChange(selected);
+          }}
         >
           Change severity
         </Button>

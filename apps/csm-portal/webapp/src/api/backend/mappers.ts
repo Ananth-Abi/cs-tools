@@ -37,6 +37,7 @@ import type { UserReference } from "@/types/userReference";
 import type {
   CaseState,
   Severity,
+  SeverityOrUnset,
 } from "@features/csm-dashboard/types/abtDashboard";
 
 // ---------------------------------------------------------------------------
@@ -44,20 +45,25 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Best-effort mapping from the backend's five-step priority taxonomy onto the
- * UI's S0-S4 severity scale. Until the BE adds explicit severity, priority
- * doubles as the source.
+ * Best-effort mapping from the backend's severity string onto the UI's
+ * S0-S4 severity scale — plus the explicit `"unset"` state.
+ *
+ * A falsy value (the backend sends `""` for a case with no severity — it
+ * never defaults one to Medium/S3) and an unrecognized string both map to
+ * `"unset"`, never to `"S3"`: "we don't know the severity" and "the severity
+ * really is Medium" are different facts and must never render/filter
+ * identically. See `SeverityChip` for the distinct "Unset" badge.
  */
-export function severityFromPriority(priority: string | undefined): Severity {
-  if (!priority) return "S3";
-  const s = priority.toLowerCase();
+export function severityFromBe(severity: string | undefined): SeverityOrUnset {
+  if (!severity) return "unset";
+  const s = severity.toLowerCase();
   // Match both P-notation ("Low (P4)", "P4") and legacy English names.
   if (s.includes("p0") || s === "catastrophic") return "S0";
   if (s.includes("p1") || s === "critical") return "S1";
   if (s.includes("p2") || s === "high") return "S2";
   if (s.includes("p3") || s === "medium") return "S3";
   if (s.includes("p4") || s === "low") return "S4";
-  return "S3";
+  return "unset";
 }
 
 export function priorityFromSeverity(severity: Severity): BeCaseSeverity {

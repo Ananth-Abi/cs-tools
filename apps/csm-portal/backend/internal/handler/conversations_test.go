@@ -179,7 +179,7 @@ func TestSearchConversations(t *testing.T) {
 
 	t.Run("rejects unknown state enum value", func(t *testing.T) {
 		h := NewConversationHandler(&mockEntityConversationClient{})
-		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(`{"filters":{"states":["CLOSED"]}}`)))
+		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(`{"filters":{"states":["ARCHIVED"]}}`)))
 		w := httptest.NewRecorder()
 		h.SearchConversations(w, r)
 		assertStatus(t, w, http.StatusBadRequest)
@@ -190,6 +190,69 @@ func TestSearchConversations(t *testing.T) {
 	t.Run("rejects non-UUID projectIds entry", func(t *testing.T) {
 		h := NewConversationHandler(&mockEntityConversationClient{})
 		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(`{"filters":{"projectIds":["not-a-uuid"]}}`)))
+		w := httptest.NewRecorder()
+		h.SearchConversations(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("accepts a valid number filter", func(t *testing.T) {
+		client := &mockEntityConversationClient{
+			searchConversationsFn: func(_ context.Context, _ []byte) ([]byte, error) {
+				return []byte(`{"conversations":[],"total":0}`), nil
+			},
+		}
+		h := NewConversationHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(`{"filters":{"number":"CHAT0001234"}}`)))
+		w := httptest.NewRecorder()
+		h.SearchConversations(w, r)
+		assertStatus(t, w, http.StatusOK)
+	})
+
+	t.Run("rejects number filter exceeding max length", func(t *testing.T) {
+		h := NewConversationHandler(&mockEntityConversationClient{})
+		body := `{"filters":{"number":"` + strings.Repeat("9", maxConversationNumberLen+1) + `"}}`
+		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(body)))
+		w := httptest.NewRecorder()
+		h.SearchConversations(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("accepts a valid createdBy filter", func(t *testing.T) {
+		client := &mockEntityConversationClient{
+			searchConversationsFn: func(_ context.Context, _ []byte) ([]byte, error) {
+				return []byte(`{"conversations":[],"total":0}`), nil
+			},
+		}
+		h := NewConversationHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(`{"filters":{"createdBy":["jane.doe@example.com"]}}`)))
+		w := httptest.NewRecorder()
+		h.SearchConversations(w, r)
+		assertStatus(t, w, http.StatusOK)
+	})
+
+	t.Run("rejects createdBy with too many entries", func(t *testing.T) {
+		h := NewConversationHandler(&mockEntityConversationClient{})
+		entries := make([]string, maxConversationCreatedByEntries+1)
+		for i := range entries {
+			entries[i] = `"user@example.com"`
+		}
+		body := `{"filters":{"createdBy":[` + strings.Join(entries, ",") + `]}}`
+		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(body)))
+		w := httptest.NewRecorder()
+		h.SearchConversations(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects createdBy entry exceeding max length", func(t *testing.T) {
+		h := NewConversationHandler(&mockEntityConversationClient{})
+		body := `{"filters":{"createdBy":["` + strings.Repeat("a", maxConversationCreatedByEntryLen+1) + `"]}}`
+		r := withUser(httptest.NewRequest(http.MethodPost, "/conversations/search", strings.NewReader(body)))
 		w := httptest.NewRecorder()
 		h.SearchConversations(w, r)
 		assertStatus(t, w, http.StatusBadRequest)

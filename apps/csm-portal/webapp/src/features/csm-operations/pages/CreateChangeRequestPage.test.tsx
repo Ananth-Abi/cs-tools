@@ -18,6 +18,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import type { CloneChangeRequestNavState } from "@features/csm-operations/utils/changeRequests";
+import type { CreateChangeRequestFromCaseNavState } from "@features/csm-cases/types/csmCases";
 
 const navigateMock = vi.fn();
 const postChangeRequestMutateMock = vi.fn();
@@ -25,7 +26,11 @@ const patchChangeRequestMutateMock = vi.fn();
 const showErrorMock = vi.fn();
 const postIsPending = false;
 const patchIsPending = false;
-let locationState: CloneChangeRequestNavState | undefined;
+let locationState:
+  | CloneChangeRequestNavState
+  | CreateChangeRequestFromCaseNavState
+  | { from?: string }
+  | undefined;
 
 vi.mock("react-router", () => ({
   useNavigate: () => navigateMock,
@@ -139,7 +144,7 @@ describe("CreateChangeRequestPage — Clone prefill", () => {
     locationState = { sourceNumber: "CHG0009988", subject: "Upgrade the gateway cluster" };
     render(<CreateChangeRequestPage />);
     expect(screen.getByText(/cloned from chg0009988/i)).toBeInTheDocument();
-    expect(screen.getByText(/category, priority, risk/i)).toBeInTheDocument();
+    expect(screen.getByText(/priority, implementation plan/i)).toBeInTheDocument();
   });
 
   it("shows a generic banner when the source number is unavailable", () => {
@@ -189,7 +194,9 @@ describe("CreateChangeRequestPage — originating service request", () => {
     options.onSuccess({ changeRequest: { id: "chg-1", number: "CHG0000001" } });
 
     expect(patchChangeRequestMutateMock).not.toHaveBeenCalled();
-    expect(navigateMock).toHaveBeenCalledWith("/operations/change-requests/chg-1");
+    expect(navigateMock).toHaveBeenCalledWith("/operations/change-requests/chg-1", {
+      state: { from: "/operations?tab=change_requests" },
+    });
   });
 
   it("PATCHes the created change request with caseId when a service request was picked, then navigates on success", () => {
@@ -213,7 +220,9 @@ describe("CreateChangeRequestPage — originating service request", () => {
 
     const [, patchOptions] = patchChangeRequestMutateMock.mock.calls[0];
     patchOptions.onSuccess();
-    expect(navigateMock).toHaveBeenCalledWith("/operations/change-requests/chg-1");
+    expect(navigateMock).toHaveBeenCalledWith("/operations/change-requests/chg-1", {
+      state: { from: "/operations?tab=change_requests" },
+    });
   });
 
   it("still navigates and surfaces a non-silent error when the follow-up PATCH fails", () => {
@@ -231,7 +240,9 @@ describe("CreateChangeRequestPage — originating service request", () => {
     patchOptions.onError(new Error("link failed"));
 
     expect(showErrorMock).toHaveBeenCalledWith(expect.stringContaining("linking it to the originating service request failed"));
-    expect(navigateMock).toHaveBeenCalledWith("/operations/change-requests/chg-1");
+    expect(navigateMock).toHaveBeenCalledWith("/operations/change-requests/chg-1", {
+      state: { from: "/operations?tab=change_requests" },
+    });
   });
 
   it("surfaces a create-mutation error via the shared error banner", () => {
@@ -244,5 +255,95 @@ describe("CreateChangeRequestPage — originating service request", () => {
       "Could not create the change request. Please try again.",
       expect.any(Error),
     );
+  });
+});
+
+// Regression tests: Back/Cancel used to always navigate to the hardcoded
+// change-requests tab and never forward a return path to the newly created
+// record, unlike its 4 sibling create pages (case/service request/
+// engagement/security report).
+describe("CreateChangeRequestPage — Back navigation", () => {
+  beforeEach(() => {
+    locationState = undefined;
+    navigateMock.mockReset();
+    postChangeRequestMutateMock.mockReset();
+    patchChangeRequestMutateMock.mockReset();
+    showErrorMock.mockReset();
+  });
+
+  it("falls back to the change-requests tab when opened with no origin", () => {
+    render(<CreateChangeRequestPage />);
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(navigateMock).toHaveBeenCalledWith("/operations?tab=change_requests");
+  });
+
+  it("returns to the captured origin, and forwards it to the newly created change request, when one is known", () => {
+    locationState = { from: "/customers/projects/proj-1?tab=workItems" };
+    render(<CreateChangeRequestPage />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(navigateMock).toHaveBeenCalledWith("/customers/projects/proj-1?tab=workItems");
+
+    fillSubject();
+    fireEvent.click(screen.getByRole("button", { name: /create change request/i }));
+    const [, options] = postChangeRequestMutateMock.mock.calls[0];
+    options.onSuccess({ changeRequest: { id: "chg-1", number: "CHG0000001" } });
+
+    expect(navigateMock).toHaveBeenCalledWith("/operations/change-requests/chg-1", {
+      state: { from: "/customers/projects/proj-1?tab=workItems" },
+    });
+  });
+});
+
+describe("CreateChangeRequestPage — opened from a service request's own 'Create change request…' action", () => {
+  beforeEach(() => {
+    navigateMock.mockReset();
+    postChangeRequestMutateMock.mockReset();
+    patchChangeRequestMutateMock.mockReset();
+    showErrorMock.mockReset();
+  });
+
+  it("pre-selects the originating service request and surfaces a banner naming it", () => {
+    locationState = {
+      caseId: "sr-789",
+      caseNumber: "CS-4321",
+      caseSubject: "Cluster is unresponsive",
+      projectId: "prj-1",
+    };
+    render(<CreateChangeRequestPage />);
+    expect(screen.getByLabelText(/originating service request/i)).toHaveValue("sr-789");
+    expect(screen.getByText(/linking to cs-4321/i)).toBeInTheDocument();
+  });
+
+  it("still lets the pre-selected service request be changed or cleared", () => {
+    locationState = { caseId: "sr-789", caseNumber: "CS-4321" };
+    render(<CreateChangeRequestPage />);
+    fireEvent.change(screen.getByLabelText(/originating service request/i), {
+      target: { value: "" },
+    });
+    expect(screen.getByLabelText(/originating service request/i)).toHaveValue("");
+  });
+
+  it("PATCHes the created change request with the pre-selected caseId on submit", () => {
+    locationState = { caseId: "sr-789", caseNumber: "CS-4321" };
+    render(<CreateChangeRequestPage />);
+    fillSubject();
+    fireEvent.click(screen.getByRole("button", { name: /create change request/i }));
+
+    const [, postOptions] = postChangeRequestMutateMock.mock.calls[0];
+    postOptions.onSuccess({ changeRequest: { id: "chg-2", number: "CHG0000002" } });
+
+    expect(patchChangeRequestMutateMock).toHaveBeenCalledWith(
+      { id: "chg-2", patch: { caseId: "sr-789" } },
+      expect.objectContaining({ onSuccess: expect.any(Function), onError: expect.any(Function) }),
+    );
+  });
+
+  it("shows no clone banner and no service-request banner when opened directly", () => {
+    locationState = undefined;
+    render(<CreateChangeRequestPage />);
+    expect(screen.queryByText(/cloned from/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/linking to/i)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/originating service request/i)).toHaveValue("");
   });
 });

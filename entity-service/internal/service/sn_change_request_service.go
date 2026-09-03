@@ -88,6 +88,20 @@ type snChangeRequestFilters struct {
 	ImpactKeys      []int    `json:"impactKeys,omitempty"`
 	ClosedStartDate string   `json:"closedStartDate,omitempty"`
 	ClosedEndDate   string   `json:"closedEndDate,omitempty"`
+	// Number: see domain.SearchChangeRequestsFilters.Number doc comment.
+	// Exact match against ServiceNow's `number` column -- not part of the
+	// free-text SearchQuery scan.
+	Number string `json:"number,omitempty"`
+	// CreatedStartDate/CreatedEndDate: see domain.SearchChangeRequestsFilters
+	// doc comment; mirrors ClosedStartDate/ClosedEndDate.
+	CreatedStartDate string `json:"createdStartDate,omitempty"`
+	CreatedEndDate   string `json:"createdEndDate,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+	// Approval: see domain.SearchChangeRequestsFilters.Filters doc comment
+	// ("approval" field). ServiceNow's raw task.approval value, passed
+	// through as-is -- not a key/enum mapping.
+	Approval string `json:"approval,omitempty"`
 }
 
 // snCRTypeIDMap maps domain ChangeRequestType enums to SN numeric type IDs.
@@ -102,6 +116,9 @@ var snCRTypeIDMap = map[domain.ChangeRequestType]int{
 
 // snCRStateIDMap maps domain ChangeRequestState enums to SN numeric state IDs.
 var snCRStateIDMap = map[domain.ChangeRequestState]int{
+	domain.ChangeRequestStateNew:              -5,
+	domain.ChangeRequestStateAssess:           -4,
+	domain.ChangeRequestStateAuthorize:        -3,
 	domain.ChangeRequestStateCustomerApproval: 5,
 	domain.ChangeRequestStateScheduled:        -2,
 	domain.ChangeRequestStateImplement:        -1,
@@ -126,6 +143,9 @@ var snCRSortFieldMap = map[domain.ChangeRequestSortField]string{
 }
 
 var validChangeRequestState = map[domain.ChangeRequestState]bool{
+	domain.ChangeRequestStateNew:              true,
+	domain.ChangeRequestStateAssess:           true,
+	domain.ChangeRequestStateAuthorize:        true,
 	domain.ChangeRequestStateCustomerApproval: true,
 	domain.ChangeRequestStateScheduled:        true,
 	domain.ChangeRequestStateImplement:        true,
@@ -174,6 +194,9 @@ func domainCRImpactsToSNIDs(impacts []domain.ChangeRequestImpact) []int {
 
 // snCRStateLabelMap maps SN state labels (lowercased) to domain ChangeRequestState enums.
 var snCRStateLabelMap = map[string]domain.ChangeRequestState{
+	"new":               domain.ChangeRequestStateNew,
+	"assess":            domain.ChangeRequestStateAssess,
+	"authorize":         domain.ChangeRequestStateAuthorize,
 	"customer approval": domain.ChangeRequestStateCustomerApproval,
 	"scheduled":         domain.ChangeRequestStateScheduled,
 	"implement":         domain.ChangeRequestStateImplement,
@@ -242,6 +265,9 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchChangeRequestsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchChangeRequestsResponse{}, err
+	}
 
 	if req.Filters.ClosedEndDate != nil && req.Filters.ClosedStartDate != nil &&
 		req.Filters.ClosedEndDate.Before(*req.Filters.ClosedStartDate) {
@@ -267,6 +293,14 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 	if err := validateUUIDs("projectIds", req.Filters.ProjectIDs); err != nil {
 		return domain.SearchChangeRequestsResponse{}, err
 	}
+	parsedFilters, err := ParseChangeRequestFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.SearchChangeRequestsResponse{}, err
+	}
+	if parsedFilters.CreatedEndDate != nil && parsedFilters.CreatedStartDate != nil &&
+		parsedFilters.CreatedEndDate.Before(*parsedFilters.CreatedStartDate) {
+		return domain.SearchChangeRequestsResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
@@ -282,12 +316,17 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 
 	payload := snChangeRequestSearchPayload{
 		Filters: snChangeRequestFilters{
-			ProjectIDs:      uuidsToSysids(req.Filters.ProjectIDs),
-			SearchQuery:     req.Filters.SearchQuery,
-			StateKeys:       domainCRStatesToSNIDs(req.Filters.States),
-			ImpactKeys:      domainCRImpactsToSNIDs(req.Filters.Impacts),
-			ClosedStartDate: formatSNDateTimeUTC(req.Filters.ClosedStartDate),
-			ClosedEndDate:   formatSNDateTimeUTC(req.Filters.ClosedEndDate),
+			ProjectIDs:         uuidsToSysids(req.Filters.ProjectIDs),
+			SearchQuery:        req.Filters.SearchQuery,
+			StateKeys:          domainCRStatesToSNIDs(req.Filters.States),
+			ImpactKeys:         domainCRImpactsToSNIDs(req.Filters.Impacts),
+			ClosedStartDate:    formatSNDateTimeUTC(req.Filters.ClosedStartDate),
+			ClosedEndDate:      formatSNDateTimeUTC(req.Filters.ClosedEndDate),
+			Number:             stringPtrValue(req.Filters.Number),
+			CreatedStartDate:   formatSNDateTimeUTC(parsedFilters.CreatedStartDate),
+			CreatedEndDate:     formatSNDateTimeUTC(parsedFilters.CreatedEndDate),
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			Approval:           stringPtrValue(parsedFilters.Approval),
 		},
 		SortBy:     snSortBy,
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
@@ -355,6 +394,108 @@ func (s *snChangeRequestService) SearchChangeRequests(ctx context.Context, req d
 		Limit:          req.Pagination.Limit,
 		Offset:         req.Pagination.Offset,
 	}, nil
+}
+
+// snChangeRequestAggregatePayload is the Choreo POST /change-requests/aggregate
+// request body.
+type snChangeRequestAggregatePayload struct {
+	Filters   snChangeRequestFilters `json:"filters,omitempty"`
+	GroupBy   string                 `json:"groupBy"`
+	MaxGroups int                    `json:"maxGroups,omitempty"`
+}
+
+// validChangeRequestAggregateField is the allow-list for
+// AggregateChangeRequestsRequest.GroupBy, matching openapi.yaml's
+// AggregateChangeRequestsRequest.groupBy enum exactly.
+var validChangeRequestAggregateField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+}
+
+// AggregateChangeRequests implements ChangeRequestService by calling the
+// Choreo POST /change-requests/aggregate endpoint: a single server-side
+// aggregation over the requested field, capped to the top MaxGroups buckets
+// with the remainder folded into AggregateResponse.OthersCount. Filter
+// parsing and validation mirror SearchChangeRequests.
+func (s *snChangeRequestService) AggregateChangeRequests(ctx context.Context, req domain.AggregateChangeRequestsRequest) (domain.AggregateResponse, error) {
+	if req.GroupBy == "" {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validChangeRequestAggregateField[req.GroupBy] {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	if req.Filters.ClosedEndDate != nil && req.Filters.ClosedStartDate != nil &&
+		req.Filters.ClosedEndDate.Before(*req.Filters.ClosedStartDate) {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "closedEndDate must not be before closedStartDate"}
+	}
+	for _, s := range req.Filters.States {
+		if !validChangeRequestState[s] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "states contains invalid value: " + string(s)}
+		}
+	}
+	for _, i := range req.Filters.Impacts {
+		if !validChangeRequestImpact[i] {
+			return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "impacts contains invalid value: " + string(i)}
+		}
+	}
+	if err := validateUUIDs("projectIds", req.Filters.ProjectIDs); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	parsedFilters, err := ParseChangeRequestFieldFilters(req.Filters.Filters, time.Now().UTC())
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if parsedFilters.CreatedEndDate != nil && parsedFilters.CreatedStartDate != nil &&
+		parsedFilters.CreatedEndDate.Before(*parsedFilters.CreatedStartDate) {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "createdOn: lte value must not be before gte value"}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snChangeRequestAggregatePayload{
+		Filters: snChangeRequestFilters{
+			ProjectIDs:         uuidsToSysids(req.Filters.ProjectIDs),
+			SearchQuery:        req.Filters.SearchQuery,
+			StateKeys:          domainCRStatesToSNIDs(req.Filters.States),
+			ImpactKeys:         domainCRImpactsToSNIDs(req.Filters.Impacts),
+			ClosedStartDate:    formatSNDateTimeUTC(req.Filters.ClosedStartDate),
+			ClosedEndDate:      formatSNDateTimeUTC(req.Filters.ClosedEndDate),
+			Number:             stringPtrValue(req.Filters.Number),
+			CreatedStartDate:   formatSNDateTimeUTC(parsedFilters.CreatedStartDate),
+			CreatedEndDate:     formatSNDateTimeUTC(parsedFilters.CreatedEndDate),
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+			Approval:           stringPtrValue(parsedFilters.Approval),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/change-requests/aggregate", token, payload)
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	var resp domain.AggregateResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.AggregateResponse{}, fmt.Errorf("sn change requests: parse aggregate response: %w", err)
+	}
+	// "assignmentGroup" is the only ID-valued field in
+	// validChangeRequestAggregateField; SN returns its bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
+	return resp, nil
 }
 
 // snCreateChangeRequestPayload is the Choreo POST /change-requests request body.

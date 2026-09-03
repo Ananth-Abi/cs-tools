@@ -1,0 +1,99 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package service
+
+import (
+	"errors"
+	"testing"
+
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+)
+
+func TestParseIncidentTaskFieldFilters_StateAssignmentGroupIncident(t *testing.T) {
+	groupID := "11111111-1111-1111-1111-111111111111"
+	incidentID := "22222222-2222-2222-2222-222222222222"
+
+	parsed, err := ParseIncidentTaskFieldFilters([]domain.IncidentTaskFieldFilter{
+		{Field: "state", Op: "in", Values: []string{"0", "1"}},
+		{Field: "assignmentGroupId", Op: "in", Values: []string{groupID}},
+		{Field: "incidentId", Op: "in", Values: []string{incidentID}},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantStates := []int{0, 1}
+	if len(parsed.StateKeys) != len(wantStates) {
+		t.Fatalf("StateKeys = %v, want %v", parsed.StateKeys, wantStates)
+	}
+	for i, k := range wantStates {
+		if parsed.StateKeys[i] != k {
+			t.Errorf("StateKeys[%d] = %d, want %d", i, parsed.StateKeys[i], k)
+		}
+	}
+	if len(parsed.AssignmentGroupIDs) != 1 || parsed.AssignmentGroupIDs[0] != groupID {
+		t.Errorf("AssignmentGroupIDs = %v, want [%s]", parsed.AssignmentGroupIDs, groupID)
+	}
+	if len(parsed.IncidentIDs) != 1 || parsed.IncidentIDs[0] != incidentID {
+		t.Errorf("IncidentIDs = %v, want [%s]", parsed.IncidentIDs, incidentID)
+	}
+}
+
+func TestParseIncidentTaskFieldFilters_Rejections(t *testing.T) {
+	tests := []struct {
+		name    string
+		filters []domain.IncidentTaskFieldFilter
+	}{
+		{
+			name:    "unsupported field",
+			filters: []domain.IncidentTaskFieldFilter{{Field: "priority", Op: "in", Values: []string{"1"}}},
+		},
+		{
+			name:    "unsupported op",
+			filters: []domain.IncidentTaskFieldFilter{{Field: "state", Op: "eq", Values: []string{"0"}}},
+		},
+		{
+			name:    "non-integer state value",
+			filters: []domain.IncidentTaskFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}},
+		},
+		{
+			name:    "empty values",
+			filters: []domain.IncidentTaskFieldFilter{{Field: "state", Op: "in", Values: nil}},
+		},
+		{
+			name:    "invalid assignmentGroupId uuid",
+			filters: []domain.IncidentTaskFieldFilter{{Field: "assignmentGroupId", Op: "in", Values: []string{"not-a-uuid"}}},
+		},
+		{
+			name:    "invalid incidentId uuid",
+			filters: []domain.IncidentTaskFieldFilter{{Field: "incidentId", Op: "in", Values: []string{"not-a-uuid"}}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseIncidentTaskFieldFilters(tt.filters)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			var v *apierror.ValidationError
+			if !errors.As(err, &v) {
+				t.Errorf("error = %v, want *apierror.ValidationError", err)
+			}
+		})
+	}
+}

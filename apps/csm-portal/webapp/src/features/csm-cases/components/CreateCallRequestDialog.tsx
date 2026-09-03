@@ -28,7 +28,10 @@ import {
 } from "@wso2/oxygen-ui";
 import { Plus } from "@wso2/oxygen-ui-icons-react";
 import { useState, type JSX } from "react";
-import type { CaseState, Severity } from "@features/csm-dashboard/types/abtDashboard";
+import type {
+  CaseState,
+  SeverityOrUnset,
+} from "@features/csm-dashboard/types/abtDashboard";
 import { callRequestCaseStateBlockReason } from "@features/csm-cases/utils/callRequestState";
 import {
   formatDateTimeLocal,
@@ -71,12 +74,15 @@ const MAX_TIME_SLOTS = 3;
  *     catastrophic=14, critical=10, high=11, medium=12, low=13
  *   SN priority id -> offset (SN CallRequestUtils._PRIORITY_TIME_OFFSETS):
  *     14=15, 10=30, 11=60, 12=90, 13=120; null/unknown -> 300
- * Caveat: the mapper collapses null-priority cases to S3, so a genuinely
- * null-priority case is enforced at 90 min here vs 300 min at the backend
- * (lenient: it may still 400, but never falsely blocks a valid time).
  * If these backend maps change, this table must change with them.
+ * A genuinely unset-severity case (`severity === "unset"`) is enforced at
+ * `DEFAULT_LEAD_TIME_MINUTES` below, matching the backend's null/unknown
+ * fallback exactly — see the `severity` prop's doc comment.
  */
-const LEAD_TIME_MINUTES_BY_SEVERITY: Record<Severity, number> = {
+const LEAD_TIME_MINUTES_BY_SEVERITY: Record<
+  Exclude<SeverityOrUnset, "unset">,
+  number
+> = {
   S0: 15,
   S1: 30,
   S2: 60,
@@ -167,8 +173,13 @@ export interface CreateDialogProps {
   open: boolean;
   submitting: boolean;
   error: string | null;
-  /** Case severity (S0-S4) — drives the minimum lead time for each proposed slot. */
-  severity?: Severity;
+  /**
+   * Case severity — drives the minimum lead time for each proposed slot.
+   * `"unset"` (no severity value at all) is treated like `undefined`: the
+   * most conservative `DEFAULT_LEAD_TIME_MINUTES`, matching the backend's
+   * own null/unknown fallback.
+   */
+  severity?: SeverityOrUnset;
   /**
    * Case's current state — the data source only accepts a call request while
    * the case is in one of a fixed set of states (see
@@ -214,9 +225,10 @@ export function CreateCallRequestDialog({
 
   // Times are entered in the user's timezone and stored/submitted as UTC.
   const timeZone = resolveDisplayTimeZone();
-  const leadMinutes = severity
-    ? LEAD_TIME_MINUTES_BY_SEVERITY[severity]
-    : DEFAULT_LEAD_TIME_MINUTES;
+  const leadMinutes =
+    severity && severity !== "unset"
+      ? LEAD_TIME_MINUTES_BY_SEVERITY[severity]
+      : DEFAULT_LEAD_TIME_MINUTES;
   const minAllowedMs = earliestAllowedMs(leadMinutes);
   const minLocal = utcMsToZonedInputValue(minAllowedMs, timeZone);
 

@@ -18,9 +18,10 @@
 // Card-level React Query hooks (a case's cards, create, decide), backed by
 // the real csm-portal-backend endpoints:
 //
-//   POST  /time-cards/search   list for a case (server-side caseId filter)
-//   POST  /time-cards          create (already `submitted` — no draft step)
-//   PATCH /time-cards/{id}     accept/reject { state, leadComment }
+//   POST   /time-cards/search   list for a case (server-side caseId filter)
+//   POST   /time-cards          create (already `submitted` — no draft step)
+//   PATCH  /time-cards/{id}     accept/reject { state, leadComment }
+//   DELETE /time-cards/{id}     delete an own, still-submitted card
 //
 
 import {
@@ -34,11 +35,14 @@ import { ApiQueryKeys } from "@constants/apiConstants";
 import { useBackendApi } from "@api/backend/client";
 import type {
   BeCreateTimeCardPayload,
+  BeDeleteTimeCardResponse,
   BeTimeCardMutationResponse,
+  BeUpdateTimeCardPayload,
 } from "@api/backend/types";
 import type {
   CreateTimeCardInput,
   CsmTimeCard,
+  UpdateTimeCardInput,
 } from "@features/csm-timecards/types/timeCards";
 import {
   invalidateTimecards,
@@ -51,9 +55,12 @@ import {
  * plus whether that one page fell short of the case's full `total` — some of
  * the case's cards may not have been fetched if so. No pagination UI here
  * (unlike the three tabs on `/time-cards`) — a single case logging more than
- * a page's worth of time is not expected. */
+ * a page's worth of time is not expected. `total` is the case's real card
+ * count (not just `cards.length`) — use it for any display count so it stays
+ * correct when `truncated` is true. */
 export interface CaseTimeCardsResult {
   cards: CsmTimeCard[];
+  total: number;
   truncated: boolean;
 }
 
@@ -71,9 +78,9 @@ export function useCaseTimeCards(
   return useQuery<CaseTimeCardsResult, Error>({
     queryKey: [ApiQueryKeys.CASE_TIME_CARDS_SEARCH, caseId ?? ""],
     queryFn: async (): Promise<CaseTimeCardsResult> => {
-      if (!caseId) return { cards: [], truncated: false };
+      if (!caseId) return { cards: [], total: 0, truncated: false };
       const { cards, total } = await searchTimeCards(api, { caseId });
-      return { cards, truncated: cards.length < total };
+      return { cards, total, truncated: cards.length < total };
     },
     enabled: !!caseId,
     staleTime: 5_000,
@@ -131,3 +138,64 @@ export function usePostTimeCard(): UseMutationResult<
  * they can't drift again.
  */
 export const useDecideTimeCard = useDecideCard;
+
+/**
+ * Edit an already-submitted card's own content (no `state` key — a content
+ * PATCH is mutually exclusive with the decide flow, see
+ * {@link BeUpdateTimeCardPayload}). The backend enforces submitter-only +
+ * `submitted`-state-only server-side; `LogTimeCardDialog`'s edit mode only
+ * ever offers this to the card's own owner while `submitted` (see
+ * `cardActions`), matching that same rule client-side.
+ */
+export function useUpdateTimeCard(): UseMutationResult<
+  CsmTimeCard,
+  Error,
+  UpdateTimeCardInput
+> {
+  const api = useBackendApi();
+  const queryClient = useQueryClient();
+  return useMutation<CsmTimeCard, Error, UpdateTimeCardInput>({
+    mutationFn: async (input): Promise<CsmTimeCard> => {
+      const payload: BeUpdateTimeCardPayload = {
+        date: input.date,
+        isBillable: input.billable,
+        issueComplexity: input.issueComplexity,
+        workLogComment: input.workLogComment,
+        // Same defensive round as usePostTimeCard's create payload — the
+        // form already collects minutes as whole numbers.
+        timeAnalyzing: Math.round(input.breakdown.analysisDebugging),
+        timeSettingUp: Math.round(input.breakdown.settingUp),
+        timeReproducingDebugging: Math.round(input.breakdown.reproduce),
+        timeProvidingSolution: Math.round(input.breakdown.providingSolution),
+        timePatching: Math.round(input.breakdown.answering),
+      };
+      const res = await api.patch<BeUpdateTimeCardPayload, BeTimeCardMutationResponse>(
+        `/time-cards/${encodeURIComponent(input.cardId)}`,
+        payload,
+      );
+      return mapTimeCard(res.timeCard);
+    },
+    onSuccess: () => invalidateTimecards(queryClient),
+  });
+}
+
+/**
+ * Delete an already-submitted card the signed-in engineer owns — the fix for
+ * a submitted-by-accident or otherwise wrong entry, which previously had no
+ * way to be removed. Same trust model as {@link useUpdateTimeCard}: the
+ * backend only validates the ID's shape, ServiceNow enforces submitter-only
+ * + `submitted`-state-only. `cardActions` only ever offers this to the
+ * card's own owner while `submitted`, matching that same rule client-side.
+ */
+export function useDeleteTimeCard(): UseMutationResult<void, Error, string> {
+  const api = useBackendApi();
+  const queryClient = useQueryClient();
+  return useMutation<void, Error, string>({
+    mutationFn: async (cardId): Promise<void> => {
+      await api.del<BeDeleteTimeCardResponse>(
+        `/time-cards/${encodeURIComponent(cardId)}`,
+      );
+    },
+    onSuccess: () => invalidateTimecards(queryClient),
+  });
+}

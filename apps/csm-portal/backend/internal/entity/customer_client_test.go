@@ -18,6 +18,7 @@ package entity
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -57,5 +58,58 @@ func TestTokenFetchTimeout(t *testing.T) {
 	// Should fail well within 1 s (configured at 100 ms); allow 2 s for CI jitter.
 	if elapsed > 2*time.Second {
 		t.Errorf("token fetch took %v; expected <2s with 100ms timeout", elapsed)
+	}
+}
+
+// TestSearchTagsSendsPostWithBody pins the entity-service call shape for tag
+// search: a POST to /tags/search carrying the caller's body byte-for-byte. The
+// old contract was a GET with `q`/`limit` query params and is gone; asserting
+// on the raw bytes (rather than decoding through a struct) is what makes this
+// test able to catch a silent key rename.
+func TestSearchTagsSendsPostWithBody(t *testing.T) {
+	t.Parallel()
+
+	const reqBody = `{"filters":{"searchQuery":"micro"},"limit":20}`
+
+	var gotMethod, gotPath, gotRawQuery string
+	var gotBody []byte
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`))
+	})
+	mux.HandleFunc("/tags/search", func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotRawQuery = r.URL.RawQuery
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tags":[]}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := NewCustomerEntityClient(CustomerEntityConfig{
+		BaseURL:      srv.URL,
+		TokenURL:     srv.URL + "/token",
+		ClientID:     "test-client",
+		ClientSecret: "test-secret",
+	})
+
+	if _, err := client.SearchTags(context.Background(), []byte(reqBody)); err != nil {
+		t.Fatalf("SearchTags: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/tags/search" {
+		t.Errorf("path = %q, want /tags/search", gotPath)
+	}
+	if gotRawQuery != "" {
+		t.Errorf("query string = %q, want empty (the query moved into the body)", gotRawQuery)
+	}
+	if string(gotBody) != reqBody {
+		t.Errorf("body = %s, want %s", gotBody, reqBody)
 	}
 }

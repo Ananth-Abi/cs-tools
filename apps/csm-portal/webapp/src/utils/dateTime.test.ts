@@ -15,7 +15,13 @@
 // under the License.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isPastDateOnly, isPastDateTime } from "./dateTime";
+import {
+  formatDateOnlyForDisplay,
+  formatRelativeDateOnly,
+  isPastDateOnly,
+  isPastDateTime,
+  parseDateOnly,
+} from "./dateTime";
 
 describe("isPastDateTime", () => {
   it("is true for an instant strictly before now", () => {
@@ -68,5 +74,100 @@ describe("isPastDateOnly", () => {
   it("is false for null/invalid", () => {
     expect(isPastDateOnly(null)).toBe(false);
     expect(isPastDateOnly(new Date("not-a-date"))).toBe(false);
+  });
+});
+
+describe("formatRelativeDateOnly", () => {
+  const now = new Date(2026, 0, 15, 12, 0, 0); // Jan 15, 2026, local noon
+
+  it("labels today's date as 'Today'", () => {
+    expect(formatRelativeDateOnly("2026-01-15", now)).toBe("Today");
+  });
+
+  it("labels yesterday as 'Yesterday'", () => {
+    expect(formatRelativeDateOnly("2026-01-14", now)).toBe("Yesterday");
+  });
+
+  it("labels tomorrow as 'Tomorrow'", () => {
+    expect(formatRelativeDateOnly("2026-01-16", now)).toBe("Tomorrow");
+  });
+
+  it("labels 2+ days ago/from now as 'Nd ago' / 'Nd from now'", () => {
+    expect(formatRelativeDateOnly("2026-01-13", now)).toBe("2d ago");
+    expect(formatRelativeDateOnly("2026-01-08", now)).toBe("7d ago");
+    expect(formatRelativeDateOnly("2026-01-17", now)).toBe("2d from now");
+  });
+
+  it("returns 'Today' near local midnight regardless of the value/now split", () => {
+    // This is the actual bug: the old (hour-diff, UTC-parsed) approach could
+    // read a date-only value as being on the wrong calendar day -- or even
+    // hours "in the future" -- once the viewer's timezone offset shifted
+    // local midnight away from UTC midnight. This function never touches UTC
+    // at all (parseDateOnly + local Date field comparisons only), so it can't
+    // regress into that: "today", one minute after local midnight, is still
+    // unambiguously "Today".
+    const justAfterMidnight = new Date(2026, 0, 15, 0, 1, 0);
+    expect(formatRelativeDateOnly("2026-01-15", justAfterMidnight)).toBe("Today");
+  });
+
+  it("returns '—' for null/undefined/empty", () => {
+    expect(formatRelativeDateOnly(null, now)).toBe("—");
+    expect(formatRelativeDateOnly(undefined, now)).toBe("—");
+    expect(formatRelativeDateOnly("", now)).toBe("—");
+  });
+
+  it("returns '—' for an unparseable value", () => {
+    expect(formatRelativeDateOnly("not-a-date", now)).toBe("—");
+  });
+});
+
+describe("parseDateOnly", () => {
+  it("parses a valid date to local midnight", () => {
+    const date = parseDateOnly("2026-08-01");
+    expect(date).not.toBeNull();
+    expect(date?.getFullYear()).toBe(2026);
+    expect(date?.getMonth()).toBe(7); // 0-indexed: August
+    expect(date?.getDate()).toBe(1);
+    expect(date?.getHours()).toBe(0);
+  });
+
+  it("accepts Feb 29 on a leap year", () => {
+    expect(parseDateOnly("2024-02-29")).not.toBeNull();
+  });
+
+  // The Date constructor silently normalizes an out-of-range day/month
+  // instead of failing (new Date(2026, 1, 31) rolls forward to Mar 3, 2026)
+  // -- these must be rejected (null), not silently returned as a different,
+  // valid-looking date.
+  it("rejects Feb 31 (rolls into March) rather than normalizing it", () => {
+    expect(parseDateOnly("2026-02-31")).toBeNull();
+  });
+
+  it("rejects Feb 29 on a non-leap year", () => {
+    expect(parseDateOnly("2026-02-29")).toBeNull();
+  });
+
+  it("rejects a day/month of 00", () => {
+    expect(parseDateOnly("2026-01-00")).toBeNull();
+    expect(parseDateOnly("2026-00-10")).toBeNull();
+  });
+
+  it("rejects a month of 13", () => {
+    expect(parseDateOnly("2026-13-01")).toBeNull();
+  });
+
+  it("returns null for a malformed string", () => {
+    expect(parseDateOnly("not-a-date")).toBeNull();
+    expect(parseDateOnly("2026/08/01")).toBeNull();
+  });
+});
+
+describe("parseDateOnly's invalid-date rejection, through its public callers", () => {
+  it("formatDateOnlyForDisplay falls back to null instead of showing the rolled-over date", () => {
+    expect(formatDateOnlyForDisplay("2026-02-31")).toBeNull();
+  });
+
+  it("formatRelativeDateOnly falls back to '—' instead of a relative label for the wrong day", () => {
+    expect(formatRelativeDateOnly("2026-02-31")).toBe("—");
   });
 });

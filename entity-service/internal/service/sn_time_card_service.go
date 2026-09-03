@@ -497,3 +497,26 @@ func (s *snTimeCardService) UpdateTimeCard(ctx context.Context, req domain.Updat
 	}
 	return parseTimeCardMutation(raw, "update")
 }
+
+// DeleteTimeCard forwards a delete straight to SN with the caller's own
+// token, the same trust model UpdateTimeCard uses — no fetch-then-check
+// here; SN's own ACL is what actually enforces submitter-only +
+// submitted-state-only, exactly as it already does for edits.
+func (s *snTimeCardService) DeleteTimeCard(ctx context.Context, req domain.DeleteTimeCardRequest) (domain.DeleteTimeCardResponse, error) {
+	token := middleware.UserIDTokenFromContext(ctx)
+	if err := validateUUIDs("id", []string{req.ID}); err != nil {
+		return domain.DeleteTimeCardResponse{}, err
+	}
+
+	raw, err := s.client.Delete(ctx, fmt.Sprintf("/time-cards/%s", uuidToSysid(req.ID)), token)
+	if err != nil {
+		return domain.DeleteTimeCardResponse{}, err
+	}
+	var snResp struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.DeleteTimeCardResponse{}, fmt.Errorf("sn time cards: parse delete response: %w", err)
+	}
+	return domain.DeleteTimeCardResponse{Message: snResp.Message}, nil
+}

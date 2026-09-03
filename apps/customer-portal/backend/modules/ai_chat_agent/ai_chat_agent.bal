@@ -144,3 +144,78 @@ public isolated function streamChat(string sessionId, string payload, websocket:
     }
     return finalPayload;
 }
+
+# Forward a side-channel message — an answer rating, or a token-increase request —
+# to the upstream agent and pipe events back until it acknowledges.
+#
+# Deliberately separate from streamChat. These are not chat turns: the agent
+# answers them with a "*_ack" and never sends a "final". Routing them through
+# streamChat left it reading for an event that could not arrive, holding the
+# caller's streaming lock until the connection gave out — so the customer's next
+# real message was rejected with "A response is already being streamed" and never
+# forwarded upstream at all. The rating persisted; the conversation was dead.
+#
+# + sessionId - Conversation/session ID used to route to the upstream Python session
+# + payload - Raw JSON string (feedback or token_increase_request) to forward
+# + caller - The browser WebSocket caller to forward the acknowledgement back to
+# + return - Error if the upstream connection could not be opened or written to
+public isolated function sendSideChannelMessage(string sessionId, string payload,
+        websocket:Caller caller) returns error? {
+    websocket:Client agentClient = check createAiChatAgentWsClient(sessionId, SIDE_CHANNEL_READ_TIMEOUT);
+    // Not `check`: returning straight out of here would leave the connection we
+    // just opened dangling, which is the very thing this function exists to stop.
+    error? upstreamWriteErr = agentClient->writeTextMessage(payload);
+    if upstreamWriteErr is error {
+        closeUpstream(agentClient);
+        return upstreamWriteErr;
+    }
+    boolean upstreamClosed = false;
+    while true {
+        string|error event = agentClient->readTextMessage();
+        if event is error {
+            if event is websocket:ConnectionClosureError {
+                upstreamClosed = true;
+            } else {
+                // Includes the read timeout. The rating may well have been stored
+                // — the write succeeded — so this is logged, not surfaced as a
+                // failure to the customer.
+                log:printError("Error reading acknowledgement from upstream AI chat agent", event);
+            }
+            break;
+        }
+        error? writeErr = caller->writeTextMessage(event);
+        if writeErr is error {
+            log:printError("Failed to forward acknowledgement to caller (client disconnected)", writeErr);
+            break;
+        }
+        json|error parsed = event.fromJsonString();
+        if parsed is error {
+            log:printError("Failed to parse upstream event as JSON", parsed);
+            continue;
+        }
+        if parsed is map<json> {
+            string evtType = (parsed[EVENT_TYPE_KEY] ?: "").toString();
+            if evtType == EVENT_FEEDBACK_ACK || evtType == EVENT_TOKEN_REQUEST_ACK
+                || evtType == EVENT_ERROR {
+                break;
+            }
+        }
+    }
+    if !upstreamClosed {
+        closeUpstream(agentClient);
+    }
+    return;
+}
+
+# Close a side-channel upstream connection, logging rather than raising if the
+# close itself fails. Every exit path from sendSideChannelMessage goes through
+# here, and each reaches it at most once, so the connection is always released
+# and never closed twice.
+#
+# + agentClient - The upstream AI chat agent connection to release
+isolated function closeUpstream(websocket:Client agentClient) {
+    error? closeErr = agentClient->close(1000, "acknowledged");
+    if closeErr is error {
+        log:printError("Failed to close upstream WebSocket connection", closeErr);
+    }
+}

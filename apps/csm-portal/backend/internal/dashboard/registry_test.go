@@ -312,26 +312,67 @@ func TestLoadDir_ContradictoryCombinations(t *testing.T) {
 	}
 }
 
-// Two defaults of DIFFERENT types are rejected too, for now. One default per
-// type is where this ends up, but only once the frontend selects on "type" --
-// today CsmDashboardPage picks on isDefault + isTeamBased and the
-// dashboard-list response does not even carry "type", so a second typed
-// default would be resolved by nothing but LoadDir's filename ordering.
-// Rejecting is the conservative half of that pair. When the frontend becomes
-// type-aware, this test flips to asserting they coexist.
-func TestLoadDir_RejectsASecondDefaultEvenOfADifferentType(t *testing.T) {
+// Two defaults of DIFFERENT types coexist: the frontend selects its landing
+// dashboard from the caller's own team family against "type", so a cre
+// default and an sre default (or a cs default) do not compete for one
+// global slot -- each type gets its own.
+func TestLoadDir_AllowsDefaultsOfDifferentTypesToCoexist(t *testing.T) {
 	dir := t.TempDir()
 	writeDefinition(t, dir, "a.json", `{"id": "a", "displayName": "A", "type": "cs", "isDefault": true, "widgets": []}`)
 	writeDefinition(t, dir, "b.json", `{"id": "b", "displayName": "B", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
 
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir rejected two isDefault dashboards of different types: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LoadDir returned %d dashboards, want 2", len(got))
+	}
+	if !got[0].IsDefault || got[0].Type != TypeCS {
+		t.Fatalf("a = %+v; want isDefault true, type cs", got[0])
+	}
+	if !got[1].IsDefault || got[1].Type != TypeCRE {
+		t.Fatalf("b = %+v; want isDefault true, type cre", got[1])
+	}
+}
+
+// A second isDefault dashboard of the SAME type is still rejected, exactly as
+// before -- the one-per-type rule is not "no rule at all".
+func TestLoadDir_RejectsASecondDefaultOfTheSameType(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "a", "displayName": "A", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "b", "displayName": "B", "type": "cre", "isDefault": true, "isTeamBased": true, "widgets": []}`)
+
 	_, err := LoadDir(dir)
 	if err == nil {
-		t.Fatal("LoadDir accepted two isDefault dashboards of different types; expected an error")
+		t.Fatal("LoadDir accepted two isDefault dashboards of the same type; expected an error")
 	}
-	for _, want := range []string{"a.json", "b.json", "isDefault"} {
+	for _, want := range []string{"a.json", "b.json", "isDefault", "cre"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
 		}
+	}
+}
+
+// An untyped isDefault dashboard (only reachable via the deprecated
+// DASHBOARDS_CONFIG path) does not share a "slot" with a typed isDefault
+// dashboard -- it has no type to key off, so it must not collide with one.
+func TestParseDashboardsConfig_UntypedDefaultDoesNotCollideWithTypedDefault(t *testing.T) {
+	got, err := ParseDashboardsConfig(`[
+		{"id":"a","displayName":"A","isDefault":true,"widgets":[]},
+		{"id":"b","displayName":"B","type":"cs","isDefault":true,"widgets":[]}
+	]`)
+	if err != nil {
+		t.Fatalf("ParseDashboardsConfig rejected an untyped default alongside a typed one: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ParseDashboardsConfig returned %d dashboards, want 2", len(got))
+	}
+	if !got[0].IsDefault || got[0].Type != "" {
+		t.Fatalf("a = %+v; want isDefault true, no type", got[0])
+	}
+	if !got[1].IsDefault || got[1].Type != TypeCS {
+		t.Fatalf("b = %+v; want isDefault true, type cs", got[1])
 	}
 }
 
@@ -429,7 +470,7 @@ func TestRegistry_DefaultModeReadsDiskExactlyOnce(t *testing.T) {
 	writeDefinition(t, dir, "a.json", csDefinition)
 
 	var reads atomic.Int64
-	r, err := NewDirRegistry(dir, false)
+	r, err := NewDirRegistry(dir, false, "", "")
 	if err != nil {
 		t.Fatalf("NewDirRegistry returned error: %v", err)
 	}
@@ -468,7 +509,7 @@ func TestRegistry_HotReloadPicksUpChanges(t *testing.T) {
 	dir := t.TempDir()
 	writeDefinition(t, dir, "a.json", csDefinition)
 
-	r, err := NewDirRegistry(dir, true)
+	r, err := NewDirRegistry(dir, true, "", "")
 	if err != nil {
 		t.Fatalf("NewDirRegistry returned error: %v", err)
 	}
@@ -508,7 +549,7 @@ func TestRegistry_HotReloadKeepsLastKnownGoodOnError(t *testing.T) {
 	dir := t.TempDir()
 	writeDefinition(t, dir, "a.json", csDefinition)
 
-	r, err := NewDirRegistry(dir, true)
+	r, err := NewDirRegistry(dir, true, "", "")
 	if err != nil {
 		t.Fatalf("NewDirRegistry returned error: %v", err)
 	}
@@ -539,7 +580,7 @@ func TestNewDirRegistry_FailsAtStartupInBothModes(t *testing.T) {
 	for _, hotReload := range []bool{false, true} {
 		dir := t.TempDir()
 		writeDefinition(t, dir, "broken.json", `{"id": "broken", "displayName":`)
-		if _, err := NewDirRegistry(dir, hotReload); err == nil {
+		if _, err := NewDirRegistry(dir, hotReload, "", ""); err == nil {
 			t.Fatalf("NewDirRegistry(hotReload=%v) returned no error for a malformed definition", hotReload)
 		}
 	}
@@ -774,6 +815,42 @@ func TestLoadDir_RejectsInvalidWidgets(t *testing.T) {
 			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "count", "gridWidth": 13}`,
 			want:    `widget "w": "gridWidth" is 13`,
 		},
+		{
+			name: "pie widget with neither slices nor groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "pie", "gridWidth": 3,
+			 "query": {}}`,
+			want: `widget "w": shape "pie" needs either "slices" or "groupBy"`,
+		},
+		{
+			name: "bar widget with both slices and groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "bar", "gridWidth": 3,
+			 "query": {}, "slices": [{"label": "A", "query": {}}], "groupBy": {"field": "account"}}`,
+			want: `widget "w": carries both "slices" and "groupBy"`,
+		},
+		{
+			name: "groupBy with an empty field",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case", "shape": "pie", "gridWidth": 3,
+			 "query": {}, "groupBy": {"field": ""}}`,
+			want: `widget "w": "groupBy.field" is empty`,
+		},
+		{
+			name: "bar widget groupBy with both field and bucket",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 3,
+			 "query": {}, "groupBy": {"field": "account", "bucket": "day"}}`,
+			want: `widget "w": "groupBy" carries both "field" and "bucket"`,
+		},
+		{
+			name: "bar widget groupBy with an unknown bucket",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 3,
+			 "query": {}, "groupBy": {"bucket": "quarter"}}`,
+			want: `widget "w": unknown "groupBy.bucket" "quarter"`,
+		},
+		{
+			name: "bar widget with neither slices nor groupBy",
+			widgets: `{"id": "w", "displayName": "W", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 3,
+			 "query": {}}`,
+			want: `widget "w": shape "bar" needs either "slices" or "groupBy"`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -798,6 +875,42 @@ func TestLoadDir_RejectsInvalidWidgets(t *testing.T) {
 	}
 }
 
+// A "bar" widget grouped by date bucket (case-feedback trend) loads clean,
+// same as a field-grouped pie/bar widget always has -- the new
+// GroupByConfig.Bucket branch is additive, not a narrowing of what already
+// loaded.
+func TestLoadDir_AcceptsBarWidgetWithBucketGroupBy(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "d.json", `{
+	  "id": "d", "displayName": "D", "type": "cs",
+	  "widgets": [
+	    {"id": "feedback-trend", "displayName": "Feedback Trend", "resourceType": "case_feedback", "shape": "bar", "gridWidth": 6,
+	     "query": {}, "groupBy": {"bucket": "week"}}
+	  ]
+	}`)
+
+	dashboards, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(dashboards) != 1 || len(dashboards[0].Widgets) != 1 {
+		t.Fatalf("unexpected loaded dashboards: %+v", dashboards)
+	}
+	w := dashboards[0].Widgets[0]
+	if w.ResourceType != ResourceCaseFeedback {
+		t.Errorf("resourceType = %q, want %q", w.ResourceType, ResourceCaseFeedback)
+	}
+	if w.Shape != ShapeBar {
+		t.Errorf("shape = %q, want %q", w.Shape, ShapeBar)
+	}
+	if w.GroupBy == nil || w.GroupBy.Bucket != "day" && w.GroupBy.Bucket != "week" && w.GroupBy.Bucket != "month" {
+		t.Fatalf("groupBy = %+v, want a valid bucket", w.GroupBy)
+	}
+	if w.GroupBy.Field != "" {
+		t.Errorf("groupBy.field = %q, want empty for a bucket-mode groupBy", w.GroupBy.Field)
+	}
+}
+
 // The deprecated single-variable path gets the same widget validation: unlike
 // "type", none of these fields is new, so an already-deployed value carrying
 // one is already broken.
@@ -816,6 +929,75 @@ func TestParseDashboardsConfig_RejectsInvalidWidgets(t *testing.T) {
 	}
 }
 
+// A dashboard may claim a defaultForTeamKeys entry without any conflict --
+// the common case, and the one every real deployment relies on to land a
+// team's members on their own specialist dashboard.
+func TestLoadDir_DefaultForTeamKeysWithNoConflictIsFine(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "migration-engineer", "displayName": "Migration Engineer", "type": "cs", "defaultForTeamKeys": ["cs_migrations_team"], "widgets": []}`)
+
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LoadDir returned %d dashboards, want 2", len(got))
+	}
+}
+
+// TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership is the fix for the
+// gap CodeRabbit flagged: validate did not track defaultForTeamKeys
+// ownership at all, so two dashboards claiming the same team key would both
+// load, and CsmDashboardPage's find() would silently pick whichever came
+// first in dashboard list order -- an outcome driven by LoadDir's filename
+// ordering rather than by any config author's intent.
+//
+// Ownership is tracked by dashboard id (see
+// TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource
+// for why source alone is not enough), so the rejection here names the
+// owning dashboard's id, not its source file.
+func TestLoadDir_RejectsDuplicateDefaultForTeamKeysOwnership(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "a.json", `{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+	writeDefinition(t, dir, "b.json", `{"id": "migration-engineer", "displayName": "Migration Engineer", "type": "cs", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}`)
+
+	_, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("LoadDir accepted two dashboards claiming the same defaultForTeamKeys entry; expected an error")
+	}
+	for _, want := range []string{"b.json", "migration-engineer", "onboarding-engineer", "customer_onboarding", "defaultForTeamKeys"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
+		}
+	}
+}
+
+// TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource
+// is the regression test for the bug in the fix above (commit faa5265a6):
+// ownership was tracked by l.source, which is fine for LoadDir (one source
+// file per dashboard) but not for the deprecated DASHBOARDS_CONFIG path,
+// where ParseDashboardsConfig decodes many distinct dashboard objects out of
+// one JSON payload -- so every dashboard in that payload shares the exact
+// same l.source string. Two different dashboards in that single payload
+// claiming the same defaultForTeamKeys entry used to pass validation because
+// prev == l.source for both; tracking by d.ID instead means they no longer
+// share an owner and the second claim is correctly rejected.
+func TestParseDashboardsConfig_RejectsDuplicateDefaultForTeamKeysOwnershipAcrossSharedSource(t *testing.T) {
+	_, err := ParseDashboardsConfig(`[
+		{"id": "onboarding-engineer", "displayName": "Onboarding Engineer", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []},
+		{"id": "migration-engineer", "displayName": "Migration Engineer", "defaultForTeamKeys": ["customer_onboarding"], "widgets": []}
+	]`)
+	if err == nil {
+		t.Fatal("ParseDashboardsConfig accepted two dashboards (sharing one DASHBOARDS_CONFIG source) claiming the same defaultForTeamKeys entry; expected an error")
+	}
+	for _, want := range []string{"migration-engineer", "onboarding-engineer", "customer_onboarding", "defaultForTeamKeys"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to contain %q", err.Error(), want)
+		}
+	}
+}
+
 // The committed dashboards.example/ directory is what .env.example's
 // DASHBOARDS_DIR points at, so `cp .env.example .env && go run ./cmd/server`
 // works on a fresh clone (./dashboards is gitignored and a missing directory
@@ -831,5 +1013,167 @@ func TestLoadDir_ShippedExampleDirectoryIsValid(t *testing.T) {
 	}
 	if len(got) == 0 {
 		t.Fatalf("%s loaded no dashboards", dir)
+	}
+}
+
+// TestLoadDir_SingleFileDashboardUnaffectedByPartOfSupport is the regression
+// check for the "partOf" mechanism: a dashboard with no parts anywhere in the
+// directory must load exactly as it always has.
+func TestLoadDir_SingleFileDashboardUnaffectedByPartOfSupport(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "01-cs.json", csDefinition)
+	writeDefinition(t, dir, "02-cre.json", creDefinition)
+
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("LoadDir returned %d dashboards, want 2: %+v", len(got), got)
+	}
+	if got[1].ID != "cre-team" || len(got[1].Widgets) != 2 {
+		t.Fatalf("cre-team = %+v; want its usual 2 widgets, untouched by partOf support", got[1])
+	}
+}
+
+// TestLoadDir_MergesPartFilesIntoPrimaryDashboard proves the split
+// mechanism's happy path: a primary file's widgets and a part file's widgets
+// end up concatenated onto one dashboard, and the part file itself
+// contributes no dashboard beyond that.
+func TestLoadDir_MergesPartFilesIntoPrimaryDashboard(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "01-primary.json", `{
+	  "id": "cs-overview", "displayName": "CS Overview", "type": "cs",
+	  "widgets": [
+	    {"id": "open-cases", "displayName": "Open Cases", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["open"]}]}}
+	  ]
+	}`)
+	// Deliberately placed before the primary in lexical order, and under an
+	// unrelated filename, to prove the loader groups by "partOf" rather than
+	// by file adjacency or naming.
+	writeDefinition(t, dir, "00-extra-widgets.json", `{
+	  "partOf": "cs-overview",
+	  "widgets": [
+	    {"id": "closed-cases", "displayName": "Closed Cases", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["closed"]}]}}
+	  ]
+	}`)
+
+	got, err := LoadDir(dir)
+	if err != nil {
+		t.Fatalf("LoadDir returned error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("LoadDir returned %d dashboards, want 1 (the part file must not become its own dashboard): %+v", len(got), got)
+	}
+	d := got[0]
+	if d.ID != "cs-overview" {
+		t.Fatalf("dashboard id = %q, want cs-overview", d.ID)
+	}
+	if len(d.Widgets) != 2 {
+		t.Fatalf("cs-overview has %d widgets, want 2 (1 primary + 1 from the part file): %+v", len(d.Widgets), d.Widgets)
+	}
+	ids := map[string]bool{}
+	for _, w := range d.Widgets {
+		ids[w.ID] = true
+	}
+	if !ids["open-cases"] || !ids["closed-cases"] {
+		t.Fatalf("merged widget ids = %v, want both open-cases and closed-cases", ids)
+	}
+}
+
+// TestLoadDir_WidgetIDCollisionAcrossPartsFailsWholeLoad mirrors
+// TestLoadDir_RejectsInvalidWidgets's "duplicate widget id" case, but with
+// the colliding widget split across a primary and its part instead of both
+// living in one file -- the merge happens before validateWidgets runs, so
+// the same check and the same error shape catch it.
+func TestLoadDir_WidgetIDCollisionAcrossPartsFailsWholeLoad(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "primary.json", `{
+	  "id": "cs-overview", "displayName": "CS Overview", "type": "cs",
+	  "widgets": [
+	    {"id": "w", "displayName": "W", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["open"]}]}}
+	  ]
+	}`)
+	writeDefinition(t, dir, "part.json", `{
+	  "partOf": "cs-overview",
+	  "widgets": [
+	    {"id": "w", "displayName": "W dup", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["closed"]}]}}
+	  ]
+	}`)
+
+	_, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("LoadDir accepted a widget id colliding across a primary and its part; expected an error")
+	}
+	if !strings.Contains(err.Error(), `duplicate widget id "w"`) {
+		t.Fatalf("err = %q, want it to contain the same duplicate-widget-id message the single-file case uses", err.Error())
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "primary.json")) {
+		t.Fatalf("err = %q, want it to name the primary file the merged widget list belongs to", err.Error())
+	}
+}
+
+// TestLoadDir_OrphanPartOfFailsWholeLoad: a part file naming a dashboard id
+// nothing else defines is not silently dropped -- same fail-loud rule as an
+// unknown preset or section reference elsewhere in this loader.
+func TestLoadDir_OrphanPartOfFailsWholeLoad(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "cs.json", csDefinition)
+	writeDefinition(t, dir, "orphan-part.json", `{
+	  "partOf": "does-not-exist",
+	  "widgets": [
+	    {"id": "stray", "displayName": "Stray", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["open"]}]}}
+	  ]
+	}`)
+
+	_, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("LoadDir accepted a part file whose partOf matched no loaded dashboard; expected an error")
+	}
+	for _, want := range []string{"orphan-part.json", `"partOf"`, "does-not-exist"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, does not mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestLoadDir_PartFileWithUnexpectedFieldFailsWholeLoad: a part file is only
+// ever read for its "partOf"/"widgets" -- any other embedded Dashboard field
+// (id, displayName, filterPresets, etc) decodes successfully via
+// dashboardFile's embedded Dashboard and then silently vanishes, since
+// dashboardPart never carries it forward. That must be a hard load failure,
+// not a silent drop, the same fail-loud rule TestLoadDir_OrphanPartOfFailsWholeLoad
+// enforces for a mismatched "partOf".
+func TestLoadDir_PartFileWithUnexpectedFieldFailsWholeLoad(t *testing.T) {
+	dir := t.TempDir()
+	writeDefinition(t, dir, "primary.json", `{
+	  "id": "cs-overview", "displayName": "CS Overview", "type": "cs",
+	  "widgets": [
+	    {"id": "open-cases", "displayName": "Open Cases", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["open"]}]}}
+	  ]
+	}`)
+	writeDefinition(t, dir, "part.json", `{
+	  "partOf": "cs-overview",
+	  "displayName": "This should never take effect",
+	  "widgets": [
+	    {"id": "closed-cases", "displayName": "Closed Cases", "resourceType": "case", "shape": "count", "gridWidth": 3,
+	     "query": {"filters": [{"field": "state", "op": "in", "values": ["closed"]}]}}
+	  ]
+	}`)
+
+	_, err := LoadDir(dir)
+	if err == nil {
+		t.Fatal("LoadDir accepted a part file carrying an unexpected field (\"displayName\"); expected an error")
+	}
+	for _, want := range []string{"part.json", `"partOf"`, "displayName"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %q, does not mention %q", err.Error(), want)
+		}
 	}
 }

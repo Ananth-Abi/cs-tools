@@ -27,6 +27,7 @@ vi.mock("@api/backend/client", () => ({
 
 import { useWidgetPieData } from "@features/csm-dashboard/api/useWidgetPieData";
 import { CURRENT_TEAM_PLACEHOLDER } from "@features/csm-dashboard/utils/teamFilterPlaceholder";
+import { CURRENT_USER_PLACEHOLDER } from "@features/csm-dashboard/utils/currentUserFilterPlaceholder";
 
 function wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({
@@ -59,14 +60,22 @@ describe("useWidgetPieData", () => {
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     expect(postMock).toHaveBeenCalledTimes(2);
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { states: ["open"], severities: "critical" },
-      pagination: { offset: 0, limit: 1 },
-    });
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: { states: ["open"], severities: "high" },
-      pagination: { offset: 0, limit: 1 },
-    });
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { states: ["open"], severities: "critical" },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: { states: ["open"], severities: "high" },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
     expect(result.current.slices).toEqual([
       { label: "Critical", query: { severities: "critical" }, value: 1 },
       { label: "High", query: { severities: "high" }, value: 3 },
@@ -83,7 +92,7 @@ describe("useWidgetPieData", () => {
     expect(result.current.isLoading).toBe(false);
   });
 
-  it("resolves __current_team__ (in either the base or a slice's own filters) after merging, using the selected team's groupId", async () => {
+  it("resolves __current_team__ (in either the base or a slice's own filters) after merging, using the selected team's creGroupId", async () => {
     postMock.mockResolvedValue({ total: 1 });
 
     const { result } = renderHook(
@@ -97,34 +106,85 @@ describe("useWidgetPieData", () => {
               label: "My team",
               query: {
                 filters: [
-                  { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+                  { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
                 ],
               },
             },
           ],
           "22222222-2222-2222-2222-222222222222",
+          undefined,
         ),
       { wrapper },
     );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [
-          { field: "state", op: "in", values: ["open"] },
-          {
-            field: "integrationCsTeam",
-            op: "in",
-            values: ["22222222-2222-2222-2222-222222222222"],
-          },
-        ],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            {
+              field: "creTeam",
+              op: "in",
+              values: ["22222222-2222-2222-2222-222222222222"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
   });
 
-  it("drops the integrationCsTeam entry rather than sending the literal placeholder when no team groupId is selected", async () => {
+  it("resolves __current_team__ in a slice's own filters using the selected team's sreGroupId, independently of creGroupId", async () => {
+    postMock.mockResolvedValue({ total: 1 });
+
+    const { result } = renderHook(
+      () =>
+        useWidgetPieData(
+          "widget-1",
+          "case",
+          { filters: [{ field: "state", op: "in", values: ["open"] }] },
+          [
+            {
+              label: "My SRE team",
+              query: {
+                filters: [
+                  { field: "sreTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+                ],
+              },
+            },
+          ],
+          undefined,
+          "33333333-3333-3333-3333-333333333333",
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            {
+              field: "sreTeam",
+              op: "in",
+              values: ["33333333-3333-3333-3333-333333333333"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("drops the creTeam entry rather than sending the literal placeholder when no team creGroupId is selected", async () => {
     postMock.mockResolvedValue({ total: 1 });
 
     renderHook(
@@ -138,11 +198,12 @@ describe("useWidgetPieData", () => {
               label: "My team",
               query: {
                 filters: [
-                  { field: "integrationCsTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
+                  { field: "creTeam", op: "in", values: [CURRENT_TEAM_PLACEHOLDER] },
                 ],
               },
             },
           ],
+          undefined,
           undefined,
         ),
       { wrapper },
@@ -150,12 +211,97 @@ describe("useWidgetPieData", () => {
 
     await waitFor(() => expect(postMock).toHaveBeenCalled());
 
-    expect(postMock).toHaveBeenCalledWith("/cases/search", {
-      filters: {
-        filters: [{ field: "state", op: "in", values: ["open"] }],
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [{ field: "state", op: "in", values: ["open"] }],
+        },
+        pagination: { offset: 0, limit: 1 },
       },
-      pagination: { offset: 0, limit: 1 },
-    });
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("resolves __current_user__ (in either the base or a slice's own filters) after merging, using the signed-in user's own id", async () => {
+    postMock.mockResolvedValue({ total: 1 });
+
+    const { result } = renderHook(
+      () =>
+        useWidgetPieData(
+          "widget-1",
+          "case",
+          { filters: [{ field: "state", op: "in", values: ["open"] }] },
+          [
+            {
+              label: "Assigned to me",
+              query: {
+                filters: [
+                  { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+                ],
+              },
+            },
+          ],
+          undefined,
+          undefined,
+          "11111111-aaaa-bbbb-cccc-000000000001",
+        ),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/cases/search",
+      {
+        filters: {
+          filters: [
+            { field: "state", op: "in", values: ["open"] },
+            {
+              field: "assignedUserId",
+              op: "in",
+              values: ["11111111-aaaa-bbbb-cccc-000000000001"],
+            },
+          ],
+        },
+        pagination: { offset: 0, limit: 1 },
+      },
+      { signal: expect.any(AbortSignal) },
+    );
+  });
+
+  it("issues no slice search at all while the signed-in user isn't known yet, rather than one without the assignedUserId entry", async () => {
+    postMock.mockResolvedValue({ total: 1 });
+
+    const { result } = renderHook(
+      () =>
+        useWidgetPieData(
+          "widget-1",
+          "case",
+          { filters: [{ field: "state", op: "in", values: ["open"] }] },
+          [
+            {
+              label: "Assigned to me",
+              query: {
+                filters: [
+                  { field: "assignedUserId", op: "in", values: [CURRENT_USER_PLACEHOLDER] },
+                ],
+              },
+            },
+          ],
+          undefined,
+          undefined,
+          undefined,
+        ),
+      { wrapper },
+    );
+
+    // Dropping the entry would have searched on `state: open` alone — every
+    // engineer's open cases, in a slice labelled "Assigned to me". Hold the
+    // request until the profile lands instead, and report the wait as
+    // loading so the chart does not paint an empty wedge in the meantime.
+    await waitFor(() => expect(result.current.isLoading).toBe(true));
+    expect(postMock).not.toHaveBeenCalled();
   });
 
   it("surfaces isError when any one slice's search fails", async () => {

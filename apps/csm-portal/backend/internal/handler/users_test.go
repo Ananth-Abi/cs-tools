@@ -63,6 +63,26 @@ func TestGetMe(t *testing.T) {
 		}
 	})
 
+	t.Run("upstream errors from the entity service are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to fetch the current user.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				entityClient := &mockEntityUserClient{
+					getUserMeFn: func(_ context.Context) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewUsersHandler(&mockSCIMClient{}, entityClient, testDirectory(t))
+				r := withUser(httptest.NewRequest(http.MethodGet, "/users/me", nil))
+				w := httptest.NewRecorder()
+				h.GetMe(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+
 	t.Run("returns email from JWT when SCIM returns no user", func(t *testing.T) {
 		scimClient := &mockSCIMClient{
 			searchUserFn: func(_ context.Context, _ string) (*scim.UserInfo, error) {

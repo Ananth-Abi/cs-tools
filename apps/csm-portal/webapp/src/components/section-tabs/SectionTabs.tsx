@@ -16,18 +16,34 @@
 
 import { Box, Chip, Tab, Tabs } from "@wso2/oxygen-ui";
 import { type JSX } from "react";
-import { Navigate } from "react-router";
+import { Navigate, useLocation } from "react-router";
 import type { SectionTabsState } from "@hooks/useSectionTabs";
-import { firstEnabledTabHref } from "@hooks/useSectionTabs";
+import {
+  enabledPathTabKeys,
+  firstEnabledPathTab,
+  firstEnabledTabHref,
+} from "@hooks/useSectionTabs";
 
 interface SectionTabsProps extends SectionTabsState {
   /** Accessible name for the strip, e.g. "Operations tabs". */
   ariaLabel: string;
   scrollable?: boolean;
+  /**
+   * Visual weight. `"primary"` (default) is a section's own tab strip.
+   * `"secondary"` renders smaller and indented, for a strip that belongs to
+   * one of those tabs rather than to the section itself — e.g. Settings'
+   * "User management" tab has its own row of sub-tabs underneath the primary
+   * strip.
+   */
+  variant?: "primary" | "secondary";
 }
 
 /**
- * A section's second-level tab strip, rendered from the navigation tree.
+ * A section's tab strip, rendered from the navigation tree. Also doubles as a
+ * nested tab's own strip via `variant="secondary"` — the underlying data
+ * (`useRouteTabs`/`useQueryTabs`) is already resolved per nav-node id, so a
+ * second level is just a second `<SectionTabs>` fed by a second hook call,
+ * not a different component.
  *
  * A tab the deployment marked WIP stays in the strip but is disabled and
  * chipped, so the section still advertises what is coming without offering a
@@ -41,17 +57,38 @@ export default function SectionTabs({
   select,
   ariaLabel,
   scrollable = false,
+  variant = "primary",
 }: SectionTabsProps): JSX.Element | null {
   if (tabs.length === 0) return null;
+  const isSecondary = variant === "secondary";
 
   return (
-    <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
+    <Box
+      sx={{
+        borderBottom: 1,
+        borderColor: "divider",
+        ...(isSecondary && { pl: 2 }),
+      }}
+    >
       <Tabs
         aria-label={ariaLabel}
         value={activeKey}
         onChange={(_, key: string) => select(key)}
         variant={scrollable ? "scrollable" : "standard"}
         scrollButtons={scrollable ? "auto" : false}
+        sx={
+          isSecondary
+            ? {
+                minHeight: 36,
+                "& .MuiTab-root": {
+                  minHeight: 36,
+                  paddingTop: 0.5,
+                  paddingBottom: 0.5,
+                  fontSize: "0.8125rem",
+                },
+              }
+            : undefined
+        }
       >
         {tabs.map((tab) =>
           tab.state === "wip" ? (
@@ -98,4 +135,64 @@ export function SectionIndexRedirect({
   sectionId: string;
 }): JSX.Element {
   return <Navigate to={firstEnabledTabHref(sectionId) ?? "/dashboard"} replace />;
+}
+
+/**
+ * Index-route element for a `usePathSectionTabs` section (Operations,
+ * Security Center — see `App.tsx`'s `operations`/`security-center` routes).
+ * Handles both ways someone can land on the section's bare path:
+ *
+ * - `/operations` with no query — sends them to the first usable tab, same
+ *   intent as `SectionIndexRedirect` above, just landing on a real path
+ *   segment (`/operations/incidents`) instead of a `?tab=` href.
+ * - `/operations?tab=incidents` — the OLD `?tab=` form these two sections used
+ *   before they got their own path segments. A link in this shape may already
+ *   be shared, bookmarked, or pinned, so it's translated rather than left to
+ *   404 or silently drop the requested tab: the legacy value is converted to
+ *   its path-segment form (see `pathTabKey` in `useSectionTabs.ts`) and used
+ *   if it names a real, currently-usable tab; an unrecognised or restricted
+ *   one falls through to the same first-usable-tab default as the bare-path
+ *   case. Every other existing search param and the hash both carry through
+ *   unchanged onto the new URL.
+ */
+export function LegacyQueryTabRedirect({
+  sectionId,
+  basePath,
+}: {
+  sectionId: string;
+  basePath: string;
+}): JSX.Element {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  const legacyTab = params.get("tab");
+  const requestedKey = legacyTab ? legacyTab.replace(/_/g, "-") : undefined;
+  const enabledKeys = enabledPathTabKeys(sectionId);
+  // Only honour the requested key when it names a tab this deployment
+  // actually offers — a restricted or unknown legacy `?tab=` value falls
+  // through to the same first-usable-tab default the bare-path case uses,
+  // instead of redirecting onto a dead tab. Mirrors `resolveActiveKey`'s own
+  // "requested tab only if enabled, else the first enabled one" rule.
+  const targetKey =
+    requestedKey && enabledKeys.includes(requestedKey)
+      ? requestedKey
+      : (firstEnabledPathTab(sectionId) ?? undefined);
+
+  params.delete("tab");
+  const rest = params.toString();
+
+  if (!targetKey) {
+    return (
+      <Navigate
+        to={`/dashboard${rest ? `?${rest}` : ""}${location.hash}`}
+        replace
+      />
+    );
+  }
+
+  return (
+    <Navigate
+      to={`${basePath}/${targetKey}${rest ? `?${rest}` : ""}${location.hash}`}
+      replace
+    />
+  );
 }

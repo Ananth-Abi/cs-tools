@@ -59,6 +59,19 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			},
 		},
 		{
+			name: "accountId in maps to AccountIDs",
+			in: []domain.CaseFieldFilter{{
+				Field:  "accountId",
+				Op:     "in",
+				Values: []string{"00000000-0000-0000-0000-000000000000"},
+			}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.AccountIDs) != 1 || p.AccountIDs[0] != "00000000-0000-0000-0000-000000000000" {
+					t.Fatalf("AccountIDs = %v", p.AccountIDs)
+				}
+			},
+		},
+		{
 			name: "tag in maps to Tags",
 			in:   []domain.CaseFieldFilter{{Field: "tag", Op: "in", Values: []string{"patch"}}},
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
@@ -73,6 +86,53 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
 				if len(p.ExcludeTags) != 1 || p.ExcludeTags[0] != "patch" {
 					t.Fatalf("ExcludeTags = %v", p.ExcludeTags)
+				}
+			},
+		},
+		{
+			name: "state in maps to States",
+			in:   []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open", "reopened"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.States) != 2 || p.States[0] != "open" || p.States[1] != "reopened" {
+					t.Fatalf("States = %v", p.States)
+				}
+				if len(p.ExcludeStates) != 0 {
+					t.Fatalf("ExcludeStates = %v, want empty", p.ExcludeStates)
+				}
+			},
+		},
+		{
+			name: "state notIn maps to ExcludeStates",
+			in:   []domain.CaseFieldFilter{{Field: "state", Op: "notIn", Values: []string{"awaiting_info", "solution_proposed", "closed"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				want := []domain.CaseState{"awaiting_info", "solution_proposed", "closed"}
+				if len(p.ExcludeStates) != len(want) {
+					t.Fatalf("ExcludeStates = %v, want %v", p.ExcludeStates, want)
+				}
+				for i, w := range want {
+					if p.ExcludeStates[i] != w {
+						t.Fatalf("ExcludeStates = %v, want %v", p.ExcludeStates, want)
+					}
+				}
+				// notIn must never be folded into the positive allowlist: that
+				// would silently invert the predicate's meaning.
+				if len(p.States) != 0 {
+					t.Fatalf("States = %v, want empty: notIn must not populate the in list", p.States)
+				}
+			},
+		},
+		{
+			name: "state in and notIn are independent and may be combined",
+			in: []domain.CaseFieldFilter{
+				{Field: "state", Op: "in", Values: []string{"open", "work_in_progress"}},
+				{Field: "state", Op: "notIn", Values: []string{"closed"}},
+			},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.States) != 2 {
+					t.Fatalf("States = %v, want 2 entries", p.States)
+				}
+				if len(p.ExcludeStates) != 1 || p.ExcludeStates[0] != "closed" {
+					t.Fatalf("ExcludeStates = %v, want [closed]", p.ExcludeStates)
 				}
 			},
 		},
@@ -140,11 +200,83 @@ func TestParseCaseFieldFilters_NamedFieldTranslations(t *testing.T) {
 			},
 		},
 		{
+			name: "projectOnboardingStatus notIn",
+			in:   []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "notIn", Values: []string{"In-Progress"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if len(p.ExcludeProjectOnboardingStatuses) != 1 || p.ExcludeProjectOnboardingStatuses[0] != "In-Progress" {
+					t.Fatalf("ExcludeProjectOnboardingStatuses = %v", p.ExcludeProjectOnboardingStatuses)
+				}
+				if len(p.ProjectOnboardingStatuses) != 0 {
+					t.Fatalf("ProjectOnboardingStatuses = %v, want empty", p.ProjectOnboardingStatuses)
+				}
+			},
+		},
+		{
 			name: "parentId eq",
 			in:   []domain.CaseFieldFilter{{Field: "parentId", Op: "eq", Values: []string{"00000000-0000-0000-0000-000000000000"}}},
 			check: func(t *testing.T, p domain.ParsedCaseFilters) {
 				if p.ParentID == nil || *p.ParentID != "00000000-0000-0000-0000-000000000000" {
 					t.Fatalf("ParentID = %v", p.ParentID)
+				}
+			},
+		},
+		{
+			name: "number eq",
+			in:   []domain.CaseFieldFilter{{Field: "number", Op: "eq", Values: []string{"CS0441174"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.Number == nil || *p.Number != "CS0441174" {
+					t.Fatalf("Number = %v", p.Number)
+				}
+			},
+		},
+		{
+			name: "internalId eq",
+			in:   []domain.CaseFieldFilter{{Field: "internalId", Op: "eq", Values: []string{"12345"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.InternalID == nil || *p.InternalID != "12345" {
+					t.Fatalf("InternalID = %v", p.InternalID)
+				}
+			},
+		},
+		{
+			name: "slaBreached eq true maps to HasBreachedSLA",
+			in:   []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasBreachedSLA == nil || !*p.HasBreachedSLA {
+					t.Fatalf("HasBreachedSLA = %v, want pointer to true", p.HasBreachedSLA)
+				}
+			},
+		},
+		{
+			name: "slaBreached eq false maps to HasBreachedSLA",
+			in:   []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"false"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasBreachedSLA == nil || *p.HasBreachedSLA {
+					t.Fatalf("HasBreachedSLA = %v, want pointer to false", p.HasBreachedSLA)
+				}
+			},
+		},
+		{
+			name: "accountEscalationActive eq true maps to HasActiveAccountEscalation",
+			in:   []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasActiveAccountEscalation == nil || !*p.HasActiveAccountEscalation {
+					t.Fatalf("HasActiveAccountEscalation = %v, want pointer to true", p.HasActiveAccountEscalation)
+				}
+				// Distinct from the case-level escalation filter: setting
+				// accountEscalationActive must not also populate
+				// HasActiveEscalation.
+				if p.HasActiveEscalation != nil {
+					t.Fatalf("HasActiveEscalation = %v, want nil (accountEscalationActive is a distinct field)", p.HasActiveEscalation)
+				}
+			},
+		},
+		{
+			name: "accountEscalationActive eq false maps to HasActiveAccountEscalation",
+			in:   []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"false"}}},
+			check: func(t *testing.T, p domain.ParsedCaseFilters) {
+				if p.HasActiveAccountEscalation == nil || *p.HasActiveAccountEscalation {
+					t.Fatalf("HasActiveAccountEscalation = %v, want pointer to false", p.HasActiveAccountEscalation)
 				}
 			},
 		},
@@ -174,6 +306,16 @@ func TestParseCaseFieldFilters_Rejections(t *testing.T) {
 		{name: "resolutionNotes isNotEmpty unsupported", in: []domain.CaseFieldFilter{{Field: "resolutionNotes", Op: "isNotEmpty"}}},
 		{name: "createdBy eq non-placeholder literal", in: []domain.CaseFieldFilter{{Field: "createdBy", Op: "eq", Values: []string{"someone@example.com"}}}},
 		{name: "createdOn bad date format", in: []domain.CaseFieldFilter{{Field: "createdOn", Op: "gte", Values: []string{"not-a-date"}}}},
+		{name: "number in unsupported", in: []domain.CaseFieldFilter{{Field: "number", Op: "in", Values: []string{"CS0441174"}}}},
+		{name: "internalId in unsupported", in: []domain.CaseFieldFilter{{Field: "internalId", Op: "in", Values: []string{"12345"}}}},
+		{name: "projectOnboardingStatus eq unsupported", in: []domain.CaseFieldFilter{{Field: "projectOnboardingStatus", Op: "eq", Values: []string{"Completed"}}}},
+		{name: "accountId malformed UUID", in: []domain.CaseFieldFilter{{Field: "accountId", Op: "in", Values: []string{"not-a-uuid"}}}},
+		{name: "slaBreached with unsupported op", in: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "in", Values: []string{"true"}}}},
+		{name: "slaBreached with non-boolean value", in: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"yes"}}}},
+		{name: "slaBreached with more than one value", in: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true", "false"}}}},
+		{name: "accountEscalationActive with unsupported op", in: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "isNotEmpty"}}},
+		{name: "accountEscalationActive with non-boolean value", in: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"yes"}}}},
+		{name: "accountEscalationActive with more than one value", in: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true", "false"}}}},
 	}
 
 	for _, tc := range cases {
@@ -389,6 +531,101 @@ func TestParseCaseFieldFilterGroups_CreatedByRejectedAsValidationError(t *testin
 				t.Errorf("Msg = %q, want %q", ve.Msg, want)
 			}
 		})
+	}
+}
+
+// state+in is one of the fields an OR branch does model, but state+notIn is
+// not: CaseFilterGroup has no exclusion field, so accepting it would drop the
+// predicate and widen the branch's result set.
+func TestParseCaseFieldFilterGroups_RejectsStateNotIn(t *testing.T) {
+	branch := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{{Field: "state", Op: "notIn", Values: []string{"closed"}}},
+	}
+	_, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{branch})
+	var ve *apierror.ValidationError
+	if !errors.As(err, &ve) {
+		t.Fatalf("err = %v (%T), want *apierror.ValidationError", err, err)
+	}
+	const want = `anyOf: field "state" (notIn) is not supported inside an OR group`
+	if ve.Msg != want {
+		t.Errorf("Msg = %q, want %q", ve.Msg, want)
+	}
+}
+
+// TestParseCaseFieldFilterGroups_RejectsSLAAndAccountEscalationFilters proves
+// slaBreached and accountEscalationActive -- like the pre-existing escalation
+// filter -- are rejected inside an OR-group branch: CaseFilterGroup does not
+// model either field, so silently accepting them inside a branch would drop
+// the predicate rather than apply it.
+func TestParseCaseFieldFilterGroups_RejectsSLAAndAccountEscalationFilters(t *testing.T) {
+	cases := []struct {
+		name   string
+		branch domain.CaseFilterBranch
+		want   string
+	}{
+		{
+			name:   "slaBreached",
+			branch: domain.CaseFilterBranch{Filters: []domain.CaseFieldFilter{{Field: "slaBreached", Op: "eq", Values: []string{"true"}}}},
+			want:   `anyOf: field "slaBreached" is not supported inside an OR group`,
+		},
+		{
+			name:   "accountEscalationActive",
+			branch: domain.CaseFilterBranch{Filters: []domain.CaseFieldFilter{{Field: "accountEscalationActive", Op: "eq", Values: []string{"true"}}}},
+			want:   `anyOf: field "accountEscalationActive" is not supported inside an OR group`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{tc.branch})
+			var ve *apierror.ValidationError
+			if !errors.As(err, &ve) {
+				t.Fatalf("err = %v (%T), want *apierror.ValidationError", err, err)
+			}
+			if ve.Msg != tc.want {
+				t.Errorf("Msg = %q, want %q", ve.Msg, tc.want)
+			}
+		})
+	}
+}
+
+// state+in stays accepted inside a branch -- the rejection above must not
+// have caught the positive form too.
+func TestParseCaseFieldFilterGroups_AcceptsStateIn(t *testing.T) {
+	branch := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{{Field: "state", Op: "in", Values: []string{"open"}}},
+	}
+	groups, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{branch})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(groups) != 1 || len(groups[0].States) != 1 || groups[0].States[0] != "open" {
+		t.Fatalf("groups = %+v, want one branch with States [open]", groups)
+	}
+}
+
+// tag/excludeTags are supported inside an anyOf branch now that ServiceNow's
+// CaseUtils (searchCases and groupCasesBy) accepts orGroups[].tags/
+// excludeTags -- the Go-side rejection that used to gate this is gone.
+func TestParseCaseFieldFilterGroups_AcceptsTagAndExcludeTags(t *testing.T) {
+	branch := domain.CaseFilterBranch{
+		Filters: []domain.CaseFieldFilter{
+			{Field: "tag", Op: "in", Values: []string{"migration"}},
+			{Field: "tag", Op: "notIn", Values: []string{"archived"}},
+		},
+	}
+	groups, err := ParseCaseFieldFilterGroups([]domain.CaseFilterBranch{branch})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("len(groups) = %d, want 1", len(groups))
+	}
+	if len(groups[0].Tags) != 1 || groups[0].Tags[0] != "migration" {
+		t.Errorf("groups[0].Tags = %v, want [migration]", groups[0].Tags)
+	}
+	if len(groups[0].ExcludeTags) != 1 || groups[0].ExcludeTags[0] != "archived" {
+		t.Errorf("groups[0].ExcludeTags = %v, want [archived]", groups[0].ExcludeTags)
 	}
 }
 

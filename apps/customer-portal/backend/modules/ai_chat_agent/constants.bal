@@ -25,3 +25,22 @@ const string EVENT_TYPE_KEY = "type";
 
 # JSON key for the payload field in the final upstream WebSocket event.
 const string EVENT_PAYLOAD_KEY = "payload";
+
+# WebSocket event acknowledging a stored answer rating.
+const string EVENT_FEEDBACK_ACK = "feedback_ack";
+
+# WebSocket event acknowledging a token-increase request.
+const string EVENT_TOKEN_REQUEST_ACK = "token_request_ack";
+
+# Inbound message type carrying a thumbs up/down on an answer.
+public const string MSG_TYPE_FEEDBACK = "feedback";
+
+# Inbound message type asking support to raise a token limit.
+public const string MSG_TYPE_TOKEN_INCREASE_REQUEST = "token_increase_request";
+
+# How long to wait for a side-channel acknowledgement before giving up.
+#
+# The upstream answers these in well under a second. A bound matters because the
+# alternative is an upstream connection parked indefinitely: the websocket client
+# is otherwise created with no read timeout at all.
+const decimal SIDE_CHANNEL_READ_TIMEOUT = 30.0;

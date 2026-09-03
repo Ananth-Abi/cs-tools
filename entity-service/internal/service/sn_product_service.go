@@ -21,10 +21,27 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/middleware"
 	integrationservice "github.com/wso2-open-operations/cs-tools/entity-service/internal/servicenow-integration-service"
 )
+
+// defaultSNProductClass is applied when the caller sends no class filter.
+// The Choreo product search endpoint's underlying catalog stores one row per
+// distinct product under this class, and one row per product *version*
+// under snProductClassSoftwareModel/snProductClassServiceModel. Defaulting
+// to the product-level class keeps unfiltered searches from returning
+// several rows for the same product name (one per version).
+const defaultSNProductClass = "product_model"
+
+// validSNProductClass enumerates every class value the Choreo product search
+// endpoint accepts.
+var validSNProductClass = map[string]bool{
+	"product_model":  true,
+	"software_model": true,
+	"service_model":  true,
+}
 
 // snProductsResponse mirrors the Choreo POST /products/search response.
 type snProductsResponse struct {
@@ -48,6 +65,7 @@ type snProductSearchPayload struct {
 
 type snProductFilters struct {
 	SearchQuery string `json:"searchQuery,omitempty"`
+	Class       string `json:"class,omitempty"`
 }
 
 type snProductService struct {
@@ -67,10 +85,17 @@ func (s *snProductService) SearchProducts(ctx context.Context, req domain.Search
 		return domain.SearchSNProductsResponse{}, err
 	}
 
+	class := req.Class
+	if class == "" {
+		class = defaultSNProductClass
+	} else if !validSNProductClass[class] {
+		return domain.SearchSNProductsResponse{}, &apierror.ValidationError{Msg: "invalid class"}
+	}
+
 	token := middleware.UserIDTokenFromContext(ctx)
 
 	payload := snProductSearchPayload{
-		Filters:    snProductFilters{SearchQuery: req.SearchQuery},
+		Filters:    snProductFilters{SearchQuery: req.SearchQuery, Class: class},
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
 	}
 

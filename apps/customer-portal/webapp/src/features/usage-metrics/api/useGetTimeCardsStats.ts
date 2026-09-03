@@ -56,10 +56,11 @@ export default function useGetTimeCardsStats({
         }
 
         const params = new URLSearchParams({
-          startDate,
-          endDate,
+          ...(startDate && { startDate }),
+          ...(endDate && { endDate }),
         });
-        const requestUrl = `${baseUrl}/projects/${projectId}/stats/time-cards?${params.toString()}`;
+        const queryString = params.toString();
+        const requestUrl = `${baseUrl}/projects/${projectId}/stats/time-cards${queryString ? `?${queryString}` : ""}`;
 
         const response = await authFetch(requestUrl, {
           method: "GET",
@@ -96,8 +97,7 @@ export default function useGetTimeCardsStats({
         throw error;
       }
     },
-    enabled:
-      !!projectId && !!startDate && !!endDate && isSignedIn && !isAuthLoading,
+    enabled: !!projectId && isSignedIn && !isAuthLoading,
     staleTime: 0,
   });
 }

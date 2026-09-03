@@ -19,13 +19,20 @@
  * tabs a deployment is allowed to see are decided in one place
  * (`CSM_PORTAL_FEATURE_OVERRIDES`) rather than per page.
  *
- * Two flavours, matching the two tab idioms in the app: `useQueryTabs` for
- * sections that keep the selection in `?tab=` (Operations, Security Center) and
- * `useRouteTabs` for sections whose tabs are child routes (Customers,
- * Settings).
+ * Three flavours, matching the tab idioms in the app: `useQueryTabs` for a
+ * legacy `?tab=` reader (kept only for the redirect off old Operations/
+ * Security Center links — see `usePathSectionTabs`), `usePathSectionTabs` for
+ * a section whose tab strip is itself a real path segment (Operations,
+ * Security Center), and `useRouteTabs` for sections whose tabs are child
+ * routes with their own nested layout (Customers, Settings).
+ *
+ * A detail page's own static tab strip (Case/Incident/Change Request/Project
+ * detail — not driven by the nav tree at all, just a caller-supplied list) is
+ * `useQueryParamTabs`, at the bottom of this file.
  */
 
-import { useLocation, useSearchParams } from "react-router";
+import { useCallback } from "react";
+import { useLocation, useParams, useSearchParams } from "react-router";
 import {
   type CsmNavNode,
   navNodeById,
@@ -38,6 +45,7 @@ import {
   visibleNavChildren,
 } from "@config/featureFlags";
 import { useNavTransition } from "@hooks/useNavTransition";
+import { useCaseRouteOverride } from "@context/case-tabs/CaseRouteOverrideContext";
 
 /** One rendered tab: the nav node plus the state that decides how it looks. */
 export interface SectionTab {
@@ -105,6 +113,67 @@ export function useQueryTabs(sectionId: string): SectionTabsState {
   };
 }
 
+/**
+ * A node's `?tab=` value (e.g. `service_requests`) converted to the kebab-case
+ * path segment `usePathSectionTabs` keys its tabs by (`service-requests`) —
+ * the same convention every hand-declared detail route under a path-tab
+ * section already uses (`/operations/service-requests/:caseId`,
+ * `/security-center/vulnerabilities/:id`, …), so a tab's own landing route and
+ * its detail routes share one prefix without the nav tree needing a second,
+ * redundant field for it.
+ */
+function pathTabKey(node: CsmNavNode): string {
+  return (node.tab ?? node.id).replace(/_/g, "-");
+}
+
+/**
+ * Tab strip for a section whose tab strip is itself a real path segment
+ * (`/operations/:tab`, `/security-center/:tab`) rather than a `?tab=` query —
+ * see the module doc comment for why these two sections get a path segment.
+ * Reuses `tabsFor`/`resolveActiveKey` — the exact same nav-tree/feature-flag
+ * gating `useQueryTabs` applies — so a WIP or hidden tab behaves identically
+ * either way; only where the active tab is read from (`useParams` vs
+ * `useSearchParams`) and how selecting one navigates differ.
+ */
+export function usePathSectionTabs(
+  sectionId: string,
+  basePath: string,
+): SectionTabsState {
+  const { tab: rawTab } = useParams();
+  const navigate = useNavTransition();
+  const tabs = tabsFor(sectionId, pathTabKey);
+  const activeKey = resolveActiveKey(tabs, rawTab ?? null);
+
+  return {
+    tabs,
+    activeKey,
+    select: (key: string) => navigate(`${basePath}/${key}`),
+  };
+}
+
+/**
+ * The first usable tab's path segment for a `usePathSectionTabs` section —
+ * the path-segment analogue of `firstEnabledTabHref` (which returns the
+ * legacy `?tab=` href and so is only still used by `useRouteTabs` sections'
+ * `SectionIndexRedirect`). `undefined` when every tab is restricted, same as
+ * `firstEnabledTabHref`.
+ */
+export function firstEnabledPathTab(sectionId: string): string | undefined {
+  return enabledPathTabKeys(sectionId)[0];
+}
+
+/**
+ * Every usable tab's path segment for a `usePathSectionTabs` section, in nav
+ * order — lets a caller (the legacy `?tab=` redirect) check whether a
+ * requested key names a tab this deployment actually offers, not just fetch
+ * the first one.
+ */
+export function enabledPathTabKeys(sectionId: string): string[] {
+  const section = navNodeById(sectionId);
+  if (!section) return [];
+  return enabledNavChildren(section).map(pathTabKey);
+}
+
 /** Tab strip for a section whose tabs are child routes. */
 export function useRouteTabs(sectionId: string): SectionTabsState {
   const { pathname } = useLocation();
@@ -130,4 +199,111 @@ export function useRouteTabs(sectionId: string): SectionTabsState {
 export function firstEnabledTabHref(sectionId: string): string | undefined {
   const section = navNodeById(sectionId);
   return section ? enabledNavChildren(section)[0]?.href : undefined;
+}
+
+/**
+ * A detail page's own static tab strip, kept in a `?tab=` query param — for a
+ * page whose tabs are NOT nav-tree driven (Case/Incident/Change
+ * Request/Project detail): the caller supplies its own fixed tab id list, not
+ * one resolved from `CSM_PORTAL_FEATURE_OVERRIDES`.
+ */
+export interface QueryParamTabsState<TId extends string> {
+  activeTab: TId;
+  /**
+   * `replace: true` (the default) swaps the current history entry rather than
+   * pushing a new one, matching how every existing hand-rolled `?tab=` reader
+   * in this app behaved before this hook existed — switching tabs is not a
+   * distinct back-button stop. Pass `replace: false` for the rare case where
+   * it should be (none of this app's current callers need it).
+   */
+  setActiveTab: (next: TId, options?: { replace?: boolean }) => void;
+}
+
+/**
+ * Reads/writes a caller-supplied tab id in `searchParams.get(paramName)`
+ * (`"tab"` by default), preserving every other existing search param (filters,
+ * pagination, an unrelated page's own params) — the update is always applied
+ * against the *current* `URLSearchParams`, never a fresh one, so nothing
+ * unrelated is clobbered. A missing or unrecognised value falls back to
+ * `defaultTab` without writing anything back to the URL itself (so a
+ * bookmarked/shared link with a stale tab value doesn't get silently
+ * rewritten out from under whoever shared it) — this can never loop, since
+ * resolving the fallback is a pure read, not a navigation.
+ *
+ * `clearParamsOnChange` drops other params (e.g. a nested sub-tab's own query
+ * param) whenever the tab itself changes, since a sub-tab selection made
+ * under a *different* parent tab no longer means anything once you've
+ * switched away from it.
+ *
+ * Override-aware: when called from inside an open in-app case tab (a
+ * `CaseTabIsolatedRouter` instance — see `CaseRouteOverrideContext`), this
+ * reads/writes that tab's OWN `search` string and navigates through its own
+ * `navigate`, instead of the real, single, app-wide `useSearchParams()`.
+ * Without this, every open tab shared the same real `?tab=` query param —
+ * two case tabs open on different sections (one on "Details", one on
+ * "Activities") would fight over it, and switching between them could reset
+ * whichever one wasn't just written to back to its default section. Outside
+ * a tab (the override is `undefined` — a directly-routed page, or any page
+ * that isn't part of the case-tabs mechanism at all) this behaves exactly as
+ * before, against the real router.
+ */
+export function useQueryParamTabs<TId extends string>(
+  tabs: readonly TId[],
+  defaultTab: TId,
+  options: { paramName?: string; clearParamsOnChange?: readonly string[] } = {},
+): QueryParamTabsState<TId> {
+  const { paramName = "tab", clearParamsOnChange = [] } = options;
+  const routeOverride = useCaseRouteOverride();
+  // Real router hooks — called unconditionally regardless of `routeOverride`
+  // (rules of hooks), same pattern as `CsmCaseDetailPage`'s own top-level
+  // override check; their values are simply unused when an override is
+  // present.
+  const [routedSearchParams, setRoutedSearchParams] = useSearchParams();
+
+  const activeSearchParams = routeOverride
+    ? new URLSearchParams(routeOverride.search)
+    : routedSearchParams;
+  const raw = activeSearchParams.get(paramName);
+  const activeTab: TId =
+    raw && (tabs as readonly string[]).includes(raw) ? (raw as TId) : defaultTab;
+
+  const setActiveTab = useCallback(
+    (next: TId, setOptions?: { replace?: boolean }): void => {
+      if (routeOverride) {
+        const params = new URLSearchParams(routeOverride.search);
+        params.set(paramName, next);
+        for (const dropped of clearParamsOnChange) params.delete(dropped);
+        const nextSearch = params.toString();
+        routeOverride.navigate(
+          {
+            pathname: routeOverride.pathname,
+            search: nextSearch ? `?${nextSearch}` : "",
+            hash: routeOverride.hash,
+          },
+          { replace: setOptions?.replace ?? true, state: routeOverride.state },
+        );
+        return;
+      }
+      setRoutedSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          params.set(paramName, next);
+          for (const dropped of clearParamsOnChange) params.delete(dropped);
+          return params;
+        },
+        { replace: setOptions?.replace ?? true },
+      );
+    },
+    // clearParamsOnChange is passed fresh by most callers (an inline array
+    // literal), so it's deliberately excluded here — including it would
+    // rebuild setActiveTab (and anything memoized on it) on every render for
+    // those callers, defeating the point of memoizing it at all. Every
+    // current caller passes a `const` module-level array, so this is safe in
+    // practice; a caller with a genuinely dynamic clear list should build one
+    // itself rather than relying on this hook to react to it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [routeOverride, setRoutedSearchParams, paramName],
+  );
+
+  return { activeTab, setActiveTab };
 }

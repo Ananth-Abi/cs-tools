@@ -13,16 +13,17 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { Box, Grid, Pagination, Typography } from "@wso2/oxygen-ui";
+import { Box, CircularProgress, Grid, Pagination, Typography } from "@wso2/oxygen-ui";
 import {
   useState,
-  useMemo,
   useEffect,
   type JSX,
   type ChangeEvent,
 } from "react";
+import { format } from "date-fns";
 import useSearchProjectCaseTimeCards from "@features/usage-metrics/api/useSearchProjectCaseTimeCards";
 import ServiceHoursStatCards from "@time-tracking/ServiceHoursStatCards";
+import TimeCardsBillableStats from "@time-tracking/TimeCardsBillableStats";
 import TimeCardsDateFilter from "@time-tracking/TimeCardsDateFilter";
 import TimeTrackingCard from "@time-tracking/TimeTrackingCard";
 import TimeTrackingCardSkeleton from "@time-tracking/TimeTrackingCardSkeleton";
@@ -31,7 +32,6 @@ import EmptyState from "@components/empty-state/EmptyState";
 import TimeCardsCsvExportButton from "@time-tracking/TimeCardsCsvExportButton";
 
 import type { ProjectTimeTrackingProps } from "@features/project-details/types/projectDetailsComponents";
-import { paginateList } from "@features/project-details/utils/timeTrackingPage";
 
 /**
  * ProjectTimeTracking manages the display of time tracking statistics, date filter, and case time cards.
@@ -48,53 +48,61 @@ export default function ProjectTimeTracking({
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [page, setPage] = useState(1);
+  const [hasAppliedDefaultDates, setHasAppliedDefaultDates] = useState(false);
   const pageSize = 10;
+
+  // Default the date range to the project's start date through today once it loads.
+  useEffect(() => {
+    if (hasAppliedDefaultDates || !project?.startDate) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHasAppliedDefaultDates(true);
+    setStartDate(project.startDate);
+    setEndDate(format(new Date(), "yyyy-MM-dd"));
+  }, [hasAppliedDefaultDates, project?.startDate]);
 
   const {
     data,
     isLoading: isTimeCardsLoading,
+    isFetching: isTimeCardsFetching,
     isError: isTimeCardsError,
-    hasNextPage,
-    fetchNextPage,
   } = useSearchProjectCaseTimeCards({
     projectId,
     startDate,
     endDate,
     states: ["Approved"],
+    page,
+    pageSize,
     enabled: !!projectId,
   });
 
-  // Auto-fetch all remaining pages in background
-  useEffect(() => {
-    if (!data || !hasNextPage) return;
-    void fetchNextPage();
-  }, [data, hasNextPage, fetchNextPage]);
-
-  // Reset pagination when filters change
+  // Reset pagination and default dates when the project changes
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPage(1);
-  }, [projectId, startDate, endDate]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setHasAppliedDefaultDates(false);
+  }, [projectId]);
 
-  const allTimeCards = useMemo(
-    () => data?.pages.flatMap((page) => page.caseTimeCards) ?? [],
-    [data],
-  );
-
-  const totalItems = data?.pages?.[0]?.totalRecords ?? allTimeCards.length;
-
-  const paginatedTimeCards = useMemo(
-    () => paginateList(allTimeCards, page, pageSize),
-    [allTimeCards, page, pageSize],
-  );
-
+  const paginatedTimeCards = data?.caseTimeCards ?? [];
+  const totalItems = data?.totalRecords ?? 0;
   const totalPages = Math.ceil(totalItems / pageSize);
 
   const handlePageChange = (_event: ChangeEvent<unknown>, value: number) => {
     setPage(value);
   };
 
+  const handleStartDateChange = (value: string) => {
+    setPage(1);
+    setStartDate(value);
+  };
+
+  const handleEndDateChange = (value: string) => {
+    setPage(1);
+    setEndDate(value);
+  };
+
   const handleClearDates = () => {
+    setPage(1);
     setStartDate("");
     setEndDate("");
   };
@@ -109,21 +117,32 @@ export default function ProjectTimeTracking({
         isError={isProjectError}
       />
 
-      <Box sx={{ mb: 3 }}>
+      <Box sx={{ mb: 2 }}>
         <TimeCardsDateFilter
           startDate={startDate}
           endDate={endDate}
-          onStartDateChange={setStartDate}
-          onEndDateChange={setEndDate}
+          onStartDateChange={handleStartDateChange}
+          onEndDateChange={handleEndDateChange}
           onClear={handleClearDates}
           hasFilters={hasDateFilters}
         />
       </Box>
 
+      <TimeCardsBillableStats
+        projectId={projectId}
+        startDate={startDate}
+        endDate={endDate}
+      />
+
       <Box sx={{ mb: 2, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <Typography variant="body2" color="text.secondary">
-          Showing {paginatedTimeCards.length} of {totalItems} time cards
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography variant="body2" color="text.secondary">
+            Showing {paginatedTimeCards.length} of {totalItems} time cards
+          </Typography>
+          {!isTimeCardsLoading && isTimeCardsFetching && (
+            <CircularProgress size={14} />
+          )}
+        </Box>
         <TimeCardsCsvExportButton
           projectId={projectId}
           projectName={project?.name}
@@ -132,7 +151,7 @@ export default function ProjectTimeTracking({
             ...(endDate && { endDate }),
             states: ["Approved"],
           }}
-          prefetchedCards={allTimeCards}
+          prefetchedCards={paginatedTimeCards}
           totalRecords={totalItems}
           disabled={isTimeCardsLoading || isTimeCardsError || totalItems === 0}
         />

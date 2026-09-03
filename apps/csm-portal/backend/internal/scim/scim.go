@@ -22,11 +22,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 )
 
 const (
 	// org is fixed to "internal" — the CSM portal is exclusively for WSO2 employees.
 	org = "internal"
+
+	// orgExternal is the SCIM org that holds customer/partner contacts, used
+	// to check whether an external contact's account exists and is locked.
+	orgExternal = "external"
 
 	domainDefault    = "DEFAULT"
 	attrPhoneNumbers = "phoneNumbers"
@@ -34,6 +40,8 @@ const (
 	attrSchema       = "urn:scim:wso2:schema"
 
 	mobilePhoneType = "mobile"
+
+	accountStateLocked = "LOCKED"
 )
 
 // SearchUser fetches SCIM data for the given email and returns the extracted
@@ -86,6 +94,61 @@ func (c *Client) SearchUser(ctx context.Context, email string) (*UserInfo, error
 		PhoneNumber:            extractMobilePhone(*found),
 		LastPasswordUpdateTime: extractLastPasswordUpdateTime(*found),
 	}, nil
+}
+
+// SearchExternalUser checks whether the given email exists in the SCIM
+// "external" org and, if so, whether the account is locked, mirroring
+// asgardeo-user-check's searchUser. A single itemsPerPage=1 lookup is enough
+// to answer an existence check, so unlike SearchUser this does not paginate.
+func (c *Client) SearchExternalUser(ctx context.Context, email string) (*ExternalUserInfo, error) {
+	reqBody, err := json.Marshal(scimExternalSearchRequest{
+		Attributes:   []string{attrUserName, attrSchema},
+		Filter:       fmt.Sprintf("userName eq %q", email),
+		ItemsPerPage: 1,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scim: encode external search request: %w", err)
+	}
+
+	raw, err := c.do(ctx, http.MethodPost, "/organizations/"+orgExternal+"/users/search", reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	var result scimSearchResponse
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return nil, fmt.Errorf("scim: decode external search response: %w", err)
+	}
+
+	if result.TotalResults == 0 || len(result.Resources) == 0 {
+		return &ExternalUserInfo{Exists: false}, nil
+	}
+
+	return &ExternalUserInfo{
+		Exists: true,
+		Locked: extractAccountLocked(result.Resources[0]),
+	}, nil
+}
+
+// extractAccountLocked mirrors asgardeo-user-check's extractLocked: Asgardeo
+// returns accountLocked as a quoted string ("true"/"false"), not a JSON
+// boolean, so it must be parsed rather than decoded directly. Falls back to
+// accountState ("LOCKED"/"UNLOCKED") when accountLocked is absent or
+// unparseable, and returns nil if neither yields a determinate answer.
+func extractAccountLocked(u scimUser) *bool {
+	if u.SchemaScope == nil {
+		return nil
+	}
+	if u.SchemaScope.AccountLocked != nil {
+		if v, err := strconv.ParseBool(*u.SchemaScope.AccountLocked); err == nil {
+			return &v
+		}
+	}
+	if u.SchemaScope.AccountState != nil {
+		v := strings.EqualFold(*u.SchemaScope.AccountState, accountStateLocked)
+		return &v
+	}
+	return nil
 }
 
 // UpdateUserPhone updates the mobile phone number for the given user via a SCIM

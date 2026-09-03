@@ -72,7 +72,7 @@ func main() {
 
 	customerEntityClient := entity.NewCustomerEntityClient(customerEntityCfg)
 	caseHandler := handler.NewCaseHandler(customerEntityClient)
-	dashboardHandler := handler.NewDashboardHandler(customerEntityClient)
+	dashboardHandler := handler.NewDashboardHandler()
 	accountHandler := handler.NewAccountHandler(customerEntityClient)
 	projectHandler := handler.NewProjectHandler(customerEntityClient)
 	productHandler := handler.NewProductHandler(customerEntityClient)
@@ -91,6 +91,8 @@ func main() {
 	taskHandler := handler.NewTaskHandler(customerEntityClient)
 	incidentHandler := handler.NewIncidentHandler(customerEntityClient)
 	problemHandler := handler.NewProblemHandler(customerEntityClient)
+	incidentTaskHandler := handler.NewIncidentTaskHandler(customerEntityClient)
+	alertHandler := handler.NewAlertHandler(customerEntityClient)
 
 	// Google Chat is not yet configured for every deployment, so its spaces
 	// are read with os.Getenv (never mustEnv) — a missing or malformed value
@@ -137,12 +139,16 @@ func main() {
 	mux.HandleFunc("GET /cases/{id}", caseHandler.GetCase)
 	mux.HandleFunc("PATCH /cases/{id}", caseHandler.PatchCase)
 	mux.HandleFunc("POST /cases/{id}/comments", caseHandler.CreateCaseComment)
+	mux.HandleFunc("POST /cases/{id}/request-update", caseHandler.RequestCaseUpdate)
+	mux.HandleFunc("GET /case-update-request-templates", caseHandler.GetCaseUpdateRequestTemplates)
 	mux.HandleFunc("POST /cases/{id}/comments/search", caseHandler.SearchCaseComments)
 	mux.HandleFunc("POST /cases/{id}/activities/search", caseHandler.SearchCaseActivities)
 	mux.HandleFunc("POST /attachments", caseHandler.CreateCaseAttachment)
 	mux.HandleFunc("POST /attachments/search", caseHandler.SearchCaseAttachments)
 	mux.HandleFunc("GET /attachments/{id}/content", caseHandler.GetCaseAttachmentContent)
 	mux.HandleFunc("DELETE /attachments/{id}", caseHandler.DeleteCaseAttachment)
+	mux.HandleFunc("GET /attachments/{id}", caseHandler.GetAttachment)
+	mux.HandleFunc("PATCH /attachments/{id}", caseHandler.UpdateAttachment)
 	mux.HandleFunc("POST /cases/{id}/call-requests", caseHandler.CreateCallRequest)
 	mux.HandleFunc("POST /cases/{id}/call-requests/search", caseHandler.SearchCallRequests)
 	mux.HandleFunc("POST /call-requests/search", caseHandler.SearchAllCallRequests)
@@ -150,9 +156,22 @@ func main() {
 	mux.HandleFunc("POST /cases/{id}/github-issues", caseHandler.CreateCaseGithubIssue)
 	mux.HandleFunc("POST /cases/{id}/tags", caseHandler.AddCaseTag)
 	mux.HandleFunc("DELETE /cases/{id}/tags/{tagId}", caseHandler.RemoveCaseTag)
-	mux.HandleFunc("GET /tags/search", caseHandler.SearchTags)
+	mux.HandleFunc("POST /tags/search", caseHandler.SearchTags)
+	// Deprecated: the query-parameter form of tag search, kept for one release
+	// so this service and its callers can be deployed independently. Remove it
+	// (and CaseHandler.SearchTagsQuery) once every caller is on the POST.
+	//nolint:staticcheck // SA1019: intentional one-release compatibility route; remove with the handler.
+	mux.HandleFunc("GET /tags/search", caseHandler.SearchTagsQuery)
 	mux.HandleFunc("POST /cases/search", caseHandler.SearchCases)
+	mux.HandleFunc("POST /cases/aggregate", caseHandler.AggregateCases)
+	mux.HandleFunc("POST /cases/feedback/search", caseHandler.SearchFeedback)
+	mux.HandleFunc("POST /cases/feedback/aggregate", caseHandler.AggregateFeedback)
 	mux.HandleFunc("GET /dashboards", dashboardHandler.GetDashboards)
+	// Registered before the {dashboardId} wildcard purely for readability —
+	// net/http's ServeMux resolves by specificity, not registration order,
+	// so these literal paths win over the wildcard regardless.
+	mux.HandleFunc("GET /dashboards/filter-presets", dashboardHandler.GetFilterPresets)
+	mux.HandleFunc("GET /dashboards/sections", dashboardHandler.GetSharedSections)
 	mux.HandleFunc("GET /dashboards/{dashboardId}", dashboardHandler.GetDashboardDetail)
 	mux.HandleFunc("GET /updates/product-update-levels", updatesHandler.GetProductUpdateLevels)
 	mux.HandleFunc("POST /updates/levels/search", updatesHandler.SearchUpdatesBetweenUpdateLevels)
@@ -184,6 +203,7 @@ func main() {
 	mux.HandleFunc("POST /change-requests/{id}/approvals/decision", changeRequestHandler.DecideChangeRequestApproval)
 	mux.HandleFunc("PATCH /change-requests/{id}", changeRequestHandler.PatchChangeRequest)
 	mux.HandleFunc("POST /change-requests/search", changeRequestHandler.SearchChangeRequests)
+	mux.HandleFunc("POST /change-requests/aggregate", changeRequestHandler.AggregateChangeRequests)
 	mux.HandleFunc("POST /services/search", itServiceHandler.SearchITServices)
 	mux.HandleFunc("POST /service-offerings/search", serviceOfferingHandler.SearchServiceOfferings)
 	mux.HandleFunc("POST /groups/search", groupHandler.SearchGroups)
@@ -191,6 +211,7 @@ func main() {
 	mux.HandleFunc("POST /time-cards/search", timeCardHandler.SearchTimeCards)
 	mux.HandleFunc("POST /time-cards", timeCardHandler.CreateTimeCard)
 	mux.HandleFunc("PATCH /time-cards/{id}", timeCardHandler.UpdateTimeCard)
+	mux.HandleFunc("DELETE /time-cards/{id}", timeCardHandler.DeleteTimeCard)
 	mux.HandleFunc("POST /catalogs/search", catalogHandler.SearchCatalogs)
 	mux.HandleFunc("GET /catalogs/{catalogId}/items/{catalogItemId}/variables", catalogHandler.GetCatalogItemVariables)
 	mux.HandleFunc("POST /products/vulnerabilities/search", productVulnerabilityHandler.SearchProductVulnerabilities)
@@ -205,17 +226,25 @@ func main() {
 	mux.HandleFunc("POST /cases/{caseId}/tasks", taskHandler.CreateCaseTask)
 	mux.HandleFunc("PATCH /tasks/{id}", taskHandler.UpdateTask)
 	mux.HandleFunc("POST /incidents/search", incidentHandler.SearchIncidents)
+	mux.HandleFunc("POST /incidents/aggregate", incidentHandler.AggregateIncidents)
 	mux.HandleFunc("POST /incidents", incidentHandler.CreateIncident)
 	mux.HandleFunc("GET /incidents/{id}", incidentHandler.GetIncident)
 	mux.HandleFunc("PATCH /incidents/{id}", incidentHandler.PatchIncident)
 	mux.HandleFunc("POST /incidents/{id}/comments", incidentHandler.CreateIncidentComment)
 	mux.HandleFunc("POST /incidents/{id}/comments/search", incidentHandler.SearchIncidentComments)
 	mux.HandleFunc("POST /incidents/{id}/activities/search", incidentHandler.SearchIncidentActivities)
+	mux.HandleFunc("GET /alerts/{id}", alertHandler.GetAlert)
+	mux.HandleFunc("GET /smart-alerts/{id}", alertHandler.GetSmartAlert)
 	mux.HandleFunc("POST /change-requests/{id}/comments", changeRequestHandler.CreateChangeRequestComment)
 	mux.HandleFunc("POST /change-requests/{id}/comments/search", changeRequestHandler.SearchChangeRequestComments)
 	mux.HandleFunc("POST /problems", problemHandler.CreateProblem)
 	mux.HandleFunc("GET /problems/{id}", problemHandler.GetProblem)
+	mux.HandleFunc("PATCH /problems/{id}", problemHandler.PatchProblem)
 	mux.HandleFunc("POST /problems/search", problemHandler.SearchProblems)
+	mux.HandleFunc("POST /problems/aggregate", problemHandler.AggregateProblems)
+	mux.HandleFunc("GET /incident-tasks/{id}", incidentTaskHandler.GetIncidentTask)
+	mux.HandleFunc("POST /incident-tasks/search", incidentTaskHandler.SearchIncidentTasks)
+	mux.HandleFunc("POST /incident-tasks/aggregate", incidentTaskHandler.AggregateIncidentTasks)
 	// Called manually today; not yet wired into real incident/case creation.
 	mux.HandleFunc("POST /notifications/google-chat/alerts", notificationHandler.PostGoogleChatAlert)
 
@@ -283,9 +312,28 @@ func main() {
 //	                       only; the default (unset/false) does the startup
 //	                       read once and never touches the disk again. A
 //	                       non-empty unparseable value warns and is false.
+//	DASHBOARD_PRESETS_FILE a JSON file of presetKey -> literal filter fragment
+//	                       ({"field":...,"op":...,"values":...}), shared
+//	                       across every dashboard in DASHBOARDS_DIR (a
+//	                       dashboard's own top-level "filterPresets" shadows a
+//	                       same-named entry here). Only consulted on the
+//	                       DASHBOARDS_DIR path — the deprecated
+//	                       DASHBOARDS_CONFIG path has no directory of its own
+//	                       to keep a presets file alongside. Unset is legal
+//	                       and means no shared presets, same as unset
+//	                       DASHBOARDS_DIR itself.
+//	DASHBOARD_SECTIONS_FILE a JSON file of sectionKey -> {"displayName",
+//	                       "widgets": [...]}, the shared, reusable widget
+//	                       sections a dashboard pulls in by name with
+//	                       "includeSections" so a section like "My Work" is
+//	                       authored once instead of copy-pasted per
+//	                       dashboard. Same scope rules as
+//	                       DASHBOARD_PRESETS_FILE: DASHBOARDS_DIR path only,
+//	                       unset is legal and means no shared sections.
 //
-// Neither set is legal and yields no dashboards: a deployment that has not
-// configured any must still start and serve every other endpoint.
+// Neither DASHBOARDS_DIR nor DASHBOARDS_CONFIG set is legal and yields no
+// dashboards: a deployment that has not configured any must still start and
+// serve every other endpoint.
 func loadDashboards() *dashboard.Registry {
 	dir := strings.TrimSpace(os.Getenv("DASHBOARDS_DIR"))
 	if dir == "" {
@@ -296,6 +344,9 @@ func loadDashboards() *dashboard.Registry {
 		}
 		return dashboard.NewStaticRegistry(dashboards)
 	}
+
+	presetsFile := strings.TrimSpace(os.Getenv("DASHBOARD_PRESETS_FILE"))
+	sectionsFile := strings.TrimSpace(os.Getenv("DASHBOARD_SECTIONS_FILE"))
 
 	// ParseBool rather than a "true" string compare: the latter silently reads
 	// 1, yes and on as OFF, and never reports a typo at all -- the operator
@@ -312,29 +363,30 @@ func loadDashboards() *dashboard.Registry {
 		}
 		hotReload = parsed
 	}
-	registry, err := dashboard.NewDirRegistry(dir, hotReload)
+	registry, err := dashboard.NewDirRegistry(dir, hotReload, presetsFile, sectionsFile)
 	if err != nil {
-		slog.Error("invalid dashboard definitions", "dir", dir, "err", err)
+		slog.Error("invalid dashboard definitions", "dir", dir, "presetsFile", presetsFile, "sectionsFile", sectionsFile, "err", err)
 		os.Exit(1)
 	}
 	if hotReload {
 		slog.Warn("DASHBOARDS_HOT_RELOAD is on: dashboard definitions are re-read from disk on every request. Intended for local development only",
 			"dir", dir)
 	}
-	slog.Info("loaded dashboard definitions", "dir", dir, "count", len(registry.Dashboards()), "hotReload", hotReload)
+	slog.Info("loaded dashboard definitions", "dir", dir, "presetsFile", presetsFile, "count", len(registry.Dashboards()), "hotReload", hotReload)
 	return registry
 }
 
 // loadDirectory resolves the reference catalogues from environment
 // configuration, once, at startup:
 //
-//	CSM_TEAM_REGISTRY  the team registry as "teamKey|Display Name|FAMILY|groupId"
-//	                   rows separated by commas, where FAMILY is one of cre-abt,
-//	                   cre, sre-abt or sre (case insensitive) and FAMILY and
-//	                   groupId are both optional. Unset means no teams are
-//	                   configured; there is deliberately no default, because
-//	                   team names are organisation vocabulary that must not be
-//	                   committed here.
+//	CSM_TEAM_REGISTRY  the team registry as
+//	                   "teamKey|Display Name|FAMILY|creGroupId|sreGroupId" rows
+//	                   separated by commas, where FAMILY is one of cre-abt,
+//	                   cre, sre-abt or sre (case insensitive) and FAMILY,
+//	                   creGroupId, and sreGroupId are all optional. Unset means
+//	                   no teams are configured; there is deliberately no
+//	                   default, because team names are organisation vocabulary
+//	                   that must not be committed here.
 //	CSM_USER_ROLES     the assignable-role allow-list, comma separated. Unset
 //	                   falls back to the committed default list.
 //

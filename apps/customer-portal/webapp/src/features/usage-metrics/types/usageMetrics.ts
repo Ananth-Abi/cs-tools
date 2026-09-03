@@ -162,13 +162,15 @@ export type UseSearchProjectTimeCardsParams = {
   startDate?: string;
   endDate?: string;
   states?: string[];
+  page?: number;
+  pageSize?: number;
   enabled?: boolean;
 };
 
 export type UseGetTimeCardsStatsParams = {
   projectId: string;
-  startDate: string;
-  endDate: string;
+  startDate?: string;
+  endDate?: string;
 };
 
 export type UsageEnvironmentPanelAccent = {

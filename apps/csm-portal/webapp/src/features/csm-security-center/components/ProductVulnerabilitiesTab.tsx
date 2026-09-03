@@ -32,6 +32,7 @@ import {
 } from "@wso2/oxygen-ui";
 import { Search } from "@wso2/oxygen-ui-icons-react";
 import { useMemo, useState, type ChangeEvent, type JSX } from "react";
+import { useLocation } from "react-router";
 import QueryErrorState from "@components/QueryErrorState";
 import { useDebouncedValue } from "@hooks/useDebouncedValue";
 import { useSearchProductVulnerabilities } from "@features/csm-security-center/api/useSearchProductVulnerabilities";
@@ -54,6 +55,7 @@ const ROWS_PER_PAGE_OPTIONS = [10, 20, 50];
  */
 export default function ProductVulnerabilitiesTab(): JSX.Element {
   const navigate = useNavTransition();
+  const location = useLocation();
   const [searchInput, setSearchInput] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<BeVulnerabilityPriority | "">("");
   const [page, setPage] = useState(0);
@@ -122,6 +124,18 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
           sx={{ minWidth: 140 }}
           slotProps={{
             htmlInput: { "aria-label": "Filter by priority" },
+            // oxygen-ui's own theme (MuiInputLabel styleOverrides) shifts an
+            // unshrunk label up by `top: -7px` for any Select-backed field —
+            // see `MultiSelectField.tsx`'s doc comment for the full story.
+            // `shrink`/`notched` (rather than MUI's focus-driven default)
+            // match this field's own value state instead of only reacting
+            // to focus, and `top: "0px !important"` is the only way to win
+            // the cascade against that compound theme selector.
+            inputLabel: {
+              shrink: priorityFilter !== "",
+              sx: { top: "0px !important" },
+            },
+            select: { notched: priorityFilter !== "" },
           }}
         >
           <MenuItem value="">All priorities</MenuItem>
@@ -189,15 +203,26 @@ export default function ProductVulnerabilitiesTab(): JSX.Element {
                   const detailPath = `/security-center/vulnerabilities/${encodeURIComponent(
                     vuln.id,
                   )}`;
+                  // `parentState` nests this tab's OWN inherited state (e.g.
+                  // `{ from: "/dashboard" }`, when this page was itself
+                  // reached from a dashboard widget) so the detail page can
+                  // restore it on its own way back — otherwise a
+                  // dashboard → here → detail → Back round trip would land
+                  // back on this tab with no `from`, silently dropping its
+                  // own Back button.
+                  const detailState = {
+                    from: `${location.pathname}${location.search}`,
+                    parentState: location.state ?? null,
+                  };
                   return (
                   <TableRow
                     key={vuln.id}
                     hover
-                    onClick={() => navigate(detailPath)}
+                    onClick={() => navigate(detailPath, { state: detailState })}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" || e.key === " ") {
                         e.preventDefault();
-                        navigate(detailPath);
+                        navigate(detailPath, { state: detailState });
                       }
                     }}
                     tabIndex={0}

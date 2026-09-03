@@ -16,7 +16,6 @@
 
 import {
   Alert,
-  AlertTitle,
   Box,
   Button,
   Collapse,
@@ -66,9 +65,12 @@ function resolveDownloadUrl(storeUrl: string | undefined): string | undefined {
  *
  * Built directly on `Alert` (not the higher-level `NotificationBanner`):
  * `NotificationBanner`/MUI `Alert` only auto-renders its own close icon when
- * no custom `action` node is supplied, so a banner that also needs a
- * "Download" action button must pack both into `action` itself -- see
- * `ErrorBanner.tsx` for the same pattern already established in this app.
+ * no custom `action` node is supplied, so this component supplies its own
+ * close button via `action` explicitly (see `ErrorBanner.tsx` for the same
+ * pattern already established in this app). The download button is not
+ * passed via `action`; it sits in the body, below the message, rather than
+ * in `action` -- `action` is vertically centered against the whole alert,
+ * which reads as disconnected from a multi-line message.
  *
  * @returns {JSX.Element | null} The MobileAppBanner component.
  */
@@ -114,30 +116,30 @@ export default function MobileAppBanner(): JSX.Element | null {
         severity="info"
         variant="filled"
         action={
-          <Stack direction="row" spacing={0.5} alignItems="center">
-            <Button
-              color="inherit"
-              size="small"
-              onClick={handleDownload}
-              sx={{ fontWeight: 600, textDecoration: "underline" }}
-            >
-              Download
-            </Button>
-            <IconButton
-              size="small"
-              color="inherit"
-              onClick={() => setDismissed(true)}
-              aria-label="Close"
-            >
-              <X size={16} />
-            </IconButton>
-          </Stack>
+          <IconButton
+            size="small"
+            color="inherit"
+            onClick={() => setDismissed(true)}
+            aria-label="Close"
+          >
+            <X size={16} />
+          </IconButton>
         }
       >
-        <AlertTitle sx={{ mb: 0 }}>Get the WSO2 Super App</AlertTitle>
-        <Box component="span">
-          {`This portal isn't optimized for ${osLabel} browsers. CSM Portal is also available as a micro-app inside the WSO2 Super App for a better mobile experience.`}
-        </Box>
+        <Stack spacing={1} alignItems="flex-start">
+          <Box component="span">
+            {`This portal isn't optimized for mobile. For a better experience on ${osLabel}, use the CSM Portal micro-app inside the WSO2 Super App.`}
+          </Box>
+          <Button
+            color="inherit"
+            size="small"
+            variant="outlined"
+            onClick={handleDownload}
+            sx={{ fontWeight: 600 }}
+          >
+            Download WSO2 Super App
+          </Button>
+        </Stack>
       </Alert>
     </Collapse>
   );

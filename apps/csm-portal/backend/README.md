@@ -96,6 +96,18 @@ gosec -fmt=text ./...
 
 The scan should report **0 issues**. If a new finding appears, fix the root cause before merging — do not suppress it without a code review.
 
+Run [govulncheck](https://golang.org/x/vuln/cmd/govulncheck) to check for known vulnerabilities:
+
+```bash
+# Install govulncheck (once)
+go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# Run from apps/csm-portal/backend
+govulncheck ./...
+```
+
+The scan should report **no vulnerabilities**. Most findings are Go standard-library CVEs tied to the toolchain patch pinned in `go.mod`'s `go` directive — bump it to the latest `1.26.x` patch and run `go mod tidy` to resolve them.
+
 ## Configuration
 
 Copy `.env` and fill in the values:
@@ -293,6 +305,7 @@ backend/
 - `GET /users/me` — Get current user profile (`id`, `email`, `firstName`, `lastName`, `timeZone`, `roles` from entity service; `phoneNumber` from SCIM)
 - `PATCH /users/me` — Update current user profile (`phoneNumber` via SCIM, `timeZone` via entity service)
 - `POST /users/search` — Search users; optional `filters` (`searchQuery`, `roles`, `userNames`, `emails`, `active`) and `sortBy` (`field`, `order`); response shape depends on data source (`User` for postgres, `SNUser` for ServiceNow)
+- `GET /users/{id}` — Get one user's full profile (ServiceNow data source only); adds `teams` (derived from `groups`) and, for external contacts only, `externalAccount` (`exists`/`locked`, from SCIM's "external" org search). Both are best-effort — absent rather than failing the request if their lookup fails
 
 ### Accounts
 
@@ -349,7 +362,7 @@ backend/
 ### Conversations
 
 - `GET /conversations/{id}/messages` — Get paginated messages for a conversation; optional query params `limit` (1–100, default 20) and `offset` (default 0) (ServiceNow data source only)
-- `POST /conversations/search` — Search conversations; optional `filters` (`projectIds`, `states` (`ACTIVE`/`RESOLVED`), `searchQuery`, `createdByMe`) and `sortBy` (`field`: `createdOn`/`updatedOn`, `order`) (ServiceNow data source only)
+- `POST /conversations/search` — Search conversations; optional `filters` (`projectIds`, `states` (`ACTIVE`/`RESOLVED`/`CONVERTED`/`ABANDONED`/`CLOSED`), `searchQuery`, `number` (exact match), `createdByMe`, `createdBy` (list of creator emails)) and `sortBy` (`field`: `createdOn`/`updatedOn`, `order`) (ServiceNow data source only)
 
 ### Updates
 

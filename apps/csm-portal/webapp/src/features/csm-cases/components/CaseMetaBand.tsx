@@ -23,10 +23,12 @@ import type { CsmCaseDetail } from "@features/csm-cases/types/csmCases";
 import { parentRecordPath } from "@features/csm-cases/utils/parentRecordRoute";
 import SemanticChip from "@components/SemanticChip";
 import UserRefLink from "@components/UserRefLink";
+import DirectoryEntityChip from "@features/csm-admin/components/DirectoryEntityChip";
 import DeploymentDetailsDialog from "@features/csm-projects/components/DeploymentDetailsDialog";
 import type { BeDeploymentType } from "@api/backend/types";
 import { announcementStateRole } from "@features/csm-announcements/utils/announcementState";
 import { STATE_LABEL } from "@features/csm-dashboard/utils/abtDashboard";
+import { formatDateOnlyForDisplay } from "@utils/dateTime";
 
 interface CaseMetaBandProps {
   detail: CsmCaseDetail;
@@ -302,11 +304,22 @@ export default function CaseMetaBand({
           </Cell>
           {!isAnnouncement && (c.customerContext.creTeam || c.customerContext.sreTeam) && (
             <Cell label="CRE / SRE team">
-              <Typography variant="body2" noWrap>
-                {[c.customerContext.creTeam?.name, c.customerContext.sreTeam?.name]
-                  .filter(Boolean)
-                  .join(" · ") || "—"}
-              </Typography>
+              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                {c.customerContext.creTeam && (
+                  <DirectoryEntityChip
+                    id={c.customerContext.creTeam.id}
+                    name={c.customerContext.creTeam.name}
+                    routeBase="/admin/teams"
+                  />
+                )}
+                {c.customerContext.sreTeam && (
+                  <DirectoryEntityChip
+                    id={c.customerContext.sreTeam.id}
+                    name={c.customerContext.sreTeam.name}
+                    routeBase="/admin/teams"
+                  />
+                )}
+              </Box>
             </Cell>
           )}
           <Cell label="Project" maxWidth={isAnnouncement ? 240 : undefined}>
@@ -402,6 +415,27 @@ export default function CaseMetaBand({
                       </Typography>
                     </Tooltip>
                   )}
+                </Cell>
+              )}
+              {c.bestCaseFixEta != null && (
+                <Cell label="Best case fix ETA">
+                  <Typography variant="body2" noWrap>
+                    {formatDateOnlyForDisplay(c.bestCaseFixEta)}
+                  </Typography>
+                </Cell>
+              )}
+              {c.mostLikelyFixEta != null && (
+                <Cell label="Most likely fix ETA">
+                  <Typography variant="body2" noWrap>
+                    {formatDateOnlyForDisplay(c.mostLikelyFixEta)}
+                  </Typography>
+                </Cell>
+              )}
+              {c.worstCaseFixEta != null && (
+                <Cell label="Worst case fix ETA">
+                  <Typography variant="body2" noWrap>
+                    {formatDateOnlyForDisplay(c.worstCaseFixEta)}
+                  </Typography>
                 </Cell>
               )}
             </>

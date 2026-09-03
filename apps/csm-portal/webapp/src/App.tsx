@@ -14,10 +14,21 @@
 // specific language governing permissions and limitations
 // under the License.
 
-import { type JSX, lazy } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router";
+import { type JSX } from "react";
+import {
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+  useSearchParams,
+} from "react-router";
 import AuthGuard from "@layouts/AuthGuard";
-import { SectionIndexRedirect } from "@components/section-tabs/SectionTabs";
+import {
+  LegacyQueryTabRedirect,
+  SectionIndexRedirect,
+} from "@components/section-tabs/SectionTabs";
 import { navNodeForPath } from "@config/csmNavItems";
 import {
   featureStateForPath,
@@ -36,129 +47,91 @@ import { ErrorBannerProvider } from "@context/error-banner/ErrorBannerContext";
 import { SuccessBannerProvider } from "@context/success-banner/SuccessBannerContext";
 import { LoaderProvider } from "@context/linear-loader/LoaderContext";
 import { ErrorPageProvider } from "@context/error-page/ErrorPageContext";
+import CaseDetailRouteSync from "@features/case-tabs/components/CaseDetailRouteSync";
+import { useAppMountedSignal } from "@utils/appMountedEvent";
 
 /*
- * Authenticated feature pages are lazily loaded so each lands in its own chunk
- * and is fetched only when its route is visited, instead of being bundled into
- * the initial entry chunk. They all render inside AppLayout's Outlet, which
- * owns the Suspense boundary that covers the load. Error pages and the shared
- * CsmComingSoonPage stay eager: they are tiny and act as immediate fallbacks.
+ * Authenticated feature pages used to be lazily loaded (one chunk per route),
+ * fetched only when their route was visited. That meant navigating to a
+ * not-yet-visited route triggered a fresh network fetch + module evaluation
+ * mid-session, which could stall the UI for a beat — especially for a larger
+ * page chunk or a slow/variable connection. They are now imported eagerly so
+ * every page ships in the initial load and no route navigation ever triggers
+ * a runtime chunk fetch. Error pages and the shared CsmComingSoonPage were
+ * already eager (tiny, immediate fallbacks) and are unaffected.
  */
-const CsmDashboardPage = lazy(
-  () => import("@features/csm-dashboard/pages/CsmDashboardPage"),
-);
-const DashboardWidgetPreviewPage = lazy(
-  () => import("@features/csm-dashboard/pages/DashboardWidgetPreviewPage"),
-);
-const CsmCasesPage = lazy(
-  () => import("@features/csm-cases/pages/CsmCasesPage"),
-);
-const CsmCaseCreatePage = lazy(
-  () => import("@features/csm-cases/pages/CsmCaseCreatePage"),
-);
-const CsmCaseDetailPage = lazy(
-  () => import("@features/csm-cases/pages/CsmCaseDetailPage"),
-);
-const OperationsPage = lazy(
-  () => import("@features/csm-operations/pages/OperationsPage"),
-);
-const CreateServiceRequestPage = lazy(
-  () => import("@features/csm-operations/pages/CreateServiceRequestPage"),
-);
-const CsmChangeRequestDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmChangeRequestDetailPage"),
-);
-const CreateChangeRequestPage = lazy(
-  () => import("@features/csm-operations/pages/CreateChangeRequestPage"),
-);
-const CsmIncidentDetailPage = lazy(
-  () => import("@features/csm-operations/pages/CsmIncidentDetailPage"),
-);
-const CreateIncidentPage = lazy(
-  () => import("@features/csm-operations/pages/CreateIncidentPage"),
-);
-const ProblemDetailPage = lazy(
-  () => import("@features/csm-operations/pages/ProblemDetailPage"),
-);
-const CreateProblemPage = lazy(
-  () => import("@features/csm-operations/pages/CreateProblemPage"),
-);
-const CsmAdminLayout = lazy(
-  () => import("@features/csm-admin/pages/CsmAdminLayout"),
-);
-const CsmUsersPage = lazy(
-  () => import("@features/csm-users/pages/CsmUsersPage"),
-);
-const UserProfilePage = lazy(
-  () => import("@features/csm-users/pages/UserProfilePage"),
-);
-const CsmRolesPage = lazy(
-  () => import("@features/csm-admin/pages/CsmRolesPage"),
-);
-const RoleMembersPage = lazy(
-  () => import("@features/csm-admin/pages/RoleMembersPage"),
-);
-const CsmGroupsPage = lazy(
-  () => import("@features/csm-admin/pages/CsmGroupsPage"),
-);
-const GroupMembersPage = lazy(
-  () => import("@features/csm-admin/pages/GroupMembersPage"),
-);
-const CsmTeamsPage = lazy(
-  () => import("@features/csm-admin/pages/CsmTeamsPage"),
-);
-const TeamMembersPage = lazy(
-  () => import("@features/csm-admin/pages/TeamMembersPage"),
-);
-const CsmCustomersLayout = lazy(
-  () => import("@features/csm-customers/pages/CsmCustomersLayout"),
-);
-const CsmAccountsPage = lazy(
-  () => import("@features/csm-accounts/pages/CsmAccountsPage"),
-);
-const CsmAccountDetailPage = lazy(
-  () => import("@features/csm-accounts/pages/CsmAccountDetailPage"),
-);
-const CsmProjectsPage = lazy(
-  () => import("@features/csm-projects/pages/CsmProjectsPage"),
-);
-const CsmProjectDetailPage = lazy(
-  () => import("@features/csm-projects/pages/CsmProjectDetailPage"),
-);
-const CsmUpdatesPage = lazy(
-  () => import("@features/updates/pages/CsmUpdatesPage"),
-);
-const CsmSecurityCenterPage = lazy(
-  () => import("@features/csm-security-center/pages/CsmSecurityCenterPage"),
-);
-const CreateSecurityReportPage = lazy(
-  () => import("@features/csm-security-center/pages/CreateSecurityReportPage"),
-);
-const ProductVulnerabilityDetailPage = lazy(
-  () => import("@features/csm-security-center/pages/ProductVulnerabilityDetailPage"),
-);
-const CsmEngagementsPage = lazy(
-  () => import("@features/csm-engagements/pages/CsmEngagementsPage"),
-);
-const CsmEngagementCreatePage = lazy(
-  () => import("@features/csm-engagements/pages/CsmEngagementCreatePage"),
-);
-const CsmTimeCardsPage = lazy(
-  () => import("@features/csm-timecards/pages/CsmTimeCardsPage"),
-);
-const CsmAnnouncementsPage = lazy(
-  () => import("@features/csm-announcements/pages/CsmAnnouncementsPage"),
-);
+import CsmDashboardPage from "@features/csm-dashboard/pages/CsmDashboardPage";
+import DashboardWidgetPreviewPage from "@features/csm-dashboard/pages/DashboardWidgetPreviewPage";
+import CsmCasesPage from "@features/csm-cases/pages/CsmCasesPage";
+import CsmCaseCreatePage from "@features/csm-cases/pages/CsmCaseCreatePage";
+import OperationsPage from "@features/csm-operations/pages/OperationsPage";
+import CreateServiceRequestPage from "@features/csm-operations/pages/CreateServiceRequestPage";
+import CreateChangeRequestPage from "@features/csm-operations/pages/CreateChangeRequestPage";
+import CreateIncidentPage from "@features/csm-operations/pages/CreateIncidentPage";
+import ProblemDetailPage from "@features/csm-operations/pages/ProblemDetailPage";
+import CreateProblemPage from "@features/csm-operations/pages/CreateProblemPage";
+import CsmAdminLayout from "@features/csm-admin/pages/CsmAdminLayout";
+import CsmUserManagementLandingPage from "@features/csm-admin/pages/CsmUserManagementLandingPage";
+import CsmUsersPage from "@features/csm-users/pages/CsmUsersPage";
+import UserProfilePage from "@features/csm-users/pages/UserProfilePage";
+import CsmRolesPage from "@features/csm-admin/pages/CsmRolesPage";
+import RoleMembersPage from "@features/csm-admin/pages/RoleMembersPage";
+import CsmGroupsPage from "@features/csm-admin/pages/CsmGroupsPage";
+import GroupMembersPage from "@features/csm-admin/pages/GroupMembersPage";
+import CsmTeamsPage from "@features/csm-admin/pages/CsmTeamsPage";
+import TeamMembersPage from "@features/csm-admin/pages/TeamMembersPage";
+import DashboardBuilderRouteGuard from "@features/csm-admin/dashboards/pages/DashboardBuilderRouteGuard";
+import CsmDashboardBuilderListPage from "@features/csm-admin/dashboards/pages/CsmDashboardBuilderListPage";
+import CsmDashboardBuilderEditorPage from "@features/csm-admin/dashboards/pages/CsmDashboardBuilderEditorPage";
+import CsmDashboardSharedConfigPage from "@features/csm-admin/dashboards/pages/CsmDashboardSharedConfigPage";
+import CsmCustomersLayout from "@features/csm-customers/pages/CsmCustomersLayout";
+import CsmAccountsPage from "@features/csm-accounts/pages/CsmAccountsPage";
+import CsmAccountDetailPage from "@features/csm-accounts/pages/CsmAccountDetailPage";
+import CsmProjectsPage from "@features/csm-projects/pages/CsmProjectsPage";
+import CsmProjectDetailPage from "@features/csm-projects/pages/CsmProjectDetailPage";
+import ConversationDetailPage from "@features/csm-projects/pages/ConversationDetailPage";
+import CsmUpdatesPage from "@features/updates/pages/CsmUpdatesPage";
+import CsmSecurityCenterPage from "@features/csm-security-center/pages/CsmSecurityCenterPage";
+import CreateSecurityReportPage from "@features/csm-security-center/pages/CreateSecurityReportPage";
+import ProductVulnerabilityDetailPage from "@features/csm-security-center/pages/ProductVulnerabilityDetailPage";
+import CsmEngagementsPage from "@features/csm-engagements/pages/CsmEngagementsPage";
+import CsmEngagementCreatePage from "@features/csm-engagements/pages/CsmEngagementCreatePage";
+import CsmTimeCardsPage from "@features/csm-timecards/pages/CsmTimeCardsPage";
+import CsmAnnouncementsPage from "@features/csm-announcements/pages/CsmAnnouncementsPage";
+import CsmAnnouncementCreatePage from "@features/csm-announcements/pages/CsmAnnouncementCreatePage";
+import HelpPage from "@features/help/pages/HelpPage";
 
 /**
  * Landing for `/`. Defers to AuthGuard's post-login deep-link restore when a
- * redirect is pending (rendering nothing so it doesn't race the restore);
- * otherwise sends the user to the default `/dashboard` landing. A pure read of
- * sessionStorage — AuthGuard owns clearing the key.
+ * redirect is pending (rendering nothing so it doesn't race the restore).
+ *
+ * Also defers — rendering nothing rather than navigating to `/dashboard` —
+ * while a `?goto=`/`?q=` deep link is still being resolved by `QuickNav`
+ * (mounted in the persistent header, above this route's `Outlet`). Without
+ * this, `/?goto=CS0441150` would navigate straight to `/dashboard` and start
+ * fetching every dashboard widget in the background, purely to sit behind
+ * the search palette while it resolves — wasted work for a link whose whole
+ * point is to jump straight to one record. `QuickNav` clears `goto`/`q` from
+ * the URL itself once it actually navigates away (the single-match case) or
+ * once the user closes the palette without picking anything (see its
+ * `close()`); either way, this component naturally proceeds to the normal
+ * `/dashboard` redirect on its next render once the params are gone.
+ *
+ * A pure read of sessionStorage/search params — AuthGuard and QuickNav own
+ * clearing their respective keys.
  */
 function RootLanding(): JSX.Element | null {
   const pending = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY);
-  return pending ? null : <Navigate to="/dashboard" replace />;
+  const [searchParams] = useSearchParams();
+  // A present-but-empty `?q=`/`?goto=` (e.g. a link with a blank query) must
+  // not defer the redirect forever: QuickNav's own initial-params effect
+  // already no-ops on an empty value (`if (!q && !goto) return`), so nothing
+  // would ever clear the param and this component would sit blank
+  // indefinitely on `.has()` alone. Require an actual non-blank value.
+  const hasDeepLinkSearch = ["goto", "q"].some((key) =>
+    Boolean(searchParams.get(key)?.trim()),
+  );
+  return pending || hasDeepLinkSearch ? null : <Navigate to="/dashboard" replace />;
 }
 
 /**
@@ -218,7 +191,28 @@ function LegacyDetailRedirect({ to }: { to: string }): JSX.Element {
   return <Navigate to={`${target}${search}${hash}`} replace />;
 }
 
+/**
+ * Redirects a legacy Settings path (`/admin/users`, `/admin/roles`, ...) to
+ * its `/admin/user-management/*` home, forwarding whatever `location.state`
+ * the caller navigated here with. A bare `<Navigate to={...} replace />`
+ * (as `LegacyDetailRedirect` above uses) has no `state` prop bound to the
+ * incoming navigation — it would silently drop a dashboard widget's own
+ * `state: { from }` click-through on this exact hop, which is exactly the
+ * state `CsmAdminLayout`'s Back button (and `CsmUsersPage`'s own profile-page
+ * hand-off) depend on to work end to end.
+ */
+function LegacySettingsRedirect({ to }: { to: string }): JSX.Element {
+  const { state } = useLocation();
+  return <Navigate to={to} state={state} replace />;
+}
+
 export default function App(): JSX.Element {
+  // Signals the index.html boot loading screen that React has mounted and
+  // taken over rendering, so it can remove itself. Not gated on auth/data —
+  // the loading screen's job is only to cover "JS not yet running", not
+  // "signed-in and ready".
+  useAppMountedSignal();
+
   return (
     <LoaderProvider>
       <ErrorBannerProvider>
@@ -293,19 +287,26 @@ export default function App(): JSX.Element {
                     element={<LegacyDetailRedirect to="/customers/projects" />}
                   />
 
-                  {/* Administration — Users/Roles/Groups/Teams are real,
-                      Permissions is still WIP. */}
+                  {/* Administration — "User management" groups the
+                      Users/Roles/Groups/Teams/Permissions directory pages
+                      (Users/Roles/Groups/Teams are real, Permissions is still
+                      WIP) behind a tile-grid landing page; Dashboards is a
+                      sibling tab. */}
                   <Route path="admin" element={<CsmAdminLayout />}>
                     <Route
                       index
                       element={<SectionIndexRedirect sectionId="admin" />}
                     />
-                    <Route path="users" element={<CsmUsersPage />} />
-                    <Route path="roles" element={<CsmRolesPage />} />
-                    <Route path="groups" element={<CsmGroupsPage />} />
-                    <Route path="teams" element={<CsmTeamsPage />} />
                     <Route
-                      path="permissions"
+                      path="user-management"
+                      element={<CsmUserManagementLandingPage />}
+                    />
+                    <Route path="user-management/users" element={<CsmUsersPage />} />
+                    <Route path="user-management/roles" element={<CsmRolesPage />} />
+                    <Route path="user-management/groups" element={<CsmGroupsPage />} />
+                    <Route path="user-management/teams" element={<CsmTeamsPage />} />
+                    <Route
+                      path="user-management/permissions"
                       element={
                         <CsmComingSoonPage
                           title="Permissions"
@@ -314,12 +315,55 @@ export default function App(): JSX.Element {
                         />
                       }
                     />
+                    {/* Dashboard builder — admin-role-gated, unlike every
+                        sibling tab above (see DashboardBuilderRouteGuard's
+                        own doc comment for why). Persists to localStorage
+                        only; there is no backend behind this feature. */}
+                    <Route path="dashboards" element={<DashboardBuilderRouteGuard />}>
+                      <Route index element={<CsmDashboardBuilderListPage />} />
+                      {/* Before the ":draftId" wildcard: "shared" is a
+                          literal segment, and react-router would otherwise
+                          match it as a draft id. */}
+                      <Route path="shared" element={<CsmDashboardSharedConfigPage />} />
+                      <Route path="new" element={<CsmDashboardBuilderEditorPage />} />
+                      <Route path=":draftId" element={<CsmDashboardBuilderEditorPage />} />
+                    </Route>
                   </Route>
+
+                  {/* Legacy Settings paths kept alive so a pinned/deep link to
+                      the pre-"User management" layout doesn't dead-end. Not
+                      requested explicitly — a judgment call to match the
+                      /accounts, /projects legacy-redirect convention above;
+                      revert this block alone if unwanted. */}
+                  <Route
+                    path="admin/users"
+                    element={<LegacySettingsRedirect to="/admin/user-management/users" />}
+                  />
+                  <Route
+                    path="admin/roles"
+                    element={<LegacySettingsRedirect to="/admin/user-management/roles" />}
+                  />
+                  <Route
+                    path="admin/groups"
+                    element={<LegacySettingsRedirect to="/admin/user-management/groups" />}
+                  />
+                  <Route
+                    path="admin/teams"
+                    element={<LegacySettingsRedirect to="/admin/user-management/teams" />}
+                  />
+                  <Route
+                    path="admin/permissions"
+                    element={<LegacySettingsRedirect to="/admin/user-management/permissions" />}
+                  />
 
                   {/* Role/group/team member lists, one level below the
                       directory pages above. Not admin-permission-gated:
                       standing project rule is to show the action and let the
-                      backend reject it, never gate in the frontend. */}
+                      backend reject it, never gate in the frontend. Left at
+                      their original /admin/<kind>/:id paths — out of scope
+                      for the User management nesting above — so every
+                      `routeBase="/admin/roles"` etc. link elsewhere in the app
+                      keeps working unchanged. */}
                   <Route path="admin/roles/:id" element={<RoleMembersPage />} />
                   <Route path="admin/groups/:id" element={<GroupMembersPage />} />
                   <Route path="admin/teams/:id" element={<TeamMembersPage />} />
@@ -337,77 +381,143 @@ export default function App(): JSX.Element {
                     element={<UserProfilePage />}
                   />
 
+                  {/* Dashboard selection is a real path segment
+                      (`/dashboard/:dashboardId`), and — for a team-based
+                      dashboard (a dashboard config's own `isTeamBased` flag) —
+                      the selected team is a SECOND path segment
+                      (`/dashboard/:dashboardId/:teamId`), since both are a
+                      genuinely different content set from one another, not a
+                      panel switch on the same view. The bare `/dashboard`
+                      index still renders CsmDashboardPage itself: which
+                      dashboard/team to default to depends on data that isn't
+                      loaded yet at route-match time (the dashboard list, the
+                      signed-in user's own team) — see the page's own doc
+                      comment — so it resolves that itself and then replaces
+                      the URL with the canonical one-or-two-segment path once
+                      it can, rather than a synchronous route redirect here. */}
                   <Route path="dashboard" element={<CsmDashboardPage />} />
+                  <Route path="dashboard/:dashboardId" element={<CsmDashboardPage />} />
+                  <Route
+                    path="dashboard/:dashboardId/:teamId"
+                    element={<CsmDashboardPage />}
+                  />
                   {/* Dashboard widget "View more" preview — :previewSlug is
                       one of WIDGET_RESOURCE_CONFIG's own previewSlug values
                       (e.g. "cases"), resolved back to a resourceType by
                       resourceTypeForPreviewSlug. Distinct from the resource's
-                      own real list route (e.g. /cases). */}
+                      own real list route (e.g. /cases). Under its own
+                      "preview" prefix, not directly under /dashboard/:x —
+                      that shape collides with /dashboard/:dashboardId above
+                      (both a single dynamic segment at the same depth; only
+                      one of two same-shape sibling routes can ever match a
+                      given value, so they can't share it). */}
                   <Route
-                    path="dashboard/:previewSlug"
+                    path="dashboard/preview/:previewSlug"
                     element={<DashboardWidgetPreviewPage />}
                   />
                   <Route path="cases" element={<CsmCasesPage />} />
                   <Route path="cases/new" element={<CsmCaseCreatePage />} />
-                  <Route path="cases/:caseId" element={<CsmCaseDetailPage />} />
+                  <Route
+                    path="cases/:caseId"
+                    element={<CaseDetailRouteSync kind="case" />}
+                  />
 
-                  <Route path="operations" element={<OperationsPage />} />
-                  <Route
-                    path="operations/service-requests/new"
-                    element={<CreateServiceRequestPage />}
-                  />
-                  <Route
-                    path="operations/service-requests/:caseId"
-                    element={<CsmCaseDetailPage />}
-                  />
-                  <Route
-                    path="operations/change-requests/new"
-                    element={<CreateChangeRequestPage />}
-                  />
-                  <Route
-                    path="operations/change-requests/:id"
-                    element={<CsmChangeRequestDetailPage />}
-                  />
-                  <Route
-                    path="operations/incidents/new"
-                    element={<CreateIncidentPage />}
-                  />
-                  <Route
-                    path="operations/incidents/:id"
-                    element={<CsmIncidentDetailPage />}
-                  />
-                  <Route
-                    path="operations/problems/new"
-                    element={<CreateProblemPage />}
-                  />
-                  <Route
-                    path="operations/problems/:id"
-                    element={<ProblemDetailPage />}
-                  />
+                  {/* A project's chat sessions ("Conversations" sub-tab of
+                      Work items) each get a dedicated detail page, flat at
+                      the top level like /cases/:caseId rather than nested
+                      under /customers/projects/:id — matching how every
+                      other work-item type (service requests, change
+                      requests, engagements, ...) routes below. */}
+                  <Route path="conversations/:id" element={<ConversationDetailPage />} />
+
+                  {/* Operations' own Service requests / Change requests /
+                      Incidents / Problems switch is a real path segment
+                      (`/operations/:tab`) rather than `?tab=` — see
+                      `usePathSectionTabs` — since it's a genuinely different
+                      content set each time, not a panel switch on the same
+                      record. The bare `/operations` index also still handles
+                      an OLD `?tab=` link (this section's shape before this
+                      change): `LegacyQueryTabRedirect` translates it to the
+                      new path form, or lands on the first usable tab if
+                      there's no `?tab=` at all. */}
+                  <Route path="operations">
+                    <Route
+                      index
+                      element={
+                        <LegacyQueryTabRedirect sectionId="operations" basePath="/operations" />
+                      }
+                    />
+                    <Route path=":tab" element={<OperationsPage />} />
+                    <Route path="service-requests/new" element={<CreateServiceRequestPage />} />
+                    <Route
+                      path="service-requests/:caseId"
+                      element={<CaseDetailRouteSync kind="service_request" />}
+                    />
+                    <Route
+                      path="change-requests/new"
+                      element={<CreateChangeRequestPage />}
+                    />
+                    <Route
+                      path="change-requests/:id"
+                      element={<CaseDetailRouteSync kind="change_request" paramName="id" />}
+                    />
+                    <Route path="incidents/new" element={<CreateIncidentPage />} />
+                    <Route
+                      path="incidents/:id"
+                      element={<CaseDetailRouteSync kind="incident" paramName="id" />}
+                    />
+                    <Route path="problems/new" element={<CreateProblemPage />} />
+                    <Route path="problems/:id" element={<ProblemDetailPage />} />
+                  </Route>
 
                   <Route path="engagements" element={<CsmEngagementsPage />} />
                   <Route path="engagements/new" element={<CsmEngagementCreatePage />} />
-                  <Route path="engagements/:caseId" element={<CsmCaseDetailPage />} />
+                  <Route
+                    path="engagements/:caseId"
+                    element={<CaseDetailRouteSync kind="engagement" />}
+                  />
                   <Route path="updates" element={<CsmUpdatesPage />} />
-                  <Route path="security-center" element={<CsmSecurityCenterPage />} />
-                  <Route
-                    path="security-center/reports/new"
-                    element={<CreateSecurityReportPage />}
-                  />
-                  <Route
-                    path="security-center/vulnerabilities/:id"
-                    element={<ProductVulnerabilityDetailPage />}
-                  />
-                  <Route
-                    path="security-center/security-reports/:caseId"
-                    element={<CsmCaseDetailPage />}
-                  />
+                  {/* Security Center's own Security reports / Vulnerabilities
+                      switch — same path-segment + legacy-`?tab=`-redirect
+                      treatment as Operations above. */}
+                  <Route path="security-center">
+                    <Route
+                      index
+                      element={
+                        <LegacyQueryTabRedirect
+                          sectionId="security-center"
+                          basePath="/security-center"
+                        />
+                      }
+                    />
+                    <Route path=":tab" element={<CsmSecurityCenterPage />} />
+                    <Route path="reports/new" element={<CreateSecurityReportPage />} />
+                    <Route
+                      path="vulnerabilities/:id"
+                      element={<ProductVulnerabilityDetailPage />}
+                    />
+                    <Route
+                      path="security-reports/:caseId"
+                      element={<CaseDetailRouteSync kind="security_report_analysis" />}
+                    />
+                  </Route>
                   <Route path="time-cards" element={<CsmTimeCardsPage />} />
                   <Route path="announcements" element={<CsmAnnouncementsPage />} />
                   <Route
-                    path="announcements/:caseId"
-                    element={<CsmCaseDetailPage />}
+                    path="announcements/new"
+                    element={<CsmAnnouncementCreatePage />}
                   />
+                  <Route
+                    path="announcements/:caseId"
+                    element={<CaseDetailRouteSync kind="announcement" />}
+                  />
+
+                  {/* Help — static, bundled Markdown docs, all rendered on
+                      one scrollable page with a table of contents at the top
+                      (see HelpPage). Every topic is an in-page anchor rather
+                      than its own route, so unlike Customers/Settings above
+                      there is nothing to redirect an index route to. */}
+                  <Route path="help" element={<HelpPage />} />
                 </Route>
               </Route>
 

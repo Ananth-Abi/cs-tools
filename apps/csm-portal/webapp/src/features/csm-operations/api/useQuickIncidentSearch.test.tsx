@@ -1,0 +1,116 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+import { renderHook, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import type { ReactNode } from "react";
+
+const postMock = vi.fn();
+
+// The real client reads runtime config at module load, which isn't present
+// under vitest (same approach as useQuickCaseSearch.test.tsx).
+vi.mock("@api/backend/client", () => ({
+  useBackendApi: () => ({ post: postMock }),
+}));
+
+import {
+  classifyQuickIncidentQuery,
+  useQuickIncidentSearch,
+} from "@features/csm-operations/api/useQuickIncidentSearch";
+
+function wrapper({ children }: { children: ReactNode }) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
+
+describe("useQuickIncidentSearch", () => {
+  beforeEach(() => {
+    postMock.mockReset();
+    postMock.mockResolvedValue({ incidents: [] });
+  });
+
+  it("sends free text as searchQuery for a non-number-shaped query", async () => {
+    const { result } = renderHook(
+      () => useQuickIncidentSearch("cluster down"),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/incidents/search",
+      expect.objectContaining({
+        filters: { searchQuery: "cluster down" },
+      }),
+    );
+  });
+
+  it("does not fire a search until the query reaches the minimum length", () => {
+    renderHook(() => useQuickIncidentSearch("a"), { wrapper });
+    expect(postMock).not.toHaveBeenCalled();
+  });
+
+  it("routes an INC number to an exact-match number filter, not searchQuery", async () => {
+    const { result } = renderHook(
+      () => useQuickIncidentSearch("INC0090472"),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    const body = postMock.mock.calls[0][1];
+    expect(body.filters).toEqual({ number: "INC0090472" });
+  });
+
+  it("falls back to free-text search when forceFreeText is set, even for a matching query", async () => {
+    const { result } = renderHook(
+      () =>
+        useQuickIncidentSearch("INC0090472", { forceFreeText: true }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    expect(postMock).toHaveBeenCalledWith(
+      "/incidents/search",
+      expect.objectContaining({
+        filters: { searchQuery: "INC0090472" },
+      }),
+    );
+  });
+
+  describe("classifyQuickIncidentQuery", () => {
+    it("classifies an INC number", () => {
+      expect(classifyQuickIncidentQuery("INC0090472")).toBe("number");
+    });
+
+    it("classifies free text as text", () => {
+      expect(classifyQuickIncidentQuery("cluster down")).toBe("text");
+      // Wrong digit count for an incident number.
+      expect(classifyQuickIncidentQuery("INC009047")).toBe("text");
+      expect(classifyQuickIncidentQuery("INC00904720")).toBe("text");
+      // Lowercase "inc" prefix fails the strict, case-sensitive shape.
+      expect(classifyQuickIncidentQuery("inc0090472")).toBe("text");
+      // A different prefix entirely.
+      expect(classifyQuickIncidentQuery("CS0441174")).toBe("text");
+    });
+  });
+});

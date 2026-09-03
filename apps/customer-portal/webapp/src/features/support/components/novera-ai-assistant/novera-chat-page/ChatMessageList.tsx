@@ -34,6 +34,7 @@ export default function ChatMessageList({
   onCreateCase,
   onThumbsUp,
   onThumbsDown,
+  onFeedbackTag,
   onFetchOlder,
   isFetchingOlder = false,
   onSolutionWorked,
@@ -93,6 +94,7 @@ export default function ChatMessageList({
             onCreateCase={onCreateCase}
             onThumbsUp={onThumbsUp}
             onThumbsDown={onThumbsDown}
+            onFeedbackTag={onFeedbackTag}
             onSolutionWorked={onSolutionWorked}
             onRequestTokenIncrease={onRequestTokenIncrease}
           />

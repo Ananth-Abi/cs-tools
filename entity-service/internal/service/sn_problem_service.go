@@ -53,6 +53,36 @@ type snProblemSearchPayload struct {
 
 type snProblemFilters struct {
 	SearchQuery string `json:"searchQuery,omitempty"`
+	// Number: see domain.SearchProblemsFilters.Number doc comment. Exact
+	// match against ServiceNow's `number` column -- not part of the
+	// free-text SearchQuery scan.
+	Number string `json:"number,omitempty"`
+	// StateKeys: see domain.SearchProblemsFilters.Filters doc comment.
+	StateKeys []int `json:"stateKeys,omitempty"`
+	// AssignmentGroupIDs: sys_user_group sys_ids (converted from UUIDs).
+	AssignmentGroupIDs []string `json:"assignmentGroupIds,omitempty"`
+}
+
+// snProblemStateKeyMap maps domain ProblemState enums to ServiceNow's raw
+// problem_state numeric keys. Mirrors the SN Script Include's own
+// _PROBLEM_STATE_LABELS map -- note 105 does not exist in ServiceNow's own
+// numbering (a real gap, not an omission here).
+var snProblemStateKeyMap = map[domain.ProblemState]int{
+	domain.ProblemStateNew:               101,
+	domain.ProblemStateAssess:            102,
+	domain.ProblemStateRootCauseAnalysis: 103,
+	domain.ProblemStateFixInProgress:     104,
+	domain.ProblemStateResolved:          106,
+	domain.ProblemStateClosed:            107,
+}
+
+var validProblemState = map[domain.ProblemState]bool{
+	domain.ProblemStateNew:               true,
+	domain.ProblemStateAssess:            true,
+	domain.ProblemStateRootCauseAnalysis: true,
+	domain.ProblemStateFixInProgress:     true,
+	domain.ProblemStateResolved:          true,
+	domain.ProblemStateClosed:            true,
 }
 
 type snProblemService struct {
@@ -71,11 +101,23 @@ func (s *snProblemService) SearchProblems(ctx context.Context, req domain.Search
 	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
 		return domain.SearchProblemsResponse{}, err
 	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.SearchProblemsResponse{}, err
+	}
+	parsedFilters, err := ParseProblemFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.SearchProblemsResponse{}, err
+	}
 
 	token := middleware.UserIDTokenFromContext(ctx)
 
 	payload := snProblemSearchPayload{
-		Filters:    snProblemFilters{SearchQuery: req.Filters.SearchQuery},
+		Filters: snProblemFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+		},
 		Pagination: snProjectPagination{Limit: req.Pagination.Limit, Offset: req.Pagination.Offset},
 	}
 
@@ -115,6 +157,78 @@ func (s *snProblemService) SearchProblems(ctx context.Context, req domain.Search
 		Limit:    req.Pagination.Limit,
 		Offset:   req.Pagination.Offset,
 	}, nil
+}
+
+// snProblemAggregatePayload is the Choreo POST /problems/aggregate request body.
+type snProblemAggregatePayload struct {
+	Filters   snProblemFilters `json:"filters,omitempty"`
+	GroupBy   string           `json:"groupBy"`
+	MaxGroups int              `json:"maxGroups,omitempty"`
+}
+
+// validProblemAggregateField is the allow-list for
+// AggregateProblemsRequest.GroupBy, matching openapi.yaml's
+// AggregateProblemsRequest.groupBy enum exactly.
+var validProblemAggregateField = map[string]bool{
+	"state":           true,
+	"assignmentGroup": true,
+}
+
+// AggregateProblems implements ProblemService by calling the Choreo POST
+// /problems/aggregate endpoint: a single server-side aggregation over the
+// requested field, capped to the top MaxGroups buckets with the remainder
+// folded into AggregateResponse.OthersCount. Filter parsing and validation
+// mirror SearchProblems.
+func (s *snProblemService) AggregateProblems(ctx context.Context, req domain.AggregateProblemsRequest) (domain.AggregateResponse, error) {
+	if req.GroupBy == "" {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy is required"}
+	}
+	if !validProblemAggregateField[req.GroupBy] {
+		return domain.AggregateResponse{}, &apierror.ValidationError{Msg: "groupBy contains invalid value: " + req.GroupBy}
+	}
+	if err := validateSearchQuery(req.Filters.SearchQuery); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	if err := validateExactNumber("number", req.Filters.Number); err != nil {
+		return domain.AggregateResponse{}, err
+	}
+	parsedFilters, err := ParseProblemFieldFilters(req.Filters.Filters)
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snProblemAggregatePayload{
+		Filters: snProblemFilters{
+			SearchQuery:        req.Filters.SearchQuery,
+			Number:             stringPtrValue(req.Filters.Number),
+			StateKeys:          parsedFilters.StateKeys,
+			AssignmentGroupIDs: uuidsToSysids(parsedFilters.AssignmentGroupIDs),
+		},
+		GroupBy:   req.GroupBy,
+		MaxGroups: req.MaxGroups,
+	}
+
+	raw, err := s.client.Post(ctx, "/problems/aggregate", token, payload)
+	if err != nil {
+		return domain.AggregateResponse{}, err
+	}
+
+	var resp domain.AggregateResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return domain.AggregateResponse{}, fmt.Errorf("sn problems: parse aggregate response: %w", err)
+	}
+	// "assignmentGroup" is the only ID-valued field in
+	// validProblemAggregateField; SN returns its bucket keys as raw
+	// sys_ids, so convert them to this platform's UUIDs before returning.
+	// "state" is a plain enum and is left as-is.
+	if req.GroupBy == "assignmentGroup" {
+		for i := range resp.Groups {
+			resp.Groups[i].Key = sysidToUUID(resp.Groups[i].Key)
+		}
+	}
+	return resp, nil
 }
 
 // snProblemEntityRef is a compact id+number reference used for the problem's
@@ -284,4 +398,113 @@ func mapSNProblemDetailToView(p snProblemDetailResponse) domain.ProblemDetail {
 	}
 
 	return view
+}
+
+// snUpdateProblemPayload is the Choreo PATCH /problems/{id} request body.
+type snUpdateProblemPayload struct {
+	Transition           *string `json:"transition,omitempty"`
+	AssignedToID         *string `json:"assignedToId,omitempty"`
+	AssignmentGroupID    *string `json:"assignmentGroupId,omitempty"`
+	CauseNotes           *string `json:"causeNotes,omitempty"`
+	FixNotes             *string `json:"fixNotes,omitempty"`
+	Workaround           *string `json:"workaround,omitempty"`
+	TargetResolutionDate *string `json:"targetResolutionDate,omitempty"`
+}
+
+// snUpdateProblemResult mirrors the Choreo PATCH /problems/{id} response's "problem" object --
+// deliberately narrower than snProblemDetailResponse, matching what that endpoint actually
+// returns.
+type snUpdateProblemResult struct {
+	ID              string            `json:"id"`
+	UpdatedOn       string            `json:"updatedOn"`
+	UpdatedBy       string            `json:"updatedBy"`
+	State           *string           `json:"state"`
+	ResolutionCode  *string           `json:"resolutionCode"`
+	AssignedTo      *snProblemUserRef `json:"assignedTo"`
+	AssignmentGroup *snProblemUserRef `json:"assignmentGroup"`
+}
+
+// snUpdateProblemResponse mirrors the Choreo PATCH /problems/{id} response.
+type snUpdateProblemResponse struct {
+	Message string                `json:"message"`
+	Problem snUpdateProblemResult `json:"problem"`
+}
+
+// UpdateProblem implements ProblemService for the ServiceNow data source. It is a thin
+// passthrough: Transition is forwarded unvalidated (see domain.UpdateProblemRequest doc
+// comment), and the response always reflects the data source's real post-write state.
+func (s *snProblemService) UpdateProblem(ctx context.Context, req domain.UpdateProblemRequest) (domain.UpdateProblemResponse, error) {
+	if err := validateUUIDs("id", []string{req.ID}); err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	hasUpdate := req.Transition != nil || req.AssignedToID != nil || req.AssignmentGroupID != nil ||
+		req.CauseNotes != nil || req.FixNotes != nil || req.Workaround != nil || req.TargetResolutionDate != nil
+	if !hasUpdate {
+		return domain.UpdateProblemResponse{}, &apierror.ValidationError{Msg: "at least one field must be provided"}
+	}
+
+	optionalUUIDs := map[string]*string{
+		"assignedToId":      req.AssignedToID,
+		"assignmentGroupId": req.AssignmentGroupID,
+	}
+	for field, val := range optionalUUIDs {
+		if val != nil {
+			if err := validateUUIDs(field, []string{*val}); err != nil {
+				return domain.UpdateProblemResponse{}, err
+			}
+		}
+	}
+
+	token := middleware.UserIDTokenFromContext(ctx)
+
+	payload := snUpdateProblemPayload{
+		Transition:           req.Transition,
+		CauseNotes:           req.CauseNotes,
+		FixNotes:             req.FixNotes,
+		Workaround:           req.Workaround,
+		TargetResolutionDate: req.TargetResolutionDate,
+	}
+	if req.AssignedToID != nil {
+		v := uuidToSysid(*req.AssignedToID)
+		payload.AssignedToID = &v
+	}
+	if req.AssignmentGroupID != nil {
+		v := uuidToSysid(*req.AssignmentGroupID)
+		payload.AssignmentGroupID = &v
+	}
+
+	raw, err := s.client.Patch(ctx, "/problems/"+uuidToSysid(req.ID), token, payload)
+	if err != nil {
+		return domain.UpdateProblemResponse{}, err
+	}
+
+	var snResp snUpdateProblemResponse
+	if err := json.Unmarshal(raw, &snResp); err != nil {
+		return domain.UpdateProblemResponse{}, fmt.Errorf("sn update problem: parse response: %w", err)
+	}
+
+	updatedOn := snResp.Problem.UpdatedOn
+	updatedBy := snResp.Problem.UpdatedBy
+	view := domain.UpdateProblemView{
+		UpdatedOn:      &updatedOn,
+		UpdatedBy:      &updatedBy,
+		State:          snResp.Problem.State,
+		ResolutionCode: snResp.Problem.ResolutionCode,
+	}
+	if snResp.Problem.ID != "" {
+		id := sysidToUUID(snResp.Problem.ID)
+		view.ID = &id
+	}
+	if snResp.Problem.AssignedTo != nil {
+		view.AssignedTo = &domain.EntityRef{ID: sysidToUUID(snResp.Problem.AssignedTo.ID), Name: snResp.Problem.AssignedTo.Name}
+	}
+	if snResp.Problem.AssignmentGroup != nil {
+		view.AssignmentGroup = &domain.EntityRef{ID: sysidToUUID(snResp.Problem.AssignmentGroup.ID), Name: snResp.Problem.AssignmentGroup.Name}
+	}
+
+	return domain.UpdateProblemResponse{
+		Message: snResp.Message,
+		Problem: view,
+	}, nil
 }

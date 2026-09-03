@@ -297,3 +297,9 @@ export type TimeCardsDateFilterProps = {
   onClear?: () => void;
   hasFilters?: boolean;
 };
+
+export type TimeCardsBillableStatsProps = {
+  projectId: string;
+  startDate?: string;
+  endDate?: string;
+};

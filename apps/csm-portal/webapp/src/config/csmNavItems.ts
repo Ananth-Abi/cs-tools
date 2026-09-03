@@ -15,16 +15,27 @@
 // under the License.
 
 import {
+  AlertOctagon,
+  AlertTriangle,
   Briefcase,
+  Bug,
   Building2,
   ChartColumn,
   Clock,
+  ClipboardList,
   Cog,
+  FileWarning,
+  GitPullRequest,
   Headset,
+  KeyRound,
+  LifeBuoy,
   Megaphone,
   RefreshCw,
   Settings,
   Shield,
+  UserCog,
+  Users,
+  UsersRound,
 } from "@wso2/oxygen-ui-icons-react";
 import type { ComponentType } from "react";
 
@@ -110,6 +121,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=service_requests",
         tab: "service_requests",
         routes: ["/operations/service-requests"],
+        icon: ClipboardList,
       },
       {
         id: "operations.change-requests",
@@ -117,6 +129,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=change_requests",
         tab: "change_requests",
         routes: ["/operations/change-requests"],
+        icon: GitPullRequest,
       },
       {
         id: "operations.incidents",
@@ -124,6 +137,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=incidents",
         tab: "incidents",
         routes: ["/operations/incidents"],
+        icon: AlertTriangle,
       },
       {
         id: "operations.problems",
@@ -131,6 +145,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/operations?tab=problems",
         tab: "problems",
         routes: ["/operations/problems"],
+        icon: AlertOctagon,
       },
     ],
   },
@@ -152,6 +167,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/security-center?tab=security_reports",
         tab: "security_reports",
         routes: ["/security-center/reports"],
+        icon: FileWarning,
       },
       {
         id: "security-center.vulnerabilities",
@@ -159,6 +175,7 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
         href: "/security-center?tab=vulnerabilities",
         tab: "vulnerabilities",
         routes: ["/security-center/vulnerabilities"],
+        icon: Bug,
       },
     ],
   },
@@ -204,18 +221,102 @@ export const CSM_NAV_ITEMS: CsmNavSection[] = [
     href: "/admin",
     icon: Settings,
     children: [
-      { id: "admin.users", label: "Users", href: "/admin/users" },
-      { id: "admin.roles", label: "Roles", href: "/admin/roles" },
-      { id: "admin.groups", label: "Groups", href: "/admin/groups" },
-      { id: "admin.teams", label: "Teams", href: "/admin/teams" },
-      // Routes to a placeholder that already names its backend blocker, so it
-      // renders itself rather than the generic WIP page.
       {
-        id: "admin.permissions",
-        label: "Permissions",
-        href: "/admin/permissions",
-        rendersOwnWipPage: true,
+        id: "admin.user-management",
+        label: "User management",
+        href: "/admin/user-management",
+        children: [
+          {
+            id: "admin.user-management.users",
+            label: "Users",
+            href: "/admin/user-management/users",
+            icon: Users,
+          },
+          {
+            id: "admin.user-management.roles",
+            label: "Roles",
+            href: "/admin/user-management/roles",
+            icon: UserCog,
+          },
+          {
+            id: "admin.user-management.groups",
+            label: "Groups",
+            href: "/admin/user-management/groups",
+            icon: UsersRound,
+          },
+          {
+            id: "admin.user-management.teams",
+            label: "Teams",
+            href: "/admin/user-management/teams",
+            icon: Building2,
+          },
+          // Routes to a placeholder that already names its backend blocker, so
+          // it renders itself rather than the generic WIP page.
+          {
+            id: "admin.user-management.permissions",
+            label: "Permissions",
+            href: "/admin/user-management/permissions",
+            rendersOwnWipPage: true,
+            icon: KeyRound,
+          },
+        ],
       },
+      // Admin-role-gated (see `isDashboardBuilderVisibleForRoles` in
+      // `csmAdminAccess.ts`) — unlike every sibling tab above, this one is
+      // hidden from a non-admin signed-in user rather than merely relying
+      // on the backend to reject the action. Deliberate exception to this
+      // section's usual "show the action, let the backend reject it" rule
+      // (see App.tsx's own comment on the roles/groups/teams member
+      // routes): the dashboard builder exposes no privileged backend
+      // action at all (everything it does is local to the browser), so
+      // there is nothing for a backend gate to enforce here — the ONLY
+      // gate is this frontend one.
+      {
+        id: "admin.dashboards",
+        label: "Dashboards",
+        href: "/admin/dashboards",
+      },
+    ],
+  },
+  {
+    id: "help",
+    label: "Help",
+    href: "/help",
+    icon: LifeBuoy,
+    // Every topic is an in-page anchor on the single `/help` route (see
+    // `HelpPage`), not its own route, so `href` carries a `#<topic>` fragment
+    // rather than a path segment — same anchor-vs-path split `navNodeRoutes`
+    // already makes for a query-param tab, and handled there the same way.
+    children: [
+      { id: "help.overview", label: "Overview", href: "/help#overview" },
+      {
+        id: "help.workspace-basics",
+        label: "Navigation & personalization",
+        href: "/help#workspace-basics",
+      },
+      { id: "help.dashboard", label: "Dashboard", href: "/help#dashboard" },
+      { id: "help.support", label: "Support", href: "/help#support" },
+      { id: "help.operations", label: "Operations", href: "/help#operations" },
+      { id: "help.engagements", label: "Engagements", href: "/help#engagements" },
+      {
+        id: "help.security-center",
+        label: "Security Center",
+        href: "/help#security-center",
+      },
+      { id: "help.updates", label: "Updates", href: "/help#updates" },
+      { id: "help.time-cards", label: "Time cards", href: "/help#time-cards" },
+      {
+        id: "help.announcements",
+        label: "Announcements",
+        href: "/help#announcements",
+      },
+      { id: "help.customers", label: "Customers", href: "/help#customers" },
+      {
+        id: "help.people-access",
+        label: "People & project access",
+        href: "/help#people-access",
+      },
+      { id: "help.settings", label: "Settings", href: "/help#settings" },
     ],
   },
 ];
@@ -226,14 +327,36 @@ export function navNodePath(node: CsmNavNode): string {
 }
 
 /**
- * Route path prefixes a node owns. A query-param tab (`tab` set) owns only its
- * explicit {@link CsmNavNode.routes}: its `href` pathname is the *parent's*
- * landing route, which every sibling tab shares, so claiming it would make the
+ * Where actually navigating to `node` should go. For a query-param tab
+ * (`tab` set), `href` is kept in the legacy `?tab=` shape purely so an old
+ * bookmarked/shared link in that form still resolves (see
+ * `LegacyQueryTabRedirect`) — the real, canonical destination is its first
+ * declared {@link CsmNavNode.routes} entry, the actual path-segment route
+ * (`/operations/incidents`, not `/operations?tab=incidents`). Every other
+ * node has no such split: `href` already is the real destination.
+ */
+export function navNodeHref(node: CsmNavNode): string {
+  if (node.tab && node.routes?.[0]) return node.routes[0];
+  return node.href;
+}
+
+/** True when `href` carries a `#` fragment rather than being a distinct path
+ * (a Help topic's `/help#operations`) — the node's pathname is only its
+ * parent's landing route, shared with every sibling anchor. */
+function isAnchorHref(node: CsmNavNode): boolean {
+  return node.href.includes("#");
+}
+
+/**
+ * Route path prefixes a node owns. A query-param tab (`tab` set) or an
+ * in-page anchor (`href` with a `#` fragment) owns only its explicit
+ * {@link CsmNavNode.routes}: its `href` pathname is the *parent's* landing
+ * route, which every sibling shares, so claiming it would make the
  * longest-prefix match in {@link navNodeForPath} ambiguous.
  */
 export function navNodeRoutes(node: CsmNavNode): string[] {
   const extra = node.routes ?? [];
-  return node.tab ? extra : [navNodePath(node), ...extra];
+  return node.tab || isAnchorHref(node) ? extra : [navNodePath(node), ...extra];
 }
 
 /** Depth-first walk of the tree, parents before their children. */
