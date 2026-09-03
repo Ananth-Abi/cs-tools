@@ -16,7 +16,7 @@
 
 import { Box, Skeleton, Typography } from "@wso2/oxygen-ui";
 import { Clock, Plane, Server, ShieldAlert, Users } from "@wso2/oxygen-ui-icons-react";
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import type { BeDashboardWidget } from "@api/backend/types";
 import { useDashboard } from "@features/csm-dashboard/api/useDashboard";
 import { groupWidgetsBySection, type WidgetGroup } from "@features/csm-dashboard/utils/dashboardWidgetGridLayout";
@@ -68,13 +68,32 @@ function familyFor(sectionName: string | undefined): WallboardSection | undefine
   return undefined;
 }
 
+/** The dark, full-viewport wrapper every one of this component's three
+ * render states (loading / error / loaded) shares — factored out so
+ * "`bgcolor: '#0f1420'`, full-viewport, 16px padding" is declared once
+ * rather than repeated three times with the risk of one copy drifting
+ * from the other two. `sx` merges in on top of (and can override) the
+ * defaults below — the loaded state uses this to swap `minHeight` for a
+ * fixed `height` plus its own flex-column layout. */
+function WallboardPageFrame({
+  children,
+  sx,
+}: {
+  children: ReactNode;
+  sx?: Record<string, unknown>;
+}): JSX.Element {
+  return <Box sx={{ bgcolor: "#0f1420", minHeight: "100dvh", p: 2, ...sx }}>{children}</Box>;
+}
+
 function LoadingSkeleton(): JSX.Element {
   return (
-    <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
-      {[0, 1, 2, 3].map((i) => (
-        <Skeleton key={i} variant="rounded" height={260} sx={{ borderRadius: "16px", bgcolor: "rgba(255,255,255,0.06)" }} />
-      ))}
-    </Box>
+    <WallboardPageFrame>
+      <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+        {[0, 1, 2, 3].map((i) => (
+          <Skeleton key={i} variant="rounded" height={260} sx={{ borderRadius: "16px", bgcolor: "rgba(255,255,255,0.06)" }} />
+        ))}
+      </Box>
+    </WallboardPageFrame>
   );
 }
 
@@ -182,9 +201,11 @@ export default function WallboardDashboard({
 
   if (isError) {
     return (
-      <Typography variant="body2" color="text.secondary">
-        Could not load the dashboard.
-      </Typography>
+      <WallboardPageFrame sx={{ display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Typography variant="body2" sx={{ color: "rgba(255,255,255,0.7)" }}>
+          Could not load the dashboard.
+        </Typography>
+      </WallboardPageFrame>
     );
   }
 
@@ -202,8 +223,8 @@ export default function WallboardDashboard({
   const groups = groupWidgetsBySection(aliasedWidgets);
 
   return (
-    <Box sx={{ bgcolor: "#0f1420", borderRadius: "16px", p: 2 }}>
-      <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1.5 }}>
+    <WallboardPageFrame sx={{ minHeight: undefined, height: "100dvh", display: "flex", flexDirection: "column" }}>
+      <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1.5, flexShrink: 0 }}>
         <Box
           sx={{
             display: "flex",
@@ -238,7 +259,23 @@ export default function WallboardDashboard({
           />
         </Box>
       </Box>
-      <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          // Matches the original's own layout exactly: CRE/SRE (row 1) grow
+          // to fill whatever vertical space is left after Security
+          // Report/FDE (row 2) take their own natural, compact height —
+          // not an even 50/50 split, and not every panel filling the
+          // viewport (which would just stretch Security/FDE's own sparse
+          // 2x2 grid until it looked emptier, not fill the page more
+          // sensibly).
+          gridTemplateRows: "1fr auto",
+          gap: 2,
+          flex: 1,
+          minHeight: 0,
+        }}
+      >
         {(["cre", "sre", "security", "fde"] as const).map((family) => {
           const group = groups.find((g) => familyFor(g.section) === family);
           if (!group) return null;
@@ -267,6 +304,6 @@ export default function WallboardDashboard({
             </Box>
           ))}
       </Box>
-    </Box>
+    </WallboardPageFrame>
   );
 }

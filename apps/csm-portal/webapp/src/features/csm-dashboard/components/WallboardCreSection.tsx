@@ -58,6 +58,14 @@ export default function WallboardCreSection({
         widgets={primary}
         section="cre"
         columns={2}
+        // A smaller gap than the default (8px) between the 4 tiles
+        // themselves, a larger gap between each tile's own value and
+        // label, and — the actual ask this time — more top/bottom padding
+        // inside each tile around that value/label block. All three per
+        // explicit request, in three separate follow-ups.
+        gap={0.5}
+        valueLabelGap={1.2}
+        paddingY={3}
         selectedTeamCreGroupId={selectedTeamCreGroupId}
         selectedTeamSreGroupId={selectedTeamSreGroupId}
         selectedTeamLabel={selectedTeamLabel}

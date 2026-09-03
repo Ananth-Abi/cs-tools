@@ -109,63 +109,39 @@ vi.mock("@context/current-user/CurrentUserContext", () => ({
 }));
 
 // Keeps this test focused on dashboard selection + the header; the widget
-// grid itself has its own tests (AgentsLandingPagePilot.test.tsx /
-// WallboardDashboard.test.tsx). Also surfaces
-// `selectedTeamCreGroupId`/`selectedTeamSreGroupId` so the wiring from
-// CsmDashboardPage down can be asserted on without a real /teams/search
-// round trip.
-//
-// The page renders one of two components depending on the selected
-// dashboard's own `id` — WallboardDashboard for exactly "cs-overview",
-// AgentsLandingPagePilot for every other dashboard — see
-// CsmDashboardPage.tsx's own doc comment. Both are mocked identically
-// (same shape, same "agents-landing-pilot" testid, kept from before this
-// branch existed) so the ~20 pre-existing assertions below don't care
-// which one fired; `data-component` is the one difference, exposed purely
-// so the dedicated branch tests further down can tell them apart.
-//
-// vi.mock factories are hoisted above this file's own top-level
-// declarations, so the shared stand-in has to be built inside vi.hoisted
-// rather than as a plain const both factories close over.
-const { mockWallboardOrPilotFactory } = vi.hoisted(() => ({
-  mockWallboardOrPilotFactory:
-    (component: "wallboard" | "pilot") =>
-    ({
-      dashboardId,
-      selectedTeamCreGroupId,
-      selectedTeamSreGroupId,
-      selectedTeamLabel,
-    }: {
-      dashboardId: string;
-      selectedTeamCreGroupId?: string | string[];
-      selectedTeamSreGroupId?: string | string[];
-      selectedTeamLabel?: string;
-    }) => (
-      <div
-        data-testid="agents-landing-pilot"
-        data-component={component}
-        data-team-cre-group-id={
-          Array.isArray(selectedTeamCreGroupId)
-            ? selectedTeamCreGroupId.join(",")
-            : (selectedTeamCreGroupId ?? "")
-        }
-        data-team-sre-group-id={
-          Array.isArray(selectedTeamSreGroupId)
-            ? selectedTeamSreGroupId.join(",")
-            : (selectedTeamSreGroupId ?? "")
-        }
-        data-team-label={selectedTeamLabel ?? ""}
-      >
-        {dashboardId}
-      </div>
-    ),
-}));
-
-vi.mock("@features/csm-dashboard/components/WallboardDashboard", () => ({
-  default: mockWallboardOrPilotFactory("wallboard"),
-}));
+// grid itself has its own tests (AgentsLandingPagePilot.test.tsx). Also
+// surfaces `selectedTeamCreGroupId`/`selectedTeamSreGroupId` so the wiring
+// from CsmDashboardPage down can be asserted on without a real
+// /teams/search round trip.
 vi.mock("@features/csm-dashboard/components/AgentsLandingPagePilot", () => ({
-  default: mockWallboardOrPilotFactory("pilot"),
+  default: ({
+    dashboardId,
+    selectedTeamCreGroupId,
+    selectedTeamSreGroupId,
+    selectedTeamLabel,
+  }: {
+    dashboardId: string;
+    selectedTeamCreGroupId?: string | string[];
+    selectedTeamSreGroupId?: string | string[];
+    selectedTeamLabel?: string;
+  }) => (
+    <div
+      data-testid="agents-landing-pilot"
+      data-team-cre-group-id={
+        Array.isArray(selectedTeamCreGroupId)
+          ? selectedTeamCreGroupId.join(",")
+          : (selectedTeamCreGroupId ?? "")
+      }
+      data-team-sre-group-id={
+        Array.isArray(selectedTeamSreGroupId)
+          ? selectedTeamSreGroupId.join(",")
+          : (selectedTeamSreGroupId ?? "")
+      }
+      data-team-label={selectedTeamLabel ?? ""}
+    >
+      {dashboardId}
+    </div>
+  ),
 }));
 
 const mockedUseDashboardList = vi.mocked(useDashboardList);
@@ -264,65 +240,6 @@ describe("CsmDashboardPage", () => {
     expect(within(listbox).getByText("Operations")).toBeInTheDocument();
     expect(within(listbox).getByText("IAM CS")).toBeInTheDocument();
     expect(within(listbox).getByText("Engineer overview")).toBeInTheDocument();
-  });
-
-  it("renders WallboardDashboard for the id 'cs-overview' dashboard specifically", () => {
-    mockListResult({
-      data: [{ id: "cs-overview", displayName: "CS Overview", type: "cs", isDefault: true, isTeamBased: false }],
-      isLoading: false,
-    });
-
-    renderAt("/dashboard");
-
-    expect(screen.getByTestId("agents-landing-pilot")).toHaveAttribute("data-component", "wallboard");
-  });
-
-  // Regression test for the real registry shape confirmed on staging: four
-  // dashboards share `type: "cs"` ("not scoped to a team"), and only one of
-  // them — "cs-overview" — is the dashboard styled to match
-  // digiops-cs's Wallboard.tsx. Branching on `type === "cs"` (an earlier
-  // version of this scoping) would have wrongly restyled all three of
-  // these too; branching on the exact id instead must not.
-  it.each([
-    { id: "case-feedback", displayName: "Case Feedback" },
-    { id: "migration-engineer", displayName: "Migration Engineers' Dashboard" },
-    { id: "onboarding-engineer", displayName: "Onboarding Engineers' Dashboard" },
-  ])(
-    "renders AgentsLandingPagePilot for '$id', despite sharing type: 'cs' with cs-overview",
-    ({ id, displayName }) => {
-      mockListResult({
-        data: [{ id, displayName, type: "cs", isDefault: true, isTeamBased: false }],
-        isLoading: false,
-      });
-
-      renderAt("/dashboard");
-
-      expect(screen.getByTestId("agents-landing-pilot")).toHaveAttribute("data-component", "pilot");
-    },
-  );
-
-  it("renders AgentsLandingPagePilot for a team-based (cre/sre-typed) dashboard", () => {
-    mockListResult({
-      data: [
-        { id: "abt-engineer", displayName: "ABT Engineers' Dashboard", type: "cre", isDefault: true, isTeamBased: true },
-      ],
-      isLoading: false,
-    });
-
-    renderAt("/dashboard");
-
-    expect(screen.getByTestId("agents-landing-pilot")).toHaveAttribute("data-component", "pilot");
-  });
-
-  it("renders AgentsLandingPagePilot for a dashboard with no type set (predates the field)", () => {
-    mockListResult({
-      data: [{ id: "legacy", displayName: "Legacy Dashboard", isDefault: true, isTeamBased: false }],
-      isLoading: false,
-    });
-
-    renderAt("/dashboard");
-
-    expect(screen.getByTestId("agents-landing-pilot")).toHaveAttribute("data-component", "pilot");
   });
 
   it("renders the real widget grid for every dashboard, not only agents_pilot", () => {

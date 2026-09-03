@@ -27,6 +27,20 @@ export interface WallboardStatGridProps {
   section: WallboardSection;
   columns: number;
   variant?: WallboardStatTileVariant;
+  /** Grid gap (MUI spacing units). Defaults to `1` (8px). CRE's own
+   * primary 2x2 grid passes a smaller value — reducing the gap between
+   * columns is the only real lever for "wider tiles" in an already
+   * full-width, fixed-column-count grid; the tiles can't exceed their
+   * `1fr` share of the row without breaking the NxM shape. */
+  gap?: number;
+  /** Forwarded to each tile's own `valueLabelGap` (see
+   * `WallboardStatTile`'s own doc comment) — CRE's primary grid passes a
+   * larger value than the default. */
+  valueLabelGap?: number;
+  /** Forwarded to each tile's own `paddingY` (see `WallboardStatTile`'s
+   * own doc comment) — CRE's primary grid passes a larger value than the
+   * default. */
+  paddingY?: number;
   selectedTeamCreGroupId?: string | string[];
   selectedTeamSreGroupId?: string | string[];
   selectedTeamLabel?: string;
@@ -45,6 +59,9 @@ export default function WallboardStatGrid({
   section,
   columns,
   variant = "primary",
+  gap = 1,
+  valueLabelGap,
+  paddingY,
   selectedTeamCreGroupId,
   selectedTeamSreGroupId,
   selectedTeamLabel,
@@ -54,7 +71,7 @@ export default function WallboardStatGrid({
       sx={{
         display: "grid",
         gridTemplateColumns: `repeat(${columns}, 1fr)`,
-        gap: 1,
+        gap,
       }}
     >
       {widgets.map((widget) => (
@@ -66,6 +83,8 @@ export default function WallboardStatGrid({
           filters={widget.query}
           section={section}
           variant={variant}
+          valueLabelGap={valueLabelGap}
+          paddingY={paddingY}
           selectedTeamCreGroupId={selectedTeamCreGroupId}
           selectedTeamSreGroupId={selectedTeamSreGroupId}
           selectedTeamLabel={selectedTeamLabel}

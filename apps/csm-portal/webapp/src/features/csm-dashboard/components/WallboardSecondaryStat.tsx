@@ -41,14 +41,17 @@ export interface WallboardSecondaryStatProps {
 }
 
 /**
- * One CRE "secondary tier" stat card — the smaller 3-column row below
- * CRE's primary 2x2 grid. Ported from `digiops-cs`'s `SecondaryStat`,
- * which (unlike `StatCard`) has no `alertType`/glow concept at all: always
- * plain white value text on a neutral gray tile, regardless of count.
+ * One CRE "secondary tier" stat card — the 3-column row below CRE's
+ * primary 2x2 grid. Ported from `digiops-cs`'s `SecondaryStat`, which
+ * (unlike `StatCard`) has no `alertType`/glow concept at all: always plain
+ * white value text on a neutral gray tile, regardless of count.
  * Deliberately a separate component from `WallboardStatTile` rather than
  * that component with emphasis disabled — this tier's tile is visually
- * distinct in the original (different border-radius, background opacity,
- * and sizing), not just "the same tile with no color."
+ * distinct in the original (different border-radius and background
+ * opacity), not just "the same tile with no color." Its value/label text
+ * sizes DO match `WallboardStatTile`'s own "primary" variant now (by
+ * explicit request) — only the tile chrome around the text stays smaller,
+ * not the text itself.
  */
 export default function WallboardSecondaryStat({
   widgetId,
@@ -107,20 +110,23 @@ export default function WallboardSecondaryStat({
       }}
     >
       {isLoading || awaitingCurrentUser ? (
-        <Skeleton variant="rounded" height={20} width="60%" sx={{ bgcolor: "rgba(255,255,255,0.08)" }} />
+        // 1.9rem * 16 — matches WallboardStatTile's own value-font-size-based
+        // skeleton height (its "primary" variant), now that this tier's
+        // value text is that same size.
+        <Skeleton variant="rounded" height={30.4} width="60%" sx={{ bgcolor: "rgba(255,255,255,0.08)" }} />
       ) : isError ? (
         <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.5)" }}>
           —
         </Typography>
       ) : (
-        <Typography sx={{ fontWeight: 700, fontSize: "1.3rem", lineHeight: 1.1, color: "#fff" }}>
+        <Typography sx={{ fontWeight: 700, fontSize: "1.9rem", lineHeight: 1.1, color: "#fff" }}>
           {total.toLocaleString()}
         </Typography>
       )}
       <Typography
         sx={{
           mt: 0.4,
-          fontSize: "0.6rem",
+          fontSize: "0.68rem",
           fontWeight: 700,
           letterSpacing: "0.04em",
           textTransform: "uppercase",

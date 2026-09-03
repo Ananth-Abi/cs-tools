@@ -41,9 +41,10 @@ const PLAIN_BG = "rgba(55,65,81,0.5)";
 const PLAIN_BORDER = "#4b5563";
 const PLAIN_LABEL = "#cbd5e1";
 
-/** Controls font size to match the original's two `StatCard` variants:
- * "primary" for CRE/Security/FDE's own grid cards, "sre" for SRE's own
- * (smaller, row-packed) sub-section cards. */
+/** The original's two `StatCard` variants: "primary" for CRE/Security/FDE's
+ * own grid cards, "sre" for SRE's own row-packed sub-section cards. Only
+ * controls padding now (`p:` below) — value/label text size is the same
+ * for both variants, by explicit request. */
 export type WallboardStatTileVariant = "primary" | "sre";
 
 export interface WallboardStatTileProps {
@@ -56,6 +57,17 @@ export interface WallboardStatTileProps {
    * `wallboardMetricStyle.ts` for why. */
   section: WallboardSection;
   variant?: WallboardStatTileVariant;
+  /** Vertical gap (MUI spacing units) between the big value number and its
+   * label underneath. Defaults to `0.6`; CRE's own primary tier passes a
+   * larger value, by explicit request. */
+  valueLabelGap?: number;
+  /** Vertical (top/bottom) padding inside the tile — the space between the
+   * tile's own edge and the value/label block, NOT the gap between the
+   * value and label themselves (that's `valueLabelGap` above). Defaults to
+   * the variant's previous fixed value (1.5 for "primary", 1 for "sre")
+   * when omitted; CRE's own primary tier passes a larger value, by
+   * explicit request. */
+  paddingY?: number;
   selectedTeamCreGroupId?: string | string[];
   selectedTeamSreGroupId?: string | string[];
   selectedTeamLabel?: string;
@@ -75,6 +87,8 @@ export default function WallboardStatTile({
   filters,
   section,
   variant = "primary",
+  valueLabelGap = 0.6,
+  paddingY,
   selectedTeamCreGroupId,
   selectedTeamSreGroupId,
   selectedTeamLabel,
@@ -113,8 +127,13 @@ export default function WallboardStatTile({
   );
   const href = config ? config.buildHref(resolvedFilters) : undefined;
 
-  const valueFontSize = variant === "sre" ? "1.55rem" : "1.9rem";
-  const labelFontSize = variant === "sre" ? "0.6rem" : "0.68rem";
+  // Value/label text size is now the same for every variant (by explicit
+  // request) — only padding still differs between "primary" and "sre"
+  // (see `px`/`py` below), not the text itself.
+  const valueFontSize = "1.9rem";
+  const labelFontSize = "0.68rem";
+  const defaultPaddingY = variant === "sre" ? 1 : 1.5;
+  const resolvedPaddingY = paddingY ?? defaultPaddingY;
 
   const tileBody = (
     <Box
@@ -122,7 +141,8 @@ export default function WallboardStatTile({
       sx={{
         flex: 1,
         borderRadius: "12px",
-        p: variant === "sre" ? 1 : 1.5,
+        px: variant === "sre" ? 1 : 1.5,
+        py: resolvedPaddingY,
         height: "100%",
         display: "flex",
         flexDirection: "column",
@@ -166,7 +186,7 @@ export default function WallboardStatTile({
       )}
       <Typography
         sx={{
-          mt: 0.6,
+          mt: valueLabelGap,
           fontSize: labelFontSize,
           fontWeight: 700,
           letterSpacing: "0.05em",
