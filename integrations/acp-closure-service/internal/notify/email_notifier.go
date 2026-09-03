@@ -18,11 +18,50 @@ package notify
 
 import (
 	"context"
+	_ "embed"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"log/slog"
 	"strings"
 )
+
+// wso2LogoPNG is the real WSO2 logo (circular pulse icon + wordmark),
+// embedded directly into the compiled binary so it ships with the code —
+// no external asset host, no broken image if that host is ever unreachable
+// from wherever the email is eventually read. Provided by Chamara,
+// confirmed as the same mark used in the real notice examples this
+// template is built from.
+//
+//go:embed assets/wso2-logo.png
+var wso2LogoPNG []byte
+
+// wso2LogoDataURI is wso2LogoPNG pre-encoded as a data: URI once at
+// package init, ready to drop straight into an <img src="...">. Computed
+// here rather than per-send since the underlying bytes never change.
+var wso2LogoDataURI = "data:image/png;base64," + base64.StdEncoding.EncodeToString(wso2LogoPNG)
+
+// emailHTMLTemplate is the branded shell every outgoing notice is wrapped
+// in — logo header, orange accent border around the message body, and the
+// standard disclaimer footer — matching real examples Chamara shared
+// (screenshots of actual received notices), not a from-scratch design.
+// Two placeholders: the logo's data URI, then the notice body already
+// converted to simple HTML by plainTextToHTML.
+const emailHTMLTemplate = `<div style="background-color:#fdece2;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:4px;overflow:hidden;">
+    <div style="padding:24px 32px 16px 32px;">
+      <img src="%s" alt="WSO2" height="28" style="display:block;">
+    </div>
+    <div style="padding:8px 32px 24px 32px;">
+      <div style="border-left:4px solid #ff7300;padding:4px 0 4px 16px;color:#333333;font-size:14px;line-height:1.6;">
+        %s
+      </div>
+    </div>
+    <div style="padding:16px 32px;border-top:1px solid #eeeeee;color:#888888;font-size:11px;">
+      This automated message was sent by WSO2's support system. Please do not reply to this email.
+    </div>
+  </div>
+</div>`
 
 // emailSender is the minimal send surface EmailNotifier needs. Satisfied by
 // *emailservice.Client — declared locally, not imported, so this package
@@ -71,7 +110,7 @@ func (n *EmailNotifier) Send(ctx context.Context, notice Notice) error {
 		return nil
 	}
 
-	htmlBody := plainTextToHTML(notice.Body)
+	htmlBody := renderEmailHTML(notice.Body)
 
 	if err := n.Sender.SendEmail(ctx, to, cc, notice.Subject, htmlBody); err != nil {
 		return fmt.Errorf("send email: %w", err)
@@ -132,11 +171,19 @@ func (n *EmailNotifier) filterRecipients(emails []string) []string {
 	return filtered
 }
 
+// renderEmailHTML wraps a notice's plain-text Body in the branded WSO2
+// email shell (emailHTMLTemplate) — logo, orange accent border, footer
+// disclaimer — matching real notice examples, not a bare text conversion.
+func renderEmailHTML(body string) string {
+	return fmt.Sprintf(emailHTMLTemplate, wso2LogoDataURI, plainTextToHTML(body))
+}
+
 // plainTextToHTML converts a plain-text notice Body (every existing
 // template uses blank-line paragraph breaks and single newlines, never
 // HTML) into simple HTML: special characters are escaped first (so a
 // project/account name containing "&", "<", etc. can never break the
-// resulting markup), then every newline becomes a <br> line break.
+// resulting markup), then every newline becomes a <br> line break. Used by
+// renderEmailHTML to build the message content inside the branded shell.
 func plainTextToHTML(s string) string {
 	escaped := html.EscapeString(s)
 	return strings.ReplaceAll(escaped, "\n", "<br>\n")

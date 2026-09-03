@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/recipients"
@@ -225,8 +226,9 @@ func TestEmailNotifier_Send_SkipsWhenNoValidRecipientsRemain(t *testing.T) {
 
 // TestEmailNotifier_Send_ConvertsBodyToHTML verifies the plain-text Body
 // (blank-line paragraph breaks, as every existing notice template uses) is
-// converted to simple HTML — line breaks become <br>, and any HTML-special
-// characters in the content are escaped rather than passed through raw.
+// converted to simple HTML within the branded wrapper — line breaks become
+// <br>, and any HTML-special characters in the content are escaped rather
+// than passed through raw.
 func TestEmailNotifier_Send_ConvertsBodyToHTML(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
@@ -244,9 +246,42 @@ func TestEmailNotifier_Send_ConvertsBodyToHTML(t *testing.T) {
 	if len(sender.calls) != 1 {
 		t.Fatalf("SendEmail calls = %d, want 1", len(sender.calls))
 	}
-	const want = "Dear Team<br>\n<br>\nProject: A &amp; B &lt;Special&gt;"
-	if got := sender.calls[0].htmlBody; got != want {
-		t.Errorf("htmlBody = %q, want %q", got, want)
+	const wantBody = "Dear Team<br>\n<br>\nProject: A &amp; B &lt;Special&gt;"
+	got := sender.calls[0].htmlBody
+	if !strings.Contains(got, wantBody) {
+		t.Errorf("htmlBody = %q, want it to contain %q", got, wantBody)
+	}
+}
+
+// TestEmailNotifier_Send_WrapsBodyInBrandedTemplate verifies the branded
+// WSO2 shell (logo, orange accent border, footer disclaimer) wraps every
+// outgoing email, per Chamara's real examples — not just the plain
+// paragraph-to-<br> conversion on its own.
+func TestEmailNotifier_Send_WrapsBodyInBrandedTemplate(t *testing.T) {
+	sender := &mockEmailSender{}
+	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
+
+	err := n.Send(context.Background(), Notice{
+		Subject:    "subject",
+		Body:       "body text",
+		Recipients: Recipients{AccountOwner: recipients.Contact{Email: "am@wso2.com"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v, want nil", err)
+	}
+	if len(sender.calls) != 1 {
+		t.Fatalf("SendEmail calls = %d, want 1", len(sender.calls))
+	}
+	got := sender.calls[0].htmlBody
+
+	if !strings.Contains(got, "data:image/png;base64,") {
+		t.Error("htmlBody missing the embedded WSO2 logo (data:image/png;base64,...)")
+	}
+	if !strings.Contains(got, "This automated message was sent by WSO2's support system. Please do not reply to this email.") {
+		t.Error("htmlBody missing the standard footer disclaimer")
+	}
+	if !strings.Contains(got, "body text") {
+		t.Error("htmlBody missing the actual notice body content")
 	}
 }
 
