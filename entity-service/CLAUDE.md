@@ -51,6 +51,8 @@ A failed Event Hub publish is logged instead of recorded — see
 | `EVENT_HUB_CONNECTION_STRING` | no* | — | Event Hub namespace Shared Access Policy connection string. *Required once `EVENT_HUB_BROKER` is set |
 | `EVENT_HUB_TOPIC` | no* | — | Event Hub (Kafka topic) name. *Required once `EVENT_HUB_BROKER` is set |
 | `EVENT_PUBLISHING_ENABLED` | no | `false` | Must be `"true"` for `EventPublisherService` to actually get constructed, even with `EVENT_HUB_BROKER` fully configured — a separate safe-by-default kill switch |
+| `SUPPORT_ENGINEER_ROLE` | no | — | ServiceNow role name whose presence on a case comment's resolved author completes the case's "response" SLA clock — see "SLA clocks" below |
+| `CUSTOMER_ROLES` | no | — | Comma-separated ServiceNow role names whose presence on a case comment's resolved author marks a customer reply — see `applyCustomerReplyStateTransition` in "SLA clocks" below |
 
 `CSM_TEAM_REGISTRY` and `CSM_USER_ROLES` are **not read here**. The team registry
 and the assignable-role allow-list are organisation vocabulary and live in the CSM
@@ -445,6 +447,35 @@ All three are deliberately **independent of `s.publisher`** except
 registration itself (inherently Kafka-based) — pause/resume/completion are
 pure in-process DB writes via `SLAClockService`, so a deployment without
 Event Hub configured must not lose them as a side effect of that.
+
+**`CreateCaseComment`** also calls `applyCustomerReplyStateTransition` —
+not itself an SLA-clock write, but it triggers one indirectly. When a
+customer-visible comment arrives while the case is `Awaiting Info`/
+`Solution Proposed`, from an author holding one of the configurable
+`CUSTOMER_ROLES` (same role-lookup mechanism as `applyResponseSLAOnComment`,
+just checked against a list instead of a single role — an organisation can
+have more than one customer-facing role), this calls `s.UpdateCase` with
+`State: WaitingOnWSO2` **in-process**, not a second, separate ServiceNow
+PATCH — reusing `UpdateCase`'s own `publishStatusChanged` and
+`applyCaseStateSLAEffects` calls entirely rather than duplicating either.
+`applyCaseStateSLAEffects`'s `default` case (any state other than
+`AwaitingInfo`/`SolutionProposed`/`Closed`) is exactly the resume behavior
+this needs, so no new SLA-specific code was needed for that part at all.
+Requires its own `GetCaseByID` call to read the case's current state —
+nothing else in `CreateCaseComment`'s flow surfaces it (`publishCommentAdded`
+fetches one for its own purpose but never shares it, and is itself skipped
+when `s.publisher` is nil).
+
+**KNOWN GAP**: the read (this function's own `GetCaseByID`) and the write
+(`UpdateCase`'s PATCH) are not atomic — a case moved to some other state
+(e.g. closed) in that window still gets unconditionally set back to
+`Waiting on WSO2`. Not unique to this function: every `UpdateCase` caller
+that sets `State`/`Severity`/`AssigneeEmail` has the same read-then-PATCH
+race, since ServiceNow is the sole source of truth (no local row/version)
+and the Choreo integration's PATCH has no conditional-update mechanism
+(ETag/version/`sys_mod_count`) to close it with. Fixing this needs that
+integration to expose one first — a cross-team dependency, not addressed
+here.
 
 ## Scheduled task runs
 

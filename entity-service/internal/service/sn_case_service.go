@@ -86,6 +86,11 @@ const applyResponseSLATimeout = 5 * time.Second
 // applyResponseSLATimeout.
 const applyCaseStateSLATimeout = 5 * time.Second
 
+// applyCustomerReplyTimeout bounds applyCustomerReplyStateTransition's own
+// GetCaseByID + author resolution + role lookup + UpdateCase calls — same
+// reasoning as applyResponseSLATimeout.
+const applyCustomerReplyTimeout = 5 * time.Second
+
 // watchListEmails extracts the non-empty emails from a case's watch list —
 // Recipients for every case.* event this file publishes is the case's
 // WatchList emails only (an explicit, deliberate decision — this service
@@ -838,12 +843,17 @@ type snCaseService struct {
 	slaClocks           SLAClockService
 	userSvc             SNUserService
 	supportEngineerRole string
+	// customerRoles backs applyCustomerReplyStateTransition — see that
+	// function's own doc comment and config.Config.CustomerRoles'. May be
+	// empty (unconfigured), treated the same "can't confirm authorship,
+	// skip" way supportEngineerRole == "" is.
+	customerRoles []string
 }
 
 // NewSNCaseService constructs a CaseService that delegates SearchCases to the
 // Choreo API and all write/read-by-id operations to pgFallback. publisher may
 // be nil (see snCaseService.publisher's doc comment).
-func NewServiceNowCaseService(client *integrationservice.Client, pgFallback CaseService, publisher EventPublisherService, slaClocks SLAClockService, userSvc SNUserService, supportEngineerRole string) CaseService {
+func NewServiceNowCaseService(client *integrationservice.Client, pgFallback CaseService, publisher EventPublisherService, slaClocks SLAClockService, userSvc SNUserService, supportEngineerRole string, customerRoles []string) CaseService {
 	return &snCaseService{
 		client:              client,
 		pgFallback:          pgFallback,
@@ -851,6 +861,7 @@ func NewServiceNowCaseService(client *integrationservice.Client, pgFallback Case
 		slaClocks:           slaClocks,
 		userSvc:             userSvc,
 		supportEngineerRole: supportEngineerRole,
+		customerRoles:       customerRoles,
 	}
 }
 
@@ -1377,6 +1388,99 @@ func (s *snCaseService) applyResponseSLAOnComment(ctx context.Context, req domai
 		if _, err := s.slaClocks.SetSLAClockTierReached(ctx, req.CaseID, slaClockTypeResponse, tier, domain.SetSLAClockTierRequest{Status: domain.SLATierStatusReached}); err != nil {
 			logSLAClockOpFailed(ctx, "sn create comment: mark response sla clock tier reached failed", req.CaseID, slaClockTypeResponse, err)
 		}
+	}
+}
+
+// applyCustomerReplyStateTransition moves a case back to Waiting on WSO2
+// when a customer replies while it's Awaiting Info or Solution Proposed —
+// WSO2 was waiting on the customer, and a reply means it's WSO2's turn to
+// act again. A pure in-process call to s.UpdateCase (not a raw ServiceNow
+// PATCH of its own), so it gets publishStatusChanged/applyCaseStateSLAEffects
+// for free — in particular, applyCaseStateSLAEffects' own "any state other
+// than Awaiting Info/Solution Proposed/Closed resumes both Workaround and
+// Resolution" default case is exactly the right side effect here, with no
+// duplicated logic. Calling UpdateCase with a State equal to the case's
+// current one (a race with some other concurrent state change) is a
+// harmless no-op there — see UpdateCase's own pre-PATCH equality check.
+//
+// KNOWN GAP: the read here (this function's own GetCaseByID) and the write
+// (the UpdateCase call below, which does its own separate GetCaseByID
+// purely to decide whether to publish case.status_changed — see that
+// function's own pre-PATCH block) are not atomic. If the case is moved to
+// some OTHER state (e.g. Closed) in the window between this function's read
+// and UpdateCase's PATCH, this still unconditionally sends
+// State: WaitingOnWSO2 — silently reopening a case that was just closed,
+// and resuming SLA clocks applyCaseStateSLAEffects had just paused for
+// Closed. This is not unique to this function: every UpdateCase caller that
+// sets State/Severity/AssigneeEmail (publishStatusChanged/
+// publishSeverityChanged/publishCaseAssigned's own pre-PATCH guards) has the
+// identical read-then-PATCH race window, since ServiceNow is this service's
+// sole source of truth (no local row/version to condition on) and
+// s.client.Patch has no optimistic-concurrency mechanism (no ETag/version/
+// sys_mod_count precondition) to send even if this function wanted one.
+// Closing this needs the underlying Choreo/ServiceNow integration to expose
+// a conditional update — a real, cross-team dependency, not a quick fix
+// here, so it's flagged rather than worked around with a partial guard that
+// wouldn't close the actual window anyway.
+//
+// Requires its own GetCaseByID call: nothing in CreateCaseComment's own flow
+// surfaces the case's current state today (publishCommentAdded fetches one
+// for its own, separate purpose, but never returns or shares it, and is
+// itself skipped when s.publisher is nil — not something this can rely on).
+//
+// Same role-lookup mechanism as applyResponseSLAOnComment (this service has
+// no auth/identity layer of its own, so "is this comment's author a
+// customer" is answered by resolving the author and checking their
+// ServiceNow role via s.userSvc.SearchUsers), but against a configurable
+// LIST of roles (s.customerRoles, config.Config.CustomerRoles) rather than
+// a single one — an organisation can have more than one customer-facing
+// role. Skips entirely, rather than guessing, when s.customerRoles is empty
+// (unconfigured — see config.Config.CustomerRoles' own doc comment).
+func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, req domain.CreateCaseCommentRequest, commentID string) {
+	if req.Type != domain.CommentTypeComment || len(s.customerRoles) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, applyCustomerReplyTimeout)
+	defer cancel()
+
+	cv, err := s.GetCaseByID(ctx, req.CaseID)
+	if err != nil {
+		slog.ErrorContext(ctx, "sn create comment: customer reply state transition not evaluated, get case failed", "caseId", req.CaseID)
+		return
+	}
+	if cv.State != domain.CaseStateAwaitingInfo && cv.State != domain.CaseStateSolutionProposed {
+		return
+	}
+
+	author := s.resolveCommentAuthor(ctx, req.CaseID, commentID)
+	if author == nil || author.Email == "" {
+		slog.InfoContext(ctx, "sn create comment: customer reply state transition not evaluated, could not resolve comment author's email", "caseId", req.CaseID)
+		return
+	}
+
+	usersResp, err := s.userSvc.SearchUsers(ctx, domain.SearchUsersRequest{
+		Pagination: domain.Pagination{Limit: 1},
+		Filters:    domain.SearchUsersFilters{Emails: []string{author.Email}},
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "sn create comment: customer reply state transition not evaluated, user role lookup failed", "caseId", req.CaseID)
+		return
+	}
+
+	isCustomer := false
+	for _, u := range usersResp.Users {
+		if slices.ContainsFunc(u.Roles, func(r string) bool { return slices.Contains(s.customerRoles, r) }) {
+			isCustomer = true
+			break
+		}
+	}
+	if !isCustomer {
+		return
+	}
+
+	waitingOnWSO2 := domain.CaseStateWaitingOnWSO2
+	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: req.CaseID, State: &waitingOnWSO2}); err != nil {
+		slog.ErrorContext(ctx, "sn create comment: move case to waiting on wso2 after customer reply failed", "caseId", req.CaseID)
 	}
 }
 
@@ -2010,6 +2114,7 @@ func (s *snCaseService) CreateCaseComment(ctx context.Context, req domain.Create
 	}
 	s.publishCommentAdded(ctx, req, result.Comment.ID)
 	s.applyResponseSLAOnComment(ctx, req, result.Comment.ID)
+	s.applyCustomerReplyStateTransition(ctx, req, result.Comment.ID)
 	return result, nil
 }
 
