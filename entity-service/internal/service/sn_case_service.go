@@ -1403,6 +1403,26 @@ func (s *snCaseService) applyResponseSLAOnComment(ctx context.Context, req domai
 // current one (a race with some other concurrent state change) is a
 // harmless no-op there — see UpdateCase's own pre-PATCH equality check.
 //
+// KNOWN GAP: the read here (this function's own GetCaseByID) and the write
+// (the UpdateCase call below, which does its own separate GetCaseByID
+// purely to decide whether to publish case.status_changed — see that
+// function's own pre-PATCH block) are not atomic. If the case is moved to
+// some OTHER state (e.g. Closed) in the window between this function's read
+// and UpdateCase's PATCH, this still unconditionally sends
+// State: WorkInProgress — silently reopening a case that was just closed,
+// and resuming SLA clocks applyCaseStateSLAEffects had just paused for
+// Closed. This is not unique to this function: every UpdateCase caller that
+// sets State/Severity/AssigneeEmail (publishStatusChanged/
+// publishSeverityChanged/publishCaseAssigned's own pre-PATCH guards) has the
+// identical read-then-PATCH race window, since ServiceNow is this service's
+// sole source of truth (no local row/version to condition on) and
+// s.client.Patch has no optimistic-concurrency mechanism (no ETag/version/
+// sys_mod_count precondition) to send even if this function wanted one.
+// Closing this needs the underlying Choreo/ServiceNow integration to expose
+// a conditional update — a real, cross-team dependency, not a quick fix
+// here, so it's flagged rather than worked around with a partial guard that
+// wouldn't close the actual window anyway.
+//
 // Requires its own GetCaseByID call: nothing in CreateCaseComment's own flow
 // surfaces the case's current state today (publishCommentAdded fetches one
 // for its own, separate purpose, but never returns or shares it, and is

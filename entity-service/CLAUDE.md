@@ -466,6 +466,17 @@ nothing else in `CreateCaseComment`'s flow surfaces it (`publishCommentAdded`
 fetches one for its own purpose but never shares it, and is itself skipped
 when `s.publisher` is nil).
 
+**KNOWN GAP**: the read (this function's own `GetCaseByID`) and the write
+(`UpdateCase`'s PATCH) are not atomic — a case moved to some other state
+(e.g. closed) in that window still gets unconditionally set back to
+`Work In Progress`. Not unique to this function: every `UpdateCase` caller
+that sets `State`/`Severity`/`AssigneeEmail` has the same read-then-PATCH
+race, since ServiceNow is the sole source of truth (no local row/version)
+and the Choreo integration's PATCH has no conditional-update mechanism
+(ETag/version/`sys_mod_count`) to close it with. Fixing this needs that
+integration to expose one first — a cross-team dependency, not addressed
+here.
+
 ## Scheduled task runs
 
 `scheduled_task_run` (migration `000013`, `internal/domain/entity.go`'s
