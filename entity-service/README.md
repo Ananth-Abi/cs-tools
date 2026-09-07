@@ -151,6 +151,7 @@ rather than async.
 | `EVENT_HUB_TOPIC` | Event Hub (Kafka topic) name, e.g. `case-events` — must match `csm-notification-service`'s own `EVENT_HUB_TOPIC` (required once `EVENT_HUB_BROKER` is set) |
 | `EVENT_PUBLISHING_ENABLED` | Set to `true` to actually publish. Defaults to `false` — safe by default even with Event Hub fully configured (optional) |
 | `SUPPORT_ENGINEER_ROLE` | ServiceNow role name whose presence on a case comment's author completes the case's "response" SLA clock — see "SLA clocks" below. No default; unset means that specific completion path never fires (optional) |
+| `CUSTOMER_ROLES` | Comma-separated ServiceNow role names whose presence on a case comment's author marks it a customer reply — see "Customer reply state transition" below. No default; unset means that path never fires (optional) |
 
 ### SLA clocks
 
@@ -190,6 +191,16 @@ with `{"status": "reached"}` — the same endpoint "complete early" reuses to pr
 tiers at once, which is what suppresses a later spurious breach alert for an already-satisfied
 clock. On a genuine breach it sends a Google Chat card directly (not routed through this
 service).
+
+### Customer reply state transition
+
+When a customer-visible comment (not a work note) from a user holding one of the `CUSTOMER_ROLES`
+roles (looked up the same way as `SUPPORT_ENGINEER_ROLE`, via `SNUserService.SearchUsers` filtered
+by the comment author's email) arrives while the case is `Awaiting Info`/`Solution Proposed`,
+`sn_case_service.go`'s `applyCustomerReplyStateTransition` moves it back to `Work In Progress` — a
+customer reply means it's WSO2's turn to act again. Implemented as a plain in-process call to this
+service's own `UpdateCase`, not a separate ServiceNow PATCH — so it gets `case.status_changed`
+publishing and the SLA pause/resume side effects above for free, with no duplicated logic.
 
 ### Scheduled task runs
 
