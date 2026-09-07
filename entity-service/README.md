@@ -197,7 +197,7 @@ service).
 When a customer-visible comment (not a work note) from a user holding one of the `CUSTOMER_ROLES`
 roles (looked up the same way as `SUPPORT_ENGINEER_ROLE`, via `SNUserService.SearchUsers` filtered
 by the comment author's email) arrives while the case is `Awaiting Info`/`Solution Proposed`,
-`sn_case_service.go`'s `applyCustomerReplyStateTransition` moves it back to `Work In Progress` — a
+`sn_case_service.go`'s `applyCustomerReplyStateTransition` moves it back to `Waiting on WSO2` — a
 customer reply means it's WSO2's turn to act again. Implemented as a plain in-process call to this
 service's own `UpdateCase`, not a separate ServiceNow PATCH — so it gets `case.status_changed`
 publishing and the SLA pause/resume side effects above for free, with no duplicated logic.

@@ -1391,7 +1391,7 @@ func (s *snCaseService) applyResponseSLAOnComment(ctx context.Context, req domai
 	}
 }
 
-// applyCustomerReplyStateTransition moves a case back to Work In Progress
+// applyCustomerReplyStateTransition moves a case back to Waiting on WSO2
 // when a customer replies while it's Awaiting Info or Solution Proposed —
 // WSO2 was waiting on the customer, and a reply means it's WSO2's turn to
 // act again. A pure in-process call to s.UpdateCase (not a raw ServiceNow
@@ -1409,7 +1409,7 @@ func (s *snCaseService) applyResponseSLAOnComment(ctx context.Context, req domai
 // function's own pre-PATCH block) are not atomic. If the case is moved to
 // some OTHER state (e.g. Closed) in the window between this function's read
 // and UpdateCase's PATCH, this still unconditionally sends
-// State: WorkInProgress — silently reopening a case that was just closed,
+// State: WaitingOnWSO2 — silently reopening a case that was just closed,
 // and resuming SLA clocks applyCaseStateSLAEffects had just paused for
 // Closed. This is not unique to this function: every UpdateCase caller that
 // sets State/Severity/AssigneeEmail (publishStatusChanged/
@@ -1478,9 +1478,9 @@ func (s *snCaseService) applyCustomerReplyStateTransition(ctx context.Context, r
 		return
 	}
 
-	workInProgress := domain.CaseStateWorkInProgress
-	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: req.CaseID, State: &workInProgress}); err != nil {
-		slog.ErrorContext(ctx, "sn create comment: move case to work in progress after customer reply failed", "caseId", req.CaseID)
+	waitingOnWSO2 := domain.CaseStateWaitingOnWSO2
+	if _, err := s.UpdateCase(ctx, domain.UpdateCaseRequest{ID: req.CaseID, State: &waitingOnWSO2}); err != nil {
+		slog.ErrorContext(ctx, "sn create comment: move case to waiting on wso2 after customer reply failed", "caseId", req.CaseID)
 	}
 }
 

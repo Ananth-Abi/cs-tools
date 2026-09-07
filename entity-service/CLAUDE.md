@@ -455,7 +455,7 @@ customer-visible comment arrives while the case is `Awaiting Info`/
 `CUSTOMER_ROLES` (same role-lookup mechanism as `applyResponseSLAOnComment`,
 just checked against a list instead of a single role — an organisation can
 have more than one customer-facing role), this calls `s.UpdateCase` with
-`State: WorkInProgress` **in-process**, not a second, separate ServiceNow
+`State: WaitingOnWSO2` **in-process**, not a second, separate ServiceNow
 PATCH — reusing `UpdateCase`'s own `publishStatusChanged` and
 `applyCaseStateSLAEffects` calls entirely rather than duplicating either.
 `applyCaseStateSLAEffects`'s `default` case (any state other than
@@ -469,7 +469,7 @@ when `s.publisher` is nil).
 **KNOWN GAP**: the read (this function's own `GetCaseByID`) and the write
 (`UpdateCase`'s PATCH) are not atomic — a case moved to some other state
 (e.g. closed) in that window still gets unconditionally set back to
-`Work In Progress`. Not unique to this function: every `UpdateCase` caller
+`Waiting on WSO2`. Not unique to this function: every `UpdateCase` caller
 that sets `State`/`Severity`/`AssigneeEmail` has the same read-then-PATCH
 race, since ServiceNow is the sole source of truth (no local row/version)
 and the Choreo integration's PATCH has no conditional-update mechanism
