@@ -1464,46 +1464,14 @@ func TestPatchCase(t *testing.T) {
 		}
 	})
 
-	t.Run("autocloseHoldUntil PATCH does not record a duplicate work note when the hold date is unchanged", func(t *testing.T) {
-		var commentCalled atomic.Bool
-		client := &mockEntityCaseClient{
-			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
-				return []byte(`{"id":"` + testCaseID + `","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}`), nil
-			},
-			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
-				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
-			},
-			createCaseCommentFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
-				commentCalled.Store(true)
-				return []byte(`{"id":"wn-1"}`), nil
-			},
-		}
-		h := NewCaseHandler(client)
-		r := withUser(httptest.NewRequest(http.MethodPatch, "/cases/"+testCaseID, strings.NewReader(`{"autocloseHoldUntil":"2026-08-01T00:00:00Z"}`)))
-		r.SetPathValue("id", testCaseID)
-		w := httptest.NewRecorder()
-		h.PatchCase(w, r)
-
-		assertStatus(t, w, http.StatusOK)
-		// Give a would-be goroutine a moment to run; there should be none to wait for.
-		time.Sleep(100 * time.Millisecond)
-		if commentCalled.Load() {
-			t.Error("expected no work note for a PATCH that resends the existing hold date")
-		}
-	})
-
-	t.Run("autocloseHoldUntil PATCH records a work note on the first hold, even if autoclosureStateTime already held an unrelated staged-advance date", func(t *testing.T) {
-		// A case not currently on hold can still carry a non-nil autoclosureStateTime
-		// (e.g. when its autoclosureStep is FIRST_COMMENT) that happens to match the
-		// FE's pre-filled hold-date picker default. The dedup check must gate on
-		// autoclosureStep == ON_HOLD, not merely on the date matching, or this — the
-		// default "open dialog, accept the pre-filled date, click Hold" path — would
-		// wrongly be treated as a no-op and its note dropped.
+	t.Run("autocloseHoldUntil PATCH records a work note even when resent with the same hold date", func(t *testing.T) {
+		// Deliberately no dedup: ServiceNow's own case-read doesn't reliably surface
+		// autoclosureStep/autoclosureStateTime, so a dedup keyed on it can't be trusted,
+		// and the legacy ticketing UI's equivalent action has this exact same behavior
+		// (a resend posts another identical note too) — this matches established
+		// behavior rather than a regression.
 		commentCalled := make(chan struct{})
 		client := &mockEntityCaseClient{
-			getCaseFn: func(_ context.Context, _ string) ([]byte, error) {
-				return []byte(`{"id":"` + testCaseID + `","autoclosureStep":"FIRST_COMMENT","autoclosureStateTime":"2026-08-01T00:00:00Z"}`), nil
-			},
 			patchCaseFn: func(_ context.Context, _ string, body []byte) ([]byte, error) {
 				return []byte(`{"message":"Case updated successfully","case":{"id":"` + testCaseID + `","updatedOn":"2026-07-23T10:00:00Z","autoclosureStep":"ON_HOLD","autoclosureStateTime":"2026-08-01T00:00:00Z"}}`), nil
 			},
@@ -1522,7 +1490,7 @@ func TestPatchCase(t *testing.T) {
 		select {
 		case <-commentCalled:
 		case <-time.After(2 * time.Second):
-			t.Fatal("expected CreateCaseComment to be called for the first hold, despite a matching prior autoclosureStateTime")
+			t.Fatal("expected CreateCaseComment to be called even for a resent hold date")
 		}
 	})
 
@@ -1907,6 +1875,346 @@ func TestGetCase(t *testing.T) {
 				r.SetPathValue("id", testCaseID)
 				w := httptest.NewRecorder()
 				h.GetCase(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+}
+
+// ----- GetCaseEscalations -----
+
+func TestGetCaseEscalations(t *testing.T) {
+	const testCaseID = "11111111-1111-1111-1111-111111111111"
+
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID+"/escalations", nil)
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.GetCaseEscalations(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects empty case ID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodGet, "/cases//escalations", nil))
+		w := httptest.NewRecorder()
+		h.GetCaseEscalations(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects malformed case UUID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/not-a-uuid/escalations", nil))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.GetCaseEscalations(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("returns upstream escalation history", func(t *testing.T) {
+		var capturedCaseID string
+		want := `{"escalations":[{"id":"e-1","level":"2","action":"ESCALATE"}]}`
+		client := &mockEntityCaseClient{
+			searchCaseEscalationsFn: func(_ context.Context, caseID string) ([]byte, error) {
+				capturedCaseID = caseID
+				return []byte(want), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID+"/escalations", nil))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.GetCaseEscalations(w, r)
+
+		assertStatus(t, w, http.StatusOK)
+		assertContentType(t, w, "application/json")
+		if capturedCaseID != testCaseID {
+			t.Errorf("caseID = %q, want %q", capturedCaseID, testCaseID)
+		}
+
+		resp := decodeJSON[map[string]any](t, w)
+		escalations, ok := resp["escalations"].([]any)
+		if !ok || len(escalations) != 1 {
+			t.Errorf("escalations = %v, want a single entry", resp["escalations"])
+		}
+	})
+
+	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to retrieve case escalation history.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					searchCaseEscalationsFn: func(_ context.Context, _ string) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodGet, "/cases/"+testCaseID+"/escalations", nil))
+				r.SetPathValue("id", testCaseID)
+				w := httptest.NewRecorder()
+				h.GetCaseEscalations(w, r)
+				assertStatus(t, w, tc.wantCode)
+				assertErrorMessage(t, w, tc.wantMsg)
+				assertContentType(t, w, "application/json")
+			})
+		}
+	})
+}
+
+// ----- CreateCaseEscalation -----
+
+func TestCreateCaseEscalation(t *testing.T) {
+	const testCaseID = "11111111-1111-1111-1111-111111111111"
+
+	t.Run("requires authenticated user", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"ESCALATE"}`))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusUnauthorized)
+		assertErrorMessage(t, w, ErrMsgUnauthorized)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects empty case ID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases//escalations", strings.NewReader(`{"action":"ESCALATE"}`)))
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects malformed case UUID", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/not-a-uuid/escalations", strings.NewReader(`{"action":"ESCALATE"}`)))
+		r.SetPathValue("id", "not-a-uuid")
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgInvalidUUID)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects body exceeding 1 MiB", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(strings.Repeat("x", maxRequestBodyBytes+1))))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusRequestEntityTooLarge)
+		assertErrorMessage(t, w, ErrMsgTooLarge)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("rejects invalid JSON body", func(t *testing.T) {
+		h := NewCaseHandler(&mockEntityCaseClient{})
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`not-json`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusBadRequest)
+		assertErrorMessage(t, w, ErrMsgBadRequest)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("forwards body verbatim and returns 201 with upstream response", func(t *testing.T) {
+		var capturedCaseID string
+		var capturedBody []byte
+		reqBody := `{"reason":"Customer escalated via call","action":"ESCALATE"}`
+		want := `{"id":"e-1","level":"1","action":"ESCALATE"}`
+		client := &mockEntityCaseClient{
+			createCaseEscalationFn: func(_ context.Context, caseID string, body []byte) ([]byte, error) {
+				capturedCaseID = caseID
+				capturedBody = body
+				return []byte(want), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(reqBody)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+
+		assertStatus(t, w, http.StatusCreated)
+		assertContentType(t, w, "application/json")
+
+		if capturedCaseID != testCaseID {
+			t.Errorf("caseID = %q, want %q", capturedCaseID, testCaseID)
+		}
+		if string(capturedBody) != reqBody {
+			t.Errorf("upstream body = %q, want verbatim %q", string(capturedBody), reqBody)
+		}
+	})
+
+	t.Run("de-escalation is rejected when the case has no escalation history", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			searchCaseEscalationsFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"escalations":[],"total":0}`), nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				t.Fatal("upstream CreateCaseEscalation should not be called when there's nothing to de-escalate")
+				return nil, nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusForbidden)
+		assertErrorMessage(t, w, ErrMsgForbidden)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("de-escalation is rejected for a caller not notified on the current escalation", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			searchCaseEscalationsFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"escalations":[{"id":"e-0"}],"total":1,"currentNotifiedUsers":[{"id":"u-2","email":"lead@example.com"}]}`), nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				return []byte(`{"id":"u-1","email":"agent@example.com"}`), nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				t.Fatal("upstream CreateCaseEscalation should not be called when the caller wasn't notified")
+				return nil, nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusForbidden)
+		assertErrorMessage(t, w, ErrMsgForbidden)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("de-escalation is allowed for a caller notified on the current escalation, matched by id", func(t *testing.T) {
+		var upstreamCalled bool
+		client := &mockEntityCaseClient{
+			searchCaseEscalationsFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"escalations":[{"id":"e-0"}],"total":1,"currentNotifiedUsers":[{"id":"u-1","email":"someone-else@example.com"}]}`), nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				return []byte(`{"id":"u-1","email":"agent@example.com"}`), nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				upstreamCalled = true
+				return []byte(`{"id":"e-1","level":"1","action":"DEESCALATE"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusCreated)
+		if !upstreamCalled {
+			t.Error("upstream CreateCaseEscalation was not called for an authorized de-escalation")
+		}
+	})
+
+	t.Run("de-escalation is allowed for a caller notified on the current escalation, matched by email when id is empty", func(t *testing.T) {
+		var upstreamCalled bool
+		client := &mockEntityCaseClient{
+			searchCaseEscalationsFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"escalations":[{"id":"e-0"}],"total":1,"currentNotifiedUsers":[{"id":"","email":"Agent@Example.com"}]}`), nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				return []byte(`{"id":"u-1","email":"agent@example.com"}`), nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				upstreamCalled = true
+				return []byte(`{"id":"e-1","level":"1","action":"DEESCALATE"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusCreated)
+		if !upstreamCalled {
+			t.Error("upstream CreateCaseEscalation was not called for an authorized de-escalation")
+		}
+	})
+
+	t.Run("de-escalation is rejected when ids differ, even if emails happen to match", func(t *testing.T) {
+		client := &mockEntityCaseClient{
+			searchCaseEscalationsFn: func(_ context.Context, _ string) ([]byte, error) {
+				return []byte(`{"escalations":[{"id":"e-0"}],"total":1,"currentNotifiedUsers":[{"id":"u-2","email":"agent@example.com"}]}`), nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				return []byte(`{"id":"u-1","email":"agent@example.com"}`), nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				t.Fatal("upstream CreateCaseEscalation should not be called when the ids differ, regardless of matching emails")
+				return nil, nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"DEESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusForbidden)
+		assertErrorMessage(t, w, ErrMsgForbidden)
+		assertContentType(t, w, "application/json")
+	})
+
+	t.Run("escalation is never gated by the notified-users check", func(t *testing.T) {
+		var upstreamCalled bool
+		client := &mockEntityCaseClient{
+			searchCaseEscalationsFn: func(_ context.Context, _ string) ([]byte, error) {
+				t.Fatal("SearchCaseEscalations should not be called for an ESCALATE action")
+				return nil, nil
+			},
+			getUserMeFn: func(_ context.Context) ([]byte, error) {
+				t.Fatal("GetUserMe should not be called for an ESCALATE action")
+				return nil, nil
+			},
+			createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+				upstreamCalled = true
+				return []byte(`{"id":"e-1","level":"1","action":"ESCALATE"}`), nil
+			},
+		}
+		h := NewCaseHandler(client)
+		r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"reason":"needed","action":"ESCALATE"}`)))
+		r.SetPathValue("id", testCaseID)
+		w := httptest.NewRecorder()
+		h.CreateCaseEscalation(w, r)
+		assertStatus(t, w, http.StatusCreated)
+		if !upstreamCalled {
+			t.Error("upstream CreateCaseEscalation was not called for an ESCALATE action")
+		}
+	})
+
+	t.Run("upstream errors are mapped correctly", func(t *testing.T) {
+		for _, tc := range upstreamErrorsGeneric("Failed to create case escalation.") {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				client := &mockEntityCaseClient{
+					createCaseEscalationFn: func(_ context.Context, _ string, _ []byte) ([]byte, error) {
+						return nil, tc.err
+					},
+				}
+				h := NewCaseHandler(client)
+				r := withUser(httptest.NewRequest(http.MethodPost, "/cases/"+testCaseID+"/escalations", strings.NewReader(`{"action":"ESCALATE"}`)))
+				r.SetPathValue("id", testCaseID)
+				w := httptest.NewRecorder()
+				h.CreateCaseEscalation(w, r)
 				assertStatus(t, w, tc.wantCode)
 				assertErrorMessage(t, w, tc.wantMsg)
 				assertContentType(t, w, "application/json")

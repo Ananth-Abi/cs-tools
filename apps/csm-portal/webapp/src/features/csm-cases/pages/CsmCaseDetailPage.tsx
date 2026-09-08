@@ -84,7 +84,9 @@ import {
   useDeleteCsmCaseAttachment,
   useGetCsmCaseAttachmentPreviewSource,
 } from "@features/csm-cases/api/useCsmCaseAttachments";
-import CsmCaseCommentInput from "@features/csm-cases/components/CsmCaseCommentInput";
+import CsmCaseCommentInput, {
+  type CommentAttachmentDraft,
+} from "@features/csm-cases/components/CsmCaseCommentInput";
 import CaseActionBar, {
   canAcknowledge,
 } from "@features/csm-cases/components/CaseActionBar";
@@ -113,8 +115,15 @@ import { useRequestCaseUpdate } from "@features/csm-cases/api/useRequestCaseUpda
 import { deriveCaseUpdateRequestCategory } from "@features/csm-cases/utils/caseUpdateRequests";
 import CreateTaskDialog from "@features/csm-cases/components/CreateTaskDialog";
 import AddTagDialog from "@features/csm-cases/components/AddTagDialog";
+import EscalateCaseDialog from "@features/csm-cases/components/EscalateCaseDialog";
 import { useCreateCaseTask } from "@features/csm-cases/api/useCreateCaseTask";
 import { useAddCaseTag, useRemoveCaseTag } from "@features/csm-cases/api/useCaseTags";
+import { useGetCsmCaseEscalations } from "@features/csm-cases/api/useGetCsmCaseEscalations";
+import { usePostCsmCaseEscalation } from "@features/csm-cases/api/usePostCsmCaseEscalation";
+import {
+  canDeescalate,
+  canEscalateFurther,
+} from "@features/csm-cases/utils/escalationLevel";
 import { ChildCasesWidget } from "@features/csm-cases/components/ChildCasesWidget";
 import { LinkedServiceRequestsWidget } from "@features/csm-cases/components/LinkedServiceRequestsWidget";
 import { LinkedChangeRequestsWidget } from "@features/csm-cases/components/LinkedChangeRequestsWidget";
@@ -129,6 +138,7 @@ import RefreshButton from "@components/RefreshButton";
 import {
   AttachmentsWidget,
   CustomerContextWidget,
+  EscalationWidget,
   ProductContextWidget,
   RequestDetailsWidget,
   TagsWidget,
@@ -578,10 +588,35 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const createTask = useCreateCaseTask(caseId);
   const addTag = useAddCaseTag(caseId);
   const removeTag = useRemoveCaseTag(caseId);
+  const {
+    data: escalationHistory,
+    isLoading: isEscalationHistoryLoading,
+    isError: isEscalationHistoryError,
+  } = useGetCsmCaseEscalations(caseId);
+  const postEscalation = usePostCsmCaseEscalation(caseId);
   const requestCaseUpdate = useRequestCaseUpdate();
   const findMyOngoingCases = useFindMyOngoingCases();
   const recordView = useRecordRecentView();
   const claims = useIdTokenClaims();
+  // De-escalating is restricted to whoever was notified on the case's
+  // current escalation level (the backend enforces the same check -- this is
+  // a client-side affordance only, matching every other role/permission
+  // check in this app). Matched by platform id first (currentUser.id against
+  // a notified user's own id, the same identity space the backend's own
+  // check uses), falling back to a case-insensitive email match against the
+  // signed-in user's ID token claim when either id is unavailable -- mirrors
+  // the BFF's own callerIsNotifiedOnCurrentEscalation exactly.
+  const callerId = currentUser?.id;
+  const callerEmail = claims?.email?.toLowerCase();
+  const callerIsNotifiedOnCurrentEscalation = (
+    escalationHistory?.currentNotifiedUsers ?? []
+  ).some((u) => {
+    if (callerId && u.id && callerId === u.id) return true;
+    if ((!callerId || !u.id) && callerEmail && u.email) {
+      return u.email.toLowerCase() === callerEmail;
+    }
+    return false;
+  });
   // Display name for comments authored in this session, resolved from the
   // signed-in user's ID token. Falls back to the email local part so a token
   // without name claims still attributes the comment to the right person.
@@ -621,6 +656,23 @@ export default function CsmCaseDetailPage(): JSX.Element {
   // this case's tab from the tab strip can confirm first — see the hook's
   // own doc comment for what this signal does and doesn't guarantee.
   useReportCaseTabDraft(caseId, composerOpen);
+  // The reply composer's draft content, lifted out of CsmCaseCommentInput so
+  // it survives switching to another case-detail tab and back — the
+  // Activities tab body below (and the composer inside it) fully unmounts
+  // while a different tab is active. Cleared explicitly on Cancel and on a
+  // successful submit; a tab switch alone must not touch this.
+  const [draftHtml, setDraftHtml] = useState("");
+  const [draftAttachments, setDraftAttachments] = useState<
+    CommentAttachmentDraft[]
+  >([]);
+  const [draftInternal, setDraftInternal] = useState(false);
+  const [draftSourceMode, setDraftSourceMode] = useState(false);
+  const clearComposerDraft = useCallback(() => {
+    setDraftHtml("");
+    setDraftAttachments([]);
+    setDraftInternal(false);
+    setDraftSourceMode(false);
+  }, []);
   const [assignOpen, setAssignOpen] = useState(false);
   const [linkCaseOpen, setLinkCaseOpen] = useState(false);
   const [linkIncidentOpen, setLinkIncidentOpen] = useState(false);
@@ -630,6 +682,12 @@ export default function CsmCaseDetailPage(): JSX.Element {
   const [fixEtaOpen, setFixEtaOpen] = useState(false);
   const [requestUpdateOpen, setRequestUpdateOpen] = useState(false);
   const [addTagOpen, setAddTagOpen] = useState(false);
+  // Which action the escalation confirm dialog is for, if open at all — null
+  // hides the dialog. Set by whichever of Escalate/De-escalate was clicked.
+  const [escalationDialogAction, setEscalationDialogAction] = useState<
+    "ESCALATE" | "DEESCALATE" | null
+  >(null);
+  const [escalationError, setEscalationError] = useState<string | null>(null);
   // ISSU-026: closing or proposing a solution opens this instead of PATCHing
   // immediately — it collects the Post Resolution Activity and doubles as
   // the confirmation step for these two customer-notifying transitions.
@@ -687,6 +745,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setPrevCaseId(caseId);
     setFeedback(null);
     setComposerOpen(false);
+    // The lifted composer draft (see clearComposerDraft above) is per-case: a
+    // draft left over from the previous case must not appear — or be
+    // submittable — against the newly opened one.
+    clearComposerDraft();
     setAssignOpen(false);
     setResolutionDialog(null);
     setSeverityOpen(false);
@@ -710,6 +772,8 @@ export default function CsmCaseDetailPage(): JSX.Element {
     setFixEtaOpen(false);
     setRequestUpdateOpen(false);
     setAddTagOpen(false);
+    setEscalationDialogAction(null);
+    setEscalationError(null);
     // A new view of the page, distinct from every prior one even if it's a
     // return visit to the same caseId (A -> B -> A) — see caseViewTokenRef
     // below, which onRequestUpdate compares against instead of caseId itself.
@@ -1736,6 +1800,48 @@ export default function CsmCaseDetailPage(): JSX.Element {
     [addTag, showError],
   );
 
+  const onSubmitEscalation = useCallback(
+    (reason: string | undefined) => {
+      if (!escalationDialogAction) return;
+      setEscalationError(null);
+      // Compared against caseViewTokenRef in the callbacks below, not caseId
+      // itself — see onRequestUpdate's identical guard above for why a plain
+      // caseId comparison can't distinguish this view's request from a
+      // still-pending one left over from an earlier visit to the same case.
+      const submittedViewToken = caseViewTokenRef.current;
+      postEscalation.mutate(
+        { action: escalationDialogAction, reason },
+        {
+          onSuccess: () => {
+            if (caseViewTokenRef.current !== submittedViewToken) return;
+            setEscalationDialogAction(null);
+            setFeedback({
+              message:
+                escalationDialogAction === "ESCALATE"
+                  ? "Case escalated."
+                  : "Case de-escalated.",
+              severity: "success",
+              sticky: false,
+            });
+          },
+          onError: (err) => {
+            if (caseViewTokenRef.current !== submittedViewToken) return;
+            // A 400 here is actionable (e.g. a reason missing while
+            // escalating, or already at the floor/ceiling level) — surface it
+            // instead of a generic fallback and keep the dialog open with the
+            // reason text preserved, same treatment as other case actions.
+            const msg =
+              err instanceof BackendApiError && err.status < 500 && err.message
+                ? err.message
+                : "Could not update the case's escalation level.";
+            setEscalationError(msg);
+          },
+        },
+      );
+    },
+    [escalationDialogAction, postEscalation],
+  );
+
   const onRemoveTag = useCallback(
     (tagId: string) => {
       removeTag.mutate(tagId, {
@@ -2244,7 +2350,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
                   size="small"
                   variant="text"
                   color="inherit"
-                  onClick={() => setComposerOpen(false)}
+                  onClick={() => {
+                    setComposerOpen(false);
+                    clearComposerDraft();
+                  }}
                 >
                   Cancel
                 </Button>
@@ -2256,6 +2365,14 @@ export default function CsmCaseDetailPage(): JSX.Element {
                 onResumeWork={() => onAction({ secondary: "toggle_work_state" })}
                 isResumingWork={patchCase.isPending}
                 autoFocus
+                draftHtml={draftHtml}
+                onDraftHtmlChange={setDraftHtml}
+                draftAttachments={draftAttachments}
+                onDraftAttachmentsChange={setDraftAttachments}
+                draftInternal={draftInternal}
+                onDraftInternalChange={setDraftInternal}
+                draftSourceMode={draftSourceMode}
+                onDraftSourceModeChange={setDraftSourceMode}
                 onSubmit={async (bodyHtml, internal, commentAttachments) => {
                   if (!caseId) return;
                   // Post the comment only when there's text; an attachment-only
@@ -2283,9 +2400,10 @@ export default function CsmCaseDetailPage(): JSX.Element {
                       uploadedBy: engineerName,
                     });
                   }
-                  // Collapse only on success; on error the input keeps its
-                  // draft + files and surfaces the failure.
+                  // Collapse and clear the draft only on success; on error the
+                  // input keeps its draft + files and surfaces the failure.
                   setComposerOpen(false);
+                  clearComposerDraft();
                 }}
               />
             </Card>
@@ -2490,6 +2608,29 @@ export default function CsmCaseDetailPage(): JSX.Element {
             onAdd={isClosed ? undefined : () => setAddTagOpen(true)}
             onRemove={isClosed ? undefined : (t) => onRemoveTag(t.id)}
             removingId={removeTag.isPending ? removeTag.variables : null}
+          />
+          <EscalationWidget
+            currentLevel={c.escalationLevel ?? null}
+            history={escalationHistory?.escalations ?? []}
+            isHistoryLoading={isEscalationHistoryLoading}
+            isHistoryError={isEscalationHistoryError}
+            onEscalate={
+              // Visibility is level-eligibility only -- isClosed disables
+              // via actionDisabledReason below instead of hiding the button,
+              // so its tooltip still has something to anchor to.
+              canEscalateFurther(c.escalationLevel)
+                ? () => setEscalationDialogAction("ESCALATE")
+                : undefined
+            }
+            onDeescalate={
+              canDeescalate(c.escalationLevel) &&
+              callerIsNotifiedOnCurrentEscalation
+                ? () => setEscalationDialogAction("DEESCALATE")
+                : undefined
+            }
+            actionDisabledReason={
+              isClosed ? "This case is closed — it's read-only." : undefined
+            }
           />
         </Box>
       )}
@@ -2743,6 +2884,20 @@ export default function CsmCaseDetailPage(): JSX.Element {
           isSaving={patchCase.isPending}
           onClose={() => setAutocloseHoldOpen(false)}
           onSave={onSetAutocloseHold}
+        />
+      )}
+
+      {escalationDialogAction && (
+        <EscalateCaseDialog
+          action={escalationDialogAction}
+          currentLevel={c.escalationLevel ?? "0"}
+          isSaving={postEscalation.isPending}
+          errorMessage={escalationError}
+          onClose={() => {
+            setEscalationDialogAction(null);
+            setEscalationError(null);
+          }}
+          onSave={onSubmitEscalation}
         />
       )}
 

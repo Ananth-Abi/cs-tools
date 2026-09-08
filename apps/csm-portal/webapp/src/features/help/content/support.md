@@ -83,6 +83,20 @@ request** action is disabled in both places: closed cases are read-only.
 Service requests aren't available on every project. If the selected project isn't eligible,
 the create form shows a warning and blocks submission.
 
+**Escalation** shows the case's current level (EL0 "not escalated" through EL5 "CEO") as a
+badge, with a read-only history of every past escalate/de-escalate step below it — who made
+each change, when, and their stated reason. **Escalate** and **De-escalate** buttons sit next
+to the badge (whichever apply at the current level: neither shows past EL5, only "Escalate"
+shows at EL0). Either opens a short confirm dialog asking for a reason — required when
+escalating, optional when de-escalating — and posts a case work note recording the change
+automatically. Any signed-in engineer can escalate a case. De-escalating is restricted to
+whoever was notified about the case's current escalation level — the **De-escalate** button
+only shows for you if you're on that notified list. Escalation is a ServiceNow data source
+feature only; a non-ServiceNow-backed case shows no escalation level at all. The Cases list
+also has an optional **Escalation** column
+(via **Customise columns**) that shows the level badge for escalated cases only, left blank for
+everything else.
+
 ## Watchers
 
 The **Watchers** tab lists everyone notified on updates to the case, and lets you add or
@@ -93,6 +107,12 @@ If you're not on the list, a **Follow case updates** button adds you with one cl
 you're already watching, it becomes **Unfollow case updates** to take yourself off the list —
 unless you were added automatically as the case's assigned engineer, in which case Unfollow is
 disabled with a tooltip explaining why.
+
+**Provide workaround** / **Recall workaround**, in the case's **More** menu, marks (or
+un-marks) that a workaround has been given to the customer — this pauses the case's Workaround
+SLA clock while marked, and resumes it on recall. The menu item's label and icon switch
+depending on whether a workaround has already been provided, and it's shown for every case
+regardless of who's assigned to it, disabled only once the case is closed.
 
 ## Comments
 
@@ -121,6 +141,12 @@ customer for a response — pick a first, second, or final reminder (each shown 
 preview of the exact wording that will be posted) or write a custom message instead. It's only
 offered while the case is **Awaiting info** or has a **Solution proposed**, since those are the
 states where a reply from the customer is actually expected.
+
+**Hold auto-closure…**, also in the case's **More** menu, exempts a case from the automated
+auto-closure sequence until the date you pick. Setting or extending the hold automatically
+posts an internal note in the timeline recording the hold and its date, so anyone on the case
+can see when a hold was set or moved — resending the same date (e.g. an accidental re-submit)
+doesn't post a duplicate note.
 
 ## Attachments
 

@@ -76,6 +76,8 @@ type entityCaseClient interface {
 	PatchCase(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	CreateCaseComment(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	SearchComments(ctx context.Context, body []byte) ([]byte, error)
+	SearchCaseEscalations(ctx context.Context, caseID string) ([]byte, error)
+	CreateCaseEscalation(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	SearchCaseActivities(ctx context.Context, caseID string, body []byte) ([]byte, error)
 	SearchCases(ctx context.Context, body []byte) ([]byte, error)
 	AggregateCases(ctx context.Context, body []byte) ([]byte, error)
@@ -172,6 +174,83 @@ func (h *CaseHandler) resolveCurrentUserID(r *http.Request, user *middleware.Use
 		slog.ErrorContext(r.Context(), "entity GetUserMe returned an empty id while resolving the caller's platform user id", "userID", user.UserID)
 	}
 	return me.ID
+}
+
+// isDeescalationAction reports whether a case-escalation request body's
+// "action" field is DEESCALATE (case-insensitive). A missing/empty action
+// defaults to ESCALATE per the entity service's own contract, so only an
+// explicit "DEESCALATE"/"deescalate"/etc. value counts.
+func isDeescalationAction(body []byte) bool {
+	var payload struct {
+		Action string `json:"action"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return false
+	}
+	return strings.EqualFold(payload.Action, "DEESCALATE")
+}
+
+// callerIsNotifiedOnCurrentEscalation reports whether the caller is one of the
+// people notified about the case's current (most recent) escalation level --
+// the only people authorized to de-escalate it. Escalating stays open to any
+// authenticated user; only de-escalation is gated this way.
+//
+// Fails closed (returns false) on any lookup/parse error or when the case has
+// no escalation history at all (nothing to de-escalate, nobody was notified).
+// Matches by the caller's platform user id first (GET /users/me's own id
+// against a notified user's id, both platform UUIDs), falling back to a
+// case-insensitive email match when either id is empty -- the notified-user
+// id can be empty when the backing data source could not resolve a platform
+// record for that recipient.
+func (h *CaseHandler) callerIsNotifiedOnCurrentEscalation(r *http.Request, caseID string, user *middleware.UserInfo) bool {
+	raw, err := h.entity.SearchCaseEscalations(r.Context(), caseID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchCaseEscalations failed while checking de-escalation authorization", "userID", user.UserID, "caseID", caseID, "err", err)
+		return false
+	}
+	var history struct {
+		CurrentNotifiedUsers []struct {
+			ID    string `json:"id"`
+			Email string `json:"email"`
+		} `json:"currentNotifiedUsers"`
+	}
+	if err := json.Unmarshal(raw, &history); err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchCaseEscalations: parse response failed while checking de-escalation authorization", "userID", user.UserID, "caseID", caseID, "err", err)
+		return false
+	}
+	if len(history.CurrentNotifiedUsers) == 0 {
+		return false
+	}
+
+	callerRaw, err := h.entity.GetUserMe(r.Context())
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity GetUserMe failed while checking de-escalation authorization", "userID", user.UserID, "err", err)
+		return false
+	}
+	var caller struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(callerRaw, &caller); err != nil {
+		slog.ErrorContext(r.Context(), "entity GetUserMe: parse response failed while checking de-escalation authorization", "userID", user.UserID, "err", err)
+		return false
+	}
+
+	for _, notified := range history.CurrentNotifiedUsers {
+		if caller.ID != "" && notified.ID != "" && caller.ID == notified.ID {
+			return true
+		}
+		// Only fall back to email when an id is unavailable on either side --
+		// two different platform users must never be treated as the same
+		// person just because both ids happen to be missing and their emails
+		// happen to match by coincidence or staleness on one side.
+		if (caller.ID == "" || notified.ID == "") &&
+			caller.Email != "" && notified.Email != "" &&
+			strings.EqualFold(caller.Email, notified.Email) {
+			return true
+		}
+	}
+	return false
 }
 
 // maxRequestBodyBytes caps incoming request bodies at 1 MiB to prevent memory DoS.
@@ -1149,34 +1228,6 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The auto-closure hold work note (below) must only fire for an actual change in
-	// the hold date, not for a retry or a no-op PATCH that resends the existing value —
-	// otherwise every duplicate request pollutes the case's activity feed with an
-	// identical note. Read the prior value before the PATCH; after it, the case
-	// already reflects the new value and there'd be nothing to diff against.
-	var priorHoldDate string
-	if patchErr == nil && patch.AutocloseHoldUntil != nil {
-		if current, err := h.entity.GetCase(r.Context(), caseID); err != nil {
-			slog.WarnContext(r.Context(), "entity GetCase failed reading prior autoclose hold date; proceeding without dedup", "userID", user.UserID, "caseID", caseID, "err", err)
-		} else {
-			// autoclosureStateTime is only "the hold date" while the case is actually
-			// ON_HOLD — for every other autoclosureStep it's when that other stage next
-			// advances, a value unrelated to any hold. Without gating on the step, the
-			// very first hold on a case (whose autoclosureStateTime already holds some
-			// unrelated staged-advance date matching the FE's pre-filled picker default)
-			// gets misread as "unchanged" and its note silently skipped.
-			var currentCase struct {
-				AutoclosureStep      *string `json:"autoclosureStep"`
-				AutoclosureStateTime *string `json:"autoclosureStateTime"`
-			}
-			if err := json.Unmarshal(current, &currentCase); err == nil &&
-				currentCase.AutoclosureStep != nil && *currentCase.AutoclosureStep == "ON_HOLD" &&
-				currentCase.AutoclosureStateTime != nil {
-				priorHoldDate = formatHoldDate(*currentCase.AutoclosureStateTime)
-			}
-		}
-	}
-
 	result, err := h.entity.PatchCase(r.Context(), caseID, body)
 	if err != nil {
 		slog.ErrorContext(r.Context(), "entity PatchCase failed", "userID", user.UserID, "caseID", caseID, "err", err)
@@ -1187,14 +1238,20 @@ func (h *CaseHandler) PatchCase(w http.ResponseWriter, r *http.Request) {
 	// Setting/extending the auto-closure hold has no visible trail of its own on the
 	// case (unlike the legacy ticketing UI's equivalent action, which records a work
 	// note). Record one here so CS engineers can see when a hold was set/extended and
-	// until when. Best-effort and fire-and-forget: the hold PATCH above already
-	// succeeded, so this secondary write must not delay the response or fail/roll back
-	// the request if it errors. context.WithoutCancel keeps the request-scoped values
-	// the entity client needs (x-user-id-token, correlation id) while detaching from
-	// the request's own cancellation, which fires as soon as the handler returns —
-	// a bare context.Background() would drop those values and the note would reach
-	// the entity service unattributed.
-	if patchErr == nil && patch.AutocloseHoldUntil != nil && formatHoldDate(*patch.AutocloseHoldUntil) != priorHoldDate {
+	// until when — every PATCH that carries autocloseHoldUntil gets one, with no
+	// no-op/dedup check: the field this would need to key off
+	// (autoclosureStep/autoclosureStateTime) isn't reliably populated on a case read,
+	// and the legacy ticketing UI's own equivalent action has the exact same
+	// behavior (it re-posts an identical note on every resend too), so this matches
+	// established behavior rather than deviating from it. Best-effort and
+	// fire-and-forget: the hold PATCH above already succeeded, so this secondary
+	// write must not delay the response or fail/roll back the request if it errors.
+	// context.WithoutCancel keeps the request-scoped values the entity client needs
+	// (x-user-id-token, correlation id) while detaching from the request's own
+	// cancellation, which fires as soon as the handler returns — a bare
+	// context.Background() would drop those values and the note would reach the
+	// entity service unattributed.
+	if patchErr == nil && patch.AutocloseHoldUntil != nil {
 		holdUntil := *patch.AutocloseHoldUntil
 		detached := context.WithoutCancel(r.Context())
 		go func() {
@@ -1277,6 +1334,75 @@ func (h *CaseHandler) GetCase(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, result)
+}
+
+// GetCaseEscalations handles GET /cases/{id}/escalations.
+func (h *CaseHandler) GetCaseEscalations(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("id")
+	if caseID == "" || !uuidRe.MatchString(caseID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	result, err := h.entity.SearchCaseEscalations(r.Context(), caseID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity SearchCaseEscalations failed", "userID", user.UserID, "caseID", caseID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to retrieve case escalation history.")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
+// CreateCaseEscalation handles POST /cases/{id}/escalations.
+func (h *CaseHandler) CreateCaseEscalation(w http.ResponseWriter, r *http.Request) {
+	user := middleware.UserInfoFromContext(r.Context())
+	if user == nil {
+		writeError(w, http.StatusUnauthorized, ErrMsgUnauthorized)
+		return
+	}
+
+	caseID := r.PathValue("id")
+	if caseID == "" || !uuidRe.MatchString(caseID) {
+		writeError(w, http.StatusBadRequest, ErrMsgInvalidUUID)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if _, ok := err.(*http.MaxBytesError); ok {
+			writeError(w, http.StatusRequestEntityTooLarge, ErrMsgTooLarge)
+			return
+		}
+		writeError(w, http.StatusBadRequest, errMsgReadBody)
+		return
+	}
+
+	if len(body) > 0 && !json.Valid(body) {
+		writeError(w, http.StatusBadRequest, ErrMsgBadRequest)
+		return
+	}
+
+	if isDeescalationAction(body) && !h.callerIsNotifiedOnCurrentEscalation(r, caseID, user) {
+		writeError(w, http.StatusForbidden, ErrMsgForbidden)
+		return
+	}
+
+	result, err := h.entity.CreateCaseEscalation(r.Context(), caseID, body)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "entity CreateCaseEscalation failed", "userID", user.UserID, "caseID", caseID, "err", err)
+		mapUpstreamErrorGeneric(w, err, "Failed to create case escalation.")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, result)
 }
 
 // injectCaseIDField merges caseId into a JSON request body as {"caseId": "<id>"}.

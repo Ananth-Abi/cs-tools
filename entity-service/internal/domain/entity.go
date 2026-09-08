@@ -466,6 +466,11 @@ type ProjectDetailsView struct {
 	// this project is eligible to raise service requests.
 	HasSr bool `json:"hasSr"`
 	ProjectClosureFields
+	// OnboardingOwner is the person assigned to run this project's
+	// onboarding. Nil when no owner is assigned — most projects, since only
+	// onboarding-enabled projects have one. Currently populated only from
+	// the ServiceNow data source.
+	OnboardingOwner *PersonRef `json:"onboardingOwner,omitempty"`
 }
 
 // ProjectUpdateRequest is the input for PATCH /projects/{id} (ServiceNow data
@@ -1847,6 +1852,9 @@ type SearchCaseView struct {
 	// only; null otherwise. CSM-engineer-facing only, never shared with the
 	// customer.
 	WorstCaseFixEta *string `json:"worstCaseFixEta"`
+	// EscalationLevel is the case's current escalation level -- see
+	// CaseView.EscalationLevel's doc comment.
+	EscalationLevel *string `json:"escalationLevel"`
 }
 
 // SearchCasesResponse is the paginated result of a case search. When the
@@ -5080,6 +5088,22 @@ type SearchEscalationsResponse struct {
 	Total       int          `json:"total"`
 	Offset      int          `json:"offset"`
 	Limit       int          `json:"limit"`
+}
+
+// CaseEscalationHistory is the response for GET /cases/{id}/escalations: a
+// single case's full escalation history (newest first), plus who is
+// authorized to de-escalate its current level.
+type CaseEscalationHistory struct {
+	Escalations []Escalation `json:"escalations"`
+	Total       int          `json:"total"`
+	// CurrentNotifiedUsers is the NotifiedUsers list of the most recent
+	// record in Escalations (i.e. who was notified about the case's current
+	// escalation level). Always present (an empty array, never omitted/null)
+	// when the case has never been escalated. Only someone on this list is
+	// authorized to de-escalate the case's current level -- surfaced as its
+	// own field so callers don't each re-derive "the first record's notified
+	// list" independently.
+	CurrentNotifiedUsers []EscalationNotifiedUser `json:"currentNotifiedUsers"`
 }
 
 // --- case-grouped time cards (ServiceNow data source only) ---
