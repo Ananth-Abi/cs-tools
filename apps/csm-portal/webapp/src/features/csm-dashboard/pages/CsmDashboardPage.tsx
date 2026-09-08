@@ -77,8 +77,8 @@ import { ALL_TEAMS_SENTINEL } from "@features/csm-dashboard/utils/teamFilterPlac
  * least one real (config-driven) widget, so this always renders the real
  * widget grid, via `AgentsLandingPagePilot`.
  *
- * The Wallboard-styled full-screen dashboard (matching `digiops-cs`'s
- * Wallboard.tsx — see `CS_Dashboard.png`) is NOT rendered here — it lives
+ * The Wallboard-styled full-screen dashboard (matching the reference
+ * wallboard implementation — see `CS_Dashboard.png`) is NOT rendered here — it lives
  * at its own route, `/cs-monitor-dashboard`
  * (`CsMonitorDashboardPage.tsx`), outside this page and outside the
  * normal CSM Portal chrome entirely. This page always renders the
