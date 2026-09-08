@@ -32,7 +32,7 @@ import (
 // image icon there) refuse to render inline base64 images in received
 // mail, so the logo has to be fetched from a real reachable address like
 // any other web image.
-const wso2LogoURL = "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.webp"
+const wso2LogoURL = "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.png"
 
 // emailHTMLTemplate is the branded shell the customer-facing notice is
 // wrapped in — peach page background, logo header, orange accent border

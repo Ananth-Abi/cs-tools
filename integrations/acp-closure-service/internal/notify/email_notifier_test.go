@@ -352,7 +352,7 @@ func TestEmailNotifier_Send_CustomerNoticeGetsBrandedTemplate(t *testing.T) {
 	}
 	got := sender.calls[0].htmlBody
 
-	if !strings.Contains(got, "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.webp") {
+	if !strings.Contains(got, "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.png") {
 		t.Error("htmlBody missing the WSO2 logo <img> reference")
 	}
 	if !strings.Contains(got, "This automated message was sent by WSO2's support system. Please do not reply to this email.") {
