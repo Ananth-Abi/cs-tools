@@ -67,8 +67,8 @@ const emailHTMLTemplate = `<div style="background-color:#fdece2;padding:32px 16p
 // detail box's inner HTML (pre-built field rows), closing sentence (HTML),
 // sign-off (HTML). Built by renderInternalEmailHTML, which is the only
 // thing that knows this template expects exactly that shape.
-const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
-  <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;">
+const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;font-family:Arial,Helvetica,sans-serif;">
+  <div style="background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;box-sizing:border-box;">
     <p style="color:#1a56db;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
     <p style="color:#1a56db;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
     <div style="border:1px solid #e0e0e0;border-radius:4px;background-color:#fafafa;padding:16px 20px;margin:0 0 16px 0;">
@@ -77,7 +77,7 @@ const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;padding:
     <p style="color:#333333;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
     <p style="color:#333333;font-size:14px;line-height:1.6;margin:0;">%s</p>
   </div>
-  <div style="max-width:600px;margin:8px auto 0 auto;padding:0 32px;color:#888888;font-size:11px;">
+  <div style="padding:8px 32px 0 32px;color:#888888;font-size:11px;">
     This automated message was sent by WSO2's support system. Please do not reply to this email.
   </div>
 </div>`
@@ -87,11 +87,11 @@ const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;padding:
 // the no-business-contact notice) — same card styling as
 // internalEmailHTMLTemplate, but without attempting the greeting/detail
 // box/closing split, since that shape assumption doesn't hold for it.
-const internalEmailFallbackTemplate = `<div style="background-color:#ffffff;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
-  <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;color:#333333;font-size:14px;line-height:1.6;">
+const internalEmailFallbackTemplate = `<div style="background-color:#ffffff;font-family:Arial,Helvetica,sans-serif;">
+  <div style="background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;color:#333333;font-size:14px;line-height:1.6;box-sizing:border-box;">
     %s
   </div>
-  <div style="max-width:600px;margin:8px auto 0 auto;padding:0 32px;color:#888888;font-size:11px;">
+  <div style="padding:8px 32px 0 32px;color:#888888;font-size:11px;">
     This automated message was sent by WSO2's support system. Please do not reply to this email.
   </div>
 </div>`
