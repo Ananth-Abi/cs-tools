@@ -355,15 +355,20 @@ plain authenticated HTTP call.
   parameter is named `htmlBody`). `notify.plainTextToHTML` escapes special
   characters first (so a project/account name containing `&`, `<`, etc.
   can never break the resulting markup), then converts every newline to
-  `<br>`. The internal notice stops there — plain text, no further
-  wrapping, per its own confirmed reference design (real screenshots
-  Chamara shared). The customer-facing notice additionally gets wrapped in
-  `emailHTMLTemplate` (`renderEmailHTML`) — a real branded shell (WSO2
-  logo, orange accent border, footer disclaimer), also confirmed against
-  real received examples — only when `notice.Recipients.Customer != nil`.
-  The logo is a hosted URL (`wso2LogoURL`, WSO2's own public CDN), not an
-  embedded `data:` URI — confirmed via a real send that Gmail blocks
-  inline `data:` images in received mail.
+  `<br>`. Every notice — internal and customer-facing alike — additionally
+  gets wrapped in `emailHTMLTemplate` (`renderEmailHTML`), unconditionally:
+  a real branded shell (WSO2 logo, orange accent border, footer
+  disclaimer), confirmed against real received examples of both kinds
+  (e.g. a real internal day-0 notice, "Dear Nisha Farook..."). An earlier
+  version of this code kept the internal notice on the bare
+  `plainTextToHTML` fragment alone (based on a different, less complete
+  reference) — that was wrong, corrected once a fuller real example
+  surfaced it. Sending that bare, unwrapped fragment (no real block-level
+  container) was also the likely cause of a real symptom seen in a live
+  test: the trailing "WSO2 Team" signature line visually missing from the
+  received email. The logo is a hosted URL (`wso2LogoURL`, WSO2's own
+  public CDN), not an embedded `data:` URI — confirmed via a real send
+  that Gmail blocks inline `data:` images in received mail.
 - **`notifier.Send` reports delivery per call, not per notifier.** The
   interface is `Send(ctx, notice) (delivered bool, err error)` — no
   separate `Delivers()` method. `LoggingNotifier.Send` always returns

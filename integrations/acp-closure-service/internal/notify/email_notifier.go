@@ -110,15 +110,15 @@ func (n *EmailNotifier) Send(ctx context.Context, notice Notice) (bool, error) {
 		return false, nil
 	}
 
-	htmlBody := plainTextToHTML(notice.Body)
-	if notice.Recipients.Customer != nil {
-		// Only the customer-facing notice gets the branded WSO2 shell — the
-		// internal notice (Account Owner/Renewal Manager/Technical Owner,
-		// no Customer) stays plain, matching its own separate reference
-		// design. Confirmed explicitly against real examples: applying the
-		// branded look to both was wrong.
-		htmlBody = renderEmailHTML(notice.Body)
-	}
+	// Every notice — internal and customer-facing alike — gets the branded
+	// WSO2 shell, confirmed against real received examples of both. An
+	// earlier version of this code kept the internal notice on the bare
+	// plainTextToHTML fragment alone, based on a different, less complete
+	// reference; that was wrong (corrected here), and sending an unwrapped
+	// fragment with no real block-level container was also the likely
+	// cause of a real symptom seen in a live test: the trailing "WSO2
+	// Team" signature line visually missing in the received email.
+	htmlBody := renderEmailHTML(notice.Body)
 
 	if err := n.Sender.SendEmail(ctx, to, cc, notice.Subject, htmlBody); err != nil {
 		return false, fmt.Errorf("send email: %w", err)

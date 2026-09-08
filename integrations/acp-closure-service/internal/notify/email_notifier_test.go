@@ -224,14 +224,20 @@ func TestEmailNotifier_Send_SkipsWhenNoValidRecipientsRemain(t *testing.T) {
 	}
 }
 
-// TestEmailNotifier_Send_InternalNoticeStaysPlainHTML verifies an
+// TestEmailNotifier_Send_InternalNoticeGetsBrandedTemplate verifies an
 // internal-only notice (no Customer in Recipients — the 90/60/30/15/7/0
-// day-count/suspension reminders, and the no-business-contact notice) is
-// NOT wrapped in the branded shell — confirmed against a real received
-// example that the internal notice must stay plain text (converted to
-// simple HTML only: escaped, newlines to <br>), matching its own reference
-// design, distinct from the customer-facing one.
-func TestEmailNotifier_Send_InternalNoticeStaysPlainHTML(t *testing.T) {
+// day-count/suspension reminders, and the no-business-contact notice) IS
+// wrapped in the branded shell too — confirmed against a real received
+// example ("Dear Nisha Farook...", an internal day-0 notice) showing the
+// full branded look (logo, orange border, footer). An earlier version of
+// this code made internal notices stay plain, based on a different, less
+// complete reference; that was wrong — corrected here. Sending the bare,
+// unwrapped plain-text fragment was also the likely cause of a real
+// symptom seen in a live test: the trailing "WSO2 Team" line visually
+// missing from the received email (Gmail can clip a trailing line with no
+// real block-level container around it) — the branded wrapper's actual
+// <div> structure avoids that.
+func TestEmailNotifier_Send_InternalNoticeGetsBrandedTemplate(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
@@ -248,16 +254,19 @@ func TestEmailNotifier_Send_InternalNoticeStaysPlainHTML(t *testing.T) {
 	if len(sender.calls) != 1 {
 		t.Fatalf("SendEmail calls = %d, want 1", len(sender.calls))
 	}
-	const want = "Dear Team<br>\n<br>\nProject: A &amp; B &lt;Special&gt;"
-	if got := sender.calls[0].htmlBody; got != want {
-		t.Errorf("htmlBody = %q, want %q (no branded wrapper on an internal-only notice)", got, want)
+	got := sender.calls[0].htmlBody
+	if !strings.Contains(got, "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.webp") {
+		t.Error("htmlBody missing the WSO2 logo <img> reference")
+	}
+	const wantBody = "Dear Team<br>\n<br>\nProject: A &amp; B &lt;Special&gt;"
+	if !strings.Contains(got, wantBody) {
+		t.Errorf("htmlBody = %q, want it to contain %q", got, wantBody)
 	}
 }
 
 // TestEmailNotifier_Send_CustomerNoticeGetsBrandedTemplate verifies the
 // branded WSO2 shell (logo, orange accent border, footer disclaimer) wraps
-// only the customer-facing notice — the one Recipients.Customer being
-// non-nil actually identifies — per Chamara's real examples.
+// the customer-facing notice too, per real examples.
 func TestEmailNotifier_Send_CustomerNoticeGetsBrandedTemplate(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
