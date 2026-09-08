@@ -35,10 +35,10 @@ import (
 const wso2LogoURL = "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.webp"
 
 // emailHTMLTemplate is the branded shell the customer-facing notice is
-// wrapped in — logo header, orange accent border around the message body,
-// and the standard disclaimer footer — matching real examples Chamara
-// shared (screenshots of actual received notices), not a from-scratch
-// design. The internal notice does not use this — see Send. Two
+// wrapped in — peach page background, logo header, orange accent border
+// around the message body, and the standard disclaimer footer — matching
+// real customer-facing examples. The internal notice uses a different,
+// distinct template (internalEmailHTMLTemplate) — see Send. Two
 // placeholders: the logo URL, then the notice body already converted to
 // simple HTML by plainTextToHTML.
 const emailHTMLTemplate = `<div style="background-color:#fdece2;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
@@ -54,6 +54,45 @@ const emailHTMLTemplate = `<div style="background-color:#fdece2;padding:32px 16p
     <div style="padding:16px 32px;border-top:1px solid #eeeeee;color:#888888;font-size:11px;">
       This automated message was sent by WSO2's support system. Please do not reply to this email.
     </div>
+  </div>
+</div>`
+
+// internalEmailHTMLTemplate is the internal notice's own distinct branded
+// shell — no peach background, no logo header, a simple light-bordered
+// white card instead. Confirmed against a real received internal notice
+// example ("Dear Nisha Farook..."): the greeting and intro sentence render
+// in blue, the five project/account fields sit in their own bordered
+// detail box, and the closing sentence plus sign-off are plain black text.
+// Five placeholders in order: greeting (HTML), intro sentence (HTML), the
+// detail box's inner HTML (pre-built field rows), closing sentence (HTML),
+// sign-off (HTML). Built by renderInternalEmailHTML, which is the only
+// thing that knows this template expects exactly that shape.
+const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;">
+    <p style="color:#1a56db;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <p style="color:#1a56db;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <div style="border:1px solid #e0e0e0;border-radius:4px;background-color:#fafafa;padding:16px 20px;margin:0 0 16px 0;">
+      %s
+    </div>
+    <p style="color:#333333;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <p style="color:#333333;font-size:14px;line-height:1.6;margin:0;">%s</p>
+  </div>
+  <div style="max-width:600px;margin:8px auto 0 auto;padding:0 32px;color:#888888;font-size:11px;">
+    This automated message was sent by WSO2's support system. Please do not reply to this email.
+  </div>
+</div>`
+
+// internalEmailFallbackTemplate wraps a body that doesn't match the
+// day-count/suspension reminder's expected paragraph shape (currently:
+// the no-business-contact notice) — same card styling as
+// internalEmailHTMLTemplate, but without attempting the greeting/detail
+// box/closing split, since that shape assumption doesn't hold for it.
+const internalEmailFallbackTemplate = `<div style="background-color:#ffffff;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;color:#333333;font-size:14px;line-height:1.6;">
+    %s
+  </div>
+  <div style="max-width:600px;margin:8px auto 0 auto;padding:0 32px;color:#888888;font-size:11px;">
+    This automated message was sent by WSO2's support system. Please do not reply to this email.
   </div>
 </div>`
 
@@ -110,15 +149,23 @@ func (n *EmailNotifier) Send(ctx context.Context, notice Notice) (bool, error) {
 		return false, nil
 	}
 
-	// Every notice — internal and customer-facing alike — gets the branded
-	// WSO2 shell, confirmed against real received examples of both. An
-	// earlier version of this code kept the internal notice on the bare
-	// plainTextToHTML fragment alone, based on a different, less complete
-	// reference; that was wrong (corrected here), and sending an unwrapped
+	// Every notice — internal and customer-facing alike — gets a branded
+	// WSO2 shell, confirmed against real received examples of both — but
+	// the two shells are genuinely different (not just a color swap): the
+	// customer-facing one is renderEmailHTML (peach background, logo,
+	// orange border); the internal one is its own distinct
+	// renderInternalEmailHTML (light-bordered white card, blue
+	// greeting/intro, a separate detail box for the project/account
+	// fields). An earlier version of this code kept the internal notice
+	// on the bare plainTextToHTML fragment alone, based on a different,
+	// less complete reference; that was wrong, and sending an unwrapped
 	// fragment with no real block-level container was also the likely
 	// cause of a real symptom seen in a live test: the trailing "WSO2
 	// Team" signature line visually missing in the received email.
-	htmlBody := renderEmailHTML(notice.Body)
+	htmlBody := renderInternalEmailHTML(notice.Body)
+	if notice.Recipients.Customer != nil {
+		htmlBody = renderEmailHTML(notice.Body)
+	}
 
 	if err := n.Sender.SendEmail(ctx, to, cc, notice.Subject, htmlBody); err != nil {
 		return false, fmt.Errorf("send email: %w", err)
@@ -169,13 +216,61 @@ func (n *EmailNotifier) filterRecipients(emails []string) []string {
 	return filtered
 }
 
-// renderEmailHTML wraps a notice's plain-text Body in the branded WSO2
-// email shell (emailHTMLTemplate) — logo, orange accent border, footer
-// disclaimer — matching real customer-facing notice examples. Used by Send
-// only when notice.Recipients.Customer is non-nil; the internal notice
-// stays on plainTextToHTML alone, per its own separate reference design.
+// renderEmailHTML wraps a notice's plain-text Body in the customer-facing
+// branded WSO2 email shell (emailHTMLTemplate) — logo, orange accent
+// border, footer disclaimer — matching real customer-facing notice
+// examples. Used by Send only when notice.Recipients.Customer is non-nil.
 func renderEmailHTML(body string) string {
 	return fmt.Sprintf(emailHTMLTemplate, wso2LogoURL, plainTextToHTML(body))
+}
+
+// internalBodyParagraphCount is the exact number of blank-line-separated
+// paragraphs the day-count/suspension reminder body templates always
+// produce (sweep.go's internalReminderBodyTemplate /
+// internalSuspensionBodyTemplate): greeting, intro sentence, 5 field
+// lines (Project Name/Key/Account Owner/Start Date/End Date), closing
+// sentence, sign-off. renderInternalEmailHTML only attempts the
+// structured layout when a body has exactly this shape.
+const internalBodyParagraphCount = 9
+
+// renderInternalEmailHTML wraps an internal notice's body in its own
+// distinct branded shell (internalEmailHTMLTemplate). The day-count/
+// suspension reminder bodies have a known, fixed paragraph shape (see
+// internalBodyParagraphCount) — when a body matches it, this pulls the
+// project/account field lines out into their own styled detail box and
+// colors the greeting/intro blue, matching the real reference example.
+// Anything else (currently: the no-business-contact notice, a genuinely
+// different shape) falls back to internalEmailFallbackTemplate — same
+// card styling, without assuming a shape that doesn't hold for it.
+func renderInternalEmailHTML(body string) string {
+	paragraphs := strings.Split(body, "\n\n")
+	if len(paragraphs) != internalBodyParagraphCount {
+		return fmt.Sprintf(internalEmailFallbackTemplate, plainTextToHTML(body))
+	}
+
+	greeting := plainTextToHTML(paragraphs[0])
+	intro := plainTextToHTML(paragraphs[1])
+	var fields strings.Builder
+	for _, p := range paragraphs[2:7] {
+		fields.WriteString(fieldRowHTML(p))
+	}
+	closing := plainTextToHTML(paragraphs[7])
+	signoff := plainTextToHTML(paragraphs[8])
+
+	return fmt.Sprintf(internalEmailHTMLTemplate, greeting, intro, fields.String(), closing, signoff)
+}
+
+// fieldRowHTML renders one "Label: value" paragraph (e.g. "Project Name:
+// X") as its own styled row inside the internal template's detail box,
+// bolding the value. Falls back to a plain escaped line if a paragraph
+// doesn't have the expected "Label: value" shape, rather than dropping it.
+func fieldRowHTML(paragraph string) string {
+	label, value, ok := strings.Cut(paragraph, ": ")
+	if !ok {
+		return fmt.Sprintf(`<p style="margin:0 0 8px 0;color:#333333;font-size:14px;">%s</p>`, plainTextToHTML(paragraph))
+	}
+	return fmt.Sprintf(`<p style="margin:0 0 8px 0;color:#333333;font-size:14px;">%s: <strong>%s</strong></p>`,
+		html.EscapeString(label), html.EscapeString(value))
 }
 
 // plainTextToHTML converts a plain-text notice Body (every existing

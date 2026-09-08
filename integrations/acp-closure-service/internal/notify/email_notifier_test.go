@@ -224,26 +224,42 @@ func TestEmailNotifier_Send_SkipsWhenNoValidRecipientsRemain(t *testing.T) {
 	}
 }
 
-// TestEmailNotifier_Send_InternalNoticeGetsBrandedTemplate verifies an
-// internal-only notice (no Customer in Recipients — the 90/60/30/15/7/0
-// day-count/suspension reminders, and the no-business-contact notice) IS
-// wrapped in the branded shell too — confirmed against a real received
-// example ("Dear Nisha Farook...", an internal day-0 notice) showing the
-// full branded look (logo, orange border, footer). An earlier version of
-// this code made internal notices stay plain, based on a different, less
-// complete reference; that was wrong — corrected here. Sending the bare,
-// unwrapped plain-text fragment was also the likely cause of a real
-// symptom seen in a live test: the trailing "WSO2 Team" line visually
-// missing from the received email (Gmail can clip a trailing line with no
-// real block-level container around it) — the branded wrapper's actual
-// <div> structure avoids that.
-func TestEmailNotifier_Send_InternalNoticeGetsBrandedTemplate(t *testing.T) {
+// internalReminderBody builds a body matching the real day-count/
+// suspension reminder templates' exact 9-paragraph shape (sweep.go), so
+// tests can exercise renderInternalEmailHTML's structured layout without
+// depending on the sweep package.
+func internalReminderBody() string {
+	return strings.Join([]string{
+		"Dear Jordan Perera",
+		"The following project has a non renewed contract. Please find the details below.",
+		"Project Name: Acme - Subscription",
+		"Project Key: ACMESUB",
+		"Account Owner: Jordan Perera",
+		"Start Date: 2025-01-01",
+		"End Date: 2026-01-01",
+		"Since projects needs contract renewal, kindly take the remedial actions.",
+		"Best Regards,\nWSO2 Team",
+	}, "\n\n")
+}
+
+// TestEmailNotifier_Send_InternalNoticeGetsOwnBrandedTemplate verifies an
+// internal-only notice (no Customer in Recipients) gets its own distinct
+// branded shell — not the customer-facing one, and not the old bare
+// plain-text fragment. Confirmed against a real received example ("Dear
+// Nisha Farook...", an internal day-0 notice): no logo, a light-bordered
+// card, and the project/account fields pulled into their own detail box.
+// An earlier version of this code either kept internal notices plain, or
+// wrongly gave them the customer-facing shell — both corrected here.
+// Sending the original bare, unwrapped plain-text fragment was also the
+// likely cause of a real symptom seen in a live test: the trailing "WSO2
+// Team" line visually missing from the received email.
+func TestEmailNotifier_Send_InternalNoticeGetsOwnBrandedTemplate(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
 
 	_, err := n.Send(context.Background(), Notice{
 		Subject: "subject",
-		Body:    "Dear Team\n\nProject: A & B <Special>",
+		Body:    internalReminderBody(),
 		Recipients: Recipients{
 			AccountOwner: recipients.Contact{Email: "am@wso2.com"},
 		},
@@ -255,12 +271,55 @@ func TestEmailNotifier_Send_InternalNoticeGetsBrandedTemplate(t *testing.T) {
 		t.Fatalf("SendEmail calls = %d, want 1", len(sender.calls))
 	}
 	got := sender.calls[0].htmlBody
-	if !strings.Contains(got, "https://wso2.cachefly.net/wso2/sites/all/image_resources/logos/WSO2-Logo-Black.webp") {
-		t.Error("htmlBody missing the WSO2 logo <img> reference")
+
+	if strings.Contains(got, "https://wso2.cachefly.net") {
+		t.Error("htmlBody has the WSO2 logo image — the internal template must not use the customer-facing shell")
 	}
-	const wantBody = "Dear Team<br>\n<br>\nProject: A &amp; B &lt;Special&gt;"
-	if !strings.Contains(got, wantBody) {
-		t.Errorf("htmlBody = %q, want it to contain %q", got, wantBody)
+	if !strings.Contains(got, "Dear Jordan Perera") {
+		t.Error("htmlBody missing the greeting")
+	}
+	if !strings.Contains(got, "Project Name: <strong>Acme - Subscription</strong>") {
+		t.Error("htmlBody missing the structured Project Name field row")
+	}
+	if !strings.Contains(got, "Project Key: <strong>ACMESUB</strong>") {
+		t.Error("htmlBody missing the structured Project Key field row")
+	}
+	if !strings.Contains(got, "Best Regards") || !strings.Contains(got, "WSO2 Team") {
+		t.Error("htmlBody missing the sign-off")
+	}
+	if !strings.Contains(got, "This automated message was sent by WSO2's support system. Please do not reply to this email.") {
+		t.Error("htmlBody missing the standard footer disclaimer")
+	}
+}
+
+// TestEmailNotifier_Send_InternalFallbackForUnrecognizedShape covers the
+// no-business-contact notice — a genuinely different body shape (no
+// blank-line-separated field paragraphs) than the day-count/suspension
+// reminder. renderInternalEmailHTML must not misparse it; it should fall
+// back to wrapping the whole body plainly in the same card styling rather
+// than dropping content or producing a broken structured layout.
+func TestEmailNotifier_Send_InternalFallbackForUnrecognizedShape(t *testing.T) {
+	sender := &mockEmailSender{}
+	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
+
+	const body = "Internal - Customer Project without Business Contacts\n\n" +
+		"Urgent reminder regarding the project Acme - Subscription.\n\n" +
+		"Project Name: Acme - Subscription\nProject Key: ACMESUB\nAccount Owner: Jordan Perera"
+
+	_, err := n.Send(context.Background(), Notice{
+		Subject:    "subject",
+		Body:       body,
+		Recipients: Recipients{AccountOwner: recipients.Contact{Email: "am@wso2.com"}},
+	})
+	if err != nil {
+		t.Fatalf("Send() error = %v, want nil", err)
+	}
+	if len(sender.calls) != 1 {
+		t.Fatalf("SendEmail calls = %d, want 1", len(sender.calls))
+	}
+	got := sender.calls[0].htmlBody
+	if !strings.Contains(got, "Urgent reminder regarding the project Acme - Subscription.") {
+		t.Errorf("htmlBody = %q, missing body content in the fallback rendering", got)
 	}
 }
 
