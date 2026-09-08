@@ -296,6 +296,12 @@ func TestEmailNotifier_Send_InternalNoticeGetsOwnBrandedTemplate(t *testing.T) {
 	if !strings.Contains(got, "<table") {
 		t.Error("footer should lay the disclaimer/logo out with a <table>, not flexbox — Gmail doesn't reliably honor display:flex, so the logo ends up inline right after the text instead of pushed to the right edge")
 	}
+	if !strings.Contains(got, "background-color:#f2f2f2;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;") {
+		t.Error("outer wrapper should have a light ash-gray page background framing the white card, matching the real reference — currently the outer background is plain white, so the card has no visible frame")
+	}
+	if !strings.Contains(got, `color:#1a56db;font-size:16px`) {
+		t.Error("greeting/intro text should render larger than the body text (16px), matching the real reference's visual hierarchy")
+	}
 }
 
 // TestEmailNotifier_Send_InternalFallbackForUnrecognizedShape covers the

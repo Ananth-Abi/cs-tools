@@ -59,19 +59,22 @@ const emailHTMLTemplate = `<div style="background-color:#fdece2;padding:32px 16p
 
 // internalEmailHTMLTemplate is the internal notice's own distinct branded
 // shell — no peach background, no logo header, a simple light-bordered
-// white card instead. Confirmed against a real received internal notice
-// example ("Dear Nisha Farook..."): the greeting and intro sentence render
-// in blue, the five project/account fields sit in their own bordered
-// detail box, and the closing sentence plus sign-off are plain black text.
-// Five placeholders in order: greeting (HTML), intro sentence (HTML), the
-// detail box's inner HTML (pre-built field rows), closing sentence (HTML),
-// sign-off (HTML). Built by renderInternalEmailHTML, which is the only
-// thing that knows this template expects exactly that shape.
-const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;font-family:Arial,Helvetica,sans-serif;">
+// white card instead, framed by a light ash-gray page background (the
+// same #f2f2f2 tone as the detail box below, matching the real reference).
+// Confirmed against a real received internal notice example ("Dear Nisha
+// Farook..."): the greeting and intro sentence render in blue and larger
+// than the body text, the five project/account fields sit in their own
+// bordered detail box, and the closing sentence plus sign-off are plain
+// black text. Five placeholders in order: greeting (HTML), intro sentence
+// (HTML), the detail box's inner HTML (pre-built field rows), closing
+// sentence (HTML), sign-off (HTML). Built by renderInternalEmailHTML,
+// which is the only thing that knows this template expects exactly that
+// shape.
+const internalEmailHTMLTemplate = `<div style="background-color:#f2f2f2;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
   <div style="background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;box-sizing:border-box;">
-    <p style="color:#1a56db;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
-    <p style="color:#1a56db;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
-    <div style="border:1px solid #e0e0e0;border-radius:4px;background-color:#fafafa;padding:16px 20px;margin:0 0 16px 0;">
+    <p style="color:#1a56db;font-size:16px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <p style="color:#1a56db;font-size:16px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <div style="border:1px solid #e0e0e0;border-radius:4px;background-color:#f2f2f2;padding:16px 20px;margin:0 0 16px 0;">
       %s
     </div>
     <p style="color:#333333;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
@@ -90,7 +93,7 @@ const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;font-fam
 // the no-business-contact notice) — same card styling as
 // internalEmailHTMLTemplate, but without attempting the greeting/detail
 // box/closing split, since that shape assumption doesn't hold for it.
-const internalEmailFallbackTemplate = `<div style="background-color:#ffffff;font-family:Arial,Helvetica,sans-serif;">
+const internalEmailFallbackTemplate = `<div style="background-color:#f2f2f2;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
   <div style="background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;color:#333333;font-size:14px;line-height:1.6;box-sizing:border-box;">
     %s
   </div>
