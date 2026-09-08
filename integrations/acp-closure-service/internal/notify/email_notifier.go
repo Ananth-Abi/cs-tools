@@ -77,8 +77,9 @@ const internalEmailHTMLTemplate = `<div style="background-color:#ffffff;font-fam
     <p style="color:#333333;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
     <p style="color:#333333;font-size:14px;line-height:1.6;margin:0;">%s</p>
   </div>
-  <div style="padding:8px 32px 0 32px;color:#888888;font-size:11px;">
-    This automated message was sent by WSO2's support system. Please do not reply to this email.
+  <div style="padding:8px 32px 0 32px;display:flex;justify-content:space-between;align-items:center;">
+    <span style="color:#888888;font-size:11px;">This automated message was sent by WSO2's support system. Please do not reply to this email.</span>
+    <img src="%s" alt="WSO2" height="16" style="display:block;">
   </div>
 </div>`
 
@@ -91,8 +92,9 @@ const internalEmailFallbackTemplate = `<div style="background-color:#ffffff;font
   <div style="background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;color:#333333;font-size:14px;line-height:1.6;box-sizing:border-box;">
     %s
   </div>
-  <div style="padding:8px 32px 0 32px;color:#888888;font-size:11px;">
-    This automated message was sent by WSO2's support system. Please do not reply to this email.
+  <div style="padding:8px 32px 0 32px;display:flex;justify-content:space-between;align-items:center;">
+    <span style="color:#888888;font-size:11px;">This automated message was sent by WSO2's support system. Please do not reply to this email.</span>
+    <img src="%s" alt="WSO2" height="16" style="display:block;">
   </div>
 </div>`
 
@@ -245,7 +247,7 @@ const internalBodyParagraphCount = 9
 func renderInternalEmailHTML(body string) string {
 	paragraphs := strings.Split(body, "\n\n")
 	if len(paragraphs) != internalBodyParagraphCount {
-		return fmt.Sprintf(internalEmailFallbackTemplate, plainTextToHTML(body))
+		return fmt.Sprintf(internalEmailFallbackTemplate, plainTextToHTML(body), wso2LogoURL)
 	}
 
 	greeting := plainTextToHTML(paragraphs[0])
@@ -257,7 +259,7 @@ func renderInternalEmailHTML(body string) string {
 	closing := plainTextToHTML(paragraphs[7])
 	signoff := plainTextToHTML(paragraphs[8])
 
-	return fmt.Sprintf(internalEmailHTMLTemplate, greeting, intro, fields.String(), closing, signoff)
+	return fmt.Sprintf(internalEmailHTMLTemplate, greeting, intro, fields.String(), closing, signoff, wso2LogoURL)
 }
 
 // fieldRowHTML renders one "Label: value" paragraph (e.g. "Project Name:

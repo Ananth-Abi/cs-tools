@@ -272,8 +272,11 @@ func TestEmailNotifier_Send_InternalNoticeGetsOwnBrandedTemplate(t *testing.T) {
 	}
 	got := sender.calls[0].htmlBody
 
-	if strings.Contains(got, "https://wso2.cachefly.net") {
-		t.Error("htmlBody has the WSO2 logo image — the internal template must not use the customer-facing shell")
+	if strings.Contains(got, "#fdece2") || strings.Contains(got, "#ff7300") {
+		t.Error("htmlBody uses the customer-facing shell's peach background/orange border — internal must use its own distinct template")
+	}
+	if !strings.Contains(got, wso2LogoURL) {
+		t.Error("htmlBody missing the WSO2 logo — internal notices get it in the footer, matching the real reference")
 	}
 	if !strings.Contains(got, "Dear Jordan Perera") {
 		t.Error("htmlBody missing the greeting")
@@ -320,6 +323,9 @@ func TestEmailNotifier_Send_InternalFallbackForUnrecognizedShape(t *testing.T) {
 	got := sender.calls[0].htmlBody
 	if !strings.Contains(got, "Urgent reminder regarding the project Acme - Subscription.") {
 		t.Errorf("htmlBody = %q, missing body content in the fallback rendering", got)
+	}
+	if !strings.Contains(got, wso2LogoURL) {
+		t.Error("htmlBody missing the WSO2 logo in the fallback rendering too")
 	}
 }
 
