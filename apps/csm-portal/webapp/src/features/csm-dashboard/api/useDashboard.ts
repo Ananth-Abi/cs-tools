@@ -49,7 +49,7 @@ export function useDashboard(
       return api.get<BeDashboard>(`/dashboards/${dashboardId}`);
     },
     enabled: dashboardId !== undefined,
-    staleTime: 30_000,
+    staleTime: 300_000,
     refetchInterval: refetchIntervalMs,
   });
 }
