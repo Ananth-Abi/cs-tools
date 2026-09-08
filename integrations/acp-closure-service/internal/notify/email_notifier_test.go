@@ -293,6 +293,9 @@ func TestEmailNotifier_Send_InternalNoticeGetsOwnBrandedTemplate(t *testing.T) {
 	if !strings.Contains(got, "This automated message was sent by WSO2's support system. Please do not reply to this email.") {
 		t.Error("htmlBody missing the standard footer disclaimer")
 	}
+	if !strings.Contains(got, "<table") {
+		t.Error("footer should lay the disclaimer/logo out with a <table>, not flexbox — Gmail doesn't reliably honor display:flex, so the logo ends up inline right after the text instead of pushed to the right edge")
+	}
 }
 
 // TestEmailNotifier_Send_InternalFallbackForUnrecognizedShape covers the
