@@ -88,6 +88,37 @@ const internalEmailHTMLTemplate = `<div style="background-color:#f2f2f2;padding:
   </table>
 </div>`
 
+// internalInvoiceEmailHTMLTemplate is the invoice-based internal notice's
+// shell — identical to internalEmailHTMLTemplate (same card, same
+// greeting/intro/closing/signoff styling, same footer) except the detail
+// box has a second, nested box inside it for the invoice-specific fields
+// (Invoice Id/Opportunity/Due Date), confirmed against real reference
+// examples (actual_90_days_invoice_email.png, actual_0_days_invoice_email.html)
+// — those three fields render visually nested under the project fields, not
+// as three more flat rows in the same box. Seven placeholders in order:
+// greeting, intro, project fields' inner HTML, invoice fields' inner HTML,
+// closing, sign-off, wso2LogoURL. Built by renderInternalInvoiceEmailHTML.
+const internalInvoiceEmailHTMLTemplate = `<div style="background-color:#f2f2f2;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;box-sizing:border-box;">
+    <p style="color:#1a56db;font-size:16px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <p style="color:#1a56db;font-size:16px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <div style="border:1px solid #e0e0e0;border-radius:4px;background-color:#f2f2f2;padding:16px 20px;margin:0 0 16px 0;">
+      %s
+      <div style="border:1px solid #e0e0e0;border-radius:4px;background-color:#ffffff;padding:12px 16px;margin-top:8px;">
+        %s
+      </div>
+    </div>
+    <p style="color:#333333;font-size:14px;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <p style="color:#333333;font-size:14px;line-height:1.6;margin:0;">%s</p>
+  </div>
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="width:100%%;margin-top:8px;">
+    <tr>
+      <td style="padding:0 0 0 32px;color:#888888;font-size:11px;text-align:left;vertical-align:middle;">This automated message was sent by WSO2's support system. Please do not reply to this email.</td>
+      <td style="padding:0 32px 0 8px;text-align:right;vertical-align:middle;white-space:nowrap;"><img src="%s" alt="WSO2" height="16" style="display:block;"></td>
+    </tr>
+  </table>
+</div>`
+
 // internalEmailFallbackTemplate wraps a body that doesn't match the
 // day-count/suspension reminder's expected paragraph shape (currently:
 // the no-business-contact notice) — same card styling as
@@ -242,21 +273,37 @@ func renderEmailHTML(body string) string {
 // structured layout when a body has exactly this shape.
 const internalBodyParagraphCount = 9
 
+// internalInvoiceBodyParagraphCount is the exact paragraph count of the
+// invoice-based internal notice's body shape: greeting, intro, the same 5
+// project fields the subscription-based notice has, then 3 more
+// invoice-specific fields (Invoice Id/Opportunity/Due Date), then closing,
+// sign-off.
+const internalInvoiceBodyParagraphCount = 12
+
 // renderInternalEmailHTML wraps an internal notice's body in its own
-// distinct branded shell (internalEmailHTMLTemplate). The day-count/
-// suspension reminder bodies have a known, fixed paragraph shape (see
-// internalBodyParagraphCount) — when a body matches it, this pulls the
-// project/account field lines out into their own styled detail box and
-// colors the greeting/intro blue, matching the real reference example.
-// Anything else (currently: the no-business-contact notice, a genuinely
-// different shape) falls back to internalEmailFallbackTemplate — same
-// card styling, without assuming a shape that doesn't hold for it.
+// distinct branded shell. The day-count/suspension reminder bodies have one
+// of two known, fixed paragraph shapes — subscription-based
+// (internalBodyParagraphCount) or invoice-based
+// (internalInvoiceBodyParagraphCount, with its extra nested invoice-fields
+// box) — dispatched to the matching renderer below. Anything else
+// (currently: the no-business-contact notice, a genuinely different shape)
+// falls back to internalEmailFallbackTemplate — same card styling, without
+// assuming a shape that doesn't hold for it.
 func renderInternalEmailHTML(body string) string {
 	paragraphs := strings.Split(body, "\n\n")
-	if len(paragraphs) != internalBodyParagraphCount {
+	switch len(paragraphs) {
+	case internalInvoiceBodyParagraphCount:
+		return renderInternalInvoiceEmailHTML(paragraphs)
+	case internalBodyParagraphCount:
+		return renderInternalSubscriptionEmailHTML(paragraphs)
+	default:
 		return fmt.Sprintf(internalEmailFallbackTemplate, plainTextToHTML(body), wso2LogoURL)
 	}
+}
 
+// renderInternalSubscriptionEmailHTML builds the subscription-based
+// internal notice's HTML from its already-validated 9-paragraph body.
+func renderInternalSubscriptionEmailHTML(paragraphs []string) string {
 	greeting := plainTextToHTML(paragraphs[0])
 	intro := plainTextToHTML(paragraphs[1])
 	var fields strings.Builder
@@ -267,6 +314,27 @@ func renderInternalEmailHTML(body string) string {
 	signoff := plainTextToHTML(paragraphs[8])
 
 	return fmt.Sprintf(internalEmailHTMLTemplate, greeting, intro, fields.String(), closing, signoff, wso2LogoURL)
+}
+
+// renderInternalInvoiceEmailHTML builds the invoice-based internal notice's
+// HTML from its already-validated 12-paragraph body — the 5 project fields
+// render in the main detail box same as the subscription-based notice, the
+// 3 invoice fields render in their own nested box inside it.
+func renderInternalInvoiceEmailHTML(paragraphs []string) string {
+	greeting := plainTextToHTML(paragraphs[0])
+	intro := plainTextToHTML(paragraphs[1])
+	var projectFields strings.Builder
+	for _, p := range paragraphs[2:7] {
+		projectFields.WriteString(fieldRowHTML(p))
+	}
+	var invoiceFields strings.Builder
+	for _, p := range paragraphs[7:10] {
+		invoiceFields.WriteString(fieldRowHTML(p))
+	}
+	closing := plainTextToHTML(paragraphs[10])
+	signoff := plainTextToHTML(paragraphs[11])
+
+	return fmt.Sprintf(internalInvoiceEmailHTMLTemplate, greeting, intro, projectFields.String(), invoiceFields.String(), closing, signoff, wso2LogoURL)
 }
 
 // fieldRowHTML renders one "Label: value" paragraph (e.g. "Project Name:
