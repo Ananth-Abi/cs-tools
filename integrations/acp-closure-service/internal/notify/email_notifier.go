@@ -119,6 +119,41 @@ const internalInvoiceEmailHTMLTemplate = `<div style="background-color:#f2f2f2;p
   </table>
 </div>`
 
+// wso2BusinessContactDocURL is the fixed link target for the no-business-
+// contact notice's "Update Business Contact" hyperlink — a static doc, not
+// something that varies per project, so it's a constant rather than a
+// per-notice parameter.
+const wso2BusinessContactDocURL = "https://docs.google.com/document/d/1xv-n6XK7E60QZdEb7DrbpDW0UmXs-SqLceLGaqPx68k/edit?tab=t.0#heading=h.58epxafkaoe"
+
+// noBusinessContactEmailHTMLTemplate is the no-business-contact notice's
+// own dedicated shell, confirmed against the real reference
+// (business_contact_email.png) — a bold red heading sits above the card
+// (not inside it, unlike every other internal template here), a bold blue
+// intro line, then a paragraph with fixed boilerplate wording (matching
+// sweep.go's noBusinessContactBodyTemplate verbatim) with the project name
+// bolded and two warning clauses in bold red italic, a real hyperlink to
+// the business contact doc, and the same nested field-detail box style
+// used elsewhere. Five placeholders in order: intro (HTML), project name
+// (HTML-escaped, for the bolded mention), doc URL, fields' inner HTML,
+// wso2LogoURL.
+const noBusinessContactEmailHTMLTemplate = `<div style="background-color:#f2f2f2;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <p style="color:#c62828;font-size:20px;font-weight:bold;margin:0 0 16px 0;">Internal - Customer Project without Business Contacts</p>
+  <div style="background-color:#ffffff;border:1px solid #dadce0;border-radius:8px;padding:24px 32px;box-sizing:border-box;">
+    <p style="color:#1a56db;font-size:16px;font-weight:bold;line-height:1.6;margin:0 0 16px 0;">%s</p>
+    <p style="color:#333333;font-size:14px;line-height:1.6;margin:0 0 16px 0;">Please note that no Business Contacts was found for the project <strong>%s</strong>. Immediate action is required to address this issue, as without a business contact, the <strong style="color:#c62828;font-style:italic;">customers will not receive essential notifications regarding their project suspension status</strong>. Additionally, this will lead to <strong style="color:#c62828;font-style:italic;">failures in further automated actions related to project suspension</strong>.</p>
+    <p style="color:#333333;font-size:14px;line-height:1.6;margin:0 0 16px 0;">Please refer this document to <a href="%s" style="color:#1a56db;">Update Business Contact</a></p>
+    <div style="border:1px solid #e0e0e0;border-radius:4px;background-color:#f2f2f2;padding:16px 20px;">
+      %s
+    </div>
+  </div>
+  <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" style="width:100%%;margin-top:8px;">
+    <tr>
+      <td style="padding:0 0 0 32px;color:#888888;font-size:11px;text-align:left;vertical-align:middle;">This automated message was sent by WSO2's support system. Please do not reply to this email.</td>
+      <td style="padding:0 32px 0 8px;text-align:right;vertical-align:middle;white-space:nowrap;"><img src="%s" alt="WSO2" height="16" style="display:block;"></td>
+    </tr>
+  </table>
+</div>`
+
 // internalEmailFallbackTemplate wraps a body that doesn't match the
 // day-count/suspension reminder's expected paragraph shape (currently:
 // the no-business-contact notice) — same card styling as
@@ -280,15 +315,22 @@ const internalBodyParagraphCount = 9
 // sign-off.
 const internalInvoiceBodyParagraphCount = 12
 
+// noBusinessContactBodyParagraphCount is the exact paragraph count of
+// sweep.go's noBusinessContactBodyTemplate: heading, intro, warning
+// paragraph, hyperlink line, then a final paragraph holding all 5 fields
+// joined by single "\n" rather than one field per paragraph like the other
+// notice shapes.
+const noBusinessContactBodyParagraphCount = 5
+
 // renderInternalEmailHTML wraps an internal notice's body in its own
 // distinct branded shell. The day-count/suspension reminder bodies have one
 // of two known, fixed paragraph shapes — subscription-based
 // (internalBodyParagraphCount) or invoice-based
 // (internalInvoiceBodyParagraphCount, with its extra nested invoice-fields
-// box) — dispatched to the matching renderer below. Anything else
-// (currently: the no-business-contact notice, a genuinely different shape)
-// falls back to internalEmailFallbackTemplate — same card styling, without
-// assuming a shape that doesn't hold for it.
+// box) — and the no-business-contact notice has its own fixed shape
+// (noBusinessContactBodyParagraphCount) — each dispatched to its matching
+// renderer below. Anything else falls back to internalEmailFallbackTemplate
+// — same card styling, without assuming a shape that doesn't hold for it.
 func renderInternalEmailHTML(body string) string {
 	paragraphs := strings.Split(body, "\n\n")
 	switch len(paragraphs) {
@@ -296,6 +338,8 @@ func renderInternalEmailHTML(body string) string {
 		return renderInternalInvoiceEmailHTML(paragraphs)
 	case internalBodyParagraphCount:
 		return renderInternalSubscriptionEmailHTML(paragraphs)
+	case noBusinessContactBodyParagraphCount:
+		return renderNoBusinessContactEmailHTML(paragraphs)
 	default:
 		return fmt.Sprintf(internalEmailFallbackTemplate, plainTextToHTML(body), wso2LogoURL)
 	}
@@ -335,6 +379,30 @@ func renderInternalInvoiceEmailHTML(paragraphs []string) string {
 	signoff := plainTextToHTML(paragraphs[11])
 
 	return fmt.Sprintf(internalInvoiceEmailHTMLTemplate, greeting, intro, projectFields.String(), invoiceFields.String(), closing, signoff, wso2LogoURL)
+}
+
+// renderNoBusinessContactEmailHTML builds the no-business-contact notice's
+// HTML from its already-validated 5-paragraph body. The warning paragraph
+// and hyperlink line's wording is fixed boilerplate baked directly into
+// noBusinessContactEmailHTMLTemplate (matching sweep.go's
+// noBusinessContactBodyTemplate verbatim) rather than parsed back out of
+// the plain-text body's prose — only the project name (pulled from the
+// structured "Project Name: X" field line, the same reliable source the
+// field box itself uses) and the field values are genuinely dynamic here.
+func renderNoBusinessContactEmailHTML(paragraphs []string) string {
+	intro := plainTextToHTML(paragraphs[1])
+
+	fieldLines := strings.Split(paragraphs[4], "\n")
+	var fields strings.Builder
+	var projectName string
+	for _, line := range fieldLines {
+		fields.WriteString(fieldRowHTML(line))
+		if label, value, ok := strings.Cut(line, ": "); ok && label == "Project Name" {
+			projectName = value
+		}
+	}
+
+	return fmt.Sprintf(noBusinessContactEmailHTMLTemplate, intro, html.EscapeString(projectName), wso2BusinessContactDocURL, fields.String(), wso2LogoURL)
 }
 
 // fieldRowHTML renders one "Label: value" paragraph (e.g. "Project Name:
