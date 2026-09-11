@@ -29,6 +29,7 @@
 package suspensionstate
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 
@@ -169,9 +170,29 @@ func withState(raw json.RawMessage, key string, window closure.NoticeWindow, act
 	}
 	blob[key] = sectionRaw
 
-	out, err := json.Marshal(blob)
+	out, err := marshalWithoutHTMLEscaping(blob)
 	if err != nil {
 		return nil, fmt.Errorf("suspensionstate: marshal blob: %w", err)
 	}
 	return out, nil
+}
+
+// marshalWithoutHTMLEscaping is json.Marshal, minus one behavior that would
+// otherwise break the byte-for-byte preservation this package promises:
+// encoding/json's default encoder HTML-escapes '<', '>', and '&' in *any*
+// output it produces — including bytes coming from an untouched
+// json.RawMessage value that was never semantically changed (confirmed via
+// a real CodeRabbit review finding, PR #1657: a project name or note
+// containing one of those characters would otherwise get silently rewritten
+// on every write to an unrelated section). json.Encoder.SetEscapeHTML(false)
+// disables exactly that step; Encode also appends a trailing newline
+// json.Marshal doesn't, trimmed here to keep this a drop-in replacement.
+func marshalWithoutHTMLEscaping(v any) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }

@@ -185,6 +185,6 @@ func TestDecideInvoice_ReusesTheSameIdempotencyContractAsDecide(t *testing.T) {
 		t.Error("ShouldNotify = true, want false — day-0 notice already recorded, should not refire")
 	}
 	if !got.ShouldSuspend {
-		t.Error("ShouldSuspend = true, want false — suspend has no idempotency signal here, must still report true")
+		t.Error("ShouldSuspend = false, want true — suspend has no idempotency signal here, must still report true")
 	}
 }
