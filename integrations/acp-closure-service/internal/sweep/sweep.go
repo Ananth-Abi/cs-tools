@@ -279,7 +279,7 @@ func accountName(proj project) string {
 // suspensionProcessState record: the caller (processProject) skips
 // recordNoticeSent on any error here, so a partial send in that order would
 // make the window look "not yet notified" on the next sweep and resend the
-// same internal notice for real (PR #1440 review, Sajith Ekanayake). This
+// same internal notice for real (Sajith Ekanayake). This
 // does mean ntf.Send(internalNotice) has two call sites below rather than
 // one — that's the tradeoff for keeping "skip contact-fetch entirely for
 // internal-only windows" (needsCustomerAudience) and "never send before

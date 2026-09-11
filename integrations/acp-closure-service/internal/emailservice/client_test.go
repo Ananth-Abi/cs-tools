@@ -43,7 +43,7 @@ func tokenServer(t *testing.T) *httptest.Server {
 // TestNewClient_RejectsInsecureTokenURL verifies NewClient refuses to
 // construct a Client whose TokenURL isn't https:// — the token request
 // carries the real ClientSecret, and an http:// endpoint would send it in
-// cleartext (CodeRabbit, PR #1657).
+// cleartext (per CodeRabbit).
 func TestNewClient_RejectsInsecureTokenURL(t *testing.T) {
 	_, err := NewClient(Config{
 		BaseURL:      "https://email.example",

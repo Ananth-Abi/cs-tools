@@ -83,19 +83,19 @@ doesn't log) vs. the real `*entity.Client`. Reads (`SearchProjects`, `GetAccount
 fetching and deciding has no write effect to protect against.
 
 `notifier` is chosen the same way — injection, not a branch inside
-`processProject`/`Run` — but on a **separate** flag, `SEND_REAL_EMAILS`, not
-`DRY_RUN`. This is deliberate: writing real project state and sending a
+`processProject`/`Run` — but on a **separate** flag, `IS_EMAIL_SEND_ENABLED`,
+not `DRY_RUN`. This is deliberate: writing real project state and sending a
 real email to a real person are different risks, and conflating them into
 one flag would make it impossible to (for example) safely test the write
 path against a real project while emails stay log-only, or vice versa. See
 "Real email sending" below for `notify.EmailNotifier`, the real
-implementation `main.go` injects when `SEND_REAL_EMAILS=true`.
+implementation `main.go` injects when `IS_EMAIL_SEND_ENABLED=true`.
 
 If you add a new side-effecting call, give it the same treatment: define a
 minimal interface, inject the real implementation and a logging one, and
 never branch on a config flag inside the orchestration logic itself. Give
-it its own flag rather than reusing `DRY_RUN`/`SEND_REAL_EMAILS` unless the
-risk it protects against is genuinely the same as one of theirs.
+it its own flag rather than reusing `DRY_RUN`/`IS_EMAIL_SEND_ENABLED` unless
+the risk it protects against is genuinely the same as one of theirs.
 
 ## TEST_PROJECT_ID scoping
 
@@ -299,9 +299,9 @@ wrong answer:
   `am_nudge`, not `business_contact`.
 - **`internal/entity.Client` doesn't validate its configured URLs use
   `https`** — the same gap `internal/emailservice.Client.NewClient` was
-  given a fix for (CodeRabbit, PR #1657; see `requireHTTPS` there).
-  Deliberately not fixed here in the same PR — scoped out to keep that PR
-  focused on the email code it was actually about. `entity.Client` carries
+  given a fix for (per CodeRabbit; see `requireHTTPS` there). Deliberately
+  not fixed here — scoped out to keep that change focused on the email code
+  it was actually about. `entity.Client` carries
   the same category of risk (its `ClientSecret` flows through the same
   kind of token request) and should get the equivalent check in its own
   follow-up.
@@ -310,7 +310,7 @@ wrong answer:
 
 `notify.EmailNotifier` calls WSO2's internal email notification service
 (owned by Rashmika's team) via `internal/emailservice.Client`, replacing
-`LoggingNotifier` when `SEND_REAL_EMAILS=true`. Confirmed directly with
+`LoggingNotifier` when `IS_EMAIL_SEND_ENABLED=true`. Confirmed directly with
 Rashmika, this superseded an earlier plan (referenced in older commit
 history) to publish an event/message onto a queue instead — "I don't think
 you need to publish an event to send an email for this use case, you could
@@ -333,7 +333,7 @@ plain authenticated HTTP call.
   `CSM_INTEGRATION_SCOPES`. Don't add a scopes config value here without
   re-confirming that's changed.
 - **`FromAddress` is fixed at config level**, not a per-`Notice` value —
-  confirmed via a real received email to be `no-reply@wso2.com`.
+  `no-reply@wso2.com`.
 - **`EmailNotifier` maps `Recipients` onto to/cc**: when `Customer` is
   present, the customer is the primary `to` and the three internal people
   are `cc`'d; otherwise (internal-only notices, and the no-business-contact
@@ -377,7 +377,7 @@ plain authenticated HTTP call.
   recipient got filtered out (e.g. the WSO2-only staging safeguard leaving
   zero `to` addresses) — not an error, but not delivered either. This
   replaced an earlier, blanket per-notifier `Delivers()` signal that had a
-  real bug (CodeRabbit, PR #1657): a customer notice silently filtered out
+  real bug (per CodeRabbit): a customer notice silently filtered out
   in staging was still recorded as `"SUCCESSFUL"` in
   `suspensionProcessState`, since the blanket signal only reflected "is
   this notifier type capable of real delivery," not "did this specific

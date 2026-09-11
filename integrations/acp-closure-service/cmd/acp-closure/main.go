@@ -47,7 +47,7 @@ type projectUpdater interface {
 
 // notifier is declared locally, mirroring projectUpdater above, so main can
 // hold either *notify.LoggingNotifier or *notify.EmailNotifier in one
-// variable depending on SEND_REAL_EMAILS.
+// variable depending on IS_EMAIL_SEND_ENABLED.
 type notifier interface {
 	Send(ctx context.Context, n notify.Notice) (delivered bool, err error)
 }
@@ -56,7 +56,7 @@ func main() {
 	loadDotEnv(".env")
 
 	dryRun := envBool("DRY_RUN", true)
-	sendRealEmails := envBool("SEND_REAL_EMAILS", false)
+	isEmailSendEnabled := envBool("IS_EMAIL_SEND_ENABLED", false)
 	testProjectID := os.Getenv("TEST_PROJECT_ID")
 	excludedProjectIDs := parseExcludedProjectIDs(os.Getenv("EXCLUDED_PROJECT_IDS"))
 	runID := newRunID()
@@ -64,7 +64,7 @@ func main() {
 	slog.Info("acp-closure-service starting",
 		"runID", runID,
 		"dryRun", dryRun,
-		"sendRealEmails", sendRealEmails,
+		"isEmailSendEnabled", isEmailSendEnabled,
 		"testProjectID", testProjectID,
 		"excludedProjectIDs", sortedKeys(excludedProjectIDs),
 	)
@@ -83,7 +83,7 @@ func main() {
 	}
 
 	var ntf notifier = &notify.LoggingNotifier{Logger: slog.Default()}
-	if sendRealEmails {
+	if isEmailSendEnabled {
 		emailClient, err := emailservice.NewClient(emailservice.Config{
 			BaseURL:      mustEnv("EMAIL_SERVICE_BASE_URL"),
 			TokenURL:     mustEnv("EMAIL_SERVICE_TOKEN_URL"),
@@ -164,8 +164,8 @@ func envBool(key string, def bool) bool {
 // parseExcludedProjectIDs parses EXCLUDED_PROJECT_IDS: a comma-separated
 // list of project IDs the sweep should skip entirely, never fetching or
 // evaluating them (backs sweep.Run's excludedProjectIDs parameter). Per
-// explicit design direction (PR #1440 discussion, Sajith Ekanayake): this
-// is meant for deliberate, verified business exclusions — expected to be
+// explicit design direction (Sajith Ekanayake): this is meant for
+// deliberate, verified business exclusions — expected to be
 // empty in production almost all the time, populated more often in
 // dev/staging to keep a known-broken project out of the way. Not a
 // substitute for fixing genuine data issues; a project put here produces

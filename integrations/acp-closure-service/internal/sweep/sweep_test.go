@@ -371,7 +371,7 @@ func TestProcessProject_CustomerAudienceWindowSkipsAccountContactLookupWhenNoAcc
 }
 
 // TestProcessProject_CustomerAudienceWindowFetchContactsFailureSendsNothing
-// is a regression test for PR #1440 (Sajith Ekanayake): a transient
+// is a regression test (Sajith Ekanayake): a transient
 // fetchContacts failure must not leave the internal notice already sent
 // with no corresponding suspensionProcessState record — that combination
 // causes a duplicate internal-notice resend on the next sweep, since the
@@ -804,7 +804,7 @@ func TestInternalNoticeSubject(t *testing.T) {
 			want:        "[ACP] Project Suspension Notice of Kotak Insurance - Subscription of Kotak Life Insurance company Ltd",
 		},
 		{
-			// Regression test, PR #1440 review (Sajith Ekanayake): a
+			// Regression test (Sajith Ekanayake): a
 			// project with no linked account previously produced a
 			// dangling "...of " with a trailing space and nothing after
 			// it, in a real outbound email subject.

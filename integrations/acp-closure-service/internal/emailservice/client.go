@@ -78,8 +78,8 @@ type Client struct {
 // csm-integration-service. Returns an error if TokenURL or BaseURL isn't
 // https:// — the token request carries the real ClientSecret, and BaseURL
 // carries real notice content on every call, neither of which should ever
-// travel in cleartext (CodeRabbit, PR #1657). internal/entity.Client has
-// the same gap, not yet fixed there — see CLAUDE.md.
+// travel in cleartext (per CodeRabbit). internal/entity.Client has the
+// same gap, not yet fixed there — see CLAUDE.md.
 func NewClient(cfg Config) (*Client, error) {
 	if err := requireHTTPS("TokenURL", cfg.TokenURL); err != nil {
 		return nil, err
