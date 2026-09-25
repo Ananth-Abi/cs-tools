@@ -42,6 +42,11 @@ func RequireHTTPS(name, rawURL string) error {
 	if err != nil {
 		return fmt.Errorf("parse %s %q: %w", name, rawURL, err)
 	}
+	// "https://" alone parses cleanly and would pass a scheme-only check,
+	// then fail on every request with a far less obvious error.
+	if u.Hostname() == "" {
+		return fmt.Errorf("%s has no host: %q", name, rawURL)
+	}
 	if u.Scheme == "https" || isLoopback(u.Hostname()) {
 		return nil
 	}

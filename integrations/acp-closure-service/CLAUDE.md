@@ -495,7 +495,9 @@ wrong answer:
 client through `internal/httpsec`, and must keep doing so:
 
 - `httpsec.RequireHTTPS` makes `NewClient` refuse a non-https `TokenURL` or
-  `BaseURL`. Loopback is exempt, since `httptest` servers bind there. The
+  `BaseURL`, and one with no host (a bare `https://` parses cleanly and
+  would otherwise only fail on the first request; CodeRabbit, PR #2008).
+  Loopback is exempt, since `httptest` servers bind there. The
   token request carries the real client secret, and every API call carries
   the bearer token and real customer data.
 - `httpsec.RefuseRedirects` goes on **both** the token client (the one in
