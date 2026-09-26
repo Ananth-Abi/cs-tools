@@ -34,6 +34,7 @@ type resolvedInvoice struct {
 	InvoiceDate        time.Time
 	DueDate            time.Time
 	EULAVersionDecimal float64
+	SfID               string
 }
 
 // excludedInvoiceClassifications mirrors the legacy fetchDueInvoicesByProject
@@ -111,6 +112,7 @@ func resolveDueInvoice(ctx context.Context, reader entityReader, proj project) (
 				InvoiceDate:        invoiceDate,
 				DueDate:            dueDate,
 				EULAVersionDecimal: eulaDecimal,
+				SfID:               stringValue(inv.SfID),
 			}
 			if best == nil || candidate.DueDate.Before(best.DueDate) {
 				best = candidate

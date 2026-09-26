@@ -63,6 +63,13 @@ type Notice struct {
 	// don't get this link at all (confirmed absent from the real
 	// customer-facing reference email).
 	ProjectSfID string
+	// InvoiceSfID is the due invoice's own Salesforce record ID (an a0I...
+	// ID, distinct from ProjectSfID), set only on the internal invoice
+	// notice. EmailNotifier renders it as the invoice box's "Open in
+	// Salesforce" link, matching the real reference email. Empty means no
+	// link — including for every customer-facing notice, which never gets
+	// one (customers have no Salesforce access).
+	InvoiceSfID string
 	StartDate   time.Time
 	EndDate     time.Time
 	Window      closure.NoticeWindow

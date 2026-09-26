@@ -422,14 +422,25 @@ rendered as plain bold text) until caught against the real reference.
   or `projectNameFieldRowHTML` at all — there's no shared code path that
   could accidentally leak the link onto a customer copy.
 
-**Not yet implemented**: the real reference email also has a second,
-separate "Open in Salesforce" button near the invoice-details box, linking
-to what appears to be the *invoice's own* Salesforce ID (a different ID
-prefix than the project's). Deliberately not added — `invoiceDTO`
-(`types.go`) has no sfId-equivalent field, and none is documented in
-`csm-integration-service`'s `openapi.yaml` either. Needs confirming via a
-real `SearchInvoices`/`GetInvoice` Postman response before implementing;
-don't guess a field name.
+**Project `sfId` in the broad sweep:** `/projects/search` items now carry
+an `sfId` key, but as of 2026-09-26 it is `null` for every project in
+staging, even where `GET /projects/{id}` returns a real value. So the
+Project Name link only appears in `TEST_PROJECT_ID`-scoped runs until the
+API populates it. No change is needed here when it does: `project.SfID`
+already reads the field from both endpoints.
+
+**"Open in Salesforce" (invoice notices, internal only):** the real
+reference email also has a separate "Open in Salesforce" link inside the
+invoice box, pointing at the *invoice's own* Salesforce record (an `a0I…`
+ID, not the project's `a0d…`). `invoiceDTO.SfID` (`sfId`, confirmed on both
+`GET /invoices/{id}` and `/invoices/search`) flows through
+`resolvedInvoice` → `dueInvoice` → `notifyForWindow`'s `invoiceSfID`, which
+sets `Notice.InvoiceSfID` on the **internal notice only**.
+`openInSalesforceLinkHTML` renders it on the right of the invoice box, in a
+table cell rather than the reference's `display:flex`, which email clients
+don't all support. There's no link when the invoice has no `sfId`, and
+never on customer or nudge notices. The reference's small external-link
+icon is deliberately left out, as for the Project Name link.
 
 ## suspensionProcessState's real shape
 

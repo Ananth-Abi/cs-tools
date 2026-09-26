@@ -289,3 +289,43 @@ func TestProcessProject_InvoiceCascade_HasPrimaryPartnerForcesGracePeriod(t *tes
 		}
 	}
 }
+
+// TestProcessProject_InvoiceCascade_PassesInvoiceSfIDToInternalNoticeOnly
+// covers the plumbing for the internal notice's "Open in Salesforce" link:
+// the invoice's sfId from the API must reach the internal invoice notice,
+// and no other notice (customer-facing or no-business-contact nudge) sent
+// for the same window.
+func TestProcessProject_InvoiceCascade_PassesInvoiceSfIDToInternalNoticeOnly(t *testing.T) {
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	reader := invoiceLinkedReader(t, now)
+	dueDate := now.Format("2006-01-02")
+	reader.searchInvoicesFn = func(ctx context.Context, body []byte) ([]byte, error) {
+		return []byte(`{"invoices":[{
+			"id":"inv1","invoiceDate":"2026-01-01","invoicedDueDate":"` + dueDate + `",
+			"opportunity":{"id":"opp1","name":"Opp One"},"sfId":"a0IE2000006XBu5MAG"
+		}]}`), nil
+	}
+	ntf := &mockNotifier{sendFn: func(ctx context.Context, n notify.Notice) (bool, error) { return true, nil }}
+	proj := project{ID: "p1", Name: "Test Project", Account: &projectAccountRef{ID: "a1"}}
+
+	if err := processProject(context.Background(), reader, &mockProjectUpdater{}, ntf, now, proj); err != nil {
+		t.Fatalf("processProject() error = %v, want nil", err)
+	}
+
+	sawInternal := false
+	for _, n := range ntf.sent {
+		if n.Subject == "[ACP] Project Suspension Notice of Test Project" {
+			sawInternal = true
+			if n.InvoiceSfID != "a0IE2000006XBu5MAG" {
+				t.Errorf("internal notice InvoiceSfID = %q, want %q", n.InvoiceSfID, "a0IE2000006XBu5MAG")
+			}
+			continue
+		}
+		if n.InvoiceSfID != "" {
+			t.Errorf("notice %q has InvoiceSfID = %q, want empty (internal notice only)", n.Subject, n.InvoiceSfID)
+		}
+	}
+	if !sawInternal {
+		t.Fatalf("no internal invoice notice sent; got %+v", ntf.sent)
+	}
+}

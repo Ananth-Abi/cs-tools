@@ -208,6 +208,7 @@ type invoiceDTO struct {
 	InvoicedDueDate  *string       `json:"invoicedDueDate"`
 	Opportunity      *entityRefDTO `json:"opportunity"`
 	Classification   *string       `json:"classification"`
+	SfID             *string       `json:"sfId"`
 }
 
 type searchInvoicesResponse struct {
