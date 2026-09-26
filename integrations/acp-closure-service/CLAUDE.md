@@ -394,6 +394,17 @@ isn't lost or re-litigated:
   pending) replaces `LoggingNotifier` as the thing this component
   ultimately integrates with. Don't re-add logging to this type without
   confirming that direction has changed.
+- **That `"notice"` line masks personal contact details** (`maskEmail`,
+  `maskName` in `notify.go`). Every email address keeps only its first
+  character and domain (`p********@wso2.com`), and the customer's name keeps
+  only initials. Staff names stay readable, since they're the point of the
+  dry-run review and already appear in the internal body. The
+  customer-facing body names no one, so log-only mode writes no customer
+  personal data at all. Real staging logs from before email sending was
+  enabled showed full addresses and names in this line; that was flagged in
+  the threat model's privacy review and closed by this masking. Don't log a
+  raw address here again. `EmailNotifier` already logs only recipient
+  counts.
 
 ## Project Name links to Salesforce (internal notices only)
 

@@ -24,7 +24,9 @@ package notify
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/closure"
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/recipients"
@@ -101,6 +103,11 @@ type Notice struct {
 }
 
 // LoggingNotifier logs what would have been sent instead of sending it.
+// The log shows the full notice (subject, body, who it's for) so a dry run
+// can be reviewed, but every email address and the customer's name are
+// masked (maskEmail/maskName): log-only mode must never write a customer's
+// personal details, or any full address, to the logs. The customer-facing
+// body itself names no one.
 type LoggingNotifier struct {
 	Logger *slog.Logger
 }
@@ -117,16 +124,16 @@ func (n *LoggingNotifier) Send(ctx context.Context, notice Notice) (bool, error)
 		"projectKey", notice.ProjectKey,
 		"startDate", notice.StartDate,
 		"endDate", notice.EndDate,
-		"accountOwner", notice.Recipients.AccountOwner.Email,
+		"accountOwner", maskEmail(notice.Recipients.AccountOwner.Email),
 		"accountOwnerName", notice.Recipients.AccountOwner.Name,
-		"renewalManager", notice.Recipients.RenewalManager.Email,
+		"renewalManager", maskEmail(notice.Recipients.RenewalManager.Email),
 		"renewalManagerName", notice.Recipients.RenewalManager.Name,
-		"technicalOwner", notice.Recipients.TechnicalOwner.Email,
+		"technicalOwner", maskEmail(notice.Recipients.TechnicalOwner.Email),
 		"technicalOwnerName", notice.Recipients.TechnicalOwner.Name,
 		"resolvedVia", notice.ResolvedVia,
 	}
 	if notice.Recipients.Customer != nil {
-		attrs = append(attrs, "customer", notice.Recipients.Customer.Email, "customerName", notice.Recipients.Customer.Name)
+		attrs = append(attrs, "customer", maskEmail(notice.Recipients.Customer.Email), "customerName", maskName(notice.Recipients.Customer.Name))
 	}
 	if notice.Body != "" {
 		attrs = append(attrs, "body", notice.Body)
@@ -134,4 +141,29 @@ func (n *LoggingNotifier) Send(ctx context.Context, notice Notice) (bool, error)
 
 	n.Logger.InfoContext(ctx, "notice", attrs...)
 	return false, nil
+}
+
+// maskEmail keeps an address's first character and its domain and stars the
+// rest of the local part ("paraparan@wso2.com" -> "p********@wso2.com"), so
+// the log still shows whether a recipient is internal or external without
+// revealing who. Anything that isn't a plain local@domain is starred
+// entirely.
+func maskEmail(email string) string {
+	local, domain, ok := strings.Cut(email, "@")
+	if !ok || local == "" || domain == "" {
+		return strings.Repeat("*", utf8.RuneCountInString(email))
+	}
+	first, size := utf8.DecodeRuneInString(local)
+	return string(first) + strings.Repeat("*", utf8.RuneCountInString(local[size:])) + "@" + domain
+}
+
+// maskName keeps the first letter of each word and stars the rest
+// ("Jordan Perera" -> "J***** P*****").
+func maskName(name string) string {
+	words := strings.Fields(name)
+	for i, w := range words {
+		first, size := utf8.DecodeRuneInString(w)
+		words[i] = string(first) + strings.Repeat("*", utf8.RuneCountInString(w[size:]))
+	}
+	return strings.Join(words, " ")
 }
