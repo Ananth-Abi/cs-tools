@@ -157,6 +157,22 @@ you're tempted to reintroduce an early `isPartner` check for efficiency
 is no way to know the cascade is actually disabled without `hasPrimaryPartner`,
 which requires the same `GetAccount` call regardless.
 
+## Only Closed Won opportunities' invoices count
+
+`eligibleOpportunity` (`invoice_resolve.go`) applies legacy's full check
+from `ACPInvoiceUtils.fetchDueInvoicesByProject`: `stage` must equal
+`"50 - Closed Won"` exactly, and the text EULA field must be non-null and
+not `"Customer contract"`. A null or any other stage is ineligible, as in
+legacy's equality check.
+
+The stage half was missing until the Opportunity API started returning
+`stage` (added by Sajith; confirmed present on both `GET /opportunities/{id}`
+and `/opportunities/search`). Before that, an unpaid invoice on a
+not-yet-won opportunity (e.g. `"45 - Proposal"`) could drive invoice
+notices and suspension, which legacy never did. The shared test
+opportunity ("ACP Partner Opportunity") is Closed Won in staging, so the
+test projects' invoice cascade is unaffected.
+
 ## Invoice-side searches must paginate
 
 `fetchAllProjectOpportunityLinks`/`fetchAllInvoicesForOpportunity`
