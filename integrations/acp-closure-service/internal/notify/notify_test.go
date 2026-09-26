@@ -218,7 +218,8 @@ func TestLoggingNotifier_Send_LogsBodyWhenPresent(t *testing.T) {
 // TestMaskEmail pins the masking rule for addresses written by log-only
 // mode: keep the first character and the domain (so a reader can still tell
 // an internal @wso2.com recipient from an external one), star the rest of the
-// local part. Anything that isn't a plain local@domain is starred entirely.
+// local part. Anything that isn't a plain local@domain (exactly one "@", with
+// something on both sides) is starred entirely.
 func TestMaskEmail(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{in: "paraparan@wso2.com", want: "p********@wso2.com"},
@@ -227,6 +228,10 @@ func TestMaskEmail(t *testing.T) {
 		{in: "", want: ""},
 		{in: "not-an-address", want: "**************"},
 		{in: "@nolocal.example", want: "****************"},
+		// More than one "@" is malformed: keeping everything after the first
+		// one would leak an embedded address (CodeRabbit, PR #2029).
+		{in: "a@wso2.com@evil.example", want: "***********************"},
+		{in: "john@", want: "*****"},
 	}
 	for _, tt := range tests {
 		if got := maskEmail(tt.in); got != tt.want {

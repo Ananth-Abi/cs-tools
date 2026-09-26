@@ -146,11 +146,12 @@ func (n *LoggingNotifier) Send(ctx context.Context, notice Notice) (bool, error)
 // maskEmail keeps an address's first character and its domain and stars the
 // rest of the local part ("paraparan@wso2.com" -> "p********@wso2.com"), so
 // the log still shows whether a recipient is internal or external without
-// revealing who. Anything that isn't a plain local@domain is starred
-// entirely.
+// revealing who. Anything that isn't a plain local@domain (exactly one "@",
+// something on both sides) is starred entirely: with more than one "@",
+// keeping everything after the first would leak an embedded address.
 func maskEmail(email string) string {
 	local, domain, ok := strings.Cut(email, "@")
-	if !ok || local == "" || domain == "" {
+	if !ok || strings.Count(email, "@") != 1 || local == "" || domain == "" {
 		return strings.Repeat("*", utf8.RuneCountInString(email))
 	}
 	first, size := utf8.DecodeRuneInString(local)
