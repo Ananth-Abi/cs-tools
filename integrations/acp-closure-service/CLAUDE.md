@@ -436,9 +436,10 @@ ID, not the project's `a0d…`). `invoiceDTO.SfID` (`sfId`, confirmed on both
 `GET /invoices/{id}` and `/invoices/search`) flows through
 `resolvedInvoice` → `dueInvoice` → `notifyForWindow`'s `invoiceSfID`, which
 sets `Notice.InvoiceSfID` on the **internal notice only**.
-`openInSalesforceLinkHTML` renders it on the right of the invoice box, in a
-table cell rather than the reference's `display:flex`, which email clients
-don't all support. There's no link when the invoice has no `sfId`, and
+`openInSalesforceLinkHTML` renders it at the start of the invoice box's
+right half (the box is split into two equal halves, as in the reference),
+using table cells rather than the reference's `display:flex`, which email
+clients don't all support. There's no link when the invoice has no `sfId`, and
 never on customer or nudge notices. The reference's small external-link
 icon is deliberately left out, as for the Project Name link.
 

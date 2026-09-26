@@ -24,11 +24,11 @@ import (
 	"github.com/wso2-open-operations/cs-tools/integrations/acp-closure-service/internal/recipients"
 )
 
-// The real internal invoice notice (local-docs/actual_0_days_invoice_email.html)
-// has an "Open in Salesforce" link inside the invoice box, pointing at the
-// invoice's own Salesforce record (an a0I... ID) — separate from the
-// Project Name link, which points at the project's record.
-
+// TestEmailNotifier_Send_InvoiceNoticeLinksOpenInSalesforceWhenInvoiceSfIDPresent
+// covers the real internal invoice notice's "Open in Salesforce" link
+// (local-docs/actual_0_days_invoice_email.html): it sits inside the invoice
+// box and points at the invoice's own Salesforce record (an a0I... ID),
+// separate from the Project Name link, which points at the project's.
 func TestEmailNotifier_Send_InvoiceNoticeLinksOpenInSalesforceWhenInvoiceSfIDPresent(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
@@ -54,8 +54,9 @@ func TestEmailNotifier_Send_InvoiceNoticeLinksOpenInSalesforceWhenInvoiceSfIDPre
 	}
 }
 
-// An invoice with no Salesforce ID on file gets no link at all, rather
-// than a link to an empty or broken record URL.
+// TestEmailNotifier_Send_InvoiceNoticeHasNoOpenInSalesforceWhenInvoiceSfIDAbsent
+// is the regression guard: an invoice with no Salesforce ID on file gets no
+// link at all, rather than a link to an empty or broken record URL.
 func TestEmailNotifier_Send_InvoiceNoticeHasNoOpenInSalesforceWhenInvoiceSfIDAbsent(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}
@@ -74,8 +75,9 @@ func TestEmailNotifier_Send_InvoiceNoticeHasNoOpenInSalesforceWhenInvoiceSfIDAbs
 	}
 }
 
-// Customers have no Salesforce access: a customer-facing notice never gets
-// the link, even if InvoiceSfID were set on it.
+// TestEmailNotifier_Send_CustomerNoticeNeverGetsOpenInSalesforce confirms
+// customers, who have no Salesforce access, never get the link: the
+// customer-facing shell ignores InvoiceSfID even if it were set.
 func TestEmailNotifier_Send_CustomerNoticeNeverGetsOpenInSalesforce(t *testing.T) {
 	sender := &mockEmailSender{}
 	n := &EmailNotifier{Sender: sender, Logger: discardLogger(), AllowNonWSO2Recipients: true}

@@ -196,11 +196,10 @@ const closedWonStage = "50 - Closed Won"
 // eligibleOpportunity mirrors the legacy fetchDueInvoicesByProject
 // eligibility check exactly: stage is "50 - Closed Won", and the text EULA
 // field is non-null and not "Customer contract". A null or any other stage
-// is ineligible, as in legacy's equality check. The stage half was missing
-// until the Opportunity API started returning stage; before that, invoices
-// on not-yet-won opportunities could drive notices and suspension. Kept
-// literal (see excludedInvoiceClassifications' doc comment) rather than
-// adjusted against unverified staging data.
+// is ineligible, as in legacy's equality check. See CLAUDE.md ("Only Closed
+// Won opportunities' invoices count"). Kept literal (see
+// excludedInvoiceClassifications' doc comment) rather than adjusted against
+// unverified staging data.
 func eligibleOpportunity(opp opportunityDTO) bool {
 	return opp.Stage != nil && *opp.Stage == closedWonStage &&
 		opp.EulaVersion != nil && *opp.EulaVersion != "Customer contract"
