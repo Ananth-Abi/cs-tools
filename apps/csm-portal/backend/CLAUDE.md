@@ -202,37 +202,56 @@ pays no extra `GetUserMe` round trip. `CreateCaseEscalation` has no equivalent s
 comment), so every caller who reaches that handler is, by construction, exactly the
 audience this exists for.
 
-## Security Center access (PermViewSecurityCenter)
+## Security Center access (PermViewSecurityCenter / PermViewSecurityReportCases)
 
-Security Center (the webapp's Security reports + Vulnerabilities tabs) is restricted to `cs_engineer`
-and `admin` only — every other role, even though it holds `PermView`, is denied. This needed two
-different mechanisms, because the feature isn't backed by its own exclusive routes:
+Security Center (the webapp's Security reports + Vulnerabilities tabs) is restricted to `cs_engineer`,
+`admin` and `security_team` — every other role, even though it holds `PermView`, is denied. This needed
+two different mechanisms, because the feature isn't backed by its own exclusive routes:
 
 - **`/products/vulnerabilities/search` and `/products/vulnerabilities/{id}`** are genuinely
   Security-Center-exclusive, so they're gated the ordinary way: `route(..., handler.PermViewSecurityCenter, ...)`
-  in `cmd/server/main.go`.
+  in `cmd/server/main.go`. `PermViewSecurityCenter` is held by `cs_engineer`/`admin`/`comment_updater`/
+  `security_team` only — `viewer` does not hold it, and reading these two routes is unaffected by the
+  API-only change below.
 - **`POST /cases/search`** is the shared, generic case-search endpoint every case-type tab uses
   (Support, Operations sub-tabs, Engagements, Security reports) — it stays registered at `PermView`,
   since narrowing that route-level permission would lock out every other tab too. Instead,
   `CaseHandler.SearchCases` inspects the request body itself: `caseSearchTargetsSecurityReports`
   (`internal/handler/cases.go`) reads the generic filter expression (`filters.filters[]`, and each
   `filters.anyOf[]` branch) for a `{field: "type", op: "in", values: [...]}` predicate naming
-  `security_report_analysis`, and if one is found, additionally requires `PermViewSecurityCenter` via
-  `CaseHandler.access` (wired with `WithAccessGuard`, the same pattern `UsersHandler` uses) —
-  a plain `PermView` caller gets 403 instead of the search running. This only catches an *explicit*
-  request for that type, the same way Security Center's own `caseTypes`-locked search
-  (`CsmIssuesView`, webapp) always sends one; a hypothetical unfiltered "every case type" search that
-  happens to also return security-report rows is a known, narrower gap, not handled here.
+  `security_report_analysis`, and if one is found, additionally requires `PermViewSecurityReportCases`
+  (not `PermViewSecurityCenter` itself) via `CaseHandler.access` (wired with `WithAccessGuard`, the
+  same pattern `UsersHandler` uses) — a caller holding neither gets 403 instead of the search running.
+  This only catches an *explicit* request for that type, the same way Security Center's own
+  `caseTypes`-locked search (`CsmIssuesView`, webapp) always sends one; a hypothetical unfiltered
+  "every case type" search that happens to also return security-report rows is a known, narrower gap,
+  not handled here.
+  - **`PermViewSecurityReportCases` is a deliberately separate, narrower permission from
+    `PermViewSecurityCenter`** — held by everyone `PermViewSecurityCenter` holds (`cs_engineer`/
+    `admin`/`comment_updater`/`security_team`) *plus* `viewer`, added by explicit request so `viewer`
+    callers can fetch/search `security_report_analysis` cases over the API without also gaining
+    `/products/vulnerabilities/*` access, which stays on `PermViewSecurityCenter` alone. This is an
+    **API-only** change — the webapp's own Security Center nav/tab gating (`canUseSecurityCenter` in
+    `portalAccess.ts`) is untouched, so a `viewer` still sees no Security reports/Vulnerabilities tab
+    in the UI; they can only reach this data by calling the API directly.
+  - **`service_request` cases have no equivalent gate at all, and never did.** `caseSearchTargetsSecurityReports`
+    only ever matched `security_report_analysis`; every `PermView` holder (`viewer` included) could
+    already search/fetch `service_request` cases over the API the whole time — the "only admin/cs_engineer
+    can view SR" behavior some callers observe is purely the webapp's own Operations nav gating
+    (`canUseOperations`), not a backend restriction, and is unaffected by this change.
 - **`GET /cases/{id}` has no equivalent check, deliberately.** `CaseView.type` (entity-service's own
   `openapi.yaml`) is only populated for ServiceNow cases — null on Postgres — so there is no reliable
   way for this handler to tell a security-report case apart from any other by inspecting the response
   alone, and a check that silently does nothing on one data source would be worse than no check at
   all (it would look like protection without being any). See `CaseHandler.WithAccessGuard`'s own doc
-  comment for the full reasoning. Practically: since `SearchCases` is now locked down, a non-`cs_engineer`/
-  `admin` caller can no longer *discover* a security-report case's id through the portal at all — the
-  residual gap is a caller who already has one (a pre-existing bookmark, or a guess) fetching it
-  directly by id. Closing that fully needs entity-service itself to resolve and enforce it (it has
-  reliable type data on either data source), not this BFF layer.
+  comment for the full reasoning. **This is not a hard per-case-type ACL** — only an *explicit*
+  `security_report_analysis` type filter on `POST /cases/search` is blocked for a caller holding
+  neither `PermViewSecurityCenter` nor `PermViewSecurityReportCases` (see the unfiltered-search caveat
+  above); a search that targets some other type, or no type at all, is not inspected for this and can
+  still return security-report rows (ids included) in its result set if the upstream query happens to
+  match any. A caller who obtains an id this way, from a pre-existing bookmark, or by guessing, can
+  still fetch it directly by `GET /cases/{id}`. Closing either gap fully needs entity-service itself to
+  resolve and enforce it (it has reliable type data on either data source), not this BFF layer.
 
 ## Redacting raw base64 inline images (`internal/handler/inline_image_redact.go`)
 
@@ -270,6 +289,22 @@ just submitted that exact content, so echoing it back leaks nothing new to them.
 This is the server-side half of a two-part fix — `apps/csm-portal/webapp`'s own `denyRawBase64`
 mitigation (added first, still in place) only ever hid the image *after* the bytes had already
 reached the browser; this is what stops them being sent at all to a caller who shouldn't see them.
+
+## Change request tags go through the case tag routes
+
+`GET /change-requests/{id}` is a raw pass-through, so the `tags` array the
+entity service now puts on a change request's detail (the same shape as a
+case's `tags`; null when it did not load them) reaches the webapp untouched
+(`TestGetChangeRequest_PassesTagsThrough`). There is deliberately **no**
+`/change-requests/{id}/tags` route: the entity service's `POST /cases/{id}/tags`,
+`DELETE /cases/{id}/tags/{tagId}` and `POST /tags/search` take a work item id
+and accept a change request's, and this BFF already routes them at `PermWrite`
+/ `PermView` -- the same permissions a change request write / read needs
+(`PATCH /change-requests/{id}` is `PermWrite` too), so the change request
+detail page calls those three as they are (`CaseHandler.AddCaseTag` /
+`RemoveCaseTag` / `SearchTags`, unchanged). Tags are staff bookkeeping: the
+entity service leaves them null for a customer, and they are never mirrored to
+the previous system (see entity-service's `CLAUDE.md`, "Change requests: Tags").
 
 ## Change request create/patch validation (`internal/handler/change_requests.go`)
 
@@ -490,7 +525,7 @@ Each upstream service has its own client package under `internal/`:
 
 | Package | Upstream | Notes |
 |---------|----------|-------|
-| `entity` | Multiple entity services (see below) | Hosts `CustomerEntityClient` (this repo's entity-service; most case/account/project endpoints, raw `[]byte` passthrough) and `EngineeringEntityClient` (a separate internal engineering entity service; `CreateGitIssue`, typed request/response, plus `Health(ctx)` backing `GET /health/dependencies` — see "Health endpoints" above). `EngineeringEntityClient` is constructed in `cmd/server/main.go` only when `ENGINEERING_ENTITY_BASE_URL` is set, and then `CaseHandler.CreateCaseGithubIssue` uses it (via `WithEngineeringClient`) instead of the entity service: the target is the case product's `product_repo_mapping` row (looked up through the entity service's `GET /products/github-repo`; `repoOverride` is ignored), and after filing it writes the issue URL to the case as a best-effort work note |
+| `entity` | Multiple entity services (see below) | Hosts `CustomerEntityClient` (this repo's entity-service; most case/account/project endpoints, raw `[]byte` passthrough) and `EngineeringEntityClient` (a separate internal engineering entity service; `CreateGitIssue`, typed request/response, plus `Health(ctx)` backing `GET /health/dependencies` — see "Health endpoints" above). `EngineeringEntityClient` is constructed in `cmd/server/main.go` only when `ENGINEERING_ENTITY_BASE_URL` is set, and then `CaseHandler.CreateCaseGithubIssue` uses it (via `WithEngineeringClient`) instead of the entity service: the target is the case product's `product_repo_mapping` row (looked up through the entity service's `GET /products/github-repo`; `repoOverride` is ignored), and after filing it writes the issue URL to the case as a best-effort work note. The issue body is the engineer's description, then the optional Public Issue / Hotfix Required lines, then an automated footer (`Product`, `Update Level`, `WSO2 Case Id`, `Case Number`, `ABT Team`, `Opened By`; a line with no value is left out, and a value holding a newline is collapsed onto its line): the footer goes last because the Git Internals dashboard reads the last `ABT Team`/`Opened By` line as the automated one. `Opened By` is the signed-in engineer, `ABT Team` the case's account's CRE team (the assigned team only as a fallback), and `Product` is `<abbreviation>-<version>` (e.g. `wso2is-6.1.0`) from a best-effort `POST /deployed-products/search` by the case's deployment (5s timeout, at most four pages, every failure logged with its reason and falling back to the deployed product's display name, then the catalogue name, then the repository label) |
 | `scim` | SCIM service | User/group/role lookups. Two orgs: `SearchUser` queries the "internal" org (WSO2 staff — phone number, last password update). `SearchExternalUser` queries the "external" org (customer/partner contacts — existence + lock status, mirroring `infra-operations/operations/asgardeo-user-check`'s `{exists, locked}` contract). `GetUser` calls the latter only when the entity response's `userType` isn't `internal`, and treats a lookup failure as best-effort — logged, response returned unchanged, never a failed request. `GetRole(ctx, roleID)` fetches an Asgardeo role's real member users (internal org only) via the SCIM operations service's `GET /organizations/internal/roles/{id}` — a plain get-by-id, not a search, so the caller supplies the role's own Asgardeo id directly (see `ASGARDEO_ROLE_IDS` below); a member's SCIM `display` (`"<domain>/<email>"`, e.g. `"DEFAULT/jane@wso2.com"`) is unwrapped to a bare email |
 | `updates` | Updates service | Product update levels; returns typed structs (not raw passthrough) |
 | `csmnotification` | `integrations/csm-notification-service` | Health check only today (`Health(ctx)`, backing `GET /health/dependencies` — see "Health endpoints" below). Optional: unconfigured (`CSM_NOTIFICATION_SERVICE_BASE_URL` unset) means this dependency reports `not_configured` |
@@ -514,6 +549,12 @@ Two boundary conversions live entirely inside `internal/risk` (never in the hand
 - **Enum case.** entity-service's Postgres enums are `UPPER_SNAKE_CASE` (`"AT_RISK"`, `"IN_PROGRESS"`, its own established convention), but every existing caller of this feature — the portal frontend's string-literal comparisons, ported from the original Ballerina backend — compares against lowercase (`"at_risk"`, `"in_progress"`). `lowerEnum`/`upperEnum`/`upperEnumPtr` (`mappers.go`) convert at the same boundary: every status/priority value entity-service returns is lowercased before it reaches a caller, and every one a caller supplies (priority on create/update, status on a transition or filter, the `healthStatus` search/filter value) is uppercased before it reaches entity-service. Found and fixed before this ever reached the frontend (a casing mismatch here would have silently broken every status comparison, defaulting to whatever `else` branch each component falls back to) — if a future endpoint in this feature forgets this conversion, that is the exact failure mode to look for.
 
 The actor is no longer passed as an explicit `email` parameter either: entity-service resolves it server-side from the `x-user-id-token` this backend's own `Auth` middleware already attaches to every request context, forwarded automatically by `entity.CustomerEntityClient.do()` — the same mechanism every other entity-service write in this backend already relies on. Error handling also moved onto this backend's standard `mapUpstreamError`/`mapUpstreamErrorGeneric` convention (see "Handler conventions" below) instead of a bespoke `*risk.ValidationError` type the handler had to explicitly check for.
+
+**The Customer Health dashboard's health-status filter returned the wrong accounts, and silently blocked one of its three values.** Two bugs, found live via a HAR capture: filtering by "At Risk" also returned accounts whose displayed status was Healthy or To Be Reviewed, and selecting "To Be Reviewed" always showed zero accounts.
+
+- `risk.Client.GetAccountsByHealthStatus` (`internal/risk/health.go`) used to short-circuit `healthStatus != "at_risk" && healthStatus != "healthy"` to an empty list with no round trip — on the belief that entity-service only supported those two values. It always supported all three (its own `validProjectHealthStatusValue` set); the guard just never let `"to_be_reviewed"` through. Fixed by widening it to also pass `"to_be_reviewed"` to entity-service.
+- The mismatched-accounts half was an entity-service bug, not this backend's: `GetAccountsByHealthStatus` queried a *different* table (`project_risk`, "is there an OPEN risk row?") than the one used to compute the status actually *displayed* for each account (`project_health_status`, the same aggregate `GetBatchAccountHealthSummaries` uses) — the two can disagree for data that predates the synchronized writes `OpenProjectRisk`/`CloseProjectRisk`/`MarkProjectHealthy` perform, or that was written some other way. Fixed in entity-service's own repository to read `project_health_status` for both the filter and the display, so they can no longer disagree by construction; see that repo's own `customer_health_repo.go` doc comment on `GetAccountsByHealthStatus`.
+- The webapp's own health-status filter dropdown (`CustomerHealthFilters.tsx`) only ever offered "At Risk"/"Healthy" — "To Be Reviewed" was missing from the UI entirely, independent of the backend bug above. Added as a third `MenuItem`, with the dropdown's and the result-count summary's wording sharing one `HEALTH_STATUS_LABELS` map (`customerHealthTypes.ts`) so the two can't drift apart.
 
 ## Viewer-access (SupportPortalLite) routes are always registered; each upstream is independently optional
 
@@ -561,6 +602,12 @@ Verified end to end against real staging data for one account exercising the fir
 **Confirmed dead code, left wired but unused**: case attachments (`GET /cases/{caseId}/attachments-info`, `GET /attachments/{attachmentId}/download`) and the ABT team schedule (`GET /abt-team-schedule`) have zero callers anywhere in the webapp or microapp — the real case-attachment feature already calls entity-service's `POST /attachments/search`/`GET /attachments/{id}/content` directly, and the real team-schedule feature (`CsmTeamSchedulePage.tsx`) already calls the separate, already entity-service-backed `/team-schedule/*` routes (`cmd/server/main.go`'s unconditionally-registered `scheduleHandler`). Neither was touched in this change — removing a route is a separate, more invasive decision than fixing one that's actually reachable.
 
 **Marking a project at-risk/healthy silently failed to update on screen — a dashed-vs-flat sys_id mismatch between two sibling endpoints.** `GetCustomerHealthDetail`'s `ProjectDetail.SysID` (and every other sys_id-shaped field it builds — deployment/case/escalation sys_ids) was a raw dashed entity-service UUID, while `internal/risk`'s own `GetAccountHealthStatus` (backing `GET /accounts/{id}/project-health-statuses`) returns `ProjectSysID` in the flat, no-dashes sys_id shape documented in `internal/risk`'s own "sys_id ↔ UUID" conversion (see its CLAUDE.md). The webapp joins these two responses by comparing `s.projectSysId === project.sysId` — a format mismatch meant the join could never match, so every project card silently fell back to its default "to be reviewed" display regardless of the real stored status, and a status mutation appeared to do nothing because the page immediately re-read the now-current data through the same broken join. Fixed by adding `uuidToSysID` (`customer_health_postgres.go`, mirroring `internal/risk`'s own private helper of the same name and purpose) and applying it everywhere `GetCustomerHealthDetail` builds a sys_id-shaped field, so both endpoints now agree on the flat format. A second, related bug in `summaryFilteredByHealthStatus` (the Customer Health list's health-status filter) compared the opposite way — an `idSet` built from flat sys_ids against `acc.AccountSysID`, which is dashed — so every health-status filter selection matched zero accounts; fixed with the inverse helper, `sysIDToUUID`. Verified end to end against real staging data for a real account's projects, confirming `ProjectDetail.SysID` now outputs the same flat value `GET /accounts/{id}/project-health-statuses` reports for the identical project.
+
+**The health-status-filtered summary path 400'd on every single request — a pagination-cap mismatch.** `summaryFilteredByHealthStatus` (`customer_health.go`) paginates through entity-service's `POST /accounts/search` while intersecting a health-status filter against the full account set, and used `batchSize = 200` — but entity-service's own `normalizePagination` hard-caps `limit` at 50 ("limit cannot exceed 50"), rejecting the whole request with a 400 regardless of how many accounts would have matched. Selecting Healthy/At Risk/To Be Reviewed on the Customer Health dashboard could never return a result. Fixed by lowering `batchSize` to 50 (and `maxBatches` from 500 to 2000, to keep the same ~100,000-account ceiling).
+
+**The "My Accounts" email filter trusted a caller-supplied email verbatim — an IDOR.** The webapp's only caller of this field (`CustomerHealthDashboardPage.tsx`'s "My Accounts" scope toggle) always sends the signed-in user's own email, with no UI path to send anyone else's — but `GetSummary` passed whatever `email` the request body carried straight to entity-service, so any caller could substitute a colleague's email and see that colleague's own "my accounts" results. `GetSummary` now overrides any non-empty `payload.Email` with the authenticated caller's own token email (`middleware.UserInfo.Email`) before forwarding — a non-empty value in the body is only ever read as "filter to my own accounts," never as whose.
+
+**Combining more than one client-side filter (region/risks/product/abtTeam) was slow — each of up to 10,000 scanned accounts computed its risk flags via a dozen+ sequential entity-service calls, one account at a time.** `filteredAccounts`' per-page account loop now delegates to `scanAccountsPage`, which evaluates the accounts of one page concurrently (`golang.org/x/sync/errgroup`, bounded to `customerHealthScanConcurrency` = 8 accounts at once) instead of sequentially. Each account's own calls still happen in the same internal order as before (intra-account parallelization was tried and reverted — it broke a test fixture that depends on `SearchCases` call order, and a real `-race` data race once two accounts' calls landed on the same connection concurrently); only the cross-account fan-out is new. Order is preserved exactly: each goroutine writes its verdict into an index-addressed slice, and the matched set is reassembled by walking that slice in the original page order afterward, so pagination stays stable across repeated identical requests (`TestPostgresCustomerHealthClient_RisksFilter_PreservesAccountOrder`).
 
 ## Running locally
 

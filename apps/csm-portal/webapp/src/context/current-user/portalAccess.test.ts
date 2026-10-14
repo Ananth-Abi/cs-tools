@@ -44,6 +44,7 @@ const NONE = {
   canViewTeamSchedule: false,
   canViewSettings: false,
   canViewWorkItemsStaffView: false,
+  isAdmin: false,
 };
 
 describe("getPortalAccess", () => {
@@ -154,7 +155,9 @@ describe("getPortalAccess", () => {
     // canCreateUser: both roles hold canUsePlg, only admin may author a
     // playbook template. canCreateAnnouncement is the one write a plain CS
     // engineer no longer holds: sending an announcement needs the
-    // announcement_creator role (admin always has it).
+    // announcement_creator role (admin always has it). isAdmin is the one
+    // flag keyed on the role itself, not a derived permission -- cs_engineer
+    // never holds it even though it shares every other capability with admin.
     expect(getPortalAccess(["cs_engineer"])).toEqual({
       ...all,
       canCreateUser: false,
@@ -162,6 +165,7 @@ describe("getPortalAccess", () => {
       canManagePlaybooks: false,
       canCreateAnnouncement: false,
       canUpdateDeleteAnyComment: false,
+      isAdmin: false,
     });
     expect(getPortalAccess(["admin"])).toEqual({
       ...all,
@@ -170,6 +174,7 @@ describe("getPortalAccess", () => {
       canManagePlaybooks: true,
       canCreateAnnouncement: true,
       canUpdateDeleteAnyComment: true,
+      isAdmin: true,
     });
   });
 
@@ -226,9 +231,10 @@ describe("getPortalAccess", () => {
     }
   });
 
-  it("only admin and CS engineer can use Security Center", () => {
+  it("only admin, CS engineer and security_team can use Security Center", () => {
     expect(getPortalAccess(["admin"]).canUseSecurityCenter).toBe(true);
     expect(getPortalAccess(["cs_engineer"]).canUseSecurityCenter).toBe(true);
+    expect(getPortalAccess(["security_team"]).canUseSecurityCenter).toBe(true);
     for (const role of [
       "viewer",
       "escalator",
@@ -257,7 +263,7 @@ describe("getPortalAccess", () => {
     expect(getPortalAccess(["admin"]).canUseTimeCardsAndUpdates).toBe(true);
   });
 
-  it("only full-access roles get the Operations section", () => {
+  it("only full-access roles and security_team get the Operations section", () => {
     for (const role of [
       "viewer",
       "escalator",
@@ -271,6 +277,7 @@ describe("getPortalAccess", () => {
     expect(getPortalAccess(["viewer", "escalator", "attachment_downloader"]).canUseOperations).toBe(false);
     expect(getPortalAccess(["cs_engineer"]).canUseOperations).toBe(true);
     expect(getPortalAccess(["admin"]).canUseOperations).toBe(true);
+    expect(getPortalAccess(["security_team"]).canUseOperations).toBe(true);
   });
 
   it("a user holding several roles gets the union", () => {
@@ -594,6 +601,69 @@ describe("getPortalAccess", () => {
 
     it("is false while roles are not loaded, so the controls fail closed", () => {
       expect(getPortalAccess(undefined).canViewSettings).toBe(false);
+    });
+  });
+
+  // The dedicated read-only security role: grants canUseOperations and
+  // canUseSecurityCenter and nothing else -- never canWrite, so both
+  // sections render read-only for a holder with no other role. Mirrors the
+  // backend's AccessConfig.SecurityTeam.
+  describe("security_team", () => {
+    it("on its own grants exactly Operations and Security Center, read-only", () => {
+      expect(getPortalAccess(["security_team"])).toEqual({
+        ...NONE,
+        hasAnyRole: true,
+        canUseOperations: true,
+        canUseSecurityCenter: true,
+      });
+    });
+
+    it("does not grant write access of any kind", () => {
+      expect(getPortalAccess(["security_team"]).canWrite).toBe(false);
+      expect(getPortalAccess(["security_team"]).canEscalate).toBe(false);
+      expect(getPortalAccess(["security_team"]).canAddWorkNotes).toBe(false);
+      expect(getPortalAccess(["security_team"]).canCreateAnnouncement).toBe(false);
+      expect(getPortalAccess(["security_team"]).canUpdateDeleteAnyComment).toBe(false);
+    });
+
+    it("matches the role key case-insensitively, like every other role", () => {
+      expect(getPortalAccess(["Security_Team"]).canUseOperations).toBe(true);
+      expect(getPortalAccess(["Security_Team"]).canUseSecurityCenter).toBe(true);
+    });
+
+    it("is false while roles are not loaded, so the controls fail closed", () => {
+      expect(getPortalAccess(undefined).canUseOperations).toBe(false);
+      expect(getPortalAccess(undefined).canUseSecurityCenter).toBe(false);
+    });
+  });
+
+  // Unlike every other flag, this one is keyed on holding the `admin` role
+  // itself, not a derived permission -- cs_engineer shares every other
+  // capability with admin but never holds this one.
+  describe("isAdmin", () => {
+    it("is true only for admin, not for cs_engineer or any other role", () => {
+      expect(getPortalAccess(["admin"]).isAdmin).toBe(true);
+      for (const role of [
+        "cs_engineer",
+        "viewer",
+        "escalator",
+        "attachment_downloader",
+        "usage_metrics_viewer",
+        "timecard_approver",
+        "dashboard_designer",
+        "plg_admin",
+      ]) {
+        expect(getPortalAccess([role]).isAdmin).toBe(false);
+      }
+    });
+
+    it("is false while roles are not loaded or empty", () => {
+      expect(getPortalAccess(undefined).isAdmin).toBe(false);
+      expect(getPortalAccess([]).isAdmin).toBe(false);
+    });
+
+    it("matches the role key case-insensitively", () => {
+      expect(getPortalAccess(["Admin"]).isAdmin).toBe(true);
     });
   });
 });

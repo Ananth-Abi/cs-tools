@@ -21,7 +21,7 @@ import type { PagingChainMember } from "../types";
 import { validateE164 } from "../utils/pagingPhone";
 
 export const PAGING_PHONE_HELPER =
-  "Used only for Case Paging calls when the person has no number on their profile. Never changes their profile.";
+  "Used only for Case Alerts calls when the person has no number on their profile. Never changes their profile.";
 
 interface Props {
   mode: "edit" | "remove";
@@ -108,7 +108,7 @@ export default function PagingPhoneDialog({ mode, member, busy, error, onSave, o
             noValidate
           >
             <h3 id={titleId}>
-              {member.pagingPhone ? "Change" : "Add"} paging number for {name}
+              {member.pagingPhone ? "Change" : "Add"} alert number for {name}
             </h3>
             <label htmlFor={inputId} className="cp-lbl">
               Mobile number (with country code)
@@ -151,9 +151,9 @@ export default function PagingPhoneDialog({ mode, member, busy, error, onSave, o
           </form>
         ) : (
           <>
-            <h3 id={titleId}>Remove paging number for {name}?</h3>
+            <h3 id={titleId}>Remove alert number for {name}?</h3>
             <p className="cp-help">
-              Case Paging will no longer call {name} on {member.pagingPhone?.masked ?? "this number"}. Their profile
+              Case Alerts will no longer call {name} on {member.pagingPhone?.masked ?? "this number"}. Their profile
               is not changed.
             </p>
             {error ? (

@@ -1211,6 +1211,9 @@ type Project struct {
 	Account          *ProjectSearchAccountRef `json:"account"`
 	ActiveCasesCount int                      `json:"activeCasesCount"`
 	OnboardingStatus *string                  `json:"onboardingStatus"`
+	// OnboardingOwner is the person assigned to run this project's onboarding,
+	// nil when none is assigned.
+	OnboardingOwner *PersonRef `json:"onboardingOwner"`
 	// GoLiveDate mirrors ProjectDetailsView/ProjectEngagementFields' own
 	// GoLiveDate (project.onboarding_go_live_date) -- previously selected
 	// only by GetProjectByID, not SearchProjects, even though callers that
@@ -1315,8 +1318,7 @@ type ProjectDetailsView struct {
 	ProjectClosureFields
 	// OnboardingOwner is the person assigned to run this project's
 	// onboarding. Nil when no owner is assigned — most projects, since only
-	// onboarding-enabled projects have one. Currently populated only from
-	// the ServiceNow data source.
+	// onboarding-enabled projects have one. Populated by every data source.
 	OnboardingOwner *PersonRef `json:"onboardingOwner"`
 }
 
@@ -1471,7 +1473,7 @@ type ProjectView struct {
 	OnboardingStatus *string `json:"onboardingStatus"`
 	// OnboardingOwner is the person assigned to run this project's
 	// onboarding. Nil when no owner is assigned — most projects, since only
-	// onboarding-enabled projects have one (ServiceNow data source only).
+	// onboarding-enabled projects have one.
 	OnboardingOwner *PersonRef `json:"onboardingOwner"`
 	// GoLiveDate mirrors ProjectDetailsView/ProjectEngagementFields' own
 	// GoLiveDate (project.onboarding_go_live_date) -- nil when the project
@@ -3019,6 +3021,56 @@ type AggregateResponse struct {
 	TotalRecords int               `json:"totalRecords"`
 }
 
+// CaseVolumeTrendRequest is the input for POST /cases/volume-trend: a
+// day-bucketed count of cases opened and closed per day, for dashboard
+// widgets. Deliberately narrow (no bucket-unit/series config, unlike
+// AggregateCasesRequest's open-ended groupBy): this backs exactly one chart,
+// not a platform, so the two series (opened, closed) are fixed.
+type CaseVolumeTrendRequest struct {
+	Filters SearchCasesFilters `json:"filters"`
+	// Days is the size of the trailing window, ending today (UTC). Optional;
+	// the service applies a default (30) when omitted and rejects a value
+	// outside 1-90.
+	Days int `json:"days,omitempty"`
+}
+
+// CaseVolumeTrendPoint is one day's count in a CaseVolumeTrendSeries. Date is
+// a plain YYYY-MM-DD (UTC calendar day), matching this codebase's other
+// date-only wire fields.
+type CaseVolumeTrendPoint struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+// CaseVolumeTrendSeries is one named line in a CaseVolumeTrendResponse
+// ("Opened" or "Closed"), with one point per day in the requested window,
+// in chronological order. A day with no matching cases is still present,
+// with Count 0 -- the chart draws a continuous line.
+type CaseVolumeTrendSeries struct {
+	Label  string                 `json:"label"`
+	Points []CaseVolumeTrendPoint `json:"points"`
+}
+
+// CaseVolumeTrendResponse is the result of a case-volume trend query: always
+// exactly two series, "Opened" (by created date) and "Closed" (by closed
+// date, own-type only -- see caseLikeOwnClosedOnColumn's doc comment).
+type CaseVolumeTrendResponse struct {
+	Days   int                     `json:"days"`
+	Series []CaseVolumeTrendSeries `json:"series"`
+}
+
+// CaseVolumeDayCount is the opened/closed count for one UTC calendar day --
+// the unit CaseVolumeTrend computes and the Redis-backed cache in front of
+// it stores. Lives in domain (not repository) specifically so internal/cache
+// can share it without importing internal/repository, the same layering
+// every other cached type (e.g. UserDetail) already follows. Not a wire
+// type of its own; the service assembles CaseVolumeTrendResponse's two
+// named series from a map of these, keyed by day.
+type CaseVolumeDayCount struct {
+	Opened int `json:"opened"`
+	Closed int `json:"closed"`
+}
+
 // SearchCaseView is the unified case representation returned in search results.
 // Fields absent for a given data source are nil.
 type SearchCaseView struct {
@@ -3065,19 +3117,22 @@ type SearchCaseView struct {
 	// (Type). Populated for the ServiceNow data source only; null otherwise.
 	AccountDetails *AccountRef `json:"account"`
 	// BestCaseFixEta is the internal-only best-case fix-commitment date, as a
-	// date-only "YYYY-MM-DD" string. Populated for the ServiceNow data source
-	// only; null otherwise. CSM-engineer-facing only, never shared with the
-	// customer.
+	// date-only "YYYY-MM-DD" string. Populated on both data sources -- on
+	// Postgres, read from work_item.best_case_eta the same way GetCaseByID
+	// already does; null when unset. CSM-engineer-facing only, never shared
+	// with the customer.
 	BestCaseFixEta *string `json:"bestCaseFixEta"`
 	// MostLikelyFixEta is the internal-only most-likely fix-commitment date, as
-	// a date-only "YYYY-MM-DD" string. Populated for the ServiceNow data source
-	// only; null otherwise. CSM-engineer-facing only, never shared with the
-	// customer.
+	// a date-only "YYYY-MM-DD" string. Populated on both data sources -- on
+	// Postgres, read from work_item.most_likely_eta the same way GetCaseByID
+	// already does; null when unset. CSM-engineer-facing only, never shared
+	// with the customer.
 	MostLikelyFixEta *string `json:"mostLikelyFixEta"`
 	// WorstCaseFixEta is the internal-only worst-case fix-commitment date, as a
-	// date-only "YYYY-MM-DD" string. Populated for the ServiceNow data source
-	// only; null otherwise. CSM-engineer-facing only, never shared with the
-	// customer.
+	// date-only "YYYY-MM-DD" string. Populated on both data sources -- on
+	// Postgres, read from work_item.worst_case_eta the same way GetCaseByID
+	// already does; null when unset. CSM-engineer-facing only, never shared
+	// with the customer.
 	WorstCaseFixEta *string `json:"worstCaseFixEta"`
 	// EscalationLevel is the case's current escalation level -- see
 	// CaseView.EscalationLevel's doc comment.
@@ -5016,6 +5071,18 @@ type ChangeRequest struct {
 	// Customer Review.
 	CustomerContacts []ChangeRequestCustomerContact `json:"customerContacts"`
 
+	// Tags are the labels attached to the change request's work_item through
+	// work_item_tag -- the same rows, read by the same helper (fetchCaseTags),
+	// as CaseView.Tags, and managed through the same POST /cases/{id}/tags,
+	// DELETE /cases/{id}/tags/{tagId} and POST /tags/search, which take a work
+	// item id and accept a change request's. Tags are internal bookkeeping:
+	// an array (empty when none) for an Unrestricted (staff) caller on the
+	// PostgreSQL data source, and null for every other read -- a customer
+	// (restricted) caller, the ServiceNow data source, or a lookup that failed
+	// (best-effort, like the case read). A tag added to a change request is
+	// never mirrored to the previous system (unlike a case's).
+	Tags []Tag `json:"tags"`
+
 	// Group C2 -- carried for parity, read-through only; no write path is
 	// exposed for any of these seven.
 	// ChangeRequestType is named to avoid colliding with the ChangeRequestType
@@ -5980,7 +6047,10 @@ type SearchIncidentsFilters struct {
 	//     `incident_state` is a distinct field that exists independently on
 	//     the same incident row. Kept only for exact parity with SN's native
 	//     incident dashboards; prefer "state" for general-purpose state
-	//     filtering.
+	//     filtering. On the Postgres data source there is no such separate
+	//     column, so the keys (1 New, 2 In Progress, 3 On Hold, 6 Resolved,
+	//     7 Closed, 8 Canceled) are applied to `state`, ANDed with any "state"
+	//     filter; a key with no state is a 400.
 	// See service.ParseIncidentFieldFilters.
 	Filters []IncidentFieldFilter `json:"filters,omitempty"`
 }

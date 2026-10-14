@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import MonthRoster from "./MonthRoster";
@@ -29,6 +29,7 @@ import {
   TZ1_WE,
   TZ2,
   TZ2_WE,
+  TZ3,
   RND,
   TZ1_L1,
   MOE_DAY,
@@ -36,6 +37,7 @@ import {
   absence,
   assignment,
   scopeControls,
+  shift,
   shiftMap,
 } from "../test/fixtures";
 
@@ -127,14 +129,36 @@ describe("MonthRoster: who may edit", () => {
 });
 
 describe("MonthRoster: what the grid says", () => {
-  it("shows leave over the rota underneath it", () => {
-    // Somebody on leave is not on the rota that day, whatever the generated
-    // row says -- but the assignment is only covered, never deleted.
-    renderRoster({
+  it("shows leave over the rota, and the turn it leaves uncovered", () => {
+    // Somebody on leave is not on the rota that day -- the leave is the cell
+    // -- but the turn generated for them is still there, and the gap is the
+    // thing the lead needs to see: struck through, and the cell flagged.
+    const { container } = renderRoster({
       absences: [absence({ name: "Asela", startsOn: "2026-09-21", endsOn: "2026-09-21" })],
     });
-    expect(screen.getByText("AL")).toBeInTheDocument();
-    expect(screen.queryByText("6-9p")).not.toBeInTheDocument();
+    const td = container.querySelector("tbody td.clash");
+    expect(td).not.toBeNull();
+    expect(td?.querySelector(".chip:not(.gone)")).toHaveTextContent("AL");
+    expect(td?.querySelector(".chip.gone")).toHaveTextContent("6-9p");
+    expect(td).toHaveAttribute("title", expect.stringContaining("needs cover"));
+  });
+
+  it("flags no clash on leave that covers no turn", () => {
+    const { container } = renderRoster({
+      absences: [absence({ name: "Asela", startsOn: "2026-09-22", endsOn: "2026-09-22" })],
+    });
+    expect(container.querySelector("tbody td.clash")).toBeNull();
+  });
+
+  it("shows leave on the weekend inside it, as it is stored", () => {
+    // Friday to Monday is four days away, not two with a weekend back at
+    // work in the middle.
+    const { container } = renderRoster({
+      assignments: [],
+      absences: [absence({ name: "Asela", startsOn: "2026-09-25", endsOn: "2026-09-28" })],
+    });
+    const grid = container.querySelector("table") as HTMLElement;
+    expect(within(grid).getAllByText("AL")).toHaveLength(4);
   });
 
   it("marks the week the reader is in, its two ends included", () => {
@@ -273,12 +297,14 @@ describe("MonthRoster: two tags in one cell", () => {
     expect(duo).toHaveTextContent(RND.shortCode);
   });
 
-  it("lets leave take the whole day", () => {
+  it("lets leave take the whole day, the uncovered turn struck through beside it", () => {
     const { container } = renderRoster({
       assignments: [assignment({ name: "Asela", rotaDate: "2026-09-21", shiftCode: EVENING.code })],
       absences: [absence({ name: "Asela", startsOn: "2026-09-21", endsOn: "2026-09-21" })],
     });
-    expect(container.querySelector(".duo")).toBeNull();
+    const pair = container.querySelector(".duo");
+    expect(pair).toHaveClass("clash");
+    expect(pair?.firstElementChild).toHaveTextContent("AL");
   });
 
   it("hands both to the picker when the cell is opened", () => {
@@ -344,7 +370,7 @@ describe("MonthRoster: an unmarked weekday is a working day", () => {
     expect(container.querySelectorAll(".chip.dflt")).toHaveLength(21);
     expect([...container.querySelectorAll(".chip.dflt")].every((c) => c.textContent === "LK")).toBe(true);
     // The turn on the 21st is still the turn, not LK.
-    expect(screen.getByText("6-9p")).toBeInTheDocument();
+    expect(within(container.querySelector("table") as HTMLElement).getByText("6-9p")).toBeInTheDocument();
   });
 
   it("gives way to leave the moment it is marked", () => {
@@ -352,7 +378,7 @@ describe("MonthRoster: an unmarked weekday is a working day", () => {
       absences: [absence({ name: "Asela", startsOn: "2026-09-22", endsOn: "2026-09-23" })],
     });
     expect(container.querySelectorAll(".chip.dflt")).toHaveLength(19);
-    expect(screen.getAllByText("AL")).toHaveLength(2);
+    expect(within(container.querySelector("table") as HTMLElement).getAllByText("AL")).toHaveLength(2);
   });
 
   it("spans an SRE day's zones as one LK, and leaves a day with a zone alone", () => {
@@ -801,5 +827,179 @@ describe("MonthRoster: moved back before today", () => {
     const cells = [...rows[0].querySelectorAll("td")].map((td) => td.textContent?.trim());
     expect(cells[0]).toBe("Mig");
     expect(cells[15]).toBe(REGULAR.shortCode);
+  });
+});
+
+describe("MonthRoster: the SaaS Night cover is a team people are moved to", () => {
+  // TZ3 tiers as the catalogue marks them: one crew for every team, and the
+  // tag (migration 0232) that moves somebody onto the Night cover for the
+  // months they are on nights. It has no hours of its own.
+  const NIGHT = { ...TZ3, sharedAcrossTeams: true };
+  const NIGHT_COVER = {
+    id: "k-nc", code: "SRE_NIGHT_COVER", shortCode: "NC", label: "SaaS Night cover", bucket: "ALLOCATION" as const,
+    colourToken: "NLK", sortOrder: 75, family: "SRE" as const, movesToTeamKey: "night", worksRotaThere: true,
+  };
+  const nightShifts = shiftMap(TZ1, TZ2, NIGHT, TZ1_WE, TZ2_WE);
+  const turn = (name: string, rotaDate: string, tier: "L1" | "L2" | "L3", teamKey: string) =>
+    assignment({ name, rotaDate, shiftCode: NIGHT.code, zoneCode: "TZ3", tier, teamKey });
+  const members = {
+    delta: ["Nia", "Tom"].map((n) => ({ userId: `u-${n}`, name: n, email: `${n.toLowerCase()}@example.test`, isLead: false, role: "engineer" })),
+    night: [],
+  };
+  const rowOf = (c: HTMLElement, name: string) =>
+    [...c.querySelectorAll("tbody tr")].find((r) => r.querySelector(".who")?.textContent === name);
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 8, 22));
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("lists somebody moved onto it under it, with their nights, and once", () => {
+    const { container } = renderRoster({
+      family: "SRE",
+      shifts: nightShifts,
+      absenceKinds: [ANNUAL_LEAVE, NIGHT_COVER],
+      teamMembers: members,
+      absences: [{ ...absence({ name: "Nia", startsOn: "2026-09-01", endsOn: "2026-11-30", kindCode: NIGHT_COVER.code, teamKey: "night" }), homeTeamKey: "delta" }],
+      assignments: [turn("Nia", "2026-09-21", "L1", "night"), turn("Tom", "2026-09-22", "L2", "delta")],
+    });
+    const nia = rowOf(container, "Nia");
+    expect(nia?.querySelector(".team")?.textContent).toBe("Night");
+    expect(nia?.textContent).toContain("L1");
+    // Being on the Night cover is the whole of it: no tag drawn on the days.
+    expect(nia?.textContent).not.toContain("NC");
+    expect(container.querySelector(".rlegend")?.textContent ?? "").not.toContain("SaaS Night cover");
+    expect(screen.getAllByText("Nia")).toHaveLength(1);
+    // Somebody holding a night without being moved stays on their own team.
+    expect(rowOf(container, "Tom")?.querySelector(".team")?.textContent).toBe("Delta");
+    expect(rowOf(container, "Tom")?.textContent).toContain("L2");
+    expect(container.querySelector("tbody.nightgrp")).toBeNull();
+  });
+
+  it("puts them back under their own team once the move is over", () => {
+    const { container } = renderRoster({
+      family: "SRE",
+      shifts: nightShifts,
+      absenceKinds: [ANNUAL_LEAVE, NIGHT_COVER],
+      teamMembers: members,
+      // Three months on nights, over before today.
+      absences: [{ ...absence({ name: "Nia", startsOn: "2026-06-01", endsOn: "2026-08-31", kindCode: NIGHT_COVER.code, teamKey: "night" }), homeTeamKey: "delta" }],
+      assignments: [assignment({ name: "Nia", rotaDate: "2026-09-21", shiftCode: TZ1.code, zoneCode: "TZ1", teamKey: "delta" })],
+    });
+    expect(rowOf(container, "Nia")?.querySelector(".team")?.textContent).toBe("Delta");
+  });
+
+  it("lets their own team's lead change the moved days, and no other team's", () => {
+    const moved = {
+      family: "SRE" as const,
+      shifts: nightShifts,
+      absenceKinds: [ANNUAL_LEAVE, NIGHT_COVER],
+      teamMembers: members,
+      absences: [{ ...absence({ name: "Nia", startsOn: "2026-09-01", endsOn: "2026-11-30", kindCode: NIGHT_COVER.code, teamKey: "night" }), homeTeamKey: "delta" }],
+      assignments: [turn("Nia", "2026-09-21", "L1", "night")],
+      editing: true,
+      onEditCell: vi.fn(),
+    };
+    const own = renderRoster({ ...moved, leadTeams: ["delta"] });
+    expect(rowOf(own.container, "Nia")?.querySelectorAll("td.editable").length).toBeGreaterThan(0);
+    // A blank day of the move still opens the move, so it can be ended or removed.
+    const blank = [...(rowOf(own.container, "Nia")?.querySelectorAll("td.editable") ?? [])].find(
+      (td) => td.textContent?.trim() === "·",
+    ) as HTMLElement;
+    fireEvent.click(blank);
+    expect(moved.onEditCell).toHaveBeenLastCalledWith(
+      expect.objectContaining({ teamKey: "night", absence: expect.objectContaining({ kindCode: NIGHT_COVER.code }) }),
+    );
+    own.unmount();
+    const other = renderRoster({ ...moved, leadTeams: ["echo"] });
+    expect(rowOf(other.container, "Nia")?.querySelectorAll("td.editable")).toHaveLength(0);
+  });
+});
+
+describe("MonthRoster: reading the codes", () => {
+  it("draws an on-call window dashed, so it is told apart from its plain twin", () => {
+    const MORNING = shift({ code: "CRE_MORNING", shortCode: "6-9am", label: "Morning 6-9am", isRotation: true });
+    const MORNING_OC = shift({
+      code: "CRE_MORNING_OC",
+      shortCode: "6-9am",
+      label: "Morning 6-9am on-call",
+      isRotation: true,
+      isOnCall: true,
+    });
+    const { container } = renderRoster({
+      shifts: shiftMap(REGULAR, MORNING, MORNING_OC),
+      assignments: [
+        assignment({ name: "Asela", rotaDate: "2026-09-21", shiftCode: MORNING.code }),
+        assignment({ name: "Asela", rotaDate: "2026-09-22", shiftCode: MORNING_OC.code }),
+      ],
+    });
+    const chips = [...container.querySelectorAll("tbody .chip")].filter((c) => c.textContent === "6-9am");
+    expect(chips).toHaveLength(2);
+    expect(chips.filter((c) => c.classList.contains("oc"))).toHaveLength(1);
+  });
+
+  it("explains the codes on screen, and only those", () => {
+    const { container } = renderRoster({
+      absences: [absence({ name: "Asela", startsOn: "2026-09-22", endsOn: "2026-09-22" })],
+    });
+    const legend = container.querySelector(".rlegend") as HTMLElement;
+    expect(legend).not.toBeNull();
+    expect(within(legend).getByText(EVENING.label)).toBeInTheDocument();
+    expect(within(legend).getByText(ANNUAL_LEAVE.label)).toBeInTheDocument();
+    expect(within(legend).getByText(/Working day/)).toBeInTheDocument();
+    expect(within(legend).queryByText(RND.label)).not.toBeInTheDocument();
+  });
+
+  it("lists labels only, not the grid's own marks", () => {
+    const { container } = renderRoster({
+      absences: [absence({ name: "Asela", startsOn: "2026-09-21", endsOn: "2026-09-21" })],
+    });
+    const legend = container.querySelector(".rlegend") as HTMLElement;
+    expect(within(legend).queryByText(/needs cover/)).not.toBeInTheDocument();
+    expect(within(legend).queryByText("Nothing rostered")).not.toBeInTheDocument();
+  });
+});
+
+describe("MonthRoster: editing by keyboard", () => {
+  const editable = () =>
+    renderRoster({
+      assignments: [
+        assignment({ name: "Asela", rotaDate: "2026-09-21", shiftCode: EVENING.code, teamKey: "alpha" }),
+        assignment({ name: "Nuwan", rotaDate: "2026-09-21", shiftCode: EVENING.code, teamKey: "bravo" }),
+      ],
+      leadTeams: ["alpha"],
+      editing: true,
+      onEditCell: vi.fn(),
+    });
+
+  it("puts one cell in the Tab order, not every cell", () => {
+    const { container } = editable();
+    const cells = [...container.querySelectorAll<HTMLElement>("td.editable")];
+    expect(cells.length).toBeGreaterThan(1);
+    expect(cells.filter((c) => c.tabIndex === 0)).toHaveLength(1);
+  });
+
+  it("moves along a row with the arrow keys and opens a cell with Enter", () => {
+    const onEditCell = vi.fn();
+    const { container } = renderRoster({ leadTeams: ["alpha"], editing: true, onEditCell });
+    const cells = [...container.querySelectorAll<HTMLElement>("td.editable")];
+    cells[0].focus();
+    fireEvent.keyDown(cells[0], { key: "ArrowRight" });
+    expect(cells[1]).toHaveFocus();
+    fireEvent.keyDown(cells[1], { key: "Home" });
+    expect(cells[0]).toHaveFocus();
+    fireEvent.keyDown(cells[0], { key: "Enter" });
+    expect(onEditCell).toHaveBeenCalledTimes(1);
+  });
+
+  it("says whose a row is when this lead cannot change it", () => {
+    const { container } = editable();
+    const other = [...container.querySelectorAll("tbody tr")].find((r) => r.textContent?.includes("Nuwan"));
+    expect(other).toHaveClass("ro");
+    expect(other?.querySelector("td")).toHaveAttribute(
+      "title",
+      expect.stringContaining("lead or a CRE rota admin can change this"),
+    );
   });
 });

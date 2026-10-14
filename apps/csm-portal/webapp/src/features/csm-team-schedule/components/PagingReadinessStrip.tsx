@@ -18,6 +18,7 @@
 
 import { useState, type JSX } from "react";
 import type { PagingReadinessChain, PagingReadinessGap } from "../types";
+import { ADD_TO_PROFILE_HINT } from "../utils/pagingPhone";
 
 /** An inline action on a phone gap, where the reader may act on that person. */
 export interface PhoneGapAction {
@@ -55,7 +56,7 @@ function ordered(gaps: readonly PagingReadinessGap[]): PagingReadinessGap[] {
 }
 
 /**
- * Whether a paging chain has somebody to page on every day ahead, and what is
+ * Whether a alert chain has somebody to page on every day ahead, and what is
  * missing where it does not. Read-only: each gap names the one thing that
  * closes it -- an edit on this tab, a day on the rota, a profile, or an admin.
  *
@@ -77,18 +78,18 @@ export default function PagingReadinessStrip({
 
   if (isLoading) {
     return (
-      <section className="cp-ready" aria-label={`${name} paging readiness`}>
-        <p className="cp-ready-head">Checking the {name} paging chain…</p>
+      <section className="cp-ready" aria-label={`${name} alert readiness`}>
+        <p className="cp-ready-head">Checking the {name} alert chain…</p>
       </section>
     );
   }
   if (isError || !chain) {
     return (
-      <section className="cp-ready" aria-label={`${name} paging readiness`}>
+      <section className="cp-ready" aria-label={`${name} alert readiness`}>
         <p className="cp-ready-head">
           {isError
-            ? `Could not check whether the ${name} paging chain is ready.`
-            : `No readiness check for the ${name} paging chain yet.`}
+            ? `Could not check whether the ${name} alert chain is ready.`
+            : `No readiness check for the ${name} alert chain yet.`}
         </p>
       </section>
     );
@@ -133,7 +134,7 @@ export default function PagingReadinessStrip({
             {phone.label}
           </button>
         ) : (
-          <span className="cp-fixnote">Ask them to add it under avatar › Profile</span>
+          <span className="cp-fixnote">{ADD_TO_PROFILE_HINT}</span>
         );
       }
       default:
@@ -142,7 +143,7 @@ export default function PagingReadinessStrip({
   };
 
   return (
-    <section className={`cp-ready ${chain.ready ? "ok" : "gap"}`} aria-label={`${name} paging readiness`}>
+    <section className={`cp-ready ${chain.ready ? "ok" : "gap"}`} aria-label={`${name} alert readiness`}>
       <p className="cp-ready-head">
         <b>{name}</b> — {head}
       </p>

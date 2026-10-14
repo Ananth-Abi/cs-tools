@@ -55,6 +55,10 @@ export function phoneIsOptional(m: PagingChainMember): boolean {
 
 /** What the chip beside a person says about the number paging would call.
  *  The words carry the state; the tone only repeats it. */
+/** What to do about a person with no number: numbers are kept on the
+ *  person's own profile, not added from the Case Alerts tab. */
+export const ADD_TO_PROFILE_HINT = "Add the number to their profile (avatar › Profile)";
+
 export function phoneChipState(m: PagingChainMember): PhoneChipState {
   if (m.hasProfilePhone === true) return { label: "Profile ✓", tone: "ok" };
   const p = m.pagingPhone;
@@ -63,14 +67,14 @@ export function phoneChipState(m: PagingChainMember): PhoneChipState {
     switch (p.lastTestStatus) {
       case "completed": {
         const on = fmtShortDate(p.lastTestAt);
-        return { label: `Paging number ✓ tested${on ? ` ${on}` : ""}`, tone: "ok", masked };
+        return { label: `Alert number ✓ tested${on ? ` ${on}` : ""}`, tone: "ok", masked };
       }
       case "no-answer":
       case "busy":
       case "failed":
-        return { label: `Paging number · test failed (${p.lastTestStatus})`, tone: "err", masked };
+        return { label: `Alert number · test failed (${p.lastTestStatus})`, tone: "err", masked };
       default:
-        return { label: "Paging number · not tested", tone: "warn", masked };
+        return { label: "Alert number · not tested", tone: "warn", masked };
     }
   }
   if (m.hasProfilePhone === false) {
