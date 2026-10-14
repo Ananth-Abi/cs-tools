@@ -84,6 +84,13 @@ type ProjectRepository interface {
 	// account (project.account_id IS NULL), or a ValidationError if a closure
 	// sub-state value isn't a valid Postgres enum label for that column.
 	UpdateProject(ctx context.Context, id string, req domain.ProjectUpdateRequest, updatedBy string) (domain.ProjectUpdateResult, error)
+	// SalesforceClosureState returns a project's Salesforce id (project.sf_id)
+	// and its current overall closure state in Title Case ("Open",
+	// "Suspended"), either nil when unset. The Salesforce closure-state
+	// writeback reads it when its job runs, not when the update committed, so
+	// the last job for a project always sends that project's latest state.
+	// Returns a NotFoundError if no such project exists.
+	SalesforceClosureState(ctx context.Context, id string) (sfID, closureState *string, err error)
 }
 
 type projectRepo struct {
@@ -598,6 +605,23 @@ func (r *projectRepo) UpdateProject(ctx context.Context, id string, req domain.P
 	})
 }
 
+// SalesforceClosureState implements ProjectRepository. It runs as the system:
+// project is not RLS-protected, and the caller (a background writeback) was
+// authorized when it updated the project.
+func (r *projectRepo) SalesforceClosureState(ctx context.Context, id string) (*string, *string, error) {
+	var sfID, closureState *string
+	err := r.db.QueryRow(WithSystemIdentity(ctx),
+		`SELECT sf_id, INITCAP(REPLACE(wso2_closure_state::TEXT, '_', ' ')) FROM project WHERE id = $1`, id,
+	).Scan(&sfID, &closureState)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, &apierror.NotFoundError{Msg: "project not found"}
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("read project salesforce closure state: %w", err)
+	}
+	return sfID, closureState, nil
+}
+
 // updateProjectTx is UpdateProject's body, run inside tx.
 func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.ProjectUpdateRequest, updatedBy string) (domain.ProjectUpdateResult, error) {
 	// Lock the row first (mirrors CaseRepository.UpdateCase's own
@@ -605,8 +629,8 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 	// even under a concurrent update to the same project, and so a
 	// nonexistent id is caught as NotFoundError before either UPDATE below
 	// runs.
-	var accountID, sfID *string
-	err := tx.QueryRow(ctx, `SELECT account_id, sf_id FROM project WHERE id = $1 FOR UPDATE`, id).Scan(&accountID, &sfID)
+	var accountID *string
+	err := tx.QueryRow(ctx, `SELECT account_id FROM project WHERE id = $1 FOR UPDATE`, id).Scan(&accountID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ProjectUpdateResult{}, &apierror.NotFoundError{Msg: "project not found"}
 	}
@@ -651,7 +675,6 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 		}
 		return domain.ProjectUpdateResult{}, fmt.Errorf("update project: %w", err)
 	}
-	res.SfID = sfID
 
 	// Recompute the overall state in this tx, standing in for ServiceNow's
 	// "Update WSO2 Closure State" business rule.

@@ -242,9 +242,11 @@ type Config struct {
 	// CSMMigrationSalesforceProjectStateWritebackEnabled writes a project's
 	// overall closure state (Open / Suspended) to Salesforce Project__c
 	// State__c after PATCH /projects/{id} changes a closure field, from
-	// CSM_MIGRATION_SALESFORCE_PROJECT_STATE_WRITEBACK_ENABLED=true. Defaults to
-	// false. Needs the Sales Entity configuration and a database; without them
-	// it is logged and ignored.
+	// CSM_MIGRATION_SALESFORCE_PROJECT_STATE_WRITEBACK_ENABLED=true. Unlike the
+	// other CSM_MIGRATION_* switches it is opt-in: only "true" (any case) turns
+	// it on, so nothing writes to Salesforce before the Sales Entity endpoint it
+	// calls is deployed. Needs the Sales Entity configuration and a database;
+	// without them it is logged and ignored.
 	CSMMigrationSalesforceProjectStateWritebackEnabled bool
 	// CSMMigrationSalesforcePartnerIngestEnabled turns on the partner-link
 	// refresh (account_relationship "Is Partner Of" / "Is Customer Of") that
@@ -819,7 +821,7 @@ func Load() *Config {
 	cfg.CSMMigrationSalesforceOpportunityIngestEnabled = envFlagOn("CSM_MIGRATION_SALESFORCE_OPPORTUNITY_INGEST_ENABLED")
 	cfg.CSMMigrationSalesforceProjectIngestEnabled = envFlagOn("CSM_MIGRATION_SALESFORCE_PROJECT_INGEST_ENABLED")
 	cfg.CSMMigrationSalesforceProjectInsertEnabled = envFlagOn("CSM_MIGRATION_SALESFORCE_PROJECT_INSERT_ENABLED")
-	cfg.CSMMigrationSalesforceProjectStateWritebackEnabled = envFlagOn("CSM_MIGRATION_SALESFORCE_PROJECT_STATE_WRITEBACK_ENABLED")
+	cfg.CSMMigrationSalesforceProjectStateWritebackEnabled = strings.EqualFold(strings.TrimSpace(os.Getenv("CSM_MIGRATION_SALESFORCE_PROJECT_STATE_WRITEBACK_ENABLED")), "true")
 	cfg.CSMMigrationSalesforcePartnerIngestEnabled = envFlagOn("CSM_MIGRATION_SALESFORCE_PARTNER_INGEST_ENABLED")
 	cfg.CSMMigrationCustomerEngagementIngestEnabled = envFlagOn("CSM_MIGRATION_CUSTOMER_ENGAGEMENT_INGEST_ENABLED")
 	cfg.CustomerEngagementFirefightingTypeID = strings.TrimSpace(os.Getenv("CUSTOMER_ENGAGEMENT_FIREFIGHTING_TYPE_ID"))

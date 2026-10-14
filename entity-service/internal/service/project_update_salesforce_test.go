@@ -47,14 +47,10 @@ func (w *recordingProjectStatusWriter) snapshot() []string {
 }
 
 // projectUpdateWithSalesforce builds the Postgres project update service with
-// the Salesforce writeback attached, over a repository that reports the given
-// overall closure state and Salesforce id after the write.
+// the Salesforce writeback attached, over a repository whose project currently
+// has the given overall closure state and Salesforce id.
 func projectUpdateWithSalesforce(closureState, sfID *string, writer *recordingProjectStatusWriter, failures *recordingSNWritebackFailures) ProjectUpdateService {
-	repo := &stubProjectUpdateRepo{
-		updateProject: func(_ context.Context, id string, _ domain.ProjectUpdateRequest, by string) (domain.ProjectUpdateResult, error) {
-			return domain.ProjectUpdateResult{ID: id, UpdatedBy: by, UpdatedOn: time.Now(), ClosureState: closureState, SfID: sfID}, nil
-		},
-	}
+	repo := &stubProjectUpdateRepo{sfID: sfID, closureState: closureState}
 	svc := NewProjectUpdateService(repo, testProjectUserRepo(), alwaysUnrestrictedAccess{})
 	return WithSalesforceProjectStateWriteback(svc, NewSNWritebackDispatcher(failures), writer)
 }
@@ -164,5 +160,34 @@ func TestProjectUpdate_WithoutWritebackNeverCallsSalesforce(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	if got := writer.snapshot(); len(got) != 0 {
 		t.Errorf("Salesforce writes = %v, want none without a dispatcher", got)
+	}
+}
+
+// TestProjectUpdate_SendsTheStateCurrentWhenTheJobRuns: the job sends the
+// project's state at the time it runs, not the one its update committed. A
+// suspend whose job runs after a later reopen has committed therefore sends
+// Open, so Salesforce ends on CSM's latest state whatever the dispatch order.
+func TestProjectUpdate_SendsTheStateCurrentWhenTheJobRuns(t *testing.T) {
+	sfID := "a0dE200000RgxAbIAJ"
+	writer := &recordingProjectStatusWriter{}
+	repo := &stubProjectUpdateRepo{
+		// This update committed Suspended...
+		updateProject: func(_ context.Context, id string, _ domain.ProjectUpdateRequest, by string) (domain.ProjectUpdateResult, error) {
+			return domain.ProjectUpdateResult{ID: id, UpdatedBy: by, UpdatedOn: time.Now(), ClosureState: sPtr("Suspended")}, nil
+		},
+		// ...but a reopen has committed since, so the project is Open now.
+		sfID: &sfID, closureState: sPtr("Open"),
+	}
+	svc := WithSalesforceProjectStateWriteback(
+		NewProjectUpdateService(repo, testProjectUserRepo(), alwaysUnrestrictedAccess{}),
+		NewSNWritebackDispatcher(&recordingSNWritebackFailures{}), writer)
+	ctx := contextWithUserIDToken(fakeJWTWithEmail(t, "jane.doe@example.com"))
+
+	if _, err := svc.UpdateProject(ctx, "11111111-1111-1111-1111-111111111111", domain.ProjectUpdateRequest{EndDateClosureState: sPtr("Closed")}); err != nil {
+		t.Fatalf("UpdateProject: %v", err)
+	}
+	waitFor(t, func() bool { return len(writer.snapshot()) == 1 })
+	if got, want := writer.snapshot()[0], sfID+" Open"; got != want {
+		t.Errorf("Salesforce write = %q, want %q (the current state, not the committed one)", got, want)
 	}
 }

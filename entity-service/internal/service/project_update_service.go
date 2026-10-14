@@ -170,7 +170,7 @@ func (s *pgProjectUpdateService) UpdateProject(ctx context.Context, id string, r
 	}
 
 	if s.sfWriteback != nil && s.sfStatusWriter != nil && touchesClosureState(req) {
-		s.dispatchSalesforceProjectState(ctx, id, result)
+		s.dispatchSalesforceProjectState(ctx, id)
 	}
 
 	return domain.ProjectUpdateResponse{
@@ -180,27 +180,37 @@ func (s *pgProjectUpdateService) UpdateProject(ctx context.Context, id string, r
 }
 
 // dispatchSalesforceProjectState queues the write of the project's overall
-// closure state to Salesforce State__c. Only Open and Suspended are sent:
-// Restricted is no longer used by the closure flow, and Salesforce's
-// endpoint refuses it. A project with no Salesforce id is skipped. Each skip
-// is logged; nothing here can fail the request, which Postgres has already
-// committed.
-func (s *pgProjectUpdateService) dispatchSalesforceProjectState(ctx context.Context, id string, result domain.ProjectUpdateResult) {
-	status := salesforceProjectStatus(result.ClosureState)
-	if status == "" {
-		slog.InfoContext(ctx, "project closure state not written to Salesforce: only Open and Suspended are synced",
-			"projectId", id, "closureState", derefString(result.ClosureState))
-		return
-	}
-	if result.SfID == nil || strings.TrimSpace(*result.SfID) == "" {
-		slog.WarnContext(ctx, "project closure state not written to Salesforce: project has no Salesforce id",
-			"projectId", id, "closureState", status)
-		return
-	}
-	sfID := strings.TrimSpace(*result.SfID)
-	payload := map[string]string{"sfId": sfID, "status": status}
+// closure state to Salesforce State__c.
+//
+// The job reads the project's state and Salesforce id when it runs, not when
+// this update committed. Jobs for one project run one at a time in dispatch
+// order, and every committed closure change dispatches one, so the last job
+// for a project always sends its latest state: two updates that commit in one
+// order but dispatch in the other cannot leave Salesforce on the older state.
+//
+// Only Open and Suspended are sent: Restricted is no longer used by the
+// closure flow, and Salesforce's endpoint refuses it. Such a state, or a
+// project with no Salesforce id, is logged and skipped. Nothing here can fail
+// the request, which Postgres has already committed.
+func (s *pgProjectUpdateService) dispatchSalesforceProjectState(ctx context.Context, id string) {
+	payload := map[string]string{"projectId": id}
 	s.sfWriteback.Dispatch(ctx, salesforceProjectWritebackEntity, id, "update_state", payload, func(writeCtx context.Context) error {
-		return s.sfStatusWriter.UpdateProjectStatus(writeCtx, sfID, status)
+		sfID, closureState, err := s.repo.SalesforceClosureState(writeCtx, id)
+		if err != nil {
+			return err
+		}
+		status := salesforceProjectStatus(closureState)
+		if status == "" {
+			slog.InfoContext(writeCtx, "project closure state not written to Salesforce: only Open and Suspended are synced",
+				"projectId", id, "closureState", derefString(closureState))
+			return nil
+		}
+		if sfID == nil || strings.TrimSpace(*sfID) == "" {
+			slog.WarnContext(writeCtx, "project closure state not written to Salesforce: project has no Salesforce id",
+				"projectId", id, "closureState", status)
+			return nil
+		}
+		return s.sfStatusWriter.UpdateProjectStatus(writeCtx, strings.TrimSpace(*sfID), status)
 	})
 }
 

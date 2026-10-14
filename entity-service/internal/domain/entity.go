@@ -1347,10 +1347,6 @@ type ProjectUpdateResult struct {
 	InvoiceDueDateClosureState      *string         `json:"invoiceDueDateClosureState"`
 	ComplianceViolationClosureState *string         `json:"complianceViolationClosureState"`
 	SuspensionProcessState          json.RawMessage `json:"suspensionProcessState"`
-	// SfID is the project's Salesforce Project__c id (project.sf_id), read in
-	// the update's transaction so the Salesforce closure-state writeback knows
-	// which record to update. Not part of the response.
-	SfID *string `json:"-"`
 }
 
 // SearchProjectsRequest is the input for a project search operation.
