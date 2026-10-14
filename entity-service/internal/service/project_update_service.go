@@ -18,6 +18,8 @@ package service
 
 import (
 	"context"
+	"log/slog"
+	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/auth"
@@ -65,6 +67,38 @@ type pgProjectUpdateService struct {
 	// variant was needed here.
 	snWriteback *SNWritebackDispatcher
 	snMirror    ProjectUpdateService
+	// sfWriteback/sfStatusWriter back the best-effort, asynchronous write of
+	// the project's overall closure state to Salesforce State__c (see
+	// WithSalesforceProjectStateWriteback). Both nil unless that switch is on.
+	sfWriteback    *SNWritebackDispatcher
+	sfStatusWriter ProjectStatusWriter
+}
+
+// ProjectStatusWriter writes a Salesforce project's State__c. Satisfied by
+// *salesentity.Client.
+type ProjectStatusWriter interface {
+	UpdateProjectStatus(ctx context.Context, projectSfID, status string) error
+}
+
+// salesforceProjectWritebackEntity is the entity type the Salesforce
+// closure-state writeback is dispatched (and its failures recorded) under, so
+// it is told apart from the ServiceNow mirror's "project" rows.
+const salesforceProjectWritebackEntity = "salesforce_project"
+
+// WithSalesforceProjectStateWriteback attaches the Salesforce closure-state
+// writeback to a Postgres project update service: after a successful update
+// that touches a closure field, the project's overall closure state is written
+// to Salesforce State__c through dispatcher (asynchronous, ordered per
+// project, failures recorded). A nil dispatcher or writer, or a service that
+// is not the Postgres one, returns svc unchanged.
+func WithSalesforceProjectStateWriteback(svc ProjectUpdateService, dispatcher *SNWritebackDispatcher, writer ProjectStatusWriter) ProjectUpdateService {
+	pg, ok := svc.(*pgProjectUpdateService)
+	if !ok || dispatcher == nil || writer == nil {
+		return svc
+	}
+	pg.sfWriteback = dispatcher
+	pg.sfStatusWriter = writer
+	return pg
 }
 
 // NewProjectUpdateService constructs a ProjectUpdateService backed by
@@ -135,10 +169,63 @@ func (s *pgProjectUpdateService) UpdateProject(ctx context.Context, id string, r
 		})
 	}
 
+	if s.sfWriteback != nil && s.sfStatusWriter != nil && touchesClosureState(req) {
+		s.dispatchSalesforceProjectState(ctx, id, result)
+	}
+
 	return domain.ProjectUpdateResponse{
 		Message: "Project updated successfully",
 		Project: result,
 	}, nil
+}
+
+// dispatchSalesforceProjectState queues the write of the project's overall
+// closure state to Salesforce State__c. Only Open and Suspended are sent:
+// Restricted is no longer used by the closure flow, and Salesforce's
+// endpoint refuses it. A project with no Salesforce id is skipped. Each skip
+// is logged; nothing here can fail the request, which Postgres has already
+// committed.
+func (s *pgProjectUpdateService) dispatchSalesforceProjectState(ctx context.Context, id string, result domain.ProjectUpdateResult) {
+	status := salesforceProjectStatus(result.ClosureState)
+	if status == "" {
+		slog.InfoContext(ctx, "project closure state not written to Salesforce: only Open and Suspended are synced",
+			"projectId", id, "closureState", derefString(result.ClosureState))
+		return
+	}
+	if result.SfID == nil || strings.TrimSpace(*result.SfID) == "" {
+		slog.WarnContext(ctx, "project closure state not written to Salesforce: project has no Salesforce id",
+			"projectId", id, "closureState", status)
+		return
+	}
+	sfID := strings.TrimSpace(*result.SfID)
+	payload := map[string]string{"sfId": sfID, "status": status}
+	s.sfWriteback.Dispatch(ctx, salesforceProjectWritebackEntity, id, "update_state", payload, func(writeCtx context.Context) error {
+		return s.sfStatusWriter.UpdateProjectStatus(writeCtx, sfID, status)
+	})
+}
+
+// salesforceProjectStatus maps the overall closure state UpdateProject
+// returns ("Open", "Suspended", "Restricted", ...) to the Salesforce State__c
+// value to write, or "" when it is not one that is synced.
+func salesforceProjectStatus(closureState *string) string {
+	if closureState == nil {
+		return ""
+	}
+	switch strings.ToUpper(strings.TrimSpace(*closureState)) {
+	case "OPEN":
+		return "Open"
+	case "SUSPENDED":
+		return "Suspended"
+	default:
+		return ""
+	}
+}
+
+// touchesClosureState reports whether req sets one of the three closure
+// fields, the only fields that can change the overall closure state.
+func touchesClosureState(req domain.ProjectUpdateRequest) bool {
+	return req.EndDateClosureState != nil || req.InvoiceDueDateClosureState != nil ||
+		req.ComplianceViolationClosureState != nil
 }
 
 // resolveUpdatedBy returns the user-token caller's email, or, with no user token,

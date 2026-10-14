@@ -605,8 +605,8 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 	// even under a concurrent update to the same project, and so a
 	// nonexistent id is caught as NotFoundError before either UPDATE below
 	// runs.
-	var accountID *string
-	err := tx.QueryRow(ctx, `SELECT account_id FROM project WHERE id = $1 FOR UPDATE`, id).Scan(&accountID)
+	var accountID, sfID *string
+	err := tx.QueryRow(ctx, `SELECT account_id, sf_id FROM project WHERE id = $1 FOR UPDATE`, id).Scan(&accountID, &sfID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ProjectUpdateResult{}, &apierror.NotFoundError{Msg: "project not found"}
 	}
@@ -651,6 +651,7 @@ func updateProjectTx(ctx context.Context, tx pgx.Tx, id string, req domain.Proje
 		}
 		return domain.ProjectUpdateResult{}, fmt.Errorf("update project: %w", err)
 	}
+	res.SfID = sfID
 
 	// Recompute the overall state in this tx, standing in for ServiceNow's
 	// "Update WSO2 Closure State" business rule.
