@@ -498,6 +498,11 @@ export function rotasForReader(reader: {
  *  kind of leave, Allo-INT, Allo-EXT, the Brazil rotation). EXCLUDED, off
  *  the rota entirely, is not a lead's to set from a cell, and a retired kind
  *  is served only so the days already marked with it keep their label. */
+/** The half-day leave kinds (0234): still a day off the rota, but which
+ *  half is shown -- beside the name on the Day view's Leave card, and always
+ *  in the roster's legend. */
+export const HALF_DAY_LEAVE_CODES: ReadonlySet<string> = new Set(["HALF_DAY_LEAVE_MORNING", "HALF_DAY_LEAVE_EVENING"]);
+
 export function kindsOfferedOn(
   kinds: readonly ScheduleAbsenceKind[],
   family: RotaFamily,
@@ -633,4 +638,23 @@ function familyOfType(type: string): RotaFamily {
   if (t.startsWith("SRE")) return "SRE";
   if (t.startsWith("SME")) return "SME";
   return "CRE";
+}
+
+/**
+ * The groups (CRE, SRE, SME) a reader runs teams in -- as a lead, or as a rota
+ * admin of that group -- in the catalogue's order. Somebody who runs teams in
+ * more than one group plans more than one rota, so every view offers them the
+ * group switch, as it does a manager. Keys the catalogue does not list count
+ * for nothing.
+ */
+export function familiesRun(
+  teams: readonly { key: string; family: RotaFamily }[],
+  runs: readonly string[],
+): RotaFamily[] {
+  const mine = new Set(runs.map((k) => k.toLowerCase()));
+  const out: RotaFamily[] = [];
+  for (const t of teams) {
+    if (mine.has(t.key.toLowerCase()) && !out.includes(t.family)) out.push(t.family);
+  }
+  return out;
 }

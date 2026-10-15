@@ -433,7 +433,7 @@ the list.
   `deactivation_date`. Sales Entity sends these only after its "customer fields"
   change (SE-1 in `docs/customer-onboarding/SALESFORCE_SYNC_PLAN.md`); until then they
   keep the ServiceNow sync's value. Switch them to plain assignment once SE-1 ships.
-- `primary_partner_sf_id` (migration 0222, from `primaryPartnerAccountId`, Salesforce
+- `primary_partner_sf_id` (migration 0235, from `primaryPartnerAccountId`, Salesforce
   `Primary_Partner_Name2__c`): assigned as sent, so a partner removed in Salesforce clears
   it; only a payload without the key keeps the stored value (`salesentity.OptionalString`,
   `KeepExistingPrimaryPartner`). `hasPrimaryPartner` on `GET /accounts/{id}` and the account
@@ -9229,8 +9229,11 @@ added `work_item_feedback`, and `pgFeedbackService`
 /cases/feedback/search` and `/aggregate` for both the `postgres` and
 `postgres-servicenow-dual-write` data sources (dual write reads Postgres, never
 the backing system). `unavailableFeedbackService` is now only the fallback for
-a data source with no feedback store. Known gap: the table stores no
-per-rating reason chips, so every `reasons_*` bucket returns an empty result.
+a data source with no feedback store. The `reasons_*` aggregate buckets
+(`reasons_very_dissatisfied`=rating 1 ... `reasons_very_satisfied`=5) count the
+ticked reasons in `work_item_feedback_reason` (migration `0128`), grouped by
+reason text over feedback of that rating (`bucketStart`=reason, `avgRating`=the
+rating, most-ticked first); the older "no reason chips are stored" gap is closed.
 `GET`/`POST /cases/{id}/feedback` (the emoji submission contract) now has a
 real Postgres implementation too — see the dedicated section below.
 

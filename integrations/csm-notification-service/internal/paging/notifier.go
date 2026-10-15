@@ -204,6 +204,9 @@ type chatSender interface {
 	// SendEscalationHandoff tells an SRE space its incident went to the SMEs
 	// (sre.smeHandoffChat).
 	SendEscalationHandoff(ctx context.Context, h notifications.EscalationHandoff) error
+	// SendEscalationStopped replies in a ladder's thread that it stopped
+	// (ackChat).
+	SendEscalationStopped(ctx context.Context, s notifications.EscalationStopped) error
 	// HasAudienceSpace reports whether GOOGLE_CHAT_SPACES has a room for the
 	// audience. Asked before every rung, because the client itself treats an
 	// unknown audience as a quiet success.
@@ -235,6 +238,8 @@ type chatNotifier struct {
 	// as a struct literal, as tests do -- means "Incident Monitor", so the zero
 	// value routes the same as an unconfigured deployment.
 	audience string
+	// reply posts the rung as a short reply under the incident's card, which only its INCIDENT_CHAT_SPACES space has.
+	reply bool
 }
 
 // roomFor is the audience a card goes to.
@@ -299,7 +304,7 @@ func (n chatNotifier) Deliver(ctx context.Context, plan Plan, call PlannedCall) 
 		NextIn:      nextIn,
 		// An incident's rungs reply under its "Incident Reported" card, so the space shows the escalation in that one thread.
 		ThreadKey: t.chatThreadKey(),
-		Reply:     !t.isCase(),
+		Reply:     n.reply,
 		Team:      t.Team,
 		// Both stamps in IST, because every shift boundary this ladder routes
 		// by is expressed in it. Rendering either in the reader's own zone
