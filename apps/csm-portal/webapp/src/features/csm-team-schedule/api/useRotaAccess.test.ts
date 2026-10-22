@@ -22,7 +22,7 @@ import type { RotaAccess, RotaAdminGrant } from "../types";
 vi.mock("@api/backend/client", () => ({ useBackendApi: () => ({}) }));
 vi.mock("@config/apiConfig", () => ({ apiConfig: { backendUrl: "https://example.test" } }));
 
-const { isRotaAdminOf } = await import("./useRotaAccess");
+const { isRotaAdminOf, mayEditWeekOf } = await import("./useRotaAccess");
 
 function grant(over: Partial<RotaAdminGrant>): RotaAdminGrant {
   return {
@@ -61,5 +61,24 @@ describe("isRotaAdminOf", () => {
       markers: [],
     };
     expect(isRotaAdminOf(csmAdmin, "jane.doe@example.com", "CRE")).toBe(false);
+  });
+});
+
+describe("mayEditWeekOf", () => {
+  it("lets a rota admin edit their own family's week and no other", () => {
+    const a = access(grant({}));
+    expect(mayEditWeekOf(a, "jane.doe@example.com", "CRE")).toBe(true);
+    expect(mayEditWeekOf(a, "jane.doe@example.com", "SRE")).toBe(false);
+  });
+
+  it("lets a CSM or portal admin edit every family's week", () => {
+    const admin: RotaAccess = { canManage: { rotaAdmins: true, markerFamilies: ["CRE", "SRE", "SME"] }, rotaAdmins: [], markers: [] };
+    for (const f of ["CRE", "SRE", "SME"] as const) expect(mayEditWeekOf(admin, "admin@example.com", f)).toBe(true);
+  });
+
+  it("does not let a reader who may only name markers edit the week", () => {
+    const leadOnly: RotaAccess = { canManage: { rotaAdmins: false, markerFamilies: [] }, rotaAdmins: [], markers: [] };
+    expect(mayEditWeekOf(leadOnly, "lead@example.com", "CRE")).toBe(false);
+    expect(mayEditWeekOf(undefined, "lead@example.com", "CRE")).toBe(false);
   });
 });

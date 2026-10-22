@@ -52,7 +52,7 @@ import WeekTable, { type WeekEditControls, type WeekPerson, type WeekTurn } from
 import CasePagingTab, { type PagingRotaTarget } from "../components/CasePagingTab";
 import { caseAlertChainsFor, caseAlertChainsReady, caseAlertsOffered } from "../utils/pagingChains";
 import RotaAccessTab from "../components/RotaAccessTab";
-import { canManageRotaAccess, isRotaAdminOf, useRotaAccess } from "../api/useRotaAccess";
+import { canManageRotaAccess, mayEditWeekOf, useRotaAccess } from "../api/useRotaAccess";
 import { canViewCaseAlertSettings, useCaseAlertSettings } from "../api/useCaseAlertSettings";
 import { useGetPagingChain } from "../api/usePagingChain";
 import GenerateRotaDialog from "../components/GenerateRotaDialog";
@@ -1427,9 +1427,10 @@ export default function CsmTeamSchedulePage(): JSX.Element {
     [catalogue.data?.teams, shownTeamKey, noRotaOfTheirs, user?.team?.teamKey, rotaScoped, scopeRota, family],
   );
 
-  /** This week is editable by a rota admin of the family on screen, and by
-   *  nobody else: a lead keeps the roster. The server checks every write. */
-  const weekEditable = view === "week" && !noRotaOfTheirs && isRotaAdminOf(rotaAccess.data, readerEmail, family);
+  /** This week is editable by a rota admin of the family on screen and by a
+   *  CSM or portal admin; a lead keeps the roster. The server checks every
+   *  write. */
+  const weekEditable = view === "week" && !noRotaOfTheirs && mayEditWeekOf(rotaAccess.data, readerEmail, family);
   /** Who This week's "+ Add" offers: the people of the family's teams on
    *  screen (the team filter and the rota narrow it as they do the roster). */
   const weekPeople = useMemo(() => {

@@ -40,10 +40,22 @@ export function canManageRotaAccess(access: RotaAccess | undefined): boolean {
   return Boolean(access && (access.canManage.rotaAdmins || access.canManage.markerFamilies.length > 0));
 }
 
-/** Whether the reader holds an active rota admin grant for this family: what
- *  lets them change its rota from This week. A CSM or portal admin, a Team
- *  lead and a rota marker are not rota admins, so it is false for them. The
- *  server checks every write again. */
+/** Whether the reader may change this family's rota from This week: a rota
+ *  admin of the family (isRotaAdminOf), or a CSM or portal admin -- who may
+ *  manage the rota admins themselves (canManage.rotaAdmins) and edit every
+ *  family's roster. A Team lead and a rota marker keep the roster. The server
+ *  checks every write again. */
+export function mayEditWeekOf(
+  access: RotaAccess | undefined,
+  email: string,
+  family: RotaFamily,
+): boolean {
+  return Boolean(access?.canManage.rotaAdmins) || isRotaAdminOf(access, email, family);
+}
+
+/** Whether the reader holds an active rota admin grant for this family. A CSM
+ *  or portal admin, a Team lead and a rota marker are not rota admins, so it is
+ *  false for them. */
 export function isRotaAdminOf(
   access: RotaAccess | undefined,
   email: string,
