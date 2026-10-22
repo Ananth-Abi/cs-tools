@@ -1343,6 +1343,17 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// same *caseService the case handler already holds, so this reaches it.
 	activeCaseSvc = service.WithServiceRequestCatalog(activeCaseSvc, activeCatalogSvc)
 
+	// Case auto-closure (reminders and automatic closure of Awaiting Info /
+	// Solution Proposed tickets). Off until AUTOCLOSURE_SYSTEM_USER_EMAIL names
+	// the system user it acts as, and Postgres-only: the workflow's position
+	// lives on the case-like tables. Driven by operations/csm-scheduled-tasks.
+	var autoclosureHandler *handler.AutoclosureHandler
+	if db != nil && cfg.AutoclosureSystemUserEmail != "" {
+		autoclosureHandler = handler.NewAutoclosureHandler(service.NewAutoclosureService(
+			repository.NewAutoclosureRepository(repository.NewScoped(db)),
+			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail))
+	}
+
 	// Case feedback (CSAT submissions): the ServiceNow data source reads it
 	// from the backing system; both Postgres data sources read
 	// work_item_feedback (migration 0102). Dual write deliberately does NOT
@@ -1874,6 +1885,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		// what each has spent. A customer token must never reach it.
 		mux.HandleFunc("GET /reports/query-hours", internalOnly(accessSvc, queryHourHandler.GetWeeklyReport))
 		mux.HandleFunc("POST /query-hours/recompute", internalOnly(accessSvc, queryHourHandler.RecomputeQueryHours))
+	}
+	if autoclosureHandler != nil {
+		mux.HandleFunc("POST /autoclosure/candidates", internalOnly(accessSvc, autoclosureHandler.FindCandidates))
+		mux.HandleFunc("POST /autoclosure/cases/{id}/advance", internalOnly(accessSvc, autoclosureHandler.Advance))
 	}
 	if scheduledTaskRunHandler != nil {
 		mux.HandleFunc("POST /scheduled-tasks/attempts", scheduledTaskRunHandler.AttemptScheduledTaskRun)

@@ -374,6 +374,38 @@ Timeout is five minutes, not the sixty seconds the neighbouring sweeps use.
 Volume is the normal case here, and cutting a healthy run off partway leaves
 some subjects updated and the rest stale.
 
+## Case auto-closure
+
+`internal/autoclosure.Run`, registered as **`case_autoclosure`** (default schedule `0 8 * * *`, TZ=UTC
+caveat as above), reminds and closes tickets that sit in Awaiting Info / Solution Proposed with no activity.
+**Off unless `AUTOCLOSURE_ENABLED=true`**: it comments on and closes customers' tickets, so it is never on by
+accident. entity-service must also have `AUTOCLOSURE_SYSTEM_USER_EMAIL` set (else it does not register the
+two routes this calls) and this component's client id in its `M2M_CLIENT_IDS`.
+
+This task is a **trigger only**. Everything that decides anything (eligibility, whether a ticket is still due,
+the comment text, how it is closed, the daily limit) is in entity-service; see its CLAUDE.md, "Case
+auto-closure". Each run works through four stages in order -- `release_hold`, `close`, `second_reminder`,
+`first_reminder` -- asking `POST /autoclosure/candidates` for what is due and `POST
+/autoclosure/cases/{id}/advance` for each ticket. A ticket moves at most one stage per run.
+
+- A failure on one ticket never stops the others; a failed listing does not stop the other stages.
+- The run **returns an error if anything failed**, so the engine alerts and retries on the next tick. That is
+  safe: tickets already advanced are no longer due, and entity-service takes what today has already done off the
+  daily limit, so the limit holds across retries.
+- The alert lists at most 10 failures and counts the rest.
+- The summary log line carries evaluated / reminded / closed / holdsReleased / skipped / failed.
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `AUTOCLOSURE_ENABLED` | `false` | Register the task |
+| `AUTOCLOSURE_INTERVAL_DAYS` | `7` | Days each stage waits (calendar days) |
+| `AUTOCLOSURE_DAILY_LIMIT` | `500` | Reminders + closures per UTC day, across all stages; `0` = no cap |
+| `AUTOCLOSURE_STATES` | both | Comma list of `awaiting_info`, `solution_proposed`. Run `solution_proposed` alone first, add `awaiting_info` after watching it |
+| `AUTOCLOSURE_TEMPLATES` | built-in | JSON `{"<state>.<kind>": "text"}` overriding comment wording; kinds `first_reminder`, `second_reminder`, `closure` |
+
+First run: expect a large backlog (thousands of eligible tickets); the daily limit spreads the notifications over
+days. Set a hold on tickets that customers asked to keep open **before** enabling.
+
 ## Outage emails (moved out)
 
 The two outage emails -- `outage_internal_notification` (internal

@@ -1,0 +1,378 @@
+// Copyright (c) 2026 WSO2 LLC. (https://www.wso2.com).
+//
+// WSO2 LLC. licenses this file to you under the Apache License,
+// Version 2.0 (the "License"); you may not use this file except
+// in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package service
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
+	"github.com/wso2-open-operations/cs-tools/entity-service/internal/repository"
+)
+
+const acTestCaseID = "92000000-0000-0000-0000-000000000001"
+
+type fakeAutoclosureRepo struct {
+	candidates []repository.AutoclosureCandidateRow
+	claimWins  bool
+	claims     []string
+	restores   int
+	events     []repository.AutoclosureEvent
+	lastQuery  repository.AutoclosureCandidateQuery
+	advanced   int
+	countSince time.Time
+}
+
+func (r *fakeAutoclosureRepo) FindCandidates(_ context.Context, q repository.AutoclosureCandidateQuery) ([]repository.AutoclosureCandidateRow, error) {
+	r.lastQuery = q
+	return r.candidates, nil
+}
+func (r *fakeAutoclosureRepo) ClaimStep(_ context.Context, _ repository.AutoclosureCandidateRow, newStep string, _ time.Time) (bool, error) {
+	r.claims = append(r.claims, newStep)
+	return r.claimWins, nil
+}
+func (r *fakeAutoclosureRepo) RestoreStep(context.Context, repository.AutoclosureCandidateRow, time.Time) error {
+	r.restores++
+	return nil
+}
+func (r *fakeAutoclosureRepo) CountAdvancedSince(_ context.Context, since time.Time) (int, error) {
+	r.countSince = since
+	return r.advanced, nil
+}
+func (r *fakeAutoclosureRepo) RecordEvent(_ context.Context, ev repository.AutoclosureEvent) error {
+	r.events = append(r.events, ev)
+	return nil
+}
+
+type fakeAutoclosureCases struct {
+	comments   []domain.CreateCaseCommentRequest
+	commentBy  []string
+	commentErr error
+	updates    []domain.UpdateCaseRequest
+	updateCtx  []context.Context
+	updateErr  error
+	view       domain.CaseView
+}
+
+func (c *fakeAutoclosureCases) CreateCaseCommentAs(_ context.Context, req domain.CreateCaseCommentRequest, by string) (domain.CreateCaseCommentResponse, error) {
+	c.comments = append(c.comments, req)
+	c.commentBy = append(c.commentBy, by)
+	return domain.CreateCaseCommentResponse{}, c.commentErr
+}
+func (c *fakeAutoclosureCases) GetCaseByID(context.Context, string) (domain.CaseView, error) {
+	return c.view, nil
+}
+func (c *fakeAutoclosureCases) UpdateCase(ctx context.Context, req domain.UpdateCaseRequest) (domain.UpdateCaseResponse, error) {
+	c.updates = append(c.updates, req)
+	c.updateCtx = append(c.updateCtx, ctx)
+	return domain.UpdateCaseResponse{}, c.updateErr
+}
+
+type internalAccess struct{ AccessService }
+
+func (internalAccess) ResolveScope(context.Context) (AccessScope, error) {
+	return AccessScope{Unrestricted: true}, nil
+}
+
+type customerAccess struct{ AccessService }
+
+func (customerAccess) ResolveScope(context.Context) (AccessScope, error) {
+	return AccessScope{ProjectIDs: []string{"p"}}, nil
+}
+
+func newACService(repo *fakeAutoclosureRepo, cases *fakeAutoclosureCases) *autoclosureService {
+	return &autoclosureService{
+		repo: repo, cases: cases, access: internalAccess{}, systemEmail: "system@example.com",
+		now: func() time.Time { return time.Date(2026, 10, 19, 8, 0, 0, 0, time.UTC) },
+	}
+}
+
+func dueCandidate(state domain.CaseState, step *string) repository.AutoclosureCandidateRow {
+	return repository.AutoclosureCandidateRow{
+		AutoclosureCandidate: domain.AutoclosureCandidate{ID: acTestCaseID, Number: "CS1", State: state, Step: step},
+		RowType:              repository.AutoclosureRowCase,
+	}
+}
+
+func TestAutoclosureAdvance_StagesPostTheRightCommentAndStep(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		stage    domain.AutoclosureStage
+		state    domain.CaseState
+		from     *string
+		wantStep string
+		wantText string
+	}{
+		{"SP first", domain.AutoclosureStageFirstReminder, domain.CaseStateSolutionProposed, nil, "FIRST_COMMENT", "solution has been proposed"},
+		{"AI first", domain.AutoclosureStageFirstReminder, domain.CaseStateAwaitingInfo, strp("DEFAULT"), "FIRST_COMMENT", "no further updates have been received. Please share"},
+		{"SP second", domain.AutoclosureStageSecondReminder, domain.CaseStateSolutionProposed, strp("FIRST_COMMENT"), "SECOND_COMMENT", "closed off after one week"},
+		{"AI second", domain.AutoclosureStageSecondReminder, domain.CaseStateAwaitingInfo, strp("FIRST_COMMENT"), "SECOND_COMMENT", "Gentle reminder"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(tc.state, tc.from)}}
+			cases := &fakeAutoclosureCases{}
+			resp, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: tc.stage})
+			if err != nil {
+				t.Fatalf("Advance: %v", err)
+			}
+			if resp.Outcome != domain.AutoclosureOutcomeAdvanced || resp.ToStep == nil || *resp.ToStep != tc.wantStep {
+				t.Fatalf("response = %+v, want advanced to %s", resp, tc.wantStep)
+			}
+			if len(cases.comments) != 1 || !strings.Contains(cases.comments[0].Content, tc.wantText) {
+				t.Fatalf("comments = %+v, want one containing %q", cases.comments, tc.wantText)
+			}
+			if cases.commentBy[0] != "system@example.com" || cases.comments[0].Type != domain.CommentTypeComment {
+				t.Errorf("comment must be a customer-visible comment by the system user, got %q / %s", cases.commentBy[0], cases.comments[0].Type)
+			}
+			if len(cases.updates) != 0 {
+				t.Errorf("a reminder must not change the ticket's state")
+			}
+			if len(repo.events) != 1 || repo.events[0].Outcome != "ADVANCED" {
+				t.Errorf("audit = %+v, want one ADVANCED row", repo.events)
+			}
+		})
+	}
+}
+
+func TestAutoclosureAdvance_AwaitingInfoCloseSetsTheNonResponsivenessCode(t *testing.T) {
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, strp("SECOND_COMMENT"))}}
+	cases := &fakeAutoclosureCases{}
+	if _, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageClose}); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+	if len(cases.updates) != 1 {
+		t.Fatalf("updates = %d, want 1", len(cases.updates))
+	}
+	u := cases.updates[0]
+	if u.State == nil || *u.State != domain.CaseStateClosed {
+		t.Errorf("state = %v, want closed", u.State)
+	}
+	if u.ResolutionCode == nil || *u.ResolutionCode != domain.CaseResolutionCodeAbruptlyClosedDueToNonResponsiveness {
+		t.Errorf("an Awaiting Info close must carry the auto-closure resolution code, got %v", u.ResolutionCode)
+	}
+	if u.CloseNotes == nil || !strings.Contains(*u.CloseNotes, "did not receive an update") {
+		t.Errorf("closeNotes = %v, want the closure text", u.CloseNotes)
+	}
+	if email, ok := autoclosureActorFromContext(cases.updateCtx[0]); !ok || email != "system@example.com" {
+		t.Errorf("the close must be made as the system user, ctx actor = %q (%v)", email, ok)
+	}
+	if len(cases.comments) != 1 || !strings.Contains(cases.comments[0].Content, "did not receive an update") {
+		t.Errorf("closure comment missing: %+v", cases.comments)
+	}
+}
+
+func TestAutoclosureAdvance_SolutionProposedCloseKeepsItsOwnResolution(t *testing.T) {
+	code := domain.CaseResolutionCodeSolvedWorkaroundProvided
+	cause := domain.CaseCauseUnknown
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateSolutionProposed, strp("SECOND_COMMENT"))}}
+	cases := &fakeAutoclosureCases{view: domain.CaseView{ResolutionCode: &code, Cause: &cause}}
+	if _, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageClose}); err != nil {
+		t.Fatalf("Advance: %v", err)
+	}
+	u := cases.updates[0]
+	if u.ResolutionCode == nil || *u.ResolutionCode != code {
+		t.Errorf("a Solution Proposed close must keep the proposed resolution %v, got %v (it must never get the Awaiting Info code)", code, u.ResolutionCode)
+	}
+}
+
+func TestAutoclosureAdvance_ASecondCallDoesNothing(t *testing.T) {
+	// Not due any more: whatever listed the ticket is stale.
+	repo := &fakeAutoclosureRepo{claimWins: true}
+	cases := &fakeAutoclosureCases{}
+	resp, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder})
+	if err != nil || resp.Outcome != domain.AutoclosureOutcomeSkipped {
+		t.Fatalf("resp=%+v err=%v, want skipped", resp, err)
+	}
+	if len(cases.comments) != 0 || len(repo.claims) != 0 || len(repo.events) != 0 {
+		t.Errorf("a skipped ticket must write nothing: comments=%d claims=%d events=%d", len(cases.comments), len(repo.claims), len(repo.events))
+	}
+	if repo.lastQuery.OnlyID != acTestCaseID {
+		t.Errorf("Advance must re-check the ticket by its id, OnlyID = %q", repo.lastQuery.OnlyID)
+	}
+}
+
+func TestAutoclosureAdvance_LosingTheClaimPostsNothing(t *testing.T) {
+	repo := &fakeAutoclosureRepo{claimWins: false, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, nil)}}
+	cases := &fakeAutoclosureCases{}
+	resp, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder})
+	if err != nil || resp.Outcome != domain.AutoclosureOutcomeSkipped {
+		t.Fatalf("resp=%+v err=%v, want skipped", resp, err)
+	}
+	if len(cases.comments) != 0 {
+		t.Errorf("the run that lost the claim posted a comment: that is the duplicate reminder this exists to prevent")
+	}
+}
+
+func TestAutoclosureAdvance_AFailedActionPutsTheStepBack(t *testing.T) {
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateSolutionProposed, nil)}}
+	cases := &fakeAutoclosureCases{commentErr: errors.New("boom")}
+	_, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder})
+	if err == nil {
+		t.Fatal("want the comment failure returned")
+	}
+	if repo.restores != 1 {
+		t.Errorf("restores = %d, want 1: a ticket marked reminded that never was would never be reminded", repo.restores)
+	}
+	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED" {
+		t.Errorf("audit = %+v, want one FAILED row", repo.events)
+	}
+}
+
+func TestAutoclosureAdvance_ARefusedCloseIsRolledBackAndPostsNoClosureComment(t *testing.T) {
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, strp("SECOND_COMMENT"))}}
+	cases := &fakeAutoclosureCases{updateErr: &apierror.ConflictError{Msg: "Cannot close this case while child case X is still open"}}
+	_, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageClose})
+	if err == nil {
+		t.Fatal("want the refusal returned")
+	}
+	if len(cases.comments) != 0 {
+		t.Errorf("a \"this case is closed\" comment was posted on a case that is not closed")
+	}
+	if repo.restores != 1 {
+		t.Errorf("restores = %d, want 1", repo.restores)
+	}
+}
+
+func TestAutoclosureAdvance_ReleaseHoldOnlyMovesTheStep(t *testing.T) {
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateSolutionProposed, strp("ON_HOLD"))}}
+	cases := &fakeAutoclosureCases{}
+	resp, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageReleaseHold})
+	if err != nil || resp.Outcome != domain.AutoclosureOutcomeAdvanced {
+		t.Fatalf("resp=%+v err=%v", resp, err)
+	}
+	if len(repo.claims) != 1 || repo.claims[0] != "DEFAULT" {
+		t.Errorf("claims = %v, want DEFAULT", repo.claims)
+	}
+	if len(cases.comments) != 0 || len(cases.updates) != 0 {
+		t.Errorf("releasing a hold must not comment or change state")
+	}
+}
+
+func TestAutoclosureTemplateOverrides(t *testing.T) {
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, nil)}}
+	cases := &fakeAutoclosureCases{}
+	_, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{
+		Stage:     domain.AutoclosureStageFirstReminder,
+		Templates: map[string]string{"awaiting_info.first_reminder": "custom wording", "solution_proposed.first_reminder": "not used"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cases.comments[0].Content != "custom wording" {
+		t.Errorf("content = %q, want the override", cases.comments[0].Content)
+	}
+}
+
+func TestAutoclosureDefaultTemplatesCoverEveryStateAndKind(t *testing.T) {
+	for _, state := range []string{"awaiting_info", "solution_proposed"} {
+		for _, kind := range []string{"first_reminder", "second_reminder", "closure"} {
+			if strings.TrimSpace(autoclosureDefaultTemplates[state+"."+kind]) == "" {
+				t.Errorf("no default template for %s.%s", state, kind)
+			}
+		}
+	}
+}
+
+func TestAutoclosureService_RefusesCustomersAndBadInput(t *testing.T) {
+	repo := &fakeAutoclosureRepo{}
+	svc := newACService(repo, &fakeAutoclosureCases{})
+	svc.access = customerAccess{}
+	if _, err := svc.FindCandidates(context.Background(), domain.AutoclosureCandidatesRequest{Stage: domain.AutoclosureStageClose}); err == nil {
+		t.Error("a customer must not be able to list tickets due for closure")
+	}
+	if _, err := svc.Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageClose}); err == nil {
+		t.Error("a customer must not be able to close a ticket through the workflow")
+	}
+
+	svc.access = internalAccess{}
+	for name, req := range map[string]domain.AutoclosureCandidatesRequest{
+		"unknown stage":      {Stage: "nope"},
+		"negative interval":  {Stage: domain.AutoclosureStageClose, IntervalDays: -1},
+		"huge interval":      {Stage: domain.AutoclosureStageClose, IntervalDays: 4000},
+		"huge limit":         {Stage: domain.AutoclosureStageClose, Limit: 99999},
+		"a state not served": {Stage: domain.AutoclosureStageClose, States: []domain.CaseState{domain.CaseStateOpen}},
+	} {
+		var ve *apierror.ValidationError
+		if _, err := svc.FindCandidates(context.Background(), req); !errors.As(err, &ve) {
+			t.Errorf("%s: err = %v, want a validation error", name, err)
+		}
+	}
+	if _, err := svc.Advance(context.Background(), "not-a-uuid", domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageClose}); err == nil {
+		t.Error("a malformed id must be refused")
+	}
+}
+
+func TestAutoclosureFindCandidates_DefaultsAndBothStates(t *testing.T) {
+	repo := &fakeAutoclosureRepo{}
+	svc := newACService(repo, &fakeAutoclosureCases{})
+	if _, err := svc.FindCandidates(context.Background(), domain.AutoclosureCandidatesRequest{Stage: domain.AutoclosureStageFirstReminder}); err != nil {
+		t.Fatal(err)
+	}
+	q := repo.lastQuery
+	if q.IntervalDays != 7 || q.Limit != 500 || len(q.States) != 2 || q.SystemEmail != "system@example.com" {
+		t.Errorf("query = %+v, want 7 days, limit 500, both states and the system user", q)
+	}
+}
+
+func TestAutoclosureFindCandidates_DailyLimitIsSharedAndSurvivesRetries(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		advanced  int
+		limit     int
+		daily     int
+		stage     domain.AutoclosureStage
+		wantLimit int
+		wantCall  bool
+	}{
+		{"nothing done today", 0, 0, 500, domain.AutoclosureStageFirstReminder, 500, true},
+		{"a daily limit above the default page size is not halved", 0, 0, 800, domain.AutoclosureStageFirstReminder, 800, true},
+		{"part of the budget used", 480, 0, 500, domain.AutoclosureStageClose, 20, true},
+		{"budget used up", 500, 0, 500, domain.AutoclosureStageFirstReminder, 0, false},
+		{"budget overrun by an earlier setting", 650, 0, 500, domain.AutoclosureStageSecondReminder, 0, false},
+		{"a smaller per-call limit still applies", 0, 50, 500, domain.AutoclosureStageFirstReminder, 50, true},
+		{"a hold release is never counted", 500, 0, 500, domain.AutoclosureStageReleaseHold, 500, true},
+		{"no daily cap", 9999, 0, 0, domain.AutoclosureStageFirstReminder, 500, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeAutoclosureRepo{advanced: tc.advanced}
+			svc := newACService(repo, &fakeAutoclosureCases{})
+			resp, err := svc.FindCandidates(context.Background(), domain.AutoclosureCandidatesRequest{Stage: tc.stage, Limit: tc.limit, DailyLimit: tc.daily})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Candidates == nil {
+				t.Error("candidates must serialise as [], not null")
+			}
+			if tc.wantCall && repo.lastQuery.Limit != tc.wantLimit {
+				t.Errorf("limit asked of the repository = %d, want %d", repo.lastQuery.Limit, tc.wantLimit)
+			}
+			if !tc.wantCall && repo.lastQuery.Limit != 0 {
+				t.Errorf("the repository was queried with limit %d although the budget is spent", repo.lastQuery.Limit)
+			}
+			if tc.daily > 0 && tc.stage != domain.AutoclosureStageReleaseHold {
+				// The budget is per UTC day: counting starts at 00:00 UTC of the clock's day.
+				if want := time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC); !repo.countSince.Equal(want) {
+					t.Errorf("counted from %v, want %v", repo.countSince, want)
+				}
+			}
+		})
+	}
+}

@@ -40,6 +40,7 @@ import (
 
 	"github.com/adhocore/gronx"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/announcementpublish"
+	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/autoclosure"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/availability"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/cloudstatus"
 	"github.com/wso2-open-operations/cs-tools/operations/csm-scheduled-tasks/internal/engine"
@@ -320,6 +321,30 @@ func main() {
 		}
 	}
 
+	// Case auto-closure: reminders and automatic closure of tickets that sit in
+	// Awaiting Info or Solution Proposed with no activity -- see
+	// internal/autoclosure's package doc and entity-service's CLAUDE.md, "Case
+	// auto-closure". OFF unless AUTOCLOSURE_ENABLED=true: it comments on and
+	// closes customers' tickets, so it is never on by accident. entity-service
+	// must also have AUTOCLOSURE_SYSTEM_USER_EMAIL set (else it does not
+	// register the two routes this calls) and this component's client id must be
+	// in its M2M_CLIENT_IDS.
+	autoclosureEnabled := envBool("AUTOCLOSURE_ENABLED", false)
+	var autoclosureClient *autoclosure.Client
+	if autoclosureEnabled {
+		autoclosureClient, err = autoclosure.NewClient(autoclosure.ClientConfig{
+			BaseURL:      entityServiceBaseURL,
+			TokenURL:     oauthTokenURL,
+			ClientID:     oauthClientID,
+			ClientSecret: oauthClientSecret,
+			Scopes:       entityServiceScopes,
+		})
+		if err != nil {
+			slog.Error("failed to construct entity-service auto-closure client", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	// Global kill switch for every failure alert email — see
 	// engine.Engine.AlertsEnabled's own doc comment. Defaults to true (the
 	// current always-alert behavior); set to false to go quiet without
@@ -530,6 +555,9 @@ func main() {
 
 	const publishScheduledAnnouncementsTaskName = "publish_scheduled_announcements"
 	publishScheduledAnnouncementsTo, publishScheduledAnnouncementsCc := recipientsFor(recipientOverrides, publishScheduledAnnouncementsTaskName)
+
+	const autoclosureTaskName = "case_autoclosure"
+	autoclosureTo, autoclosureCc := recipientsFor(recipientOverrides, autoclosureTaskName)
 
 	const cloudStatusTaskName = "cloud_status_webhooks"
 	cloudStatusTo, cloudStatusCc := recipientsFor(recipientOverrides, cloudStatusTaskName)
@@ -859,6 +887,28 @@ func main() {
 				Cc: rotaManualCc,
 			},
 		)
+	}
+
+	// Daily at 08:00 (TZ=UTC-dependent, like every schedule here), the time the
+	// ServiceNow flow this replaces ran. The limit is per UTC day and enforced by
+	// entity-service from its audit table, so the engine retrying a failed run
+	// the same day cannot exceed it. A partial failure is retried the next tick:
+	// tickets already advanced are no longer due, so only what is left is done.
+	if autoclosureEnabled {
+		tasks = append(tasks, registry.Task{
+			Name:     autoclosureTaskName,
+			Schedule: scheduleFor(scheduleOverrides, autoclosureTaskName, "0 8 * * *"),
+			Handler: autoclosure.Run(autoclosureClient, autoclosure.RunConfig{
+				IntervalDays: envInt("AUTOCLOSURE_INTERVAL_DAYS", 7),
+				DailyLimit:   envInt("AUTOCLOSURE_DAILY_LIMIT", 500),
+				// Solution Proposed on its own first, then Awaiting Info: set
+				// AUTOCLOSURE_STATES=solution_proposed until the first has been watched.
+				States:    splitComma(os.Getenv("AUTOCLOSURE_STATES")),
+				Templates: parseStringMap("AUTOCLOSURE_TEMPLATES", os.Getenv("AUTOCLOSURE_TEMPLATES")),
+			}),
+			To: autoclosureTo,
+			Cc: autoclosureCc,
+		})
 	}
 
 	var tasksWithRecipients []string
@@ -1215,6 +1265,22 @@ func envDays(key string, defDays int) time.Duration {
 		return def
 	}
 	return time.Duration(n) * 24 * time.Hour
+}
+
+// envInt returns the given environment variable parsed as a non-negative
+// integer, or def if unset or malformed (logged, not fatal: a typo in a tuning
+// knob must not stop every other task in this component from running).
+func envInt(key string, def int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		slog.Warn("environment variable is not a valid non-negative integer; using default", "key", key, "value", v, "default", def)
+		return def
+	}
+	return n
 }
 
 func splitComma(s string) []string {
