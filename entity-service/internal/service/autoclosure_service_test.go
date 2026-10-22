@@ -376,3 +376,135 @@ func TestAutoclosureFindCandidates_DailyLimitIsSharedAndSurvivesRetries(t *testi
 		})
 	}
 }
+
+// --- Pending Verification queueing after an auto-close ---------------------
+
+type fakeVerificationQueue struct {
+	enabled     bool
+	enabledErr  error
+	lookupErr   error
+	createErr   error
+	created     []domain.CreatePendingVerificationRequest
+	lookedUp    []string
+	settingRead int
+}
+
+func (q *fakeVerificationQueue) GetWorkItemTypeAndProject(_ context.Context, id string) (string, string, *string, error) {
+	q.lookedUp = append(q.lookedUp, id)
+	return "CASE", "project-1", nil, q.lookupErr
+}
+func (q *fakeVerificationQueue) GetProjectVerificationEnabled(context.Context, string) (bool, error) {
+	q.settingRead++
+	return q.enabled, q.enabledErr
+}
+func (q *fakeVerificationQueue) Create(_ context.Context, req domain.CreatePendingVerificationRequest) (domain.PendingVerification, error) {
+	q.created = append(q.created, req)
+	return domain.PendingVerification{}, q.createErr
+}
+
+func closeWith(t *testing.T, q *fakeVerificationQueue, state domain.CaseState, rowType repository.AutoclosureRowType) (*fakeAutoclosureRepo, *fakeAutoclosureCases, error) {
+	t.Helper()
+	cand := dueCandidate(state, strp("SECOND_COMMENT"))
+	cand.RowType = rowType
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{cand}}
+	cases := &fakeAutoclosureCases{}
+	svc := newACService(repo, cases)
+	if q != nil {
+		svc.verification = q
+	}
+	_, err := svc.Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageClose})
+	return repo, cases, err
+}
+
+func TestAutoclosureClose_QueuesTheCaseForCustomerVerification(t *testing.T) {
+	for state, want := range map[domain.CaseState]domain.PendingVerificationPreviousStatus{
+		domain.CaseStateAwaitingInfo:     domain.PendingVerificationPreviousStatusAwaitingInfo,
+		domain.CaseStateSolutionProposed: domain.PendingVerificationPreviousStatusSolutionProposed,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			q := &fakeVerificationQueue{enabled: true}
+			repo, _, err := closeWith(t, q, state, repository.AutoclosureRowCase)
+			if err != nil {
+				t.Fatalf("Advance: %v", err)
+			}
+			if len(q.created) != 1 {
+				t.Fatalf("queue entries = %d, want 1", len(q.created))
+			}
+			got := q.created[0]
+			if got.WorkItemID != acTestCaseID || got.AddedReason != domain.PendingVerificationAddedReasonAutoClosed {
+				t.Errorf("entry = %+v, want an AUTO_CLOSED entry for the case", got)
+			}
+			if got.PreviousStatus == nil || *got.PreviousStatus != want {
+				t.Errorf("previousStatus = %v, want %s (the state it was closed from)", got.PreviousStatus, want)
+			}
+			if got.AddedBy != "system@example.com" {
+				t.Errorf("addedBy = %q, want the system user (the workflow has no user token)", got.AddedBy)
+			}
+			if len(repo.events) != 1 || !strings.Contains(repo.events[0].Detail, "queued for customer verification") {
+				t.Errorf("audit = %+v, want the queueing noted", repo.events)
+			}
+		})
+	}
+}
+
+func TestAutoclosureClose_DoesNotQueueWhatTheFeatureDoesNotCover(t *testing.T) {
+	// A security report analysis is not a Case: the feature accepts Cases only.
+	q := &fakeVerificationQueue{enabled: true}
+	if _, _, err := closeWith(t, q, domain.CaseStateAwaitingInfo, repository.AutoclosureRowSRA); err != nil {
+		t.Fatal(err)
+	}
+	if len(q.lookedUp) != 0 || len(q.created) != 0 {
+		t.Errorf("a security report analysis was looked up or queued: %+v", q)
+	}
+	// A project that has not turned the feature on is left alone, quietly.
+	q = &fakeVerificationQueue{enabled: false}
+	repo, _, err := closeWith(t, q, domain.CaseStateAwaitingInfo, repository.AutoclosureRowCase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.created) != 0 {
+		t.Errorf("queued on a project with the feature off")
+	}
+	if repo.events[0].Detail != "" {
+		t.Errorf("audit detail = %q, want none for a project that does not use the feature", repo.events[0].Detail)
+	}
+	// No queue wired at all (a deployment without the feature): the close is unaffected.
+	if _, cases, err := closeWith(t, nil, domain.CaseStateAwaitingInfo, repository.AutoclosureRowCase); err != nil || len(cases.updates) != 1 {
+		t.Errorf("close without a queue: err=%v updates=%d", err, len(cases.updates))
+	}
+}
+
+func TestAutoclosureClose_AQueueProblemNeverUndoesTheClose(t *testing.T) {
+	for name, q := range map[string]*fakeVerificationQueue{
+		"already queued":     {enabled: true, createErr: &apierror.ConflictError{Msg: "this case already has an unverified pending verification entry"}},
+		"create fails":       {enabled: true, createErr: errors.New("boom")},
+		"case lookup fails":  {enabled: true, lookupErr: errors.New("boom")},
+		"setting read fails": {enabled: true, enabledErr: errors.New("boom")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, cases, err := closeWith(t, q, domain.CaseStateSolutionProposed, repository.AutoclosureRowCase)
+			if err != nil {
+				t.Fatalf("a queue problem failed the close: %v", err)
+			}
+			if len(cases.updates) != 1 || len(cases.comments) != 1 {
+				t.Errorf("the case was not fully closed: updates=%d comments=%d", len(cases.updates), len(cases.comments))
+			}
+			if repo.restores != 0 || repo.events[0].Outcome != "ADVANCED" {
+				t.Errorf("the close was rolled back or recorded as failed: restores=%d audit=%+v", repo.restores, repo.events)
+			}
+		})
+	}
+}
+
+func TestAutoclosureReminders_NeverTouchTheQueue(t *testing.T) {
+	q := &fakeVerificationQueue{enabled: true}
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, nil)}}
+	svc := newACService(repo, &fakeAutoclosureCases{})
+	svc.verification = q
+	if _, err := svc.Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder}); err != nil {
+		t.Fatal(err)
+	}
+	if len(q.lookedUp) != 0 || len(q.created) != 0 {
+		t.Errorf("a reminder touched the verification queue: %+v", q)
+	}
+}

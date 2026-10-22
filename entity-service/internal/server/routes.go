@@ -1349,9 +1349,14 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// lives on the case-like tables. Driven by operations/csm-scheduled-tasks.
 	var autoclosureHandler *handler.AutoclosureHandler
 	if db != nil && cfg.AutoclosureSystemUserEmail != "" {
-		autoclosureHandler = handler.NewAutoclosureHandler(service.NewAutoclosureService(
+		autoclosureSvc := service.NewAutoclosureService(
 			repository.NewAutoclosureRepository(repository.NewScoped(db)),
-			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail))
+			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)
+		// A case closed for inactivity is queued for the customer's own
+		// verification (the Pending Verification feature) where the project
+		// has that turned on.
+		service.WithPendingVerificationQueue(autoclosureSvc, repository.NewPendingVerificationRepository(repository.NewScoped(db)))
+		autoclosureHandler = handler.NewAutoclosureHandler(autoclosureSvc)
 	}
 
 	// Case feedback (CSAT submissions): the ServiceNow data source reads it

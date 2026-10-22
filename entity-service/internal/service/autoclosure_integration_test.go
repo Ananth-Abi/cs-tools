@@ -42,6 +42,8 @@ const (
 	acSysEmail    = "ac-system@test.local"
 	acStaffEmail  = "ac-staff@test.local"
 	acIDPrefix    = "92100000-0000-4000-8000-0000000000"
+	acProjectOn   = "92100000-0000-4000-8000-0000000000b1" // Pending Verification switched on
+	acProjectOff  = "92100000-0000-4000-8000-0000000000b2" // switched off
 )
 
 func acTicketID(n int) string { return fmt.Sprintf("%s%02d", acIDPrefix, n) }
@@ -69,6 +71,7 @@ func newACEnv(t *testing.T) *acEnv {
 		} {
 			_, _ = e.scoped.Exec(e.ctx, stmt)
 		}
+		_, _ = e.scoped.Exec(e.ctx, `DELETE FROM project WHERE id IN ($1, $2)`, acProjectOn, acProjectOff)
 		_, _ = pool.Exec(e.ctx, `DELETE FROM "user" WHERE id IN ($1, $2)`, acSysUserID, acStaffUserID)
 	}
 	cleanup()
@@ -79,9 +82,20 @@ func newACEnv(t *testing.T) *acEnv {
 		e.exec(`UPDATE "user" SET user_type = $2::user_type_enum WHERE id = $1`, u.id, u.typ)
 	}
 
+	for _, pr := range []struct {
+		id      string
+		key     string
+		enabled bool
+	}{{acProjectOn, "ACVON", true}, {acProjectOff, "ACVOFF", false}} {
+		e.exec(`INSERT INTO project (id, created_on, updated_on, created_by, updated_by, key, sf_id, verification_enabled)
+			VALUES ($1, $2, $2, 'test', 'test', $3, $3, $4)`, pr.id, e.now, pr.key, pr.enabled)
+	}
+
 	userRepo := repository.NewUserRepository(pool)
 	caseSvc := NewCaseService(repository.NewCaseRepository(e.scoped), userRepo, nil, ctxIdentityAccess{}, nil)
 	e.svc = NewAutoclosureService(repository.NewAutoclosureRepository(e.scoped), caseSvc, ctxIdentityAccess{}, acSysEmail)
+	// As in routes.go: a case closed for inactivity is queued for the customer's own verification.
+	WithPendingVerificationQueue(e.svc, repository.NewPendingVerificationRepository(e.scoped))
 	return e
 }
 
@@ -381,3 +395,94 @@ func TestAutoclosureIntegration_DailyLimitHoldsAcrossRetries(t *testing.T) {
 
 func ptrOf(s string) *string         { return &s }
 func ptrTime(t time.Time) *time.Time { return &t }
+
+func (e *acEnv) putInProject(caseID, projectID string) {
+	e.exec(`UPDATE work_item SET project_id = $2 WHERE id = $1`, caseID, projectID)
+}
+
+type acVerification struct {
+	reason, previous, addedBy string
+	verified                  bool
+}
+
+func (e *acEnv) verifications(caseID string) []acVerification {
+	e.t.Helper()
+	rows, err := e.scoped.Query(e.ctx, `SELECT added_reason::text, COALESCE(previous_status::text, ''), added_by, verified_on IS NOT NULL FROM pending_verification WHERE work_item_id = $1 ORDER BY added_on`, caseID)
+	if err != nil {
+		e.t.Fatalf("read pending verifications: %v", err)
+	}
+	defer rows.Close()
+	var out []acVerification
+	for rows.Next() {
+		var v acVerification
+		if err := rows.Scan(&v.reason, &v.previous, &v.addedBy, &v.verified); err != nil {
+			e.t.Fatal(err)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// TestAutoclosureIntegration_ClosedCaseIsQueuedForCustomerVerification is the
+// join with the Pending Verification feature: a case closed for inactivity lands
+// in the customer's queue (reason AUTO_CLOSED, with the state it was closed
+// from), but only where the project has that feature on, and never twice.
+func TestAutoclosureIntegration_ClosedCaseIsQueuedForCustomerVerification(t *testing.T) {
+	e := newACEnv(t)
+
+	// Awaiting Info on a project that uses the feature.
+	ai := e.ticket(20, "AWAITING_INFO", 0, ptrOf("SECOND_COMMENT"), ptrTime(e.now.Add(-8*24*time.Hour)))
+	e.putInProject(ai, acProjectOn)
+	if r := e.advance(ai, domain.AutoclosureStageClose); r.Outcome != domain.AutoclosureOutcomeAdvanced {
+		t.Fatalf("close: %+v", r)
+	}
+	got := e.verifications(ai)
+	if len(got) != 1 || got[0].reason != "AUTO_CLOSED" || got[0].previous != "AWAITING_INFO" || got[0].addedBy != acSysEmail || got[0].verified {
+		t.Fatalf("queue = %+v, want one unverified AUTO_CLOSED entry from AWAITING_INFO added by the system user", got)
+	}
+	if ev := e.events(ai); len(ev) != 1 || ev[0] != "close:ADVANCED" {
+		t.Errorf("audit = %v", ev)
+	}
+
+	// Solution Proposed records its own previous state.
+	sp := e.ticket(21, "SOLUTION_PROPOSED", 30, ptrOf("SECOND_COMMENT"), ptrTime(e.now.Add(-8*24*time.Hour)))
+	e.putInProject(sp, acProjectOn)
+	e.advance(sp, domain.AutoclosureStageClose)
+	if got := e.verifications(sp); len(got) != 1 || got[0].previous != "SOLUTION_PROPOSED" {
+		t.Errorf("queue = %+v, want one entry from SOLUTION_PROPOSED", got)
+	}
+
+	// A project that has not turned the feature on: closed, not queued.
+	off := e.ticket(22, "AWAITING_INFO", 0, ptrOf("SECOND_COMMENT"), ptrTime(e.now.Add(-8*24*time.Hour)))
+	e.putInProject(off, acProjectOff)
+	e.advance(off, domain.AutoclosureStageClose)
+	if row := e.row(off); row.state != "CLOSED" {
+		t.Errorf("state = %s, want CLOSED even where the feature is off", row.state)
+	}
+	if got := e.verifications(off); len(got) != 0 {
+		t.Errorf("queued on a project with the feature off: %+v", got)
+	}
+
+	// A case that already has an unverified entry is still closed, and keeps exactly one.
+	dup := e.ticket(23, "AWAITING_INFO", 0, ptrOf("SECOND_COMMENT"), ptrTime(e.now.Add(-8*24*time.Hour)))
+	e.putInProject(dup, acProjectOn)
+	e.exec(`INSERT INTO pending_verification (work_item_id, added_reason, added_by) VALUES ($1, 'MANUAL', 'someone@example.com')`, dup)
+	if r := e.advance(dup, domain.AutoclosureStageClose); r.Outcome != domain.AutoclosureOutcomeAdvanced {
+		t.Fatalf("close with an entry already queued: %+v", r)
+	}
+	if row := e.row(dup); row.state != "CLOSED" {
+		t.Errorf("state = %s, want CLOSED", row.state)
+	}
+	if got := e.verifications(dup); len(got) != 1 || got[0].reason != "MANUAL" {
+		t.Errorf("queue = %+v, want the existing single MANUAL entry untouched", got)
+	}
+
+	// No project at all: closed, nothing queued, nothing breaks.
+	none := e.ticket(24, "AWAITING_INFO", 0, ptrOf("SECOND_COMMENT"), ptrTime(e.now.Add(-8*24*time.Hour)))
+	if r := e.advance(none, domain.AutoclosureStageClose); r.Outcome != domain.AutoclosureOutcomeAdvanced {
+		t.Fatalf("close of a case with no project: %+v", r)
+	}
+	if got := e.verifications(none); len(got) != 0 {
+		t.Errorf("queued a case with no project: %+v", got)
+	}
+}

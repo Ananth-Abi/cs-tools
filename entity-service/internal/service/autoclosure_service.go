@@ -18,6 +18,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -56,12 +57,25 @@ type autoclosureComments interface {
 	UpdateCase(ctx context.Context, req domain.UpdateCaseRequest) (domain.UpdateCaseResponse, error)
 }
 
+// autoclosureVerificationQueue is the slice of the Pending Verification
+// repository the workflow needs to queue a closed case for the customer's own
+// verification (see queueForVerification). repository.PendingVerificationRepository
+// satisfies it.
+type autoclosureVerificationQueue interface {
+	GetWorkItemTypeAndProject(ctx context.Context, workItemID string) (workItemType string, projectID string, caseState *string, err error)
+	GetProjectVerificationEnabled(ctx context.Context, projectID string) (bool, error)
+	Create(ctx context.Context, req domain.CreatePendingVerificationRequest) (domain.PendingVerification, error)
+}
+
 type autoclosureService struct {
-	repo        repository.AutoclosureRepository
-	cases       autoclosureComments
-	access      AccessService
-	systemEmail string
-	now         func() time.Time
+	repo  repository.AutoclosureRepository
+	cases autoclosureComments
+	// verification is optional: nil leaves a closed case out of the Pending
+	// Verification queue, which is what a deployment without that feature wants.
+	verification autoclosureVerificationQueue
+	access       AccessService
+	systemEmail  string
+	now          func() time.Time
 }
 
 // NewAutoclosureService constructs the service. systemEmail is the system
@@ -69,6 +83,19 @@ type autoclosureService struct {
 // attributed to.
 func NewAutoclosureService(repo repository.AutoclosureRepository, cases CaseService, access AccessService, systemEmail string) AutoclosureService {
 	return &autoclosureService{repo: repo, cases: cases, access: access, systemEmail: systemEmail, now: time.Now}
+}
+
+// WithPendingVerificationQueue makes the workflow queue every case it
+// auto-closes for the customer's own verification (Pending Verification, reason
+// AUTO_CLOSED), so a case closed for inactivity does not silently disappear from
+// the customer's view. It is set in place, after construction, so existing
+// callers and tests are unaffected. A svc that is not the real service is
+// returned unchanged.
+func WithPendingVerificationQueue(svc AutoclosureService, queue autoclosureVerificationQueue) AutoclosureService {
+	if s, ok := svc.(*autoclosureService); ok {
+		s.verification = queue
+	}
+	return svc
 }
 
 // autoclosureStageSpec is what a stage does to the workflow position.
@@ -226,11 +253,12 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 	}
 
 	var actErr error
+	var detail string
 	switch req.Stage {
 	case domain.AutoclosureStageReleaseHold:
 		// Nothing to write beyond the claim.
 	case domain.AutoclosureStageClose:
-		actErr = s.closeCase(ctx, c, s.commentText(c.State, spec.template, req.Templates))
+		detail, actErr = s.closeCase(ctx, c, s.commentText(c.State, spec.template, req.Templates))
 	default:
 		_, actErr = s.cases.CreateCaseCommentAs(ctx, domain.CreateCaseCommentRequest{
 			CaseID:  caseID,
@@ -248,7 +276,7 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 		return resp, actErr
 	}
 
-	s.record(ctx, caseID, req.Stage, c.Step, &toStep, "ADVANCED", "")
+	s.record(ctx, caseID, req.Stage, c.Step, &toStep, "ADVANCED", detail)
 	resp.Outcome = domain.AutoclosureOutcomeAdvanced
 	return resp, nil
 }
@@ -261,10 +289,10 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 // Awaiting Info tickets get the non-responsiveness resolution code (which
 // keeps them out of the KB process); Solution Proposed tickets keep whatever
 // resolution they were proposed with.
-func (s *autoclosureService) closeCase(ctx context.Context, c repository.AutoclosureCandidateRow, comment string) error {
+func (s *autoclosureService) closeCase(ctx context.Context, c repository.AutoclosureCandidateRow, comment string) (string, error) {
 	view, err := s.cases.GetCaseByID(ctx, c.ID)
 	if err != nil {
-		return fmt.Errorf("read ticket before closing: %w", err)
+		return "", fmt.Errorf("read ticket before closing: %w", err)
 	}
 	closed := domain.CaseStateClosed
 	update := domain.UpdateCaseRequest{ID: c.ID, State: &closed, CloseNotes: &comment}
@@ -284,7 +312,7 @@ func (s *autoclosureService) closeCase(ctx context.Context, c repository.Autoclo
 	// Closing is done as the system user, which is also what allows the one
 	// move no staff table offers (Awaiting Info -> Closed).
 	if _, err := s.cases.UpdateCase(withAutoclosureActor(ctx, s.systemEmail), update); err != nil {
-		return fmt.Errorf("close ticket: %w", err)
+		return "", fmt.Errorf("close ticket: %w", err)
 	}
 	if _, err := s.cases.CreateCaseCommentAs(ctx, domain.CreateCaseCommentRequest{
 		CaseID: c.ID, Type: domain.CommentTypeComment, Content: comment,
@@ -293,7 +321,63 @@ func (s *autoclosureService) closeCase(ctx context.Context, c repository.Autoclo
 		// than undoing the close. Logged, and the audit row still says ADVANCED.
 		slog.ErrorContext(ctx, "autoclosure: ticket closed but its closure comment failed", "caseId", c.ID, "error", err)
 	}
-	return nil
+	return s.queueForVerification(ctx, c), nil
+}
+
+// queueForVerification adds a case the workflow has just closed to the
+// customer's Pending Verification queue (reason AUTO_CLOSED, with the state it
+// was closed from), so they can review and sign it off. It never fails the
+// close: the case is already closed, and a missing queue entry is a lesser
+// problem than undoing that. The returned text goes into the audit row.
+//
+// It follows the rules the Pending Verification feature itself enforces on
+// this call (see pendingVerificationService.CreatePendingVerification), which
+// it cannot reuse as is: that path needs an end-user token for "added by", and
+// the workflow has none, so it writes through the repository as the system user.
+//
+//   - Cases only: a security report analysis is never queued.
+//   - The project must have the feature turned on; otherwise this is a quiet no-op.
+//   - One unverified entry per case: an existing one is success, not an error.
+func (s *autoclosureService) queueForVerification(ctx context.Context, c repository.AutoclosureCandidateRow) string {
+	if s.verification == nil || c.RowType != repository.AutoclosureRowCase {
+		return ""
+	}
+	var previous domain.PendingVerificationPreviousStatus
+	switch c.State {
+	case domain.CaseStateAwaitingInfo:
+		previous = domain.PendingVerificationPreviousStatusAwaitingInfo
+	case domain.CaseStateSolutionProposed:
+		previous = domain.PendingVerificationPreviousStatusSolutionProposed
+	default:
+		return ""
+	}
+	_, projectID, _, err := s.verification.GetWorkItemTypeAndProject(ctx, c.ID)
+	if err != nil {
+		slog.WarnContext(ctx, "autoclosure: could not look the closed case up for Pending Verification", "caseId", c.ID, "error", err)
+		return "not queued for verification: lookup failed"
+	}
+	enabled, err := s.verification.GetProjectVerificationEnabled(ctx, projectID)
+	if err != nil {
+		slog.WarnContext(ctx, "autoclosure: could not read the project's Pending Verification setting", "caseId", c.ID, "error", err)
+		return "not queued for verification: setting unreadable"
+	}
+	if !enabled {
+		return "" // the project does not use Pending Verification
+	}
+	_, err = s.verification.Create(ctx, domain.CreatePendingVerificationRequest{
+		WorkItemID:     c.ID,
+		AddedReason:    domain.PendingVerificationAddedReasonAutoClosed,
+		PreviousStatus: &previous,
+		AddedBy:        s.systemEmail,
+	})
+	var conflict *apierror.ConflictError
+	switch {
+	case err == nil, errors.As(err, &conflict):
+		return "queued for customer verification"
+	default:
+		slog.WarnContext(ctx, "autoclosure: closed case could not be queued for Pending Verification", "caseId", c.ID, "error", err)
+		return "not queued for verification: " + err.Error()
+	}
 }
 
 func (s *autoclosureService) record(ctx context.Context, caseID string, stage domain.AutoclosureStage, from, to *string, outcome, detail string) {

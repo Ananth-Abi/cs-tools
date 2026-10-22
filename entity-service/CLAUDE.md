@@ -3610,6 +3610,19 @@ close (a comment first and a refused close would leave "this case is closed" on 
 failure of just the comment is logged and does not undo the close. A refused close (for example an open
 child appeared since the listing) is rolled back and retried next run.
 
+**Pending Verification.** A case the workflow closes is queued for the customer's own verification (the
+Pending Verification feature: `pending_verification`, reason `AUTO_CLOSED`, `previous_status` = the state it was
+closed from), so a case closed for inactivity does not silently disappear from their view. `queueForVerification`
+runs after the close and never fails it. It follows the rules `pendingVerificationService.CreatePendingVerification`
+enforces, but writes through `PendingVerificationRepository` as the system user, because that service needs an
+end-user token for "added by" and the workflow has none (this closes the "no machine-to-machine path" gap noted
+for that feature):
+- **Cases only**: a security report analysis is closed but never queued.
+- The project must have `verification_enabled` on; otherwise nothing is queued, quietly.
+- One unverified entry per case: an existing entry (`ConflictError`) counts as done.
+- Wired in `routes.go` with `WithPendingVerificationQueue`; without it (no feature) the close is unchanged.
+- The audit row's `detail` says "queued for customer verification" (or why not, when something failed).
+
 **The one transition exemption.** No staff table lists Awaiting Info -> Closed (staff go through Waiting on
 WSO2). `UpdateCase` allows it only when the context carries `withAutoclosureActor` (`autoclosure_context.go`),
 which is unexported and set only by the workflow, and only for a close out of those two waiting states; it also
