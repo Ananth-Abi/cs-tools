@@ -40,6 +40,22 @@ export function canManageRotaAccess(access: RotaAccess | undefined): boolean {
   return Boolean(access && (access.canManage.rotaAdmins || access.canManage.markerFamilies.length > 0));
 }
 
+/** Whether the reader holds an active rota admin grant for this family: what
+ *  lets them change its rota from This week. A CSM or portal admin, a Team
+ *  lead and a rota marker are not rota admins, so it is false for them. The
+ *  server checks every write again. */
+export function isRotaAdminOf(
+  access: RotaAccess | undefined,
+  email: string,
+  family: RotaFamily,
+): boolean {
+  const me = email.trim().toLowerCase();
+  if (!me || !access) return false;
+  return access.rotaAdmins.some(
+    (g) => g.active && g.family === family && g.email.trim().toLowerCase() === me,
+  );
+}
+
 /**
  * Who holds a rota admin role or marks a team's rota, and what the reader may
  * change. The page asks it to decide whether to show the tab: the server
