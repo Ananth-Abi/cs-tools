@@ -26049,12 +26049,12 @@ components:
         updatedOn: { type: string, format: date-time }
     SaveCaseAlertRoomRequest:
       type: object
-      required: [ladder, label]
+      required: [ladder]
       properties:
         ladder: { type: string, enum: [CRE, SRE, SME] }
         teamKey: { type: string, description: "An SRE or SME team of the Team Schedule (required for SME); omit for the ladder's shared room." }
         groupId: { type: string, format: uuid, description: "SRE only, instead of teamKey: an assignment group from routeOptions.assignmentGroups, whose incident card and paging replies go to this room (who is called does not change). No teamless flag or channel. 400 when it is not one." }
-        label: { type: string, maxLength: 100, description: "May be left out with groupId: the group's own name is used." }
+        label: { type: string, maxLength: 100, description: "Required for a ladder's shared room and a team room (400 when blank). May be left out with groupId: the group's own name is used." }
         enabled: { type: boolean, default: true }
         teamless: { type: boolean, default: false, description: "SRE team rooms only." }
         channel: { type: string, enum: ["", log, chat, call, both], description: "An SRE team room only: chat, call, both or log; an empty string goes back to the ladder's. Refused on a ladder's shared room and on an SME room." }
