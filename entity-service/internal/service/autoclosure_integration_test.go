@@ -28,6 +28,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,9 @@ func newACEnv(t *testing.T) *acEnv {
 
 	cleanup := func() {
 		for _, stmt := range []string{
+			// pending_verification references work_item without a cascade, so its
+			// rows must go first or they block the work items' own cleanup.
+			`DELETE FROM pending_verification WHERE work_item_id::text LIKE '` + acIDPrefix + `%'`,
 			`DELETE FROM work_item_activity WHERE work_item_id::text LIKE '` + acIDPrefix + `%'`,
 			`DELETE FROM comment WHERE work_item_id::text LIKE '` + acIDPrefix + `%'`,
 			`DELETE FROM work_item_watcher WHERE work_item_id::text LIKE '` + acIDPrefix + `%'`,
@@ -78,7 +82,11 @@ func newACEnv(t *testing.T) *acEnv {
 	t.Cleanup(cleanup)
 
 	for _, u := range []struct{ id, email, typ string }{{acSysUserID, acSysEmail, "SYSTEM"}, {acStaffUserID, acStaffEmail, "INTERNAL"}} {
-		e.exec(`INSERT INTO "user" (id, created_on, updated_on, user_name, name, email, is_active) VALUES ($1, $2, $2, $3, $3, $3, TRUE)`, u.id, e.now, u.email)
+		name := u.email
+		if u.id == acSysUserID {
+			name = "System (auto-closure test)"
+		}
+		e.exec(`INSERT INTO "user" (id, created_on, updated_on, user_name, name, email, is_active) VALUES ($1, $2, $2, $3, $4, $3, TRUE)`, u.id, e.now, u.email, name)
 		e.exec(`UPDATE "user" SET user_type = $2::user_type_enum WHERE id = $1`, u.id, u.typ)
 	}
 
@@ -401,13 +409,13 @@ func (e *acEnv) putInProject(caseID, projectID string) {
 }
 
 type acVerification struct {
-	reason, previous, addedBy string
-	verified                  bool
+	reason, previous, addedBy, note string
+	verified                        bool
 }
 
 func (e *acEnv) verifications(caseID string) []acVerification {
 	e.t.Helper()
-	rows, err := e.scoped.Query(e.ctx, `SELECT added_reason::text, COALESCE(previous_status::text, ''), added_by, verified_on IS NOT NULL FROM pending_verification WHERE work_item_id = $1 ORDER BY added_on`, caseID)
+	rows, err := e.scoped.Query(e.ctx, `SELECT added_reason::text, COALESCE(previous_status::text, ''), added_by, COALESCE(note, ''), verified_on IS NOT NULL FROM pending_verification WHERE work_item_id = $1 ORDER BY added_on`, caseID)
 	if err != nil {
 		e.t.Fatalf("read pending verifications: %v", err)
 	}
@@ -415,7 +423,7 @@ func (e *acEnv) verifications(caseID string) []acVerification {
 	var out []acVerification
 	for rows.Next() {
 		var v acVerification
-		if err := rows.Scan(&v.reason, &v.previous, &v.addedBy, &v.verified); err != nil {
+		if err := rows.Scan(&v.reason, &v.previous, &v.addedBy, &v.note, &v.verified); err != nil {
 			e.t.Fatal(err)
 		}
 		out = append(out, v)
@@ -437,8 +445,15 @@ func TestAutoclosureIntegration_ClosedCaseIsQueuedForCustomerVerification(t *tes
 		t.Fatalf("close: %+v", r)
 	}
 	got := e.verifications(ai)
-	if len(got) != 1 || got[0].reason != "AUTO_CLOSED" || got[0].previous != "AWAITING_INFO" || got[0].addedBy != acSysEmail || got[0].verified {
-		t.Fatalf("queue = %+v, want one unverified AUTO_CLOSED entry from AWAITING_INFO added by the system user", got)
+	if len(got) != 1 || got[0].reason != "AUTO_CLOSED" || got[0].previous != "AWAITING_INFO" || got[0].verified {
+		t.Fatalf("queue = %+v, want one unverified AUTO_CLOSED entry from AWAITING_INFO", got)
+	}
+	// "Added by" is what the customer portal prints, so it is the system user's name, not its email.
+	if got[0].addedBy != "System (auto-closure test)" {
+		t.Errorf("addedBy = %q, want the system user's display name", got[0].addedBy)
+	}
+	if !strings.Contains(got[0].note, "no response to our request for information after two reminders") {
+		t.Errorf("note = %q, want the explanation for an Awaiting Info close", got[0].note)
 	}
 	if ev := e.events(ai); len(ev) != 1 || ev[0] != "close:ADVANCED" {
 		t.Errorf("audit = %v", ev)

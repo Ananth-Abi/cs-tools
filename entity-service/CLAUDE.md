@@ -3622,6 +3622,8 @@ for that feature):
 - One unverified entry per case: an existing entry (`ConflictError`) counts as done.
 - Wired in `routes.go` with `WithPendingVerificationQueue`; without it (no feature) the close is unchanged.
 - The audit row's `detail` says "queued for customer verification" (or why not, when something failed).
+- **"Added by" is the system user's display name** (the `user.name`, e.g. "Support Team (auto-closure)"), not its email: the customer portal prints the stored value as it is. It falls back to the email if the name cannot be read.
+- **A short `note`** explains the close on the customer's card ("Automatically closed: no response to our request for information after two reminders." / "...to the proposed solution after two reminders.").
 
 **The one transition exemption.** No staff table lists Awaiting Info -> Closed (staff go through Waiting on
 WSO2). `UpdateCase` allows it only when the context carries `withAutoclosureActor` (`autoclosure_context.go`),
@@ -3644,6 +3646,8 @@ scheduled task reads them from `AUTOCLOSURE_TEMPLATES`, so wording changes need 
 - A non-closed child blocks every stage, re-checked on every advance and again by `UpdateCase` itself.
 - `autoclose_enabled` has no UI yet; set it in SQL to exclude a ticket.
 - Migration 0245 is idempotent (re-runnable). Upstream numbering moves fast: re-check it is still the next free number against the target branch before merging.
+
+Run the two database test packages one at a time (`go test -p 1 ./internal/repository/ ./internal/service/ -run Autoclosure`): the daily-limit audit count is database-wide and the service tests write audit rows too.
 
 Tests: `autoclosure_repo_integration_test.go` (repository: selection matrix, claim exclusivity, reset trigger,
 audit count; `CASE_STATS_TEST_DSN`), `autoclosure_integration_test.go` (service end to end over the real case

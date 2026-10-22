@@ -18,10 +18,12 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
 )
 
@@ -93,6 +95,11 @@ type AutoclosureRepository interface {
 	// the given instant (hold releases excluded: they notify nobody). It is
 	// what makes the daily limit hold across retried runs.
 	CountAdvancedSince(ctx context.Context, since time.Time) (int, error)
+	// DisplayNameOf returns how a user is shown to people (the "name" column,
+	// else first and last name), or the email itself when the user has none
+	// or does not exist. It is the same name the case timeline shows for a
+	// comment the user wrote.
+	DisplayNameOf(ctx context.Context, email string) (string, error)
 }
 
 type autoclosureRepo struct {
@@ -327,4 +334,25 @@ func (r *autoclosureRepo) CountAdvancedSince(ctx context.Context, since time.Tim
 		return 0, fmt.Errorf("autoclosure count: %w", err)
 	}
 	return n, nil
+}
+
+// DisplayNameOf implements AutoclosureRepository.
+func (r *autoclosureRepo) DisplayNameOf(ctx context.Context, email string) (string, error) {
+	var name *string
+	err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(NULLIF(TRIM(name), ''), NULLIF(TRIM(CONCAT_WS(' ', first_name, last_name)), ''))
+		  FROM "user"
+		 WHERE LOWER(email) = LOWER($1::text)
+		 ORDER BY id
+		 LIMIT 1`, email).Scan(&name)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return email, nil
+		}
+		return "", fmt.Errorf("autoclosure display name: %w", err)
+	}
+	if name == nil || *name == "" {
+		return email, nil
+	}
+	return *name, nil
 }

@@ -18,7 +18,11 @@
 // (migration 0245) against a real Postgres, run as a non-superuser so
 // row-level security is in force. Skipped without CASE_STATS_TEST_DSN.
 //
-//	CASE_STATS_TEST_DSN=postgres://csm_app:...@host/db go test ./internal/repository/ -run AutoclosureIntegration
+//	CASE_STATS_TEST_DSN=postgres://csm_app:...@host/db go test -p 1 ./internal/repository/ ./internal/service/ -run Autoclosure
+//
+// Use -p 1 when running this package together with internal/service: the daily
+// limit test counts audit rows database-wide, and the service package's tests
+// write them too, so running both at once makes its count race.
 
 package repository_test
 

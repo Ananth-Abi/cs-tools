@@ -31,14 +31,15 @@ import (
 const acTestCaseID = "92000000-0000-0000-0000-000000000001"
 
 type fakeAutoclosureRepo struct {
-	candidates []repository.AutoclosureCandidateRow
-	claimWins  bool
-	claims     []string
-	restores   int
-	events     []repository.AutoclosureEvent
-	lastQuery  repository.AutoclosureCandidateQuery
-	advanced   int
-	countSince time.Time
+	candidates  []repository.AutoclosureCandidateRow
+	claimWins   bool
+	claims      []string
+	restores    int
+	events      []repository.AutoclosureEvent
+	lastQuery   repository.AutoclosureCandidateQuery
+	advanced    int
+	countSince  time.Time
+	displayName string
 }
 
 func (r *fakeAutoclosureRepo) FindCandidates(_ context.Context, q repository.AutoclosureCandidateQuery) ([]repository.AutoclosureCandidateRow, error) {
@@ -52,6 +53,12 @@ func (r *fakeAutoclosureRepo) ClaimStep(_ context.Context, _ repository.Autoclos
 func (r *fakeAutoclosureRepo) RestoreStep(context.Context, repository.AutoclosureCandidateRow, time.Time) error {
 	r.restores++
 	return nil
+}
+func (r *fakeAutoclosureRepo) DisplayNameOf(_ context.Context, email string) (string, error) {
+	if r.displayName == "" {
+		return email, nil
+	}
+	return r.displayName, nil
 }
 func (r *fakeAutoclosureRepo) CountAdvancedSince(_ context.Context, since time.Time) (int, error) {
 	r.countSince = since
@@ -402,11 +409,14 @@ func (q *fakeVerificationQueue) Create(_ context.Context, req domain.CreatePendi
 	return domain.PendingVerification{}, q.createErr
 }
 
-func closeWith(t *testing.T, q *fakeVerificationQueue, state domain.CaseState, rowType repository.AutoclosureRowType) (*fakeAutoclosureRepo, *fakeAutoclosureCases, error) {
+func closeWith(t *testing.T, q *fakeVerificationQueue, state domain.CaseState, rowType repository.AutoclosureRowType, displayName ...string) (*fakeAutoclosureRepo, *fakeAutoclosureCases, error) {
 	t.Helper()
 	cand := dueCandidate(state, strp("SECOND_COMMENT"))
 	cand.RowType = rowType
 	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{cand}}
+	if len(displayName) > 0 {
+		repo.displayName = displayName[0]
+	}
 	cases := &fakeAutoclosureCases{}
 	svc := newACService(repo, cases)
 	if q != nil {
@@ -423,7 +433,7 @@ func TestAutoclosureClose_QueuesTheCaseForCustomerVerification(t *testing.T) {
 	} {
 		t.Run(string(state), func(t *testing.T) {
 			q := &fakeVerificationQueue{enabled: true}
-			repo, _, err := closeWith(t, q, state, repository.AutoclosureRowCase)
+			repo, _, err := closeWith(t, q, state, repository.AutoclosureRowCase, "Support Team (auto-closure)")
 			if err != nil {
 				t.Fatalf("Advance: %v", err)
 			}
@@ -437,8 +447,11 @@ func TestAutoclosureClose_QueuesTheCaseForCustomerVerification(t *testing.T) {
 			if got.PreviousStatus == nil || *got.PreviousStatus != want {
 				t.Errorf("previousStatus = %v, want %s (the state it was closed from)", got.PreviousStatus, want)
 			}
-			if got.AddedBy != "system@example.com" {
-				t.Errorf("addedBy = %q, want the system user (the workflow has no user token)", got.AddedBy)
+			if got.AddedBy != "Support Team (auto-closure)" {
+				t.Errorf("addedBy = %q, want the system user's display name: the customer portal prints it as stored", got.AddedBy)
+			}
+			if got.Note == nil || !strings.Contains(*got.Note, "Automatically closed") {
+				t.Errorf("note = %v, want the explanation customers see on the card", got.Note)
 			}
 			if len(repo.events) != 1 || !strings.Contains(repo.events[0].Detail, "queued for customer verification") {
 				t.Errorf("audit = %+v, want the queueing noted", repo.events)
@@ -506,5 +519,15 @@ func TestAutoclosureReminders_NeverTouchTheQueue(t *testing.T) {
 	}
 	if len(q.lookedUp) != 0 || len(q.created) != 0 {
 		t.Errorf("a reminder touched the verification queue: %+v", q)
+	}
+}
+
+func TestAutoclosureClose_AddedByFallsBackToTheEmailWhenTheNameIsUnavailable(t *testing.T) {
+	q := &fakeVerificationQueue{enabled: true}
+	if _, _, err := closeWith(t, q, domain.CaseStateAwaitingInfo, repository.AutoclosureRowCase); err != nil {
+		t.Fatal(err)
+	}
+	if len(q.created) != 1 || q.created[0].AddedBy != "system@example.com" {
+		t.Errorf("entries = %+v, want addedBy to fall back to the system user's email", q.created)
 	}
 }

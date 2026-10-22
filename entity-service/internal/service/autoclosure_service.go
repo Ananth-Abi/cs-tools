@@ -324,6 +324,14 @@ func (s *autoclosureService) closeCase(ctx context.Context, c repository.Autoclo
 	return s.queueForVerification(ctx, c), nil
 }
 
+// autoclosureVerificationNote is the context a customer sees on the Pending
+// Verification card of a case that was closed for them. Two reminders always
+// precede the close, so the text can say so.
+var autoclosureVerificationNote = map[domain.CaseState]string{
+	domain.CaseStateAwaitingInfo:     "Automatically closed: no response to our request for information after two reminders.",
+	domain.CaseStateSolutionProposed: "Automatically closed: no response to the proposed solution after two reminders.",
+}
+
 // queueForVerification adds a case the workflow has just closed to the
 // customer's Pending Verification queue (reason AUTO_CLOSED, with the state it
 // was closed from), so they can review and sign it off. It never fails the
@@ -364,11 +372,24 @@ func (s *autoclosureService) queueForVerification(ctx context.Context, c reposit
 	if !enabled {
 		return "" // the project does not use Pending Verification
 	}
+	// The customer portal prints "Added by <this>" as it is stored, so store
+	// what a person should read ("Support Team (auto-closure)"), not the system
+	// user's email address. Falls back to the email if the name cannot be read.
+	addedBy, nameErr := s.repo.DisplayNameOf(ctx, s.systemEmail)
+	if nameErr != nil || strings.TrimSpace(addedBy) == "" {
+		addedBy = s.systemEmail
+	}
+	note := autoclosureVerificationNote[c.State]
+	var notePtr *string
+	if note != "" {
+		notePtr = &note
+	}
 	_, err = s.verification.Create(ctx, domain.CreatePendingVerificationRequest{
 		WorkItemID:     c.ID,
 		AddedReason:    domain.PendingVerificationAddedReasonAutoClosed,
 		PreviousStatus: &previous,
-		AddedBy:        s.systemEmail,
+		Note:           notePtr,
+		AddedBy:        addedBy,
 	})
 	var conflict *apierror.ConflictError
 	switch {
