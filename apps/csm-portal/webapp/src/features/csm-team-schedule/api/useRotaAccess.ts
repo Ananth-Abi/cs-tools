@@ -30,14 +30,19 @@ const ROTA_ACCESS_KEY = ["team-schedule", "rota-access"] as const;
 
 /** Somebody who may change nothing: no tab. */
 export const NO_ROTA_ACCESS: RotaAccess = {
-  canManage: { rotaAdmins: false, markerFamilies: [] },
+  canManage: { rotaAdmins: false, markerFamilies: [], markerTeams: [] },
   rotaAdmins: [],
   markers: [],
 };
 
 /** Whether the reader may change anything on the Rota access tab. */
 export function canManageRotaAccess(access: RotaAccess | undefined): boolean {
-  return Boolean(access && (access.canManage.rotaAdmins || access.canManage.markerFamilies.length > 0));
+  return Boolean(
+    access &&
+      (access.canManage.rotaAdmins ||
+        access.canManage.markerFamilies.length > 0 ||
+        (access.canManage.markerTeams ?? []).length > 0),
+  );
 }
 
 /** Whether the reader may change this family's rota from This week: a rota

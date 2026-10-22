@@ -25689,17 +25689,26 @@ components:
             $ref: '#/components/schemas/RotaMarkerGrant'
     RotaAccessRights:
       type: object
-      required: [rotaAdmins, markerFamilies]
+      required: [rotaAdmins, markerFamilies, markerTeams]
       properties:
         rotaAdmins:
           type: boolean
-          description: True for a CSM admin, who alone grants and removes rota admin.
+          description: >
+            True for a CSM admin (an AUTH_ADMIN_ROLES role on the token) or a portal admin (the
+            global admin role, internal staff), who alone grant and remove rota admin.
         markerFamilies:
           type: array
           description: The families whose teams' rota managers the caller may change.
           items:
             type: string
             enum: [CRE, SRE, SME]
+        markerTeams:
+          type: array
+          description: >
+            The teams whose rota managers the caller may change as their lead (lead or Americas
+            team lead), in addition to markerFamilies. Empty for an admin, who has every family.
+          items:
+            type: string
     RotaAdminGrant:
       type: object
       required: [family, userId, name, email, grantedBy, grantedOn, active]
