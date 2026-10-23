@@ -20,8 +20,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/domain"
@@ -232,6 +234,31 @@ func TestDeferredWrite_InviteDefersWhenTheValidatorCannotReachSalesforce(t *test
 	}
 }
 
+// What entity-service actually sees during a Salesforce outage is a timeout
+// of the Sales Entity call (sales-entity-service retries Salesforce with
+// backoff for longer than the client timeout). That must defer too, as long
+// as the admin's own request is still alive.
+func TestDeferredWrite_InviteDefersOnADownstreamTimeout(t *testing.T) {
+	d := newDeferredHarness(t)
+	d.se.searchErr = fmt.Errorf("salesentity: POST /contacts/search: %w", context.DeadlineExceeded)
+	got, err := d.svc.Invite(context.Background(), writeProjectID, inviteReq("Portal user"))
+	if err != nil {
+		t.Fatalf("a downstream timeout with a live request must defer: %v", err)
+	}
+	if got.SalesforceSync != domain.SalesforceSyncPending || len(d.commands.published) != 1 {
+		t.Errorf("want a deferred invitation, got %+v / %d commands", got, len(d.commands.published))
+	}
+	// But not when the admin's own request is gone: there is nobody to
+	// answer, and the error is the caller's, not Salesforce's.
+	d2 := newDeferredHarness(t)
+	d2.se.searchErr = fmt.Errorf("salesentity: POST /contacts/search: %w", context.DeadlineExceeded)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if _, err := d2.svc.Invite(ctx, writeProjectID, inviteReq("Portal user")); err == nil || len(d2.commands.published) != 0 {
+		t.Errorf("a dead request must not be deferred: err=%v commands=%d", err, len(d2.commands.published))
+	}
+}
+
 func TestDeferredWrite_InviteStillFailsWhenDeferralIsNotWired(t *testing.T) {
 	h := newInternalWriteHarness(t)
 	h.se.searchErr = salesforceDown()
@@ -282,7 +309,7 @@ func TestDeferredWrite_ReinvitationIsNotDeferred(t *testing.T) {
 	}
 	d.se.getContactErr = salesforceDown()
 	d.se.searchErr = salesforceDown()
-	if _, err := d.svc.Invite(context.Background(), writeProjectID, inviteReq("Portal user")); !isSalesforceUnavailable(err) {
+	if _, err := d.svc.Invite(context.Background(), writeProjectID, inviteReq("Portal user")); !isSalesforceUnavailable(context.Background(), err) {
 		t.Fatalf("want the outage error, got %v", err)
 	}
 	if len(d.repo.upserts) != 0 || len(d.commands.published) != 0 {
@@ -374,7 +401,7 @@ func TestDeferredWrite_CompleteRetriesWhileSalesEntityIsUnreadable(t *testing.T)
 	d.se.searchErr = salesforceDown()
 
 	err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, false)
-	if !isSalesforceUnavailable(err) {
+	if !isSalesforceUnavailable(context.Background(), err) {
 		t.Fatalf("want the outage returned so the consumer retries, got %v", err)
 	}
 	if len(d.requests.attempts) != 1 || d.requests.attempts[0] != req.ID {

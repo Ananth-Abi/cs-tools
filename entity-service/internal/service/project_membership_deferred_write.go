@@ -109,13 +109,30 @@ func (s *projectMembershipWriteService) deferralAvailable() bool {
 }
 
 // isSalesforceUnavailable is the one error class a deferred write absorbs:
-// the sales-entity client maps connection errors, timeouts and 5xx answers to
+// the sales-entity client maps connection errors and 5xx answers to
 // ServiceUnavailableError, and so does an answer with no id in it. A
 // validation refusal (DownstreamError / ValidationError) or a conflict is
 // not an outage and is never deferred.
-func isSalesforceUnavailable(err error) bool {
+//
+// A TIMEOUT of the Sales Entity call counts as an outage too, with one
+// condition: the admin's own request must still be alive (ctx.Err() == nil).
+// The client returns a deadline error unwrapped so a caller that has gone
+// away is not mistaken for a downstream fault; but when Salesforce is down,
+// sales-entity-service retries its own Salesforce calls with backoff for
+// twenty-odd seconds before answering 5xx, which is longer than the client's
+// timeout -- so what entity-service actually sees during a Salesforce outage
+// is a timeout, not a 503 (observed on the local stack). A timeout with the
+// request still open is therefore the outage signature, and is deferred.
+func isSalesforceUnavailable(ctx context.Context, err error) bool {
 	var sue *apierror.ServiceUnavailableError
-	return errors.As(err, &sue)
+	if errors.As(err, &sue) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		return true
+	}
+	var timeout interface{ Timeout() bool }
+	return errors.As(err, &timeout) && timeout.Timeout() && ctx.Err() == nil
 }
 
 // canDeferInvite says whether this failed invitation may be committed
@@ -124,8 +141,8 @@ func isSalesforceUnavailable(err error) bool {
 // Salesforce ids already and would be an UPDATE there; deferring it would
 // leave the CSM state ahead of Salesforce's for a membership the
 // registration flow can already see, so it keeps failing fast.
-func (s *projectMembershipWriteService) canDeferInvite(wc repository.MembershipWriteContext, err error) bool {
-	return s.deferralAvailable() && wc.Existing == nil && isSalesforceUnavailable(err)
+func (s *projectMembershipWriteService) canDeferInvite(ctx context.Context, wc repository.MembershipWriteContext, err error) bool {
+	return s.deferralAvailable() && wc.Existing == nil && isSalesforceUnavailable(ctx, err)
 }
 
 // deferredInviteUpsert is the database half of an invitation whose

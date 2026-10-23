@@ -16,21 +16,24 @@
 # under the License.
 #
 # End-to-end run of the deferred Salesforce membership write against the
-# local compose stack plus scripts/csm-compose/sf-deferred-e2e.compose.yml:
+# local compose stack plus scripts/csm-compose/sf-deferred-e2e.compose.yml
+# (real entity-service, real sales-entity-service, fake Salesforce):
 #
 #   1. switch the mock sales-entity-service into an outage
 #   2. invite a brand-new address -> 201 with salesforceSync PENDING, rows
 #      committed with NULL sf_id, a PENDING salesforce_write_request
 #   3. a role change while pending -> 409 SALESFORCE_SYNC_PENDING
-#   4. end the outage -> the (mock) sales-entity-service consumer writes the
-#      mock Salesforce and answers on salesforce-write-results; entity-service
+#   4. end the outage -> the real sales-entity-service consumer writes the
+#      fake Salesforce and answers on salesforce-write-results; entity-service
 #      stamps the ids, marks the request SUCCEEDED, publishes
 #      project_contact.invited
 #   5. no duplicate Salesforce records; the contact list shows no sync flag
 #
 # Usage: scripts/csm-compose/sf-deferred-e2e.sh up | run | run-exhaust | down
-#   OUTAGE_SECONDS=15 run   keeps Salesforce down so the consumer retries in
-#                           place several times before it can finish
+#   OUTAGE_SECONDS=60 run   keeps Salesforce down long enough for the main
+#                           tier to give up and dead-letter (each failed
+#                           attempt takes ~21s: sales-entity-service retries
+#                           its own Salesforce query 3x with backoff first)
 #   run-exhaust             keeps Salesforce down until the consumer gives up
 #                           and answers failed: the request must end FAILED,
 #                           never stay PENDING
@@ -39,7 +42,7 @@ cd "$(dirname "$0")/../.."
 COMPOSE=(docker compose -f docker-compose.yml -f scripts/csm-compose/sf-deferred-e2e.compose.yml)
 PSQL=(docker compose exec -T postgres psql -U postgres -d csm_platform -v ON_ERROR_STOP=1 -tA)
 ENTITY=${ENTITY_URL:-http://localhost:8081}
-MOCK=${MOCK_SF_URL:-http://localhost:9200}
+MOCK=${MOCK_SF_URL:-http://localhost:9300}   # the fake Salesforce behind the real sales-entity-service
 OIDC=${MOCK_OIDC_URL:-http://localhost:9100}
 PROJECT_ID=${PROJECT_ID:-00000000-0000-0000-0000-000000000401} # seeded "Example Corp Production", sf_id SF-PROJ-0001
 
@@ -47,6 +50,23 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   \033[32mOK\033[0m  %s\n' "$*"; }
 fail() { printf '   \033[31mFAIL\033[0m %s\n' "$*"; exit 1; }
 sql()  { "${PSQL[@]}" -c "$1" </dev/null | tr -d '\r'; }
+# Whatever happens, leave the fake Salesforce up: a run that stops midway
+# must not leave the next one (or the dead-letter consumer) facing an outage.
+trap 'curl -fsS -X POST "$MOCK/__mock/outage" -H "Content-Type: application/json" -d "{\"down\":false}" >/dev/null 2>&1 || true' EXIT
+
+# drain waits until no request from an earlier run is still PENDING, so the
+# consumers' sequential partitions are empty when this run's record arrives.
+# With the real sales-entity-service each failed attempt can take ~20s (its
+# own Salesforce retry policy), so a leftover backlog takes minutes.
+drain() {
+  for i in $(seq 1 100); do
+    n="$(sql "SELECT count(*) FROM salesforce_write_request WHERE status='PENDING'")"
+    [[ "$n" == "0" ]] && return 0
+    [[ $i -eq 1 ]] && printf '   draining %s PENDING request(s) left by earlier runs' "$n" || printf '.'
+    sleep 3
+  done
+  echo; fail "earlier requests are still PENDING; is sales-entity-service consuming?"
+}
 
 # An M2M caller: entity-service reads x-jwt-assertion's client_id (not
 # signature-verified) and treats a client in M2M_CLIENT_IDS as internal.
@@ -59,10 +79,10 @@ outage() { curl -fsS -X POST "$MOCK/__mock/outage" -H 'Content-Type: application
 
 case "${1:-run}" in
   up)
-    "${COMPOSE[@]}" up -d --build entity-service mock-sales-entity kafka-topics-init
+    "${COMPOSE[@]}" up -d --build entity-service sales-entity-service mock-salesforce kafka-topics-init
     ;;
   down)
-    "${COMPOSE[@]}" stop entity-service mock-sales-entity
+    "${COMPOSE[@]}" stop entity-service sales-entity-service mock-salesforce sales-mysql
     ;;
   run)
     TOKEN="$(token)"
@@ -80,9 +100,16 @@ case "${1:-run}" in
       FROM unnest(ARRAY['external','customer','partner','customer_admin','partner_admin']) AS r
       ON CONFLICT (name) DO NOTHING" </dev/null >/dev/null
     ok "roles present: $(sql "SELECT string_agg(name, ', ' ORDER BY name) FROM role WHERE name IN ('external','customer','partner','customer_admin','partner_admin')")"
+    # The seed's Salesforce ids (SF-PROJ-0001, SF-0001) are not Salesforce id
+    # formats; the real sales-entity-service validates every id it puts into
+    # SOQL. Give the seeded project and account ids shaped like Salesforce's.
+    "${PSQL[@]}" -c "UPDATE project SET sf_id='a0p000000000401AAA' WHERE id='$PROJECT_ID' AND sf_id NOT SIMILAR TO '[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18}';
+                     UPDATE account SET sf_id='001000000000301AAA' WHERE id=(SELECT account_id FROM project WHERE id='$PROJECT_ID') AND sf_id NOT SIMILAR TO '[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18}'" </dev/null >/dev/null
+    ok "project / account Salesforce ids: $(sql "SELECT p.sf_id||' / '||a.sf_id FROM project p JOIN account a ON a.id=p.account_id WHERE p.id='$PROJECT_ID'")"
 
+    outage false; drain; echo
     say "1. Salesforce goes down"
-    outage true; ok "mock sales-entity answers 503"
+    outage true; ok "fake Salesforce answers 503 to sales-entity-service (and so to entity-service)"
 
     say "2. invite $EMAIL while it is down"
     RESP="$(curl -sS -o /tmp/sf-e2e-invite.json -w '%{http_code}' -X POST "$ENTITY/projects/$PROJECT_ID/contacts" \
@@ -112,31 +139,34 @@ case "${1:-run}" in
       -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' -d '{"roles":["Admin"]}')"
     [[ "$RESP" == "409" ]] && grep -q SALESFORCE_SYNC_PENDING /tmp/sf-e2e-patch.json || { cat /tmp/sf-e2e-patch.json; fail "PATCH returned $RESP"; }
     ok "409 $(cat /tmp/sf-e2e-patch.json)"
-    TRIES="$("${COMPOSE[@]}" logs --since 3m mock-sales-entity 2>/dev/null | grep -c "CONSUMER request .* attempt .* failed" || true)"
-    ok "sales-entity consumer (mock) has made ${TRIES:-0} failed attempt(s) so far against the down Salesforce"
+    TRIES="$("${COMPOSE[@]}" logs --since 3m sales-entity-service 2>/dev/null | grep -c "Salesforce unavailable; will retry" || true)"
+    ok "sales-entity-service consumer has made ${TRIES:-0} failed attempt(s) so far against the down Salesforce"
 
     say "4. Salesforce comes back${OUTAGE_SECONDS:+ after ${OUTAGE_SECONDS}s}"
     if [[ "${OUTAGE_SECONDS:-0}" -gt 0 ]]; then
       sleep "$OUTAGE_SECONDS"
       REQ_ID="$(sql "SELECT id FROM salesforce_write_request WHERE project_contact_id='$PC_ID'")"
       # Captured, not grep -q'd: see the startup check above (pipefail).
-      RETRIES="$("${COMPOSE[@]}" logs --since 5m mock-sales-entity 2>/dev/null | grep -c "CONSUMER request $REQ_ID attempt .* failed" || true)"
-      [[ "${RETRIES:-0}" -ge 3 ]] || fail "the sales-entity consumer retried only ${RETRIES:-0} times in ${OUTAGE_SECONDS}s"
+      RETRIES="$("${COMPOSE[@]}" logs --since 5m sales-entity-service 2>/dev/null | grep "\"requestId\":\"$REQ_ID\"" | grep -c "Salesforce unavailable; will retry" || true)"
+      DEADLETTERED="$("${COMPOSE[@]}" logs --since 5m sales-entity-service 2>/dev/null | grep -c "Main-tier attempts exhausted; dead-lettering" || true)"
+      ONDLQ="$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic salesforce-writes-dlq --from-beginning --timeout-ms 6000 2>/dev/null | grep -c "$REQ_ID" || true)"
+      [[ "${RETRIES:-0}" -ge 1 ]] || fail "sales-entity-service made no failed attempt for $REQ_ID in ${OUTAGE_SECONDS}s"
+      [[ "${ONDLQ:-0}" -ge 1 ]] || fail "sales-entity-service did not dead-letter $REQ_ID to salesforce-writes-dlq in ${OUTAGE_SECONDS}s"
       [[ "$(sql "SELECT status FROM salesforce_write_request WHERE id='$REQ_ID'")" == "PENDING" ]] || fail "request must still be PENDING while Salesforce is down"
-      ok "sales-entity consumer retried the command $RETRIES times in place while Salesforce was down; request still PENDING"
+      ok "sales-entity-service made $RETRIES failed attempt(s) and dead-lettered the record to salesforce-writes-dlq ($DEADLETTERED dead-letter publish(es) logged); request still PENDING"
     fi
     outage false
-    for i in $(seq 1 40); do
+    for i in $(seq 1 120); do
       STATUS="$(sql "SELECT status FROM salesforce_write_request WHERE project_contact_id='$PC_ID'")"
       [[ "$STATUS" == "SUCCEEDED" ]] && break
       [[ "$STATUS" == "FAILED" ]] && fail "request FAILED: $(sql "SELECT last_error FROM salesforce_write_request WHERE project_contact_id='$PC_ID'")"
       sleep 3
     done
-    [[ "$STATUS" == "SUCCEEDED" ]] || fail "request still $STATUS after 2 minutes"
+    [[ "$STATUS" == "SUCCEEDED" ]] || fail "request still $STATUS after 6 minutes"
     RESULTS="$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic salesforce-write-results --from-beginning --timeout-ms 6000 2>/dev/null || true)"
     REQ_ID="$(sql "SELECT id FROM salesforce_write_request WHERE project_contact_id='$PC_ID'")"
     [[ "$RESULTS" == *"membership_write.completed"* && "$RESULTS" == *"$REQ_ID"* ]] || fail "no completed result for $REQ_ID on salesforce-write-results"
-    ok "sales-entity consumer answered membership_write.completed on salesforce-write-results; entity-service marked the request SUCCEEDED"
+    ok "sales-entity-service answered membership_write.completed on salesforce-write-results; entity-service marked the request SUCCEEDED"
     SF="$(sql "SELECT pc.sf_id||' / '||ac.sf_id||' / '||COALESCE(u.sf_id,'<null>') FROM project_contact pc JOIN account_contact ac ON ac.id=pc.account_contact_id LEFT JOIN \"user\" u ON LOWER(u.user_name)=LOWER(ac.user_name) WHERE pc.id='$PC_ID'")"
     [[ "$SF" == a0eM* ]] || fail "sf ids not stamped: $SF"
     ok "sf_id stamped on project_contact / account_contact / user: $SF"
@@ -148,11 +178,12 @@ case "${1:-run}" in
     C="$(echo "$STATE" | python3 -c "
 import json,sys
 s=json.load(sys.stdin)
-contacts=sum(1 for c in s['contacts'].values() if (c.get('email') or '').lower()=='$EMAIL')
-memberships=sum(1 for m in s['memberships'].values() if ((m.get('contact') or {}).get('email') or '').lower()=='$EMAIL')
-print(contacts, memberships)")"
-    [[ "$C" == "1 1" ]] || fail "mock holds contacts/memberships = $C for $EMAIL (want 1 1)"
-    ok "mock Salesforce holds 1 contact for $EMAIL and 1 membership"
+contacts=[c for c in s['contacts'].values() if (c.get('Email') or '').lower()=='$EMAIL']
+ids={c['Id'] for c in contacts}
+memberships=sum(1 for m in s['memberships'].values() if m.get('Contact__c') in ids)
+print(len(contacts), memberships)")"
+    [[ "$C" == "1 1" ]] || fail "fake Salesforce holds contacts/memberships = $C for $EMAIL (want 1 1)"
+    ok "fake Salesforce holds 1 Contact for $EMAIL and 1 Project_Contact__c"
     EVENTS="$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic project-events --from-beginning --timeout-ms 8000 2>/dev/null || true)"
     echo "$EVENTS" | grep -q "project_contact.invited" && echo "$EVENTS" | grep -q "$EMAIL" || fail "project_contact.invited for $EMAIL not found on project-events"
     ok "project_contact.invited for $EMAIL is on project-events"
@@ -165,6 +196,7 @@ print(contacts, memberships)")"
   run-exhaust)
     TOKEN="$(token)"
     EMAIL="deferred.exhaust.$(date +%s)@example.com"
+    outage false; drain; echo
     say "both tiers give up: the request must end FAILED"
     outage true
     RESP="$(curl -sS -o /tmp/sf-e2e-invite.json -w '%{http_code}' -X POST "$ENTITY/projects/$PROJECT_ID/contacts" \
@@ -173,13 +205,13 @@ print(contacts, memberships)")"
     [[ "$RESP" == "201" ]] || { cat /tmp/sf-e2e-invite.json; fail "invite returned $RESP"; }
     PC_ID="$(sql "SELECT id FROM project_contact WHERE project_id='$PROJECT_ID' AND LOWER(email)='$EMAIL'")"
     ok "invited $EMAIL while down (project_contact $PC_ID)"
-    for i in $(seq 1 60); do
+    for i in $(seq 1 120); do
       STATUS="$(sql "SELECT status FROM salesforce_write_request WHERE project_contact_id='$PC_ID'")"
       [[ "$STATUS" == "PENDING" ]] || break
       sleep 5
     done
-    [[ "$STATUS" == "FAILED" ]] || fail "request is $STATUS after 5 minutes; want FAILED once the consumer gave up"
-    ok "sales-entity consumer gave up and answered membership_write.failed; request FAILED: $(sql "SELECT last_error FROM salesforce_write_request WHERE project_contact_id='$PC_ID'" | cut -c1-120)"
+    [[ "$STATUS" == "FAILED" ]] || fail "request is $STATUS after 10 minutes; want FAILED once the consumer gave up"
+    ok "sales-entity-service gave up and answered membership_write.failed; request FAILED: $(sql "SELECT last_error FROM salesforce_write_request WHERE project_contact_id='$PC_ID'" | cut -c1-120)"
     LIST="$(curl -fsS -X POST "$ENTITY/projects/$PROJECT_ID/contacts/search" -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' \
       -d "{\"filters\":{\"searchQuery\":\"$EMAIL\"},\"pagination\":{\"limit\":5,\"offset\":0}}")"
     [[ "$LIST" == *'"salesforceSync":"FAILED"'* ]] || { echo "$LIST"; fail "contact search does not show salesforceSync FAILED"; }

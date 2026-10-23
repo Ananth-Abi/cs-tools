@@ -294,7 +294,7 @@ func (s *projectMembershipWriteService) Invite(ctx context.Context, projectID st
 		// (project_membership_deferred_write.go). Only an outage, only a
 		// first invitation; anything else is returned as the error it is.
 		deferInvite := func(cause error) (domain.SalesforceMembershipUpsert, domain.UpsertOnboardingStepRequest, error) {
-			if !s.canDeferInvite(wc, cause) {
+			if !s.canDeferInvite(ctx, wc, cause) {
 				return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{}, cause
 			}
 			slog.WarnContext(ctx, "membership write: Salesforce unavailable; deferring the invitation's Salesforce half",

@@ -14,30 +14,18 @@
 # specific language governing permissions and limitations
 # under the License.
 #
-# LOCAL DEV ONLY -- builds the mock sales-entity-service used by the docker-compose
-# stack in apps/csm-portal/README.md so contributors can run the CSM
-# platform without access to Salesforce (scripts/csm-compose/sf-deferred-e2e.compose.yml).
+# LOCAL DEV ONLY -- builds the fake Salesforce REST API the deferred-write
+# end-to-end stack puts behind the real sales-entity-service
+# (scripts/csm-compose/sf-deferred-e2e.compose.yml).
 
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
-COPY go.mod go.sum ./
+COPY go.mod ./
 COPY main.go ./
-RUN CGO_ENABLED=0 go build -o /out/mock-sales-entity .
+RUN CGO_ENABLED=0 go build -o /out/mock-salesforce .
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
 WORKDIR /app
-COPY --from=builder /out/mock-sales-entity ./mock-sales-entity
-
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid 10109 \
-    "csmdev"
-
-USER 10109
-
-ENTRYPOINT ["./mock-sales-entity"]
+COPY --from=builder /out/mock-salesforce ./mock-salesforce
+ENTRYPOINT ["/app/mock-salesforce"]
