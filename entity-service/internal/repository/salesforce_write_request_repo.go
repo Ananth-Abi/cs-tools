@@ -184,8 +184,13 @@ func truncateSalesforceWriteError(cause error) *string {
 	if msg == "" {
 		return nil
 	}
-	if len(msg) > salesforceWriteRequestErrorChars {
-		msg = msg[:salesforceWriteRequestErrorChars]
+	// The column limit counts characters; cut on a rune boundary so a
+	// multi-byte character spanning the limit cannot turn into invalid
+	// UTF-8 that PostgreSQL rejects (which would fail the very UPDATE that
+	// records the failure and leave the request PENDING).
+	msg = strings.ToValidUTF8(msg, "")
+	if r := []rune(msg); len(r) > salesforceWriteRequestErrorChars {
+		msg = string(r[:salesforceWriteRequestErrorChars])
 	}
 	return &msg
 }

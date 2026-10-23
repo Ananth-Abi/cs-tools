@@ -364,6 +364,9 @@ func TestDeferredWrite_CompleteStampsIdsAndPublishesTheInvitation(t *testing.T) 
 	if in.CompletesSalesforceWriteRequestID != req.ID || len(d.repo.completedRequests) != 1 {
 		t.Errorf("the request must be completed in the same transaction: %+v / %v", in.CompletesSalesforceWriteRequestID, d.repo.completedRequests)
 	}
+	if in.AdoptProjectContactID != writeProjectContactID {
+		t.Errorf("the upsert must be bound to the deferred row %s, got %q", writeProjectContactID, in.AdoptProjectContactID)
+	}
 	if len(d.repo.steps) != 1 || d.repo.steps[0].Step != domain.OnboardingStepDatabase || d.repo.steps[0].MembershipSfID != writeMembershipID || d.repo.steps[0].EventType != domain.PortalMembershipWriteEventType {
 		t.Errorf("DATABASE step = %+v", d.repo.steps)
 	}

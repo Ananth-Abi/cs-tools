@@ -307,6 +307,10 @@ func (s *projectMembershipWriteService) CompleteDeferredSalesforceWrite(ctx cont
 	in.ProjectID = req.ProjectID
 	in.Actor = domain.PortalMembershipWriteActor
 	in.CompletesSalesforceWriteRequestID = req.ID
+	// Stamp the row this request was deferred for, even when Salesforce put
+	// the contact on another account than the project's: the plain lookups
+	// would otherwise miss it and insert a second membership.
+	in.AdoptProjectContactID = req.ProjectContactID
 	if strings.TrimSpace(in.Email) == "" {
 		in.Email, in.ContactEmail = req.Email, req.Email
 	}

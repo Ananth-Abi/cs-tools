@@ -50,9 +50,15 @@ say()  { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok()   { printf '   \033[32mOK\033[0m  %s\n' "$*"; }
 fail() { printf '   \033[31mFAIL\033[0m %s\n' "$*"; exit 1; }
 sql()  { "${PSQL[@]}" -c "$1" </dev/null | tr -d '\r'; }
-# Whatever happens, leave the fake Salesforce up: a run that stops midway
-# must not leave the next one (or the dead-letter consumer) facing an outage.
-trap 'curl -fsS -X POST "$MOCK/__mock/outage" -H "Content-Type: application/json" -d "{\"down\":false}" >/dev/null 2>&1 || true' EXIT
+# Whatever happens, leave the fake Salesforce up and remove the work files: a
+# run that stops midway must not leave the next one (or the dead-letter
+# consumer) facing an outage, nor temp files at fixed paths.
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/sf-deferred-e2e.XXXXXX")"
+cleanup() {
+  curl -fsS -X POST "$MOCK/__mock/outage" -H "Content-Type: application/json" -d '{"down":false}' >/dev/null 2>&1 || true
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
 
 # drain waits until no request from an earlier run is still PENDING, so the
 # consumers' sequential partitions are empty when this run's record arrives.
@@ -77,6 +83,26 @@ token() {
 }
 outage() { curl -fsS -X POST "$MOCK/__mock/outage" -H 'Content-Type: application/json' -d "{\"down\":$1}" >/dev/null; }
 
+# prepare seeds what the local stack lacks and both scenarios need: the
+# account-level roles the membership write grants, and Salesforce-shaped ids
+# on the seeded project and account (the real sales-entity-service validates
+# every id it puts into SOQL; the seed's SF-PROJ-0001 / SF-0001 are not ids).
+prepare() {
+  say "0. seed the account-level roles the membership write grants (local stack has none)"
+  "${PSQL[@]}" -c "INSERT INTO role (id, created_on, updated_on, created_by, updated_by, name, description)
+    SELECT gen_random_uuid(), now(), now(), 'sf-deferred-e2e', 'sf-deferred-e2e', r, 'seeded by sf-deferred-e2e.sh'
+    FROM unnest(ARRAY['external','customer','partner','customer_admin','partner_admin']) AS r
+    ON CONFLICT (name) DO NOTHING" </dev/null >/dev/null
+  ok "roles present: $(sql "SELECT string_agg(name, ', ' ORDER BY name) FROM role WHERE name IN ('external','customer','partner','customer_admin','partner_admin')")"
+  # The seed's Salesforce ids (SF-PROJ-0001, SF-0001) are not Salesforce id
+  # formats; the real sales-entity-service validates every id it puts into
+  # SOQL. Give the seeded project and account ids shaped like Salesforce's.
+  "${PSQL[@]}" -c "UPDATE project SET sf_id='a0p000000000401AAA' WHERE id='$PROJECT_ID' AND sf_id NOT SIMILAR TO '[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18}';
+                   UPDATE account SET sf_id='001000000000301AAA' WHERE id=(SELECT account_id FROM project WHERE id='$PROJECT_ID') AND sf_id NOT SIMILAR TO '[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18}'" </dev/null >/dev/null
+  ok "project / account Salesforce ids: $(sql "SELECT p.sf_id||' / '||a.sf_id FROM project p JOIN account a ON a.id=p.account_id WHERE p.id='$PROJECT_ID'")"
+
+}
+
 case "${1:-run}" in
   up)
     "${COMPOSE[@]}" up -d --build entity-service sales-entity-service mock-salesforce kafka-topics-init
@@ -94,30 +120,18 @@ case "${1:-run}" in
     [[ -n "$STARTUP" ]] || fail "entity-service did not log 'salesforce deferred writes enabled'"
     ok "consumers started (${STARTUP:0:140}...)"
 
-    say "0. seed the account-level roles the membership write grants (local stack has none)"
-    "${PSQL[@]}" -c "INSERT INTO role (id, created_on, updated_on, created_by, updated_by, name, description)
-      SELECT gen_random_uuid(), now(), now(), 'sf-deferred-e2e', 'sf-deferred-e2e', r, 'seeded by sf-deferred-e2e.sh'
-      FROM unnest(ARRAY['external','customer','partner','customer_admin','partner_admin']) AS r
-      ON CONFLICT (name) DO NOTHING" </dev/null >/dev/null
-    ok "roles present: $(sql "SELECT string_agg(name, ', ' ORDER BY name) FROM role WHERE name IN ('external','customer','partner','customer_admin','partner_admin')")"
-    # The seed's Salesforce ids (SF-PROJ-0001, SF-0001) are not Salesforce id
-    # formats; the real sales-entity-service validates every id it puts into
-    # SOQL. Give the seeded project and account ids shaped like Salesforce's.
-    "${PSQL[@]}" -c "UPDATE project SET sf_id='a0p000000000401AAA' WHERE id='$PROJECT_ID' AND sf_id NOT SIMILAR TO '[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18}';
-                     UPDATE account SET sf_id='001000000000301AAA' WHERE id=(SELECT account_id FROM project WHERE id='$PROJECT_ID') AND sf_id NOT SIMILAR TO '[a-zA-Z0-9]{15}|[a-zA-Z0-9]{18}'" </dev/null >/dev/null
-    ok "project / account Salesforce ids: $(sql "SELECT p.sf_id||' / '||a.sf_id FROM project p JOIN account a ON a.id=p.account_id WHERE p.id='$PROJECT_ID'")"
-
+    prepare
     outage false; drain; echo
     say "1. Salesforce goes down"
     outage true; ok "fake Salesforce answers 503 to sales-entity-service (and so to entity-service)"
 
     say "2. invite $EMAIL while it is down"
-    RESP="$(curl -sS -o /tmp/sf-e2e-invite.json -w '%{http_code}' -X POST "$ENTITY/projects/$PROJECT_ID/contacts" \
+    RESP="$(curl -sS -o "$WORK/invite.json" -w '%{http_code}' -X POST "$ENTITY/projects/$PROJECT_ID/contacts" \
       -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' \
       -d "{\"email\":\"$EMAIL\",\"firstName\":\"Deferred\",\"lastName\":\"Invitee\",\"roles\":[\"Portal user\"]}")"
-    [[ "$RESP" == "201" ]] || { cat /tmp/sf-e2e-invite.json; fail "invite returned $RESP, want 201"; }
-    grep -q '"salesforceSync":"PENDING"' /tmp/sf-e2e-invite.json || { cat /tmp/sf-e2e-invite.json; fail "response lacks salesforceSync PENDING"; }
-    ok "201 with salesforceSync PENDING: $(cat /tmp/sf-e2e-invite.json)"
+    [[ "$RESP" == "201" ]] || { cat "$WORK/invite.json"; fail "invite returned $RESP, want 201"; }
+    grep -q '"salesforceSync":"PENDING"' "$WORK/invite.json" || { cat "$WORK/invite.json"; fail "response lacks salesforceSync PENDING"; }
+    ok "201 with salesforceSync PENDING: $(cat "$WORK/invite.json")"
     PC_ID="$(sql "SELECT id FROM project_contact WHERE project_id='$PROJECT_ID' AND LOWER(email)='$EMAIL'")"
     [[ -n "$PC_ID" ]] || fail "no project_contact row"
     [[ "$(sql "SELECT COALESCE(sf_id,'<null>') FROM project_contact WHERE id='$PC_ID'")" == "<null>" ]] || fail "project_contact.sf_id should be NULL"
@@ -135,10 +149,10 @@ case "${1:-run}" in
     ok "contact search shows salesforceSync PENDING"
 
     say "3. a role change while pending is refused"
-    RESP="$(curl -sS -o /tmp/sf-e2e-patch.json -w '%{http_code}' -X PATCH "$ENTITY/projects/$PROJECT_ID/contacts/$EMAIL" \
+    RESP="$(curl -sS -o "$WORK/patch.json" -w '%{http_code}' -X PATCH "$ENTITY/projects/$PROJECT_ID/contacts/$EMAIL" \
       -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' -d '{"roles":["Admin"]}')"
-    [[ "$RESP" == "409" ]] && grep -q SALESFORCE_SYNC_PENDING /tmp/sf-e2e-patch.json || { cat /tmp/sf-e2e-patch.json; fail "PATCH returned $RESP"; }
-    ok "409 $(cat /tmp/sf-e2e-patch.json)"
+    [[ "$RESP" == "409" ]] && grep -q SALESFORCE_SYNC_PENDING "$WORK/patch.json" || { cat "$WORK/patch.json"; fail "PATCH returned $RESP"; }
+    ok "409 $(cat "$WORK/patch.json")"
     TRIES="$("${COMPOSE[@]}" logs --since 3m sales-entity-service 2>/dev/null | grep -c "Salesforce unavailable; will retry" || true)"
     ok "sales-entity-service consumer has made ${TRIES:-0} failed attempt(s) so far against the down Salesforce"
 
@@ -185,7 +199,11 @@ print(len(contacts), memberships)")"
     [[ "$C" == "1 1" ]] || fail "fake Salesforce holds contacts/memberships = $C for $EMAIL (want 1 1)"
     ok "fake Salesforce holds 1 Contact for $EMAIL and 1 Project_Contact__c"
     EVENTS="$(docker compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 --topic project-events --from-beginning --timeout-ms 8000 2>/dev/null || true)"
-    echo "$EVENTS" | grep -q "project_contact.invited" && echo "$EVENTS" | grep -q "$EMAIL" || fail "project_contact.invited for $EMAIL not found on project-events"
+    # One record must carry both the type and this run's address; two
+    # separate greps could match two different events. No pipe into grep -q:
+    # with pipefail a large $EVENTS can SIGPIPE the writer and fail the check.
+    INVITED="$(grep -F "project_contact.invited" <<<"$EVENTS" | grep -c -F "$EMAIL" || true)"
+    [[ "${INVITED:-0}" -ge 1 ]] || fail "project_contact.invited for $EMAIL not found on project-events"
     ok "project_contact.invited for $EMAIL is on project-events"
     LIST="$(curl -fsS -X POST "$ENTITY/projects/$PROJECT_ID/contacts/search" -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' \
       -d "{\"filters\":{\"searchQuery\":\"$EMAIL\"},\"pagination\":{\"limit\":5,\"offset\":0}}")"
@@ -196,13 +214,14 @@ print(len(contacts), memberships)")"
   run-exhaust)
     TOKEN="$(token)"
     EMAIL="deferred.exhaust.$(date +%s)@example.com"
+    prepare
     outage false; drain; echo
     say "both tiers give up: the request must end FAILED"
     outage true
-    RESP="$(curl -sS -o /tmp/sf-e2e-invite.json -w '%{http_code}' -X POST "$ENTITY/projects/$PROJECT_ID/contacts" \
+    RESP="$(curl -sS -o "$WORK/invite.json" -w '%{http_code}' -X POST "$ENTITY/projects/$PROJECT_ID/contacts" \
       -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' \
       -d "{\"email\":\"$EMAIL\",\"firstName\":\"Exhausted\",\"lastName\":\"Invitee\",\"roles\":[\"Portal user\"]}")"
-    [[ "$RESP" == "201" ]] || { cat /tmp/sf-e2e-invite.json; fail "invite returned $RESP"; }
+    [[ "$RESP" == "201" ]] || { cat "$WORK/invite.json"; fail "invite returned $RESP"; }
     PC_ID="$(sql "SELECT id FROM project_contact WHERE project_id='$PROJECT_ID' AND LOWER(email)='$EMAIL'")"
     ok "invited $EMAIL while down (project_contact $PC_ID)"
     for i in $(seq 1 120); do

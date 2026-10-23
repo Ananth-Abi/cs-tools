@@ -946,6 +946,16 @@ type SalesforceMembershipUpsert struct {
 	// the request and the rows can never disagree about whether the write
 	// happened. Set only by the deferred-write consumer.
 	CompletesSalesforceWriteRequestID string
+	// AdoptProjectContactID, when set, is the project_contact row a deferred
+	// write committed with NULL ids, which this upsert must stamp rather
+	// than match afresh. The deferred row sits under the project's account;
+	// Salesforce may place the contact on another account (a partner's), in
+	// which case the ordinary (account, user) and (project, account_contact)
+	// lookups would miss the row and insert a second membership. With this
+	// set, the row's account_contact is moved to the resolved account and
+	// the row itself is updated in place. Set only by the deferred-write
+	// completion.
+	AdoptProjectContactID string
 }
 
 // SalesforceMembershipUpsertResult reports what the upsert resolved or created.

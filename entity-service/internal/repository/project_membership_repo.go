@@ -608,12 +608,16 @@ func upsertMembershipTx(ctx context.Context, tx pgx.Tx, in domain.SalesforceMemb
 	}
 
 	// 5. account_contact — by sf_id, then (account, user_name), else insert.
-	res.AccountContactID, res.CreatedAccountContact, err = upsertAccountContact(ctx, tx, in.ContactSfID, res.AccountID, userName, in.IsPrimaryContact, actor)
+	// A deferred row being completed (AdoptProjectContactID) binds to the
+	// account_contact that row already has, moving it to the resolved
+	// account when Salesforce placed the contact elsewhere.
+	res.AccountContactID, res.CreatedAccountContact, err = upsertAccountContact(ctx, tx, in.ContactSfID, res.AccountID, userName, in.IsPrimaryContact, actor, in.AdoptProjectContactID)
 	if err != nil {
 		return res, err
 	}
 
-	// 6. project_contact — by sf_id, then (project, account_contact), else insert.
+	// 6. project_contact — by sf_id, then (project, account_contact), else
+	// insert; a deferred row being completed is updated in place.
 	res.ProjectContactID, res.CreatedProjectContact, res.PreviousState, err = upsertProjectContact(ctx, tx, in, res.ProjectID, res.AccountContactID, actor)
 	if err != nil {
 		return res, err
@@ -881,7 +885,7 @@ func syncDerivedAdminRole(ctx context.Context, tx querier, userID, adminRole str
 // marks it active. isPrimary is Salesforce's primary_contact__c: written on
 // insert and on update when known, FALSE on insert and untouched on update
 // when nil.
-func upsertAccountContact(ctx context.Context, tx querier, contactSfID, accountID, userName string, isPrimary *bool, actor string) (id string, created bool, err error) {
+func upsertAccountContact(ctx context.Context, tx querier, contactSfID, accountID, userName string, isPrimary *bool, actor, adoptProjectContactID string) (id string, created bool, err error) {
 	var copies int64
 	contactSfID = strings.TrimSpace(contactSfID)
 	// A blank id (deferred write) is not a key -- see upsertMembershipUser.
@@ -901,6 +905,30 @@ func upsertAccountContact(ctx context.Context, tx querier, contactSfID, accountI
 			ORDER BY created_on LIMIT 1`, accountID, userName).Scan(&id)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", false, fmt.Errorf("upsert membership: resolve account_contact: %w", err)
+		}
+	}
+	// A deferred row being completed: its account_contact was created under
+	// the project's account with no sf_id. If Salesforce put the contact on
+	// a different account (so the lookups above missed), adopt that row and
+	// move it to the resolved account rather than inserting a second one.
+	if id == "" && strings.TrimSpace(adoptProjectContactID) != "" {
+		err = tx.QueryRow(ctx, `
+			SELECT ac.id FROM project_contact pc
+			JOIN account_contact ac ON ac.id = pc.account_contact_id
+			WHERE pc.id = $1 AND ac.sf_id IS NULL AND LOWER(ac.user_name) = LOWER($2)`, adoptProjectContactID, userName).Scan(&id)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return "", false, fmt.Errorf("upsert membership: resolve deferred account_contact: %w", err)
+		}
+		if id != "" {
+			if _, err = tx.Exec(ctx, `
+				UPDATE account_contact
+				SET account_id = $2, is_active = TRUE, sf_id = COALESCE($3, sf_id), is_primary_contact = COALESCE($5::boolean, is_primary_contact),
+				    updated_on = NOW(), updated_by = $4
+				WHERE id = $1`,
+				id, accountID, nullIfBlank(contactSfID), actor, isPrimary); err != nil {
+				return "", false, fmt.Errorf("upsert membership: move deferred account_contact: %w", err)
+			}
+			return id, false, nil
 		}
 	}
 	if id == "" {
@@ -950,6 +978,16 @@ func upsertProjectContact(ctx context.Context, tx pgx.Tx, in domain.SalesforceMe
 			ORDER BY created_on LIMIT 1`, projectID, accountContactID).Scan(&id, &prior)
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return "", false, "", fmt.Errorf("upsert membership: resolve project_contact: %w", err)
+		}
+	}
+	// A deferred row being completed is stamped in place, whatever account
+	// its account_contact ended up under (see upsertAccountContact).
+	if id == "" && strings.TrimSpace(in.AdoptProjectContactID) != "" {
+		err = tx.QueryRow(ctx, `
+			SELECT id, state::text FROM project_contact WHERE id = $1 AND project_id = $2 AND sf_id IS NULL`,
+			in.AdoptProjectContactID, projectID).Scan(&id, &prior)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return "", false, "", fmt.Errorf("upsert membership: resolve deferred project_contact: %w", err)
 		}
 	}
 	if prior != nil {
