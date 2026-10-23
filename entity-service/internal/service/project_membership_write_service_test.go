@@ -98,6 +98,18 @@ func (f *fakeWriteSalesEntity) GetContact(_ context.Context, id string) (salesen
 	return salesentity.Contact{}, &apierror.ServiceUnavailableError{Msg: "salesentity: contact not found"}
 }
 
+// GetProjectContact answers with the membership the fake holds, as the real
+// client does after a create: the deferred write's completion reads it back.
+func (f *fakeWriteSalesEntity) GetProjectContact(_ context.Context, id string) (salesentity.ProjectContact, error) {
+	if f.searchErr != nil {
+		return salesentity.ProjectContact{}, f.searchErr
+	}
+	if f.membership != nil && f.membership.ID == id {
+		return *f.membership, nil
+	}
+	return salesentity.ProjectContact{}, &apierror.ServiceUnavailableError{Msg: "salesentity: project contact not found"}
+}
+
 func (f *fakeWriteSalesEntity) SearchContactByEmail(_ context.Context, email string) (salesentity.Contact, bool, error) {
 	f.contactSearchs = append(f.contactSearchs, email)
 	if f.searchErr != nil {

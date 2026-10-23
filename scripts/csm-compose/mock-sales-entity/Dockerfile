@@ -20,7 +20,7 @@
 
 FROM golang:1.26-alpine AS builder
 WORKDIR /app
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY main.go ./
 RUN CGO_ENABLED=0 go build -o /out/mock-sales-entity .
 

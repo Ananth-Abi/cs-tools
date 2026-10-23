@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -197,6 +198,12 @@ func TestDeferredWrite_InviteCommitsLocallyWhenSalesforceIsDown(t *testing.T) {
 	if p.RequestID != writeRequestID || p.ProjectContactID != writeProjectContactID || p.Operation != domain.SalesforceWriteOperationInvite {
 		t.Errorf("payload = %+v", p)
 	}
+	// Sales Entity cannot read this database: the command must carry the
+	// whole intent and the Salesforce ids of the project and account.
+	if p.Email != writeEmail || p.FirstName != "Jane" || p.LastName != "Doe" || len(p.Roles) != 1 || p.Roles[0] != "Portal user" ||
+		p.State != domain.MembershipStateInvited || p.ProjectSfID != writeProjectSfID || p.AccountSfID != writeAccountSfID {
+		t.Errorf("command intent = %+v", p)
+	}
 	if len(d.requests.published) != 1 || d.requests.published[0] != writeRequestID {
 		t.Errorf("published_on not stamped: %v", d.requests.published)
 	}
@@ -283,30 +290,54 @@ func TestDeferredWrite_ReinvitationIsNotDeferred(t *testing.T) {
 	}
 }
 
-// ---- the consumer finishes it --------------------------------------------
+// ---- sales-entity-service answers ----------------------------------------
 
-func TestDeferredWrite_ProcessWritesSalesforceAndPublishesTheInvitation(t *testing.T) {
+// completedResult is what Sales Entity publishes after creating both records
+// for inviteIntent; the fake Sales Entity is given the same records so the
+// completion can read them back.
+func (d *deferredHarness) completedResult(t *testing.T, state string) events.SalesforceMembershipWriteCompletedPayload {
+	t.Helper()
+	d.se.contact = existingSalesforceContact()
+	d.se.membership = &salesentity.ProjectContact{
+		ID: writeMembershipID, Email: writeEmail, State: sampleStr(state), Roles: []string{"Portal user"},
+		Contact:          &salesentity.ProjectContactContact{ID: sampleStr(writeContactSfID), Email: sampleStr(writeEmail), Name: sampleStr("Jane Doe")},
+		Subscription:     &salesentity.ProjectContactSubscription{ID: sampleStr(writeProjectSfID), Key: sampleStr("ACMEPROD"), Name: sampleStr("Acme Prod")},
+		LastModifiedDate: sampleStr("2026-10-23T10:00:00.000+0000"),
+	}
+	return events.SalesforceMembershipWriteCompletedPayload{
+		RequestID: writeRequestID, ProjectContactID: writeProjectContactID,
+		ContactSfID: writeContactSfID, MembershipSfID: writeMembershipID, State: state, Roles: []string{"Portal user"},
+		ContactCreated: true, MembershipCreated: true, LastModifiedDate: "2026-10-23T10:00:00.000+0000",
+	}
+}
+
+func completer(d *deferredHarness) DeferredSalesforceWriteCompleter {
+	return d.svc.(DeferredSalesforceWriteCompleter)
+}
+
+func TestDeferredWrite_CompleteStampsIdsAndPublishesTheInvitation(t *testing.T) {
 	d := newDeferredHarness(t)
 	req := d.pendingRequest(t, inviteIntent())
+	result := d.completedResult(t, domain.MembershipStateInvited)
 
-	if err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), req.ID, false); err != nil {
-		t.Fatalf("Salesforce is back; the write must succeed: %v", err)
+	if err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, false); err != nil {
+		t.Fatalf("a completed result must finish the request: %v", err)
 	}
-	// Search first, then create both records.
-	if len(d.se.contactSearchs) != 1 || len(d.se.createdContact) != 1 || len(d.se.createdPC) != 1 {
-		t.Errorf("salesforce calls: searches=%d contacts=%d memberships=%d", len(d.se.contactSearchs), len(d.se.createdContact), len(d.se.createdPC))
+	// Read back through Sales Entity, never written there from here.
+	if len(d.se.contactGets) != 1 || len(d.se.createdContact) != 0 || len(d.se.createdPC) != 0 || len(d.se.updates) != 0 {
+		t.Errorf("completion must only read Sales Entity: gets=%d creates=%d/%d updates=%d", len(d.se.contactGets), len(d.se.createdContact), len(d.se.createdPC), len(d.se.updates))
 	}
 	if len(d.repo.upserts) != 1 {
 		t.Fatalf("want one upsert, got %d", len(d.repo.upserts))
 	}
 	in := d.repo.upserts[0]
-	if in.MembershipSfID != writeMembershipID || in.ContactSfID != writeContactSfID || in.State != domain.MembershipStateInvited {
-		t.Errorf("upsert = %+v, want the Salesforce ids stamped", in)
+	if in.MembershipSfID != writeMembershipID || in.ContactSfID != writeContactSfID || in.State != domain.MembershipStateInvited || in.ProjectID != writeProjectID {
+		t.Errorf("upsert = %+v, want the Salesforce ids stamped on the request's project", in)
 	}
 	if in.CompletesSalesforceWriteRequestID != req.ID || len(d.repo.completedRequests) != 1 {
 		t.Errorf("the request must be completed in the same transaction: %+v / %v", in.CompletesSalesforceWriteRequestID, d.repo.completedRequests)
 	}
-	if len(d.repo.steps) != 1 || d.repo.steps[0].Step != domain.OnboardingStepDatabase || d.repo.steps[0].MembershipSfID != writeMembershipID {
+	if len(d.repo.steps) != 1 || d.repo.steps[0].Step != domain.OnboardingStepDatabase || d.repo.steps[0].MembershipSfID != writeMembershipID || d.repo.steps[0].EventType != domain.PortalMembershipWriteEventType {
 		t.Errorf("DATABASE step = %+v", d.repo.steps)
 	}
 	if len(d.pub.published) != 1 || d.pub.published[0].Type != events.TypeProjectContactInvited || d.pub.published[0].EntityID != writeMembershipID {
@@ -316,127 +347,119 @@ func TestDeferredWrite_ProcessWritesSalesforceAndPublishesTheInvitation(t *testi
 	if err := json.Unmarshal(d.pub.published[0].Payload, &p); err != nil {
 		t.Fatal(err)
 	}
-	if p.Email != writeEmail || p.ContactSfID != writeContactSfID || p.Resend || p.ProjectKey != "ACMEPROD" {
+	if p.Email != writeEmail || p.ContactSfID != writeContactSfID || p.Resend || p.ProjectKey != "ACMEPROD" || p.GivenName != "Jane" {
 		t.Errorf("invited payload = %+v", p)
 	}
 	if len(d.requests.attempts) != 0 || len(d.requests.failed) != 0 {
-		t.Errorf("a success records no failed attempt: %v %v", d.requests.attempts, d.requests.failed)
+		t.Errorf("a completion records no failed attempt: %v %v", d.requests.attempts, d.requests.failed)
 	}
 }
 
-func TestDeferredWrite_ProcessAdoptsARecordSalesforceAlreadyHas(t *testing.T) {
+func TestDeferredWrite_CompleteKeepsTheStateSalesforceStored(t *testing.T) {
 	d := newDeferredHarness(t)
-	req := d.pendingRequest(t, inviteIntent())
-	d.se.contact = existingSalesforceContact()
-	d.se.membership = &salesentity.ProjectContact{ID: writeMembershipID, State: sampleStr(domain.MembershipStateInvited), Roles: []string{"Portal user"}}
-
-	if err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), req.ID, false); err != nil {
+	d.pendingRequest(t, inviteIntent())
+	result := d.completedResult(t, domain.MembershipStateRegistered)
+	if err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.se.createdContact) != 0 || len(d.se.createdPC) != 0 {
-		t.Error("an existing Salesforce record must be adopted, not duplicated")
-	}
-	if len(d.se.updates) != 1 {
-		t.Errorf("the adopted membership gets the requested state and roles: %+v", d.se.updates)
-	}
-	if len(d.repo.completedRequests) != 1 || len(d.pub.published) != 1 {
-		t.Errorf("completed=%v published=%d", d.repo.completedRequests, len(d.pub.published))
+	if d.repo.upserts[0].State != domain.MembershipStateRegistered {
+		t.Errorf("state = %q, want REGISTERED as Salesforce stored it", d.repo.upserts[0].State)
 	}
 }
 
-func TestDeferredWrite_ProcessRetriesWhileSalesforceIsStillDown(t *testing.T) {
+func TestDeferredWrite_CompleteRetriesWhileSalesEntityIsUnreadable(t *testing.T) {
 	d := newDeferredHarness(t)
 	req := d.pendingRequest(t, inviteIntent())
+	result := d.completedResult(t, domain.MembershipStateInvited)
 	d.se.searchErr = salesforceDown()
 
-	err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), req.ID, false)
+	err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, false)
 	if !isSalesforceUnavailable(err) {
 		t.Fatalf("want the outage returned so the consumer retries, got %v", err)
 	}
 	if len(d.requests.attempts) != 1 || d.requests.attempts[0] != req.ID {
 		t.Errorf("attempt not recorded: %v", d.requests.attempts)
 	}
-	if len(d.requests.failed) != 0 || d.requests.requests[req.ID].Status != domain.SalesforceWriteRequestPending {
-		t.Error("the request must stay PENDING while retries remain")
-	}
-	if len(d.repo.upserts) != 0 || len(d.pub.published) != 0 {
-		t.Error("nothing is written or published on a failed attempt")
+	if d.requests.requests[req.ID].Status != domain.SalesforceWriteRequestPending || len(d.repo.upserts) != 0 || len(d.pub.published) != 0 {
+		t.Error("nothing settles, is written or published on a retryable failure")
 	}
 }
 
-func TestDeferredWrite_ProcessMarksFailedOnTheLastAttempt(t *testing.T) {
+func TestDeferredWrite_CompleteMarksFailedOnTheLastAttempt(t *testing.T) {
 	d := newDeferredHarness(t)
 	req := d.pendingRequest(t, inviteIntent())
+	result := d.completedResult(t, domain.MembershipStateInvited)
 	d.se.searchErr = salesforceDown()
 
-	err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), req.ID, true)
-	if err == nil {
+	if err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, true); err == nil {
 		t.Fatal("the exhaustion is still reported to the consumer")
 	}
 	if d.requests.requests[req.ID].Status != domain.SalesforceWriteRequestFailed {
 		t.Error("the final attempt must leave the request FAILED, not PENDING forever")
 	}
-	if len(d.requests.attempts) != 0 {
-		t.Error("MarkFailed counts the attempt; RecordAttempt must not double it")
+	if reason := d.requests.failed[req.ID]; !strings.Contains(reason, writeMembershipID) {
+		t.Errorf("the FAILED reason must name the Salesforce ids an operator needs: %q", reason)
 	}
 }
 
-func TestDeferredWrite_ProcessFailsForGoodOnARefusal(t *testing.T) {
-	cases := map[string]func(*deferredHarness){
-		"salesforce refuses the contact": func(d *deferredHarness) {
-			d.se.createErr = &apierror.DownstreamError{Msg: "salesforce rejected the contact"}
-		},
-		"invitation validator refuses": func(d *deferredHarness) {
-			d.svc = NewProjectMembershipWriteService(MembershipWriteDeps{
-				Memberships: d.repo, Steps: d.steps, SalesEntity: d.se, Publisher: d.pub, Access: alwaysUnrestrictedAccess{},
-				Invitations:   &fakeInvitationValidator{err: &apierror.ValidationError{Msg: "contact belongs to another account"}},
-				WriteRequests: d.requests, SalesforceWritePublisher: d.commands,
-			})
-		},
-		"membership row is gone": func(d *deferredHarness) {
-			d.repo.existing = nil
-		},
-	}
-	for name, setup := range cases {
-		t.Run(name, func(t *testing.T) {
-			d := newDeferredHarness(t)
-			req := d.pendingRequest(t, inviteIntent())
-			setup(d)
-			if err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), req.ID, false); err != nil {
-				t.Fatalf("a refusal is acknowledged (nil), got %v", err)
-			}
-			if d.requests.requests[req.ID].Status != domain.SalesforceWriteRequestFailed {
-				t.Error("the request must be FAILED")
-			}
-			if len(d.pub.published) != 0 || len(d.repo.completedRequests) != 0 {
-				t.Error("nothing is published or completed on a refusal")
-			}
-		})
-	}
-}
-
-func TestDeferredWrite_ProcessIsIdempotent(t *testing.T) {
+func TestDeferredWrite_CompleteFailsForGoodWhenTheRowIsGone(t *testing.T) {
 	d := newDeferredHarness(t)
 	req := d.pendingRequest(t, inviteIntent())
+	result := d.completedResult(t, domain.MembershipStateInvited)
+	d.repo.existing = nil
+	if err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, false); err != nil {
+		t.Fatalf("a terminal problem is acknowledged (nil), got %v", err)
+	}
+	if d.requests.requests[req.ID].Status != domain.SalesforceWriteRequestFailed || len(d.pub.published) != 0 {
+		t.Error("the request must be FAILED and nothing published")
+	}
+}
+
+func TestDeferredWrite_FailedResultMarksTheRequestFailed(t *testing.T) {
+	d := newDeferredHarness(t)
+	req := d.pendingRequest(t, inviteIntent())
+	err := completer(d).FailDeferredSalesforceWrite(context.Background(), events.SalesforceMembershipWriteFailedPayload{
+		RequestID: req.ID, ProjectContactID: writeProjectContactID, Reason: "Account does not accept this domain", Terminal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.requests.requests[req.ID].Status != domain.SalesforceWriteRequestFailed || d.requests.failed[req.ID] != "Account does not accept this domain" {
+		t.Errorf("request = %+v, failed = %v", d.requests.requests[req.ID], d.requests.failed)
+	}
+	if len(d.repo.upserts) != 0 || len(d.pub.published) != 0 {
+		t.Error("a failed result writes and publishes nothing")
+	}
+}
+
+// Results are at-least-once. A settled request acknowledges any later result
+// without touching Salesforce, the rows or the project topic.
+func TestDeferredWrite_ResultsAreIdempotent(t *testing.T) {
+	d := newDeferredHarness(t)
+	req := d.pendingRequest(t, inviteIntent())
+	result := d.completedResult(t, domain.MembershipStateInvited)
 	req.Status = domain.SalesforceWriteRequestSucceeded
 	d.requests.requests[req.ID] = req
 
-	if err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), req.ID, false); err != nil {
+	if err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, false); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.se.contactSearchs) != 0 || len(d.repo.upserts) != 0 || len(d.pub.published) != 0 {
-		t.Error("a settled request must do nothing: a redelivered record would otherwise send a second invitation")
+	if err := completer(d).FailDeferredSalesforceWrite(context.Background(), events.SalesforceMembershipWriteFailedPayload{RequestID: req.ID, Reason: "late"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.se.contactGets) != 0 || len(d.repo.upserts) != 0 || len(d.pub.published) != 0 || d.requests.requests[req.ID].Status != domain.SalesforceWriteRequestSucceeded {
+		t.Error("a settled request must do nothing: a redelivered result would otherwise send a second invitation or flip SUCCEEDED to FAILED")
 	}
 	// A request that no longer exists is acknowledged too.
-	if err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), "missing", false); err != nil {
+	if err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), events.SalesforceMembershipWriteCompletedPayload{RequestID: "missing", ContactSfID: "x", MembershipSfID: "y"}, false); err != nil {
 		t.Errorf("missing request: want nil, got %v", err)
 	}
 }
 
-func TestDeferredWrite_ProcessRetriesWhenTheLedgerIsUnreadable(t *testing.T) {
+func TestDeferredWrite_CompleteRetriesWhenTheLedgerIsUnreadable(t *testing.T) {
 	d := newDeferredHarness(t)
 	d.requests.getErr = errors.New("database unavailable")
-	if err := d.svc.(DeferredSalesforceWriter).ProcessDeferredSalesforceWrite(context.Background(), writeRequestID, false); err == nil {
+	if err := completer(d).CompleteDeferredSalesforceWrite(context.Background(), events.SalesforceMembershipWriteCompletedPayload{RequestID: writeRequestID, ContactSfID: "x", MembershipSfID: "y"}, false); err == nil {
 		t.Fatal("a ledger read failure must be retried, not acknowledged")
 	}
 }

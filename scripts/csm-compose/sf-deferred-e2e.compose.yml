@@ -16,10 +16,13 @@
 #
 # LOCAL DEV ONLY -- compose override for the deferred Salesforce membership
 # write (entity-service SALESFORCE_DEFERRED_WRITES_ENABLED). Adds a mock
-# sales-entity-service that can be switched into an outage, points
-# entity-service at it, turns the portal membership writes and the deferral
-# on, and shortens the retry policies so the whole scenario runs in a couple
-# of minutes. Driven by scripts/csm-compose/sf-deferred-e2e.sh:
+# sales-entity-service that can be switched into an outage AND plays the real
+# service's deferred-write consumer (digiops-sales membershipwrite: reads
+# salesforce-writes, writes its store search-first, answers on
+# salesforce-write-results), points entity-service at it, turns the portal
+# membership writes and the deferral on, and shortens the retry policies so
+# the whole scenario runs in a couple of minutes. Driven by
+# scripts/csm-compose/sf-deferred-e2e.sh:
 #
 #   docker compose -f docker-compose.yml -f scripts/csm-compose/sf-deferred-e2e.compose.yml up -d --build entity-service mock-sales-entity kafka-topics-init
 #   scripts/csm-compose/sf-deferred-e2e.sh run
@@ -27,11 +30,28 @@ services:
   mock-sales-entity:
     build:
       context: ./scripts/csm-compose/mock-sales-entity
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-topics-init:
+        condition: service_completed_successfully
     environment:
       PORT: "9200"
       # The invitation validator refuses addresses outside the account's
       # domain list; every mock customer answers with this list.
       MOCK_SF_DOMAIN_LIST: example.com
+      # The consumer half: same broker, credentials and topics as the real
+      # sales-entity-service would use. Retries every 3s while the outage is
+      # on, gives up (non-terminal failed result) after 20 attempts = 60s.
+      MOCK_SF_WRITES_BROKER: kafka:9094
+      MOCK_SF_WRITES_CONNECTION_STRING: local-dev-shared-secret
+      MOCK_SF_WRITES_TOPIC: salesforce-writes
+      MOCK_SF_RESULTS_TOPIC: salesforce-write-results
+      MOCK_SF_WRITES_RETRY: 3s
+      MOCK_SF_WRITES_MAX_ATTEMPTS: "20"
+      SSL_CERT_FILE: /certs/ca.crt
+    volumes:
+      - csm-dev-certs:/certs:ro
     ports:
       - "127.0.0.1:9200:9200"
     healthcheck:
@@ -45,7 +65,7 @@ services:
       - sh
       - -c
       - |
-        for t in case-events case-events-dlq sre-events sre-events-dlq project-events project-events-dlq salesforce-writes salesforce-writes-dlq; do
+        for t in case-events case-events-dlq sre-events sre-events-dlq project-events project-events-dlq salesforce-writes salesforce-writes-dlq salesforce-write-results salesforce-write-results-dlq; do
           /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$$t" --partitions 1 --replication-factor 1
         done
 
@@ -67,12 +87,12 @@ services:
       SALESFORCE_DEFERRED_WRITES_ENABLED: "true"
       PROJECT_EVENT_HUB_TOPIC: project-events
       SALESFORCE_WRITE_EVENT_HUB_TOPIC: salesforce-writes
-      SALESFORCE_WRITE_EVENT_HUB_DLQ_TOPIC: salesforce-writes-dlq
-      # Short policies so the scenario exercises both tiers quickly: the
-      # main topic gives up after ~2s and dead-letters; the dead-letter tier
-      # retries 5s, 10s, 20s, 20s, 20s (~75s of cover) before marking FAILED.
-      SALESFORCE_WRITE_RETRY_ATTEMPTS: "2"
-      SALESFORCE_WRITE_RETRY_DELAY: "2s"
-      SALESFORCE_WRITE_DLQ_RETRY_ATTEMPTS: "6"
-      SALESFORCE_WRITE_DLQ_RETRY_DELAY: "5s"
-      SALESFORCE_WRITE_DLQ_RETRY_MAX_DELAY: "20s"
+      SALESFORCE_WRITE_RESULTS_TOPIC: salesforce-write-results
+      SALESFORCE_WRITE_RESULTS_DLQ_TOPIC: salesforce-write-results-dlq
+      # The results consumer only waits on Sales Entity's REST reads and the
+      # database; short policies keep the scenario quick.
+      SALESFORCE_WRITE_RESULTS_RETRY_ATTEMPTS: "2"
+      SALESFORCE_WRITE_RESULTS_RETRY_DELAY: "2s"
+      SALESFORCE_WRITE_RESULTS_DLQ_RETRY_ATTEMPTS: "4"
+      SALESFORCE_WRITE_RESULTS_DLQ_RETRY_DELAY: "5s"
+      SALESFORCE_WRITE_RESULTS_DLQ_RETRY_MAX_DELAY: "10s"

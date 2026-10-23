@@ -519,45 +519,42 @@ type Config struct {
 	// during a portal invitation, the CSM rows are committed with NULL
 	// sf_id columns, a salesforce_write_request row is recorded, and
 	// salesforce.membership_write.requested is published to
-	// SalesforceWriteEventHubTopic for this service's own consumer to carry
-	// out. From SALESFORCE_DEFERRED_WRITES_ENABLED, exactly "true"; off by
+	// SalesforceWriteEventHubTopic for sales-entity-service to carry out;
+	// its result comes back on SalesforceWriteResultsTopic. From SALESFORCE_DEFERRED_WRITES_ENABLED, exactly "true"; off by
 	// default. Needs HasPortalMembershipWrites and a configured, enabled
 	// Event Hub publisher; without either it stays off (logged at startup).
 	SalesforceDeferredWritesEnabled bool
-	// SalesforceWriteEventHubTopic carries the deferred-write commands
-	// (SALESFORCE_WRITE_EVENT_HUB_TOPIC, default "salesforce-writes"). Its
-	// own topic on purpose: nothing but this service's consumer should read
-	// it, and a backlog here must not delay a case or project event.
+	// SalesforceWriteEventHubTopic carries the deferred-write commands to
+	// sales-entity-service (SALESFORCE_WRITE_EVENT_HUB_TOPIC, default
+	// "salesforce-writes"). Its own topic on purpose: a backlog here must
+	// not delay a case or project event.
 	SalesforceWriteEventHubTopic string
-	// SalesforceWriteEventHubDLQTopic is where a command every main-topic
-	// attempt failed on is republished (SALESFORCE_WRITE_EVENT_HUB_DLQ_TOPIC,
-	// default "salesforce-writes-dlq"), to be retried with the long policy.
-	SalesforceWriteEventHubDLQTopic string
-	// SalesforceWriteConsumerGroup / SalesforceWriteDLQConsumerGroup are the
-	// consumer groups on the two topics (SALESFORCE_WRITE_CONSUMER_GROUP,
-	// default "entity-service-salesforce-writes";
-	// SALESFORCE_WRITE_DLQ_CONSUMER_GROUP, default
-	// "entity-service-salesforce-writes-dlq"). Distinct from every other
-	// service's groups; each group reads its whole topic.
-	SalesforceWriteConsumerGroup    string
-	SalesforceWriteDLQConsumerGroup string
-	// SalesforceWriteRetryAttempts / SalesforceWriteRetryDelay are the main
-	// topic's retry policy (SALESFORCE_WRITE_RETRY_ATTEMPTS, default 3;
-	// SALESFORCE_WRITE_RETRY_DELAY, default 2s, fixed): short, so one
-	// unreachable Salesforce cannot hold the partition for long before the
-	// record moves to the dead-letter tier.
-	SalesforceWriteRetryAttempts int
-	SalesforceWriteRetryDelay    time.Duration
-	// SalesforceWriteDLQRetryAttempts / SalesforceWriteDLQRetryDelay /
-	// SalesforceWriteDLQRetryMaxDelay are the dead-letter tier's policy
-	// (SALESFORCE_WRITE_DLQ_RETRY_ATTEMPTS, default 10;
-	// SALESFORCE_WRITE_DLQ_RETRY_DELAY, default 30s, doubling each attempt;
-	// SALESFORCE_WRITE_DLQ_RETRY_MAX_DELAY, default 15m cap). The defaults
-	// cover roughly an hour of Salesforce unavailability in place. Waiting
-	// is this tier's job; blocking its partition is fine.
-	SalesforceWriteDLQRetryAttempts int
-	SalesforceWriteDLQRetryDelay    time.Duration
-	SalesforceWriteDLQRetryMaxDelay time.Duration
+	// SalesforceWriteResultsTopic / SalesforceWriteResultsDLQTopic carry
+	// sales-entity-service's answers (salesforce.membership_write.completed /
+	// .failed; SALESFORCE_WRITE_RESULTS_TOPIC, default
+	// "salesforce-write-results"; SALESFORCE_WRITE_RESULTS_DLQ_TOPIC, default
+	// "salesforce-write-results-dlq"). This service consumes them to stamp
+	// the ids and settle the request.
+	SalesforceWriteResultsTopic    string
+	SalesforceWriteResultsDLQTopic string
+	// SalesforceWriteResultsConsumerGroup / ...DLQConsumerGroup are this
+	// service's groups on those topics (SALESFORCE_WRITE_RESULTS_CONSUMER_GROUP,
+	// default "entity-service-salesforce-write-results"; ..._DLQ_CONSUMER_GROUP,
+	// default "entity-service-salesforce-write-results-dlq").
+	SalesforceWriteResultsConsumerGroup    string
+	SalesforceWriteResultsDLQConsumerGroup string
+	// SalesforceWriteResultsRetry* are the results consumer's policies
+	// (SALESFORCE_WRITE_RESULTS_RETRY_ATTEMPTS, default 3; ..._RETRY_DELAY,
+	// default 2s fixed; ..._DLQ_RETRY_ATTEMPTS, default 10; ..._DLQ_RETRY_DELAY,
+	// default 30s doubling; ..._DLQ_RETRY_MAX_DELAY, default 15m). What a
+	// result's handling waits on is Sales Entity's REST API (to read the
+	// records back) and this database, so these cover an outage of either.
+	// The Salesforce retry policy itself lives in sales-entity-service.
+	SalesforceWriteResultsRetryAttempts    int
+	SalesforceWriteResultsRetryDelay       time.Duration
+	SalesforceWriteResultsDLQRetryAttempts int
+	SalesforceWriteResultsDLQRetryDelay    time.Duration
+	SalesforceWriteResultsDLQRetryMaxDelay time.Duration
 	// Auth* configure token validation (internal/auth), always on -- there is
 	// no config flag to disable it. AuthIssuer/AuthJWKSURL/
 	// AuthUserTokenAudiences are required (Validate rejects startup without
@@ -901,14 +898,15 @@ func Load() *Config {
 		SalesforceIngestRetryInterval:                 envDurationOrOff("SALESFORCE_INGEST_RETRY_INTERVAL", 5*time.Minute),
 		SalesforceDeferredWritesEnabled:               os.Getenv("SALESFORCE_DEFERRED_WRITES_ENABLED") == "true",
 		SalesforceWriteEventHubTopic:                  getEnvOrDefault("SALESFORCE_WRITE_EVENT_HUB_TOPIC", "salesforce-writes"),
-		SalesforceWriteEventHubDLQTopic:               getEnvOrDefault("SALESFORCE_WRITE_EVENT_HUB_DLQ_TOPIC", "salesforce-writes-dlq"),
-		SalesforceWriteConsumerGroup:                  getEnvOrDefault("SALESFORCE_WRITE_CONSUMER_GROUP", "entity-service-salesforce-writes"),
-		SalesforceWriteDLQConsumerGroup:               getEnvOrDefault("SALESFORCE_WRITE_DLQ_CONSUMER_GROUP", "entity-service-salesforce-writes-dlq"),
-		SalesforceWriteRetryAttempts:                  envPositiveInt("SALESFORCE_WRITE_RETRY_ATTEMPTS", 3),
-		SalesforceWriteRetryDelay:                     envDuration("SALESFORCE_WRITE_RETRY_DELAY", 2*time.Second),
-		SalesforceWriteDLQRetryAttempts:               envPositiveInt("SALESFORCE_WRITE_DLQ_RETRY_ATTEMPTS", 10),
-		SalesforceWriteDLQRetryDelay:                  envDuration("SALESFORCE_WRITE_DLQ_RETRY_DELAY", 30*time.Second),
-		SalesforceWriteDLQRetryMaxDelay:               envDuration("SALESFORCE_WRITE_DLQ_RETRY_MAX_DELAY", 15*time.Minute),
+		SalesforceWriteResultsTopic:                   getEnvOrDefault("SALESFORCE_WRITE_RESULTS_TOPIC", "salesforce-write-results"),
+		SalesforceWriteResultsDLQTopic:                getEnvOrDefault("SALESFORCE_WRITE_RESULTS_DLQ_TOPIC", "salesforce-write-results-dlq"),
+		SalesforceWriteResultsConsumerGroup:           getEnvOrDefault("SALESFORCE_WRITE_RESULTS_CONSUMER_GROUP", "entity-service-salesforce-write-results"),
+		SalesforceWriteResultsDLQConsumerGroup:        getEnvOrDefault("SALESFORCE_WRITE_RESULTS_DLQ_CONSUMER_GROUP", "entity-service-salesforce-write-results-dlq"),
+		SalesforceWriteResultsRetryAttempts:           envPositiveInt("SALESFORCE_WRITE_RESULTS_RETRY_ATTEMPTS", 3),
+		SalesforceWriteResultsRetryDelay:              envDuration("SALESFORCE_WRITE_RESULTS_RETRY_DELAY", 2*time.Second),
+		SalesforceWriteResultsDLQRetryAttempts:        envPositiveInt("SALESFORCE_WRITE_RESULTS_DLQ_RETRY_ATTEMPTS", 10),
+		SalesforceWriteResultsDLQRetryDelay:           envDuration("SALESFORCE_WRITE_RESULTS_DLQ_RETRY_DELAY", 30*time.Second),
+		SalesforceWriteResultsDLQRetryMaxDelay:        envDuration("SALESFORCE_WRITE_RESULTS_DLQ_RETRY_MAX_DELAY", 15*time.Minute),
 		SalesEntityBaseURL:                            os.Getenv("SALES_ENTITY_BASE_URL"),
 		SalesEntityTokenURL:                           os.Getenv("SALES_ENTITY_TOKEN_URL"),
 		SalesEntityClientID:                           os.Getenv("SALES_ENTITY_CLIENT_ID"),

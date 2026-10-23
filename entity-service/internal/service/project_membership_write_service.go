@@ -57,6 +57,10 @@ type SalesEntityMembershipWriteClient interface {
 	// domain.UserContactAccess.ContactRecordEmail), and searching by the
 	// invited address would then miss the real record.
 	GetContact(ctx context.Context, id string) (salesentity.Contact, error)
+	// GetProjectContact reads a membership by its Salesforce Id; the
+	// deferred write's completion uses it to read back what Sales Entity
+	// wrote. *salesentity.Client has it.
+	GetProjectContact(ctx context.Context, id string) (salesentity.ProjectContact, error)
 	SearchContactByEmail(ctx context.Context, email string) (salesentity.Contact, bool, error)
 	CreateContact(ctx context.Context, in salesentity.CreateContactInput) (salesentity.Contact, error)
 	SearchProjectContact(ctx context.Context, projectSfID, contactSfID string) (salesentity.ProjectContact, bool, error)
@@ -268,6 +272,9 @@ func (s *projectMembershipWriteService) Invite(ctx context.Context, projectID st
 	// deferredIntent is set when the Salesforce half was deferred (see
 	// deferInvite below); the response then says so instead of carrying ids.
 	var deferredIntent *domain.SalesforceWriteIntent
+	// deferredTarget is the project/account the deferred write lands on; the
+	// command carries their Salesforce ids for sales-entity-service.
+	var deferredTarget domain.MembershipWriteTarget
 	res, err := s.deps.Memberships.UpsertWithin(ctx, projectID, email, func(ctx context.Context, wc repository.MembershipWriteContext) (domain.SalesforceMembershipUpsert, domain.UpsertOnboardingStepRequest, error) {
 		state := domain.MembershipStateInvited
 		if wc.Existing != nil {
@@ -292,6 +299,7 @@ func (s *projectMembershipWriteService) Invite(ctx context.Context, projectID st
 			}
 			slog.WarnContext(ctx, "membership write: Salesforce unavailable; deferring the invitation's Salesforce half",
 				"projectId", projectID, "err", cause)
+			deferredTarget = wc.Target
 			deferredIntent = &domain.SalesforceWriteIntent{
 				Email:               email,
 				FirstName:           strings.TrimSpace(req.FirstName),
@@ -363,7 +371,7 @@ func (s *projectMembershipWriteService) Invite(ctx context.Context, projectID st
 	invalidateUser(ctx, s.deps.UserCache, res.UserID, email)
 
 	if deferredIntent != nil {
-		s.publishDeferredWrite(ctx, res.SalesforceWriteRequestID, res.ProjectID, res.ProjectContactID)
+		s.publishDeferredWrite(ctx, res.SalesforceWriteRequestID, res.ProjectID, res.ProjectContactID, *deferredIntent, deferredTarget)
 		return domain.ProjectMembership{
 			ProjectID:        res.ProjectID,
 			ProjectContactID: res.ProjectContactID,

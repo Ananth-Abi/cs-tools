@@ -26,19 +26,21 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/events"
 )
 
-type fakeDeferredWriter struct {
-	calls []struct {
-		id   string
-		last bool
-	}
-	err error
+type fakeCompleter struct {
+	completed []events.SalesforceMembershipWriteCompletedPayload
+	failed    []events.SalesforceMembershipWriteFailedPayload
+	lastFlags []bool
+	err       error
 }
 
-func (f *fakeDeferredWriter) ProcessDeferredSalesforceWrite(_ context.Context, requestID string, lastAttempt bool) error {
-	f.calls = append(f.calls, struct {
-		id   string
-		last bool
-	}{requestID, lastAttempt})
+func (f *fakeCompleter) CompleteDeferredSalesforceWrite(_ context.Context, p events.SalesforceMembershipWriteCompletedPayload, last bool) error {
+	f.completed = append(f.completed, p)
+	f.lastFlags = append(f.lastFlags, last)
+	return f.err
+}
+
+func (f *fakeCompleter) FailDeferredSalesforceWrite(_ context.Context, p events.SalesforceMembershipWriteFailedPayload) error {
+	f.failed = append(f.failed, p)
 	return f.err
 }
 
@@ -55,48 +57,46 @@ func envelope(t *testing.T, typ events.Type, entityID string, payload any) []byt
 	return body
 }
 
-func TestSalesforceWriteHandle_CallsTheWriterWithTheRequestID(t *testing.T) {
-	w := &fakeDeferredWriter{err: errors.New("salesforce down")}
-	handle := salesforceWriteHandle(w)
-	body := envelope(t, events.TypeSalesforceMembershipWriteRequested, "req-1",
-		events.SalesforceMembershipWriteRequestedPayload{RequestID: "req-1", Operation: "INVITE"})
+func TestSalesforceWriteResultHandle_CompletedCallsTheCompleter(t *testing.T) {
+	c := &fakeCompleter{err: errors.New("sales entity unreadable")}
+	body := envelope(t, events.TypeSalesforceMembershipWriteCompleted, "req-1",
+		events.SalesforceMembershipWriteCompletedPayload{RequestID: "req-1", ContactSfID: "003", MembershipSfID: "a0e"})
 
-	err := handle(context.Background(), eventbus.Record{Value: body, NoMoreRetries: true})
-	if err == nil || err.Error() != "salesforce down" {
-		t.Fatalf("the writer's error must propagate so the consumer retries; got %v", err)
+	err := salesforceWriteResultHandle(c)(context.Background(), eventbus.Record{Value: body, NoMoreRetries: true})
+	if err == nil || err.Error() != "sales entity unreadable" {
+		t.Fatalf("the completer's error must propagate so the consumer retries; got %v", err)
 	}
-	if len(w.calls) != 1 || w.calls[0].id != "req-1" || !w.calls[0].last {
-		t.Errorf("calls = %+v, want one call for req-1 with lastAttempt", w.calls)
+	if len(c.completed) != 1 || c.completed[0].MembershipSfID != "a0e" || !c.lastFlags[0] {
+		t.Errorf("completed calls = %+v last=%v", c.completed, c.lastFlags)
 	}
 }
 
-func TestSalesforceWriteHandle_FallsBackToTheEntityID(t *testing.T) {
-	w := &fakeDeferredWriter{}
-	body := envelope(t, events.TypeSalesforceMembershipWriteRequested, "req-2", map[string]any{})
-	if err := salesforceWriteHandle(w)(context.Background(), eventbus.Record{Value: body}); err != nil {
+func TestSalesforceWriteResultHandle_FailedCallsTheCompleter(t *testing.T) {
+	c := &fakeCompleter{}
+	body := envelope(t, events.TypeSalesforceMembershipWriteFailed, "req-2", map[string]any{"reason": "refused", "terminal": true})
+	if err := salesforceWriteResultHandle(c)(context.Background(), eventbus.Record{Value: body}); err != nil {
 		t.Fatal(err)
 	}
-	if len(w.calls) != 1 || w.calls[0].id != "req-2" || w.calls[0].last {
-		t.Errorf("calls = %+v", w.calls)
+	if len(c.failed) != 1 || c.failed[0].RequestID != "req-2" || c.failed[0].Reason != "refused" || !c.failed[0].Terminal {
+		t.Errorf("failed calls = %+v (request id must fall back to the entity id)", c.failed)
 	}
 }
 
-// Anything this service did not publish is acknowledged, not retried: there
-// is nothing a retry or a dead-letter could do with it.
-func TestSalesforceWriteHandle_SkipsWhatItCannotAct(t *testing.T) {
+// Anything this consumer cannot act on is acknowledged, not retried.
+func TestSalesforceWriteResultHandle_SkipsWhatItCannotAct(t *testing.T) {
 	cases := map[string][]byte{
 		"malformed envelope": []byte("{not json"),
-		"other event type":   envelope(t, events.TypeProjectContactInvited, "x", map[string]any{}),
-		"no request id":      envelope(t, events.TypeSalesforceMembershipWriteRequested, "", map[string]any{}),
+		"other event type":   envelope(t, events.TypeSalesforceMembershipWriteRequested, "x", map[string]any{}),
+		"no request id":      envelope(t, events.TypeSalesforceMembershipWriteCompleted, "", map[string]any{}),
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
-			w := &fakeDeferredWriter{err: errors.New("must not be called")}
-			if err := salesforceWriteHandle(w)(context.Background(), eventbus.Record{Value: body}); err != nil {
+			c := &fakeCompleter{err: errors.New("must not be called")}
+			if err := salesforceWriteResultHandle(c)(context.Background(), eventbus.Record{Value: body}); err != nil {
 				t.Fatalf("want nil (acknowledge), got %v", err)
 			}
-			if len(w.calls) != 0 {
-				t.Errorf("writer called for %s: %+v", name, w.calls)
+			if len(c.completed)+len(c.failed) != 0 {
+				t.Errorf("completer called for %s", name)
 			}
 		})
 	}

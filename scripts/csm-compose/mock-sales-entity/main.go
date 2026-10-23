@@ -24,20 +24,37 @@
 //	POST /__mock/outage {"down":true|false}   flip the outage
 //	GET  /__mock/state                        dump contacts and memberships
 //
+// With MOCK_SF_WRITES_BROKER set it also plays sales-entity-service's
+// deferred-write CONSUMER (digiops-sales membershipwrite): it reads
+// salesforce.membership_write.requested from MOCK_SF_WRITES_TOPIC, performs
+// the same search-first write against its own store, retries in place every
+// MOCK_SF_WRITES_RETRY while the outage is on (up to MOCK_SF_WRITES_MAX_ATTEMPTS,
+// then reports a non-terminal failure), and publishes
+// salesforce.membership_write.completed / .failed to MOCK_SF_RESULTS_TOPIC --
+// the same contract the real consumer honours, so entity-service's side of
+// the flow is exercised end to end without Salesforce or MySQL.
+//
 // Records live in memory and vanish on restart. Ids are invented
 // ("003MOCK…", "a0eMOCK…") and never collide with real Salesforce ids.
 package main
 
 import (
+	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	kafka "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/plain"
 )
 
 type contact struct {
@@ -110,9 +127,15 @@ func str(s string) *string { return &s }
 func boolp(b bool) *bool   { return &b }
 func now() *string         { return str(time.Now().UTC().Format(time.RFC3339Nano)) }
 
+// idEpoch makes ids unique across restarts, as Salesforce ids are: the store
+// is in memory, and a sequence that restarted at 1 would hand a new record an
+// id an earlier run's CSM row already carries, so the upsert would match the
+// wrong row. 3-char prefix + "M" + 8 digits of epoch + 6 of sequence = 18.
+var idEpoch = time.Now().Unix() % 100000000
+
 func (s *store) nextID(prefix string) string {
 	s.seq++
-	return fmt.Sprintf("%sMOCK%012d", prefix, s.seq)
+	return fmt.Sprintf("%sM%08d%06d", prefix, idEpoch, s.seq)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -332,6 +355,179 @@ func main() {
 		writeJSON(w, http.StatusOK, m)
 	})
 
+	if broker := os.Getenv("MOCK_SF_WRITES_BROKER"); broker != "" {
+		go s.consumeWrites(context.Background(), broker)
+	}
 	log.Printf("mock sales-entity listening on :%s (down=%v, domainList=%s)", port, s.down.Load(), s.domainList)
 	log.Fatal(http.ListenAndServe(":"+port, s.outageGate(mux)))
+}
+
+// ---- the deferred-write consumer ---------------------------------------
+
+type envelope struct {
+	Type     string          `json:"type"`
+	EntityID string          `json:"entityId"`
+	Payload  json.RawMessage `json:"payload"`
+}
+
+type requested struct {
+	RequestID           string   `json:"requestId"`
+	ProjectContactID    string   `json:"projectContactId"`
+	ProjectSfID         string   `json:"projectSfId"`
+	AccountSfID         string   `json:"accountSfId"`
+	Email               string   `json:"email"`
+	FirstName           string   `json:"firstName"`
+	LastName            string   `json:"lastName"`
+	Roles               []string `json:"roles"`
+	State               string   `json:"state"`
+	IsCsIntegrationUser bool     `json:"isCsIntegrationUser"`
+}
+
+type completed struct {
+	RequestID         string   `json:"requestId"`
+	ProjectContactID  string   `json:"projectContactId"`
+	ContactSfID       string   `json:"contactSfId"`
+	MembershipSfID    string   `json:"membershipSfId"`
+	State             string   `json:"state"`
+	Roles             []string `json:"roles"`
+	ContactCreated    bool     `json:"contactCreated"`
+	MembershipCreated bool     `json:"membershipCreated"`
+	LastModifiedDate  string   `json:"lastModifiedDate,omitempty"`
+}
+
+type failed struct {
+	RequestID        string `json:"requestId"`
+	ProjectContactID string `json:"projectContactId"`
+	Reason           string `json:"reason"`
+	Terminal         bool   `json:"terminal"`
+}
+
+var errOutage = errors.New("simulated outage")
+
+func envInt(key string, def int) int {
+	if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v > 0 {
+		return v
+	}
+	return def
+}
+
+func envDuration(key string, def time.Duration) time.Duration {
+	if d, err := time.ParseDuration(os.Getenv(key)); err == nil && d > 0 {
+		return d
+	}
+	return def
+}
+
+// consumeWrites is the mock stand-in for sales-entity-service's consumer.
+func (s *store) consumeWrites(ctx context.Context, broker string) {
+	topic := envOr("MOCK_SF_WRITES_TOPIC", "salesforce-writes")
+	results := envOr("MOCK_SF_RESULTS_TOPIC", "salesforce-write-results")
+	group := envOr("MOCK_SF_WRITES_GROUP", "mock-sales-entity-salesforce-writes")
+	retry := envDuration("MOCK_SF_WRITES_RETRY", 3*time.Second)
+	maxAttempts := envInt("MOCK_SF_WRITES_MAX_ATTEMPTS", 20)
+	dialer := &kafka.Dialer{TLS: &tls.Config{MinVersion: tls.VersionTLS12}, SASLMechanism: plain.Mechanism{Username: "$ConnectionString", Password: os.Getenv("MOCK_SF_WRITES_CONNECTION_STRING")}}
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{broker}, GroupID: group, Topic: topic, Dialer: dialer, StartOffset: kafka.FirstOffset, WatchPartitionChanges: true})
+	writer := &kafka.Writer{Addr: kafka.TCP(broker), Topic: results, Balancer: &kafka.Hash{}, RequiredAcks: kafka.RequireAll,
+		Transport: &kafka.Transport{TLS: &tls.Config{MinVersion: tls.VersionTLS12}, SASL: dialer.SASLMechanism}}
+	log.Printf("CONSUMER reading %s (group %s), answering on %s, retry %s up to %d attempts", topic, group, results, retry, maxAttempts)
+	for {
+		msg, err := reader.FetchMessage(ctx)
+		if err != nil {
+			log.Printf("CONSUMER fetch: %v", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		var env envelope
+		var cmd requested
+		if json.Unmarshal(msg.Value, &env) != nil || env.Type != "salesforce.membership_write.requested" || json.Unmarshal(env.Payload, &cmd) != nil {
+			log.Printf("CONSUMER skipping record at offset %d", msg.Offset)
+			_ = reader.CommitMessages(ctx, msg)
+			continue
+		}
+		if cmd.RequestID == "" {
+			cmd.RequestID = env.EntityID
+		}
+		var result any
+		var resultType string
+		for attempt := 1; ; attempt++ {
+			done, err := s.write(cmd)
+			if err == nil {
+				result, resultType = done, "salesforce.membership_write.completed"
+				log.Printf("CONSUMER request %s written on attempt %d: contact %s membership %s", cmd.RequestID, attempt, done.ContactSfID, done.MembershipSfID)
+				break
+			}
+			if attempt >= maxAttempts {
+				result, resultType = failed{RequestID: cmd.RequestID, ProjectContactID: cmd.ProjectContactID, Reason: "retries exhausted: " + err.Error(), Terminal: false}, "salesforce.membership_write.failed"
+				log.Printf("CONSUMER request %s gave up after %d attempts: %v", cmd.RequestID, attempt, err)
+				break
+			}
+			log.Printf("CONSUMER request %s attempt %d failed (%v); retrying in %s", cmd.RequestID, attempt, err, retry)
+			time.Sleep(retry)
+		}
+		raw, _ := json.Marshal(result)
+		body, _ := json.Marshal(envelope{Type: resultType, EntityID: cmd.RequestID, Payload: raw})
+		if err := writer.WriteMessages(ctx, kafka.Message{Key: []byte(cmd.RequestID), Value: body}); err != nil {
+			log.Printf("CONSUMER publish result for %s failed: %v (will redeliver)", cmd.RequestID, err)
+			time.Sleep(retry)
+			continue
+		}
+		_ = reader.CommitMessages(ctx, msg)
+	}
+}
+
+// write is the search-first membership write against the in-memory store;
+// errOutage while the switch is on.
+func (s *store) write(cmd requested) (completed, error) {
+	if s.down.Load() {
+		return completed{}, errOutage
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	email := strings.ToLower(strings.TrimSpace(cmd.Email))
+	out := completed{RequestID: cmd.RequestID, ProjectContactID: cmd.ProjectContactID}
+	var c *contact
+	for _, x := range s.contacts {
+		if x.Email != nil && *x.Email == email {
+			c = x
+			break
+		}
+	}
+	if c == nil {
+		c = &contact{ID: s.nextID("003"), Email: str(email), Name: str(strings.TrimSpace(cmd.FirstName + " " + cmd.LastName)),
+			FirstName: str(cmd.FirstName), LastName: str(cmd.LastName), IsCsAdmin: boolp(false), IsCsIntegrationUser: boolp(cmd.IsCsIntegrationUser),
+			LockoutStatus: boolp(true), Account: &contactAccount{ID: str(cmd.AccountSfID), Classification: str("Customer"), IsPartner: boolp(false)}, LastModifiedDate: now()}
+		s.contacts[c.ID] = c
+		out.ContactCreated = true
+	}
+	out.ContactSfID = c.ID
+	state := cmd.State
+	if state == "" {
+		state = "INVITED"
+	}
+	var m *projectContact
+	for _, x := range s.memberships {
+		if x.Subscription != nil && x.Subscription.ID != nil && *x.Subscription.ID == cmd.ProjectSfID && x.Contact != nil && x.Contact.ID != nil && *x.Contact.ID == c.ID {
+			m = x
+			break
+		}
+	}
+	if m == nil {
+		m = &projectContact{ID: s.nextID("a0e"), Email: email, State: str(state), Roles: cmd.Roles, Type: str("OWN CONTACT"),
+			Contact:      &pcContact{ID: str(c.ID), Name: c.Name, Email: c.Email, CustomerID: str(cmd.AccountSfID)},
+			Subscription: &subscription{ID: str(cmd.ProjectSfID), Name: str("Mock Project"), Key: str("MOCKPROJ"), CustomerID: str(cmd.AccountSfID)},
+			CreatedDate:  now(), LastModifiedDate: now()}
+		s.memberships[m.ID] = m
+		out.MembershipCreated = true
+	} else {
+		m.State, m.Roles, m.LastModifiedDate = str(state), cmd.Roles, now()
+	}
+	out.MembershipSfID, out.State, out.Roles, out.LastModifiedDate = m.ID, *m.State, m.Roles, *m.LastModifiedDate
+	return out, nil
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

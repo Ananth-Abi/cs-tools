@@ -75,11 +75,11 @@ The server loads `.env` automatically on startup (silently ignored if absent). P
 | `SALESFORCE_INGEST_RETRY_INTERVAL` | no | `5m` | How often the Salesforce ingest retry worker re-runs memberships whose DATABASE step FAILED because their project or account was not in CSM yet, and how old such a failure must be before it is re-run (see "Salesforce ingest ledger and the delayed-retry job" below). `0` disables the job, and so does an unparseable or negative value (logged as a warning; it fails closed rather than falling back to `5m`). Only runs when `CSM_MIGRATION_SALESFORCE_MEMBERSHIP_INGEST_ENABLED=true` |
 | `CSM_MIGRATION_PORTAL_WRITES_ENABLED` | no | `false` | Must be `"true"` to register the four portal-driven membership write routes under `/projects/{id}/contacts` (see "Portal-driven membership writes" below). Also needs `DATA_SOURCE=postgres`, a pool, and the full `SALES_ENTITY_*` set (`Config.HasPortalMembershipWrites`). Off means the routes are **not registered at all**, not 403 |
 | `SALESFORCE_DEFERRED_WRITES_ENABLED` | no | `false` | Must be `"true"` to let a portal invitation survive a sales-entity-service outage: the rows commit with NULL `sf_id`, a `salesforce_write_request` row is recorded, and `salesforce.membership_write.requested` is published for this service's own consumer to finish (see "Deferred Salesforce writes" under "Portal-driven membership writes"). Also needs `HasPortalMembershipWrites` and `EVENT_HUB_BROKER` + `EVENT_PUBLISHING_ENABLED=true`; without them it is logged and stays off. Off = an outage fails the invitation with 503 as before |
-| `SALESFORCE_WRITE_EVENT_HUB_TOPIC` | no | `salesforce-writes` | Topic of the deferred-write commands. Its own topic: nothing but this service consumes it. Unset = the default name; the Event Hub must exist or every deferred invitation's publish fails (recorded in `event_publish_failures`, the request stays unpublished) |
-| `SALESFORCE_WRITE_EVENT_HUB_DLQ_TOPIC` | no | `salesforce-writes-dlq` | Dead-letter topic the main consumer republishes to after its attempts; consumed by the long-retry consumer |
-| `SALESFORCE_WRITE_CONSUMER_GROUP` / `SALESFORCE_WRITE_DLQ_CONSUMER_GROUP` | no | `entity-service-salesforce-writes` / `…-dlq` | Consumer groups on the two topics. Must not be shared with any other component |
-| `SALESFORCE_WRITE_RETRY_ATTEMPTS` / `SALESFORCE_WRITE_RETRY_DELAY` | no | `3` / `2s` | Main-topic policy: attempts in total and a fixed pause between them, then dead-letter. Keep short: a retry here blocks the partition for every later invitation |
-| `SALESFORCE_WRITE_DLQ_RETRY_ATTEMPTS` / `SALESFORCE_WRITE_DLQ_RETRY_DELAY` / `SALESFORCE_WRITE_DLQ_RETRY_MAX_DELAY` | no | `10` / `30s` / `15m` | Dead-letter policy: attempts, first pause, doubling up to the cap (defaults ≈ 75 min of in-place cover). After the last attempt the request is marked FAILED and the record dropped |
+| `SALESFORCE_WRITE_EVENT_HUB_TOPIC` | no | `salesforce-writes` | Topic the deferred-write **commands** are published to, consumed by sales-entity-service (digiops-sales, `membershipwrite`). The Event Hub must exist or every deferred invitation's publish fails (recorded in `event_publish_failures`, the request stays unpublished) |
+| `SALESFORCE_WRITE_RESULTS_TOPIC` / `SALESFORCE_WRITE_RESULTS_DLQ_TOPIC` | no | `salesforce-write-results` / `…-dlq` | Topics sales-entity-service **answers** on (`salesforce.membership_write.completed` / `.failed`) and this service's dead-letter copy of them. Both must exist |
+| `SALESFORCE_WRITE_RESULTS_CONSUMER_GROUP` / `…_DLQ_CONSUMER_GROUP` | no | `entity-service-salesforce-write-results` / `…-dlq` | This service's consumer groups on the two results topics. Never shared with another component |
+| `SALESFORCE_WRITE_RESULTS_RETRY_ATTEMPTS` / `…_RETRY_DELAY` | no | `3` / `2s` | Main results tier: attempts and fixed pause, then dead-letter. A result's handling waits on Sales Entity's REST reads and this database only; the **Salesforce** retry policy lives in sales-entity-service |
+| `SALESFORCE_WRITE_RESULTS_DLQ_RETRY_ATTEMPTS` / `…_DLQ_RETRY_DELAY` / `…_DLQ_RETRY_MAX_DELAY` | no | `10` / `30s` / `15m` | Dead-letter results tier: exponential, capped. On its last attempt the request is marked FAILED naming the Salesforce ids it could not stamp (the Salesforce echo still stamps them) |
 | `CSM_MIGRATION_CUSTOMER_ENGAGEMENT_INGEST_ENABLED` | no | `false` | Registers `POST /customer-engagements/allocation-events` (Postgres-authoritative only); see "Allocation events" below |
 | `CUSTOMER_ENGAGEMENT_FIREFIGHTING_TYPE_ID` | no | — | ServiceNow sys_id written as `engagement_type_id` on firefighting engagements created by allocation events. Unset skips creating them |
 | `REDIS_URL` | no | — | `rediss://:<key>@<host>:<port>` (TLS, Azure Managed Redis); wins over `REDIS_ADDR`. Turns on the user cache (see "User cache (Redis)" below). `Validate` requires a `redis`/`rediss` scheme and a host, and never echoes the URL |
@@ -1862,6 +1862,9 @@ The ordering above makes every invitation fail with 503 while
 sales/sales-entity-service (or Salesforce behind it) is down, and a customer
 admin can do nothing about that. With `SALESFORCE_DEFERRED_WRITES_ENABLED=true`
 a **first invitation** survives the outage; everything else keeps failing fast.
+The Salesforce half then runs in **sales-entity-service** (digiops-sales,
+`membershipwrite` package), the service that owns the Salesforce connection;
+this service keeps the decision, the ledger and both CSM transactions.
 
 1. `Invite` tries Salesforce synchronously as always. Only when the validator
    or the write fails with `ServiceUnavailableError` (connection error,
@@ -1875,31 +1878,37 @@ a **first invitation** survives the outage; everything else keeps failing fast.
    the membership id) plus a `salesforce_write_request` row (migration 0249:
    the admin's request as JSON `intent`, status PENDING) in the same
    transaction. Then `salesforce.membership_write.requested` is published to
-   `SALESFORCE_WRITE_EVENT_HUB_TOPIC`, keyed by the request id, and
-   `published_on` is stamped. The caller gets **201** with
-   `salesforceSync: "PENDING"` and empty ids.
-3. `startSalesforceWriteConsumers` (`internal/server/salesforce_write_consumer.go`)
-   runs two consumers of this service's own: the main topic with a short fixed
-   policy, then a dead-letter topic with a long exponential one (the
-   `SALESFORCE_WRITE_*RETRY*` vars; `eventbus.RetryPolicy`). Each record calls
-   `ProcessDeferredSalesforceWrite`, which re-reads the request row (settled →
-   acknowledge; this is what makes redelivery safe), re-runs the invitation
-   validator, and replays the intent through **the same `writeSalesforce`**
-   the synchronous path uses — search first, create or adopt — then upserts
-   the rows with the ids, records the DATABASE step and marks the request
-   SUCCEEDED **in one transaction**, and only then publishes
-   `project_contact.invited`. The invitation email and the identity
-   provisioning therefore wait for Salesforce to come back; nothing else
+   `SALESFORCE_WRITE_EVENT_HUB_TOPIC`, keyed by the request id, **carrying the
+   whole intent and the project's and account's Salesforce ids** (Sales Entity
+   cannot read this database), and `published_on` is stamped. The caller gets
+   **201** with `salesforceSync: "PENDING"` and empty ids.
+3. sales-entity-service consumes the command on two tiers (its own
+   `SALESFORCE_WRITES_*RETRY*` policies: short fixed, then a dead-letter topic
+   with exponential backoff), performs the write **search-first** (contact by
+   address, membership by project and contact; create on a miss, PATCH state
+   and roles otherwise) so a redelivery adopts rather than duplicates, and
+   publishes `salesforce.membership_write.completed` (both ids, the stored
+   state and roles) or `.failed` (`terminal: true` for a Salesforce refusal,
+   `false` when its retries ran out) to `SALESFORCE_WRITE_RESULTS_TOPIC`.
+4. `startSalesforceWriteResultConsumers` (`internal/server/salesforce_write_consumer.go`)
+   consumes the results. `CompleteDeferredSalesforceWrite` re-reads the
+   request (settled → acknowledge; this is what makes a duplicate result
+   harmless), reads the records back through Sales Entity's REST API
+   (`GetProjectContact`, `GetContact`) and maps them with the ingest's
+   `buildMembershipUpsert`, then in **one transaction** upserts the rows with
+   the ids, records the DATABASE step and marks the request SUCCEEDED, and
+   only then publishes `project_contact.invited`. The invitation email and the
+   identity provisioning therefore wait for the Salesforce id; nothing else
    publishes that event for a deferred row (the Salesforce echo stays silent
-   because the row is already INVITED).
-4. Still unavailable → `RecordAttempt` and the error is returned, so the
-   consumer retries per its policy. On the dead-letter tier's final call
-   (`Record.NoMoreRetries`) the request is marked **FAILED** instead, so it
-   never sits PENDING with nothing behind it. Refused for good (validation,
-   row gone) → FAILED and acknowledged. A commit failure after Salesforce
-   succeeded is recorded as an orphan like the synchronous path and retried;
-   the search adopts the record.
-5. While a request is PENDING, `UpdateRoles`, `Deactivate` and
+   because the row is already INVITED). `FailDeferredSalesforceWrite` marks
+   the request **FAILED** with Sales Entity's reason.
+5. A result whose handling cannot finish (Sales Entity REST or the database
+   unavailable) is retried per the results policies; on the dead-letter
+   tier's last call the request is marked FAILED naming the Salesforce ids it
+   could not stamp, so it never sits PENDING with nothing behind it. A
+   terminal problem (the row is gone, the records do not add up) is FAILED at
+   once.
+6. While a request is PENDING, `UpdateRoles`, `Deactivate` and
    `ResendInvitation` answer **409** with code `SALESFORCE_SYNC_PENDING`
    ("still being synced to Salesforce"); a row with no id and no request
    keeps the generic missing-id refusal. The contact reads
@@ -1907,12 +1916,15 @@ a **first invitation** survives the outage; everything else keeps failing fast.
    `salesforceSync: PENDING | FAILED` from the latest request row, read
    best-effort through `WithProjectContactSalesforceSync`.
 
-What the event path does **not** cover: a request that outlives both tiers
-(the record is dropped; the row says FAILED), and a publish that failed (the
-row stays PENDING with `published_on` NULL). Both need a re-publish — a sweep
-or a manual retry — which is deliberately not part of this change.
-`membership_registration_service.go` already skips rows with a blank `sf_id`,
-so a person who signs in before the sync lands is registered on a later login.
+What the event path does **not** cover: a command or result that is never
+delivered (the row stays PENDING, `published_on` says whether the command
+left at all), and an outage that outlives Sales Entity's retries (the row
+says FAILED). Both need a re-publish — a sweep or a manual retry — which is
+deliberately not part of this change. `membership_registration_service.go`
+already skips rows with a blank `sf_id`, so a person who signs in before the
+sync lands is registered on a later login. The local stack exercises the
+whole loop with `scripts/csm-compose/sf-deferred-e2e.sh` and a mock
+sales-entity-service that plays the consumer.
 
 ### The Sales Entity write client (`internal/salesentity/membership_writes.go`)
 

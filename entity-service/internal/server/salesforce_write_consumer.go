@@ -29,38 +29,36 @@ import (
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/service"
 )
 
-// startSalesforceWriteConsumers runs the two consumers of the deferred
-// Salesforce membership write (service.DeferredSalesforceWriter) and returns
-// the function that stops them.
+// startSalesforceWriteResultConsumers runs the two consumers of
+// sales-entity-service's answers to the deferred Salesforce membership writes
+// (service.DeferredSalesforceWriteCompleter) and returns the function that
+// stops them.
 //
-// TWO TIERS, TWO POLICIES. The main topic's consumer retries a record a few
-// times a couple of seconds apart (SALESFORCE_WRITE_RETRY_*), then
-// republishes it to the dead-letter topic and commits: a Salesforce outage
-// must not hold the main partition for long, since every later invitation
-// made during the outage lands behind it. The dead-letter topic's consumer
-// retries the same record for roughly an hour with exponential backoff
-// (SALESFORCE_WRITE_DLQ_RETRY_*), because waiting is that topic's whole job.
-// A record that outlives both tiers is dropped by Event Hub, and the
-// handler's final call (Record.NoMoreRetries) has already marked the
-// salesforce_write_request FAILED so the portal shows it. This is what
-// "short outages are covered by the event path" means in practice: the
-// cover is the sum of the two tiers' waits, logged at startup.
-func startSalesforceWriteConsumers(cfg *config.Config, writer service.DeferredSalesforceWriter) func() {
+// The Salesforce retry policy lives in sales-entity-service, which owns the
+// Salesforce connection. What a RESULT's handling can wait on is narrower:
+// Sales Entity's REST API (to read the records back) and this database. The
+// main topic's consumer retries a few seconds then dead-letters, so a stuck
+// result cannot hold later results on the partition; the dead-letter topic's
+// consumer retries with exponential backoff, and on its final attempt the
+// request is closed as FAILED naming the Salesforce ids it could not stamp
+// (the Salesforce echo through Service Bus stamps them anyway when it
+// arrives), so nothing sits PENDING with nothing behind it.
+func startSalesforceWriteResultConsumers(cfg *config.Config, completer service.DeferredSalesforceWriteCompleter) func() {
 	mainCfg := eventbus.Config{
 		Broker:           cfg.EventHubBroker,
 		ConnectionString: cfg.EventHubConnectionString,
-		Topic:            cfg.SalesforceWriteEventHubTopic,
+		Topic:            cfg.SalesforceWriteResultsTopic,
 	}
 	dlqCfg := mainCfg
-	dlqCfg.Topic = cfg.SalesforceWriteEventHubDLQTopic
+	dlqCfg.Topic = cfg.SalesforceWriteResultsDLQTopic
 
-	mainPolicy := eventbus.RetryPolicy{Attempts: cfg.SalesforceWriteRetryAttempts, Delay: cfg.SalesforceWriteRetryDelay}
-	dlqPolicy := eventbus.RetryPolicy{Attempts: cfg.SalesforceWriteDLQRetryAttempts, Delay: cfg.SalesforceWriteDLQRetryDelay, MaxDelay: cfg.SalesforceWriteDLQRetryMaxDelay}
+	mainPolicy := eventbus.RetryPolicy{Attempts: cfg.SalesforceWriteResultsRetryAttempts, Delay: cfg.SalesforceWriteResultsRetryDelay}
+	dlqPolicy := eventbus.RetryPolicy{Attempts: cfg.SalesforceWriteResultsDLQRetryAttempts, Delay: cfg.SalesforceWriteResultsDLQRetryDelay, MaxDelay: cfg.SalesforceWriteResultsDLQRetryMaxDelay}
 
 	dlqProducer := eventbus.NewProducer(dlqCfg)
-	mainConsumer := eventbus.NewConsumer(mainCfg, cfg.SalesforceWriteConsumerGroup, mainPolicy)
-	dlqConsumer := eventbus.NewConsumer(dlqCfg, cfg.SalesforceWriteDLQConsumerGroup, dlqPolicy)
-	handle := salesforceWriteHandle(writer)
+	mainConsumer := eventbus.NewConsumer(mainCfg, cfg.SalesforceWriteResultsConsumerGroup, mainPolicy)
+	dlqConsumer := eventbus.NewConsumer(dlqCfg, cfg.SalesforceWriteResultsDLQConsumerGroup, dlqPolicy)
+	handle := salesforceWriteResultHandle(completer)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
@@ -68,7 +66,7 @@ func startSalesforceWriteConsumers(cfg *config.Config, writer service.DeferredSa
 	go func() {
 		defer wg.Done()
 		mainConsumer.Run(ctx, handle, func(ctx context.Context, record eventbus.Record, handleErr error) error {
-			slog.WarnContext(ctx, "salesforce deferred write: main-topic attempts exhausted; dead-lettering",
+			slog.WarnContext(ctx, "salesforce write results: main-topic attempts exhausted; dead-lettering",
 				"topic", record.Topic, "offset", record.Offset, "dlqTopic", dlqCfg.Topic, "err", handleErr)
 			return dlqProducer.Publish(ctx, record.Key, record.Value)
 		})
@@ -77,9 +75,10 @@ func startSalesforceWriteConsumers(cfg *config.Config, writer service.DeferredSa
 		defer wg.Done()
 		dlqConsumer.Run(ctx, handle, nil)
 	}()
-	log.Printf("salesforce deferred writes enabled: consuming %s (group %s, %d attempts, %s in-place cover) and %s (group %s, %d attempts, %s in-place cover)",
-		mainCfg.Topic, cfg.SalesforceWriteConsumerGroup, mainConsumer.Policy().Attempts, mainConsumer.Policy().TotalWait(),
-		dlqCfg.Topic, cfg.SalesforceWriteDLQConsumerGroup, dlqConsumer.Policy().Attempts, dlqConsumer.Policy().TotalWait())
+	log.Printf("salesforce deferred writes enabled: publishing commands to %s; consuming results from %s (group %s, %d attempts, %s in-place cover) and %s (group %s, %d attempts, %s in-place cover)",
+		cfg.SalesforceWriteEventHubTopic,
+		mainCfg.Topic, cfg.SalesforceWriteResultsConsumerGroup, mainConsumer.Policy().Attempts, mainConsumer.Policy().TotalWait(),
+		dlqCfg.Topic, cfg.SalesforceWriteResultsDLQConsumerGroup, dlqConsumer.Policy().Attempts, dlqConsumer.Policy().TotalWait())
 
 	return func() {
 		cancel()
@@ -90,36 +89,49 @@ func startSalesforceWriteConsumers(cfg *config.Config, writer service.DeferredSa
 	}
 }
 
-// salesforceWriteHandle adapts the eventbus record to the service call. A
-// record this service did not publish (another type, a malformed body, no
+// salesforceWriteResultHandle adapts a result record to the service call. A
+// record this consumer cannot act on (another type, a malformed body, no
 // request id) is logged and acknowledged: there is nothing to retry and
 // nothing to dead-letter.
-func salesforceWriteHandle(writer service.DeferredSalesforceWriter) eventbus.Handle {
+func salesforceWriteResultHandle(completer service.DeferredSalesforceWriteCompleter) eventbus.Handle {
 	return func(ctx context.Context, record eventbus.Record) error {
 		var env events.Envelope
 		if err := json.Unmarshal(record.Value, &env); err != nil {
-			slog.ErrorContext(ctx, "salesforce deferred write: malformed envelope; skipping", "topic", record.Topic, "offset", record.Offset, "err", err)
+			slog.ErrorContext(ctx, "salesforce write results: malformed envelope; skipping", "topic", record.Topic, "offset", record.Offset, "err", err)
 			return nil
 		}
-		if env.Type != events.TypeSalesforceMembershipWriteRequested {
-			slog.WarnContext(ctx, "salesforce deferred write: unexpected event type on the write topic; skipping", "type", env.Type, "offset", record.Offset)
-			return nil
-		}
-		var payload events.SalesforceMembershipWriteRequestedPayload
-		if len(env.Payload) > 0 {
-			if err := json.Unmarshal(env.Payload, &payload); err != nil {
-				slog.ErrorContext(ctx, "salesforce deferred write: malformed payload; skipping", "offset", record.Offset, "err", err)
+		switch env.Type {
+		case events.TypeSalesforceMembershipWriteCompleted:
+			var p events.SalesforceMembershipWriteCompletedPayload
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				slog.ErrorContext(ctx, "salesforce write results: malformed completed payload; skipping", "offset", record.Offset, "err", err)
 				return nil
 			}
-		}
-		requestID := payload.RequestID
-		if requestID == "" {
-			requestID = env.EntityID
-		}
-		if requestID == "" {
-			slog.ErrorContext(ctx, "salesforce deferred write: event carries no request id; skipping", "offset", record.Offset)
+			if p.RequestID == "" {
+				p.RequestID = env.EntityID
+			}
+			if p.RequestID == "" {
+				slog.ErrorContext(ctx, "salesforce write results: completed result carries no request id; skipping", "offset", record.Offset)
+				return nil
+			}
+			return completer.CompleteDeferredSalesforceWrite(ctx, p, record.NoMoreRetries)
+		case events.TypeSalesforceMembershipWriteFailed:
+			var p events.SalesforceMembershipWriteFailedPayload
+			if err := json.Unmarshal(env.Payload, &p); err != nil {
+				slog.ErrorContext(ctx, "salesforce write results: malformed failed payload; skipping", "offset", record.Offset, "err", err)
+				return nil
+			}
+			if p.RequestID == "" {
+				p.RequestID = env.EntityID
+			}
+			if p.RequestID == "" {
+				slog.ErrorContext(ctx, "salesforce write results: failed result carries no request id; skipping", "offset", record.Offset)
+				return nil
+			}
+			return completer.FailDeferredSalesforceWrite(ctx, p)
+		default:
+			slog.WarnContext(ctx, "salesforce write results: unexpected event type on the results topic; skipping", "type", env.Type, "offset", record.Offset)
 			return nil
 		}
-		return writer.ProcessDeferredSalesforceWrite(ctx, requestID, record.NoMoreRetries)
 	}
 }

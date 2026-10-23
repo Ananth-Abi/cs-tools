@@ -592,8 +592,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		salesforceWriteRequestRepo = repository.NewSalesforceWriteRequestRepository(db)
 	}
 	// salesforceWritePublisher and stopSalesforceWriteConsumers belong to the
-	// deferred Salesforce write (service.DeferredSalesforceWriter); both nil
-	// unless cfg.HasSalesforceDeferredWrites(). Released by closePublishers.
+	// deferred Salesforce write (service.DeferredSalesforceWriteCompleter):
+	// the command publisher towards sales-entity-service and the consumers
+	// of its results. Both nil unless cfg.HasSalesforceDeferredWrites().
+	// Released by closePublishers.
 	var salesforceWritePublisher service.EventPublisherService
 	var stopSalesforceWriteConsumers func()
 	if db != nil && cfg.HasPortalMembershipWrites() && salesEntityClient != nil {
@@ -611,7 +613,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		switch {
 		case cfg.HasSalesforceDeferredWrites():
 			// Its own producer on its own topic: the command is consumed by
-			// this service alone and must not share a stream with the
+			// sales-entity-service and must not share a stream with the
 			// notifications (see Config.SalesforceWriteEventHubTopic).
 			salesforceWritePublisher = service.NewEventPublisherService(
 				eventbus.NewProducer(eventbus.Config{
@@ -629,11 +631,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		membershipWriteSvc := service.NewProjectMembershipWriteService(writeDeps)
 		projectMembershipHandler = handler.NewProjectMembershipHandler(membershipWriteSvc)
 		if salesforceWritePublisher != nil {
-			writer, ok := membershipWriteSvc.(service.DeferredSalesforceWriter)
+			completer, ok := membershipWriteSvc.(service.DeferredSalesforceWriteCompleter)
 			if !ok {
-				panic("salesforce: membership write service does not implement DeferredSalesforceWriter")
+				panic("salesforce: membership write service does not implement DeferredSalesforceWriteCompleter")
 			}
-			stopSalesforceWriteConsumers = startSalesforceWriteConsumers(cfg, writer)
+			stopSalesforceWriteConsumers = startSalesforceWriteResultConsumers(cfg, completer)
 		}
 	}
 
