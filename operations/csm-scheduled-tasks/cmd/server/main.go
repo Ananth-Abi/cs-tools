@@ -996,10 +996,16 @@ func main() {
 			// Solution Proposed on its own first, then Awaiting Info: set
 			// AUTOCLOSURE_STATES=solution_proposed until the first has been watched.
 			States:    splitComma(os.Getenv("AUTOCLOSURE_STATES")),
-			Templates: parseStringMap("AUTOCLOSURE_TEMPLATES", os.Getenv("AUTOCLOSURE_TEMPLATES")),
+			Templates: autoclosureTemplates(),
 			// AUTOCLOSURE_DRY_RUN=true: decide and log, change nothing. Use it to see
 			// what the first real run would do to a large backlog.
 			DryRun: envBool("AUTOCLOSURE_DRY_RUN", false),
+		}
+		// A value entity-service would reject on every call must stop startup, not
+		// fail and alert every day while no ticket is processed.
+		if err := autoclosureCfg.Validate(); err != nil {
+			slog.Error("invalid AUTOCLOSURE_* configuration; refusing to start", "err", err)
+			os.Exit(1)
 		}
 		// A tryout runs the handler once, outside the ledger, against the real
 		// entity-service: here that would comment on and close real tickets. Only the
@@ -1100,6 +1106,22 @@ func parseStringMap(name, raw string) map[string]string {
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		slog.Error("ignoring malformed configuration value; treating it as unset", "key", name, "err", err)
 		return nil
+	}
+	return out
+}
+
+// autoclosureTemplates reads AUTOCLOSURE_TEMPLATES. Unlike the other maps here,
+// a malformed value stops startup: treating it as unset would silently post the
+// built-in wording to customers instead of the wording the operator meant.
+func autoclosureTemplates() map[string]string {
+	raw := os.Getenv("AUTOCLOSURE_TEMPLATES")
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		slog.Error("AUTOCLOSURE_TEMPLATES is not a JSON object of strings; refusing to start", "err", err)
+		os.Exit(1)
 	}
 	return out
 }

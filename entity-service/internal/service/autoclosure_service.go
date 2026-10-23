@@ -339,13 +339,33 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 		if rErr := s.repo.RestoreStep(cctx, c, now); rErr != nil {
 			slog.ErrorContext(ctx, "autoclosure: restore after failed action", "caseId", caseID, "stage", req.Stage, "error", rErr)
 		}
-		s.record(cctx, caseID, req.Stage, c.Step, &toStep, "FAILED", actErr.Error())
+		s.record(cctx, caseID, req.Stage, c.Step, &toStep, failureOutcome(actErr), actErr.Error())
 		return resp, actErr
 	}
 
 	s.record(cctx, caseID, req.Stage, c.Step, &toStep, "ADVANCED", detail)
 	resp.Outcome = domain.AutoclosureOutcomeAdvanced
 	return resp, nil
+}
+
+// failureOutcome decides which audit outcome a failed action is recorded as.
+// Only FAILED counts toward the failure cap that leaves a ticket out of the
+// listing, so it is kept for refusals that will repeat (validation, a conflict
+// such as an open child, a forbidden or missing record). A cancelled request, a
+// timeout or a temporary outage of the comment or close path says nothing about
+// the ticket and must not hide healthy tickets for a week: those are recorded as
+// FAILED_TRANSIENT, which the cap ignores.
+func failureOutcome(err error) string {
+	var (
+		validation *apierror.ValidationError
+		conflict   *apierror.ConflictError
+		forbidden  *apierror.ForbiddenError
+		notFound   *apierror.NotFoundError
+	)
+	if errors.As(err, &validation) || errors.As(err, &conflict) || errors.As(err, &forbidden) || errors.As(err, &notFound) {
+		return "FAILED"
+	}
+	return "FAILED_TRANSIENT"
 }
 
 // dryRunDetail says what a real run would have done to the ticket, for the

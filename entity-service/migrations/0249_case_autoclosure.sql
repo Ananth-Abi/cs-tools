@@ -65,8 +65,10 @@ CREATE TABLE IF NOT EXISTS case_autoclosure_event (
     from_step    VARCHAR(50),
     to_step      VARCHAR(50),
     -- ADVANCED (done; the only outcome the daily limit counts), FAILED (the
-    -- action was claimed and then rolled back), or DRY_RUN (a dry run found the
-    -- ticket due and changed nothing).
+    -- action was claimed and then rolled back for a reason that will repeat:
+    -- a refusal; counts toward the failure cap), FAILED_TRANSIENT (the same,
+    -- for a cancelled request, timeout or outage; ignored by the cap), or
+    -- DRY_RUN (a dry run found the ticket due and changed nothing).
     outcome      VARCHAR(20) NOT NULL,
     detail       TEXT,
     created_on   TIMESTAMPTZ NOT NULL DEFAULT NOW()

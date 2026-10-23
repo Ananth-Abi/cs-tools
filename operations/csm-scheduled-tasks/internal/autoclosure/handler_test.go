@@ -284,3 +284,22 @@ func TestRun_ARealRunPassesTheDailyLimitToEveryAdvance(t *testing.T) {
 		}
 	}
 }
+
+func TestRunConfigValidate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  RunConfig
+		ok   bool
+	}{
+		{"defaults", RunConfig{}, true},
+		{"normal", RunConfig{IntervalDays: 7, DailyLimit: 500, States: []string{"awaiting_info", "solution_proposed"}}, true},
+		{"max interval", RunConfig{IntervalDays: 365}, true},
+		{"interval too large", RunConfig{IntervalDays: 400}, false},
+		{"misspelt state", RunConfig{States: []string{"solution-proposed"}}, false},
+		{"unknown state", RunConfig{States: []string{"awaiting_info", "closed"}}, false},
+	} {
+		if err := tc.cfg.Validate(); (err == nil) != tc.ok {
+			t.Errorf("%s: err = %v, want ok=%v", tc.name, err, tc.ok)
+		}
+	}
+}

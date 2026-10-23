@@ -3699,7 +3699,7 @@ and forces it for a `TRYOUT_TASK` of this task.
 **A ticket that keeps failing is left out for a while.** A ticket with 3 `FAILED` events for the same stage in the
 last 7 days (`autoclosureMaxFailures`, `autoclosureFailureWindowDays`) is dropped from the listing and the
 per-ticket re-check, so one permanently bad ticket (a refused close, for example) does not raise the same alert on
-every run. The listing logs how many it left out (`CountQuarantined`). The rows age out of the window by themselves.
+every run. Only refusals that will repeat (validation, conflict such as an open child, forbidden, not found) are recorded as `FAILED`; a cancelled request, timeout or outage is recorded as `FAILED_TRANSIENT`, which the cap ignores, so a short outage cannot hide healthy tickets for a week. The listing logs how many it left out (`CountQuarantined`). The rows age out of the window by themselves.
 
 **Failure and crash handling.** A step is claimed before the action. If the action fails, or the request is
 cancelled or times out, the claim is restored and the audit row written on a **detached context with its own 15 s

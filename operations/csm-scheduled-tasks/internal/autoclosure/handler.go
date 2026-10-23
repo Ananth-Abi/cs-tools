@@ -63,6 +63,25 @@ type RunConfig struct {
 	DryRun bool
 }
 
+// Validate refuses a configuration entity-service would reject on every call,
+// so the task fails at startup (loudly, once) instead of failing and alerting on
+// every daily run while processing nothing. The limits are entity-service's own
+// (its OpenAPI: intervalDays 1-365, states awaiting_info / solution_proposed).
+func (c RunConfig) Validate() error {
+	if c.IntervalDays < 0 || c.IntervalDays > 365 {
+		return fmt.Errorf("interval days %d is outside 0-365 (0 uses entity-service's default of 7)", c.IntervalDays)
+	}
+	if c.DailyLimit < 0 {
+		return fmt.Errorf("daily limit %d is negative", c.DailyLimit)
+	}
+	for _, s := range c.States {
+		if s != "awaiting_info" && s != "solution_proposed" {
+			return fmt.Errorf("state %q is not one of awaiting_info, solution_proposed", s)
+		}
+	}
+	return nil
+}
+
 type workClient interface {
 	Candidates(ctx context.Context, req CandidatesRequest) ([]Candidate, error)
 	Advance(ctx context.Context, id string, req AdvanceRequest) (Outcome, error)

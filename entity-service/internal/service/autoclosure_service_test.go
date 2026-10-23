@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -255,8 +256,8 @@ func TestAutoclosureAdvance_AFailedActionPutsTheStepBack(t *testing.T) {
 	if repo.restores != 1 {
 		t.Errorf("restores = %d, want 1: a ticket marked reminded that never was would never be reminded", repo.restores)
 	}
-	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED" {
-		t.Errorf("audit = %+v, want one FAILED row", repo.events)
+	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED_TRANSIENT" {
+		t.Errorf("audit = %+v, want one FAILED_TRANSIENT row (a cancelled request says nothing about the ticket, so it must not count toward the failure cap)", repo.events)
 	}
 }
 
@@ -655,8 +656,8 @@ func TestAutoclosureAdvance_CleanupSurvivesACancelledRequest(t *testing.T) {
 	if repo.ctxErrAtRestore != nil || repo.ctxErrAtRecord != nil {
 		t.Errorf("cleanup ran on a cancelled context (restore=%v record=%v): it would have failed in production", repo.ctxErrAtRestore, repo.ctxErrAtRecord)
 	}
-	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED" {
-		t.Errorf("audit = %+v, want one FAILED row", repo.events)
+	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED_TRANSIENT" {
+		t.Errorf("audit = %+v, want one FAILED_TRANSIENT row (a cancelled request says nothing about the ticket, so it must not count toward the failure cap)", repo.events)
 	}
 }
 
@@ -679,5 +680,27 @@ func TestAutoclosureAdvance_RecheckAppliesTheFailureCapToo(t *testing.T) {
 	}
 	if repo.lastQuery.MaxFailures != autoclosureMaxFailures {
 		t.Errorf("the per-ticket re-check does not apply the failure cap: %+v", repo.lastQuery)
+	}
+}
+
+func TestFailureOutcome_OnlyRepeatingRefusalsCountTowardTheCap(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"validation", &apierror.ValidationError{Msg: "no cause"}, "FAILED"},
+		{"conflict", &apierror.ConflictError{Msg: "open child"}, "FAILED"},
+		{"forbidden", &apierror.ForbiddenError{Msg: "no"}, "FAILED"},
+		{"not found", &apierror.NotFoundError{Msg: "gone"}, "FAILED"},
+		{"wrapped refusal", fmt.Errorf("close: %w", &apierror.ConflictError{Msg: "open child"}), "FAILED"},
+		{"cancelled", context.Canceled, "FAILED_TRANSIENT"},
+		{"timeout", context.DeadlineExceeded, "FAILED_TRANSIENT"},
+		{"outage", &apierror.ServiceUnavailableError{Msg: "down"}, "FAILED_TRANSIENT"},
+		{"unknown", errors.New("connection reset"), "FAILED_TRANSIENT"},
+	} {
+		if got := failureOutcome(tc.err); got != tc.want {
+			t.Errorf("%s: outcome = %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }
