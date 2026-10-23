@@ -220,6 +220,12 @@ type Config struct {
 	// constructs EventPublisherService when both this is true AND
 	// EventHubBroker is set.
 	EventPublishingEnabled bool
+	// UsageRollupEnabled makes an offline usage import rebuild the monthly usage rows of
+	// every month its rows fall in, in the same transaction (USAGE_ROLLUP_ENABLED, exactly
+	// "true"; default off). It is the switch csm-scheduled-tasks' usage rollup tasks use
+	// too, and it stays off while the previous system's aggregation jobs and csm-sync's
+	// mirroring still write monthly_usage_summary, which would otherwise have two writers.
+	UsageRollupEnabled bool
 	// CSMMigrationSalesforceMembershipIngestEnabled turns on the
 	// Project_Contact__c / Contact branch of POST /salesforce/events (the
 	// customer onboarding database write), from
@@ -775,6 +781,7 @@ func Load() *Config {
 		WorklogReportTeamTypes: splitCommaOrDefault(
 			os.Getenv("WORKLOG_REPORT_TEAM_TYPES"), []string{"cre-abt", "cre"}),
 		WorklogReportExcludedTeamKeys:            splitComma(os.Getenv("WORKLOG_REPORT_EXCLUDED_TEAM_KEYS")),
+		QueryHourInternalEmailDomain:             strings.TrimSpace(os.Getenv("QUERY_HOUR_INTERNAL_EMAIL_DOMAIN")),
 		DBUser:                                   os.Getenv("DB_USER"),
 		DBPassword:                               os.Getenv("DB_PASSWORD"),
 		DBName:                                   os.Getenv("DB_NAME"),
@@ -798,6 +805,7 @@ func Load() *Config {
 		EventHubConnectionString:                 os.Getenv("EVENT_HUB_CONNECTION_STRING"),
 		EventHubTopic:                            os.Getenv("EVENT_HUB_TOPIC"),
 		EventPublishingEnabled:                   os.Getenv("EVENT_PUBLISHING_ENABLED") == "true",
+		UsageRollupEnabled:                       os.Getenv("USAGE_ROLLUP_ENABLED") == "true",
 		GithubIntegrationEnabled:                 os.Getenv("GITHUB_INTEGRATION_ENABLED") == "true",
 		GithubBaseURL:                            getEnvOrDefault("GITHUB_API_BASE_URL", "https://api.github.com"),
 		GithubToken:                              os.Getenv("GITHUB_TOKEN"),
@@ -1053,6 +1061,14 @@ func (c *Config) Validate() error {
 		if t.val <= 0 {
 			return fmt.Errorf("%s must be greater than 0, got %s", t.name, t.val)
 		}
+	}
+	// QUERY_HOUR_INTERNAL_EMAIL_DOMAIN is matched with HasSuffix, so a
+	// value missing the "@" matches more than it looks like it does:
+	// "wso2.com" would also accept someone@notwso2.com. Reject it here
+	// rather than quietly mailing an internal report outside.
+	if c.QueryHourInternalEmailDomain != "" && !strings.HasPrefix(c.QueryHourInternalEmailDomain, "@") {
+		return fmt.Errorf("QUERY_HOUR_INTERNAL_EMAIL_DOMAIN must start with \"@\", got %q",
+			c.QueryHourInternalEmailDomain)
 	}
 	// A team id that is not a UUID can never match account.sre_team_id, so
 	// the team it was meant to automate would silently never be.

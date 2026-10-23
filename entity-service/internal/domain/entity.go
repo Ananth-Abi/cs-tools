@@ -2206,7 +2206,11 @@ type DeploymentView struct {
 	ProjectSfID *string `json:"projectSfId"`
 	// Active reports whether the deployment is active; null when the data
 	// source does not say.
-	Active    *bool     `json:"active"`
+	Active *bool `json:"active"`
+	// AirGapped reports whether the deployment's products cannot reach WSO2, so
+	// its licence file is issued to stop them publishing usage online; null when
+	// the data source does not carry it (ServiceNow).
+	AirGapped *bool     `json:"airGapped"`
 	CreatedOn time.Time `json:"createdOn"`
 	UpdatedOn time.Time `json:"updatedOn"`
 	// DeployedProductCount is the number of deployed products in this
@@ -2301,6 +2305,20 @@ type UpdateDeploymentRequest struct {
 	Type        *DeploymentType `json:"type"`
 	Description **string        `json:"description"`
 	Active      *bool           `json:"active"`
+}
+
+// SetDeploymentAirGappedRequest is the body of PUT /deployments/{id}/air-gapped.
+type SetDeploymentAirGappedRequest struct {
+	AirGapped *bool `json:"airGapped"`
+}
+
+// DeploymentAirGapped is a deployment's air-gapped state after it was set.
+type DeploymentAirGapped struct {
+	ID        string    `json:"id"`
+	Number    *string   `json:"number"`
+	AirGapped bool      `json:"airGapped"`
+	UpdatedOn time.Time `json:"updatedOn"`
+	UpdatedBy string    `json:"updatedBy"`
 }
 
 // UpdateDeploymentResponse is the response for PATCH /deployments/{id}.
@@ -8595,6 +8613,22 @@ type SLAStatus struct {
 	// StartedOn is sla.start_on — nullable because ServiceNow leaves it unset
 	// on some real rows. No omitempty: absent must serialize as JSON null.
 	StartedOn *time.Time `json:"startedOn"`
+	// PausedOn is sla.paused_on — when the clock is CURRENTLY paused, the
+	// instant that pause began; nil otherwise. Only ever non-nil alongside
+	// IsPaused=true.
+	PausedOn *time.Time `json:"pausedOn"`
+	// PauseDurationSeconds is sla.pause_duration, the clock's total
+	// accumulated time spent paused across every completed pause/resume
+	// cycle so far (NOT including any currently-open pause — see PausedOn
+	// for that) — whole seconds, not an ISO-8601 duration, same convention
+	// as SLADurationPolicyItem.DurationSeconds (a plain integer needs no
+	// parsing). On a source='CSM' row this is written by
+	// SLAEngineRepository.SetPaused, accumulated on every resume; a
+	// ServiceNow-synced row carries whatever the sync writes. 0 for a clock
+	// that has never been paused, not absent — this is what lets a caller
+	// tell "never paused" (0) apart from "paused right now"
+	// (IsPaused=true, PausedOn set) without a third state.
+	PauseDurationSeconds int64 `json:"pauseDurationSeconds"`
 	// The eight fields below are the same display-only shape SLAClock's
 	// retired display fields carried, still populated live off the case's
 	// current data (not a point-in-time snapshot, unlike the old design) —
@@ -8692,6 +8726,14 @@ type SLAClockState struct {
 	Stage       string     `json:"stage"`
 	HasBreached bool       `json:"hasBreached"`
 	StartedOn   *time.Time `json:"startedOn"`
+	// PausedOn/PauseDurationSeconds mirror SLAStatus's own fields of the
+	// same name — see that type's doc comments. Added so a caller that
+	// needs to rebuild its own notion of elapsed/remaining time from this
+	// one row (csm-notification-service's own Redis-down recovery path,
+	// Engine.Reconcile) has the accumulated pause total available without
+	// a second round trip to GET /sla-status.
+	PausedOn             *time.Time `json:"pausedOn"`
+	PauseDurationSeconds int64      `json:"pauseDurationSeconds"`
 }
 
 // SLADurationPolicyItem is one (severity, clockType) duration row from the
