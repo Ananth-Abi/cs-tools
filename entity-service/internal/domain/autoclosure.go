@@ -90,6 +90,19 @@ type AutoclosureAdvanceRequest struct {
 	Stage        AutoclosureStage `json:"stage"`
 	IntervalDays int              `json:"intervalDays,omitempty"`
 	States       []CaseState      `json:"states,omitempty"`
+	// DailyLimit is the same per-UTC-day budget the listing applies, checked
+	// again here, right before the ticket is claimed: two overlapping runs can
+	// both read the same count when they list, and this is what stops them
+	// advancing more than the budget between them (up to one in-flight ticket
+	// per concurrent run can still slip past it). Zero means no cap.
+	DailyLimit int `json:"dailyLimit,omitempty"`
+	// DryRun runs the whole decision (still due? within the daily limit?) and
+	// stops there: it posts no comment, claims no step, closes nothing and
+	// queues nothing. It records an audit row with outcome DRY_RUN saying what
+	// it would have done, and that row is not counted against the daily limit.
+	// It is how the selection rules can be checked against real data before
+	// the first real reminder goes out.
+	DryRun bool `json:"dryRun,omitempty"`
 	// Templates overrides comment text by key, "<state>.<stage>", for example
 	// "awaiting_info.first_reminder". A key not listed keeps its default.
 	Templates map[string]string `json:"templates,omitempty"`
@@ -101,6 +114,9 @@ type AutoclosureOutcome string
 const (
 	// AutoclosureOutcomeAdvanced means the stage ran.
 	AutoclosureOutcomeAdvanced AutoclosureOutcome = "advanced"
+	// AutoclosureOutcomeDryRun means a dry run found the ticket due and changed
+	// nothing; only an audit row (outcome DRY_RUN) says what would have happened.
+	AutoclosureOutcomeDryRun AutoclosureOutcome = "dry_run"
 	// AutoclosureOutcomeSkipped means nothing was written: the ticket is no
 	// longer due (it moved, got a hold, gained an open child, was handled by
 	// another run). Not an error.

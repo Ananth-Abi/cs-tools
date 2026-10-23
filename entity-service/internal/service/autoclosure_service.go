@@ -34,6 +34,14 @@ const (
 	autoclosureDefaultLimit        = 500
 	autoclosureMaxLimit            = 5000
 	autoclosureMaxIntervalDays     = 365
+
+	// A ticket whose stage has failed this many times inside this many days is
+	// left out of the list until the oldest failure ages out, so one ticket
+	// that can never succeed (a close refused by validation) cannot raise the
+	// same alert every run for ever. Its failures stay in the audit table.
+	autoclosureMaxFailures       = 3
+	autoclosureFailureWindowDays = 7
+	autoclosureCleanupTimeout    = 15 * time.Second
 )
 
 // AutoclosureService runs the reminder-and-close workflow for tickets that sit
@@ -154,6 +162,22 @@ func (s *autoclosureService) validate(stage domain.AutoclosureStage, intervalDay
 	return days, lim, stateLabels, nil
 }
 
+// advancedToday is how many reminders and closures have been performed so far
+// this UTC day, the number the daily limit is measured against. Dry-run rows are
+// not in it: only ADVANCED events count.
+func (s *autoclosureService) advancedToday(ctx context.Context) (int, error) {
+	now := s.now().UTC()
+	return s.repo.CountAdvancedSince(ctx, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC))
+}
+
+// cleanupContext is a context for the writes that must still happen after the
+// request was cancelled or timed out: putting a claimed step back and recording
+// what happened. Without it a ticket claimed just before the caller gave up
+// would stay marked as reminded with no reminder and no audit row.
+func cleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), autoclosureCleanupTimeout)
+}
+
 // FindCandidates implements AutoclosureService.
 func (s *autoclosureService) FindCandidates(ctx context.Context, req domain.AutoclosureCandidatesRequest) (domain.AutoclosureCandidatesResponse, error) {
 	if err := s.requireInternal(ctx); err != nil {
@@ -176,8 +200,7 @@ func (s *autoclosureService) FindCandidates(ctx context.Context, req domain.Auto
 	// notifies nobody so it is exempt. What this day has already done counts
 	// against it, which is what keeps a retried run inside the limit.
 	if req.DailyLimit > 0 && req.Stage != domain.AutoclosureStageReleaseHold {
-		now := s.now().UTC()
-		done, err := s.repo.CountAdvancedSince(ctx, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC))
+		done, err := s.advancedToday(ctx)
 		if err != nil {
 			return domain.AutoclosureCandidatesResponse{}, err
 		}
@@ -189,12 +212,20 @@ func (s *autoclosureService) FindCandidates(ctx context.Context, req domain.Auto
 			limit = remaining
 		}
 	}
+	now := s.now().UTC()
 	rows, err := s.repo.FindCandidates(ctx, repository.AutoclosureCandidateQuery{
-		Stage: req.Stage, Now: s.now().UTC(), IntervalDays: days, Limit: limit,
+		Stage: req.Stage, Now: now, IntervalDays: days, Limit: limit,
 		States: states, SystemEmail: s.systemEmail,
+		MaxFailures: autoclosureMaxFailures, FailureWindowDays: autoclosureFailureWindowDays,
 	})
 	if err != nil {
 		return domain.AutoclosureCandidatesResponse{}, err
+	}
+	// Make the skipping visible: a ticket left out for repeated failures is
+	// otherwise silent.
+	if n, qErr := s.repo.CountQuarantined(ctx, req.Stage, now, autoclosureFailureWindowDays, autoclosureMaxFailures); qErr == nil && n > 0 {
+		slog.WarnContext(ctx, "autoclosure: tickets left out of the list after repeated failures; see case_autoclosure_event",
+			"stage", req.Stage, "tickets", n, "failures", autoclosureMaxFailures, "windowDays", autoclosureFailureWindowDays)
 	}
 	out := domain.AutoclosureCandidatesResponse{Candidates: make([]domain.AutoclosureCandidate, 0, len(rows))}
 	for _, r := range rows {
@@ -215,6 +246,9 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 	if err != nil {
 		return domain.AutoclosureAdvanceResponse{}, err
 	}
+	if req.DailyLimit < 0 || req.DailyLimit > autoclosureMaxLimit*10 {
+		return domain.AutoclosureAdvanceResponse{}, &apierror.ValidationError{Msg: "dailyLimit must not be negative or absurdly large"}
+	}
 	spec := autoclosureStages[req.Stage]
 	now := s.now().UTC()
 	resp := domain.AutoclosureAdvanceResponse{CaseID: caseID, Stage: req.Stage}
@@ -230,6 +264,7 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 	rows, err := s.repo.FindCandidates(ctx, repository.AutoclosureCandidateQuery{
 		Stage: req.Stage, Now: now, IntervalDays: days, Limit: 1,
 		States: states, OnlyID: caseID, SystemEmail: s.systemEmail,
+		MaxFailures: autoclosureMaxFailures, FailureWindowDays: autoclosureFailureWindowDays,
 	})
 	if err != nil {
 		return resp, err
@@ -241,6 +276,33 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 	resp.FromStep = c.Step
 	toStep := spec.toStep
 	resp.ToStep = &toStep
+
+	// The daily limit is checked here as well as when the list was made. Two
+	// overlapping runs can read the same count when they list, and listing once
+	// per stage lets a page overshoot; checking right before the claim stops
+	// both. It is a read followed by a write, not one atomic step, so up to one
+	// ticket per concurrent run can still slip past it. Hold releases notify
+	// nobody and are exempt.
+	if req.DailyLimit > 0 && req.Stage != domain.AutoclosureStageReleaseHold {
+		done, cErr := s.advancedToday(ctx)
+		if cErr != nil {
+			return resp, cErr
+		}
+		if done >= req.DailyLimit {
+			return skip("the daily limit has been reached")
+		}
+	}
+
+	// A dry run stops here: the ticket is due and within the limit, which is
+	// everything a real run would have decided. Nothing is claimed, posted,
+	// closed or queued; the audit row says what would have happened and, being
+	// DRY_RUN rather than ADVANCED, is not counted against the daily limit.
+	if req.DryRun {
+		s.record(ctx, caseID, req.Stage, c.Step, &toStep, "DRY_RUN", dryRunDetail(req.Stage, c, toStep))
+		resp.Outcome = domain.AutoclosureOutcomeDryRun
+		resp.Reason = dryRunDetail(req.Stage, c, toStep)
+		return resp, nil
+	}
 
 	// Claim before acting. A second run reaching this point finds the step and
 	// time already changed and loses, so a ticket is never reminded twice.
@@ -266,19 +328,41 @@ func (s *autoclosureService) Advance(ctx context.Context, caseID string, req dom
 			Content: s.commentText(c.State, spec.template, req.Templates),
 		}, s.systemEmail)
 	}
+	// What follows must survive the request having been cancelled or timed out
+	// (the caller gave up mid-action): it runs on a context that is detached from
+	// the request's cancellation, with its own short timeout.
+	cctx, cancel := cleanupContext(ctx)
+	defer cancel()
 	if actErr != nil {
 		// Put the position back so the next run retries it, rather than leaving
 		// a ticket marked as reminded that never was.
-		if rErr := s.repo.RestoreStep(ctx, c, now); rErr != nil {
+		if rErr := s.repo.RestoreStep(cctx, c, now); rErr != nil {
 			slog.ErrorContext(ctx, "autoclosure: restore after failed action", "caseId", caseID, "stage", req.Stage, "error", rErr)
 		}
-		s.record(ctx, caseID, req.Stage, c.Step, &toStep, "FAILED", actErr.Error())
+		s.record(cctx, caseID, req.Stage, c.Step, &toStep, "FAILED", actErr.Error())
 		return resp, actErr
 	}
 
-	s.record(ctx, caseID, req.Stage, c.Step, &toStep, "ADVANCED", detail)
+	s.record(cctx, caseID, req.Stage, c.Step, &toStep, "ADVANCED", detail)
 	resp.Outcome = domain.AutoclosureOutcomeAdvanced
 	return resp, nil
+}
+
+// dryRunDetail says what a real run would have done to the ticket, for the
+// audit row and the response of a dry run.
+func dryRunDetail(stage domain.AutoclosureStage, c repository.AutoclosureCandidateRow, toStep string) string {
+	from := "none"
+	if c.Step != nil && *c.Step != "" {
+		from = *c.Step
+	}
+	what := map[domain.AutoclosureStage]string{
+		domain.AutoclosureStageReleaseHold:    "release the hold",
+		domain.AutoclosureStageFirstReminder:  "send the first reminder",
+		domain.AutoclosureStageSecondReminder: "send the second reminder",
+		domain.AutoclosureStageClose:          "post the closure comment and close the ticket",
+	}[stage]
+	return fmt.Sprintf("dry run: would %s (%s, step %s -> %s, clock reference %s)",
+		what, c.State, from, toStep, c.ReferenceTime.UTC().Format(time.RFC3339))
 }
 
 // closeCase closes the ticket as the system user and then writes the closure

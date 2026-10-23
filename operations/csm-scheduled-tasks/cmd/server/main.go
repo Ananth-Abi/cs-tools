@@ -990,19 +990,31 @@ func main() {
 	// the same day cannot exceed it. A partial failure is retried the next tick:
 	// tickets already advanced are no longer due, so only what is left is done.
 	if autoclosureEnabled {
+		autoclosureCfg := autoclosure.RunConfig{
+			IntervalDays: envInt("AUTOCLOSURE_INTERVAL_DAYS", 7),
+			DailyLimit:   envInt("AUTOCLOSURE_DAILY_LIMIT", 500),
+			// Solution Proposed on its own first, then Awaiting Info: set
+			// AUTOCLOSURE_STATES=solution_proposed until the first has been watched.
+			States:    splitComma(os.Getenv("AUTOCLOSURE_STATES")),
+			Templates: parseStringMap("AUTOCLOSURE_TEMPLATES", os.Getenv("AUTOCLOSURE_TEMPLATES")),
+			// AUTOCLOSURE_DRY_RUN=true: decide and log, change nothing. Use it to see
+			// what the first real run would do to a large backlog.
+			DryRun: envBool("AUTOCLOSURE_DRY_RUN", false),
+		}
+		// A tryout runs the handler once, outside the ledger, against the real
+		// entity-service: here that would comment on and close real tickets. Only the
+		// debug recipients are protected from the alert email, not the tickets, so a
+		// tryout of this task is always a dry run.
+		if strings.TrimSpace(os.Getenv("TRYOUT_TASK")) == autoclosureTaskName && !autoclosureCfg.DryRun {
+			slog.Warn("TRYOUT_TASK is case_autoclosure: running as a dry run, nothing will be changed; set AUTOCLOSURE_DRY_RUN=true explicitly to silence this")
+			autoclosureCfg.DryRun = true
+		}
 		tasks = append(tasks, registry.Task{
 			Name:     autoclosureTaskName,
 			Schedule: scheduleFor(scheduleOverrides, autoclosureTaskName, "0 8 * * *"),
-			Handler: autoclosure.Run(autoclosureClient, autoclosure.RunConfig{
-				IntervalDays: envInt("AUTOCLOSURE_INTERVAL_DAYS", 7),
-				DailyLimit:   envInt("AUTOCLOSURE_DAILY_LIMIT", 500),
-				// Solution Proposed on its own first, then Awaiting Info: set
-				// AUTOCLOSURE_STATES=solution_proposed until the first has been watched.
-				States:    splitComma(os.Getenv("AUTOCLOSURE_STATES")),
-				Templates: parseStringMap("AUTOCLOSURE_TEMPLATES", os.Getenv("AUTOCLOSURE_TEMPLATES")),
-			}),
-			To: autoclosureTo,
-			Cc: autoclosureCc,
+			Handler:  autoclosure.Run(autoclosureClient, autoclosureCfg),
+			To:       autoclosureTo,
+			Cc:       autoclosureCc,
 		})
 	}
 

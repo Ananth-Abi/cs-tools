@@ -40,6 +40,12 @@ type fakeAutoclosureRepo struct {
 	advanced    int
 	countSince  time.Time
 	displayName string
+	quarantined int
+	// ctxErrAtRestore and ctxErrAtRecord are the context's error at the moment
+	// the repository was called: non-nil means the call was made on a context
+	// that had already been cancelled.
+	ctxErrAtRestore error
+	ctxErrAtRecord  error
 }
 
 func (r *fakeAutoclosureRepo) FindCandidates(_ context.Context, q repository.AutoclosureCandidateQuery) ([]repository.AutoclosureCandidateRow, error) {
@@ -50,8 +56,9 @@ func (r *fakeAutoclosureRepo) ClaimStep(_ context.Context, _ repository.Autoclos
 	r.claims = append(r.claims, newStep)
 	return r.claimWins, nil
 }
-func (r *fakeAutoclosureRepo) RestoreStep(context.Context, repository.AutoclosureCandidateRow, time.Time) error {
+func (r *fakeAutoclosureRepo) RestoreStep(ctx context.Context, _ repository.AutoclosureCandidateRow, _ time.Time) error {
 	r.restores++
+	r.ctxErrAtRestore = ctx.Err()
 	return nil
 }
 func (r *fakeAutoclosureRepo) DisplayNameOf(_ context.Context, email string) (string, error) {
@@ -64,9 +71,13 @@ func (r *fakeAutoclosureRepo) CountAdvancedSince(_ context.Context, since time.T
 	r.countSince = since
 	return r.advanced, nil
 }
-func (r *fakeAutoclosureRepo) RecordEvent(_ context.Context, ev repository.AutoclosureEvent) error {
+func (r *fakeAutoclosureRepo) RecordEvent(ctx context.Context, ev repository.AutoclosureEvent) error {
 	r.events = append(r.events, ev)
+	r.ctxErrAtRecord = ctx.Err()
 	return nil
+}
+func (r *fakeAutoclosureRepo) CountQuarantined(context.Context, domain.AutoclosureStage, time.Time, int, int) (int, error) {
+	return r.quarantined, nil
 }
 
 type fakeAutoclosureCases struct {
@@ -77,9 +88,15 @@ type fakeAutoclosureCases struct {
 	updateCtx  []context.Context
 	updateErr  error
 	view       domain.CaseView
+	// beforeComment runs just before a comment is created, to simulate the
+	// request being cancelled mid-action.
+	beforeComment func()
 }
 
 func (c *fakeAutoclosureCases) CreateCaseCommentAs(_ context.Context, req domain.CreateCaseCommentRequest, by string) (domain.CreateCaseCommentResponse, error) {
+	if c.beforeComment != nil {
+		c.beforeComment()
+	}
 	c.comments = append(c.comments, req)
 	c.commentBy = append(c.commentBy, by)
 	return domain.CreateCaseCommentResponse{}, c.commentErr
@@ -529,5 +546,138 @@ func TestAutoclosureClose_AddedByFallsBackToTheEmailWhenTheNameIsUnavailable(t *
 	}
 	if len(q.created) != 1 || q.created[0].AddedBy != "system@example.com" {
 		t.Errorf("entries = %+v, want addedBy to fall back to the system user's email", q.created)
+	}
+}
+
+// --- Review follow-ups: daily limit in Advance, dry run, cleanup after cancel, failure cap
+
+func TestAutoclosureAdvance_TheDailyLimitIsCheckedAgainRightBeforeTheClaim(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		done    int
+		limit   int
+		stage   domain.AutoclosureStage
+		wantRun bool
+	}{
+		{"room left", 499, 500, domain.AutoclosureStageFirstReminder, true},
+		{"exactly spent", 500, 500, domain.AutoclosureStageFirstReminder, false},
+		{"overrun by a racing run", 612, 500, domain.AutoclosureStageClose, false},
+		{"no cap", 99999, 0, domain.AutoclosureStageFirstReminder, true},
+		{"a hold release is never counted", 500, 500, domain.AutoclosureStageReleaseHold, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &fakeAutoclosureRepo{claimWins: true, advanced: tc.done, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, nil)}}
+			cases := &fakeAutoclosureCases{}
+			resp, err := newACService(repo, cases).Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: tc.stage, DailyLimit: tc.limit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ran := resp.Outcome == domain.AutoclosureOutcomeAdvanced
+			if ran != tc.wantRun {
+				t.Fatalf("outcome = %s, want advanced=%v", resp.Outcome, tc.wantRun)
+			}
+			if !tc.wantRun && (len(repo.claims) != 0 || len(cases.comments) != 0 || len(cases.updates) != 0) {
+				t.Errorf("a ticket over the limit was claimed or acted on: claims=%v comments=%d", repo.claims, len(cases.comments))
+			}
+		})
+	}
+}
+
+func TestAutoclosureAdvance_DryRunDecidesButChangesNothing(t *testing.T) {
+	for _, stage := range []domain.AutoclosureStage{
+		domain.AutoclosureStageReleaseHold, domain.AutoclosureStageFirstReminder,
+		domain.AutoclosureStageSecondReminder, domain.AutoclosureStageClose,
+	} {
+		t.Run(string(stage), func(t *testing.T) {
+			q := &fakeVerificationQueue{enabled: true}
+			repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, strp2("SECOND_COMMENT"))}}
+			cases := &fakeAutoclosureCases{}
+			svc := newACService(repo, cases)
+			svc.verification = q
+			resp, err := svc.Advance(context.Background(), acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: stage, DryRun: true, DailyLimit: 500})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resp.Outcome != domain.AutoclosureOutcomeDryRun || !strings.Contains(resp.Reason, "dry run: would") {
+				t.Fatalf("response = %+v, want a dry_run that says what it would do", resp)
+			}
+			if len(repo.claims) != 0 || repo.restores != 0 {
+				t.Errorf("a dry run claimed or restored a step: %v / %d", repo.claims, repo.restores)
+			}
+			if len(cases.comments) != 0 || len(cases.updates) != 0 {
+				t.Errorf("a dry run posted or closed: comments=%d updates=%d", len(cases.comments), len(cases.updates))
+			}
+			if len(q.lookedUp) != 0 || len(q.created) != 0 {
+				t.Errorf("a dry run touched the verification queue: %+v", q)
+			}
+			if len(repo.events) != 1 || repo.events[0].Outcome != "DRY_RUN" {
+				t.Errorf("audit = %+v, want exactly one DRY_RUN row", repo.events)
+			}
+		})
+	}
+}
+
+func TestAutoclosureAdvance_DryRunStillAppliesTheDailyLimitAndTheDueCheck(t *testing.T) {
+	// Over the limit: a dry run reports it as a real run would, and records nothing.
+	repo := &fakeAutoclosureRepo{claimWins: true, advanced: 500, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateAwaitingInfo, nil)}}
+	resp, err := newACService(repo, &fakeAutoclosureCases{}).Advance(context.Background(), acTestCaseID,
+		domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder, DryRun: true, DailyLimit: 500})
+	if err != nil || resp.Outcome != domain.AutoclosureOutcomeSkipped || len(repo.events) != 0 {
+		t.Fatalf("over the limit: resp=%+v err=%v events=%d, want skipped with no audit row", resp, err, len(repo.events))
+	}
+	// Not due: skipped, exactly as a real run would.
+	repo = &fakeAutoclosureRepo{claimWins: true}
+	resp, err = newACService(repo, &fakeAutoclosureCases{}).Advance(context.Background(), acTestCaseID,
+		domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder, DryRun: true})
+	if err != nil || resp.Outcome != domain.AutoclosureOutcomeSkipped || len(repo.events) != 0 {
+		t.Fatalf("not due: resp=%+v err=%v events=%d", resp, err, len(repo.events))
+	}
+}
+
+func strp2(s string) *string { return &s }
+
+// A request cancelled between the claim and the action (the caller's timeout)
+// must still put the step back and record the failure: those writes run on a
+// context detached from the cancellation.
+func TestAutoclosureAdvance_CleanupSurvivesACancelledRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	repo := &fakeAutoclosureRepo{claimWins: true, candidates: []repository.AutoclosureCandidateRow{dueCandidate(domain.CaseStateSolutionProposed, nil)}}
+	cases := &fakeAutoclosureCases{}
+	cases.beforeComment = func() { cancel() } // the caller gives up mid-action
+	cases.commentErr = context.Canceled
+	_, err := newACService(repo, cases).Advance(ctx, acTestCaseID, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder})
+	if err == nil {
+		t.Fatal("want the cancellation returned")
+	}
+	if repo.restores != 1 {
+		t.Fatalf("restores = %d, want the claimed step put back even though the request was cancelled", repo.restores)
+	}
+	if repo.ctxErrAtRestore != nil || repo.ctxErrAtRecord != nil {
+		t.Errorf("cleanup ran on a cancelled context (restore=%v record=%v): it would have failed in production", repo.ctxErrAtRestore, repo.ctxErrAtRecord)
+	}
+	if len(repo.events) != 1 || repo.events[0].Outcome != "FAILED" {
+		t.Errorf("audit = %+v, want one FAILED row", repo.events)
+	}
+}
+
+func TestAutoclosureFindCandidates_AsksForTheFailureCapAndSaysWhenItSkips(t *testing.T) {
+	repo := &fakeAutoclosureRepo{quarantined: 4}
+	if _, err := newACService(repo, &fakeAutoclosureCases{}).FindCandidates(context.Background(),
+		domain.AutoclosureCandidatesRequest{Stage: domain.AutoclosureStageClose}); err != nil {
+		t.Fatal(err)
+	}
+	if repo.lastQuery.MaxFailures != autoclosureMaxFailures || repo.lastQuery.FailureWindowDays != autoclosureFailureWindowDays {
+		t.Errorf("query = %+v, want the failure cap (%d in %d days) applied", repo.lastQuery, autoclosureMaxFailures, autoclosureFailureWindowDays)
+	}
+}
+
+func TestAutoclosureAdvance_RecheckAppliesTheFailureCapToo(t *testing.T) {
+	repo := &fakeAutoclosureRepo{claimWins: true}
+	if _, err := newACService(repo, &fakeAutoclosureCases{}).Advance(context.Background(), acTestCaseID,
+		domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageClose}); err != nil {
+		t.Fatal(err)
+	}
+	if repo.lastQuery.MaxFailures != autoclosureMaxFailures {
+		t.Errorf("the per-ticket re-check does not apply the failure cap: %+v", repo.lastQuery)
 	}
 }

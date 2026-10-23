@@ -109,14 +109,21 @@ type AdvanceRequest struct {
 	IntervalDays int               `json:"intervalDays,omitempty"`
 	States       []string          `json:"states,omitempty"`
 	Templates    map[string]string `json:"templates,omitempty"`
+	// DailyLimit is the per-UTC-day budget entity-service checks again right
+	// before it claims the ticket (0 = none).
+	DailyLimit int `json:"dailyLimit,omitempty"`
+	// DryRun asks entity-service to decide and record, but change nothing.
+	DryRun bool `json:"dryRun,omitempty"`
 }
 
-// Outcome of an advance: "advanced" or "skipped".
+// Outcome of an advance: "advanced", "skipped" or, for a dry run, "dry_run"
+// (the ticket would have been advanced).
 type Outcome string
 
 const (
 	OutcomeAdvanced Outcome = "advanced"
 	OutcomeSkipped  Outcome = "skipped"
+	OutcomeDryRun   Outcome = "dry_run"
 )
 
 func (c *Client) post(ctx context.Context, path string, in, out any) error {

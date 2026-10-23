@@ -60,6 +60,12 @@ type AutoclosureCandidateQuery struct {
 	// SystemEmail is the system user's email. Its comments (the reminders) are
 	// never counted as a staff reply, so a reminder cannot restart the clock.
 	SystemEmail string
+	// MaxFailures and FailureWindowDays keep a ticket that fails the same stage
+	// again and again out of the list: one with MaxFailures or more FAILED audit
+	// rows for this stage inside the window is skipped until the oldest ages out
+	// of it. Zero MaxFailures turns the rule off.
+	MaxFailures       int
+	FailureWindowDays int
 }
 
 // AutoclosureEvent is one audit row.
@@ -76,7 +82,7 @@ type AutoclosureEvent struct {
 // workflow position lives on the case-like tables (autoclosure_step /
 // autoclosure_state_on); this repository is the only writer of it besides the
 // customer-requested hold (setAutocloseHoldTx) and the reset trigger in
-// migration 0245.
+// migration 0249.
 type AutoclosureRepository interface {
 	// FindCandidates lists the tickets due for q.Stage, oldest reference time
 	// first.
@@ -91,6 +97,12 @@ type AutoclosureRepository interface {
 	RestoreStep(ctx context.Context, c AutoclosureCandidateRow, claimedAt time.Time) error
 	// RecordEvent appends an audit row.
 	RecordEvent(ctx context.Context, ev AutoclosureEvent) error
+	// CountQuarantined reports how many tickets FindCandidates is skipping for
+	// stage because of repeated failures (see AutoclosureCandidateQuery.MaxFailures).
+	// It is approximate: it counts tickets with that many recent failures
+	// whether or not they are still due, and exists so the skipping is visible
+	// in the logs instead of silent.
+	CountQuarantined(ctx context.Context, stage domain.AutoclosureStage, now time.Time, windowDays, maxFailures int) (int, error)
 	// CountAdvancedSince counts the reminders and closures performed since
 	// the given instant (hold releases excluded: they notify nobody). It is
 	// what makes the daily limit hold across retried runs.
@@ -225,13 +237,19 @@ func (r *autoclosureRepo) FindCandidates(ctx context.Context, q AutoclosureCandi
 		FROM base b
 		WHERE ($5::text = '' OR b.id = $5::uuid)
 		  AND $6::text IS NOT NULL -- Postgres rejects a parameter no stage references
+		  AND ($9::int <= 0 OR (
+		        SELECT COUNT(*) FROM case_autoclosure_event fe
+		         WHERE fe.work_item_id = b.id AND fe.stage = $7::text AND fe.outcome = 'FAILED'
+		           AND fe.created_on > $2::timestamptz - make_interval(days => $8::int)
+		      ) < $9::int)
 		  ` + stepFilter + childFilter + `
 	) q
 	WHERE ` + dueFilter + `
 	ORDER BY q.ref_time ASC, q.id ASC
 	LIMIT $4::int`
 
-	rows, err := r.db.Query(ctx, query, q.States, q.Now, days, q.Limit, q.OnlyID, q.SystemEmail)
+	rows, err := r.db.Query(ctx, query, q.States, q.Now, days, q.Limit, q.OnlyID, q.SystemEmail,
+		string(q.Stage), q.FailureWindowDays, q.MaxFailures)
 	if err != nil {
 		return nil, fmt.Errorf("autoclosure candidates: %w", err)
 	}
@@ -355,4 +373,22 @@ func (r *autoclosureRepo) DisplayNameOf(ctx context.Context, email string) (stri
 		return email, nil
 	}
 	return *name, nil
+}
+
+// CountQuarantined implements AutoclosureRepository.
+func (r *autoclosureRepo) CountQuarantined(ctx context.Context, stage domain.AutoclosureStage, now time.Time, windowDays, maxFailures int) (int, error) {
+	if maxFailures <= 0 {
+		return 0, nil
+	}
+	var n int
+	if err := r.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM (
+			SELECT work_item_id FROM case_autoclosure_event
+			 WHERE stage = $1::text AND outcome = 'FAILED'
+			   AND created_on > $2::timestamptz - make_interval(days => $3::int)
+			 GROUP BY work_item_id HAVING COUNT(*) >= $4::int
+		) q`, string(stage), now, windowDays, maxFailures).Scan(&n); err != nil {
+		return 0, fmt.Errorf("autoclosure quarantined count: %w", err)
+	}
+	return n, nil
 }

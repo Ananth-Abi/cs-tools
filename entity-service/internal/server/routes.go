@@ -1348,7 +1348,17 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// the system user it acts as, and Postgres-only: the workflow's position
 	// lives on the case-like tables. Driven by operations/csm-scheduled-tasks.
 	var autoclosureHandler *handler.AutoclosureHandler
-	if db != nil && cfg.AutoclosureSystemUserEmail != "" {
+	// Plain Postgres only. In postgres-servicenow-dual-write mode activeCaseSvc
+	// mirrors every case update to ServiceNow, so an automatic close would be
+	// written there too (and ServiceNow's own flow may still be closing the same
+	// tickets); in servicenow mode there is no Postgres position to work from.
+	// Refused with a log line rather than silently, until the dual-write cutover
+	// behaviour is defined.
+	if cfg.AutoclosureSystemUserEmail != "" && cfg.DataSource != config.DataSourcePostgres {
+		slog.Warn("AUTOCLOSURE_SYSTEM_USER_EMAIL is set but case auto-closure is only available with DATA_SOURCE=postgres; it is not enabled",
+			"dataSource", string(cfg.DataSource))
+	}
+	if db != nil && cfg.AutoclosureSystemUserEmail != "" && cfg.DataSource == config.DataSourcePostgres {
 		autoclosureSvc := service.NewAutoclosureService(
 			repository.NewAutoclosureRepository(repository.NewScoped(db)),
 			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)

@@ -90,7 +90,9 @@ func TestRun_StagesRunInOrderAndEveryDueTicketIsAdvanced(t *testing.T) {
 	}
 	var stages []string
 	for _, l := range f.listed {
-		stages = append(stages, l.Stage)
+		if len(stages) == 0 || stages[len(stages)-1] != l.Stage {
+			stages = append(stages, l.Stage) // each stage is listed again until nothing new comes back
+		}
 		if l.DailyLimit != 500 || l.IntervalDays != 7 {
 			t.Errorf("listing for %s sent %+v, want the configured limit and interval", l.Stage, l)
 		}
@@ -184,5 +186,101 @@ func TestRun_StopsWhenTheContextEnds(t *testing.T) {
 	}
 	if len(f.advanced) != 0 {
 		t.Errorf("advanced %v after cancellation", f.advanced)
+	}
+}
+
+// limitedWork serves its tickets oldest first and honours Limit, as
+// entity-service does, so paging can be tested. Tickets stay due until the
+// test says otherwise (a skipped or failed ticket is still listed next time).
+type limitedWork struct {
+	all      []Candidate
+	advanced map[string]int
+	reqs     []AdvanceRequest
+	listed   []CandidatesRequest
+	outcome  Outcome
+}
+
+func (l *limitedWork) Candidates(_ context.Context, req CandidatesRequest) ([]Candidate, error) {
+	l.listed = append(l.listed, req)
+	if req.Stage != StageFirstReminder {
+		return nil, nil
+	}
+	n := req.Limit
+	if n <= 0 {
+		n = 500 // entity-service's default page when no limit is sent
+	}
+	n = min(n, 5000) // and its ceiling
+	if n > len(l.all) {
+		n = len(l.all)
+	}
+	return l.all[:n], nil
+}
+
+func (l *limitedWork) Advance(_ context.Context, id string, req AdvanceRequest) (Outcome, error) {
+	if l.advanced == nil {
+		l.advanced = map[string]int{}
+	}
+	l.advanced[id]++
+	l.reqs = append(l.reqs, req)
+	if l.outcome != "" {
+		return l.outcome, nil
+	}
+	return OutcomeAdvanced, nil
+}
+
+func many(n int) []Candidate {
+	out := make([]Candidate, n)
+	for i := range out {
+		id := "t" + string(rune('A'+i/676%26)) + string(rune('a'+i/26%26)) + string(rune('a'+i%26))
+		out[i] = Candidate{ID: id, Number: "CS-" + id}
+	}
+	return out
+}
+
+// More due tickets than one listing returns: the run asks again, each ticket is
+// attempted once, and tickets that stay due (skipped here) cannot loop forever
+// or hide the ones behind them.
+func TestRun_PagesPastOneListingAndAttemptsEveryTicketOnce(t *testing.T) {
+	l := &limitedWork{all: many(1300), outcome: OutcomeSkipped}
+	if err := Run(l, RunConfig{})(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.advanced) != 1300 {
+		t.Fatalf("attempted %d distinct tickets, want all 1300", len(l.advanced))
+	}
+	for id, n := range l.advanced {
+		if n != 1 {
+			t.Fatalf("ticket %s attempted %d times, want once", id, n)
+		}
+	}
+}
+
+func TestRun_DryRunSendsTheFlagAndSpendsTheBudgetItself(t *testing.T) {
+	l := &limitedWork{all: many(10), outcome: OutcomeDryRun}
+	if err := Run(l, RunConfig{DailyLimit: 4, DryRun: true})(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(l.reqs) != 4 {
+		t.Fatalf("a dry run with a limit of 4 evaluated %d tickets as would-act, want exactly 4", len(l.reqs))
+	}
+	for i, r := range l.reqs {
+		if !r.DryRun {
+			t.Errorf("advance %d did not carry dryRun", i)
+		}
+		if want := 4 - i; r.DailyLimit != want {
+			t.Errorf("advance %d daily limit = %d, want the budget left (%d)", i, r.DailyLimit, want)
+		}
+	}
+}
+
+func TestRun_ARealRunPassesTheDailyLimitToEveryAdvance(t *testing.T) {
+	l := &limitedWork{all: many(3)}
+	if err := Run(l, RunConfig{DailyLimit: 50})(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range l.reqs {
+		if r.DryRun || r.DailyLimit != 50 {
+			t.Errorf("advance = %+v, want dryRun off and the configured limit", r)
+		}
 	}
 }

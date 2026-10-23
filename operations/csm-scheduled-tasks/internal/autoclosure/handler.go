@@ -56,12 +56,28 @@ type RunConfig struct {
 	States []string
 	// Templates overrides the comment wording, keyed "<state>.<kind>".
 	Templates map[string]string
+	// DryRun makes the whole run decide and log without acting: no comment, no
+	// step change, no closure. entity-service records a DRY_RUN audit row per
+	// ticket (not counted against the daily budget); the handler spends the
+	// daily limit itself as it goes, so the totals are what a real run would do.
+	DryRun bool
 }
 
 type workClient interface {
 	Candidates(ctx context.Context, req CandidatesRequest) ([]Candidate, error)
 	Advance(ctx context.Context, id string, req AdvanceRequest) (Outcome, error)
 }
+
+const (
+	// pageSize is how many new tickets each listing pass asks for, on top of
+	// the ones already attempted this run.
+	pageSize = 500
+	// entityListMax is the most entity-service returns for one listing.
+	entityListMax = 5000
+	// maxPasses bounds the listing loop per stage, so a misbehaving listing can
+	// never keep a run alive: 20 passes of 500 is 10,000 tickets per stage.
+	maxPasses = 20
+)
 
 // maxErrorsReported bounds the failure alert email: a run that fails for
 // thousands of tickets must not produce thousands of lines.
@@ -82,46 +98,85 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 		var (
 			errs                                           []error
 			evaluated, reminded, closed, released, skipped int
-			failed                                         int
+			failed, wouldAct                               int
+			// spent counts the budget this run has used itself in a dry run (a real
+			// run's use is in entity-service's audit table, which it subtracts).
+			spent int
 		)
+	stages:
 		for _, stage := range stageOrder {
-			if err := ctx.Err(); err != nil {
-				errs = append(errs, err)
-				break
-			}
-			candidates, err := client.Candidates(ctx, CandidatesRequest{
-				Stage: stage, IntervalDays: cfg.IntervalDays, DailyLimit: cfg.DailyLimit, States: cfg.States,
-			})
-			if err != nil {
-				failed++
-				errs = append(errs, fmt.Errorf("list tickets due for %s: %w", stage, err))
-				continue
-			}
-			for _, c := range candidates {
-				evaluated++
-				outcome, err := client.Advance(ctx, c.ID, AdvanceRequest{
-					Stage: stage, IntervalDays: cfg.IntervalDays, States: cfg.States, Templates: cfg.Templates,
+			// attempted keeps a ticket that was skipped or failed from being tried
+			// again by the next pass of this same stage.
+			attempted := map[string]bool{}
+			for pass := 0; pass < maxPasses; pass++ {
+				if err := ctx.Err(); err != nil {
+					errs = append(errs, err)
+					break stages
+				}
+				limit := min(len(attempted)+pageSize, entityListMax)
+				daily := cfg.DailyLimit
+				if cfg.DryRun && stage != StageReleaseHold && daily > 0 {
+					if daily -= spent; daily <= 0 {
+						break // the budget a real run would have is used up
+					}
+				}
+				candidates, err := client.Candidates(ctx, CandidatesRequest{
+					Stage: stage, IntervalDays: cfg.IntervalDays, Limit: limit, DailyLimit: daily, States: cfg.States,
 				})
-				switch {
-				case err != nil:
+				if err != nil {
 					failed++
-					slog.WarnContext(ctx, "autoclosure: stage failed for a ticket", "stage", stage, "ticket", c.Number, "id", c.ID, "err", err)
-					errs = append(errs, fmt.Errorf("%s %s: %w", stage, c.Number, err))
-				case outcome != OutcomeAdvanced:
-					skipped++
-				case stage == StageClose:
-					closed++
-				case stage == StageReleaseHold:
-					released++
-				default:
-					reminded++
+					errs = append(errs, fmt.Errorf("list tickets due for %s: %w", stage, err))
+					break
+				}
+				fresh := 0
+				for _, c := range candidates {
+					if attempted[c.ID] {
+						continue
+					}
+					attempted[c.ID] = true
+					fresh++
+					evaluated++
+					daily := cfg.DailyLimit
+					if cfg.DryRun && stage != StageReleaseHold && daily > 0 {
+						if daily -= spent; daily <= 0 {
+							skipped++
+							continue
+						}
+					}
+					outcome, err := client.Advance(ctx, c.ID, AdvanceRequest{
+						Stage: stage, IntervalDays: cfg.IntervalDays, States: cfg.States, Templates: cfg.Templates,
+						DailyLimit: daily, DryRun: cfg.DryRun,
+					})
+					switch {
+					case err != nil:
+						failed++
+						slog.WarnContext(ctx, "autoclosure: stage failed for a ticket", "stage", stage, "ticket", c.Number, "id", c.ID, "err", err)
+						errs = append(errs, fmt.Errorf("%s %s: %w", stage, c.Number, err))
+					case outcome == OutcomeDryRun:
+						wouldAct++
+						if stage != StageReleaseHold {
+							spent++
+						}
+						slog.InfoContext(ctx, "autoclosure: dry run, would advance", "stage", stage, "ticket", c.Number, "id", c.ID)
+					case outcome != OutcomeAdvanced:
+						skipped++
+					case stage == StageClose:
+						closed++
+					case stage == StageReleaseHold:
+						released++
+					default:
+						reminded++
+					}
+				}
+				if fresh == 0 {
+					break // nothing new came back: this stage is done
 				}
 			}
 		}
 
-		slog.InfoContext(ctx, "autoclosure: run complete",
+		slog.InfoContext(ctx, "autoclosure: run complete", "dryRun", cfg.DryRun,
 			"evaluated", evaluated, "reminded", reminded, "closed", closed,
-			"holdsReleased", released, "skipped", skipped, "failed", failed)
+			"holdsReleased", released, "wouldAdvance", wouldAct, "skipped", skipped, "failed", failed)
 
 		if len(errs) == 0 {
 			return nil

@@ -34481,6 +34481,20 @@ components:
           description: >-
             Comment text overrides keyed "<state>.<kind>" (awaiting_info or
             solution_proposed, then first_reminder, second_reminder or closure).
+        dailyLimit:
+          type: integer
+          minimum: 0
+          description: >-
+            The per-UTC-day budget of reminders and closures, checked again
+            right before the ticket is claimed (hold releases are exempt). 0 or
+            absent means no cap. Up to one in-flight ticket per concurrent run
+            can still pass it.
+        dryRun:
+          type: boolean
+          description: >-
+            Decide (still due? within the limit?) and record a DRY_RUN audit
+            row, but post nothing, claim nothing and close nothing. The answer
+            is outcome "dry_run" when the ticket would have been advanced.
     AutoclosureAdvanceResponse:
       type: object
       required: [caseId, stage, outcome]
@@ -34492,7 +34506,7 @@ components:
           $ref: '#/components/schemas/AutoclosureStage'
         outcome:
           type: string
-          enum: [advanced, skipped]
+          enum: [advanced, skipped, dry_run]
         reason:
           type: string
         fromStep:

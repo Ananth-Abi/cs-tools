@@ -501,3 +501,87 @@ func TestAutoclosureIntegration_ClosedCaseIsQueuedForCustomerVerification(t *tes
 		t.Errorf("queued a case with no project: %+v", got)
 	}
 }
+
+// The reference-time rules join on strings the real writers produce (the state
+// activity's new_value label, the comment's created_by email). Seeding those
+// by hand would prove nothing, so this drives the real case service: a staff
+// state change and a staff comment, then ages the rows and asserts the
+// listing's reference time is the comment's (not the updated_on fallback).
+func TestAutoclosureIntegration_ReferenceTimeFollowsWhatTheRealWritersRecord(t *testing.T) {
+	e := newACEnv(t)
+	userRepo := repository.NewUserRepository(e.pool)
+	caseSvc := NewCaseService(repository.NewCaseRepository(e.scoped), userRepo, nil, ctxIdentityAccess{}, nil)
+	staffCtx := repository.WithSystemIdentity(contextWithUserIDToken(fakeJWTWithEmail(t, acStaffEmail)))
+
+	id := e.ticket(31, "WORK_IN_PROGRESS", 0, nil, nil)
+	e.exec(`UPDATE work_item SET project_id = $2 WHERE id = $1`, id, acProjectOn)
+
+	ai := domain.CaseStateAwaitingInfo
+	if _, err := caseSvc.UpdateCase(staffCtx, domain.UpdateCaseRequest{ID: id, State: &ai}); err != nil {
+		t.Fatalf("staff moves the case to Awaiting Info: %v", err)
+	}
+	if _, err := caseSvc.CreateCaseComment(staffCtx, domain.CreateCaseCommentRequest{CaseID: id, Type: domain.CommentTypeComment, Content: "please send the logs"}); err != nil {
+		t.Fatalf("staff comment: %v", err)
+	}
+	if _, err := caseSvc.CreateCaseComment(staffCtx, domain.CreateCaseCommentRequest{CaseID: id, Type: domain.CommentTypeWorkNote, Content: "internal only"}); err != nil {
+		t.Fatalf("work note: %v", err)
+	}
+
+	// Age what the writers recorded: state entry 22 days, public comment 20, work note 10 (newer, must be ignored).
+	e.exec(`UPDATE work_item_activity SET created_on = $2 WHERE work_item_id = $1 AND field_name = 'state'`, id, e.ago(22))
+	e.exec(`UPDATE comment SET created_on = $2 WHERE work_item_id = $1 AND type = 'COMMENT'`, id, e.ago(20))
+	e.exec(`UPDATE comment SET created_on = $2 WHERE work_item_id = $1 AND type = 'WORK_NOTE'`, id, e.ago(10))
+	e.exec(`UPDATE work_item SET updated_on = $2 WHERE id = $1`, id, e.ago(90))
+	e.exec(`UPDATE "case" SET autoclosure_step = NULL, autoclosure_state_on = NULL WHERE id = $1`, id)
+
+	resp, err := e.svc.FindCandidates(e.ctx, domain.AutoclosureCandidatesRequest{Stage: domain.AutoclosureStageFirstReminder, Limit: 5000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range resp.Candidates {
+		if c.ID != id {
+			continue
+		}
+		want := e.ago(20)
+		if d := c.ReferenceTime.Sub(want); d < -time.Minute || d > time.Minute {
+			t.Fatalf("reference time = %v, want the staff comment's %v (not the 90-day fallback, not the work note)", c.ReferenceTime, want)
+		}
+		return
+	}
+	t.Fatalf("a ticket whose real comment and state change are 20+ days old was not listed")
+}
+
+// A dry run decides and records, and leaves the ticket exactly as it was.
+func TestAutoclosureIntegration_DryRunLeavesTheTicketAloneAndIsNotCounted(t *testing.T) {
+	e := newACEnv(t)
+	id := e.ticket(32, "SOLUTION_PROPOSED", 20, nil, nil)
+	e.exec(`UPDATE work_item SET project_id = $2 WHERE id = $1`, id, acProjectOn)
+
+	resp, err := e.svc.Advance(e.ctx, id, domain.AutoclosureAdvanceRequest{Stage: domain.AutoclosureStageFirstReminder, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Outcome != domain.AutoclosureOutcomeDryRun {
+		t.Fatalf("outcome = %q, want dry_run", resp.Outcome)
+	}
+	if r := e.row(id); r.step != nil || r.state != "SOLUTION_PROPOSED" {
+		t.Errorf("a dry run changed the ticket: step=%v state=%s", r.step, r.state)
+	}
+	if got := e.systemComments(id); len(got) != 0 {
+		t.Errorf("a dry run posted %d comment(s)", len(got))
+	}
+	if ev := e.events(id); len(ev) != 1 || ev[0] != "first_reminder:DRY_RUN" {
+		t.Errorf("audit rows = %v, want one first_reminder:DRY_RUN", ev)
+	}
+	n, err := repository.NewAutoclosureRepository(e.scoped).CountAdvancedSince(e.ctx, e.now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again := e.advance(id, domain.AutoclosureStageFirstReminder); again.Outcome != domain.AutoclosureOutcomeAdvanced {
+		t.Errorf("a real run after the dry run = %q, want advanced", again.Outcome)
+	}
+	m, _ := repository.NewAutoclosureRepository(e.scoped).CountAdvancedSince(e.ctx, e.now.Add(-24*time.Hour))
+	if m != n+1 {
+		t.Errorf("advanced count went %d -> %d; the dry run must not count and the real run must (+1)", n, m)
+	}
+}

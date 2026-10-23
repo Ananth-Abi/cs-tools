@@ -28,11 +28,20 @@
 --   case_autoclosure_event   append-only audit of every automated action, which
 --                            is also the evidence behind "no duplicate comment".
 --   autoclosure_reset trigger  restarts the workflow (step DEFAULT, time now)
---                            when a parent ticket enters WAITING_ON_WSO2 or
---                            REOPENED, or swaps between AWAITING_INFO and
---                            SOLUTION_PROPOSED. A trigger rather than service
---                            code so every writer (portal, API, sync) restarts
---                            it identically.
+--                            whenever a parent ticket ENTERS AWAITING_INFO,
+--                            SOLUTION_PROPOSED, WAITING_ON_WSO2 or REOPENED
+--                            from a different state. Entering a waiting state
+--                            is a fresh request to the customer, so it must not
+--                            inherit the clock of an earlier one (Awaiting Info
+--                            -> Work in Progress -> Awaiting Info with a new
+--                            question). One exception: a customer hold
+--                            (step ON_HOLD) survives entering Awaiting Info or
+--                            Solution Proposed, because the customer asked for
+--                            the ticket not to be closed; moving to Waiting on
+--                            WSO2 or Reopened still ends it, as a customer
+--                            reply does. A trigger rather than service code so
+--                            every writer (portal, API, sync) restarts it
+--                            identically.
 
 ALTER TABLE "case" ADD COLUMN IF NOT EXISTS autoclose_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE security_report_analysis ADD COLUMN IF NOT EXISTS autoclose_enabled BOOLEAN NOT NULL DEFAULT TRUE;
@@ -48,11 +57,16 @@ CREATE INDEX IF NOT EXISTS idx_sra_autoclosure_candidates
 CREATE TABLE IF NOT EXISTS case_autoclosure_event (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     work_item_id UUID NOT NULL REFERENCES work_item(id) ON DELETE CASCADE,
-    -- RELEASE_HOLD, FIRST_COMMENT, SECOND_COMMENT or CLOSE.
+    -- The stage, spelled as the code writes it and as CountAdvancedSince
+    -- counts it: release_hold, first_reminder, second_reminder or close.
+    -- (Not the step names FIRST_COMMENT / SECOND_COMMENT, which are the
+    -- values of autoclosure_step.)
     stage        VARCHAR(30) NOT NULL,
     from_step    VARCHAR(50),
     to_step      VARCHAR(50),
-    -- ADVANCED, or FAILED when the action was claimed and then rolled back.
+    -- ADVANCED (done; the only outcome the daily limit counts), FAILED (the
+    -- action was claimed and then rolled back), or DRY_RUN (a dry run found the
+    -- ticket due and changed nothing).
     outcome      VARCHAR(20) NOT NULL,
     detail       TEXT,
     created_on   TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -61,16 +75,16 @@ CREATE TABLE IF NOT EXISTS case_autoclosure_event (
 CREATE INDEX IF NOT EXISTS idx_case_autoclosure_event_work_item
     ON case_autoclosure_event (work_item_id, created_on DESC);
 
--- Restart the workflow on the transitions that mean "the clock starts over".
--- Parent-level tickets only: a child (work_item.parent_id set) never has its
--- own workflow.
+-- Restart the workflow when a ticket enters a state that starts (or restarts)
+-- a request to the customer. Parent-level tickets only: a child
+-- (work_item.parent_id set) never has its own workflow.
 CREATE OR REPLACE FUNCTION autoclosure_reset() RETURNS trigger AS $$
 BEGIN
     IF NEW.state IS DISTINCT FROM OLD.state
        AND (
             NEW.state::TEXT IN ('WAITING_ON_WSO2', 'REOPENED')
-            OR (OLD.state::TEXT = 'AWAITING_INFO' AND NEW.state::TEXT = 'SOLUTION_PROPOSED')
-            OR (OLD.state::TEXT = 'SOLUTION_PROPOSED' AND NEW.state::TEXT = 'AWAITING_INFO')
+            OR (NEW.state::TEXT IN ('AWAITING_INFO', 'SOLUTION_PROPOSED')
+                AND COALESCE(OLD.autoclosure_step, '') <> 'ON_HOLD')
        )
        AND NOT EXISTS (SELECT 1 FROM work_item w WHERE w.id = NEW.id AND w.parent_id IS NOT NULL)
     THEN

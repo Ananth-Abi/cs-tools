@@ -15,7 +15,7 @@
 // under the License.
 
 // Auto-closure candidate selection, the claim, and the reset trigger
-// (migration 0245) against a real Postgres, run as a non-superuser so
+// (migration 0249) against a real Postgres, run as a non-superuser so
 // row-level security is in force. Skipped without CASE_STATS_TEST_DSN.
 //
 //	CASE_STATS_TEST_DSN=postgres://csm_app:...@host/db go test -p 1 ./internal/repository/ ./internal/service/ -run Autoclosure
@@ -310,7 +310,14 @@ func TestAutoclosureIntegration_ResetTrigger(t *testing.T) {
 		{"Awaiting Info to Solution Proposed", "AWAITING_INFO", "SOLUTION_PROPOSED", true, false, ""},
 		{"Solution Proposed to Awaiting Info", "SOLUTION_PROPOSED", "AWAITING_INFO", true, false, ""},
 		{"Awaiting Info to Closed does not reset", "AWAITING_INFO", "CLOSED", false, false, "SECOND_COMMENT"},
-		{"Work in Progress to Awaiting Info does not reset", "WORK_IN_PROGRESS", "AWAITING_INFO", false, false, "SECOND_COMMENT"},
+		// Entering a waiting state from ANY other state is a fresh request to the
+		// customer and must not inherit the old clock: Awaiting Info -> Work in
+		// Progress -> Awaiting Info with a new question.
+		{"Work in Progress to Awaiting Info resets", "WORK_IN_PROGRESS", "AWAITING_INFO", true, false, ""},
+		{"Open to Solution Proposed resets", "OPEN", "SOLUTION_PROPOSED", true, false, ""},
+		{"Work in Progress to Solution Proposed resets", "WORK_IN_PROGRESS", "SOLUTION_PROPOSED", true, false, ""},
+		{"Leaving a waiting state for Work in Progress does not reset", "AWAITING_INFO", "WORK_IN_PROGRESS", false, false, "SECOND_COMMENT"},
+		{"Work in Progress to Closed does not reset", "WORK_IN_PROGRESS", "CLOSED", false, false, "SECOND_COMMENT"},
 		{"a child is never reset", "AWAITING_INFO", "WAITING_ON_WSO2", false, true, "SECOND_COMMENT"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -376,5 +383,116 @@ func TestAutoclosureIntegration_AuditCountBacksTheDailyLimit(t *testing.T) {
 	f.exec(`UPDATE case_autoclosure_event SET created_on = created_on - INTERVAL '2 days' WHERE work_item_id = $1`, id)
 	if got := count() - base; got != 0 {
 		t.Errorf("counted %d after the events aged a day, want 0", got)
+	}
+}
+
+// A customer hold survives entering Awaiting Info or Solution Proposed (the
+// customer asked for the ticket not to be closed), but a move to Waiting on WSO2
+// or Reopened, which is what a customer reply causes, still ends it.
+func TestAutoclosureIntegration_HoldSurvivesEnteringAWaitingStateButNotAReply(t *testing.T) {
+	pool := caseStatsPool(t)
+	f := newACFixture(t, pool)
+	heldUntil := time.Date(f.now.Year(), f.now.Month(), f.now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 14)
+	held := func(n int, state string) string {
+		return f.ticket(acTicket{n: n, state: state, step: acStr("ON_HOLD"), stateOn: &heldUntil})
+	}
+	read := func(id string) (step *string, on *time.Time) {
+		t.Helper()
+		if err := f.scoped.QueryRow(f.ctx, `SELECT autoclosure_step, autoclosure_state_on FROM "case" WHERE id = $1`, id).Scan(&step, &on); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	for _, tc := range []struct {
+		name     string
+		from, to string
+		survives bool
+	}{
+		{"Work in Progress to Awaiting Info", "WORK_IN_PROGRESS", "AWAITING_INFO", true},
+		{"Open to Solution Proposed", "OPEN", "SOLUTION_PROPOSED", true},
+		{"Awaiting Info to Solution Proposed", "AWAITING_INFO", "SOLUTION_PROPOSED", true},
+		{"to Waiting on WSO2 (a customer reply)", "AWAITING_INFO", "WAITING_ON_WSO2", false},
+		{"to Reopened", "SOLUTION_PROPOSED", "REOPENED", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id := held(60+len(tc.name)%30, tc.from)
+			f.exec(`UPDATE "case" SET state = $2::case_state_enum WHERE id = $1`, id, tc.to)
+			step, on := read(id)
+			if tc.survives {
+				if step == nil || *step != "ON_HOLD" || on == nil || !on.Equal(heldUntil) {
+					t.Errorf("the hold was lost: step=%v on=%v, want ON_HOLD until %v", step, on, heldUntil)
+				}
+			} else if step == nil || *step != "DEFAULT" {
+				t.Errorf("step = %v, want the hold ended (DEFAULT)", step)
+			}
+		})
+	}
+}
+
+// A ticket that fails the same stage over and over is left out of the list so
+// one permanently bad ticket cannot raise the same alert every run.
+func TestAutoclosureIntegration_RepeatedlyFailingTicketsAreLeftOutForAWhile(t *testing.T) {
+	pool := caseStatsPool(t)
+	f := newACFixture(t, pool)
+	repo := repository.NewAutoclosureRepository(f.scoped)
+
+	failures := func(id string, stage domain.AutoclosureStage, n int, daysAgo int) {
+		t.Helper()
+		for i := 0; i < n; i++ {
+			if err := repo.RecordEvent(f.ctx, repository.AutoclosureEvent{WorkItemID: id, Stage: stage, Outcome: "FAILED", Detail: "boom"}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if daysAgo > 0 {
+			f.exec(`UPDATE case_autoclosure_event SET created_on = now() - make_interval(days => $3)
+			         WHERE work_item_id = $1 AND stage = $2 AND outcome = 'FAILED' AND created_on > now() - interval '1 minute'`, id, string(stage), daysAgo)
+		}
+	}
+	due := func(n int) string { return f.ticket(acTicket{n: n, state: "SOLUTION_PROPOSED", resolvedOn: f.ago(20)}) }
+	capped := due(1)     // three recent failures of this stage: left out
+	twice := due(2)      // two: still listed
+	aged := due(3)       // three, but two of them outside the window: listed
+	otherStage := due(4) // three failures, of a different stage: listed
+	failures(capped, domain.AutoclosureStageFirstReminder, 3, 0)
+	failures(twice, domain.AutoclosureStageFirstReminder, 2, 0)
+	failures(aged, domain.AutoclosureStageFirstReminder, 1, 0)
+	failures(aged, domain.AutoclosureStageFirstReminder, 2, 10)
+	failures(otherStage, domain.AutoclosureStageSecondReminder, 3, 0)
+
+	list := func(maxFailures int, onlyID string) map[string]bool {
+		t.Helper()
+		rows, err := repo.FindCandidates(f.ctx, repository.AutoclosureCandidateQuery{
+			Stage: domain.AutoclosureStageFirstReminder, Now: f.now, IntervalDays: 7, Limit: 500,
+			States: []string{"AWAITING_INFO", "SOLUTION_PROPOSED"}, SystemEmail: acSystemEmail,
+			MaxFailures: maxFailures, FailureWindowDays: 7, OnlyID: onlyID,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return acIDs(rows)
+	}
+	got := list(3, "")
+	if got[capped] {
+		t.Errorf("a ticket with 3 recent failures of this stage is still listed")
+	}
+	for name, id := range map[string]string{"two failures": twice, "failures outside the window": aged, "failures of another stage": otherStage} {
+		if !got[id] {
+			t.Errorf("%s: should still be listed", name)
+		}
+	}
+	if one := list(3, capped); len(one) != 0 {
+		t.Errorf("the per-ticket re-check still lets the capped ticket through")
+	}
+	if off := list(0, ""); !off[capped] {
+		t.Errorf("with the rule off (0) the ticket must be listed again")
+	}
+
+	n, err := repo.CountQuarantined(f.ctx, domain.AutoclosureStageFirstReminder, f.now, 7, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The database may hold other tickets with failures; ours contribute exactly one.
+	if n < 1 {
+		t.Errorf("CountQuarantined = %d, want at least the one capped ticket", n)
 	}
 }
