@@ -73,10 +73,12 @@ func main() {
 		"standingRecipientsCount", len(standingRecipients),
 	)
 
-	if isWeekend(time.Now()) {
-		slog.Info("weekend: skipping run, no notices sent and no projects suspended", "runID", runID)
-		os.Exit(0)
-	}
+	// TEMPORARY (POC only, 2026-10-25): weekend check disabled to test the
+	// Sales Entity Service Go connection on a Sunday. Revert this commit.
+	// if isWeekend(time.Now()) {
+	// 	slog.Info("weekend: skipping run, no notices sent and no projects suspended", "runID", runID)
+	// 	os.Exit(0)
+	// }
 
 	entityClient, err := entity.NewClient(entity.Config{
 		BaseURL:      mustEnv("CSM_INTEGRATION_BASE_URL"),
