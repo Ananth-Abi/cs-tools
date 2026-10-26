@@ -579,10 +579,19 @@ func (e *Engine) threadReplies(t Trigger) bool {
 
 // incidentRooms is the rooms an incident's card went to: its SRE team's room from the Alert Settings
 // mapping, else its INCIDENT_CHAT_SPACES space, else the shared SRE room (IncidentFallbackAudience).
-// A case, or an incident with none of these, keeps the ladder's own spaces.
+// An S0 case on the SRE ladder uses its account SRE group the same way (sreCaseCard).
+// Any other case, or an incident with none of these, keeps the ladder's own spaces.
 func (e *Engine) incidentRooms(t Trigger) []chatRoom {
-	if t.isCase() || e.incidentChat == nil {
+	if e.incidentChat == nil {
 		return nil
+	}
+	group := t.Team
+	if t.isCase() {
+		// Only the SRE engine's S0 case with an account SRE team has a card (sreCaseCard); every other case, CRE's included, keeps the ladder's own spaces.
+		if e.cfg.Kind != LadderSRE || !t.sreCaseCard() {
+			return nil
+		}
+		group = t.Routing.SRETeam
 	}
 	// The dispatcher's card picks its rooms with the same call, so the
 	// replies always land in the threads the card started.
@@ -593,7 +602,7 @@ func (e *Engine) incidentRooms(t Trigger) []chatRoom {
 			return audience != notifications.IncidentFallbackAudience && e.incidentChat.HasAudienceSpace(audience)
 		}
 	}
-	audiences, _ := notifications.IncidentAudiences(e.cfg.IncidentRoutes, e.cfg.IncidentChatFanout, t.Team, has)
+	audiences, _ := notifications.IncidentAudiences(e.cfg.IncidentRoutes, e.cfg.IncidentChatFanout, group, has)
 	var rooms []chatRoom
 	for _, audience := range audiences {
 		rooms = append(rooms, chatRoom{chat: e.incidentChat, room: audience, reply: true})

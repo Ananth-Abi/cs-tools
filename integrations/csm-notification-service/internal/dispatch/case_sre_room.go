@@ -72,3 +72,21 @@ func (d *Dispatcher) sendCaseSRERoomCard(ctx context.Context, t events.Type, cas
 			"type", string(t), "caseId", caseID, "rooms", rooms, "err", err)
 	}
 }
+
+// caseSRERoomCard is the card an S0 case posts to its SRE rooms: the
+// incident's "Reported" card in its case form, keyed by the case id so the
+// SRE ladder's rung cards reply under it (paging's sreCaseCard), as an
+// incident's do.
+func caseSRERoomCard(caseID, caseNumber, sreGroup, severity, title, product, caseLink string) notifications.IncidentCreatedAlert {
+	return notifications.IncidentCreatedAlert{
+		IncidentID:       caseID,
+		Number:           displayCaseRef(caseNumber, caseID),
+		Team:             sreGroup,
+		Priority:         severity,
+		ShortDescription: truncateTitle(title, maxChatTitleLength),
+		Service:          product,
+		Category:         "case",
+		IncidentLink:     caseLink,
+		Case:             true,
+	}
+}

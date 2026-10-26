@@ -132,6 +132,16 @@ type IncidentCreatedAlert struct {
 	Category         string
 	State            string
 	IncidentLink     string
+	// Case renders the card for an S0 customer case on the SRE ladder:
+	// "Case Reported", "View Case", "Case Details" and the case severity. An
+	// incident leaves it false and gets the card exactly as before.
+	Case bool
+}
+
+// casePriorityLabels renders a case severity on the card when Case is set.
+var casePriorityLabels = map[string]struct{ word, label string }{
+	"CATASTROPHIC": {"Catastrophic", "S0 - Catastrophic"},
+	"S0":           {"Catastrophic", "S0 - Catastrophic"},
 }
 
 // IncidentAssignedAlert is SendIncidentAssignedAlert's card content.
@@ -164,7 +174,11 @@ func (c *GoogleChatClient) SendIncidentCreatedAlert(ctx context.Context, audienc
 		return fmt.Errorf("notifications: incidentId is required")
 	}
 	priority := incidentPriorityLabels[strings.ToUpper(strings.TrimSpace(a.Priority))]
-	title := "Priority Incident Reported"
+	noun := "Incident"
+	if a.Case {
+		priority, noun = casePriorityLabels[strings.ToUpper(strings.TrimSpace(a.Priority))], "Case"
+	}
+	title := "Priority " + noun + " Reported"
 	if priority.word != "" {
 		title = priority.word + " " + title
 	}
@@ -183,7 +197,7 @@ func (c *GoogleChatClient) SendIncidentCreatedAlert(ctx context.Context, audienc
 	}}}
 	if a.IncidentLink != "" {
 		summary = append(summary, chatCardWidget{ButtonList: &chatButtonList{
-			Buttons: []chatButton{{Text: "View Incident", OnClick: chatOnClick{OpenLink: chatOpenLink{URL: a.IncidentLink}}}},
+			Buttons: []chatButton{{Text: "View " + noun, OnClick: chatOnClick{OpenLink: chatOpenLink{URL: a.IncidentLink}}}},
 		}})
 	}
 	details := []string{
@@ -194,7 +208,7 @@ func (c *GoogleChatClient) SendIncidentCreatedAlert(ctx context.Context, audienc
 	sections := []chatCardSection{
 		{Widgets: summary},
 		{
-			Header:      "Incident Details",
+			Header:      noun + " Details",
 			Collapsible: true,
 			Widgets:     []chatCardWidget{{TextParagraph: &chatTextParagraph{Text: strings.Join(details, "<br>")}}},
 		},

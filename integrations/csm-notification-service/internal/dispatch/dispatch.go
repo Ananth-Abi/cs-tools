@@ -977,11 +977,9 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 		}
 		// An S0 also goes straight to its account SRE team's room (caseSRERooms).
 		if rooms := d.caseSRERooms(ctx, events.TypeCaseCreated, p.CaseID, p.Priority, p.SRETeamName); len(rooms) > 0 && d.claim(sreRoomKey) {
-			caseLink := d.links.CSMLink(p.CaseID)
-			title := truncateTitle(p.CaseTitle, maxChatTitleLength)
-			severityLabel, severityColor := severityLabelAndColor(p.Priority)
+			card := caseSRERoomCard(p.CaseID, p.CaseNumber, p.SRETeamName, p.Priority, p.CaseTitle, p.Product, d.links.CSMLink(p.CaseID))
 			d.sendCaseSRERoomCard(ctx, events.TypeCaseCreated, p.CaseID, rooms, func(audience string) error {
-				return d.googleChat.SendCaseCreatedAlert(ctx, audience, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, p.Product, title, p.Team, caseLink)
+				return d.googleChat.SendIncidentCreatedAlert(ctx, audience, card)
 			})
 		}
 	}
@@ -1533,10 +1531,9 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 	}
 	// An S0 also goes straight to its account SRE team's room (caseSRERooms).
 	if rooms := d.caseSRERooms(ctx, events.TypeSeverityChanged, p.CaseID, p.NewSeverity, p.SRETeamName); len(rooms) > 0 && d.claim(sreRoomKey) {
-		caseLink := d.links.CSMLink(p.CaseID)
-		title := truncateTitle(p.CaseTitle, maxChatTitleLength)
+		card := caseSRERoomCard(p.CaseID, p.CaseNumber, p.SRETeamName, p.NewSeverity, p.CaseTitle, p.Product, d.links.CSMLink(p.CaseID))
 		d.sendCaseSRERoomCard(ctx, events.TypeSeverityChanged, p.CaseID, rooms, func(audience string) error {
-			return d.googleChat.SendSeverityChangedAlert(ctx, audience, oldLabel, oldColor, newLabel, newColor, caseRef, p.WSO2CaseID, p.Product, title, p.Team, caseLink)
+			return d.googleChat.SendIncidentCreatedAlert(ctx, audience, card)
 		})
 	}
 

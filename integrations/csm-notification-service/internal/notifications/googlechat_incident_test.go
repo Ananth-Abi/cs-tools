@@ -248,3 +248,31 @@ func TestBuildSMEIncidentEscalatedCard_FirstRostered(t *testing.T) {
 		}
 	}
 }
+
+// An S0 case on the SRE ladder gets the same card in its case form, threaded
+// by the case id so the SRE ladder's rung cards reply under it.
+func TestSendIncidentCreatedAlert_CaseForm(t *testing.T) {
+	c, got := captureIncidentCard(t)
+	err := c.SendIncidentCreatedAlert(context.Background(), IncidentAudience("artemis sre group"), IncidentCreatedAlert{
+		IncidentID: "case-1", Number: "CS0451895", Team: "Artemis SRE Group", Priority: "CATASTROPHIC",
+		ShortDescription: "test S0", Service: "WSO2 API Manager Analytics", Category: "case",
+		IncidentLink: "https://csm.example/cases/case-1", Case: true,
+	})
+	if err != nil {
+		t.Fatalf("SendIncidentCreatedAlert: %v", err)
+	}
+	msg, _, _ := got()
+	card := msg.CardsV2[0].Card
+	if card.Header.Title != "ARTEMIS SRE GROUP | Catastrophic Priority Case Reported" {
+		t.Errorf("title = %q", card.Header.Title)
+	}
+	if b := card.Sections[0].Widgets[1].ButtonList.Buttons[0]; b.Text != "View Case" || b.OnClick.OpenLink.URL != "https://csm.example/cases/case-1" {
+		t.Errorf("button = %+v", b)
+	}
+	if card.Sections[1].Header != "Case Details" || !strings.Contains(sectionText(card.Sections[1]), "S0 - Catastrophic") {
+		t.Errorf("details section = %+v", card.Sections[1])
+	}
+	if msg.Thread == nil || msg.Thread.ThreadKey != "incident-case-1" {
+		t.Errorf("thread = %+v", msg.Thread)
+	}
+}
