@@ -519,7 +519,7 @@ Artemis and IaaS each in their own space, through `NewEngine` and the webhook
 variables: `team_chat_spaces_test.go` (SME teams too).
 
 **An incident with no SRE team of its own** (`sre.teamlessChats`, opt-in):
-a default group (a service mapped to no SRE team), a customer case at S0, a
+a default group (a service mapped to no SRE team), a customer case at S0 whose account has no known SRE team, a
 monitoring alert with no team. `teamlessChats: [apollo, artemis]` posts its
 cards and closing message to every space named (`Engine.chatTeams`); each
 entry must be a `teamChats` key (refused at load otherwise). Empty, such an
@@ -565,7 +565,9 @@ when a severity or priority change replaces the chain -- "Severity changed to
 X: paging restarts". It lists who was paged and how many calls were
 cancelled. Posted only from the first stop (a retried stop finds `Cancelled`
 set) and only once a rung has gone out with sending on, so a room never hears
-about a chain it did not see. A hand-off to the SMEs posts nothing here; its
+about a chain it did not see; before any rung, a room the incident card
+reached (`IncidentCards`, e.g. an SME ladder whose L1 was empty) counts as
+having seen it. A hand-off to the SMEs posts nothing here; its
 own message says it. The SRE setting covers the SME ladders. Best effort.
 
 **Stops on** (an SRE incident): `incident.assigned` (an engineer set as the
@@ -584,7 +586,7 @@ rota `SRE_IAAS`; Day/Night zones) and PaaS (none yet). The catalogue carries
 `rotaCode` on teams and zones; the engine stamps the incident's rota on the
 routing context (`RoutingContext.Rota`, from `TeamScheduleResolver.SRERota`):
 its own SRE team's rota, or `sre.teams.defaultRota` (default `SRE_SAAS`) for an
-incident with no SRE team (a case S0, a team-less monitoring alert). Only SRE
+incident with no SRE team (a case S0 whose account has none, a team-less monitoring alert). Only SRE
 windows whose zone is on that rota are read, so a SaaS incident never reaches
 an IaaS engineer or the other way round. A catalogue with no rota codes at all
 (an entity-service from before rotas) reads every SRE window, as before. The
@@ -632,7 +634,16 @@ file's `sme.enabled`:
   uncomments it and checks each team gets its own space). Unset, every team's
   cards go to `sme.chat`, as before. Set, a listed team's cards go to its own space and
   a team not listed uses `sme.chat`, never no card (a room saved on the Alert
-  Settings tab counts as listed). `Engine.smeNotifiersFor` picks by `Routing.SMETeam`. At the start a work note says who
+  Settings tab counts as listed). `Engine.smeNotifiersFor` picks by `Routing.SMETeam`.
+- **The "Incident Escalated" card is the escalation's, not L1's** (since
+  2026-10-23): `postSMEIncidentCard` posts it to the SME team's spaces when the
+  alert is handled, with chat in `sme.channel` and sending on, whoever is on
+  call. Nobody rostered on any tier: the card still goes out ("Nobody
+  rostered") and no ladder starts. L1 empty: the card goes out at once rather
+  than with L2, and names the first rostered tier and when it is called
+  ("Nobody rostered before L2", then the L2 and the time). The rooms it reached are saved on the ladder (`IncidentCards`)
+  before any rung is scheduled, so the first rung posts only its reply; a room
+  the card missed gets it from the first rung, as before. At the start a work note says who
   L1 is, or why nobody can be paged (`NO_RECIPIENTS`, `NO_NUMBER`,
   `NUMBER_NOT_ALLOWED`, `NO_CHANNEL`); a rung with nobody is logged ("SME rung
   cannot be called") and skipped; the usual execution summary is written when
@@ -686,6 +697,17 @@ is keyed by the case id, and `Trigger.Record` is `case`.
   comment before they are assigned is remembered and counts once they are. A
   closed case (`case.status_changed` "Closed", or a resolved/cancelled label)
   stops both.
+- **SRE team**: an S0 case's SRE ladder pages its account's SRE team
+  (`sreTeamName` on `case.created`/`case.severity_changed`, entity-service's
+  `account.sre_team_id`), carried as `RoutingContext.SRETeam`; `Trigger.Team`
+  stays the CRE team. Who is called (`ownSRETeam`, the rota), the card spaces
+  (`chatTeams`), the team's channel (`channelFor`) and the closing replies all
+  follow it. The name must resolve, through `sre.teams.aliases`, to a team in
+  `sre.teams.abts` (and to a `sre.teamChats` key for its own space); one that
+  does not, or a case with none, pages every team on `defaultRota` and posts
+  to `teamlessChats`, as before. Until 2026-10-26 every S0 case was paged that
+  way. Both fields are new and this service decodes strictly: deploy it before
+  the entity-service that sends them.
 - **Assignee**: the starting events carry none, so the current assignee is kept
   in Redis from `case.assigned` (`incident:escalation:case:assignee:<caseId>`,
   shared by both ladders).
