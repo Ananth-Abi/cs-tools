@@ -879,6 +879,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 
 	baseKey := recordBaseKey(record)
 	chatKey := baseKey + "/chat"
+	sreRoomKey := baseKey + "/sre-room"
 	endRecord := d.beginRecord(baseKey)
 
 	var errs []error
@@ -974,6 +975,15 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 				d.forget(chatKey)
 			}
 		}
+		// An S0 also goes straight to its account SRE team's room (caseSRERooms).
+		if rooms := d.caseSRERooms(ctx, events.TypeCaseCreated, p.CaseID, p.Priority, p.SRETeamName); len(rooms) > 0 && d.claim(sreRoomKey) {
+			caseLink := d.links.CSMLink(p.CaseID)
+			title := truncateTitle(p.CaseTitle, maxChatTitleLength)
+			severityLabel, severityColor := severityLabelAndColor(p.Priority)
+			d.sendCaseSRERoomCard(ctx, events.TypeCaseCreated, p.CaseID, rooms, func(audience string) error {
+				return d.googleChat.SendCaseCreatedAlert(ctx, audience, severityLabel, severityColor, displayCaseRef(p.CaseNumber, p.CaseID), p.WSO2CaseID, p.Product, title, p.Team, caseLink)
+			})
+		}
 	}
 
 	// record.NoMoreRetries always forgets every key unconditionally,
@@ -1008,6 +1018,7 @@ func (d *Dispatcher) handleCaseCreated(ctx context.Context, record eventbus.Reco
 	safeToRelease := endRecord(len(errs) > 0)
 	if record.NoMoreRetries || safeToRelease {
 		d.forget(chatKey)
+		d.forget(sreRoomKey)
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
 	}
 
@@ -1464,6 +1475,7 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 
 	baseKey := recordBaseKey(record)
 	chatKey := baseKey + "/chat"
+	sreRoomKey := baseKey + "/sre-room"
 	endRecord := d.beginRecord(baseKey)
 
 	var errs []error
@@ -1519,6 +1531,14 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 			d.forget(chatKey)
 		}
 	}
+	// An S0 also goes straight to its account SRE team's room (caseSRERooms).
+	if rooms := d.caseSRERooms(ctx, events.TypeSeverityChanged, p.CaseID, p.NewSeverity, p.SRETeamName); len(rooms) > 0 && d.claim(sreRoomKey) {
+		caseLink := d.links.CSMLink(p.CaseID)
+		title := truncateTitle(p.CaseTitle, maxChatTitleLength)
+		d.sendCaseSRERoomCard(ctx, events.TypeSeverityChanged, p.CaseID, rooms, func(audience string) error {
+			return d.googleChat.SendSeverityChangedAlert(ctx, audience, oldLabel, oldColor, newLabel, newColor, caseRef, p.WSO2CaseID, p.Product, title, p.Team, caseLink)
+		})
+	}
 
 	// Same release reasoning as handleCaseCreated's own matching comment —
 	// see its doc comment for the full explanation of endRecord/
@@ -1526,6 +1546,7 @@ func (d *Dispatcher) handleSeverityChanged(ctx context.Context, record eventbus.
 	safeToRelease := endRecord(len(errs) > 0)
 	if record.NoMoreRetries || safeToRelease {
 		d.forget(chatKey)
+		d.forget(sreRoomKey)
 		d.forgetEmailGroups(baseKey, slices.Collect(maps.Keys(groups)))
 	}
 
