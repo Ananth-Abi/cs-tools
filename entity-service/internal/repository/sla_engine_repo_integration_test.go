@@ -666,3 +666,66 @@ func TestSLAEngineIntegration_CompleteClockSubtractsPauseDuration(t *testing.T) 
 		t.Errorf("business_elapsed_percentage at completion = %v, want ~%v", percent, wantPercent)
 	}
 }
+
+// TestSLAEngineIntegration_CompleteClockFinalizesAnOpenPause is the
+// regression test for completing a clock that is still marked paused
+// (paused_on IS NOT NULL) -- the real path is ApplyStateEffects' CLOSED
+// branch always resuming a clock before completing it, but a resume that
+// fails is logged and ignored, so CompleteClock must tolerate reaching a
+// still-paused row directly. Before this fix, business_duration/percentage
+// were computed correctly (the completedElapsedExpr already excludes an
+// open pause segment) but paused_on was left set and the open segment was
+// never folded into pause_duration -- GetClockState would then report a
+// finished (ACHIEVED) clock as still paused, with an incomplete total.
+func TestSLAEngineIntegration_CompleteClockFinalizesAnOpenPause(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedSLAEngineWorkItem(t, pool)
+	ctx := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	repo := repository.NewSLAEngineRepository(scoped)
+
+	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
+	if err != nil {
+		t.Fatalf("FindPolicyByName(workaround): %v", err)
+	}
+	if _, err := repo.RegisterClock(ctx, slaEngineIntegrationWorkItemID, policy); err != nil {
+		t.Fatalf("RegisterClock setup: %v", err)
+	}
+
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", true); err != nil {
+		t.Fatalf("SetPaused(true): %v", err)
+	}
+	openPause := 15 * time.Minute
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET paused_on = paused_on - $2::interval WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(openPause)); err != nil {
+		t.Fatalf("push paused_on back: %v", err)
+	}
+
+	// No resume here -- CompleteClock must be called directly on a row
+	// that is still paused.
+	completed, err := repo.CompleteClock(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND")
+	if err != nil {
+		t.Fatalf("CompleteClock: %v", err)
+	}
+	if !completed {
+		t.Fatal("CompleteClock reported no row updated")
+	}
+
+	var pausedOn *time.Time
+	var pauseDurationSeconds float64
+	if err := scoped.QueryRow(ctx,
+		`SELECT paused_on, EXTRACT(EPOCH FROM COALESCE(pause_duration, INTERVAL '0'))
+		 FROM sla WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID).
+		Scan(&pausedOn, &pauseDurationSeconds); err != nil {
+		t.Fatalf("scan after complete: %v", err)
+	}
+
+	if pausedOn != nil {
+		t.Errorf("paused_on = %v, want nil -- completing a paused clock must clear it", pausedOn)
+	}
+	if diff := pauseDurationSeconds - openPause.Seconds(); diff < -2 || diff > 2 {
+		t.Errorf("pause_duration = %vs, want ~%vs -- the still-open segment must be folded in", pauseDurationSeconds, openPause.Seconds())
+	}
+}

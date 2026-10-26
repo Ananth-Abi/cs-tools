@@ -252,6 +252,19 @@ type Config struct {
 	// "sla" table side by side, distinguished by source -- this is already
 	// what happens today on DataSource=servicenow/postgres-servicenow-dual-write,
 	// just without a named switch controlling it.
+	//
+	// Known limitation: flipping this to false only stops NEW writes --
+	// any source='CSM' row already IN_PROGRESS/BREACHED at that moment is
+	// left exactly as it was (still is_active, still returned by every
+	// unscoped read: sla_live, GetClockState, SearchActiveSLAStatuses),
+	// since nothing retires or excludes it. It will simply never be
+	// updated again. This is intentional scope: deciding whether such a
+	// clock should be force-completed, cancelled, or left visible as a
+	// frozen record is a product decision, not something this flag's
+	// on/off switch should make unilaterally. An operator disabling this
+	// engine should do so only once they've confirmed they're fine with
+	// whatever in-flight source='CSM' clocks exist at that moment going
+	// stale, or has a separate plan (e.g. a one-off migration) for them.
 	CSMSLAEngineEnabled bool
 	// ServiceNowIntegrationServiceBaseURL is the base URL for the ServiceNow integration service API.
 	// Required when DataSource is "servicenow" (or SLADataSource is "servicenow" -- see Validate).

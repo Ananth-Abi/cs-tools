@@ -384,6 +384,13 @@ func (r *slaEngineRepo) RegisterClock(ctx context.Context, workItemID string, po
 const completedElapsedExpr = `(NOW() - s.start_on - COALESCE(s.pause_duration, INTERVAL '0') -
 		    CASE WHEN s.paused_on IS NOT NULL THEN NOW() - s.paused_on ELSE INTERVAL '0' END)`
 
+// CompleteClock also finalizes any open pause segment (paused_on IS NOT
+// NULL) into pause_duration and clears paused_on. ApplyStateEffects'
+// CLOSED branch always resumes a clock before completing it, but that
+// resume can itself fail and be logged-and-ignored -- this keeps a clock
+// that reaches CompleteClock still paused from ending up ACHIEVED with
+// paused_on left set, which would make GetClockState report a finished
+// clock as paused with an incomplete pause total.
 func (r *slaEngineRepo) CompleteClock(ctx context.Context, workItemID, target string) (bool, error) {
 	const query = `
 		UPDATE sla s
@@ -393,6 +400,9 @@ func (r *slaEngineRepo) CompleteClock(ctx context.Context, workItemID, target st
 		    ),
 		    business_duration = ` + completedElapsedExpr + `,
 		    remaining_business_duration = GREATEST(s.duration - ` + completedElapsedExpr + `, INTERVAL '0'),
+		    pause_duration = COALESCE(s.pause_duration, INTERVAL '0') +
+		        CASE WHEN s.paused_on IS NOT NULL THEN NOW() - s.paused_on ELSE INTERVAL '0' END,
+		    paused_on = NULL,
 		    updated_on = NOW(), updated_by = $3
 		FROM sla_policy sp
 		WHERE s.sla_policy_id = sp.id
