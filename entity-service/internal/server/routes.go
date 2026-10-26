@@ -1348,11 +1348,13 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	// (AUTOCLOSURE_SYSTEM_USER_EMAIL) and the Postgres case tables. Driven by
 	// operations/csm-scheduled-tasks.
 	//
-	// It never touches ServiceNow, whatever DATA_SOURCE says. It is given its own
-	// case service with no ServiceNow mirror and no write-back dispatcher, not
-	// activeCaseSvc (which mirrors every update to ServiceNow under dual-write): a
-	// reminder or a close is written to Postgres only. Events, SLA effects and the
-	// activity entry are the ones every Postgres close produces.
+	// It acts through activeCaseSvc, so its comments, state changes and the close
+	// follow the deployment's data source like every other case write: Postgres
+	// only on DATA_SOURCE=postgres, and Postgres first with an asynchronous,
+	// best-effort ServiceNow mirror on postgres-servicenow-dual-write (a failed
+	// mirror is recorded in sn_writeback_failures and never fails or repeats a
+	// stage). The workflow's own position (step, clock) and audit rows are
+	// Postgres-only: ServiceNow has no field that API accepts for them.
 	//
 	// The routes are always registered. Where the feature cannot run (no system
 	// user, or DATA_SOURCE=servicenow, which has no Postgres case tables to work
@@ -1367,11 +1369,9 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		slog.Warn("AUTOCLOSURE_SYSTEM_USER_EMAIL is set but case auto-closure needs a Postgres data source; it is not enabled",
 			"dataSource", string(cfg.DataSource))
 	default:
-		autoclosureCaseSvc := service.NewCaseServiceWithSNWriteback(caseRepo, userRepo, eventPublisher, accessSvc, projectContactRepo,
-			nil, nil, slaEngineSvc, cfg.CSEngineerRole)
 		autoclosureSvc = service.NewAutoclosureService(
 			repository.NewAutoclosureRepository(repository.NewScoped(db)),
-			autoclosureCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)
+			activeCaseSvc, accessSvc, cfg.AutoclosureSystemUserEmail)
 		// A case closed for inactivity is queued for the customer's own
 		// verification (the Pending Verification feature) where the project
 		// has that turned on.
