@@ -652,6 +652,25 @@ func main() {
 	// named by that family's rota admin, who is no portal admin, so those
 	// routes are PermWrite and entity-service decides.
 	rotaAccessHandler := handler.NewRotaAccessHandler(customerEntityClient)
+	// Skill management: My Skills, the All Skills catalogue, the Skill Manager
+	// and the admin's catalogue edits. The floor here only keeps the control
+	// away from a caller who could not use it at all (PermWrite for every
+	// change); who may add a skill to the catalogue or read everybody's skills
+	// is entity-service's decision, made from the forwarded user token.
+	skillHandler := handler.NewSkillHandler(customerEntityClient)
+	route("GET /skills/levels", handler.PermView, skillHandler.GetSkillLevels)
+	route("GET /skills/categories", handler.PermView, skillHandler.GetSkillCategories)
+	route("POST /skills/search", handler.PermView, skillHandler.SearchSkills)
+	route("GET /skills/me", handler.PermView, skillHandler.GetMySkills)
+	route("GET /skills/me/history", handler.PermView, skillHandler.GetMySkillHistory)
+	route("POST /skills/users/search", handler.PermView, skillHandler.SearchUserSkills)
+	route("GET /skills/{id}", handler.PermView, skillHandler.GetSkill)
+	route("POST /skills", handler.PermWrite, skillHandler.CreateSkill)
+	route("PATCH /skills/{id}", handler.PermWrite, skillHandler.UpdateSkill)
+	route("POST /skills/me", handler.PermWrite, skillHandler.AddMySkill)
+	route("PUT /skills/me/{skillId}", handler.PermWrite, skillHandler.SetMySkillLevel)
+	route("DELETE /skills/me/{skillId}", handler.PermWrite, skillHandler.RemoveMySkill)
+
 	route("GET /team-schedule/rota-access", handler.PermView, rotaAccessHandler.GetRotaAccess)
 	route("PUT /team-schedule/rota-access/admins/{family}/{userId}", handler.PermAdmin, rotaAccessHandler.PutRotaAdmin)
 	route("DELETE /team-schedule/rota-access/admins/{family}/{userId}", handler.PermAdmin, rotaAccessHandler.DeleteRotaAdmin)
