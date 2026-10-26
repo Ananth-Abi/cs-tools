@@ -50,6 +50,14 @@ permission (see `apps/csm-portal/backend`'s own `CLAUDE.md`, "PATCH /projects/{i
 requires PermAdmin") — hiding the pencil icon for a `cs_engineer` just avoids offering an action that
 would 403 for them.
 
+**Skills** (`features/csm-skills`, `/skills`) has two more deliberate exceptions, both by explicit product
+decision and both on top of a real backend gate: the **Skill Manager** tab (`CsmSkillsPage.tsx`) is shown only
+when `useIsSkillManager` succeeds. That hook has no flag to read, so it calls `POST /skills/users/search` once
+with `{pagination:{limit:1}}`, caches the answer for the session and treats a `403` as "not a manager" (any other
+failure also hides the tab). And the All Skills tab's create/edit/(de)activate actions render only for
+`usePortalAccess().isAdmin`. The sidebar entry itself uses `canWrite`. Filtering and paging for the catalogue and the
+manager table are always sent to the backend, never done in the browser.
+
 **`AddUserDialog.tsx` only collects an email — there are no first/last name fields.** The backend
 (`apps/csm-portal/backend`'s own `CLAUDE.md`, "Creating a user") looks that email up in SCIM and fills
 `firstName`/`lastName`/phone from that record; a 400 from SCIM having no matching user (or a match with
