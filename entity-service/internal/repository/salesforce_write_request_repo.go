@@ -43,6 +43,11 @@ type SalesforceWriteRequestRepository interface {
 	// PendingForProjectContact returns the open request for a membership row,
 	// nil when there is none. The partial unique index guarantees at most one.
 	PendingForProjectContact(ctx context.Context, projectContactID string) (*domain.SalesforceWriteRequest, error)
+	// LatestForProjectContact returns the most recent request for a
+	// membership row whatever its status, nil when there is none: what a
+	// write on a row with no Salesforce id consults to tell "still being
+	// synced" from "sync failed, nothing is coming".
+	LatestForProjectContact(ctx context.Context, projectContactID string) (*domain.SalesforceWriteRequest, error)
 	// SyncStatusForProjectContacts returns, for each membership row that has
 	// a request, the status the portals show: PENDING when a request is
 	// open, FAILED when the latest one gave up. Rows whose latest request
@@ -54,10 +59,11 @@ type SalesforceWriteRequestRepository interface {
 	// RecordAttempt counts one failed Salesforce attempt and keeps its error;
 	// the row stays PENDING.
 	RecordAttempt(ctx context.Context, id string, cause error) error
-	// MarkFailed ends the request: Salesforce refused it for good, or every
-	// retry tier was exhausted. attempts is bumped too, since this is the
-	// outcome of an attempt.
-	MarkFailed(ctx context.Context, id string, cause error) error
+	// MarkFailed ends the request: Salesforce refused it for good
+	// (retryable false), or every retry tier was exhausted while it was
+	// unavailable (retryable true). attempts is bumped too, since this is
+	// the outcome of an attempt.
+	MarkFailed(ctx context.Context, id string, cause error, retryable bool) error
 }
 
 type salesforceWriteRequestRepo struct {
@@ -73,14 +79,14 @@ func NewSalesforceWriteRequestRepository(db *pgxpool.Pool) SalesforceWriteReques
 
 const salesforceWriteRequestColumns = `
 	id, operation, project_id, project_contact_id, email, intent, status,
-	attempts, last_error, last_attempt_on, published_on, completed_on, created_on, updated_on`
+	attempts, last_error, last_attempt_on, published_on, completed_on, retryable, created_on, updated_on`
 
 func scanSalesforceWriteRequest(row pgx.Row) (domain.SalesforceWriteRequest, error) {
 	var r domain.SalesforceWriteRequest
 	var projectContactID *string
 	var status string
 	if err := row.Scan(&r.ID, &r.Operation, &r.ProjectID, &projectContactID, &r.Email, &r.Intent, &status,
-		&r.Attempts, &r.LastError, &r.LastAttemptOn, &r.PublishedOn, &r.CompletedOn, &r.CreatedOn, &r.UpdatedOn); err != nil {
+		&r.Attempts, &r.LastError, &r.LastAttemptOn, &r.PublishedOn, &r.CompletedOn, &r.Retryable, &r.CreatedOn, &r.UpdatedOn); err != nil {
 		return domain.SalesforceWriteRequest{}, err
 	}
 	if projectContactID != nil {
@@ -115,6 +121,19 @@ func (r *salesforceWriteRequestRepo) PendingForProjectContact(ctx context.Contex
 	return &req, nil
 }
 
+func (r *salesforceWriteRequestRepo) LatestForProjectContact(ctx context.Context, projectContactID string) (*domain.SalesforceWriteRequest, error) {
+	req, err := scanSalesforceWriteRequest(r.db.QueryRow(ctx,
+		`SELECT `+salesforceWriteRequestColumns+` FROM salesforce_write_request
+		 WHERE project_contact_id = $1 ORDER BY created_on DESC LIMIT 1`, projectContactID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("salesforce write request: latest for project contact: %w", err)
+	}
+	return &req, nil
+}
+
 func (r *salesforceWriteRequestRepo) SyncStatusForProjectContacts(ctx context.Context, projectContactIDs []string) (map[string]string, error) {
 	out := map[string]string{}
 	if len(projectContactIDs) == 0 {
@@ -136,7 +155,9 @@ func (r *salesforceWriteRequestRepo) SyncStatusForProjectContacts(ctx context.Co
 		if err := rows.Scan(&id, &status); err != nil {
 			return nil, fmt.Errorf("salesforce write request: scan sync status: %w", err)
 		}
-		if status != string(domain.SalesforceWriteRequestSucceeded) {
+		// SUCCEEDED is "in Salesforce like any other"; CANCELLED rows are
+		// deactivated memberships, which the lists do not show.
+		if status != string(domain.SalesforceWriteRequestSucceeded) && status != string(domain.SalesforceWriteRequestCancelled) {
 			out[id] = status
 		}
 	}
@@ -165,12 +186,12 @@ func (r *salesforceWriteRequestRepo) RecordAttempt(ctx context.Context, id strin
 	return nil
 }
 
-func (r *salesforceWriteRequestRepo) MarkFailed(ctx context.Context, id string, cause error) error {
+func (r *salesforceWriteRequestRepo) MarkFailed(ctx context.Context, id string, cause error, retryable bool) error {
 	if _, err := r.db.Exec(ctx, `
 		UPDATE salesforce_write_request
 		SET status = 'FAILED', attempts = attempts + 1, last_error = $2, last_attempt_on = NOW(),
-		    completed_on = NOW(), updated_on = NOW()
-		WHERE id = $1 AND status = 'PENDING'`, id, truncateSalesforceWriteError(cause)); err != nil {
+		    completed_on = NOW(), retryable = $3, updated_on = NOW()
+		WHERE id = $1 AND status = 'PENDING'`, id, truncateSalesforceWriteError(cause), retryable); err != nil {
 		return fmt.Errorf("salesforce write request: mark failed: %w", err)
 	}
 	return nil
@@ -211,6 +232,21 @@ func insertSalesforceWriteRequestTx(ctx context.Context, tx querier, dw domain.D
 		return "", fmt.Errorf("salesforce write request: insert: %w", err)
 	}
 	return id, nil
+}
+
+// cancelSalesforceWriteRequestTx closes a FAILED or never-published request as
+// CANCELLED in the transaction that deactivates its membership row locally:
+// nothing may pick it up afterwards. A published PENDING request is left as
+// it is (the caller refuses the deactivation in that case), and a SUCCEEDED
+// one is not a candidate.
+func cancelSalesforceWriteRequestTx(ctx context.Context, tx querier, id string) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE salesforce_write_request
+		SET status = 'CANCELLED', completed_on = COALESCE(completed_on, NOW()), updated_on = NOW()
+		WHERE id = $1 AND (status = 'FAILED' OR (status = 'PENDING' AND published_on IS NULL))`, id); err != nil {
+		return fmt.Errorf("salesforce write request: cancel: %w", err)
+	}
+	return nil
 }
 
 // completeSalesforceWriteRequestTx marks the request SUCCEEDED in the

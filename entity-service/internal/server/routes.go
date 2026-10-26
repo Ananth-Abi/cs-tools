@@ -609,6 +609,7 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 			Invitations: service.NewInvitationValidator(salesEntityClient, repository.NewAccountPartnerRepository(db)),
 			Admins:      repository.NewAccountAdminRepository(db),
 			UserCache:   userCacheInvalidator,
+			Partners:    repository.NewAccountPartnerRepository(db),
 		}
 		switch {
 		case cfg.HasSalesforceDeferredWrites():

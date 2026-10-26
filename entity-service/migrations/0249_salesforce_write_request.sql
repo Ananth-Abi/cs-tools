@@ -17,10 +17,13 @@
 -- salesforce_write_request records a portal membership write whose Salesforce
 -- half could not run because sales/sales-entity-service (or Salesforce behind
 -- it) was unavailable. The CSM rows are committed in the same transaction as
--- this row, with their sf_id columns NULL; the write is then carried out
--- asynchronously by entity-service's own Event Hub consumer
--- (internal/service/project_membership_deferred_write.go), which marks the
--- row SUCCEEDED in the transaction that stamps the Salesforce ids.
+-- this row, with their sf_id columns NULL. The write itself is then carried
+-- out by sales-entity-service: entity-service publishes the command
+-- (salesforce.membership_write.requested, topic SALESFORCE_WRITE_EVENT_HUB_TOPIC),
+-- Sales Entity performs the Salesforce write and answers on
+-- SALESFORCE_WRITE_RESULTS_TOPIC, and entity-service's results consumer
+-- (internal/service/project_membership_deferred_write.go) marks the row
+-- SUCCEEDED in the transaction that stamps the Salesforce ids, or FAILED.
 --
 -- WHY A ROW AND NOT ONLY AN EVENT: the event is the trigger, this row is the
 -- record. Event Hub commits the offset after a bounded number of attempts
@@ -32,8 +35,15 @@
 -- intent is the portal request as the admin made it (address, names, roles,
 -- state, integration-user flag), replayed verbatim by the consumer so the
 -- Salesforce record ends up exactly as a synchronous write would have made
--- it. Only the INVITE operation is deferred; role changes and deactivation
--- need the Salesforce ids and are refused (409) while a row here is PENDING.
+-- it. Only the INVITE operation is deferred; role changes and resend need
+-- the Salesforce ids and are refused (409) while a row here is PENDING or
+-- FAILED. Deactivation of a FAILED (or never published) row runs locally and
+-- moves the row to CANCELLED: there is no Salesforce half to undo.
+--
+-- retryable tells a FAILED row's two causes apart: TRUE when the retries ran
+-- out while Salesforce was unavailable (a re-publish would likely succeed),
+-- FALSE when Salesforce refused the write (the same request would be refused
+-- again). A sweep or an operator retries only the former.
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS salesforce_write_request (
@@ -56,8 +66,9 @@ CREATE TABLE IF NOT EXISTS salesforce_write_request (
     -- this row until something re-publishes it.
     published_on       TIMESTAMPTZ,
     completed_on       TIMESTAMPTZ,
+    retryable          BOOLEAN      NOT NULL DEFAULT FALSE,
     CONSTRAINT chk_salesforce_write_request_operation CHECK (operation IN ('INVITE')),
-    CONSTRAINT chk_salesforce_write_request_status    CHECK (status IN ('PENDING', 'SUCCEEDED', 'FAILED'))
+    CONSTRAINT chk_salesforce_write_request_status    CHECK (status IN ('PENDING', 'SUCCEEDED', 'FAILED', 'CANCELLED'))
 );
 
 -- One open request per membership row: a second deferral of the same row

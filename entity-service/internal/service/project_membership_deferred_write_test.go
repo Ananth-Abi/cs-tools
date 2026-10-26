@@ -39,11 +39,12 @@ type fakeWriteRequestRepo struct {
 	published []string
 	attempts  []string
 	failed    map[string]string
+	retryable map[string]bool
 	getErr    error
 }
 
 func newFakeWriteRequestRepo() *fakeWriteRequestRepo {
-	return &fakeWriteRequestRepo{requests: map[string]domain.SalesforceWriteRequest{}, failed: map[string]string{}}
+	return &fakeWriteRequestRepo{requests: map[string]domain.SalesforceWriteRequest{}, failed: map[string]string{}, retryable: map[string]bool{}}
 }
 
 func (f *fakeWriteRequestRepo) Get(_ context.Context, id string) (domain.SalesforceWriteRequest, error) {
@@ -67,6 +68,17 @@ func (f *fakeWriteRequestRepo) PendingForProjectContact(_ context.Context, proje
 	return nil, nil
 }
 
+func (f *fakeWriteRequestRepo) LatestForProjectContact(_ context.Context, projectContactID string) (*domain.SalesforceWriteRequest, error) {
+	var latest *domain.SalesforceWriteRequest
+	for _, r := range f.requests {
+		if r.ProjectContactID == projectContactID && (latest == nil || r.CreatedOn.After(latest.CreatedOn)) {
+			rr := r
+			latest = &rr
+		}
+	}
+	return latest, nil
+}
+
 func (f *fakeWriteRequestRepo) SyncStatusForProjectContacts(context.Context, []string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
@@ -81,8 +93,9 @@ func (f *fakeWriteRequestRepo) RecordAttempt(_ context.Context, id string, _ err
 	return nil
 }
 
-func (f *fakeWriteRequestRepo) MarkFailed(_ context.Context, id string, cause error) error {
+func (f *fakeWriteRequestRepo) MarkFailed(_ context.Context, id string, cause error, retryable bool) error {
 	f.failed[id] = cause.Error()
+	f.retryable[id] = retryable
 	if r, ok := f.requests[id]; ok {
 		r.Status = domain.SalesforceWriteRequestFailed
 		f.requests[id] = r
@@ -101,18 +114,30 @@ func (f *fakeInvitationValidator) Validate(context.Context, domain.MembershipWri
 	return f.err
 }
 
+// fakePartners answers the partner accounts of the project's account.
+type fakePartners struct {
+	partners []string
+	err      error
+}
+
+func (f *fakePartners) PartnerAccountSfIDs(context.Context, string) ([]string, error) {
+	return f.partners, f.err
+}
+
 // deferredHarness is the write harness with the deferred write wired: a
-// request ledger and a publisher for the command topic.
+// request ledger, a publisher for the command topic and the partner lookup.
 type deferredHarness struct {
 	*writeHarness
 	requests *fakeWriteRequestRepo
 	commands *fakeInvitePublisher
+	partners *fakePartners
 }
 
 func newDeferredHarness(t *testing.T) *deferredHarness {
 	t.Helper()
 	h := newInternalWriteHarness(t)
-	d := &deferredHarness{writeHarness: h, requests: newFakeWriteRequestRepo(), commands: &fakeInvitePublisher{}}
+	d := &deferredHarness{writeHarness: h, requests: newFakeWriteRequestRepo(), commands: &fakeInvitePublisher{},
+		partners: &fakePartners{partners: []string{"001000000000002PAR"}}}
 	d.svc = NewProjectMembershipWriteService(MembershipWriteDeps{
 		Memberships:              h.repo,
 		Steps:                    h.steps,
@@ -123,6 +148,7 @@ func newDeferredHarness(t *testing.T) *deferredHarness {
 		UserCache:                h.cache,
 		WriteRequests:            d.requests,
 		SalesforceWritePublisher: d.commands,
+		Partners:                 d.partners,
 	})
 	return d
 }
@@ -139,10 +165,11 @@ func (d *deferredHarness) pendingRequest(t *testing.T, intent domain.SalesforceW
 	if err != nil {
 		t.Fatal(err)
 	}
+	published := time.Now()
 	req := domain.SalesforceWriteRequest{
 		ID: writeRequestID, Operation: domain.SalesforceWriteOperationInvite,
 		ProjectID: writeProjectID, ProjectContactID: writeProjectContactID,
-		Email: writeEmail, Intent: raw, Status: domain.SalesforceWriteRequestPending,
+		Email: writeEmail, Intent: raw, Status: domain.SalesforceWriteRequestPending, PublishedOn: &published,
 	}
 	d.requests.requests[req.ID] = req
 	d.repo.existing = &domain.ProjectMembershipRow{
@@ -206,6 +233,11 @@ func TestDeferredWrite_InviteCommitsLocallyWhenSalesforceIsDown(t *testing.T) {
 		p.State != domain.MembershipStateInvited || p.ProjectSfID != writeProjectSfID || p.AccountSfID != writeAccountSfID {
 		t.Errorf("command intent = %+v", p)
 	}
+	// The accounts an existing contact may be adopted from: the project's
+	// own and its partners, read here because the consumer cannot.
+	if len(p.AllowedAccountSfIDs) != 2 || p.AllowedAccountSfIDs[0] != writeAccountSfID || p.AllowedAccountSfIDs[1] != "001000000000002PAR" {
+		t.Errorf("allowedAccountSfIds = %v", p.AllowedAccountSfIDs)
+	}
 	if len(d.requests.published) != 1 || d.requests.published[0] != writeRequestID {
 		t.Errorf("published_on not stamped: %v", d.requests.published)
 	}
@@ -223,7 +255,7 @@ func TestDeferredWrite_InviteDefersWhenTheValidatorCannotReachSalesforce(t *test
 	v := &fakeInvitationValidator{err: salesforceDown()}
 	d.svc = NewProjectMembershipWriteService(MembershipWriteDeps{
 		Memberships: d.repo, Steps: d.steps, SalesEntity: d.se, Publisher: d.pub, Access: alwaysUnrestrictedAccess{},
-		Invitations: v, WriteRequests: d.requests, SalesforceWritePublisher: d.commands,
+		Invitations: v, WriteRequests: d.requests, SalesforceWritePublisher: d.commands, Partners: d.partners,
 	})
 	got, err := d.svc.Invite(context.Background(), writeProjectID, inviteReq("Portal user"))
 	if err != nil {
@@ -281,7 +313,7 @@ func TestDeferredWrite_InviteDoesNotDeferARefusal(t *testing.T) {
 			d.svc = NewProjectMembershipWriteService(MembershipWriteDeps{
 				Memberships: d.repo, Steps: d.steps, SalesEntity: d.se, Publisher: d.pub, Access: alwaysUnrestrictedAccess{},
 				Invitations:   &fakeInvitationValidator{err: &apierror.ValidationError{Msg: "public e-mail domains cannot be invited"}},
-				WriteRequests: d.requests, SalesforceWritePublisher: d.commands,
+				WriteRequests: d.requests, SalesforceWritePublisher: d.commands, Partners: d.partners,
 			})
 		},
 	}
@@ -494,6 +526,106 @@ func TestDeferredWrite_CompleteRetriesWhenTheLedgerIsUnreadable(t *testing.T) {
 	}
 }
 
+// The consumer runs the invitation checks from the allowed accounts; if they
+// cannot be read, the invitation is not deferred unchecked.
+func TestDeferredWrite_InviteFailsWhenPartnersCannotBeRead(t *testing.T) {
+	d := newDeferredHarness(t)
+	d.se.searchErr = salesforceDown()
+	d.partners.err = errors.New("database unavailable")
+	if _, err := d.svc.Invite(context.Background(), writeProjectID, inviteReq("Portal user")); err == nil {
+		t.Fatal("want an error")
+	}
+	if len(d.repo.upserts) != 0 || len(d.commands.published) != 0 {
+		t.Error("nothing may be committed or published when the allowed accounts are unknown")
+	}
+}
+
+func TestDeferredWrite_FailedResultKeepsWhetherItIsRetryable(t *testing.T) {
+	for _, terminal := range []bool{true, false} {
+		d := newDeferredHarness(t)
+		req := d.pendingRequest(t, inviteIntent())
+		if err := completer(d).FailDeferredSalesforceWrite(context.Background(), events.SalesforceMembershipWriteFailedPayload{RequestID: req.ID, Reason: "x", Terminal: terminal}); err != nil {
+			t.Fatal(err)
+		}
+		if d.requests.retryable[req.ID] != !terminal {
+			t.Errorf("terminal=%v: retryable recorded as %v", terminal, d.requests.retryable[req.ID])
+		}
+	}
+	// Completion that could not finish on the last attempt is retryable; a
+	// refusal is not.
+	d := newDeferredHarness(t)
+	req := d.pendingRequest(t, inviteIntent())
+	result := d.completedResult(t, domain.MembershipStateInvited)
+	d.se.searchErr = salesforceDown()
+	_ = completer(d).CompleteDeferredSalesforceWrite(context.Background(), result, true)
+	if !d.requests.retryable[req.ID] {
+		t.Error("an exhausted completion must be retryable")
+	}
+}
+
+// ---- a stuck deferred write (FAILED or never published) -------------------
+
+func (d *deferredHarness) stuckRequest(t *testing.T, status domain.SalesforceWriteRequestStatus, published bool) domain.SalesforceWriteRequest {
+	t.Helper()
+	req := d.pendingRequest(t, inviteIntent())
+	req.Status = status
+	req.PublishedOn = nil
+	if published {
+		now := time.Now()
+		req.PublishedOn = &now
+	}
+	d.requests.requests[req.ID] = req
+	d.repo.existing.ProjectGroups = []string{"PORTAL_USER"}
+	return req
+}
+
+func TestDeferredWrite_DeactivateRunsLocallyWhenTheWriteIsStuck(t *testing.T) {
+	cases := map[string]struct {
+		status    domain.SalesforceWriteRequestStatus
+		published bool
+	}{
+		"request FAILED":                   {domain.SalesforceWriteRequestFailed, true},
+		"request PENDING, never published": {domain.SalesforceWriteRequestPending, false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			d := newDeferredHarness(t)
+			req := d.stuckRequest(t, tc.status, tc.published)
+			if err := d.svc.Deactivate(context.Background(), writeProjectID, writeEmail); err != nil {
+				t.Fatalf("a stuck row must be removable: %v", err)
+			}
+			if len(d.se.contactSearchs)+len(d.se.updates)+len(d.se.createdContact) != 0 {
+				t.Error("a local deactivation must not touch Salesforce")
+			}
+			if len(d.repo.upserts) != 1 {
+				t.Fatalf("want one upsert, got %d", len(d.repo.upserts))
+			}
+			in := d.repo.upserts[0]
+			if in.State != domain.MembershipStateDeactivated || in.MembershipSfID != "" || in.CancelsSalesforceWriteRequestID != req.ID || len(in.ProjectGroups) != 1 {
+				t.Errorf("upsert = %+v, want DEACTIVATED, no ids, groups kept, request %s cancelled", in, req.ID)
+			}
+			if len(d.repo.steps) != 0 || len(d.pub.published) != 0 {
+				t.Error("no onboarding step and no event for a local deactivation")
+			}
+		})
+	}
+}
+
+func TestDeferredWrite_StuckWriteRefusesRoleChangeAndResendWithItsOwnCode(t *testing.T) {
+	d := newDeferredHarness(t)
+	d.stuckRequest(t, domain.SalesforceWriteRequestFailed, true)
+	assertCode := func(t *testing.T, err error, code string) {
+		t.Helper()
+		var ce *apierror.ConflictError
+		if !errors.As(err, &ce) || ce.Code != code {
+			t.Fatalf("want 409 %s, got %v", code, err)
+		}
+	}
+	_, err := d.svc.UpdateRoles(context.Background(), writeProjectID, writeEmail, domain.UpdateProjectMembershipRolesRequest{Roles: []string{"Admin"}})
+	assertCode(t, err, apierror.CodeSalesforceSyncFailed)
+	assertCode(t, d.svc.ResendInvitation(context.Background(), writeProjectID, writeEmail), apierror.CodeSalesforceSyncFailed)
+}
+
 // ---- while the write is pending ------------------------------------------
 
 func TestDeferredWrite_OtherWritesAreRefusedWhilePending(t *testing.T) {
@@ -504,8 +636,8 @@ func TestDeferredWrite_OtherWritesAreRefusedWhilePending(t *testing.T) {
 	assertPending := func(t *testing.T, err error) {
 		t.Helper()
 		var ce *apierror.ConflictError
-		if !errors.As(err, &ce) || ce.Code != codeSalesforceSyncPending {
-			t.Fatalf("want 409 %s, got %v", codeSalesforceSyncPending, err)
+		if !errors.As(err, &ce) || ce.Code != apierror.CodeSalesforceSyncPending {
+			t.Fatalf("want 409 %s, got %v", apierror.CodeSalesforceSyncPending, err)
 		}
 	}
 	_, err := d.svc.UpdateRoles(ctx, writeProjectID, writeEmail, domain.UpdateProjectMembershipRolesRequest{Roles: []string{"Admin"}})
@@ -528,7 +660,7 @@ func TestDeferredWrite_MissingIdWithoutARequestIsTheOldRefusal(t *testing.T) {
 	d.repo.existing = &domain.ProjectMembershipRow{ProjectContactID: writeProjectContactID, Email: writeEmail, State: domain.MembershipStateInvited}
 	_, err := d.svc.UpdateRoles(context.Background(), writeProjectID, writeEmail, domain.UpdateProjectMembershipRolesRequest{Roles: []string{"Admin"}})
 	var ce *apierror.ConflictError
-	if !errors.As(err, &ce) || ce.Code == codeSalesforceSyncPending {
+	if !errors.As(err, &ce) || ce.Code == apierror.CodeSalesforceSyncPending {
 		t.Fatalf("want the generic missing-id 409, got %v", err)
 	}
 }

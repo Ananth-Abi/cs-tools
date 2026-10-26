@@ -1890,6 +1890,13 @@ this service keeps the decision, the ledger and both CSM transactions.
    publishes `salesforce.membership_write.completed` (both ids, the stored
    state and roles) or `.failed` (`terminal: true` for a Salesforce refusal,
    `false` when its retries ran out) to `SALESFORCE_WRITE_RESULTS_TOPIC`.
+   Before writing it runs the invitation checks the validator could not run
+   during the outage, from the command's `allowedAccountSfIds` (the project's
+   account and its partners, read here at deferral time) and `inviterEmail`:
+   at most one contact per address, the inviter on an allowed account, no
+   take-over of another account's live membership, the address's domain in
+   the base account's or a partner's domain list, and adoption of an existing
+   contact only from an allowed account. A refusal is a terminal `.failed`.
 4. `startSalesforceWriteResultConsumers` (`internal/server/salesforce_write_consumer.go`)
    consumes the results. `CompleteDeferredSalesforceWrite` re-reads the
    request (settled → acknowledge; this is what makes a duplicate result
@@ -1909,9 +1916,14 @@ this service keeps the decision, the ledger and both CSM transactions.
    terminal problem (the row is gone, the records do not add up) is FAILED at
    once.
 6. While a request is PENDING, `UpdateRoles`, `Deactivate` and
-   `ResendInvitation` answer **409** with code `SALESFORCE_SYNC_PENDING`
-   ("still being synced to Salesforce"); a row with no id and no request
-   keeps the generic missing-id refusal. The contact reads
+   `ResendInvitation` answer **409** with code `salesforce_sync_pending`
+   ("still being synced to Salesforce"). Once it is FAILED, or was never
+   published, `UpdateRoles` and `ResendInvitation` answer **409**
+   `salesforce_sync_failed` and `Deactivate` runs **locally** (no Salesforce
+   half to undo), closing the request as CANCELLED so nothing picks it up. A
+   row with no id and no request keeps the generic missing-id refusal.
+   `salesforce_write_request.retryable` tells a FAILED row's two causes apart
+   (retries exhausted vs. refused). The contact reads
    (`POST /projects/{id}/contacts/search`, `GET …/{contactId}`) carry
    `salesforceSync: PENDING | FAILED` from the latest request row, read
    best-effort through `WithProjectContactSalesforceSync`.

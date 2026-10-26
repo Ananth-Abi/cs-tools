@@ -42,9 +42,14 @@ const (
 	// CSM rows carry its ids.
 	SalesforceWriteRequestSucceeded SalesforceWriteRequestStatus = "SUCCEEDED"
 	// SalesforceWriteRequestFailed: Salesforce refused the write for a reason
-	// a retry will not fix (validation), or every retry tier was exhausted.
+	// a retry will not fix (validation; Retryable false), or every retry tier
+	// was exhausted while Salesforce was unavailable (Retryable true).
 	// Nothing retries it on its own; a later sweep or a manual retry does.
 	SalesforceWriteRequestFailed SalesforceWriteRequestStatus = "FAILED"
+	// SalesforceWriteRequestCancelled: the admin removed the contact before
+	// the Salesforce write happened (a FAILED or never-published request), so
+	// there is nothing left to write.
+	SalesforceWriteRequestCancelled SalesforceWriteRequestStatus = "CANCELLED"
 )
 
 // SalesforceSync is the membership-level view of the request status that
@@ -69,6 +74,13 @@ type SalesforceWriteIntent struct {
 	State               string   `json:"state"`
 	IsCsIntegrationUser bool     `json:"isCsIntegrationUser,omitempty"`
 	InviterEmail        string   `json:"inviterEmail,omitempty"`
+	// AllowedAccountSfIDs are the Salesforce accounts an existing contact may
+	// belong to and still be adopted: the project's own account and its
+	// partners, read from this database at deferral time. The invitation
+	// validator's Salesforce-side checks (domain allow-list, own-or-partner
+	// adoption) cannot run while Salesforce is down, so the consumer runs
+	// them from this list before it writes.
+	AllowedAccountSfIDs []string `json:"allowedAccountSfIds"`
 }
 
 // DeferredSalesforceWrite, set on a SalesforceMembershipUpsert, tells the
@@ -93,6 +105,9 @@ type SalesforceWriteRequest struct {
 	LastAttemptOn    *time.Time
 	PublishedOn      *time.Time
 	CompletedOn      *time.Time
-	CreatedOn        time.Time
-	UpdatedOn        time.Time
+	// Retryable is meaningful for FAILED only: true when the retries ran out
+	// while Salesforce was unavailable, false when it refused the write.
+	Retryable bool
+	CreatedOn time.Time
+	UpdatedOn time.Time
 }

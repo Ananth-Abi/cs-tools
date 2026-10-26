@@ -66,7 +66,10 @@ import (
 //     id, so the email waits for the id. FailDeferredSalesforceWrite marks
 //     the request FAILED from a .failed result.
 //  4. While the request is PENDING, role changes, deactivation and resend are
-//     refused with 409 SALESFORCE_SYNC_PENDING: they need the ids.
+//     refused with 409 salesforce_sync_pending: they need the ids. Once it is
+//     FAILED (or was never published) role changes and resend answer 409
+//     salesforce_sync_failed, and deactivation runs locally, closing the
+//     request as CANCELLED: there is no Salesforce half to undo.
 //
 // The request row is the durable record; the events are only the triggers.
 // A request whose result never arrives sits PENDING for an operator, a
@@ -76,12 +79,30 @@ import (
 // msgSalesforceSyncPending is what the caller is told when a write needs the
 // Salesforce ids a still-pending deferred write has not produced yet. 409,
 // like the other refusals of this kind, because retrying later WILL help and
-// the message says so.
+// the message says so. apierror.CodeSalesforceSyncPending is its code.
 const msgSalesforceSyncPending = "This contact is still being synced to Salesforce. Please try again in a few minutes."
 
-// codeSalesforceSyncPending is the machine-readable companion of
-// msgSalesforceSyncPending, so a portal can show its own wording.
-const codeSalesforceSyncPending = "SALESFORCE_SYNC_PENDING"
+// msgSalesforceSyncFailed is the refusal of a role change or resend on a row
+// whose deferred write ended FAILED or was never published: nothing is coming
+// that would produce the ids. Removing the contact is allowed (it runs
+// locally), which is what the message steers to.
+// apierror.CodeSalesforceSyncFailed is its code.
+const msgSalesforceSyncFailed = "This contact could not be synced to Salesforce. Remove them from the project and invite them again, or contact WSO2 support."
+
+// deferredWriteState is what a write on a row with no Salesforce id finds in
+// the request ledger.
+type deferredWriteState int
+
+const (
+	// deferredNone: no request at all -- the data-migration gap
+	// requireSalesforceLinks reports.
+	deferredNone deferredWriteState = iota
+	// deferredPending: a published request Sales Entity is working on.
+	deferredPending
+	// deferredStuck: FAILED, or PENDING but never published; nothing is
+	// coming without a re-publish.
+	deferredStuck
+)
 
 // DeferredSalesforceWriteCompleter is the results-consumer-facing half of the
 // deferred write; *projectMembershipWriteService implements it.
@@ -203,6 +224,8 @@ func (s *projectMembershipWriteService) publishDeferredWrite(ctx context.Context
 		Roles:               intent.Roles,
 		State:               intent.State,
 		IsCsIntegrationUser: intent.IsCsIntegrationUser,
+		InviterEmail:        intent.InviterEmail,
+		AllowedAccountSfIDs: intent.AllowedAccountSfIDs,
 		RequestedOn:         time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
@@ -223,27 +246,81 @@ func (s *projectMembershipWriteService) publishDeferredWrite(ctx context.Context
 		"requestId", requestID, "projectId", projectID, "projectContactId", projectContactID)
 }
 
-// refuseWhileSyncPending is the 409 a role change, deactivation or resend
-// gets while the membership's deferred write is still owed. It only speaks
-// up for a row with no Salesforce id AND an open request: a row with no id
-// and no request is the data-migration gap requireSalesforceLinks reports.
-func (s *projectMembershipWriteService) refuseWhileSyncPending(ctx context.Context, operation string, existing *domain.ProjectMembershipRow) error {
+// deferredWrite reads the latest request for a row with no Salesforce id and
+// says what state the deferred write is in. A row with an id, or no ledger,
+// or a ledger read failure, answers deferredNone: the caller then falls
+// through to the ordinary missing-id refusal, so a ledger problem never
+// lets a write run without ids.
+func (s *projectMembershipWriteService) deferredWrite(ctx context.Context, operation string, existing *domain.ProjectMembershipRow) (*domain.SalesforceWriteRequest, deferredWriteState) {
 	if existing == nil || s.deps.WriteRequests == nil || strings.TrimSpace(existing.MembershipSfID) != "" {
-		return nil
+		return nil, deferredNone
 	}
-	req, err := s.deps.WriteRequests.PendingForProjectContact(ctx, existing.ProjectContactID)
+	req, err := s.deps.WriteRequests.LatestForProjectContact(ctx, existing.ProjectContactID)
 	if err != nil {
-		// Fall through to the ordinary missing-id refusal rather than fail
-		// the request on a ledger read: either way the write does not run.
 		slog.WarnContext(ctx, "membership write: could not read the salesforce write request ledger", "operation", operation, "projectContactId", existing.ProjectContactID, "err", err)
-		return nil
+		return nil, deferredNone
 	}
 	if req == nil {
-		return nil
+		return nil, deferredNone
 	}
-	slog.InfoContext(ctx, "membership write refused: the membership's Salesforce write is still pending",
-		"operation", operation, "projectContactId", existing.ProjectContactID, "requestId", req.ID, "attempts", req.Attempts)
-	return &apierror.ConflictError{Msg: msgSalesforceSyncPending, Code: codeSalesforceSyncPending}
+	switch {
+	case req.Status == domain.SalesforceWriteRequestPending && req.PublishedOn != nil:
+		return req, deferredPending
+	case req.Status == domain.SalesforceWriteRequestPending || req.Status == domain.SalesforceWriteRequestFailed:
+		return req, deferredStuck
+	default:
+		// SUCCEEDED with no id on the row (the row was re-created?), or
+		// CANCELLED: the generic refusal applies.
+		return req, deferredNone
+	}
+}
+
+// refuseUnsynced is the 409 a role change or resend gets on a row whose
+// deferred write is PENDING (try again later) or stuck (remove and re-invite).
+// Both need the Salesforce ids. A row with no id and no request keeps the
+// generic missing-id refusal from requireSalesforceLinks.
+func (s *projectMembershipWriteService) refuseUnsynced(ctx context.Context, operation string, existing *domain.ProjectMembershipRow) error {
+	req, state := s.deferredWrite(ctx, operation, existing)
+	switch state {
+	case deferredPending:
+		slog.InfoContext(ctx, "membership write refused: the membership's Salesforce write is still pending",
+			"operation", operation, "projectContactId", existing.ProjectContactID, "requestId", req.ID, "attempts", req.Attempts)
+		return &apierror.ConflictError{Msg: msgSalesforceSyncPending, Code: apierror.CodeSalesforceSyncPending}
+	case deferredStuck:
+		slog.InfoContext(ctx, "membership write refused: the membership's Salesforce write failed or was never published",
+			"operation", operation, "projectContactId", existing.ProjectContactID, "requestId", req.ID, "status", req.Status, "published", req.PublishedOn != nil)
+		return &apierror.ConflictError{Msg: msgSalesforceSyncFailed, Code: apierror.CodeSalesforceSyncFailed}
+	}
+	return nil
+}
+
+// localDeactivationUpsert is the database half of removing a contact whose
+// deferred write is stuck: the row and its groups as they are, state
+// DEACTIVATED, no Salesforce ids (there are none), and the request closed as
+// CANCELLED in the same transaction so nothing picks it up later.
+func localDeactivationUpsert(wc repository.MembershipWriteContext, existing *domain.ProjectMembershipRow, email, requestID string) domain.SalesforceMembershipUpsert {
+	accountSfID := wc.Target.AccountSfID
+	roles := mapGlobalRoles(&salesentity.ContactAccount{ID: &accountSfID}, existing.IsIntegrationUser)
+	return domain.SalesforceMembershipUpsert{
+		State:                           domain.MembershipStateDeactivated,
+		Type:                            existing.Type,
+		Email:                           email,
+		Actor:                           domain.PortalMembershipWriteActor,
+		ProjectID:                       wc.Target.ProjectID,
+		ContactEmail:                    email,
+		ContactFirstName:                existing.FirstName,
+		ContactLastName:                 existing.LastName,
+		ContactAccountSfID:              wc.Target.AccountSfID,
+		IsCsIntegrationUser:             existing.IsIntegrationUser,
+		ProjectSfID:                     wc.Target.ProjectSfID,
+		ProjectKey:                      wc.Target.ProjectKey,
+		GlobalRoles:                     roles.Grant,
+		ManagedGlobalRoles:              roles.ManagedGlobal,
+		ManagedAdminRoles:               roles.ManagedAdmin,
+		AdminRoleName:                   roles.AdminRole,
+		ProjectGroups:                   existing.ProjectGroups,
+		CancelsSalesforceWriteRequestID: requestID,
+	}
 }
 
 // isTerminalCompletionError says a completion failure a retry would not
@@ -279,7 +356,7 @@ func (s *projectMembershipWriteService) CompleteDeferredSalesforceWrite(ctx cont
 		return nil
 	}
 	if strings.TrimSpace(result.MembershipSfID) == "" || strings.TrimSpace(result.ContactSfID) == "" {
-		return s.failDeferredWrite(ctx, req, errors.New("completed result carries no Salesforce ids"), logAttrs)
+		return s.failDeferredWrite(ctx, req, errors.New("completed result carries no Salesforce ids"), false, logAttrs)
 	}
 
 	// The records as Salesforce holds them, read back the way the Salesforce
@@ -302,7 +379,7 @@ func (s *projectMembershipWriteService) CompleteDeferredSalesforceWrite(ctx cont
 	}
 	in, _, err := buildMembershipUpsert(pc, contact)
 	if err != nil {
-		return s.failDeferredWrite(ctx, req, err, logAttrs)
+		return s.failDeferredWrite(ctx, req, err, false, logAttrs)
 	}
 	in.ProjectID = req.ProjectID
 	in.Actor = domain.PortalMembershipWriteActor
@@ -387,14 +464,14 @@ func (s *projectMembershipWriteService) CompleteDeferredSalesforceWrite(ctx cont
 // when it arrives; the request row then just needs an operator).
 func (s *projectMembershipWriteService) completionProblem(ctx context.Context, req domain.SalesforceWriteRequest, result events.SalesforceMembershipWriteCompletedPayload, cause error, lastAttempt bool, logAttrs []any) error {
 	if isTerminalCompletionError(cause) {
-		return s.failDeferredWrite(ctx, req, cause, logAttrs)
+		return s.failDeferredWrite(ctx, req, cause, false, logAttrs)
 	}
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if lastAttempt {
 		slog.ErrorContext(ctx, "deferred salesforce write: could not complete the request on the final attempt; request marked FAILED", append(logAttrs, "err", cause)...)
 		if err := s.deps.WriteRequests.MarkFailed(recordCtx, req.ID,
-			fmt.Errorf("completion failed after retries (Salesforce has contact %s, membership %s): %w", result.ContactSfID, result.MembershipSfID, cause)); err != nil {
+			fmt.Errorf("completion failed after retries (Salesforce has contact %s, membership %s): %w", result.ContactSfID, result.MembershipSfID, cause), true); err != nil {
 			slog.ErrorContext(ctx, "deferred salesforce write: mark request failed", append(logAttrs, "err", err)...)
 		}
 		return cause
@@ -429,17 +506,19 @@ func (s *projectMembershipWriteService) FailDeferredSalesforceWrite(ctx context.
 	if reason == "" {
 		reason = "sales-entity-service reported the write as failed"
 	}
-	return s.failDeferredWrite(ctx, req, errors.New(reason), logAttrs)
+	// Terminal (a refusal) is not retryable; an outage that outlived the
+	// retries is. The row keeps the distinction for the sweep / operator.
+	return s.failDeferredWrite(ctx, req, errors.New(reason), !failed.Terminal, logAttrs)
 }
 
 // failDeferredWrite closes the request as FAILED and acknowledges the record
 // (nil). The rows stay as they are: the person is a contact in CSM, the
 // portal shows the failed sync, and an operator decides.
-func (s *projectMembershipWriteService) failDeferredWrite(ctx context.Context, req domain.SalesforceWriteRequest, cause error, logAttrs []any) error {
-	slog.ErrorContext(ctx, "deferred salesforce write: request marked FAILED", append(logAttrs, "err", cause)...)
+func (s *projectMembershipWriteService) failDeferredWrite(ctx context.Context, req domain.SalesforceWriteRequest, cause error, retryable bool, logAttrs []any) error {
+	slog.ErrorContext(ctx, "deferred salesforce write: request marked FAILED", append(logAttrs, "retryable", retryable, "err", cause)...)
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if err := s.deps.WriteRequests.MarkFailed(recordCtx, req.ID, cause); err != nil {
+	if err := s.deps.WriteRequests.MarkFailed(recordCtx, req.ID, cause, retryable); err != nil {
 		slog.ErrorContext(ctx, "deferred salesforce write: mark request failed", append(logAttrs, "err", err)...)
 		// Without the FAILED mark the row would stay PENDING; let the
 		// consumer retry the mark.

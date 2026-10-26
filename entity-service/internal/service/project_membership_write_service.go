@@ -99,6 +99,10 @@ type MembershipWriteDeps struct {
 	// the invitation with 503 as before.
 	WriteRequests            repository.SalesforceWriteRequestRepository
 	SalesforceWritePublisher EventPublisherService
+	// Partners answers which accounts partner the project's, read at
+	// deferral time so the command can carry the accounts an existing
+	// contact may be adopted from. Required when the two above are set.
+	Partners repository.AccountPartnerRepository
 }
 
 type projectMembershipWriteService struct {
@@ -297,8 +301,21 @@ func (s *projectMembershipWriteService) Invite(ctx context.Context, projectID st
 			if !s.canDeferInvite(ctx, wc, cause) {
 				return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{}, cause
 			}
+			// The accounts the consumer may adopt an existing contact from
+			// and whose domain lists may admit the address: the project's
+			// and its partners, from this database. Without them the
+			// consumer cannot run the invitation checks, so a failed read
+			// fails the invitation rather than deferring it unchecked.
+			allowed := []string{wc.Target.AccountSfID}
+			if s.deps.Partners != nil {
+				partners, perr := s.deps.Partners.PartnerAccountSfIDs(ctx, wc.Target.AccountID)
+				if perr != nil {
+					return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{}, perr
+				}
+				allowed = append(allowed, partners...)
+			}
 			slog.WarnContext(ctx, "membership write: Salesforce unavailable; deferring the invitation's Salesforce half",
-				"projectId", projectID, "err", cause)
+				"projectId", projectID, "allowedAccounts", len(allowed), "err", cause)
 			deferredTarget = wc.Target
 			deferredIntent = &domain.SalesforceWriteIntent{
 				Email:               email,
@@ -308,6 +325,7 @@ func (s *projectMembershipWriteService) Invite(ctx context.Context, projectID st
 				State:               state,
 				IsCsIntegrationUser: req.IsCsIntegrationUser,
 				InviterEmail:        req.InviterEmail,
+				AllowedAccountSfIDs: allowed,
 			}
 			// No onboarding step: the ledger is keyed by the membership id
 			// this write does not have yet (the repository skips a blank).
@@ -545,7 +563,7 @@ func (s *projectMembershipWriteService) UpdateRoles(ctx context.Context, project
 			return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{},
 				&apierror.NotFoundError{Msg: "contact not found on this project"}
 		}
-		if err := s.refuseWhileSyncPending(ctx, membershipOpUpdateRoles, wc.Existing); err != nil {
+		if err := s.refuseUnsynced(ctx, membershipOpUpdateRoles, wc.Existing); err != nil {
 			return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{}, err
 		}
 		if err := requireSalesforceLinks(ctx, membershipOpUpdateRoles, wc); err != nil {
@@ -594,13 +612,30 @@ func (s *projectMembershipWriteService) Deactivate(ctx context.Context, projectI
 	}
 
 	var written salesforceWriteRecord
+	// localOnly: the deactivation ran without a Salesforce half (see below);
+	// a commit failure then has no orphan to record.
+	var localOnly bool
 	res, err := s.deps.Memberships.UpsertWithin(ctx, projectID, normalized, func(ctx context.Context, wc repository.MembershipWriteContext) (domain.SalesforceMembershipUpsert, domain.UpsertOnboardingStepRequest, error) {
 		if wc.Existing == nil {
 			return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{},
 				&apierror.NotFoundError{Msg: "contact not found on this project"}
 		}
-		if err := s.refuseWhileSyncPending(ctx, membershipOpDeactivate, wc.Existing); err != nil {
-			return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{}, err
+		// A row whose deferred write is still PENDING keeps its ids coming:
+		// refuse. One whose write FAILED or was never published has no
+		// Salesforce half to undo: deactivate it locally and close the
+		// request, so an admin is never stuck with a contact they cannot
+		// remove (and can invite again).
+		switch req, state := s.deferredWrite(ctx, membershipOpDeactivate, wc.Existing); state {
+		case deferredPending:
+			slog.InfoContext(ctx, "membership write refused: the membership's Salesforce write is still pending",
+				"operation", membershipOpDeactivate, "projectContactId", wc.Existing.ProjectContactID, "requestId", req.ID)
+			return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{},
+				&apierror.ConflictError{Msg: msgSalesforceSyncPending, Code: apierror.CodeSalesforceSyncPending}
+		case deferredStuck:
+			slog.InfoContext(ctx, "membership write: deactivating a contact whose Salesforce write never happened; request cancelled",
+				"projectContactId", wc.Existing.ProjectContactID, "requestId", req.ID, "status", req.Status)
+			localOnly = true
+			return localDeactivationUpsert(wc, wc.Existing, normalized, req.ID), domain.UpsertOnboardingStepRequest{}, nil
 		}
 		if err := requireSalesforceLinks(ctx, membershipOpDeactivate, wc); err != nil {
 			return domain.SalesforceMembershipUpsert{}, domain.UpsertOnboardingStepRequest{}, err
@@ -625,6 +660,9 @@ func (s *projectMembershipWriteService) Deactivate(ctx context.Context, projectI
 		return in, membershipStep(in, rec), nil
 	})
 	if err != nil {
+		if localOnly && errors.Is(err, repository.ErrMembershipCommitFailed) {
+			return &apierror.ServiceUnavailableError{Msg: "the change could not be saved; please try again"}
+		}
 		return s.handleWriteError(ctx, membershipOpDeactivate, projectID, normalized, written, err)
 	}
 	invalidateUser(ctx, s.deps.UserCache, res.UserID, normalized)
@@ -661,7 +699,7 @@ func (s *projectMembershipWriteService) ResendInvitation(ctx context.Context, pr
 	}
 	// A deferred invitation has nothing to re-send yet: no invitation went
 	// out, and none will until its Salesforce write lands.
-	if err := s.refuseWhileSyncPending(ctx, membershipOpResend, &row); err != nil {
+	if err := s.refuseUnsynced(ctx, membershipOpResend, &row); err != nil {
 		return err
 	}
 	// The membership id keys the event and the cooldown, and the contact id

@@ -955,7 +955,11 @@ type SalesforceMembershipUpsert struct {
 	// set, the row's account_contact is moved to the resolved account and
 	// the row itself is updated in place. Set only by the deferred-write
 	// completion.
-	AdoptProjectContactID string
+	AdoptProjectContactID string // CancelsSalesforceWriteRequestID, when set, is the salesforce_write_request
+	// row a local-only deactivation closes as CANCELLED in the same
+	// transaction: the row was FAILED or never published, so there is no
+	// Salesforce half to undo and nothing may pick the request up later.
+	CancelsSalesforceWriteRequestID string
 }
 
 // SalesforceMembershipUpsertResult reports what the upsert resolved or created.

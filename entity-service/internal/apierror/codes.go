@@ -118,3 +118,18 @@ const (
 	// lifecycle still moves. Nothing was written.
 	CodeChangeRequestApprovedReadOnly = "change_request_approved_read_only"
 )
+
+// The refusals of a portal membership write (PATCH / DELETE /
+// projects/{id}/contacts/{email} and the resend) while the contact's
+// Salesforce half is owed by a deferred write (see
+// service/project_membership_deferred_write.go). The portal tells them
+// apart from the generic missing-id refusal, which has no code.
+const (
+	// CodeSalesforceSyncPending: the deferred write is still PENDING; the
+	// write needs the Salesforce ids it will produce. Retrying later helps.
+	CodeSalesforceSyncPending = "salesforce_sync_pending"
+	// CodeSalesforceSyncFailed: the deferred write ended FAILED (or was
+	// never published). Role changes and resend are refused; removing the
+	// contact is allowed and runs locally.
+	CodeSalesforceSyncFailed = "salesforce_sync_failed"
+)

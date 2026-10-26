@@ -58,6 +58,16 @@ type SalesforceMembershipWriteRequestedPayload struct {
 	Roles               []string `json:"roles"`
 	State               string   `json:"state"`
 	IsCsIntegrationUser bool     `json:"isCsIntegrationUser,omitempty"`
+	// InviterEmail is set when a customer admin invited (empty for CSM
+	// staff), and AllowedAccountSfIDs are the project's account and its
+	// partners. Together they let Sales Entity run the invitation checks
+	// the validator could not run while Salesforce was down: the inviter
+	// must belong to an allowed account, an existing contact is adopted
+	// only from an allowed account, and the address's domain must be in the
+	// base account's (the inviter's, else the project's) or a partner's
+	// domain list.
+	InviterEmail        string   `json:"inviterEmail,omitempty"`
+	AllowedAccountSfIDs []string `json:"allowedAccountSfIds"`
 	RequestedOn         string   `json:"requestedOn,omitempty"`
 }
 

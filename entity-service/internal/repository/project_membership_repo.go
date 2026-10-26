@@ -376,6 +376,11 @@ func upsertWithinTx(ctx context.Context, tx pgx.Tx, projectID, email string, pla
 			return domain.SalesforceMembershipUpsertResult{}, err
 		}
 	}
+	if in.CancelsSalesforceWriteRequestID != "" {
+		if err := cancelSalesforceWriteRequestTx(ctx, tx, in.CancelsSalesforceWriteRequestID); err != nil {
+			return domain.SalesforceMembershipUpsertResult{}, err
+		}
+	}
 	return res, nil
 }
 
@@ -614,6 +619,20 @@ func upsertMembershipTx(ctx context.Context, tx pgx.Tx, in domain.SalesforceMemb
 	res.AccountContactID, res.CreatedAccountContact, err = upsertAccountContact(ctx, tx, in.ContactSfID, res.AccountID, userName, in.IsPrimaryContact, actor, in.AdoptProjectContactID)
 	if err != nil {
 		return res, err
+	}
+	// The deferred row's own account_contact, when the user already had one
+	// on the resolved account (so the lookup above found that instead of
+	// adopting): it would otherwise stay behind, active, with no sf_id,
+	// as a second account_contact for the same user. Deactivate it; the
+	// project_contact is re-pointed at the resolved one below.
+	if adopt := strings.TrimSpace(in.AdoptProjectContactID); adopt != "" {
+		if _, err := tx.Exec(ctx, `
+			UPDATE account_contact ac SET is_active = FALSE, updated_on = NOW(), updated_by = $3
+			FROM project_contact pc
+			WHERE pc.id = $1 AND ac.id = pc.account_contact_id AND ac.id <> $2 AND ac.sf_id IS NULL`,
+			adopt, res.AccountContactID, actor); err != nil {
+			return res, fmt.Errorf("upsert membership: retire deferred account_contact: %w", err)
+		}
 	}
 
 	// 6. project_contact — by sf_id, then (project, account_contact), else

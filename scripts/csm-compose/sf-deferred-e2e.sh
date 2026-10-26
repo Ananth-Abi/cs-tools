@@ -22,7 +22,7 @@
 #   1. switch the mock sales-entity-service into an outage
 #   2. invite a brand-new address -> 201 with salesforceSync PENDING, rows
 #      committed with NULL sf_id, a PENDING salesforce_write_request
-#   3. a role change while pending -> 409 SALESFORCE_SYNC_PENDING
+#   3. a role change while pending -> 409 salesforce_sync_pending
 #   4. end the outage -> the real sales-entity-service consumer writes the
 #      fake Salesforce and answers on salesforce-write-results; entity-service
 #      stamps the ids, marks the request SUCCEEDED, publishes
@@ -151,7 +151,7 @@ case "${1:-run}" in
     say "3. a role change while pending is refused"
     RESP="$(curl -sS -o "$WORK/patch.json" -w '%{http_code}' -X PATCH "$ENTITY/projects/$PROJECT_ID/contacts/$EMAIL" \
       -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' -d '{"roles":["Admin"]}')"
-    [[ "$RESP" == "409" ]] && grep -q SALESFORCE_SYNC_PENDING "$WORK/patch.json" || { cat "$WORK/patch.json"; fail "PATCH returned $RESP"; }
+    [[ "$RESP" == "409" ]] && grep -q salesforce_sync_pending "$WORK/patch.json" || { cat "$WORK/patch.json"; fail "PATCH returned $RESP"; }
     ok "409 $(cat "$WORK/patch.json")"
     TRIES="$("${COMPOSE[@]}" logs --since 3m sales-entity-service 2>/dev/null | grep -c "Salesforce unavailable; will retry" || true)"
     ok "sales-entity-service consumer has made ${TRIES:-0} failed attempt(s) so far against the down Salesforce"
@@ -235,6 +235,17 @@ print(len(contacts), memberships)")"
       -d "{\"filters\":{\"searchQuery\":\"$EMAIL\"},\"pagination\":{\"limit\":5,\"offset\":0}}")"
     [[ "$LIST" == *'"salesforceSync":"FAILED"'* ]] || { echo "$LIST"; fail "contact search does not show salesforceSync FAILED"; }
     ok "contact search shows salesforceSync FAILED; rows kept with NULL sf_id ($(sql "SELECT COALESCE(sf_id,'<null>') FROM project_contact WHERE id='$PC_ID'"))"
+    [[ "$(sql "SELECT retryable FROM salesforce_write_request WHERE project_contact_id='$PC_ID'")" == "t" ]] || fail "an outage that outlived the retries must be recorded as retryable"
+    ok "request recorded as retryable (an outage, not a refusal)"
+    RESP="$(curl -sS -o "$WORK/patch.json" -w '%{http_code}' -X PATCH "$ENTITY/projects/$PROJECT_ID/contacts/$EMAIL" \
+      -H "x-jwt-assertion: $TOKEN" -H 'Content-Type: application/json' -d '{"roles":["Admin"]}')"
+    [[ "$RESP" == "409" ]] && grep -q salesforce_sync_failed "$WORK/patch.json" || { cat "$WORK/patch.json"; fail "PATCH on a failed row returned $RESP"; }
+    ok "role change on the failed row -> 409 salesforce_sync_failed"
+    RESP="$(curl -sS -o "$WORK/delete.json" -w '%{http_code}' -X DELETE "$ENTITY/projects/$PROJECT_ID/contacts/$EMAIL" -H "x-jwt-assertion: $TOKEN")"
+    [[ "$RESP" == "204" ]] || { cat "$WORK/delete.json"; fail "DELETE on the failed row returned $RESP, want 204"; }
+    [[ "$(sql "SELECT state FROM project_contact WHERE id='$PC_ID'")" == "DEACTIVATED" ]] || fail "the row was not deactivated"
+    [[ "$(sql "SELECT status FROM salesforce_write_request WHERE project_contact_id='$PC_ID'")" == "CANCELLED" ]] || fail "the request was not cancelled"
+    ok "the admin removed the contact locally: row DEACTIVATED, request CANCELLED, Salesforce untouched"
     outage false
     say "exhaust scenario passed for $EMAIL"
     ;;
