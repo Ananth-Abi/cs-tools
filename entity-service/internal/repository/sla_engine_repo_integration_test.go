@@ -579,3 +579,90 @@ func TestSLAEngineIntegration_SetPausedFreezesElapsedTime(t *testing.T) {
 		t.Errorf("business_elapsed_percentage after a duplicate pause call = %v, want it unchanged at ~%v", percentAfterDuplicate, percent)
 	}
 }
+
+// TestSLAEngineIntegration_CompleteClockSubtractsPauseDuration is the
+// regression test for a real, reported bug: CompleteClock used a bare
+// "NOW() - start_on" with no account at all for s.pause_duration, so a
+// clock paused for a real stretch of time and then resumed and completed
+// had its final business_duration/business_elapsed_percentage count that
+// entire pause as elapsed working time. A clock paused for roughly an hour
+// mid-way through, then resumed and immediately completed, must show the
+// SAME elapsed time it had right before the pause (the pause contributed
+// nothing), not elapsed-before-pause plus the pause length.
+func TestSLAEngineIntegration_CompleteClockSubtractsPauseDuration(t *testing.T) {
+	pool := caseStatsPool(t)
+	seedSLAEngineWorkItem(t, pool)
+	ctx := repository.WithSystemIdentity(context.Background())
+	scoped := repository.NewScoped(pool)
+	repo := repository.NewSLAEngineRepository(scoped)
+
+	policy, err := repo.FindPolicyByName(ctx, "P0 - Workaround (Managed Services)", "WORKAROUND")
+	if err != nil {
+		t.Fatalf("FindPolicyByName(workaround): %v", err)
+	}
+	if _, err := repo.RegisterClock(ctx, slaEngineIntegrationWorkItemID, policy); err != nil {
+		t.Fatalf("RegisterClock setup: %v", err)
+	}
+	elapsedBeforePause := 10 * time.Minute
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET start_on = NOW() - $2::interval WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(elapsedBeforePause)); err != nil {
+		t.Fatalf("push start_on back: %v", err)
+	}
+
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", true); err != nil {
+		t.Fatalf("SetPaused(true): %v", err)
+	}
+	// Simulate the pause having lasted roughly an hour, without a real
+	// sleep: push BOTH start_on and paused_on back by that much, together --
+	// pushing paused_on back alone (an earlier version of this test, caught
+	// failing against a real database) makes the resume below accumulate a
+	// full hour of pause_duration while the clock's total real lifespan
+	// (NOW() - start_on) is still only ~10 minutes, an internally
+	// inconsistent timeline no real clock could ever have (the formula then
+	// correctly reports a negative elapsed time for an impossible clock --
+	// that's the formula working, not a bug). Shifting start_on by the same
+	// amount keeps paused_on - start_on fixed at elapsedBeforePause (the
+	// real invariant this test cares about) while making the clock's total
+	// lifespan long enough to have genuinely contained an hour-long pause.
+	pauseLength := time.Hour
+	if _, err := scoped.Exec(ctx,
+		`UPDATE sla SET start_on = start_on - $2::interval, paused_on = paused_on - $2::interval
+		  WHERE work_item_id = $1::uuid`,
+		slaEngineIntegrationWorkItemID, intervalLiteral(pauseLength)); err != nil {
+		t.Fatalf("push start_on/paused_on back: %v", err)
+	}
+	if _, err := repo.SetPaused(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND", false); err != nil {
+		t.Fatalf("SetPaused(false) (resume): %v", err)
+	}
+
+	completed, err := repo.CompleteClock(ctx, slaEngineIntegrationWorkItemID, "WORKAROUND")
+	if err != nil {
+		t.Fatalf("CompleteClock: %v", err)
+	}
+	if !completed {
+		t.Fatal("CompleteClock reported no row updated")
+	}
+
+	var percent, elapsedSeconds, pauseDurationSeconds float64
+	if err := scoped.QueryRow(ctx, `SELECT business_elapsed_percentage,
+		EXTRACT(EPOCH FROM business_duration), EXTRACT(EPOCH FROM pause_duration)
+		FROM sla WHERE work_item_id = $1::uuid`, slaEngineIntegrationWorkItemID).
+		Scan(&percent, &elapsedSeconds, &pauseDurationSeconds); err != nil {
+		t.Fatalf("scan after complete: %v", err)
+	}
+
+	if diff := pauseDurationSeconds - pauseLength.Seconds(); diff < -2 || diff > 2 {
+		t.Fatalf("pause_duration = %vs, want ~%vs -- the resume above should have accumulated it", pauseDurationSeconds, pauseLength.Seconds())
+	}
+
+	wantElapsed := elapsedBeforePause.Seconds()
+	const tolerance = 2.0
+	if diff := elapsedSeconds - wantElapsed; diff < -tolerance || diff > tolerance {
+		t.Errorf("business_duration at completion = %vs, want ~%vs (elapsed-before-pause only -- the hour spent paused must not count)", elapsedSeconds, wantElapsed)
+	}
+	wantPercent := wantElapsed / policy.Duration.Seconds() * 100
+	if diff := percent - wantPercent; diff < -0.5 || diff > 0.5 {
+		t.Errorf("business_elapsed_percentage at completion = %v, want ~%v", percent, wantPercent)
+	}
+}
