@@ -10564,6 +10564,11 @@ components:
           type: string
         isCsAdmin:
           type: boolean
+          description: The project-level Admin role. This is the editable flag.
+        isAccountAdmin:
+          type: boolean
+          readOnly: true
+          description: Read-only. True when the contact holds an account-level admin role. Never read on the write path.
         isLead:
           type: boolean
         isCsIntegrationUser:
