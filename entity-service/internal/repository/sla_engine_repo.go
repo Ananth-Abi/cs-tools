@@ -365,15 +365,44 @@ func (r *slaEngineRepo) RegisterClock(ctx context.Context, workItemID string, po
 // see that constant's own doc comment: a BREACHED clock is exactly the
 // case this needs to still match, so its real completing event (whenever
 // it finally happens) finalizes it instead of silently matching zero rows.
+// completedElapsedExpr is the wall-clock time between a clock's start and
+// its completion MINUS every moment it spent paused along the way -- the
+// same pause-subtraction sla_live and SetPaused's own pause-time freeze
+// already apply, just evaluated at completion instead of at read time or
+// pause time. Before this, CompleteClock used a bare "NOW() - s.start_on",
+// completely ignoring s.pause_duration -- a real, reported bug: a clock
+// paused for, say, two days and then resumed and completed showed a final
+// business_duration/business_elapsed_percentage that counted those two
+// paused days as elapsed working time. COALESCE(s.pause_duration, INTERVAL
+// '0') covers every already-closed pause segment; the CASE covers the rare
+// defensive case of a clock somehow still marked paused (paused_on IS NOT
+// NULL) at the exact moment it's force-completed -- every real caller
+// (ApplyStateEffects' CLOSED branch) already resumes a clock before
+// completing it, but this makes the formula correct regardless of calling
+// order, the same way reconcileClock's own pauseOffset does on the
+// csm-notification-service side for the identical reason.
+const completedElapsedExpr = `(NOW() - s.start_on - COALESCE(s.pause_duration, INTERVAL '0') -
+		    CASE WHEN s.paused_on IS NOT NULL THEN NOW() - s.paused_on ELSE INTERVAL '0' END)`
+
+// CompleteClock also finalizes any open pause segment (paused_on IS NOT
+// NULL) into pause_duration and clears paused_on. ApplyStateEffects'
+// CLOSED branch always resumes a clock before completing it, but that
+// resume can itself fail and be logged-and-ignored -- this keeps a clock
+// that reaches CompleteClock still paused from ending up ACHIEVED with
+// paused_on left set, which would make GetClockState report a finished
+// clock as paused with an incomplete pause total.
 func (r *slaEngineRepo) CompleteClock(ctx context.Context, workItemID, target string) (bool, error) {
 	const query = `
 		UPDATE sla s
 		SET stage = 'ACHIEVED'::sla_stage_enum, end_on = NOW(), is_active = FALSE,
 		    business_elapsed_percentage = GREATEST(0,
-		        EXTRACT(EPOCH FROM (NOW() - s.start_on)) / NULLIF(EXTRACT(EPOCH FROM s.duration), 0) * 100
+		        EXTRACT(EPOCH FROM ` + completedElapsedExpr + `) / NULLIF(EXTRACT(EPOCH FROM s.duration), 0) * 100
 		    ),
-		    business_duration = NOW() - s.start_on,
-		    remaining_business_duration = GREATEST(s.duration - (NOW() - s.start_on), INTERVAL '0'),
+		    business_duration = ` + completedElapsedExpr + `,
+		    remaining_business_duration = GREATEST(s.duration - ` + completedElapsedExpr + `, INTERVAL '0'),
+		    pause_duration = COALESCE(s.pause_duration, INTERVAL '0') +
+		        CASE WHEN s.paused_on IS NOT NULL THEN NOW() - s.paused_on ELSE INTERVAL '0' END,
+		    paused_on = NULL,
 		    updated_on = NOW(), updated_by = $3
 		FROM sla_policy sp
 		WHERE s.sla_policy_id = sp.id

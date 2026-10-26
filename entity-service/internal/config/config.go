@@ -231,6 +231,42 @@ type Config struct {
 	// SLADataSource. Defaults to "postgres" -- see AttachmentDataSource's
 	// own doc comment.
 	AttachmentDataSource AttachmentDataSource
+	// CSMSLAEngineEnabled gates the CSM-native SLA clock engine
+	// (internal/service/sla_engine_service.go, source='CSM' "sla" rows) --
+	// independently of DataSource/SLADataSource, and independently of
+	// whether an external SLA engine is also tracking the same case.
+	// Defaults to true: this engine is meant to run on every deployment
+	// regardless of data source, not just the ones that already involve the
+	// external system, which is how it used to be gated in practice
+	// (routes.go only ever wired its one real trigger -- registering a new
+	// case's clocks -- into the external-system-backed CreateCase path; the
+	// plain-Postgres CreateCase never called it at all, so a case created
+	// under a plain-Postgres data source got no SLA tracking from creation
+	// onward unless its severity happened to change later). Was previously
+	// an implicit "db != nil" check with no name of its own; now an
+	// explicit, independently-documented toggle an operator can use to turn
+	// this engine off on purpose (CSM_SLA_ENGINE_ENABLED=false) -- e.g. a
+	// deployment that wants the external system's own synced
+	// source='SERVICENOW' rows as the only SLA truth, with this engine's
+	// own source='CSM' rows never created at all. Left on, both sets of
+	// rows coexist in the same "sla" table side by side, distinguished by
+	// source -- this is already what happens today on any data source that
+	// involves the external system, just without a named switch
+	// controlling it.
+	//
+	// Known limitation: flipping this to false only stops NEW writes --
+	// any source='CSM' row already IN_PROGRESS/BREACHED at that moment is
+	// left exactly as it was (still is_active, still returned by every
+	// unscoped read: sla_live, GetClockState, SearchActiveSLAStatuses),
+	// since nothing retires or excludes it. It will simply never be
+	// updated again. This is intentional scope: deciding whether such a
+	// clock should be force-completed, cancelled, or left visible as a
+	// frozen record is a product decision, not something this flag's
+	// on/off switch should make unilaterally. An operator disabling this
+	// engine should do so only once they've confirmed they're fine with
+	// whatever in-flight source='CSM' clocks exist at that moment going
+	// stale, or has a separate plan (e.g. a one-off migration) for them.
+	CSMSLAEngineEnabled bool
 	// ServiceNowIntegrationServiceBaseURL is the base URL for the ServiceNow integration service API.
 	// Required when DataSource is "servicenow" (or SLADataSource is "servicenow" -- see Validate).
 	ServiceNowIntegrationServiceBaseURL string
@@ -847,9 +883,9 @@ func Load() *Config {
 		HealthPort:                                    getEnvOrDefault("HEALTH_PORT", "8081"),
 		DataSource:                                    DataSource(getEnvOrDefault("DATA_SOURCE", string(DataSourcePostgres))),
 		SLADataSource:                                 SLADataSource(getEnvOrDefault("SLA_DATA_SOURCE", string(SLADataSourcePostgres))),
-		UsageRollupEnabled:                            os.Getenv("USAGE_ROLLUP_ENABLED") == "true",
 		UsageReadMode:                                 UsageReadMode(getEnvOrDefault("PRODUCT_CONSUMPTION_DATA_READ_MODE", string(UsageReadModePostgres))),
 		AttachmentDataSource:                          AttachmentDataSource(getEnvOrDefault("ATTACHMENT_DATA_SOURCE", string(AttachmentDataSourcePostgres))),
+		CSMSLAEngineEnabled:                           envFlagOn("CSM_SLA_ENGINE_ENABLED"),
 		ServiceNowIntegrationServiceBaseURL:           os.Getenv("SERVICENOW_INTEGRATION_SERVICE_BASE_URL"),
 		ServiceNowIntegrationServiceTokenURL:          os.Getenv("SERVICENOW_INTEGRATION_SERVICE_TOKEN_URL"),
 		ServiceNowIntegrationServiceClientID:          os.Getenv("SERVICENOW_INTEGRATION_SERVICE_CLIENT_ID"),
@@ -859,6 +895,7 @@ func Load() *Config {
 		EventHubConnectionString:                      os.Getenv("EVENT_HUB_CONNECTION_STRING"),
 		EventHubTopic:                                 os.Getenv("EVENT_HUB_TOPIC"),
 		EventPublishingEnabled:                        os.Getenv("EVENT_PUBLISHING_ENABLED") == "true",
+		UsageRollupEnabled:                            os.Getenv("USAGE_ROLLUP_ENABLED") == "true",
 		GithubIntegrationEnabled:                      os.Getenv("GITHUB_INTEGRATION_ENABLED") == "true",
 		GithubBaseURL:                                 getEnvOrDefault("GITHUB_API_BASE_URL", "https://api.github.com"),
 		GithubToken:                                   os.Getenv("GITHUB_TOKEN"),
