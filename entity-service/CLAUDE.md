@@ -10052,6 +10052,31 @@ new repository method this needed — a single-row lookup
 lower-cased before returning), deliberately not reusing
 `SearchDeployedProducts`' list/filter machinery for a one-row check.
 
+## Skills (`/skills`, Postgres only)
+
+`SkillService` (`internal/service/skill_service.go`) serves the skill catalogue, each internal user's own
+skills profile, the manager's view of everybody's, and the admin's catalogue edits, over the tables of
+migration 0079 (`skill*`, `user_skill`, `user_skill_history`). Registered only with a database pool.
+
+- **Who.** Catalogue reads: any internal caller. `/skills/me*`: the token's own user, found by the token's
+  email among active internal users; no route takes a person's id, and the identity provider's id is never
+  compared with a platform id. `POST /skills/users/search`: a CSM admin (a token role in `AUTH_ADMIN_ROLES`, as
+  for rota access) or a lead (`lead`, `americas_team_lead`) of a CRE or SRE team. `POST /skills` and
+  `PATCH /skills/{id}`: CSM admin only.
+- **No unique key on `user_skill(user_id, skill_id)`**, and migrated rows are not known to be free of repeats.
+  Every profile write holds `pg_advisory_xact_lock` for the pair and reads the pair's rows `FOR UPDATE`; every
+  read takes one canonical row per pair (`userSkillCanonical`: active, own before inherited, newest). An add
+  over an inactive own row revives it. Adding a held skill is a 409. A unique index needs the production data
+  checked for repeats first, so it is not added here. `skill.name` has no unique key either: create and rename
+  hold a per-name advisory lock and compare ignoring case.
+- **Levels.** A level must belong to the skill's `level_type_id` scale (checked in the service; no FK does it).
+  Inactive skills cannot be newly added. Every set, change and removal writes a `user_skill_history` row
+  (`level_from_id` null on first set, `level_to_id` null on removal; `created_by` is the actor's email); setting
+  the level already held writes nothing. A removal deletes the `user_skill` row. Inherited rows are never
+  changed (409). A skill's scale cannot change while any `user_skill` holds a level of it (409).
+- **Manager search** lists active internal people and active skills only, one row per person-skill, every filter
+  (skill, level, minimum level value, team key, name or email, user ids) applied in SQL.
+
 ## Adding a new entity
 
 Follow these steps in order:

@@ -342,6 +342,8 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 	var rotaReminderSettingsHandler *handler.RotaReminderSettingsHandler
 	var rotaReminderRequestHandler *handler.RotaReminderRequestHandler
 	var teamMemberHandler *handler.TeamMemberHandler
+	// Skills: the catalogue and each engineer's profile. Postgres-only.
+	var skillHandler *handler.SkillHandler
 	var pagingChainHandler *handler.PagingChainHandler
 	var caseAlertSettingsHandler *handler.CaseAlertSettingsHandler
 	var migrationCaseReportHandler *handler.MigrationCaseReportHandler
@@ -1197,6 +1199,11 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		teamMemberHandler = handler.NewTeamMemberHandler(
 			service.NewTeamMemberService(repository.NewTeamMemberRepository(db), accessSvc),
 		)
+		// Skills exist only in Postgres. Reads are internal-staff-only; a CSM
+		// admin is a token role from AUTH_ADMIN_ROLES, as for rota access.
+		skillHandler = handler.NewSkillHandler(
+			service.NewSkillService(repository.NewSkillRepository(db), accessSvc, cfg.AuthAdminRoles),
+		)
 	}
 	// activeAttachmentSvc backs the case-attachment write/non-content-read
 	// routes registered below (POST/PATCH/DELETE /attachments..., plus
@@ -1962,6 +1969,23 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		// five rungs from this, and the fifth by intersecting it with on-duty
 		// above.
 		mux.HandleFunc("GET /team-schedule/members", teamMemberHandler.GetTeamMembers)
+	}
+	if skillHandler != nil {
+		// The catalogue: any internal caller reads it, a CSM admin edits it.
+		mux.HandleFunc("GET /skills/levels", skillHandler.GetSkillLevels)
+		mux.HandleFunc("GET /skills/categories", skillHandler.GetSkillCategories)
+		mux.HandleFunc("POST /skills/search", skillHandler.SearchSkills)
+		mux.HandleFunc("GET /skills/{id}", skillHandler.GetSkill)
+		mux.HandleFunc("POST /skills", skillHandler.CreateSkill)
+		mux.HandleFunc("PATCH /skills/{id}", skillHandler.UpdateSkill)
+		// The caller's own profile. No person's id anywhere: it is the token's user.
+		mux.HandleFunc("GET /skills/me", skillHandler.GetMySkills)
+		mux.HandleFunc("POST /skills/me", skillHandler.AddMySkill)
+		mux.HandleFunc("GET /skills/me/history", skillHandler.GetMySkillHistory)
+		mux.HandleFunc("PUT /skills/me/{skillId}", skillHandler.SetMySkillLevel)
+		mux.HandleFunc("DELETE /skills/me/{skillId}", skillHandler.RemoveMySkill)
+		// Everybody's skills: a CSM admin or a CRE or SRE team lead.
+		mux.HandleFunc("POST /skills/users/search", skillHandler.SearchUserSkills)
 	}
 	if pagingChainHandler != nil {
 		// Who is on each tier of the CRE and SRE paging chains, what the caller
