@@ -126,7 +126,7 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 			errs                                           []error
 			evaluated, reminded, closed, released, skipped int
 			failed, wouldAct                               int
-			// quarantined is the most any listing reported for a stage this run: due
+			// quarantined is the total the stages reported this run: due
 			// tickets entity-service left out for failing repeatedly. They cause no
 			// error (that would alert on every retry), so the summary is where they show.
 			quarantined int
@@ -139,6 +139,9 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 			// attempted keeps a ticket that was skipped or failed from being tried
 			// again by the next pass of this same stage.
 			attempted := map[string]bool{}
+			// Every pass of a stage repeats that stage's own count, so take the
+			// maximum within the stage and add the stages together.
+			stageHeld := 0
 			for pass := 0; pass < maxPasses; pass++ {
 				if err := ctx.Err(); err != nil {
 					errs = append(errs, err)
@@ -159,7 +162,7 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 					errs = append(errs, fmt.Errorf("list tickets due for %s: %w", stage, err))
 					break
 				}
-				quarantined = max(quarantined, held)
+				stageHeld = max(stageHeld, held)
 				fresh := 0
 				for _, c := range candidates {
 					if attempted[c.ID] {
@@ -204,6 +207,7 @@ func Run(client workClient, cfg RunConfig) func(ctx context.Context) error {
 					break // nothing new came back: this stage is done
 				}
 			}
+			quarantined += stageHeld
 		}
 
 		slog.InfoContext(ctx, "autoclosure: run complete", "dryRun", cfg.DryRun,

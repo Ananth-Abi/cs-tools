@@ -17,8 +17,10 @@
 package autoclosure
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -318,6 +320,21 @@ func TestRun_QuarantinedTicketsDoNotFailTheRun(t *testing.T) {
 	}
 	if len(f.advanced) != 1 {
 		t.Errorf("advanced %v, want the due ticket still handled", f.advanced)
+	}
+}
+
+// Each stage reports its own count and the run total is their sum, not the largest.
+func TestRun_QuarantinedIsSummedAcrossStages(t *testing.T) {
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(prev)
+	f := &fakeWork{quarantined: map[string]int{StageClose: 3, StageFirstReminder: 1}}
+	if err := Run(f, RunConfig{})(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logged.String(), "quarantined=4") {
+		t.Errorf("summary = %s, want quarantined=4 (3 + 1)", logged.String())
 	}
 }
 
