@@ -9666,6 +9666,160 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Change a member's role or Case Alerts tier on a team.
+      description: >
+        CSM admin only; a rota admin is refused even for their own family. The
+        person must be active internal staff and already on the team. The role
+        may be switched between engineer and sub_lead, never set to a lead role
+        (lead, americas_team_lead, cre_head, cs_head), and a member who holds a
+        lead role is not changed (409). alertTier sets the member's Case Alerts
+        responder tier (T1, T2 or T3; one holder per tier per team, so a tier
+        another member holds is refused with 409) or, as null, clears it. A
+        field left out is left as it is. Changing nothing is not an error.
+        PostgreSQL only; audited.
+      operationId: updateTeamMember
+      parameters:
+        - name: teamKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The team's registry key.
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The person ("user" id).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateTeamMemberRequest'
+      responses:
+        "200":
+          description: The membership as it stands now.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMembership'
+        "400":
+          description: Bad request — the user id is not a UUID, nothing to change, a role other than engineer or sub_lead, an alertTier other than T1, T2, T3 or null, or the person is not active internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not a CSM admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: The team is not on the schedule, the person is not on it, or the schedule routes are not registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: The member holds a lead role, or another member holds the requested tier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /team-schedule/teams/{teamKey}/members/{userId}/move:
+    post:
+      summary: Move a member from one team to another.
+      description: >
+        CSM admin only. In one transaction, puts the person on toTeamKey as the
+        same role they had (engineer or sub_lead; the alert tier does not carry
+        over) and takes them off the team in the path, with their rota manager
+        grant for it. Both teams must be on the schedule, and the person active
+        internal staff. Refused, with nothing changed, while the person has turns
+        on the source team that have not ended (409), holds a Case Alerts
+        responder tier there (409), holds a lead role there (409; a lead is not
+        moved), or is already on both teams (409). Already on toTeamKey and off
+        the source team returns that membership unchanged. Past turns are kept.
+        PostgreSQL only; audited.
+      operationId: moveTeamMember
+      parameters:
+        - name: teamKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The source team's registry key.
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The person ("user" id).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveTeamMemberRequest'
+      responses:
+        "200":
+          description: The membership on the target team.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamMembership'
+        "400":
+          description: Bad request — the user id is not a UUID, toTeamKey is missing or is the source team, or the person is not active internal staff.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "401":
+          description: No user token and not an authorized internal client.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "403":
+          description: Not a CSM admin.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "404":
+          description: Either team is not on the schedule, the person is not on the source team, or the schedule routes are not registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "409":
+          description: The person is on both teams, holds a lead role, has upcoming turns, or holds a responder tier on the source team; the message says which.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        "500":
+          description: Unexpected error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /team-schedule/rota-access/markers/{teamKey}/{userId}:
     put:
       summary: Make somebody a team's rota manager.
@@ -26848,6 +27002,44 @@ components:
           items:
             type: string
             enum: [CRE, SRE, SME]
+    TeamMembership:
+      type: object
+      required: [teamKey, userId, role, alertTier]
+      properties:
+        teamKey:
+          type: string
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [engineer, sub_lead]
+        alertTier:
+          type: string
+          enum: [T1, T2, T3]
+          nullable: true
+          description: The Case Alerts responder tier on this team, or null.
+    UpdateTeamMemberRequest:
+      type: object
+      additionalProperties: false
+      description: At least one of role and alertTier.
+      properties:
+        role:
+          type: string
+          enum: [engineer, sub_lead]
+        alertTier:
+          type: string
+          enum: [T1, T2, T3]
+          nullable: true
+          description: The tier to hold, or null to clear it. Left out, it is unchanged.
+    MoveTeamMemberRequest:
+      type: object
+      additionalProperties: false
+      required: [toTeamKey]
+      properties:
+        toTeamKey:
+          type: string
+          description: The registry key of the team to move the person to.
     RotaAdminGrant:
       type: object
       required: [family, userId, name, email, grantedBy, grantedOn, active]

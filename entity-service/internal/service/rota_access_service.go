@@ -19,6 +19,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/wso2-open-operations/cs-tools/entity-service/internal/apierror"
@@ -35,6 +36,8 @@ import (
 //   - a CSM admin grants and removes rota admin, and any team's marker;
 //   - a rota admin grants and removes markers for the teams of their own
 //     family, and adds and removes those teams' members, and nothing else;
+//   - a member's role (engineer or sub_lead), alert tier and team (a move)
+//     are changed by a CSM admin only;
 //   - everybody else sees an empty tab and may change nothing.
 //
 // A CSM admin is a CSM Portal admin: a caller whose token's "roles" claim holds
@@ -51,6 +54,11 @@ type RotaAccessService interface {
 	// own family.
 	AddTeamMember(ctx context.Context, teamKey, userID string) error
 	RemoveTeamMember(ctx context.Context, teamKey, userID string) error
+	// UpdateTeamMember and MoveTeamMember change what a member is on a team,
+	// or which team: CSM admin only, a rota admin is not enough. They return
+	// the membership as it stands afterwards.
+	UpdateTeamMember(ctx context.Context, teamKey, userID string, patch domain.TeamMemberPatch) (domain.TeamMembership, error)
+	MoveTeamMember(ctx context.Context, teamKey, userID, toTeamKey string) (domain.TeamMembership, error)
 }
 
 type rotaAccessService struct {
@@ -159,12 +167,18 @@ func (s *rotaAccessService) Get(ctx context.Context) (domain.RotaAccess, error) 
 
 // requireCSMAdmin is the gate for the rota admin roles themselves.
 func (s *rotaAccessService) requireCSMAdmin(ctx context.Context) (rotaAccessCaller, error) {
+	return s.requireCSMAdminFor(ctx, "only a CSM admin can grant or remove rota admin")
+}
+
+// requireCSMAdminFor is requireCSMAdmin with the 403's message given: the
+// gate for what a rota admin may not do even in their own family.
+func (s *rotaAccessService) requireCSMAdminFor(ctx context.Context, refusal string) (rotaAccessCaller, error) {
 	c, err := s.whoIsAsking(ctx)
 	if err != nil {
 		return c, err
 	}
 	if !c.csmAdmin {
-		return c, &apierror.ForbiddenError{Msg: "only a CSM admin can grant or remove rota admin"}
+		return c, &apierror.ForbiddenError{Msg: refusal}
 	}
 	return c, nil
 }
@@ -336,6 +350,134 @@ func (s *rotaAccessService) RemoveTeamMember(ctx context.Context, teamKey, userI
 		return err
 	}
 	return teamMemberRemovalRefusal(teamKey, res)
+}
+
+// teamMemberAdminRefusal is the 403 for changing a member's role or tier, or
+// moving them: a CSM admin only, whatever the team's family.
+const teamMemberAdminRefusal = "a member's role, alert tier or team is changed by a CSM admin only"
+
+// assignableRoles are the roles a member can be switched between here.
+// Lead-type roles decide who Case Alerts calls and stay out of reach.
+var assignableRoles = []string{"engineer", "sub_lead"}
+
+// UpdateTeamMember implements RotaAccessService. Only a CSM admin; the
+// person must be active internal staff and already on the team. The role may
+// be switched between engineer and sub_lead, never to a lead-type role, and
+// the alert tier set (T1-T3, one holder per team) or cleared with null. A
+// member who holds a lead-type role is not changed.
+func (s *rotaAccessService) UpdateTeamMember(ctx context.Context, teamKey, userID string, patch domain.TeamMemberPatch) (domain.TeamMembership, error) {
+	if strings.TrimSpace(teamKey) == "" {
+		return domain.TeamMembership{}, &apierror.ValidationError{Msg: "teamKey is required"}
+	}
+	if err := requireGrantUserID(userID); err != nil {
+		return domain.TeamMembership{}, err
+	}
+	if patch.Role == nil && !patch.AlertTierSet {
+		return domain.TeamMembership{}, &apierror.ValidationError{Msg: "give a role, an alertTier or both"}
+	}
+	if patch.Role != nil && !slices.Contains(assignableRoles, *patch.Role) {
+		return domain.TeamMembership{}, &apierror.ValidationError{Msg: fmt.Sprintf(
+			"role %q cannot be set here: only engineer or sub_lead (lead roles are not assigned here)", *patch.Role)}
+	}
+	if patch.AlertTierSet && patch.AlertTier != nil && !slices.Contains([]string{"T1", "T2", "T3"}, *patch.AlertTier) {
+		return domain.TeamMembership{}, &apierror.ValidationError{Msg: fmt.Sprintf("alertTier %q is not T1, T2 or T3", *patch.AlertTier)}
+	}
+	c, err := s.requireCSMAdminFor(ctx, teamMemberAdminRefusal)
+	if err != nil {
+		return domain.TeamMembership{}, err
+	}
+	if _, ok, err := s.repo.RosteredTeamFamily(ctx, teamKey); err != nil {
+		return domain.TeamMembership{}, err
+	} else if !ok {
+		return domain.TeamMembership{}, &apierror.NotFoundError{Msg: fmt.Sprintf("%s is not a team on the schedule", teamKey)}
+	}
+	if err := s.requireTeamMemberInternal(ctx, userID); err != nil {
+		return domain.TeamMembership{}, err
+	}
+	res, err := s.repo.UpdateTeamMember(ctx, userID, teamKey, c.email, patch)
+	if err != nil {
+		return domain.TeamMembership{}, err
+	}
+	switch {
+	case !res.Member:
+		return domain.TeamMembership{}, &apierror.NotFoundError{Msg: fmt.Sprintf("that person is not on %s", teamKey)}
+	case res.Lead:
+		return domain.TeamMembership{}, &apierror.ConflictError{Msg: fmt.Sprintf(
+			"this person holds a lead role on %s, which decides who Case Alerts calls: it is not changed here", teamKey)}
+	case res.TierHolder != "":
+		return domain.TeamMembership{}, &apierror.ConflictError{Msg: fmt.Sprintf(
+			"tier %s of %s is held by someone else: clear theirs first", *patch.AlertTier, teamKey)}
+	}
+	return res.Membership, nil
+}
+
+// MoveTeamMember implements RotaAccessService. Only a CSM admin. The person
+// must be active internal staff on teamKey and not on toTeamKey; they arrive
+// as the same engineer or sub_lead, without a tier, and their rota manager
+// grant for teamKey goes with the move. Refused, with nothing changed, under
+// the same conditions as a removal: upcoming turns or an alert tier on
+// teamKey (409), and a lead is never moved (409). Already on toTeamKey and
+// off teamKey changes nothing.
+func (s *rotaAccessService) MoveTeamMember(ctx context.Context, teamKey, userID, toTeamKey string) (domain.TeamMembership, error) {
+	if strings.TrimSpace(teamKey) == "" {
+		return domain.TeamMembership{}, &apierror.ValidationError{Msg: "teamKey is required"}
+	}
+	if strings.TrimSpace(toTeamKey) == "" {
+		return domain.TeamMembership{}, &apierror.ValidationError{Msg: "toTeamKey is required"}
+	}
+	if strings.EqualFold(strings.TrimSpace(teamKey), strings.TrimSpace(toTeamKey)) {
+		return domain.TeamMembership{}, &apierror.ValidationError{Msg: "toTeamKey is the team the person is already on"}
+	}
+	if err := requireGrantUserID(userID); err != nil {
+		return domain.TeamMembership{}, err
+	}
+	c, err := s.requireCSMAdminFor(ctx, teamMemberAdminRefusal)
+	if err != nil {
+		return domain.TeamMembership{}, err
+	}
+	for _, key := range []string{teamKey, toTeamKey} {
+		if _, ok, err := s.repo.RosteredTeamFamily(ctx, key); err != nil {
+			return domain.TeamMembership{}, err
+		} else if !ok {
+			return domain.TeamMembership{}, &apierror.NotFoundError{Msg: fmt.Sprintf("%s is not a team on the schedule", key)}
+		}
+	}
+	if err := s.requireTeamMemberInternal(ctx, userID); err != nil {
+		return domain.TeamMembership{}, err
+	}
+	res, err := s.repo.MoveTeamMember(ctx, userID, teamKey, toTeamKey, c.email)
+	if err != nil {
+		return domain.TeamMembership{}, err
+	}
+	switch {
+	case res.OnSource && res.OnTarget:
+		return domain.TeamMembership{}, &apierror.ConflictError{Msg: fmt.Sprintf(
+			"this person is on both %s and %s: remove them from one instead", teamKey, toTeamKey)}
+	case res.OnTarget:
+		return res.Membership, nil // already moved
+	case !res.OnSource:
+		return domain.TeamMembership{}, &apierror.NotFoundError{Msg: fmt.Sprintf("that person is not on %s", teamKey)}
+	case res.Lead:
+		return domain.TeamMembership{}, &apierror.ConflictError{Msg: fmt.Sprintf(
+			"this person is a %s of %s, which decides who Case Alerts calls: a lead is not moved",
+			strings.ReplaceAll(res.Role, "_", " "), teamKey)}
+	case !res.Moved:
+		return domain.TeamMembership{}, teamMemberRemovalRefusal(teamKey, domain.TeamMemberRemoval{
+			Member: true, Role: res.Role, AlertTier: res.AlertTier, UpcomingTurns: res.UpcomingTurns})
+	}
+	return res.Membership, nil
+}
+
+// requireTeamMemberInternal is the same rule as adding: active internal staff.
+func (s *rotaAccessService) requireTeamMemberInternal(ctx context.Context, userID string) error {
+	ok, err := s.repo.UserIsInternal(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return &apierror.ValidationError{Msg: "only active internal staff are on a team, and that person is not one"}
+	}
+	return nil
 }
 
 // teamMemberRefusal is the 403 for changing the members of a team the caller
