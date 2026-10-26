@@ -1246,6 +1246,18 @@ func (c *CustomerEntityClient) DeleteTeamMember(ctx context.Context, teamKey, us
 	return c.do(ctx, http.MethodDelete, "/team-schedule/teams/"+url.PathEscape(teamKey)+"/members/"+url.PathEscape(userID), nil)
 }
 
+// PatchTeamMember calls PATCH /team-schedule/teams/{teamKey}/members/{userId}:
+// a member's role and Case Alerts tier.
+func (c *CustomerEntityClient) PatchTeamMember(ctx context.Context, teamKey, userID string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPatch, "/team-schedule/teams/"+url.PathEscape(teamKey)+"/members/"+url.PathEscape(userID), body)
+}
+
+// MoveTeamMember calls POST /team-schedule/teams/{teamKey}/members/{userId}/move:
+// takes the person off the source team and puts them on the target in the body.
+func (c *CustomerEntityClient) MoveTeamMember(ctx context.Context, teamKey, userID string, body []byte) ([]byte, error) {
+	return c.do(ctx, http.MethodPost, "/team-schedule/teams/"+url.PathEscape(teamKey)+"/members/"+url.PathEscape(userID)+"/move", body)
+}
+
 // GetRotaReminderSettings calls GET /team-schedule/reminder-settings/{family}:
 // 404 when nothing was saved for the family.
 func (c *CustomerEntityClient) GetRotaReminderSettings(ctx context.Context, family string) ([]byte, error) {

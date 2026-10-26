@@ -12752,6 +12752,165 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorPayload'
+    patch:
+      summary: Change a team member's role or Case Alerts tier.
+      operationId: updateTeamMember
+      description: >
+        CSM admin only; the entity service decides and its reason is kept on every refusal. Send
+        `role`, `alertTier` or both; an omitted field is unchanged and `alertTier: null` clears the
+        tier. At least one field is required and unknown fields are refused. 409 when the member
+        holds a lead-type role or another member of the team holds the requested tier. PostgreSQL
+        data source only.
+      parameters:
+        - name: teamKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The team the member is on.
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                role:
+                  type: string
+                  enum: [engineer, sub_lead]
+                alertTier:
+                  type: string
+                  nullable: true
+                  enum: [T1, T2, T3, null]
+      responses:
+        "200":
+          description: The member as it now stands.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamScheduleTeamMember'
+        "400":
+          description: Bad request (not a team key or UUID, not JSON, empty body, unknown role or tier, or not active internal staff; the entity service reason is kept).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden (not a CSM admin; the entity service reason is kept).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Not found (a team not on the schedule, or the person is not on the team).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "409":
+          description: The member holds a lead-type role, or another member holds the requested tier (the entity service reason is kept).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+  /team-schedule/teams/{teamKey}/members/{userId}/move:
+    post:
+      summary: Move a team member to another team on the schedule.
+      operationId: moveTeamMember
+      description: >
+        CSM admin only; the entity service decides and its reason is kept on every refusal. `teamKey`
+        is the team the person leaves and `toTeamKey` the team they join. Their role is kept and their
+        alert tier is empty on the new team. Refused with nothing written (409) while they have
+        upcoming turns or an alert tier on the source team, hold a lead-type role, or are on both
+        teams. Idempotent when they are already on the target and not on the source. PostgreSQL data
+        source only.
+      parameters:
+        - name: teamKey
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The team the member leaves.
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [toTeamKey]
+              properties:
+                toTeamKey:
+                  type: string
+                  description: The team they join; not the same as `teamKey`.
+      responses:
+        "200":
+          description: The member on the target team.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamScheduleTeamMember'
+        "400":
+          description: Bad request (not a team key or UUID, not JSON, missing toTeamKey, same source and target, or not active internal staff; the entity service reason is kept).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "401":
+          description: Unauthorized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "403":
+          description: Forbidden (not a CSM admin; the entity service reason is kept).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "404":
+          description: Not found (either team is not on the schedule, or the person is not on the source team).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "409":
+          description: Refused with nothing written (upcoming turns or an alert tier on the source team, a lead-type role, or on both teams; the entity service reason is kept).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
+        "500":
+          description: Internal server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorPayload'
   /team-schedule/rota-access/markers/{teamKey}/{userId}:
     put:
       summary: Make somebody a team's rota manager.
@@ -16255,6 +16414,22 @@ components:
         absencesCreated: {type: integer}
         absencesRemoved: {type: integer, description: Earlier absences the file's spans covered entirely.}
         absencesTrimmed: {type: integer, description: Earlier absences the file's spans shortened.}
+    TeamScheduleTeamMember:
+      type: object
+      required: [teamKey, userId, role, alertTier]
+      properties:
+        teamKey:
+          type: string
+        userId:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [engineer, sub_lead]
+        alertTier:
+          type: string
+          nullable: true
+          enum: [T1, T2, T3, null]
     ErrorPayload:
       type: object
       description: >-

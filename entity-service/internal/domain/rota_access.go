@@ -61,6 +61,61 @@ type TeamMemberRemoval struct {
 	UpcomingTurns int
 }
 
+// TeamMemberPatch is a change to one person's place on a team: their role
+// (engineer or sub_lead only) and/or their Case Alerts responder tier.
+type TeamMemberPatch struct {
+	// Role is the new role, or nil to leave it.
+	Role *string
+	// AlertTierSet is true when the tier is to be written; AlertTier is then
+	// the new tier (T1-T3), or nil to clear it.
+	AlertTierSet bool
+	AlertTier    *string
+}
+
+// TeamMembership is one person's place on one team.
+type TeamMembership struct {
+	TeamKey   string  `json:"teamKey"`
+	UserID    string  `json:"userId"`
+	Role      string  `json:"role"`
+	AlertTier *string `json:"alertTier"`
+}
+
+// TeamMemberUpdate is what changing a membership found. A change that is
+// kept is not written; the service turns the reason into the caller's refusal.
+type TeamMemberUpdate struct {
+	// Member is false when the person is not on the team.
+	Member bool
+	// Updated is true when the membership was written (false for a no-op).
+	Updated bool
+	// Lead is true when the person holds a lead-type role, which is never
+	// changed here.
+	Lead bool
+	// TierHolder is the team's other holder of the requested tier, when the
+	// tier is taken ("" otherwise). Each tier has one holder per team.
+	TierHolder string
+	// Membership is the membership as it stands after the call.
+	Membership TeamMembership
+}
+
+// TeamMemberMove is what moving a person between two teams found: what kept
+// them where they were, or where they ended up.
+type TeamMemberMove struct {
+	// Moved is true when this call moved them.
+	Moved bool
+	// OnSource and OnTarget say where they were when the call started.
+	OnSource, OnTarget bool
+	// Role, AlertTier and UpcomingTurns describe the source membership, as
+	// for TeamMemberRemoval.
+	Role          string
+	AlertTier     string
+	UpcomingTurns int
+	// Lead is true when the source role is lead-type.
+	Lead bool
+	// Membership is the membership on the target after the call, when the
+	// person is on it.
+	Membership TeamMembership
+}
+
 // RotaAdminGrant is one person holding one family's rota admin role.
 type RotaAdminGrant struct {
 	Family    string    `json:"family"`

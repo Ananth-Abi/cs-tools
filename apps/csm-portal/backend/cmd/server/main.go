@@ -661,6 +661,11 @@ func main() {
 	// (no portal admin), so PermWrite and entity-service decides.
 	route("PUT /team-schedule/teams/{teamKey}/members/{userId}", handler.PermWrite, rotaAccessHandler.PutTeamMember)
 	route("DELETE /team-schedule/teams/{teamKey}/members/{userId}", handler.PermWrite, rotaAccessHandler.DeleteTeamMember)
+	// A member's role and Case Alerts tier, and moving them to another team:
+	// CSM admin only, which entity-service enforces, so PermWrite like the
+	// add and remove above.
+	route("PATCH /team-schedule/teams/{teamKey}/members/{userId}", handler.PermWrite, rotaAccessHandler.PatchTeamMember)
+	route("POST /team-schedule/teams/{teamKey}/members/{userId}/move", handler.PermWrite, rotaAccessHandler.MoveTeamMember)
 	// Rota Reminders card on the Rota access tab: a family's rota reminder
 	// settings. Changed by a CSM admin or the family's rota admin, who is no
 	// portal admin, so PermWrite and entity-service decides.

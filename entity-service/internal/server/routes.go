@@ -2053,6 +2053,10 @@ func NewRouter(db *pgxpool.Pool, cfg *config.Config) (http.Handler, func()) {
 		// teams of their own family.
 		mux.HandleFunc("PUT /team-schedule/teams/{teamKey}/members/{userId}", rotaAccessHandler.AddTeamMember)
 		mux.HandleFunc("DELETE /team-schedule/teams/{teamKey}/members/{userId}", rotaAccessHandler.RemoveTeamMember)
+		// A member's role and alert tier, and moving them to another team:
+		// CSM admin only (a rota admin is not enough).
+		mux.HandleFunc("PATCH /team-schedule/teams/{teamKey}/members/{userId}", rotaAccessHandler.UpdateTeamMember)
+		mux.HandleFunc("POST /team-schedule/teams/{teamKey}/members/{userId}/move", rotaAccessHandler.MoveTeamMember)
 	}
 	if scheduleReminderHandler != nil {
 		mux.HandleFunc("GET /team-schedule/reminders/{family}/{kind}/{periodStart}", scheduleReminderHandler.GetReminder)
