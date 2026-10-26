@@ -2114,7 +2114,7 @@ func (d *Dispatcher) sendToEachIncidentSpace(ctx context.Context, t events.Type,
 		errs = append(errs, err)
 		if len(audiences) > 1 {
 			slog.WarnContext(ctx, "dispatch: an incident Chat space did not take the card",
-				"type", string(t), "incidentId", incidentID, "audience", audience, "err", err)
+				"type", string(t), "incidentId", incidentID, "audience", audience, "errSummary", chatErrSummary(err))
 		}
 	}
 	if len(errs) < len(audiences) {

@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/chataudience"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/eventbus"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
@@ -161,5 +163,18 @@ func TestDispatcher_S0CaseSRERoomFailureDoesNotFailTheRecord(t *testing.T) {
 	}
 	if got := caseCardAudiences(chat); !slices.Equal(got, []string{chataudience.IncidentMonitor}) {
 		t.Errorf("Case Reported card went to %v; want Incident Monitor", got)
+	}
+}
+
+// A Chat error's response excerpt can echo case content, so only its status
+// (or its type) is logged.
+func TestChatErrSummary_NeverCarriesTheResponseBody(t *testing.T) {
+	err := errors.Join(&apierror.Error{StatusCode: 400, Body: `{"text":"Something broke for Customer 3"}`}, errors.New("dial tcp: timeout"))
+	got := chatErrSummary(err)
+	if got != "status 400; *errors.errorString" {
+		t.Errorf("chatErrSummary = %q; want only the status and the type", got)
+	}
+	if strings.Contains(got, "Customer 3") {
+		t.Errorf("chatErrSummary leaked the response body: %q", got)
 	}
 }

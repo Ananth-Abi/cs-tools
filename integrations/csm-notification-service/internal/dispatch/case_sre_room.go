@@ -18,9 +18,12 @@ package dispatch
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 
+	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/apierror"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/events"
 	"github.com/wso2-open-operations/cs-tools/integrations/csm-notification-service/internal/notifications"
 )
@@ -77,7 +80,7 @@ func (d *Dispatcher) caseSRERooms(ctx context.Context, t events.Type, caseID, se
 func (d *Dispatcher) sendCaseSRERoomCard(ctx context.Context, t events.Type, caseID string, rooms []string, send func(audience string) error) {
 	if err := d.sendToEachIncidentSpace(ctx, t, caseID, rooms, send); err != nil {
 		slog.WarnContext(ctx, "dispatch: S0 case card did not reach its SRE room",
-			"type", string(t), "caseId", caseID, "rooms", rooms, "err", err)
+			"type", string(t), "caseId", caseID, "rooms", rooms, "errSummary", chatErrSummary(err))
 	}
 }
 
@@ -97,4 +100,31 @@ func caseSRERoomCard(caseID, caseNumber, sreGroup, severity, title, product, cas
 		IncidentLink:     caseLink,
 		Case:             true,
 	}
+}
+
+// chatErrSummary is a Chat send error safe to log: the HTTP status of each
+// failed post, or the error's type. Never the error text, which for a failed
+// post carries an excerpt of Google Chat's response body and so can echo
+// case content.
+func chatErrSummary(err error) string {
+	var parts []string
+	var walk func(error)
+	walk = func(err error) {
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, e := range joined.Unwrap() {
+				walk(e)
+			}
+			return
+		}
+		var apiErr *apierror.Error
+		if errors.As(err, &apiErr) {
+			parts = append(parts, fmt.Sprintf("status %d", apiErr.StatusCode))
+			return
+		}
+		parts = append(parts, fmt.Sprintf("%T", err))
+	}
+	if err != nil {
+		walk(err)
+	}
+	return strings.Join(parts, "; ")
 }
