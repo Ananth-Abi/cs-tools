@@ -234,24 +234,25 @@ type Config struct {
 	// CSMSLAEngineEnabled gates the CSM-native SLA clock engine
 	// (internal/service/sla_engine_service.go, source='CSM' "sla" rows) --
 	// independently of DataSource/SLADataSource, and independently of
-	// whether ServiceNow's own SLA engine is also tracking the same case.
+	// whether an external SLA engine is also tracking the same case.
 	// Defaults to true: this engine is meant to run on every deployment
-	// regardless of data source, not just DataSource=servicenow/
-	// postgres-servicenow-dual-write, which is how it used to be gated in
-	// practice (routes.go only ever wired its one real trigger --
-	// registering a new case's clocks -- into the ServiceNow-branch
-	// CreateCase; the plain-Postgres CreateCase never called it at all, so a
-	// case created under DataSource=postgres got no SLA tracking from
-	// creation onward unless its severity happened to change later). Was
-	// previously an implicit "db != nil" check with no name of its own; now
-	// an explicit, independently-documented toggle an operator can use to
-	// turn this engine off on purpose (CSM_SLA_ENGINE_ENABLED=false) -- e.g.
-	// a deployment that wants ServiceNow's own synced source='SERVICENOW'
-	// rows as the only SLA truth, with this engine's own source='CSM' rows
-	// never created at all. Left on, both sets of rows coexist in the same
-	// "sla" table side by side, distinguished by source -- this is already
-	// what happens today on DataSource=servicenow/postgres-servicenow-dual-write,
-	// just without a named switch controlling it.
+	// regardless of data source, not just the ones that already involve the
+	// external system, which is how it used to be gated in practice
+	// (routes.go only ever wired its one real trigger -- registering a new
+	// case's clocks -- into the external-system-backed CreateCase path; the
+	// plain-Postgres CreateCase never called it at all, so a case created
+	// under a plain-Postgres data source got no SLA tracking from creation
+	// onward unless its severity happened to change later). Was previously
+	// an implicit "db != nil" check with no name of its own; now an
+	// explicit, independently-documented toggle an operator can use to turn
+	// this engine off on purpose (CSM_SLA_ENGINE_ENABLED=false) -- e.g. a
+	// deployment that wants the external system's own synced
+	// source='SERVICENOW' rows as the only SLA truth, with this engine's
+	// own source='CSM' rows never created at all. Left on, both sets of
+	// rows coexist in the same "sla" table side by side, distinguished by
+	// source -- this is already what happens today on any data source that
+	// involves the external system, just without a named switch
+	// controlling it.
 	//
 	// Known limitation: flipping this to false only stops NEW writes --
 	// any source='CSM' row already IN_PROGRESS/BREACHED at that moment is
