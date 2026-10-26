@@ -62,4 +62,18 @@ describe("groupCasesByAccount", () => {
     expect(groups).toHaveLength(1);
     expect(groups[0].items).toHaveLength(2);
   });
+
+  it("labels an account that has an id but no name by its id, as separate rows", () => {
+    const groups = groupCasesByAccount([
+      c("1", { id: "acc-2" }),
+      c("2", { id: "acc-1" }),
+      c("3", { id: "acc-1", name: "  " }),
+      c("4"),
+    ]);
+    expect(groups.map((g) => [g.accountId, g.accountName, g.items.length])).toEqual([
+      ["acc-1", "acc-1", 2],
+      ["acc-2", "acc-2", 1],
+      ["", NO_ACCOUNT_LABEL, 1],
+    ]);
+  });
 });

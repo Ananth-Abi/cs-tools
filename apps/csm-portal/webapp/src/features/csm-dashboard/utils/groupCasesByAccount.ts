@@ -17,7 +17,7 @@
 export interface AccountCaseGroup {
   /** The account's id, or `""` for cases that carry no account. */
   accountId: string;
-  /** The account's name, or `NO_ACCOUNT_LABEL` when it has none. */
+  /** The account's name, its id when the name is missing, or `NO_ACCOUNT_LABEL` when neither exists. */
   accountName: string;
   /** The account's cases, in their incoming order. */
   items: Record<string, unknown>[];
@@ -51,7 +51,7 @@ export function groupCasesByAccount(items: Record<string, unknown>[]): AccountCa
     const key = id || `name:${name}`;
     let group = groups.get(key);
     if (!group) {
-      group = { accountId: id, accountName: name || NO_ACCOUNT_LABEL, items: [] };
+      group = { accountId: id, accountName: name || id || NO_ACCOUNT_LABEL, items: [] };
       groups.set(key, group);
     }
     group.items.push(item);
